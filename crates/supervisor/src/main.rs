@@ -92,10 +92,30 @@ fn status(args: &Args) -> Result<(), String> {
 fn start(args: &Args) -> Result<(), String> {
     let cfg = load_cfg(args)?;
     let divid = process::find_divid(args.divid.clone())?;
-    println!("Starting the node ({})...", divid.display());
     let rpc = RpcClient::new(&cfg);
-    let pid = process::start_daemon(&divid, &cfg.datadir, &rpc, Duration::from_secs(120))?;
-    println!("Node is running and answering (pid {pid}).");
+
+    if health::last_shutdown(&cfg.datadir) == health::LastShutdown::Dirty
+        || health::stale_pid_file(&cfg.datadir, process::daemon_pid(&cfg.datadir).is_some())
+    {
+        println!("The node didn't shut down cleanly last time. Starting it, and repairing the downloaded blockchain data if needed — your coins are safe.");
+    } else {
+        println!("Starting the node ({})...", divid.display());
+    }
+
+    let report = process::start_with_recovery(
+        &divid,
+        &cfg.datadir,
+        &rpc,
+        Duration::from_secs(120),
+        Duration::from_secs(1800),
+    )?;
+    match report.repaired_with {
+        Some(what) => println!(
+            "Node is running (pid {}). It needed repair — {} — which is now done. No coins were affected.",
+            report.pid, what
+        ),
+        None => println!("Node is running and answering (pid {}).", report.pid),
+    }
     Ok(())
 }
 

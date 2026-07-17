@@ -51,57 +51,140 @@ pub fn find_divid(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
         .ok_or_else(|| "cannot find a divid binary — pass --divid <path>".into())
 }
 
-/// Start divid against a datadir and wait until its RPC actually answers
-/// (tolerating the "still starting up" phase). Returns the pid.
-pub fn start_daemon(
+/// Outcome of one launch attempt.
+enum Spawn {
+    Running(i32),
+    /// The block database is damaged — repairable by rebuilding it.
+    Corruption(String),
+    /// Any other refusal to start (config, ports, permissions...).
+    Failed(String),
+}
+
+const CORRUPTION_MARKERS: [&str; 4] = [
+    "corruption",
+    "Error loading block database",
+    "Failed to find best block",
+    "Error opening block database",
+];
+
+/// One launch attempt with a given set of extra flags. Waits until the node's
+/// RPC answers, or classifies why it didn't.
+fn spawn_once(
     divid: &Path,
     datadir: &Path,
     rpc: &RpcClient,
     timeout: Duration,
-) -> Result<i32, String> {
+    extra_args: &[&str],
+) -> Spawn {
     if let Some(pid) = daemon_pid(datadir) {
-        return Err(format!("a node is already running (pid {pid})"));
+        return Spawn::Running(pid);
     }
-    // The daemon's startup complaints are gold when something goes wrong —
-    // capture them instead of letting them scroll away (or vanish).
     let spawn_log_path = datadir.join("dd69-spawn.log");
-    let spawn_log = std::fs::File::create(&spawn_log_path)
-        .map_err(|e| format!("cannot write in {}: {}", datadir.display(), e))?;
-    let spawn_log_err = spawn_log.try_clone().map_err(|e| e.to_string())?;
-    std::process::Command::new(divid)
-        .arg(format!("-conf={}", datadir.join("divi.conf").display()))
-        .arg(format!("-datadir={}/", datadir.display()))
-        .stdout(spawn_log)
-        .stderr(spawn_log_err)
-        .spawn()
-        .map_err(|e| format!("could not launch {}: {}", divid.display(), e))?;
+    let Ok(spawn_log) = std::fs::File::create(&spawn_log_path) else {
+        return Spawn::Failed(format!("cannot write in {}", datadir.display()));
+    };
+    let Ok(spawn_log_err) = spawn_log.try_clone() else {
+        return Spawn::Failed("cannot open spawn log".into());
+    };
+    let mut cmd = std::process::Command::new(divid);
+    cmd.arg(format!("-conf={}", datadir.join("divi.conf").display()))
+        .arg(format!("-datadir={}/", datadir.display()));
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    if cmd.stdout(spawn_log).stderr(spawn_log_err).spawn().is_err() {
+        return Spawn::Failed(format!("could not launch {}", divid.display()));
+    }
+
     let started = Instant::now();
-    while started.elapsed() < timeout {
+    loop {
         if rpc.call("getblockcount", serde_json::json!([])).is_ok() {
-            return daemon_pid(datadir).ok_or_else(|| "node answered RPC but wrote no pid file".into());
+            return match daemon_pid(datadir) {
+                Some(pid) => Spawn::Running(pid),
+                None => Spawn::Failed("node answered RPC but wrote no pid file".into()),
+            };
         }
-        // If the daemon printed a fatal complaint and died, say so now
-        // rather than waiting out the full timeout.
-        if daemon_pid(datadir).is_none() && started.elapsed() > Duration::from_secs(10) {
+        // Daemon printed a fatal line and died? Classify and stop waiting.
+        if daemon_pid(datadir).is_none() && started.elapsed() > Duration::from_secs(3) {
             let said = std::fs::read_to_string(&spawn_log_path).unwrap_or_default();
             if let Some(line) = said.lines().find(|l| l.contains("Error:")) {
-                return Err(format!("the node refused to start: {}", line.trim()));
+                let msg = line.trim().to_string();
+                if CORRUPTION_MARKERS.iter().any(|m| msg.contains(m)) {
+                    return Spawn::Corruption(msg);
+                }
+                return Spawn::Failed(msg);
             }
+        }
+        if started.elapsed() >= timeout {
+            let said = std::fs::read_to_string(&spawn_log_path).unwrap_or_default();
+            let hint = said
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("no output")
+                .trim()
+                .to_string();
+            return Spawn::Failed(format!(
+                "node did not become ready within {}s (its last words: {})",
+                timeout.as_secs(),
+                hint
+            ));
         }
         std::thread::sleep(Duration::from_millis(500));
     }
-    let said = std::fs::read_to_string(&spawn_log_path).unwrap_or_default();
-    let hint = said
-        .lines()
-        .rev()
-        .find(|l| !l.trim().is_empty())
-        .unwrap_or("no output")
-        .trim()
-        .to_string();
+}
+
+/// What a start actually did, so the UI can tell the user the truth.
+pub struct StartReport {
+    pub pid: i32,
+    /// Some(flag) if the node had to be repaired to start.
+    pub repaired_with: Option<String>,
+}
+
+/// The recovery ladder. Try a normal start; if the block database is corrupt,
+/// rebuild it from the local block files — chainstate-only first (fast), then
+/// a full index rebuild. Neither step ever touches wallet.dat: keys are never
+/// at risk, only the re-downloadable chain data is rebuilt.
+///
+/// Rung 3 (restore from the daily snapshot) is a future step — it needs the
+/// download+verify code — and is surfaced as a clear message rather than
+/// pretended.
+pub fn start_with_recovery(
+    divid: &Path,
+    datadir: &Path,
+    rpc: &RpcClient,
+    normal_timeout: Duration,
+    repair_timeout: Duration,
+) -> Result<StartReport, String> {
+    // (flag, human label, timeout). None flag = ordinary start.
+    let ladder: [(Option<&str>, &str, Duration); 3] = [
+        (None, "", normal_timeout),
+        (Some("-reindex-chainstate"), "rebuilding the coin database", repair_timeout),
+        (Some("-reindex"), "rebuilding the full blockchain index", repair_timeout),
+    ];
+
+    let mut last_corruption = String::new();
+    for (i, (flag, label, timeout)) in ladder.iter().enumerate() {
+        let args: Vec<&str> = flag.iter().copied().collect();
+        match spawn_once(divid, datadir, rpc, *timeout, &args) {
+            Spawn::Running(pid) => {
+                return Ok(StartReport {
+                    pid,
+                    repaired_with: if i == 0 { None } else { Some((*label).to_string()) },
+                });
+            }
+            Spawn::Corruption(msg) => {
+                last_corruption = msg;
+                // fall through to the next, more aggressive repair rung
+                continue;
+            }
+            Spawn::Failed(msg) => return Err(msg),
+        }
+    }
     Err(format!(
-        "node did not become ready within {}s (its last words: {})",
-        timeout.as_secs(),
-        hint
+        "the blockchain data is damaged and a local rebuild didn't fix it ({}). \
+         Next step: restore from the Divi snapshot. Your coins are safe — only downloaded data is affected.",
+        last_corruption
     ))
 }
 
@@ -124,4 +207,21 @@ pub fn safe_stop(rpc: &RpcClient, datadir: &Path, timeout: Duration) -> Result<D
         "daemon (pid {pid}) still flushing after {}s — NOT killing it; wait longer",
         timeout.as_secs()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corruption_markers_match_real_divi_error() {
+        let real = "Error: Error loading block database : Block database corruption detected! Failed to find best block in block index";
+        assert!(CORRUPTION_MARKERS.iter().any(|m| real.contains(m)));
+    }
+
+    #[test]
+    fn benign_error_is_not_corruption() {
+        let benign = "Error: Unable to bind to 0.0.0.0:51472";
+        assert!(!CORRUPTION_MARKERS.iter().any(|m| benign.contains(m)));
+    }
 }

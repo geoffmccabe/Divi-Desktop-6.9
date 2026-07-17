@@ -13,9 +13,18 @@ TOOLS=./target/divi-tools
 SB=./target/divi-sandbox
 PASS=0; FAIL=0
 
-check() { # check <label> <ok:0|1>
-  if [ "$2" -eq 0 ]; then echo "  PASS  $1"; PASS=$((PASS+1)); else echo "  FAIL  $1"; FAIL=$((FAIL+1)); fi
+check() { # check <label> <ok:0|1>  — a missing status counts as FAIL, never aborts
+  local ok="${2:-1}"
+  if [ "$ok" -eq 0 ]; then echo "  PASS  $1"; PASS=$((PASS+1)); else echo "  FAIL  $1"; FAIL=$((FAIL+1)); fi
 }
+
+# Kill any sandbox node holding our RPC port — from this run or an aborted one.
+kill_strays() {
+  lsof -nP -iTCP:51999 2>/dev/null | awk '/LISTEN/{print $2}' | while read -r p; do kill "$p" 2>/dev/null; done
+  pkill -f "divi-sandbox" 2>/dev/null || true
+}
+trap kill_strays EXIT
+kill_strays; sleep 1
 
 cargo build -q || { echo "build failed"; exit 1; }
 
@@ -52,14 +61,36 @@ check "kill -9 delivered to pid ${PID:-?}" $?
 $DD status --datadir "$SB" | grep -q "did NOT stop cleanly"
 check "dirty crash detected IMMEDIATELY (stale pid heuristic)" $?
 
-echo "── C. restart over the crash ──"
-$DD start --datadir "$SB" --divid "$DIVID" >/dev/null 2>&1
-check "node starts over dirty state" $?
+echo "── C. auto-recovery: restart over the kill-9 corruption ──"
+OUT=$($DD start --datadir "$SB" --divid "$DIVID" 2>&1)
+echo "$OUT" | grep -q "Node is running"
+check "node auto-recovers and starts after corruption" $?
+echo "$OUT" | grep -qiE "repair|rebuild"
+check "recovery was actually performed (not a silent pass)" $?
 sleep 2
-$DD status --datadir "$SB" | grep -q "NOT clean"
-check "daemon's own log flag says last shutdown was dirty" $?
+$DD status --datadir "$SB" | grep -q "running"
+check "node is healthy after recovery" $?
 $DD stop --datadir "$SB" --yes >/dev/null 2>&1
 check "final safe stop" $?
+
+echo "── D. recovery preserves the wallet keys (coins are safe) ──"
+# The real invariant isn't byte-equality (the daemon rewrites its best-block
+# marker every run) — it's that a key created before the crash still belongs
+# to the wallet after the repair.
+RPCPW=$(grep '^rpcpassword=' "$SB/divi.conf" | cut -d= -f2)
+rpc() { local m="${1:-}" p="${2:-}"; curl -s --max-time 8 -u "dd69test:$RPCPW" -d "{\"method\":\"$m\",\"params\":[$p]}" http://127.0.0.1:51999/; }
+jget() { python3 -c "import json,sys;print(json.load(sys.stdin)$1)" 2>/dev/null; }
+
+$DD start --datadir "$SB" --divid "$DIVID" >/dev/null 2>&1
+ADDR=$(rpc getnewaddress '' | jget "['result']")
+[ -n "$ADDR" ]; check "created a test address before the crash" $?
+PID=$(cat "$SB/divid.pid" 2>/dev/null); sleep 1; kill -9 "$PID" 2>/dev/null; sleep 1
+$DD start --datadir "$SB" --divid "$DIVID" >/dev/null 2>&1   # auto-recovers
+sleep 1
+MINE=$(rpc validateaddress "\"$ADDR\"" | jget "['result']['ismine']")
+[ "$MINE" = "True" ]; check "key created before crash still belongs to the wallet after repair" $?
+[ -s "$SB/wallet.dat" ]; check "wallet.dat present and non-empty after repair" $?
+$DD stop --datadir "$SB" --yes >/dev/null 2>&1
 
 echo
 echo "RESULT: $PASS passed, $FAIL failed"
