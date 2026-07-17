@@ -91,6 +91,20 @@ async fn validate_address(address: String) -> bool {
     .unwrap_or(false)
 }
 
+/// Open an http(s) URL in the user's default browser (e.g. a block explorer).
+#[tauri::command]
+fn open_url(url: String) {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+}
+
 /// Render an address as a QR-code SVG (generated locally; no network).
 #[tauri::command]
 fn address_qr(address: String) -> Result<String, String> {
@@ -156,7 +170,8 @@ fn main() {
             new_receive_address,
             recent_activity,
             validate_address,
-            address_qr
+            address_qr,
+            open_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

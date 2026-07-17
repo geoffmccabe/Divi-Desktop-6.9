@@ -28,6 +28,7 @@ export const ICONS: Record<string, string> = {
   ),
   copy: svg("<rect x='9' y='9' width='11' height='11' rx='2'/><path d='M5 15V5a2 2 0 0 1 2-2h10'/>"),
   note: svg("<path d='M9 18V5l12-2v13'/><circle cx='6' cy='18' r='3'/><circle cx='18' cy='16' r='3'/>"),
+  external: svg("<path d='M15 3h6v6'/><path d='M10 14 21 3'/><path d='M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/>"),
 };
 
 // Set the default icon vars on :root. A skin later overrides any --icon-<name>.
