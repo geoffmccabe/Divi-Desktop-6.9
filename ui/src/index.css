@@ -314,11 +314,28 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .status-panel .glass-chip { padding: 6px 10px; font-size: 0.72rem; }
 /* header-panel above main-panel so the address dropdown isn't covered (both
    have backdrop-filter = stacking contexts; explicit z-index decides order). */
-.header-panel { flex-shrink: 0; padding: 16px 22px; overflow: visible; position: relative; z-index: 2; }
+/* header row above main-panel so the dropdowns aren't covered (both have
+   backdrop-filter = stacking contexts; explicit z-index decides order). */
+.header-panel { flex-shrink: 0; overflow: visible; position: relative; z-index: 2; }
 .header-panel .balance-cards { margin-bottom: 0; }
 
-/* ── Header bar: Spendable · Staking · My Addresses ────────────────────────── */
-.header-bar { display: flex; gap: 22px; align-items: flex-start; }
+/* ── Header: three equal, independent panels ───────────────────────────────── */
+.header-bar { display: flex; gap: 16px; align-items: stretch; }
+.hdr-panel { flex: 1 1 0; min-width: 0; position: relative; padding: 14px 18px; display: flex; flex-direction: column; gap: 6px; }
+.bl-frac { font-size: 0.6em; color: hsl(var(--muted-foreground)); font-weight: 400; }
+
+/* Staking (left) + next lottery (right) share one panel. */
+.hdr-staking-panel { flex-direction: row; justify-content: space-between; align-items: flex-start; }
+.hdr-staking-btn {
+  display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
+  background: none; border: none; padding: 0; cursor: pointer; color: inherit; text-align: left; min-width: 0;
+}
+.hdr-lottery { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
+.lot-count { font-family: ui-monospace, monospace; font-size: 1.15rem; font-weight: 600; color: hsl(var(--primary)); }
+.lot-when { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+
+.hdr-addr-panel { flex-direction: column; }
+.hdr-addr-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .header-cell { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .header-addr-cell { position: relative; flex: 1.5; }
 .addr-toggle {
@@ -367,7 +384,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   font-size: 0.92rem; text-align: left;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.nav-item:hover { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
+.nav-item:hover { background: hsl(var(--primary) / 0.3); color: hsl(var(--foreground)); }
 .nav-item-active { background: hsl(var(--primary) / 0.18); color: hsl(var(--foreground)); }
 .nav-item-active .ic { color: hsl(var(--primary)); }
 .sidebar-foot { padding: 12px 8px 4px; display: flex; }
@@ -417,4 +434,39 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .coll-badge {
   display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 600;
   background: hsl(var(--primary)); color: #fff;
+}
+
+/* ── Staking dropdown ──────────────────────────────────────────────────────── */
+.stake-dropdown {
+  position: absolute; top: calc(100% + 8px); left: 0; right: 0; z-index: 30;
+  max-height: 0; opacity: 0; overflow: hidden;
+  transition: max-height 0.28s ease, opacity 0.22s ease;
+}
+.stake-dropdown-open { max-height: 66vh; opacity: 1; }
+.stake-dropdown-inner { padding: 12px; overflow-y: auto; max-height: 66vh; }
+.stake-scan { font-size: 0.75rem; color: hsl(var(--muted-foreground)); margin: 0 0 8px; }
+.stake-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.stake-row {
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
+  border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 5px;
+}
+.stake-row-top { display: flex; align-items: center; gap: 10px; }
+.stake-size { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); }
+.stake-size em { font-size: 0.72rem; font-style: normal; color: hsl(var(--muted-foreground)); }
+.stake-name { font-size: 0.8rem; color: hsl(var(--muted-foreground)); flex: 1; }
+.stake-full { font-family: ui-monospace, monospace; font-size: 0.7rem; color: hsl(var(--muted-foreground)); word-break: break-all; }
+.stake-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+.stake-win-big { color: hsl(var(--warning)); }
+.stake-win-small { color: hsl(var(--foreground)); }
+
+/* Block height that's behind: greyed last-known value with a "+?" hint. */
+.blk-stale { color: hsl(var(--muted-foreground)); }
+.blk-more { color: hsl(var(--muted-foreground)); font-size: 0.8em; margin-left: 2px; }
+
+/* Newly-connected peer: a one-second bright-yellow flash. */
+.peer-flash { animation: peer-flash-anim 1s ease-out; }
+@keyframes peer-flash-anim {
+  0% { background: hsl(48 100% 55% / 0.85); box-shadow: 0 0 16px hsl(48 100% 55% / 0.7); }
+  100% { background: inherit; box-shadow: none; }
 }

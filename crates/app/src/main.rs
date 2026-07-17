@@ -253,6 +253,81 @@ async fn poe_verify(txid: String, hash: String) -> Result<PoeProofDto, String> {
     .map_err(|_| "internal error".to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StakeWalletDto {
+    address: String,
+    size: f64,
+    stakes: i64,
+    first_stake: Option<i64>,
+    last_stake: Option<i64>,
+}
+
+/// The wallet's staking addresses (largest first) with stake counts + dates.
+#[tauri::command]
+async fn staking_wallets() -> Vec<StakeWalletDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else { return Vec::new() };
+        wallet::staking_wallets(&cfg)
+            .into_iter()
+            .map(|w| StakeWalletDto {
+                address: w.address,
+                size: w.size,
+                stakes: w.stakes,
+                first_stake: w.first_stake,
+                last_stake: w.last_stake,
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LotteryInfoDto {
+    tip: i64,
+    next_height: i64,
+    next_eta: i64,
+}
+
+/// Height + estimated time of the next weekly lottery draw (null if unreachable).
+#[tauri::command]
+async fn lottery_info() -> Option<LotteryInfoDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().ok()?;
+        wallet::lottery_info(&cfg).map(|i| LotteryInfoDto {
+            tip: i.tip,
+            next_height: i.next_height,
+            next_eta: i.next_eta,
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[derive(Serialize)]
+struct LotteryWinDto {
+    address: String,
+    big: i64,
+    small: i64,
+}
+
+/// Historical big/small lottery wins for the given addresses (a chain scan).
+#[tauri::command]
+async fn lottery_wins(addresses: Vec<String>) -> Vec<LotteryWinDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(cfg) = NodeConfig::load() else { return Vec::new() };
+        wallet::lottery_wins(&cfg, &addresses)
+            .into_iter()
+            .map(|w| LotteryWinDto { address: w.address, big: w.big, small: w.small })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -266,7 +341,10 @@ fn main() {
             address_qr,
             open_url,
             poe_timestamp,
-            poe_verify
+            poe_verify,
+            staking_wallets,
+            lottery_info,
+            lottery_wins
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

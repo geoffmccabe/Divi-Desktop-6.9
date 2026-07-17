@@ -27,6 +27,16 @@ export function fmtDivi(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
+// Split into the whole part (grouped) and a fixed 4-digit fraction, so the UI
+// can render the fraction smaller/greyer than the whole number.
+export function fmtDiviParts(n: number): { whole: string; frac: string } {
+  const whole = Math.trunc(n).toLocaleString();
+  const frac = Math.abs(n - Math.trunc(n))
+    .toFixed(4)
+    .slice(2); // drop the "0."
+  return { whole, frac };
+}
+
 export function relTime(unix: number): string {
   if (!unix) return "";
   const s = Math.max(0, Math.floor(Date.now() / 1000 - unix));

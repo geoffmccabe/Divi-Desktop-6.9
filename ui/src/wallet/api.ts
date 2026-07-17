@@ -30,9 +30,30 @@ export interface Proof {
   block_time: number | null;
 }
 
+export interface StakeWallet {
+  address: string;
+  size: number;
+  stakes: number;
+  firstStake: number | null;
+  lastStake: number | null;
+}
+export interface LotteryInfo {
+  tip: number;
+  nextHeight: number;
+  nextEta: number; // unix seconds, estimated
+}
+export interface LotteryWin {
+  address: string;
+  big: number;
+  small: number;
+}
+
 export const walletBalance = () => invoke<Balance | null>("wallet_balance");
 export const poeTimestamp = (hash: string) => invoke<string>("poe_timestamp", { hash });
 export const poeVerify = (txid: string, hash: string) => invoke<Proof>("poe_verify", { txid, hash });
+export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
+export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
+export const lotteryWins = (addresses: string[]) => invoke<LotteryWin[]>("lottery_wins", { addresses });
 export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");
 export const newReceiveAddress = () => invoke<string>("new_receive_address");
 export const recentActivity = () => invoke<Tx[]>("recent_activity");

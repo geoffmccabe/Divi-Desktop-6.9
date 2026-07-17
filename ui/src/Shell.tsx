@@ -39,7 +39,7 @@ export function Shell() {
         </aside>
       </div>
       <div className="col-right">
-        <header className="glass-panel header-panel">
+        <header className="header-panel">
           <HeaderBar />
         </header>
         <section className="glass-panel main-panel">

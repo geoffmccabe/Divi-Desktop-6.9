@@ -5,7 +5,7 @@
 use crate::config::NodeConfig;
 use crate::rpc::RpcClient;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct AddrInfo {
     pub address: String,
@@ -67,6 +67,166 @@ pub struct Balance {
     pub staking: f64,
     pub pending: f64,
     pub immature: f64,
+}
+
+// ── Staking details ────────────────────────────────────────────────────────
+
+/// One address's staking picture: how much sits there ("size"), how many times
+/// it has staked, and when it first/last staked.
+pub struct StakeWallet {
+    pub address: String,
+    pub size: f64,
+    pub stakes: i64,
+    pub first_stake: Option<i64>,
+    pub last_stake: Option<i64>,
+}
+
+fn is_stake_cat(c: &str) -> bool {
+    matches!(c, "generate" | "stake" | "mint" | "immature" | "orphan")
+}
+
+/// The wallet's addresses that hold stakeable coins and/or have staked, largest
+/// first. Size comes from spendable UTXOs; stake counts/dates from history.
+pub fn staking_wallets(cfg: &NodeConfig) -> Vec<StakeWallet> {
+    let rpc = RpcClient::new(cfg);
+
+    // Size = sum of spendable outputs per address (what can actually stake).
+    let mut size: HashMap<String, f64> = HashMap::new();
+    if let Ok(u) = rpc.call("listunspent", json!([1, 9_999_999])) {
+        if let Some(arr) = u.as_array() {
+            for o in arr {
+                if let Some(a) = o["address"].as_str() {
+                    *size.entry(a.to_string()).or_insert(0.0) += o["amount"].as_f64().unwrap_or(0.0);
+                }
+            }
+        }
+    }
+
+    // Stake count + first/last stake time per address.
+    let mut stakes: HashMap<String, (i64, Option<i64>, Option<i64>)> = HashMap::new();
+    if let Ok(txs) = rpc.call("listtransactions", json!(["*", 2000])) {
+        if let Some(arr) = txs.as_array() {
+            for t in arr {
+                let addr = t["address"].as_str().unwrap_or("");
+                if addr.is_empty() || !is_stake_cat(t["category"].as_str().unwrap_or("")) {
+                    continue;
+                }
+                let time = t["time"].as_i64();
+                let e = stakes.entry(addr.to_string()).or_insert((0, None, None));
+                e.0 += 1;
+                if let Some(ts) = time {
+                    e.1 = Some(e.1.map_or(ts, |f: i64| f.min(ts)));
+                    e.2 = Some(e.2.map_or(ts, |l: i64| l.max(ts)));
+                }
+            }
+        }
+    }
+
+    let mut keys: std::collections::HashSet<String> = HashSet::new();
+    keys.extend(size.keys().cloned());
+    keys.extend(stakes.keys().cloned());
+
+    let mut out: Vec<StakeWallet> = keys
+        .into_iter()
+        .map(|address| {
+            let s = stakes.get(&address).copied().unwrap_or((0, None, None));
+            StakeWallet {
+                size: *size.get(&address).unwrap_or(&0.0),
+                stakes: s.0,
+                first_stake: s.1,
+                last_stake: s.2,
+                address,
+            }
+        })
+        .filter(|w| w.size > 0.0 || w.stakes > 0)
+        .collect();
+    out.sort_by(|a, b| b.size.partial_cmp(&a.size).unwrap_or(std::cmp::Ordering::Equal));
+    out
+}
+
+/// Lottery cycle parameters (start height, blocks per cycle) for the active
+/// network. Divi runs a weekly lottery (10080 one-minute blocks); regtest is 10.
+fn lottery_cycle(rpc: &RpcClient) -> (i64, i64) {
+    let chain = rpc
+        .call("getblockchaininfo", json!([]))
+        .ok()
+        .and_then(|v| v["chain"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    match chain.as_str() {
+        "regtest" => (101, 10),
+        _ => (101, 10080), // main + test: weekly
+    }
+}
+
+/// Where and (roughly) when the next lottery draw happens. `next_eta` is an
+/// estimate (blocks-remaining × ~60s), so the UI should label it approximate.
+pub struct LotteryInfo {
+    pub tip: i64,
+    pub next_height: i64,
+    pub next_eta: i64,
+}
+
+pub fn lottery_info(cfg: &NodeConfig) -> Option<LotteryInfo> {
+    let rpc = RpcClient::new(cfg);
+    let tip = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64())?;
+    let (_, cycle) = lottery_cycle(&rpc);
+    let next_height = (tip / cycle + 1) * cycle;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let next_eta = now + (next_height - tip) * 60;
+    Some(LotteryInfo { tip, next_height, next_eta })
+}
+
+/// How many big (rank 0) and small (ranks 1-10) lottery prizes each of `addrs`
+/// has won, by scanning historical lottery blocks. NOTE: derived from
+/// getlotteryblockwinners; verify the totals against a synced mainnet node
+/// before presenting them as authoritative.
+pub struct LotteryWin {
+    pub address: String,
+    pub big: i64,
+    pub small: i64,
+}
+
+pub fn lottery_wins(cfg: &NodeConfig, addrs: &[String]) -> Vec<LotteryWin> {
+    let rpc = RpcClient::new(cfg);
+    let want: HashSet<&str> = addrs.iter().map(|s| s.as_str()).collect();
+    let mut tally: HashMap<String, (i64, i64)> = HashMap::new();
+
+    let tip = match rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64()) {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    let (_, cycle) = lottery_cycle(&rpc);
+    let mut h = cycle; // lottery blocks fall on multiples of the cycle
+    let mut scanned = 0;
+    while h <= tip && scanned < 4000 {
+        if let Ok(v) = rpc.call("getlotteryblockwinners", json!([h])) {
+            if let Some(cands) = v["Lottery Candidates"].as_array() {
+                for c in cands {
+                    let rank = c["Rank"].as_i64().unwrap_or(-1);
+                    for a in c["Address"].as_str().unwrap_or("").split(':') {
+                        if want.contains(a) {
+                            let e = tally.entry(a.to_string()).or_insert((0, 0));
+                            if rank == 0 {
+                                e.0 += 1;
+                            } else if rank > 0 {
+                                e.1 += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        h += cycle;
+        scanned += 1;
+    }
+
+    tally
+        .into_iter()
+        .map(|(address, (big, small))| LotteryWin { address, big, small })
+        .collect()
 }
 
 pub fn balance(cfg: &NodeConfig) -> Option<Balance> {
