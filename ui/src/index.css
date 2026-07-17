@@ -22,14 +22,14 @@
   --font-heading: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --panel-bg: 240 6% 10%;
-  --panel-opacity: 85%;
+  --panel-opacity: 0.85;
   --panel-radius: 12px;
   --panel-blur: 24px;
   --glow-color: 280 80% 60%;
   --glow-strength: 22px;
   --control-scheme: dark;
   --subpanel-bg: 0 0% 0%;
-  --subpanel-opacity: 100%;
+  --subpanel-opacity: 1;
   --subpanel-outline-width: 0px;
   --subpanel-outline-color: 0 0% 50%;
 }
@@ -104,6 +104,14 @@ h1, h2, h3 { font-family: var(--font-heading); }
   background: rgba(0, 0, 0, 0.45);
   display: flex; justify-content: flex-end;
 }
+/* No-dim mode (Style panel): app stays fully visible + interactive; only the
+   drawer catches clicks, so live theme changes are seen in real time. */
+.admin-nodim {
+  position: fixed; inset: 0; z-index: 50;
+  background: transparent; pointer-events: none;
+  display: flex; justify-content: flex-end;
+}
+.admin-nodim .admin-drawer { pointer-events: auto; }
 .admin-drawer {
   width: 380px; max-width: 90vw; height: 100%;
   border-radius: 0; display: flex; flex-direction: column;

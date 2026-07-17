@@ -14,6 +14,10 @@ export interface SavedTheme {
 
 const ACTIVE_KEY = "dd69.activeTheme";
 const SAVED_KEY = "dd69.savedThemes";
+const VERSION_KEY = "dd69.themeVersion";
+// Bump when token formats change so a stale saved theme is discarded instead of
+// overriding new defaults (e.g. opacity moved from 0.45 default to 0.85).
+const THEME_VERSION = 2;
 
 export function defaultTheme(): Theme {
   return Object.fromEntries(TOKENS.map((t) => [t.key, t.default]));
@@ -31,6 +35,9 @@ export function applyTheme(theme: Theme): void {
 
 export function loadActive(): Theme {
   try {
+    if (parseInt(localStorage.getItem(VERSION_KEY) || "0", 10) !== THEME_VERSION) {
+      return defaultTheme(); // format changed — start from current defaults
+    }
     const saved = JSON.parse(localStorage.getItem(ACTIVE_KEY) || "{}");
     return { ...defaultTheme(), ...saved };
   } catch {
@@ -40,6 +47,7 @@ export function loadActive(): Theme {
 
 export function persistActive(theme: Theme): void {
   localStorage.setItem(ACTIVE_KEY, JSON.stringify(theme));
+  localStorage.setItem(VERSION_KEY, String(THEME_VERSION));
 }
 
 export function loadSavedThemes(): SavedTheme[] {

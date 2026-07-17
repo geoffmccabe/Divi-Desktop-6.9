@@ -61,10 +61,11 @@ function Control({ token }: { token: TokenDef }) {
 
   // range
   const num = parseFloat(value) || 0;
+  const shown = token.displayPercent ? `${Math.round(num * 100)}%` : `${num}${token.unit ?? ""}`;
   return (
     <label className="style-row">
       <span>
-        {token.label} <em className="style-val">{num}{token.unit}</em>
+        {token.label} <em className="style-val">{shown}</em>
       </span>
       <input
         type="range"

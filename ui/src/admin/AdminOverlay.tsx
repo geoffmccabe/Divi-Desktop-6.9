@@ -6,9 +6,10 @@ import { ADMIN_PANELS } from "./registry";
 export function AdminOverlay({ onClose }: { onClose: () => void }) {
   const [activeId, setActiveId] = useState(ADMIN_PANELS[0].id);
   const active = ADMIN_PANELS.find((p) => p.id === activeId) ?? ADMIN_PANELS[0];
+  const dim = active.dim !== false;
 
   return (
-    <div className="admin-scrim" onClick={onClose}>
+    <div className={dim ? "admin-scrim" : "admin-nodim"} onClick={dim ? onClose : undefined}>
       <aside className="admin-drawer glass-panel" onClick={(e) => e.stopPropagation()}>
         <header className="admin-drawer-head">
           <div className="admin-tabs">

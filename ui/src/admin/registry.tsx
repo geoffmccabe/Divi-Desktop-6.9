@@ -6,9 +6,12 @@ import { StylePanel } from "./panels/StylePanel";
 export interface AdminPanel {
   id: string;
   title: string;
+  /** Dim/darken the app behind the drawer. Default true; the Style panel sets
+   *  false so live theme changes are visible in real time. */
+  dim?: boolean;
   render: () => ReactNode;
 }
 
 export const ADMIN_PANELS: AdminPanel[] = [
-  { id: "style", title: "Style", render: () => <StylePanel /> },
+  { id: "style", title: "Style", dim: false, render: () => <StylePanel /> },
 ];

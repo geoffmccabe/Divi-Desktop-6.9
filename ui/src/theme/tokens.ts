@@ -17,6 +17,7 @@ export interface TokenDef {
   max?: number;
   step?: number;
   unit?: string; // range
+  displayPercent?: boolean; // show a 0-1 range value as a percentage
 }
 
 const SYSTEM = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
@@ -58,7 +59,7 @@ export const TOKENS: TokenDef[] = [
   // HSL triplets; range values carry their unit.
   { key: "controlScheme", label: "Menus & sliders", group: "Panel", type: "select", cssVar: "--control-scheme", default: "dark", options: [{ label: "Dark", value: "dark" }, { label: "Light", value: "light" }] },
   { key: "panelBg", label: "Panel background", group: "Panel", type: "color", cssVar: "--panel-bg", default: "240 6% 10%" },
-  { key: "panelOpacity", label: "Panel opacity", group: "Panel", type: "range", cssVar: "--panel-opacity", default: "85%", min: 10, max: 100, step: 5, unit: "%" },
+  { key: "panelOpacity", label: "Panel opacity", group: "Panel", type: "range", cssVar: "--panel-opacity", default: "0.85", min: 0.05, max: 1, step: 0.05, unit: "", displayPercent: true },
   { key: "panelRadius", label: "Corners", group: "Panel", type: "range", cssVar: "--panel-radius", default: "12px", min: 0, max: 28, step: 1, unit: "px" },
   { key: "panelBlur", label: "Frost / blur", group: "Panel", type: "range", cssVar: "--panel-blur", default: "24px", min: 0, max: 40, step: 1, unit: "px" },
   { key: "glowColor", label: "Glow color", group: "Panel", type: "color", cssVar: "--glow-color", default: "280 80% 60%" },
@@ -67,7 +68,7 @@ export const TOKENS: TokenDef[] = [
   // Sub-panels — the nested boxes on a panel (balance cards, chips). Their own
   // background/opacity/outline, independent of the parent panel.
   { key: "subPanelBg", label: "Sub-panel background", group: "Sub-panels", type: "color", cssVar: "--subpanel-bg", default: "0 0% 0%" },
-  { key: "subPanelOpacity", label: "Sub-panel opacity", group: "Sub-panels", type: "range", cssVar: "--subpanel-opacity", default: "100%", min: 10, max: 100, step: 5, unit: "%" },
+  { key: "subPanelOpacity", label: "Sub-panel opacity", group: "Sub-panels", type: "range", cssVar: "--subpanel-opacity", default: "1", min: 0.05, max: 1, step: 0.05, unit: "", displayPercent: true },
   { key: "subPanelOutline", label: "Sub-panel outline", group: "Sub-panels", type: "range", cssVar: "--subpanel-outline-width", default: "0px", min: 0, max: 8, step: 1, unit: "px" },
   { key: "subPanelOutlineColor", label: "Outline color", group: "Sub-panels", type: "color", cssVar: "--subpanel-outline-color", default: "0 0% 50%" },
 
