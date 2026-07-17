@@ -2,7 +2,7 @@ import { useState, type ComponentType } from "react";
 import { NAV } from "./nav";
 import { Sidebar } from "./Sidebar";
 import { StatusPanel } from "./StatusPanel";
-import { BalanceCard } from "./wallet/BalanceCard";
+import { HeaderBar } from "./wallet/HeaderBar";
 import { Overview } from "./wallet/Overview";
 import { SendPanel } from "./wallet/SendPanel";
 import { ReceivePanel } from "./wallet/ReceivePanel";
@@ -36,7 +36,7 @@ export function Shell() {
       </div>
       <div className="col-right">
         <header className="glass-panel header-panel">
-          <BalanceCard />
+          <HeaderBar />
         </header>
         <section className="glass-panel main-panel">
           <h2 className="view-title">{label}</h2>

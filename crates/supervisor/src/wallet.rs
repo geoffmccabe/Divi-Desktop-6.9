@@ -5,6 +5,62 @@
 use crate::config::NodeConfig;
 use crate::rpc::RpcClient;
 use serde_json::json;
+use std::collections::HashMap;
+
+pub struct AddrInfo {
+    pub address: String,
+    pub is_main: bool,
+    pub receives: i64,
+    pub sends: i64,
+    pub stakes: i64,
+}
+
+/// The account's deposit addresses that have seen activity (plus the main one),
+/// with per-address counts by category. Counts are tallied from recent history.
+pub fn addresses(cfg: &NodeConfig) -> Vec<AddrInfo> {
+    let rpc = RpcClient::new(cfg);
+    let main = rpc
+        .call("getaccountaddress", json!([""]))
+        .ok()
+        .and_then(|v| v.as_str().map(|s| s.to_string()));
+
+    let mut map: HashMap<String, (i64, i64, i64)> = HashMap::new();
+    if let Ok(txs) = rpc.call("listtransactions", json!(["*", 1000])) {
+        if let Some(arr) = txs.as_array() {
+            for t in arr {
+                let addr = t["address"].as_str().unwrap_or("");
+                if addr.is_empty() {
+                    continue;
+                }
+                let e = map.entry(addr.to_string()).or_insert((0, 0, 0));
+                match t["category"].as_str().unwrap_or("") {
+                    "receive" => e.0 += 1,
+                    "send" => e.1 += 1,
+                    "generate" | "stake" | "mint" | "immature" | "orphan" => e.2 += 1,
+                    _ => {}
+                }
+            }
+        }
+    }
+    if let Some(m) = &main {
+        map.entry(m.clone()).or_insert((0, 0, 0));
+    }
+
+    let mut out: Vec<AddrInfo> = map
+        .into_iter()
+        .map(|(address, (r, s, st))| {
+            let is_main = main.as_deref() == Some(address.as_str());
+            AddrInfo { address, is_main, receives: r, sends: s, stakes: st }
+        })
+        .collect();
+    // Main first, then busiest.
+    out.sort_by(|a, b| {
+        b.is_main
+            .cmp(&a.is_main)
+            .then((b.receives + b.sends + b.stakes).cmp(&(a.receives + a.sends + a.stakes)))
+    });
+    out
+}
 
 pub struct Balance {
     pub spendable: f64,

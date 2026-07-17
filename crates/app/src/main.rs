@@ -14,6 +14,36 @@ struct BalanceDto {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AddrDto {
+    address: String,
+    is_main: bool,
+    receives: i64,
+    sends: i64,
+    stakes: i64,
+}
+
+/// The account's deposit addresses with per-address counts.
+#[tauri::command]
+async fn wallet_addresses() -> Vec<AddrDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else { return vec![] };
+        wallet::addresses(&cfg)
+            .into_iter()
+            .map(|a| AddrDto {
+                address: a.address,
+                is_main: a.is_main,
+                receives: a.receives,
+                sends: a.sends,
+                stakes: a.stakes,
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[derive(Serialize)]
 struct TxDto {
     kind: String,
     amount: f64,
@@ -167,6 +197,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             node_status,
             wallet_balance,
+            wallet_addresses,
             new_receive_address,
             recent_activity,
             validate_address,

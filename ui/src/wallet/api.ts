@@ -16,7 +16,16 @@ export interface Tx {
   time: number;
 }
 
+export interface AddrInfo {
+  address: string;
+  isMain: boolean;
+  receives: number;
+  sends: number;
+  stakes: number;
+}
+
 export const walletBalance = () => invoke<Balance | null>("wallet_balance");
+export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");
 export const newReceiveAddress = () => invoke<string>("new_receive_address");
 export const recentActivity = () => invoke<Tx[]>("recent_activity");
 export const validateAddress = (address: string) => invoke<boolean>("validate_address", { address });
