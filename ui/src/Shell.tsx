@@ -1,6 +1,8 @@
 import { useState, type ComponentType } from "react";
 import { NAV } from "./nav";
 import { Sidebar } from "./Sidebar";
+import { StatusPanel } from "./StatusPanel";
+import { BalanceCard } from "./wallet/BalanceCard";
 import { Overview } from "./wallet/Overview";
 import { SendPanel } from "./wallet/SendPanel";
 import { ReceivePanel } from "./wallet/ReceivePanel";
@@ -17,6 +19,8 @@ const VIEWS: Record<string, ComponentType> = {
   settings: SettingsView,
 };
 
+// Four independent panels: nav (top-left), node status (bottom-left, chopped
+// off the sidebar), balances (top-right header), and the main content.
 export function Shell() {
   const [view, setView] = useState("overview");
   const Active = VIEWS[view] ?? Overview;
@@ -24,13 +28,23 @@ export function Shell() {
 
   return (
     <div className="shell">
-      <Sidebar active={view} onSelect={setView} />
-      <section className="glass-panel main-panel">
-        <h2 className="view-title">{label}</h2>
-        <div className="view-body">
-          <Active />
-        </div>
-      </section>
+      <div className="col-left">
+        <Sidebar active={view} onSelect={setView} />
+        <aside className="glass-panel status-panel">
+          <StatusPanel />
+        </aside>
+      </div>
+      <div className="col-right">
+        <header className="glass-panel header-panel">
+          <BalanceCard />
+        </header>
+        <section className="glass-panel main-panel">
+          <h2 className="view-title">{label}</h2>
+          <div className="view-body">
+            <Active />
+          </div>
+        </section>
+      </div>
     </div>
   );
 }

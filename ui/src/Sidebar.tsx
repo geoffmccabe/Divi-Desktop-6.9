@@ -1,6 +1,5 @@
 import { NAV } from "./nav";
 import { Icon } from "./Icon";
-import { StatusPill } from "./StatusPill";
 
 export function Sidebar({ active, onSelect }: { active: string; onSelect: (id: string) => void }) {
   return (
@@ -23,9 +22,6 @@ export function Sidebar({ active, onSelect }: { active: string; onSelect: (id: s
           </li>
         ))}
       </ul>
-      <div className="sidebar-foot">
-        <StatusPill />
-      </div>
     </nav>
   );
 }
