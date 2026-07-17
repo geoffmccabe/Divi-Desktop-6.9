@@ -3,7 +3,7 @@ import { AdminOverlay } from "./AdminOverlay";
 
 function GearIcon() {
   return (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden>
       <path
         d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z"
         stroke="currentColor"

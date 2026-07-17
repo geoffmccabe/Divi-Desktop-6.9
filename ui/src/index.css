@@ -59,15 +59,15 @@ h1, h2, h3 { font-family: var(--font-heading); }
 
 /* ── Admin gear + drawer ──────────────────────────────────────────────────── */
 .admin-gear {
-  position: fixed; right: 20px; bottom: 20px; z-index: 40;
-  width: 48px; height: 48px; border-radius: 50%;
+  position: fixed; right: 18px; bottom: 18px; z-index: 40;
+  width: 30px; height: 30px; padding: 0;
   display: flex; align-items: center; justify-content: center;
-  color: #fff; cursor: pointer; border: none;
-  background: hsl(var(--primary));
-  box-shadow: 0 6px 20px hsl(var(--primary) / 0.45);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  background: transparent; border: none; cursor: pointer;
+  color: hsl(var(--primary));
+  opacity: 0.8;
+  transition: transform 0.2s ease, opacity 0.2s ease;
 }
-.admin-gear:hover { transform: rotate(30deg) scale(1.05); box-shadow: 0 8px 26px hsl(var(--primary) / 0.6); }
+.admin-gear:hover { opacity: 1; transform: rotate(40deg); }
 
 .admin-scrim {
   position: fixed; inset: 0; z-index: 50;
