@@ -111,6 +111,34 @@ pub struct Tx {
     pub time: i64,
 }
 
+/// A page of wallet transactions (from `listtransactions`, a fast local read —
+/// no chain re-parse). `from` skips that many of the most-recent txs. Returns
+/// None if the node couldn't be reached (so the UI can distinguish "offline"
+/// from "genuinely no transactions").
+pub fn list(cfg: &NodeConfig, count: i64, from: i64) -> Option<Vec<Tx>> {
+    let rpc = RpcClient::new(cfg);
+    let v = rpc.call("listtransactions", json!(["*", count, from])).ok()?;
+    let arr = v.as_array()?;
+    Some(arr.iter().map(tx_from_json).collect())
+}
+
+fn tx_from_json(t: &serde_json::Value) -> Tx {
+    let kind = match t["category"].as_str().unwrap_or("") {
+        "receive" => "receive",
+        "send" => "send",
+        "generate" | "immature" | "stake" | "mint" | "orphan" => "stake",
+        _ => "other",
+    };
+    Tx {
+        kind: kind.to_string(),
+        amount: t["amount"].as_f64().unwrap_or(0.0),
+        address: t["address"].as_str().unwrap_or("").to_string(),
+        confirmations: t["confirmations"].as_i64().unwrap_or(0),
+        txid: t["txid"].as_str().unwrap_or("").to_string(),
+        time: t["time"].as_i64().unwrap_or(0),
+    }
+}
+
 pub fn recent(cfg: &NodeConfig, count: i64) -> Vec<Tx> {
     let rpc = RpcClient::new(cfg);
     let Ok(v) = rpc.call("listtransactions", json!(["*", count])) else {

@@ -28,6 +28,9 @@ export const walletBalance = () => invoke<Balance | null>("wallet_balance");
 export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");
 export const newReceiveAddress = () => invoke<string>("new_receive_address");
 export const recentActivity = () => invoke<Tx[]>("recent_activity");
+// null = node unreachable; [] = genuinely no (more) transactions.
+export const listTransactions = (count: number, from: number) =>
+  invoke<Tx[] | null>("list_transactions", { count, from });
 export const validateAddress = (address: string) => invoke<boolean>("validate_address", { address });
 export const addressQr = (address: string) => invoke<string>("address_qr", { address });
 export const openUrl = (url: string) => invoke<void>("open_url", { url });

@@ -277,6 +277,15 @@ h1, h2, h3 { font-family: var(--font-heading); }
   border: 1px dashed hsl(var(--warning) / 0.45);
 }
 .conn-dot { width: 9px; height: 9px; border-radius: 50%; background: hsl(var(--warning)); box-shadow: 0 0 8px hsl(var(--warning) / 0.8); animation: status-dot-pulse 1.4s ease-in-out infinite; flex-shrink: 0; }
+.conn-dot.ok { background: hsl(var(--success)); box-shadow: 0 0 8px hsl(var(--success) / 0.8); animation: none; }
+.conn-dot.bad { background: hsl(var(--destructive)); box-shadow: 0 0 8px hsl(var(--destructive) / 0.8); animation: none; }
+
+.activity-wrap { display: flex; flex-direction: column; gap: 12px; }
+.activity-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.activity-status { display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
+.activity-status.bad { color: hsl(var(--destructive)); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.icon-btn.spinning .ic { animation: spin 1s linear infinite; }
 
 /* ── Icons: masked, colored by currentColor, shape from --icon-<name> ──────── */
 .ic {
@@ -303,7 +312,9 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .status-panel .wl-status-line { font-size: 0.88rem; margin: 4px 0 12px; }
 .status-panel .wl-status-chips { flex-wrap: wrap; gap: 8px; }
 .status-panel .glass-chip { padding: 6px 10px; font-size: 0.72rem; }
-.header-panel { flex-shrink: 0; padding: 16px 22px; overflow: visible; }
+/* header-panel above main-panel so the address dropdown isn't covered (both
+   have backdrop-filter = stacking contexts; explicit z-index decides order). */
+.header-panel { flex-shrink: 0; padding: 16px 22px; overflow: visible; position: relative; z-index: 2; }
 .header-panel .balance-cards { margin-bottom: 0; }
 
 /* ── Header bar: Spendable · Staking · My Addresses ────────────────────────── */
@@ -361,6 +372,6 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .nav-item-active .ic { color: hsl(var(--primary)); }
 .sidebar-foot { padding: 12px 8px 4px; display: flex; }
 
-.main-panel { flex: 1; min-width: 0; padding: 26px 32px; overflow: auto; display: flex; flex-direction: column; }
+.main-panel { flex: 1; min-width: 0; padding: 26px 32px; overflow: auto; display: flex; flex-direction: column; position: relative; z-index: 1; }
 .view-title { margin: 0 0 20px; font-size: 1.3rem; font-weight: 600; color: hsl(var(--foreground)); }
 .view-body { flex: 1; }

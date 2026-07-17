@@ -88,6 +88,31 @@ async fn new_receive_address() -> Result<String, String> {
     .map_err(|_| "internal error".to_string())?
 }
 
+/// A page of transactions (newest window; `from` skips that many recent ones).
+/// None = node unreachable (vs Some([]) = genuinely no more transactions).
+#[tauri::command]
+async fn list_transactions(count: i64, from: i64) -> Option<Vec<TxDto>> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().ok()?;
+        Some(
+            wallet::list(&cfg, count, from)?
+                .into_iter()
+                .map(|t| TxDto {
+                    kind: t.kind,
+                    amount: t.amount,
+                    address: t.address,
+                    confirmations: t.confirmations,
+                    txid: t.txid,
+                    time: t.time,
+                })
+                .collect(),
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 #[tauri::command]
 async fn recent_activity() -> Vec<TxDto> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -200,6 +225,7 @@ fn main() {
             wallet_addresses,
             new_receive_address,
             recent_activity,
+            list_transactions,
             validate_address,
             address_qr,
             open_url
