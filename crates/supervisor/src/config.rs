@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Where the node lives and how to talk to it. Read from the standard Divi
-/// datadir for this platform and its divi.conf.
+/// datadir for this platform (or an explicit override) and its divi.conf.
 pub struct NodeConfig {
     pub datadir: PathBuf,
     pub rpc_user: String,
@@ -24,30 +24,63 @@ pub fn default_datadir() -> PathBuf {
     }
 }
 
+/// Tolerates whitespace around keys/values and comment lines.
+pub fn parse_conf(text: &str) -> HashMap<String, String> {
+    text.lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            if l.starts_with('#') {
+                return None;
+            }
+            l.split_once('=')
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect()
+}
+
 impl NodeConfig {
     pub fn load() -> Result<Self, String> {
-        let datadir = default_datadir();
+        Self::load_from(default_datadir())
+    }
+
+    pub fn load_from(datadir: PathBuf) -> Result<Self, String> {
+        // divid resolves relative -conf/-datadir paths against each other,
+        // silently doubling them. Absolute paths only, always.
+        let datadir = std::fs::canonicalize(&datadir).unwrap_or(datadir);
         let conf_path = datadir.join("divi.conf");
         let conf = std::fs::read_to_string(&conf_path)
             .map_err(|e| format!("cannot read {}: {}", conf_path.display(), e))?;
-        let map: HashMap<&str, &str> = conf
-            .lines()
-            .filter_map(|l| {
-                let l = l.trim();
-                if l.starts_with('#') {
-                    return None;
-                }
-                l.split_once('=')
-            })
-            .collect();
-        Ok(NodeConfig {
-            rpc_user: map.get("rpcuser").copied().unwrap_or("").to_string(),
-            rpc_pass: map.get("rpcpassword").copied().unwrap_or("").to_string(),
+        let map = parse_conf(&conf);
+        let cfg = NodeConfig {
+            rpc_user: map.get("rpcuser").cloned().unwrap_or_default(),
+            rpc_pass: map.get("rpcpassword").cloned().unwrap_or_default(),
             rpc_port: map
                 .get("rpcport")
-                .and_then(|p| p.trim().parse().ok())
+                .and_then(|p| p.parse().ok())
                 .unwrap_or(51473),
             datadir,
-        })
+        };
+        if cfg.rpc_user.is_empty() || cfg.rpc_pass.is_empty() {
+            return Err(format!(
+                "divi.conf in {} has no rpcuser/rpcpassword — the supervisor cannot talk to the node without them",
+                cfg.datadir.display()
+            ));
+        }
+        Ok(cfg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_spaces_and_comments() {
+        let m = parse_conf("# comment\nrpcuser = alice\nrpcport= 51999 \n\nbad line\nrpcpassword=p=w");
+        assert_eq!(m.get("rpcuser").unwrap(), "alice");
+        assert_eq!(m.get("rpcport").unwrap(), "51999");
+        // value containing '=' keeps everything after the first '='
+        assert_eq!(m.get("rpcpassword").unwrap(), "p=w");
+        assert!(!m.contains_key("bad line"));
     }
 }

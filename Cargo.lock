@@ -44,6 +44,7 @@ name = "dd69-supervisor"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "libc",
  "serde_json",
  "ureq",
 ]

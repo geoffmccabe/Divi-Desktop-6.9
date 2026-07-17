@@ -21,3 +21,29 @@ pub fn staking_sentence(s: &Value) -> String {
     }
     "Staking is off for an unrecognized reason (this is a bug — the app should always know).".into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn active_wins() {
+        let s = json!({"staking status": true, "walletunlocked": false});
+        assert_eq!(staking_sentence(&s), "Staking is ACTIVE.");
+    }
+
+    #[test]
+    fn first_blocker_is_reported() {
+        let s = json!({"staking status": false, "haveconnections": true,
+                        "mnsync": false, "walletunlocked": false});
+        assert!(staking_sentence(&s).contains("still syncing"));
+    }
+
+    #[test]
+    fn locked_wallet() {
+        let s = json!({"staking status": false, "haveconnections": true,
+                        "mnsync": true, "walletunlocked": false});
+        assert!(staking_sentence(&s).contains("locked"));
+    }
+}
