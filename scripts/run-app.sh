@@ -1,10 +1,10 @@
 #!/bin/bash
-# Build the frontend, embed it, and run Divi Desktop 6.9 as a real app
-# (serves the embedded UI — no dev server). Run from anywhere.
+# Build the frontend (single self-contained file) and run Divi Desktop 6.9
+# (Tauri, ~10 MB, uses the OS webview). Run from anywhere.
 set -e
 cd "$(dirname "$0")/.."
 
-echo "→ building frontend"
+echo "→ building frontend (single-file)"
 npm --prefix ui run build
 
 echo "→ building app (release, embeds the UI)"

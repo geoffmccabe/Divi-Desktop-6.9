@@ -9,13 +9,14 @@ export type NodeStatus = {
 
 declare global {
   interface Window {
-    divi?: { nodeStatus: () => Promise<NodeStatus> };
+    __TAURI__?: { core: { invoke: <T>(cmd: string) => Promise<T> } };
   }
 }
 
 export async function nodeStatus(): Promise<NodeStatus> {
-  if (window.divi) return window.divi.nodeStatus();
-  // Plain-browser fallback (headless testing outside Electron).
+  // Tauri shell (withGlobalTauri exposes __TAURI__).
+  if (window.__TAURI__?.core?.invoke) return window.__TAURI__.core.invoke<NodeStatus>("node_status");
+  // Plain-browser fallback (headless testing).
   return {
     running: false,
     phase: "starting",
