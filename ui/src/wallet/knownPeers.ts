@@ -9,6 +9,8 @@ const TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days → considered dead, removed
 export interface KnownPeer {
   lat: number;
   lon: number;
+  city?: string;
+  country?: string;
   lastSeen: number;
 }
 export type Known = Record<string, KnownPeer>;
@@ -41,10 +43,13 @@ function save(k: Known) {
 }
 
 /// Record the currently-seen located peers, refreshing their lastSeen.
-export function recordKnown(prev: Known, seen: { ip: string; lat: number; lon: number }[]): Known {
+export function recordKnown(
+  prev: Known,
+  seen: { ip: string; lat: number; lon: number; city?: string; country?: string }[]
+): Known {
   const now = Date.now();
   const k = { ...prev };
-  for (const s of seen) k[s.ip] = { lat: s.lat, lon: s.lon, lastSeen: now };
+  for (const s of seen) k[s.ip] = { lat: s.lat, lon: s.lon, city: s.city, country: s.country, lastSeen: now };
   save(k);
   return k;
 }

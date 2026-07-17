@@ -16,7 +16,12 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
   // instead of dropping to 0.
   const [lastPeers, setLastPeers] = useState<number | null>(null);
   const [peerFlash, setPeerFlash] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const prevPeers = useRef<number | null>(null);
+  // The last status where the node actually answered, so a brief connection miss
+  // keeps showing the true state instead of flapping to a scary message.
+  const lastGood = useRef<NodeStatus | null>(null);
+  const misses = useRef(0);
 
   useEffect(() => {
     let alive = true;
@@ -24,13 +29,31 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
       try {
         const s = await nodeStatus();
         if (!alive) return;
-        setStatus(s);
         setError(false);
+        const answered = s.peers != null; // got real data back from the node
+        const definitive = answered || s.phase === "stopped" || s.phase === "crashed";
+        if (answered) lastGood.current = s;
+
+        if (definitive) {
+          misses.current = 0;
+          setReconnecting(false);
+          setStatus(s);
+        } else {
+          // No answer this cycle. Keep the last real status through short blips;
+          // only surface the trouble if it persists (~20s).
+          misses.current += 1;
+          if (lastGood.current && misses.current < 4) {
+            setReconnecting(true);
+            setStatus(lastGood.current);
+          } else {
+            setReconnecting(false);
+            setStatus(s);
+          }
+        }
+
         if (s.blocks != null) setLastBlocks(s.blocks);
-        if (s.peers != null) setLastPeers(s.peers);
-        // A newly-added peer: brief yellow flash + low click. Only compare when
-        // we actually got a fresh reading, so a missed poll doesn't false-flash.
         if (s.peers != null) {
+          setLastPeers(s.peers);
           const p = s.peers;
           if (prevPeers.current != null && p > prevPeers.current) {
             setPeerFlash(true);
@@ -44,7 +67,7 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
       }
     };
     poll();
-    const id = setInterval(poll, 5000);
+    const id = setInterval(poll, 10000);
     return () => {
       alive = false;
       clearInterval(id);
@@ -81,6 +104,7 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
       </div>
       <p className="wl-status-line">
         {error ? "Can't reach the node service yet — retrying…" : status?.headline ?? "Checking the node…"}
+        {reconnecting && <span className="wl-refreshing"> · refreshing…</span>}
       </p>
       <div className="wl-status-chips">
         <div className="glass-chip px-4 py-2">

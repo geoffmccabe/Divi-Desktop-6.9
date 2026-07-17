@@ -462,6 +462,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .stake-win-small { color: hsl(var(--foreground)); }
 
 /* Block height that's behind: greyed last-known value with a "+?" hint. */
+.wl-refreshing { color: hsl(var(--muted-foreground)); font-style: italic; }
 .blk-stale { color: hsl(var(--muted-foreground)); }
 .blk-more { color: hsl(var(--muted-foreground)); font-size: 0.8em; margin-left: 2px; }
 

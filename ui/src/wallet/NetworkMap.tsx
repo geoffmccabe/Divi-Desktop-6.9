@@ -80,7 +80,6 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const [snap, setSnap] = useState<{ peers: Peer[]; selfIp: string | null } | null>(null);
   const [geos, setGeos] = useState<Record<string, Geo>>({});
   const [self, setSelf] = useState<Geo | null>(null);
-  const [located, setLocated] = useState(0);
   const [hover, setHover] = useState<HoverPoint | null>(null);
   const pointsRef = useRef<HoverPoint[]>([]);
 
@@ -140,13 +139,12 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         await resolveGeos(ips, (m) => {
           if (!alive) return;
           setGeos({ ...m });
-          setLocated(s.peers.filter((p) => m[p.ip]).length);
-          const seen: { ip: string; lat: number; lon: number }[] = [];
+          const seen: { ip: string; lat: number; lon: number; city?: string; country?: string }[] = [];
           let newIdx = 0;
           for (const p of s.peers) {
             const pg = m[p.ip];
             if (!pg) continue;
-            seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon });
+            seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon, city: pg.city, country: pg.country });
             probeRef.current.set(p.ip, "online"); // connected = definitely online
             // Stagger reveal times so peers pop in one-by-one, not all at once.
             if (!revealed.current.has(p.ip)) {
@@ -190,7 +188,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       }
     };
     poll();
-    const id = setInterval(poll, 5000);
+    const id = setInterval(poll, 10000);
     return () => {
       alive = false;
       clearInterval(id);
@@ -301,9 +299,16 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           // same moment as the grey dots), then persist for reachable peers.
           // Only peers the probe found unreachable drop to a static grey dot.
           const st = probeRef.current.get(ip) ?? "probing";
-          if (st === "probing") {
-            // Actively checking: a 1px up-arc whose pulse grows from us out to the
-            // peer (≤50% at the tip), desynced per-IP, with a flashing "?".
+          if (st === "offline") {
+            // known but unreachable: faint grey dot
+            ctx.beginPath();
+            ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = GREY(0.28);
+            ctx.fill();
+          } else {
+            // probing OR reachable → the pulsing green up-arc (grows from us to
+            // the peer, ≤50% at the tip, desynced per-IP). The flashing "?" only
+            // shows while we're still checking; once reachable it drops away.
             const dx = px - sx, dy = py - sy;
             const len = Math.hypot(dx, dy) || 1;
             const bez = upArc(sx, sy, px, py);
@@ -328,26 +333,14 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               ctx.fillStyle = GREEN(0.5);
               ctx.fill();
             }
-            const qx = px + (dx / len) * 12, qy = py + (dy / len) * 12;
-            ctx.fillStyle = GREEN(0.2 + 0.3 * Math.abs(Math.sin(now / 450)));
-            ctx.font = "bold 12px system-ui";
-            ctx.textAlign = "center";
-            ctx.textBaseline = "middle";
-            ctx.fillText("?", qx, qy);
-          } else if (st === "online") {
-            // Reachable but not (yet) connected: a calm green dot — no "?" left
-            // hanging around. Gentle pulse so it reads as "available".
-            const a = 0.5 + 0.2 * Math.sin(now / 700 + phaseOf(ip));
-            ctx.beginPath();
-            ctx.arc(px, py, 3, 0, Math.PI * 2);
-            ctx.fillStyle = GREEN(a);
-            ctx.fill();
-          } else {
-            // known but unreachable: faint grey dot
-            ctx.beginPath();
-            ctx.arc(px, py, 2.5, 0, Math.PI * 2);
-            ctx.fillStyle = GREY(0.28);
-            ctx.fill();
+            if (st === "probing") {
+              const qx = px + (dx / len) * 12, qy = py + (dy / len) * 12;
+              ctx.fillStyle = GREEN(0.2 + 0.3 * Math.abs(Math.sin(now / 450)));
+              ctx.font = "bold 12px system-ui";
+              ctx.textAlign = "center";
+              ctx.textBaseline = "middle";
+              ctx.fillText("?", qx, qy);
+            }
           }
         }
       }
@@ -507,11 +500,16 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         if (liveNow.has(ip)) continue;
         const [x, y] = project(kp.lon, kp.lat, w, h);
         const st = probeRef.current.get(ip) ?? "probing";
+        const loc = [kp.city, kp.country].filter(Boolean).join(", ");
         pts.push({
           x,
           y,
-          title: ip,
-          lines: [st === "online" ? "Reachable (not connected)" : st === "probing" ? "Checking…" : "Idle / unreachable", "Seen in the last 30 days"],
+          title: loc || ip,
+          lines: [
+            loc ? ip : "",
+            st === "online" ? "Reachable (not connected)" : st === "probing" ? "Checking…" : "Idle / unreachable",
+            "Seen in the last 30 days",
+          ].filter(Boolean),
         });
       }
       pointsRef.current = pts;
@@ -527,9 +525,6 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     };
   }, []);
 
-  const total = snap?.peers.length ?? 0;
-  const searching = total === 0;
-
   return (
     <div className="netmap">
       <div className="netmap-topbar">
@@ -540,9 +535,6 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <span className="nm-item"><span className="nm-dot nm-out" /> Outbound</span>
           <span className="nm-item"><span className="nm-dot nm-in" /> Inbound</span>
           <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
-          <span className="nm-count">
-            {searching ? "Searching for peers…" : `${total} peers${located < total ? ` · locating ${total - located}…` : ""}`}
-          </span>
         </div>
       </div>
       <div className="netmap-canvas-wrap" ref={wrapRef}>

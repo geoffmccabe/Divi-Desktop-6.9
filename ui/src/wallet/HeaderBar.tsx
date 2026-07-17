@@ -18,16 +18,11 @@ export function HeaderBar() {
 
   useEffect(() => {
     let alive = true;
-    const poll = async () => {
+    // Light + frequent: balance and next-lottery timing (cheap RPC calls).
+    const pollLight = async () => {
       try {
         const b = await walletBalance();
-        if (alive && b) setBal(b); // keep last-known on failure
-      } catch {
-        /* keep last */
-      }
-      try {
-        const a = await walletAddresses();
-        if (alive && a.length) setAddrs(a);
+        if (alive && b) setBal(b);
       } catch {
         /* keep last */
       }
@@ -38,11 +33,24 @@ export function HeaderBar() {
         /* keep last */
       }
     };
-    poll();
-    const id = setInterval(poll, 8000);
+    // Heavy + rare: the per-address tally scans a lot of history, and addresses
+    // barely change — so it runs infrequently to spare the node's RPC threads.
+    const pollAddrs = async () => {
+      try {
+        const a = await walletAddresses();
+        if (alive && a.length) setAddrs(a);
+      } catch {
+        /* keep last */
+      }
+    };
+    pollLight();
+    pollAddrs();
+    const idLight = setInterval(pollLight, 12000);
+    const idAddrs = setInterval(pollAddrs, 90000);
     return () => {
       alive = false;
-      clearInterval(id);
+      clearInterval(idLight);
+      clearInterval(idAddrs);
     };
   }, []);
 

@@ -101,7 +101,7 @@ export function useTransactions() {
 
   useEffect(() => {
     sync();
-    const id = setInterval(sync, 30000);
+    const id = setInterval(sync, 60000);
     return () => clearInterval(id);
   }, [sync]);
 

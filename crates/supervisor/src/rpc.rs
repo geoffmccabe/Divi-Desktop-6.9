@@ -1,7 +1,25 @@
 use crate::config::NodeConfig;
 use base64::Engine;
 use serde_json::{json, Value};
+use std::sync::OnceLock;
 use std::time::Duration;
+
+/// One shared, connection-pooling agent for the whole app. The legacy node's RPC
+/// server drops connections under churn (a new socket per call overwhelms its
+/// accept loop — "RPCAcceptHandler: Invalid argument"), so we keep connections
+/// alive and reuse them instead of opening a fresh one for every request.
+fn shared_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(8))
+            .timeout_read(Duration::from_secs(30))
+            .timeout_write(Duration::from_secs(30))
+            .max_idle_connections(16)
+            .max_idle_connections_per_host(16)
+            .build()
+    })
+}
 
 /// Minimal JSON-RPC client for the local divid. Local loopback only.
 pub struct RpcClient {
@@ -34,15 +52,12 @@ impl RpcClient {
     // or Err only on a transport/parse failure.
     fn send(&self, method: &str, params: Value) -> Result<Value, String> {
         let body = json!({"jsonrpc": "1.0", "id": "dd69", "method": method, "params": params});
-        let resp = ureq::post(&self.url)
+        // Reuse a pooled keep-alive connection (see shared_agent). The 30s read
+        // timeout tolerates the node's bursty spells; these run off the UI thread
+        // (spawn_blocking) so waiting never freezes anything.
+        let resp = shared_agent()
+            .post(&self.url)
             .set("Authorization", &self.auth)
-            // Patient timeout: the legacy Divi node's RPC is bursty — a cold call
-            // can take 10-25s before it warms up and answers instantly. These
-            // calls run off the UI thread (spawn_blocking), so waiting doesn't
-            // freeze anything; giving up too early just mislabels a live node as
-            // "starting". 30s tolerates the slow spells; truly-down fails fast
-            // because the connection is refused, not merely slow.
-            .timeout(Duration::from_secs(30))
             .send_string(&body.to_string());
         let text = match resp {
             Ok(r) => r.into_string().map_err(|e| e.to_string())?,

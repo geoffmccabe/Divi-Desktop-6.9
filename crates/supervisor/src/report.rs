@@ -60,13 +60,14 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
     let peers = match peers {
         Some(p) => p,
         None => {
-            // Running (pid present) but RPC didn't answer even on retry: it's
-            // busy/warming up, not "starting from scratch". Say so, and let the
-            // UI keep the last-known peers/height rather than blanking them.
+            // Running (pid present) but the RPC connection didn't answer even on
+            // retry. We do NOT know why (often the legacy node briefly refuses a
+            // connection), so we don't claim "busy" — just that we're reaching
+            // for it. The UI keeps the last-known good status during brief misses.
             return StatusReport {
                 running: true,
                 phase: Phase::Starting,
-                headline: "The node is busy — reconnecting…".into(),
+                headline: "Connecting to the node…".into(),
                 blocks: None,
                 peers: None,
                 last_shutdown,
