@@ -2,6 +2,7 @@ import { useState } from "react";
 import { TOKENS, TOKEN_GROUPS, type TokenDef } from "../../theme/tokens";
 import { useTheme } from "../../theme/ThemeProvider";
 import { hexToHslTriplet, hslTripletToHex } from "../../theme/color";
+import { playSound } from "../../sound";
 
 function Control({ token }: { token: TokenDef }) {
   const { theme, setToken } = useTheme();
@@ -21,7 +22,7 @@ function Control({ token }: { token: TokenDef }) {
     );
   }
 
-  if (token.type === "font") {
+  if (token.type === "font" || token.type === "select") {
     return (
       <label className="style-row">
         <span>{token.label}</span>
@@ -31,7 +32,7 @@ function Control({ token }: { token: TokenDef }) {
           onChange={(e) => setToken(token.key, e.target.value)}
         >
           {token.options?.map((o) => (
-            <option key={o.label} value={o.value}>
+            <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}
@@ -61,22 +62,47 @@ function Control({ token }: { token: TokenDef }) {
 }
 
 export function StylePanel() {
-  const { reset, saved, saveCurrent, applySaved, deleteSaved } = useTheme();
+  const { reset, saved, saveCurrent, applySaved, deleteSaved, builtinSkins, applySkin } = useTheme();
   const [name, setName] = useState("");
 
   return (
     <div className="style-panel">
+      <section className="style-group">
+        <h3>Skins</h3>
+        <ul className="style-saved">
+          {builtinSkins.map((s) => (
+            <li key={s.id}>
+              <button type="button" className="style-apply" onClick={() => applySkin(s.id)}>
+                {s.name}
+                {s.free && <span className="skin-badge">Free</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <p className="style-note">
+          Design and sell your own skin — a paid marketplace (in DIVI) is coming; your saved themes
+          below are the starting point.
+        </p>
+      </section>
+
       {TOKEN_GROUPS.map((group) => (
         <section key={group} className="style-group">
           <h3>{group}</h3>
           {TOKENS.filter((t) => t.group === group).map((t) => (
             <Control key={t.key} token={t} />
           ))}
+          {group === "Sounds" && (
+            <div className="sound-test">
+              <button type="button" className="wl-btn" onClick={() => playSound("click")}>Test click</button>
+              <button type="button" className="wl-btn" onClick={() => playSound("send")}>Test send</button>
+              <button type="button" className="wl-btn" onClick={() => playSound("receive")}>Test receive</button>
+            </div>
+          )}
         </section>
       ))}
 
       <section className="style-group">
-        <h3>Themes</h3>
+        <h3>My themes</h3>
         <div className="style-save">
           <input
             className="style-name"
@@ -96,7 +122,6 @@ export function StylePanel() {
             Save
           </button>
         </div>
-
         {saved.length > 0 && (
           <ul className="style-saved">
             {saved.map((s) => (
@@ -111,12 +136,8 @@ export function StylePanel() {
             ))}
           </ul>
         )}
-
-        <p className="style-note">
-          Sharing &amp; selling themes for DIVI is coming — saved themes are the foundation.
-        </p>
         <button type="button" className="style-btn" onClick={reset}>
-          Reset to default
+          Reset to Divilicious default
         </button>
       </section>
     </div>

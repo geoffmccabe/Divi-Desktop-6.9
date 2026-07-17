@@ -144,6 +144,10 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .style-del { border: none; background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; padding: 4px 8px; }
 .style-note { font-size: 0.78rem; color: hsl(var(--muted-foreground)); margin: 8px 0 14px; }
+.skin-badge { margin-left: 8px; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em;
+  padding: 1px 6px; border-radius: 999px; background: hsl(var(--success) / 0.25); color: hsl(var(--success)); }
+.sound-test { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+.sound-test .wl-btn { padding: 6px 10px; font-size: 0.78rem; }
 
 /* ── App layout ───────────────────────────────────────────────────────────── */
 .app-main { position: relative; z-index: 10; height: 100%; display: flex; flex-direction: column; }

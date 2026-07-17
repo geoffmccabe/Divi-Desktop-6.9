@@ -3,7 +3,7 @@
 // Add a token here → it shows up in the editor and takes effect. Nothing else
 // to wire.
 
-export type TokenType = "color" | "font" | "range";
+export type TokenType = "color" | "font" | "select" | "range";
 
 export interface TokenDef {
   key: string;
@@ -31,6 +31,13 @@ const FONTS = [
   { label: "Rounded", value: ROUNDED },
 ];
 
+const WAVES = [
+  { label: "Soft (sine)", value: "sine" },
+  { label: "Warm (triangle)", value: "triangle" },
+  { label: "Sharp (square)", value: "square" },
+  { label: "Buzzy (saw)", value: "sawtooth" },
+];
+
 export const TOKENS: TokenDef[] = [
   // Colors — value is an HSL triplet consumed via hsl(var(--x)).
   { key: "background", label: "Background", group: "Colors", type: "color", cssVar: "--background", default: "240 6% 10%" },
@@ -55,6 +62,15 @@ export const TOKENS: TokenDef[] = [
   { key: "panelBlur", label: "Frost / blur", group: "Panel", type: "range", cssVar: "--panel-blur", default: "24px", min: 0, max: 40, step: 1, unit: "px" },
   { key: "glowColor", label: "Glow color", group: "Panel", type: "color", cssVar: "--glow-color", default: "280 80% 60%" },
   { key: "glowStrength", label: "Glow amount", group: "Panel", type: "range", cssVar: "--glow-strength", default: "22px", min: 0, max: 60, step: 2, unit: "px" },
+
+  // Sounds — generated tones (see sound.ts). Values feed the Web Audio engine.
+  { key: "soundVolume", label: "Volume", group: "Sounds", type: "range", cssVar: "--sound-volume", default: "0.15", min: 0, max: 0.5, step: 0.05, unit: "" },
+  { key: "clickWave", label: "Click sound", group: "Sounds", type: "select", cssVar: "--sound-click-wave", default: "sine", options: WAVES },
+  { key: "clickFreq", label: "Click pitch", group: "Sounds", type: "range", cssVar: "--sound-click-freq", default: "660", min: 200, max: 1200, step: 10, unit: "" },
+  { key: "sendWave", label: "Send sound", group: "Sounds", type: "select", cssVar: "--sound-send-wave", default: "triangle", options: WAVES },
+  { key: "sendFreq", label: "Send pitch", group: "Sounds", type: "range", cssVar: "--sound-send-freq", default: "880", min: 200, max: 1200, step: 10, unit: "" },
+  { key: "receiveWave", label: "Receive sound", group: "Sounds", type: "select", cssVar: "--sound-receive-wave", default: "sine", options: WAVES },
+  { key: "receiveFreq", label: "Receive pitch", group: "Sounds", type: "range", cssVar: "--sound-receive-freq", default: "523", min: 200, max: 1200, step: 10, unit: "" },
 ];
 
-export const TOKEN_GROUPS = ["Colors", "Typography", "Panel"];
+export const TOKEN_GROUPS = ["Colors", "Typography", "Panel", "Sounds"];

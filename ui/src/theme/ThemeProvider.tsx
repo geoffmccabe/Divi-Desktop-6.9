@@ -9,6 +9,7 @@ import {
   type SavedTheme,
   type Theme,
 } from "./store";
+import { BUILTIN_SKINS, type Skin } from "./skins";
 
 interface ThemeCtx {
   theme: Theme;
@@ -18,6 +19,8 @@ interface ThemeCtx {
   saveCurrent: (name: string) => void;
   applySaved: (id: string) => void;
   deleteSaved: (id: string) => void;
+  builtinSkins: Skin[];
+  applySkin: (id: string) => void;
 }
 
 const Ctx = createContext<ThemeCtx | null>(null);
@@ -55,6 +58,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         const next = saved.filter((s) => s.id !== id);
         setSaved(next);
         writeSavedThemes(next);
+      },
+      builtinSkins: BUILTIN_SKINS,
+      applySkin: (id) => {
+        const s = BUILTIN_SKINS.find((x) => x.id === id);
+        if (s) setTheme({ ...defaultTheme(), ...s.tokens });
       },
     }),
     [theme, saved]

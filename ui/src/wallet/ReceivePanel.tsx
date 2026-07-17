@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { addressQr, newReceiveAddress } from "./api";
+import { playSound } from "../sound";
 
 export function ReceivePanel() {
   const [addr, setAddr] = useState<string | null>(null);
@@ -15,6 +16,7 @@ export function ReceivePanel() {
       const a = await newReceiveAddress();
       setAddr(a);
       setQr(await addressQr(a));
+      playSound("receive");
     } catch (e) {
       setErr(String(e));
     }

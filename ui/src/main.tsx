@@ -2,10 +2,13 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { applyIcons } from "./icons";
+import { installClickSound } from "./sound";
 import "./index.css";
 
 // Install the default icon CSS vars before first paint (a skin overrides them).
 applyIcons();
+// Instant click tone on any button (waveform/pitch come from the skin).
+installClickSound();
 
 function showFatal(msg: string) {
   document.body.innerHTML =
