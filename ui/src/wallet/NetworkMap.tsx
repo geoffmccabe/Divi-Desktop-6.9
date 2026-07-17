@@ -1,30 +1,37 @@
 import { useEffect, useRef, useState } from "react";
-import { networkPeers, type Peer, type Geo } from "./api";
+import { networkPeers, selfGeo, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
+import { Icon } from "../Icon";
 import worldmap from "../assets/worldmap.json";
 
-// A live map of the peers this node is connected to. Peer/our-node locations
-// come from IP geolocation; the moving pulses are driven by REAL bytes flowing
-// between us and each peer. Transactions have no location on-chain, so nothing
-// here pretends to show a transaction's origin — it's honest network topology.
+// A live map of the peers this node is connected to. At boot it centers on you
+// with radiating "searching" rings; as each peer is found it appears as a green
+// light with a pulsing line back to you. Peer/our-node locations come from IP
+// geolocation. Transactions have no location on-chain, so nothing here pretends
+// to show a transaction's origin — it's honest network topology.
 
 const POLYS: number[][][] = (worldmap as { polys: number[][][] }).polys;
 
-// equirectangular projection
 const project = (lon: number, lat: number, w: number, h: number): [number, number] => [
   ((lon + 180) / 360) * w,
   ((90 - lat) / 180) * h,
 ];
 
 const clusterKey = (lat: number, lon: number) => `${Math.round(lat)},${Math.round(lon)}`;
+// stable per-ip phase so each line pulses a little out of sync
+const phaseOf = (ip: string) => {
+  let h = 0;
+  for (let i = 0; i < ip.length; i++) h = (h * 31 + ip.charCodeAt(i)) % 1000;
+  return (h / 1000) * Math.PI * 2;
+};
 
-// Read an HSL triplet CSS var ("280 80% 60%") into a color()-with-alpha helper.
 function hslVar(name: string): (a: number) => string {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "0 0% 100%";
   const m = raw.match(/([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/);
   const [h, s, l] = m ? [m[1], m[2], m[3]] : ["0", "0", "100"];
   return (a: number) => `hsla(${h}, ${s}%, ${l}%, ${a})`;
 }
+const GREEN = (a: number) => `hsla(145, 80%, 50%, ${a})`;
 
 interface Pulse {
   fx: number;
@@ -36,22 +43,36 @@ interface Pulse {
   inbound: boolean;
 }
 
-export function NetworkMap() {
+export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [snap, setSnap] = useState<{ peers: Peer[]; selfIp: string | null } | null>(null);
   const [geos, setGeos] = useState<Record<string, Geo>>({});
+  const [self, setSelf] = useState<Geo | null>(null);
   const [located, setLocated] = useState(0);
 
   const geosRef = useRef(geos);
   geosRef.current = geos;
   const snapRef = useRef(snap);
   snapRef.current = snap;
+  const selfRef = useRef(self);
+  selfRef.current = self;
   const prevBytes = useRef<Map<string, number>>(new Map());
   const pulses = useRef<Pulse[]>([]);
+  const revealed = useRef<Map<string, number>>(new Map()); // ip -> first-seen ms
   const baseRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Poll peers, resolve any new IP locations, and turn real byte-deltas into pulses.
+  // Center on us right away (caller-IP lookup), before any peer connects.
+  useEffect(() => {
+    let alive = true;
+    selfGeo().then((g) => {
+      if (alive && g) setSelf(g);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   useEffect(() => {
     let alive = true;
     const poll = async () => {
@@ -62,19 +83,24 @@ export function NetworkMap() {
         const ips = s.peers.map((p) => p.ip);
         if (s.selfIp) ips.push(s.selfIp);
         await resolveGeos(ips, (m) => {
-          if (alive) {
-            setGeos({ ...m });
-            setLocated(s.peers.filter((p) => m[p.ip]).length);
+          if (!alive) return;
+          setGeos({ ...m });
+          setLocated(s.peers.filter((p) => m[p.ip]).length);
+          // mark newly-located peers for the green "appear" animation
+          for (const p of s.peers) {
+            if (m[p.ip] && !revealed.current.has(p.ip)) {
+              revealed.current.set(p.ip, performance.now());
+            }
           }
         });
-        // Real traffic → pulses (peer → us for received bytes).
+        // real received-byte deltas → traffic pulses
         const g = geosRef.current;
-        const self = s.selfIp ? g[s.selfIp] : null;
+        const selfG = (s.selfIp && g[s.selfIp]) || selfRef.current;
         const wrap = wrapRef.current;
-        if (self && wrap) {
+        if (selfG && wrap) {
           const w = wrap.clientWidth;
           const h = wrap.clientHeight;
-          const [sx, sy] = project(self.lon, self.lat, w, h);
+          const [sx, sy] = project(selfG.lon, selfG.lat, w, h);
           for (const p of s.peers) {
             const pg = g[p.ip];
             if (!pg) continue;
@@ -101,14 +127,13 @@ export function NetworkMap() {
       }
     };
     poll();
-    const id = setInterval(poll, 6000);
+    const id = setInterval(poll, 5000);
     return () => {
       alive = false;
       clearInterval(id);
     };
   }, []);
 
-  // Build the static base layer (world landmasses) at the current size.
   const buildBase = () => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -177,20 +202,38 @@ export function NetworkMap() {
       const g = geosRef.current;
       const now = performance.now();
 
-      const self = s?.selfIp ? g[s.selfIp] : null;
-      const selfXY = self ? project(self.lon, self.lat, w, h) : null;
+      const selfG = (s?.selfIp && g[s.selfIp]) || selfRef.current;
+      const selfXY = selfG ? project(selfG.lon, selfG.lat, w, h) : null;
+      const peerCount = s?.peers.filter((p) => g[p.ip]).length ?? 0;
 
-      // faint links self→peers
+      // radiating "searching" rings from our node (stronger while few peers)
+      if (selfXY) {
+        const intensity = peerCount < 4 ? 1 : 0.35;
+        const maxR = 150;
+        for (let k = 0; k < 4; k++) {
+          const prog = ((now / 2600 + k / 4) % 1);
+          ctx.beginPath();
+          ctx.arc(selfXY[0], selfXY[1], prog * maxR, 0, Math.PI * 2);
+          ctx.strokeStyle = selfCol((1 - prog) * 0.35 * intensity);
+          ctx.lineWidth = 1.4;
+          ctx.stroke();
+        }
+      }
+
+      // pulsing links self→peer (green while a peer is first appearing)
       if (s && selfXY) {
         for (const p of s.peers) {
           const pg = g[p.ip];
           if (!pg) continue;
           const [px, py] = project(pg.lon, pg.lat, w, h);
+          const revAge = now - (revealed.current.get(p.ip) ?? 0);
+          const fresh = revAge < 2200;
+          const pulse = 0.12 + 0.1 * (0.5 + 0.5 * Math.sin(now / 500 + phaseOf(p.ip)));
           ctx.beginPath();
           ctx.moveTo(selfXY[0], selfXY[1]);
           ctx.lineTo(px, py);
-          ctx.strokeStyle = (p.inbound ? inbound : outbound)(0.12);
-          ctx.lineWidth = 0.6;
+          ctx.strokeStyle = fresh ? GREEN(0.6 * (1 - revAge / 2200) + 0.2) : (p.inbound ? inbound : outbound)(pulse);
+          ctx.lineWidth = fresh ? 1.6 : 0.8;
           ctx.stroke();
         }
       }
@@ -202,13 +245,7 @@ export function NetworkMap() {
         const life = 1 - t;
         const x = p.fx + (p.tx - p.fx) * t;
         const y = p.fy + (p.ty - p.fy) * t;
-        const col = (p.inbound ? inbound : outbound);
-        ctx.beginPath();
-        ctx.moveTo(p.fx, p.fy);
-        ctx.lineTo(x, y);
-        ctx.strokeStyle = col(0.15 * life * p.strength + 0.05);
-        ctx.lineWidth = 1;
-        ctx.stroke();
+        const col = p.inbound ? inbound : outbound;
         ctx.beginPath();
         ctx.arc(x, y, 2 + 2 * p.strength, 0, Math.PI * 2);
         ctx.fillStyle = col(0.7 * life);
@@ -241,6 +278,24 @@ export function NetworkMap() {
           ctx.lineWidth = 1;
           ctx.stroke();
         }
+        // green "appear" burst for freshly-located peers
+        for (const p of s.peers) {
+          const pg = g[p.ip];
+          if (!pg) continue;
+          const revAge = now - (revealed.current.get(p.ip) ?? 0);
+          if (revAge >= 1800) continue;
+          const t = revAge / 1800;
+          const [x, y] = project(pg.lon, pg.lat, w, h);
+          ctx.beginPath();
+          ctx.arc(x, y, 4 + 26 * t, 0, Math.PI * 2);
+          ctx.strokeStyle = GREEN((1 - t) * 0.8);
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(x, y, 4, 0, Math.PI * 2);
+          ctx.fillStyle = GREEN(0.5 + 0.5 * (1 - t));
+          ctx.fill();
+        }
       }
 
       // our node — pulsing ring
@@ -267,20 +322,25 @@ export function NetworkMap() {
   }, []);
 
   const total = snap?.peers.length ?? 0;
+  const searching = total === 0;
 
   return (
     <div className="netmap">
-      <div className="netmap-legend">
-        <span className="nm-item"><span className="nm-dot nm-out" /> Outbound</span>
-        <span className="nm-item"><span className="nm-dot nm-in" /> Inbound</span>
-        <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
-        <span className="nm-count">
-          {total} peers{located < total ? ` · locating ${total - located}…` : located ? " · located" : ""}
-        </span>
+      <div className="netmap-topbar">
+        <button type="button" className="netmap-return" onClick={onReturn}>
+          <Icon name="overview" size={14} /> Return to Overview
+        </button>
+        <div className="netmap-legend">
+          <span className="nm-item"><span className="nm-dot nm-out" /> Outbound</span>
+          <span className="nm-item"><span className="nm-dot nm-in" /> Inbound</span>
+          <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
+          <span className="nm-count">
+            {searching ? "Searching for peers…" : `${total} peers${located < total ? ` · locating ${total - located}…` : ""}`}
+          </span>
+        </div>
       </div>
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
-        {!snap && <div className="netmap-empty">Reading peers from the node…</div>}
       </div>
     </div>
   );

@@ -31,7 +31,9 @@ const EXTRA_TITLES: Record<string, string> = { network: "Network Map" };
 // Four independent panels: nav (top-left), node status (bottom-left, chopped
 // off the sidebar), balances (top-right header), and the main content.
 export function Shell() {
-  const [view, setView] = useState("overview");
+  // Boot into the network map — a nice "finding peers" intro; the map's own
+  // Return-to-Overview button (and any nav click) leaves it.
+  const [view, setView] = useState("network");
   const Active = VIEWS[view] ?? Overview;
   const label = NAV.find((n) => n.id === view)?.label ?? EXTRA_TITLES[view] ?? "";
 
@@ -48,9 +50,9 @@ export function Shell() {
           <HeaderBar />
         </header>
         <section className="glass-panel main-panel">
-          <h2 className="view-title">{label}</h2>
+          {view !== "network" && <h2 className="view-title">{label}</h2>}
           <div className="view-body">
-            <Active />
+            {view === "network" ? <NetworkMap onReturn={() => setView("overview")} /> : <Active />}
           </div>
         </section>
       </div>

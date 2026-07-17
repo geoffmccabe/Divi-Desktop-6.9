@@ -480,6 +480,14 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .peers-label .ic { color: hsl(var(--primary)); }
 
 .netmap { display: flex; flex-direction: column; height: 100%; gap: 12px; }
+.netmap-topbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.netmap-return {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 7px 14px;
+  background: hsl(var(--background) / 0.5); color: hsl(var(--foreground)); font-size: 0.85rem;
+}
+.netmap-return:hover { border-color: hsl(var(--primary) / 0.6); }
+.netmap-return .ic { color: hsl(var(--primary)); }
 .netmap-legend { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
 .nm-item { display: inline-flex; align-items: center; gap: 6px; }
 .nm-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }

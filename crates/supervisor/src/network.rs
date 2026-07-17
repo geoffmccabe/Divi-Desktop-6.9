@@ -80,6 +80,26 @@ pub struct Geo {
     pub country: String,
 }
 
+/// Our own approximate location, from the caller IP as the geo service sees it.
+/// Works before any peer connects, so the map can center on us at boot.
+pub fn self_geo() -> Option<Geo> {
+    let resp = ureq::get("http://ip-api.com/json?fields=status,country,city,lat,lon,query")
+        .timeout(Duration::from_secs(10))
+        .call()
+        .ok()?;
+    let v: Value = serde_json::from_str(&resp.into_string().ok()?).ok()?;
+    if v["status"].as_str() != Some("success") {
+        return None;
+    }
+    Some(Geo {
+        ip: v["query"].as_str().unwrap_or("").to_string(),
+        lat: v["lat"].as_f64()?,
+        lon: v["lon"].as_f64()?,
+        city: v["city"].as_str().unwrap_or("").to_string(),
+        country: v["country"].as_str().unwrap_or("").to_string(),
+    })
+}
+
 /// Geolocate up to 100 IPs in one call via ip-api.com's free batch endpoint.
 /// Only public peer IPs are sent; the wallet/keys are never involved. Callers
 /// cache results (IPs rarely move) so this is hit rarely.

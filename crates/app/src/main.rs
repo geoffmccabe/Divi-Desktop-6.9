@@ -386,6 +386,17 @@ struct GeoDto {
     country: String,
 }
 
+/// Our own approximate location (caller IP), so the map can center before peers.
+#[tauri::command]
+async fn self_geo() -> Option<GeoDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        network::self_geo().map(|g| GeoDto { ip: g.ip, lat: g.lat, lon: g.lon, city: g.city, country: g.country })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Geolocate peer IPs (free batch lookup). Public IPs only; cache on the client.
 #[tauri::command]
 async fn geolocate_ips(ips: Vec<String>) -> Vec<GeoDto> {
@@ -417,7 +428,8 @@ fn main() {
             lottery_info,
             lottery_wins,
             network_peers,
-            geolocate_ips
+            geolocate_ips,
+            self_geo
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

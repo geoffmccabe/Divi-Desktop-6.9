@@ -74,6 +74,7 @@ export interface Geo {
 }
 export const networkPeers = () => invoke<PeerSnapshot | null>("network_peers");
 export const geolocateIps = (ips: string[]) => invoke<Geo[]>("geolocate_ips", { ips });
+export const selfGeo = () => invoke<Geo | null>("self_geo");
 
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
