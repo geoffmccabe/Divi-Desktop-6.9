@@ -60,7 +60,7 @@ fn human_duration(secs: i64) -> String {
 
 /// Derive the running-node health from three cheap facts: how many peers we
 /// have, how old the newest block is, and the staking status object.
-pub fn assess(peers: i64, tip_age_secs: i64, staking: &Value) -> Health {
+pub fn assess(peers: i64, tip_age_secs: Option<i64>, staking: &Value) -> Health {
     if peers <= 0 {
         return Health {
             phase: Phase::NoPeers,
@@ -68,6 +68,14 @@ pub fn assess(peers: i64, tip_age_secs: i64, staking: &Value) -> Health {
                 .into(),
         };
     }
+    // Tip age unknown (the block-time query didn't answer this cycle): don't
+    // invent a number — say we're checking. Never print a bogus "N days behind".
+    let Some(tip_age_secs) = tip_age_secs else {
+        return Health {
+            phase: Phase::Syncing,
+            headline: "Connected — checking sync status…".into(),
+        };
+    };
     if tip_age_secs > SYNC_FRESH_SECS {
         return Health {
             phase: Phase::Syncing,
@@ -132,27 +140,34 @@ mod tests {
 
     #[test]
     fn no_peers_beats_everything() {
-        let h = assess(0, 5, &staking_on());
+        let h = assess(0, Some(5), &staking_on());
         assert_eq!(h.phase, Phase::NoPeers);
     }
 
     #[test]
     fn stale_tip_means_syncing() {
-        let h = assess(8, 3600, &staking_on());
+        let h = assess(8, Some(3600), &staking_on());
         assert_eq!(h.phase, Phase::Syncing);
         assert!(h.headline.contains("behind"));
-        assert!(assess(8, 7200, &staking_on()).headline.contains("hours"));
+        assert!(assess(8, Some(7200), &staking_on()).headline.contains("hours"));
+    }
+
+    #[test]
+    fn unknown_tip_age_never_shows_a_number() {
+        let h = assess(8, None, &staking_on());
+        assert_eq!(h.phase, Phase::Syncing);
+        assert!(!h.headline.contains("behind"));
     }
 
     #[test]
     fn fresh_tip_and_staking() {
-        let h = assess(8, 20, &staking_on());
+        let h = assess(8, Some(20), &staking_on());
         assert_eq!(h.phase, Phase::Staking);
     }
 
     #[test]
     fn fresh_tip_not_staking_says_why() {
-        let h = assess(8, 20, &staking_off_locked());
+        let h = assess(8, Some(20), &staking_off_locked());
         assert_eq!(h.phase, Phase::Synced);
         assert!(h.headline.contains("locked"));
     }

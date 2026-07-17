@@ -386,6 +386,25 @@ struct GeoDto {
     country: String,
 }
 
+#[derive(Serialize)]
+struct ProbeDto {
+    ip: String,
+    online: bool,
+}
+
+/// Probe known peer IPs for reachability (TCP connect to the Divi P2P port).
+#[tauri::command]
+async fn probe_peers(ips: Vec<String>) -> Vec<ProbeDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        network::probe(&ips, 51472)
+            .into_iter()
+            .map(|(ip, online)| ProbeDto { ip, online })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// Our own approximate location (caller IP), so the map can center before peers.
 #[tauri::command]
 async fn self_geo() -> Option<GeoDto> {
@@ -429,7 +448,8 @@ fn main() {
             lottery_wins,
             network_peers,
             geolocate_ips,
-            self_geo
+            self_geo,
+            probe_peers
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

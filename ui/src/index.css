@@ -492,7 +492,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .nm-item { display: inline-flex; align-items: center; gap: 6px; }
 .nm-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
 .nm-out { background: hsl(var(--primary)); }
-.nm-in { background: hsl(var(--accent)); }
+.nm-in { background: hsl(var(--info)); }
 .nm-self { background: hsl(var(--warning)); }
 .nm-count { margin-left: auto; color: hsl(var(--foreground)); }
 .netmap-canvas-wrap {

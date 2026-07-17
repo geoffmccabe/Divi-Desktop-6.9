@@ -76,7 +76,7 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
 
     let blocks = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64());
     let staking = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
-    let tip_age = tip_age_secs(&rpc).unwrap_or(i64::MAX);
+    let tip_age = tip_age_secs(&rpc);
     let h = state::assess(peers, tip_age, &staking);
     StatusReport {
         running: true,

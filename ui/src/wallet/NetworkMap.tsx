@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { networkPeers, selfGeo, type Peer, type Geo } from "./api";
+import { networkPeers, selfGeo, probePeers, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
+import { loadKnown, recordKnown, type Known } from "./knownPeers";
 import { Icon } from "../Icon";
 import worldmap from "../assets/worldmap.json";
 
@@ -32,6 +33,9 @@ function hslVar(name: string): (a: number) => string {
   return (a: number) => `hsla(${h}, ${s}%, ${l}%, ${a})`;
 }
 const GREEN = (a: number) => `hsla(145, 80%, 50%, ${a})`;
+const GREY = (a: number) => `hsla(0, 0%, 62%, ${a})`;
+
+type ProbeState = "probing" | "online" | "offline";
 
 interface Pulse {
   fx: number;
@@ -61,6 +65,9 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const pulses = useRef<Pulse[]>([]);
   const revealed = useRef<Map<string, number>>(new Map()); // ip -> first-seen ms
   const baseRef = useRef<HTMLCanvasElement | null>(null);
+  // Peers seen in the last 30 days (grey at startup), and the live probe result.
+  const knownRef = useRef<Known>({});
+  const probeRef = useRef<Map<string, ProbeState>>(new Map());
 
   // Center on us right away (caller-IP lookup), before any peer connects.
   useEffect(() => {
@@ -68,6 +75,25 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     selfGeo().then((g) => {
       if (alive && g) setSelf(g);
     });
+
+    // Load known peers and immediately probe them for reachability, so the map
+    // has something to show at boot and lights up the ones that are online.
+    const known = loadKnown();
+    knownRef.current = known;
+    const ips = Object.keys(known);
+    if (ips.length) {
+      for (const ip of ips) probeRef.current.set(ip, "probing");
+      probePeers(ips)
+        .then((res) => {
+          if (!alive) return;
+          for (const r of res) probeRef.current.set(r.ip, r.online ? "online" : "offline");
+          // any not returned → offline
+          for (const ip of ips) if (probeRef.current.get(ip) === "probing") probeRef.current.set(ip, "offline");
+        })
+        .catch(() => {
+          for (const ip of ips) probeRef.current.set(ip, "offline");
+        });
+    }
     return () => {
       alive = false;
     };
@@ -86,12 +112,16 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           if (!alive) return;
           setGeos({ ...m });
           setLocated(s.peers.filter((p) => m[p.ip]).length);
-          // mark newly-located peers for the green "appear" animation
+          const seen: { ip: string; lat: number; lon: number }[] = [];
           for (const p of s.peers) {
-            if (m[p.ip] && !revealed.current.has(p.ip)) {
-              revealed.current.set(p.ip, performance.now());
-            }
+            const pg = m[p.ip];
+            if (!pg) continue;
+            seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon });
+            probeRef.current.set(p.ip, "online"); // connected = definitely online
+            // mark newly-located peers for the green "appear" animation
+            if (!revealed.current.has(p.ip)) revealed.current.set(p.ip, performance.now());
           }
+          if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
         });
         // real received-byte deltas → traffic pulses
         const g = geosRef.current;
@@ -196,7 +226,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       if (baseRef.current) ctx.drawImage(baseRef.current, 0, 0, w, h);
 
       const outbound = hslVar("--primary");
-      const inbound = hslVar("--accent");
+      const inbound = hslVar("--info"); // blue — clearly distinct from purple outbound
       const selfCol = hslVar("--warning");
       const s = snapRef.current;
       const g = geosRef.current;
@@ -205,6 +235,62 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const selfG = (s?.selfIp && g[s.selfIp]) || selfRef.current;
       const selfXY = selfG ? project(selfG.lon, selfG.lat, w, h) : null;
       const peerCount = s?.peers.filter((p) => g[p.ip]).length ?? 0;
+      const liveIps = new Set((s?.peers ?? []).filter((p) => g[p.ip]).map((p) => p.ip));
+
+      // Known peers (last 30 days) that aren't currently connected: faint grey so
+      // there's something at startup, or a green "probing" arc + flashing "?"
+      // while we're checking if they're reachable.
+      if (selfXY) {
+        const [sx, sy] = selfXY;
+        for (const [ip, kp] of Object.entries(knownRef.current)) {
+          if (liveIps.has(ip)) continue; // connected ones are drawn below
+          const [px, py] = project(kp.lon, kp.lat, w, h);
+          const st = probeRef.current.get(ip) ?? "offline";
+          if (st === "probing") {
+            // arced green line growing self→peer, with a travelling pulse
+            const mx = (sx + px) / 2, my = (sy + py) / 2;
+            const dx = px - sx, dy = py - sy;
+            const len = Math.hypot(dx, dy) || 1;
+            const cx = mx + (-dy / len) * Math.min(70, len * 0.22);
+            const cy = my + (dx / len) * Math.min(70, len * 0.22);
+            const bez = (u: number): [number, number] => {
+              const v = 1 - u;
+              return [v * v * sx + 2 * v * u * cx + u * u * px, v * v * sy + 2 * v * u * cy + u * u * py];
+            };
+            ctx.beginPath();
+            for (let u = 0; u <= 1.0001; u += 0.05) {
+              const [x, y] = bez(u);
+              u === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = GREEN(0.18);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            const head = (now / 1400 + phaseOf(ip)) % 1;
+            ctx.beginPath();
+            for (let u = Math.max(0, head - 0.14); u <= head; u += 0.03) {
+              const [x, y] = bez(u);
+              u === Math.max(0, head - 0.14) ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = GREEN(0.85);
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            // flashing "?" just beyond the peer (away from us)
+            const qx = px + (dx / len) * 12, qy = py + (dy / len) * 12;
+            ctx.fillStyle = GREEN(0.5 + 0.5 * Math.sin(now / 200));
+            ctx.font = "bold 12px system-ui";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("?", qx, qy);
+          } else {
+            // known but not connected: faint grey dot (offline / idle)
+            const alpha = st === "offline" ? 0.28 : 0.4;
+            ctx.beginPath();
+            ctx.arc(px, py, 2.5, 0, Math.PI * 2);
+            ctx.fillStyle = GREY(alpha);
+            ctx.fill();
+          }
+        }
+      }
 
       // radiating "searching" rings from our node (stronger while few peers)
       if (selfXY) {

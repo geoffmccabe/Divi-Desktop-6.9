@@ -80,6 +80,31 @@ pub struct Geo {
     pub country: String,
 }
 
+/// A real liveness probe: try to open a TCP connection to each peer's Divi P2P
+/// port. It's not a full handshake, but an open port is a genuine "this node is
+/// reachable right now" signal — honest, and all the webview-side map needs to
+/// light a known peer as online. Bounded parallelism, short timeout.
+pub fn probe(ips: &[String], port: u16) -> Vec<(String, bool)> {
+    use std::net::{TcpStream, ToSocketAddrs};
+    let handles: Vec<_> = ips
+        .iter()
+        .take(80)
+        .cloned()
+        .map(|ip| {
+            std::thread::spawn(move || {
+                let ok = format!("{ip}:{port}")
+                    .to_socket_addrs()
+                    .ok()
+                    .and_then(|mut a| a.next())
+                    .map(|sa| TcpStream::connect_timeout(&sa, Duration::from_millis(2500)).is_ok())
+                    .unwrap_or(false);
+                (ip, ok)
+            })
+        })
+        .collect();
+    handles.into_iter().filter_map(|h| h.join().ok()).collect()
+}
+
 /// Our own approximate location, from the caller IP as the geo service sees it.
 /// Works before any peer connects, so the map can center on us at boot.
 pub fn self_geo() -> Option<Geo> {
