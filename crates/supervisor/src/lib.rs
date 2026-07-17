@@ -1,6 +1,7 @@
 pub mod config;
 pub mod crypto_nfd;
 pub mod health;
+pub mod nfd_record;
 pub mod process;
 pub mod poe;
 pub mod report;
