@@ -1,6 +1,7 @@
 pub mod config;
 pub mod health;
 pub mod process;
+pub mod network;
 pub mod poe;
 pub mod report;
 pub mod rpc;

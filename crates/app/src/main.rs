@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{config::NodeConfig, poe, report, wallet};
+use dd69_supervisor::{config::NodeConfig, network, poe, report, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -328,6 +328,77 @@ async fn lottery_wins(addresses: Vec<String>) -> Vec<LotteryWinDto> {
     .unwrap_or_default()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PeerDto {
+    ip: String,
+    inbound: bool,
+    ping_ms: f64,
+    conn_secs: i64,
+    bytes_sent: i64,
+    bytes_recv: i64,
+    subver: String,
+    height: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PeerSnapshotDto {
+    peers: Vec<PeerDto>,
+    self_ip: Option<String>,
+}
+
+/// Connected peers + our public IP, for the network map.
+#[tauri::command]
+async fn network_peers() -> Option<PeerSnapshotDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().ok()?;
+        let s = network::peers(&cfg)?;
+        Some(PeerSnapshotDto {
+            peers: s
+                .peers
+                .into_iter()
+                .map(|p| PeerDto {
+                    ip: p.ip,
+                    inbound: p.inbound,
+                    ping_ms: p.ping_ms,
+                    conn_secs: p.conn_secs,
+                    bytes_sent: p.bytes_sent,
+                    bytes_recv: p.bytes_recv,
+                    subver: p.subver,
+                    height: p.height,
+                })
+                .collect(),
+            self_ip: s.self_ip,
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[derive(Serialize)]
+struct GeoDto {
+    ip: String,
+    lat: f64,
+    lon: f64,
+    city: String,
+    country: String,
+}
+
+/// Geolocate peer IPs (free batch lookup). Public IPs only; cache on the client.
+#[tauri::command]
+async fn geolocate_ips(ips: Vec<String>) -> Vec<GeoDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        network::geolocate(&ips)
+            .into_iter()
+            .map(|g| GeoDto { ip: g.ip, lat: g.lat, lon: g.lon, city: g.city, country: g.country })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -344,7 +415,9 @@ fn main() {
             poe_verify,
             staking_wallets,
             lottery_info,
-            lottery_wins
+            lottery_wins,
+            network_peers,
+            geolocate_ips
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

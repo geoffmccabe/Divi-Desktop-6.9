@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { nodeStatus, type NodeStatus } from "./bridge";
 import { PHASE_COLOR, PHASE_LABEL } from "./status";
 import { playSound } from "./sound";
+import { Icon } from "./Icon";
 
 // The node status block for the Overview tab. No glass wrapper — it nests
 // inside the wallet panel.
-export function StatusPanel() {
+export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
   const [status, setStatus] = useState<NodeStatus | null>(null);
   const [error, setError] = useState(false);
   // Last block height we ever saw, so we can keep showing it (greyed) while the
@@ -97,7 +98,15 @@ export function StatusPanel() {
             <span>—</span>
           )}
         </div>
-        <div className={"glass-chip px-4 py-2" + (peerFlash ? " peer-flash" : "")}>
+        <div className={"glass-chip px-4 py-2 peers-chip" + (peerFlash ? " peer-flash" : "")}>
+          <button
+            type="button"
+            className="peers-globe"
+            title="Show the network map"
+            onClick={onOpenNetwork}
+          >
+            <Icon name="globe" size={13} />
+          </button>
           Peers<br />
           <span>{peers}</span>
         </div>

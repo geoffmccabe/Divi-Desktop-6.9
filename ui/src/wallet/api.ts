@@ -51,6 +51,30 @@ export interface LotteryWin {
 export const walletBalance = () => invoke<Balance | null>("wallet_balance");
 export const poeTimestamp = (hash: string) => invoke<string>("poe_timestamp", { hash });
 export const poeVerify = (txid: string, hash: string) => invoke<Proof>("poe_verify", { txid, hash });
+export interface Peer {
+  ip: string;
+  inbound: boolean;
+  pingMs: number;
+  connSecs: number;
+  bytesSent: number;
+  bytesRecv: number;
+  subver: string;
+  height: number;
+}
+export interface PeerSnapshot {
+  peers: Peer[];
+  selfIp: string | null;
+}
+export interface Geo {
+  ip: string;
+  lat: number;
+  lon: number;
+  city: string;
+  country: string;
+}
+export const networkPeers = () => invoke<PeerSnapshot | null>("network_peers");
+export const geolocateIps = (ips: string[]) => invoke<Geo[]>("geolocate_ips", { ips });
+
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
 export const lotteryWins = (addresses: string[]) => invoke<LotteryWin[]>("lottery_wins", { addresses });

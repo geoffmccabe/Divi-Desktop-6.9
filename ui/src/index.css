@@ -470,3 +470,30 @@ h1, h2, h3 { font-family: var(--font-heading); }
   0% { background: hsl(48 100% 55% / 0.85); box-shadow: 0 0 16px hsl(48 100% 55% / 0.7); }
   100% { background: inherit; box-shadow: none; }
 }
+
+/* ── Network map (Peers globe) ─────────────────────────────────────────────── */
+.peers-chip { position: relative; }
+.peers-globe {
+  position: absolute; top: 4px; right: 4px; padding: 2px; z-index: 2;
+  background: transparent; border: none; cursor: pointer; color: hsl(var(--primary)); opacity: 0.85;
+}
+.peers-globe:hover { opacity: 1; }
+
+.netmap { display: flex; flex-direction: column; height: 100%; gap: 12px; }
+.netmap-legend { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
+.nm-item { display: inline-flex; align-items: center; gap: 6px; }
+.nm-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.nm-out { background: hsl(var(--primary)); }
+.nm-in { background: hsl(var(--accent)); }
+.nm-self { background: hsl(var(--warning)); }
+.nm-count { margin-left: auto; color: hsl(var(--foreground)); }
+.netmap-canvas-wrap {
+  flex: 1; position: relative; min-height: 320px; border-radius: 12px; overflow: hidden;
+  background: radial-gradient(ellipse at center, hsl(var(--primary) / 0.05), transparent 70%);
+  border: 1px solid hsl(var(--border) / 0.5);
+}
+.netmap-canvas { display: block; width: 100%; height: 100%; }
+.netmap-empty {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: hsl(var(--muted-foreground)); font-size: 0.9rem;
+}

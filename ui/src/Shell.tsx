@@ -11,6 +11,7 @@ import { AddressBook } from "./wallet/AddressBook";
 import { SettingsView } from "./wallet/SettingsView";
 import { TimestampPanel } from "./wallet/TimestampPanel";
 import { CollectiblesPanel } from "./wallet/CollectiblesPanel";
+import { NetworkMap } from "./wallet/NetworkMap";
 
 const VIEWS: Record<string, ComponentType> = {
   overview: Overview,
@@ -21,21 +22,25 @@ const VIEWS: Record<string, ComponentType> = {
   collectibles: CollectiblesPanel,
   addressbook: AddressBook,
   settings: SettingsView,
+  network: NetworkMap,
 };
+
+// Views reachable without a sidebar entry (e.g. the Peers globe icon).
+const EXTRA_TITLES: Record<string, string> = { network: "Network Map" };
 
 // Four independent panels: nav (top-left), node status (bottom-left, chopped
 // off the sidebar), balances (top-right header), and the main content.
 export function Shell() {
   const [view, setView] = useState("overview");
   const Active = VIEWS[view] ?? Overview;
-  const label = NAV.find((n) => n.id === view)?.label ?? "";
+  const label = NAV.find((n) => n.id === view)?.label ?? EXTRA_TITLES[view] ?? "";
 
   return (
     <div className="shell">
       <div className="col-left">
         <Sidebar active={view} onSelect={setView} />
         <aside className="glass-panel status-panel">
-          <StatusPanel />
+          <StatusPanel onOpenNetwork={() => setView("network")} />
         </aside>
       </div>
       <div className="col-right">
