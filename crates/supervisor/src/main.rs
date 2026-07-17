@@ -71,22 +71,41 @@ fn status(args: &Args) -> Result<(), String> {
         Some(pid) => println!("The node is running (pid {pid})."),
         None => {
             if health::stale_pid_file(&cfg.datadir, false) {
-                println!("The node is not running — and it did NOT stop cleanly (crashed, killed, or lost power). Repair may be needed on next start.");
+                println!(
+                    "[{}] The node is not running — and it did NOT stop cleanly (crashed, killed, or lost power). It will repair itself on next start; your coins are safe.",
+                    state::Phase::CrashedNeedsRepair.slug()
+                );
             } else {
-                println!("The node is not running.");
+                println!("[{}] The node is not running.", state::Phase::Stopped.slug());
             }
             return Ok(());
         }
     }
 
     let rpc = RpcClient::new(&cfg);
+    let peers = rpc.call("getconnectioncount", json!([]))?.as_i64().unwrap_or(0);
     let blocks = rpc.call("getblockcount", json!([]))?;
-    let conns = rpc.call("getconnectioncount", json!([]))?;
-    println!("Blocks: {blocks}   Peers: {conns}");
-
     let staking = rpc.call("getstakingstatus", json!([]))?;
-    println!("{}", state::staking_sentence(&staking));
+    let tip_age = tip_age_secs(&rpc).unwrap_or(i64::MAX);
+
+    let health = state::assess(peers, tip_age, &staking);
+    println!("Blocks: {blocks}   Peers: {peers}");
+    println!("[{}] {}", health.phase.slug(), health.headline);
     Ok(())
+}
+
+/// Seconds between the newest block's timestamp and now. The basis of the
+/// sync heuristic — no version-specific RPC fields needed.
+fn tip_age_secs(rpc: &RpcClient) -> Result<i64, String> {
+    let hash = rpc.call("getbestblockhash", json!([]))?;
+    let hash = hash.as_str().ok_or("no best block hash")?;
+    let block = rpc.call("getblock", json!([hash]))?;
+    let tip_time = block["time"].as_i64().ok_or("block has no time")?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(tip_time);
+    Ok((now - tip_time).max(0))
 }
 
 fn start(args: &Args) -> Result<(), String> {
