@@ -4,3 +4,4 @@ pub mod process;
 pub mod report;
 pub mod rpc;
 pub mod state;
+pub mod wallet;

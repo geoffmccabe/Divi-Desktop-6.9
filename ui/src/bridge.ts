@@ -1,4 +1,5 @@
-// The renderer's view of the Rust engine, via the Electron preload bridge.
+import { invoke, inApp } from "./tauri";
+
 export type NodeStatus = {
   running: boolean;
   phase: string; // stopped | crashed | starting | no-peers | syncing | synced | staking
@@ -7,16 +8,8 @@ export type NodeStatus = {
   peers: number | null;
 };
 
-declare global {
-  interface Window {
-    __TAURI__?: { core: { invoke: <T>(cmd: string) => Promise<T> } };
-  }
-}
-
 export async function nodeStatus(): Promise<NodeStatus> {
-  // Tauri shell (withGlobalTauri exposes __TAURI__).
-  if (window.__TAURI__?.core?.invoke) return window.__TAURI__.core.invoke<NodeStatus>("node_status");
-  // Plain-browser fallback (headless testing).
+  if (inApp()) return invoke<NodeStatus>("node_status");
   return {
     running: false,
     phase: "starting",
