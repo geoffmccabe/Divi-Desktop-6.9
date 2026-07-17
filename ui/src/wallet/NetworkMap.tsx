@@ -247,36 +247,44 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           const [px, py] = project(kp.lon, kp.lat, w, h);
           const st = probeRef.current.get(ip) ?? "offline";
           if (st === "probing") {
-            // arced green line growing self→peer, with a travelling pulse
+            // A 1px arc that bows UP; each ~1s a pulse grows from us out to the
+            // peer, opacity ramping to a max of 50% at the advancing tip. Peers
+            // are desynced by a per-IP phase so they don't all pulse together.
             const mx = (sx + px) / 2, my = (sy + py) / 2;
             const dx = px - sx, dy = py - sy;
             const len = Math.hypot(dx, dy) || 1;
-            const cx = mx + (-dy / len) * Math.min(70, len * 0.22);
-            const cy = my + (dx / len) * Math.min(70, len * 0.22);
+            const cx = mx; // control point lifted upward → consistent up-arc
+            const cy = my - Math.min(90, len * 0.3);
             const bez = (u: number): [number, number] => {
               const v = 1 - u;
               return [v * v * sx + 2 * v * u * cx + u * u * px, v * v * sy + 2 * v * u * cy + u * u * py];
             };
-            ctx.beginPath();
-            for (let u = 0; u <= 1.0001; u += 0.05) {
-              const [x, y] = bez(u);
-              u === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            const period = 1400; // ms per pulse (1s travel + short gap)
+            const travel = 1000;
+            const off = (phaseOf(ip) / (Math.PI * 2)) * period;
+            const local = (now + off) % period;
+            if (local < travel) {
+              const headU = local / travel;
+              let prev = bez(0);
+              for (let u = 0.04; u <= headU + 1e-6; u += 0.04) {
+                const p2 = bez(u);
+                ctx.beginPath();
+                ctx.moveTo(prev[0], prev[1]);
+                ctx.lineTo(p2[0], p2[1]);
+                ctx.strokeStyle = GREEN(0.5 * (u / headU)); // brightest at the tip, ≤50%
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                prev = p2;
+              }
+              const [hx, hy] = bez(headU);
+              ctx.beginPath();
+              ctx.arc(hx, hy, 2, 0, Math.PI * 2);
+              ctx.fillStyle = GREEN(0.5);
+              ctx.fill();
             }
-            ctx.strokeStyle = GREEN(0.18);
-            ctx.lineWidth = 1;
-            ctx.stroke();
-            const head = (now / 1400 + phaseOf(ip)) % 1;
-            ctx.beginPath();
-            for (let u = Math.max(0, head - 0.14); u <= head; u += 0.03) {
-              const [x, y] = bez(u);
-              u === Math.max(0, head - 0.14) ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-            }
-            ctx.strokeStyle = GREEN(0.85);
-            ctx.lineWidth = 1;
-            ctx.stroke();
             // flashing "?" just beyond the peer (away from us)
             const qx = px + (dx / len) * 12, qy = py + (dy / len) * 12;
-            ctx.fillStyle = GREEN(0.5 + 0.5 * Math.sin(now / 200));
+            ctx.fillStyle = GREEN(0.2 + 0.3 * Math.abs(Math.sin(now / 450)));
             ctx.font = "bold 12px system-ui";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
