@@ -1,9 +1,11 @@
 import { AnimatedBackdrop } from "./AnimatedBackdrop";
 import { StatusPanel } from "./StatusPanel";
+import { ThemeProvider } from "./theme/ThemeProvider";
+import { AdminGear } from "./admin/AdminGear";
 
 export default function App() {
   return (
-    <>
+    <ThemeProvider>
       <AnimatedBackdrop />
       <main className="relative z-10 h-full flex flex-col">
         <header className="px-8 py-5 flex items-baseline gap-3">
@@ -17,6 +19,7 @@ export default function App() {
           <StatusPanel />
         </div>
       </main>
-    </>
+      <AdminGear />
+    </ThemeProvider>
   );
 }
