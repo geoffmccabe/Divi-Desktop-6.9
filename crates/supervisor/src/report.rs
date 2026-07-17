@@ -45,37 +45,33 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
     }
 
     let rpc = RpcClient::new(cfg);
-    let peers = rpc
-        .call("getconnectioncount", json!([]))
-        .ok()
-        .and_then(|v| v.as_i64());
-    let blocks = rpc
-        .call("getblockcount", json!([]))
-        .ok()
-        .and_then(|v| v.as_i64());
 
-    match peers {
-        // Process is up but RPC isn't answering yet: still warming up.
-        None => StatusReport {
-            running: true,
-            phase: Phase::Starting,
-            headline: "The node is starting up…".into(),
-            blocks,
-            peers: None,
-            last_shutdown,
-        },
-        Some(p) => {
-            let staking = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
-            let tip_age = tip_age_secs(&rpc).unwrap_or(i64::MAX);
-            let h = state::assess(p, tip_age, &staking);
-            StatusReport {
+    // Probe with one cheap call first. If the node doesn't answer promptly,
+    // report "starting" immediately instead of stacking up more slow calls.
+    let peers = match rpc.call("getconnectioncount", json!([])).ok().and_then(|v| v.as_i64()) {
+        Some(p) => p,
+        None => {
+            return StatusReport {
                 running: true,
-                phase: h.phase,
-                headline: h.headline,
-                blocks,
-                peers: Some(p),
+                phase: Phase::Starting,
+                headline: "The node is starting up…".into(),
+                blocks: None,
+                peers: None,
                 last_shutdown,
             }
         }
+    };
+
+    let blocks = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64());
+    let staking = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
+    let tip_age = tip_age_secs(&rpc).unwrap_or(i64::MAX);
+    let h = state::assess(peers, tip_age, &staking);
+    StatusReport {
+        running: true,
+        phase: h.phase,
+        headline: h.headline,
+        blocks,
+        peers: Some(peers),
+        last_shutdown,
     }
 }

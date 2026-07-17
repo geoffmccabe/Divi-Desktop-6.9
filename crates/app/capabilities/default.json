@@ -1,6 +1,0 @@
-{
-  "identifier": "default",
-  "description": "Baseline window capability for Divi Desktop 6.9",
-  "windows": ["main"],
-  "permissions": ["core:default"]
-}

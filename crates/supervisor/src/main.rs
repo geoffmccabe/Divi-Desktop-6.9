@@ -8,24 +8,44 @@ struct Args {
     datadir: Option<PathBuf>,
     divid: Option<PathBuf>,
     yes: bool,
+    json: bool,
 }
 
 fn parse_args() -> Args {
-    let mut args = Args { cmd: "status".into(), datadir: None, divid: None, yes: false };
+    let mut args = Args { cmd: "status".into(), datadir: None, divid: None, yes: false, json: false };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--datadir" => args.datadir = it.next().map(PathBuf::from),
             "--divid" => args.divid = it.next().map(PathBuf::from),
             "--yes" => args.yes = true,
+            "--json" => args.json = true,
             "status" | "start" | "stop" => args.cmd = a,
             other => {
-                eprintln!("unknown argument: {other}\nusage: dd69 [status|start|stop] [--datadir PATH] [--divid PATH] [--yes]");
+                eprintln!("unknown argument: {other}\nusage: dd69 [status|start|stop] [--datadir PATH] [--divid PATH] [--yes] [--json]");
                 std::process::exit(2);
             }
         }
     }
     args
+}
+
+/// The status report as JSON — the interface the desktop app consumes.
+fn report_json(r: &report::StatusReport) -> String {
+    let shutdown = match r.last_shutdown {
+        health::LastShutdown::Clean => "clean",
+        health::LastShutdown::Dirty => "dirty",
+        health::LastShutdown::Unknown => "unknown",
+    };
+    serde_json::json!({
+        "running": r.running,
+        "phase": r.phase.slug(),
+        "headline": r.headline,
+        "blocks": r.blocks,
+        "peers": r.peers,
+        "lastShutdown": shutdown,
+    })
+    .to_string()
 }
 
 fn load_cfg(args: &Args) -> Result<NodeConfig, String> {
@@ -55,6 +75,21 @@ fn main() {
 }
 
 fn status(args: &Args) -> Result<(), String> {
+    // JSON mode: single machine-readable line, including the no-config case.
+    if args.json {
+        let line = match load_cfg(args) {
+            Ok(cfg) => report_json(&report::status_report(&cfg)),
+            Err(_) => serde_json::json!({
+                "running": false, "phase": "stopped",
+                "headline": "No Divi node is set up on this computer yet.",
+                "blocks": null, "peers": null, "lastShutdown": "unknown",
+            })
+            .to_string(),
+        };
+        println!("{line}");
+        return Ok(());
+    }
+
     let cfg = load_cfg(args)?;
     println!("Divi node folder: {}", cfg.datadir.display());
 

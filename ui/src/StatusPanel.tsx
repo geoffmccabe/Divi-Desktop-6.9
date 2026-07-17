@@ -1,14 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-
-// Mirrors the Rust supervisor's status report (see crates/app node_status).
-type NodeStatus = {
-  running: boolean;
-  phase: string; // stopped | crashed | no-peers | syncing | synced | staking | unreachable
-  headline: string;
-  blocks: number | null;
-  peers: number | null;
-};
+import { nodeStatus, type NodeStatus } from "./bridge";
 
 // One color per phase — the always-visible signal. Greens = good, amber =
 // working, red = attention.
@@ -17,6 +8,7 @@ const PHASE_COLOR: Record<string, string> = {
   synced: "var(--success)",
   syncing: "var(--warning)",
   "no-peers": "var(--warning)",
+  starting: "var(--warning)",
   crashed: "var(--destructive)",
   stopped: "var(--muted-foreground)",
   unreachable: "var(--muted-foreground)",
@@ -27,6 +19,7 @@ const PHASE_LABEL: Record<string, string> = {
   synced: "Synced",
   syncing: "Syncing",
   "no-peers": "Connecting",
+  starting: "Starting",
   crashed: "Needs repair",
   stopped: "Stopped",
   unreachable: "Starting",
@@ -40,7 +33,7 @@ export function StatusPanel() {
     let alive = true;
     const poll = async () => {
       try {
-        const s = await invoke<NodeStatus>("node_status");
+        const s = await nodeStatus();
         if (alive) { setStatus(s); setError(null); }
       } catch (e) {
         if (alive) setError(String(e));

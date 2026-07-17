@@ -34,7 +34,9 @@ impl RpcClient {
         let body = json!({"jsonrpc": "1.0", "id": "dd69", "method": method, "params": params});
         let resp = ureq::post(&self.url)
             .set("Authorization", &self.auth)
-            .timeout(Duration::from_secs(20))
+            // Short timeout: a healthy local node answers in milliseconds, so a
+            // stall means "not ready" — report that fast rather than hang the UI.
+            .timeout(Duration::from_secs(5))
             .send_string(&body.to_string());
         let text = match resp {
             Ok(r) => r.into_string().map_err(|e| e.to_string())?,
