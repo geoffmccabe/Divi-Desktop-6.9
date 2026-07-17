@@ -59,12 +59,24 @@ pub fn timestamp(cfg: &NodeConfig, hash_hex: &str) -> Result<String, String> {
         .to_string();
 
     let inputs = json!([{ "txid": utxo["txid"], "vout": utxo["vout"] }]);
-    // "data" makes divid wrap the payload in an OP_META output automatically.
-    let mut outputs = serde_json::Map::new();
-    outputs.insert(change_addr, json!(change));
-    outputs.insert("data".into(), json!(format!("{}{}", RECORD_PREFIX, hash_hex)));
+    let record_hex = format!("{}{}", RECORD_PREFIX, hash_hex);
 
-    let raw = rpc.call("createrawtransaction", json!([inputs, Value::Object(outputs)]))?;
+    // Prefer the "data" convention (divid wraps it in OP_META for us). Some
+    // builds reject it ("value is type str, expected real") -- fall back to a
+    // raw OP_META script output: 0x6a + single-byte push length + payload.
+    let mut outs = serde_json::Map::new();
+    outs.insert(change_addr.clone(), json!(change));
+    outs.insert("data".into(), json!(record_hex));
+    let raw = match rpc.call("createrawtransaction", json!([inputs, Value::Object(outs)])) {
+        Ok(v) => v,
+        Err(_) => {
+            let script = format!("6a{:02x}{}", record_hex.len() / 2, record_hex);
+            let mut outs = serde_json::Map::new();
+            outs.insert(change_addr, json!(change));
+            outs.insert(script, json!(0));
+            rpc.call("createrawtransaction", json!([inputs, Value::Object(outs)]))?
+        }
+    };
     let signed = rpc.call("signrawtransaction", json!([raw]))?;
     if !signed["complete"].as_bool().unwrap_or(false) {
         return Err("Could not sign the anchor transaction.".into());
