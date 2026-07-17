@@ -23,48 +23,72 @@ struct TxDto {
     time: i64,
 }
 
+// ── IMPORTANT ─────────────────────────────────────────────────────────────
+// Every command that talks to the node does BLOCKING RPC. Tauri runs a sync
+// command on the UI thread, so a slow/dead node would freeze the window and
+// lock the user out. So each of these is `async` + `spawn_blocking`: the wait
+// happens on a worker thread and the UI stays responsive no matter what.
+// ──────────────────────────────────────────────────────────────────────────
+
 /// Read-only: wallet balances. None if the node/wallet isn't reachable.
 #[tauri::command]
-fn wallet_balance() -> Option<BalanceDto> {
-    let cfg = NodeConfig::load().ok()?;
-    wallet::balance(&cfg).map(|b| BalanceDto {
-        spendable: b.spendable,
-        staking: b.staking,
-        pending: b.pending,
-        immature: b.immature,
+async fn wallet_balance() -> Option<BalanceDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().ok()?;
+        wallet::balance(&cfg).map(|b| BalanceDto {
+            spendable: b.spendable,
+            staking: b.staking,
+            pending: b.pending,
+            immature: b.immature,
+        })
     })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Reserve and return a fresh receiving address.
 #[tauri::command]
-fn new_receive_address() -> Result<String, String> {
-    let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
-    wallet::new_address(&cfg)
+async fn new_receive_address() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        wallet::new_address(&cfg)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
 }
 
 #[tauri::command]
-fn recent_activity() -> Vec<TxDto> {
-    let Ok(cfg) = NodeConfig::load() else { return vec![] };
-    wallet::recent(&cfg, 25)
-        .into_iter()
-        .map(|t| TxDto {
-            kind: t.kind,
-            amount: t.amount,
-            address: t.address,
-            confirmations: t.confirmations,
-            txid: t.txid,
-            time: t.time,
-        })
-        .collect()
+async fn recent_activity() -> Vec<TxDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else { return vec![] };
+        wallet::recent(&cfg, 25)
+            .into_iter()
+            .map(|t| TxDto {
+                kind: t.kind,
+                amount: t.amount,
+                address: t.address,
+                confirmations: t.confirmations,
+                txid: t.txid,
+                time: t.time,
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// Validate a destination address (used before send). Safe/read-only.
 #[tauri::command]
-fn validate_address(address: String) -> bool {
-    NodeConfig::load()
-        .ok()
-        .map(|cfg| wallet::is_valid_address(&cfg, &address))
-        .unwrap_or(false)
+async fn validate_address(address: String) -> bool {
+    tauri::async_runtime::spawn_blocking(move || {
+        NodeConfig::load()
+            .ok()
+            .map(|cfg| wallet::is_valid_address(&cfg, &address))
+            .unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Render an address as a QR-code SVG (generated locally; no network).
@@ -91,11 +115,11 @@ struct NodeStatusDto {
     peers: Option<i64>,
 }
 
-/// Read-only status poll — the only call the status line makes. It never
-/// starts, stops, or mutates anything; no wallet secrets cross this boundary.
+/// Read-only status poll — the only call the status line makes. Off the UI
+/// thread so a hung node can never freeze the window.
 #[tauri::command]
-fn node_status() -> NodeStatusDto {
-    match NodeConfig::load() {
+async fn node_status() -> NodeStatusDto {
+    tauri::async_runtime::spawn_blocking(|| match NodeConfig::load() {
         Ok(cfg) => {
             let r = report::status_report(&cfg);
             NodeStatusDto {
@@ -113,7 +137,15 @@ fn node_status() -> NodeStatusDto {
             blocks: None,
             peers: None,
         },
-    }
+    })
+    .await
+    .unwrap_or_else(|_| NodeStatusDto {
+        running: false,
+        phase: "starting".into(),
+        headline: "Checking the node…".into(),
+        blocks: None,
+        peers: None,
+    })
 }
 
 fn main() {
