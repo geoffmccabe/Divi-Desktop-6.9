@@ -40,7 +40,12 @@ pub fn parse_conf(text: &str) -> HashMap<String, String> {
 
 impl NodeConfig {
     pub fn load() -> Result<Self, String> {
-        Self::load_from(default_datadir())
+        // DIVI_DATADIR lets you point the wallet at a specific node (a test /
+        // regtest node, or a non-standard install) instead of the default.
+        let dir = std::env::var("DIVI_DATADIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| default_datadir());
+        Self::load_from(dir)
     }
 
     pub fn load_from(datadir: PathBuf) -> Result<Self, String> {
