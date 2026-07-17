@@ -12,7 +12,7 @@ export const NAV: NavItem[] = [
   { id: "send", label: "Send", icon: "send" },
   { id: "receive", label: "Receive", icon: "receive" },
   { id: "history", label: "Transaction History", icon: "history" },
-  { id: "timestamp", label: "Timestamp a File", icon: "timestamp" },
+  { id: "timestamp", label: "Proof of Existence", icon: "timestamp" },
   { id: "addressbook", label: "Address Book", icon: "addressbook" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
