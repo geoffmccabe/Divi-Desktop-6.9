@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{config::NodeConfig, report, wallet};
+use dd69_supervisor::{config::NodeConfig, poe, report, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -217,6 +217,42 @@ async fn node_status() -> NodeStatusDto {
     })
 }
 
+/// Proof of existence: anchor a document's SHA-256 hash on-chain. The UI hashes
+/// the file locally (Web Crypto) and passes only the hash, so the document never
+/// leaves the machine. Returns the anchoring transaction id.
+#[tauri::command]
+async fn poe_timestamp(hash: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        poe::timestamp(&cfg, &hash)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+struct PoeProofDto {
+    matched: bool,
+    confirmations: i64,
+    block_time: Option<i64>,
+}
+
+/// Verify a prior anchor: does `txid` contain this file's hash, and how deep is it?
+#[tauri::command]
+async fn poe_verify(txid: String, hash: String) -> Result<PoeProofDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let p = poe::verify(&cfg, &txid, &hash)?;
+        Ok(PoeProofDto {
+            matched: p.matched,
+            confirmations: p.confirmations,
+            block_time: p.block_time,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -228,7 +264,9 @@ fn main() {
             list_transactions,
             validate_address,
             address_qr,
-            open_url
+            open_url,
+            poe_timestamp,
+            poe_verify
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

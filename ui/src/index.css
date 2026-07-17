@@ -375,3 +375,46 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .main-panel { flex: 1; min-width: 0; padding: 26px 32px; overflow: auto; display: flex; flex-direction: column; position: relative; z-index: 1; }
 .view-title { margin: 0 0 20px; font-size: 1.3rem; font-weight: 600; color: hsl(var(--foreground)); }
 .view-body { flex: 1; }
+
+/* ── Proof of Existence + Divi Collectibles ───────────────────────────────── */
+.timestamp, .collectibles { display: flex; flex-direction: column; gap: 22px; max-width: 620px; }
+.ts-section {
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
+  border-radius: 12px; padding: 20px 22px;
+  display: flex; flex-direction: column; gap: 14px; align-items: flex-start;
+}
+.ts-head { margin: 0; font-size: 1.05rem; font-weight: 600; color: hsl(var(--foreground)); }
+.ts-file { display: inline-flex; }
+.ts-fileinfo { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.ts-filename { font-size: 0.9rem; color: hsl(var(--foreground)); word-break: break-all; }
+.ts-hash {
+  font-family: ui-monospace, monospace; font-size: 0.72rem; color: hsl(var(--muted-foreground));
+  word-break: break-all; background: hsl(var(--background) / 0.5); border-radius: 6px; padding: 6px 8px;
+}
+.ts-result { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.ts-confirmed { color: hsl(var(--success)); font-size: 0.95rem; font-weight: 600; }
+.ts-pending { color: hsl(var(--warning)); font-size: 0.92rem; display: flex; align-items: center; gap: 8px; }
+.ts-spin {
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid hsl(var(--warning) / 0.35); border-top-color: hsl(var(--warning));
+  display: inline-block; animation: spin 0.9s linear infinite;
+}
+.wl-input {
+  width: 100%; max-width: 460px; border: 1px solid hsl(var(--border)); border-radius: 8px;
+  padding: 9px 12px; background: hsl(var(--background) / 0.5); color: hsl(var(--foreground));
+  font-family: ui-monospace, monospace; font-size: 0.82rem;
+}
+.ts-proof {
+  width: 100%; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid hsl(var(--border));
+}
+.ts-proof-ok { border-color: hsl(var(--success) / 0.6); background: hsl(var(--success) / 0.08); }
+.ts-proof-bad { border-color: hsl(var(--destructive) / 0.6); background: hsl(var(--destructive) / 0.08); }
+.ts-proof-title { font-weight: 700; font-size: 1rem; color: hsl(var(--foreground)); }
+.coll-points { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 8px; color: hsl(var(--foreground)); font-size: 0.9rem; }
+.coll-soon { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 4px; }
+.coll-badge {
+  display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 600;
+  background: hsl(var(--primary)); color: #fff;
+}

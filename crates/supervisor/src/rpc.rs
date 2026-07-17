@@ -30,7 +30,9 @@ impl RpcClient {
         }
     }
 
-    pub fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+    // Send the request and return the full JSON-RPC envelope ({result, error}),
+    // or Err only on a transport/parse failure.
+    fn send(&self, method: &str, params: Value) -> Result<Value, String> {
         let body = json!({"jsonrpc": "1.0", "id": "dd69", "method": method, "params": params});
         let resp = ureq::post(&self.url)
             .set("Authorization", &self.auth)
@@ -44,14 +46,34 @@ impl RpcClient {
             Err(ureq::Error::Status(_, r)) => r.into_string().map_err(|e| e.to_string())?,
             Err(e) => return Err(format!("cannot reach the node: {e}")),
         };
-        let v: Value =
-            serde_json::from_str(&text).map_err(|_| "the node sent an unreadable reply".to_string())?;
+        serde_json::from_str(&text).map_err(|_| "the node sent an unreadable reply".to_string())
+    }
+
+    pub fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        let v = self.send(method, params)?;
         if !v["error"].is_null() {
             let code = v["error"]["code"].as_i64().unwrap_or(0);
             let msg = v["error"]["message"].as_str().unwrap_or("unknown node error");
             return Err(humanize(code, msg));
         }
         Ok(v["result"].clone())
+    }
+
+    /// Like `call`, but returns Ok(None) when the node doesn't recognize the
+    /// method (JSON-RPC "Method not found", -32601). This is how we prefer the
+    /// new soft-fork RPCs (createpoe/verifypoe) and fall back cleanly to the
+    /// forkless path on any node that hasn't shipped them yet.
+    pub fn call_optional(&self, method: &str, params: Value) -> Result<Option<Value>, String> {
+        let v = self.send(method, params)?;
+        if !v["error"].is_null() {
+            let code = v["error"]["code"].as_i64().unwrap_or(0);
+            if code == -32601 {
+                return Ok(None);
+            }
+            let msg = v["error"]["message"].as_str().unwrap_or("unknown node error");
+            return Err(humanize(code, msg));
+        }
+        Ok(Some(v["result"].clone()))
     }
 }
 

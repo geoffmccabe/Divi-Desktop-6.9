@@ -9,12 +9,16 @@ import { ReceivePanel } from "./wallet/ReceivePanel";
 import { ActivityList } from "./wallet/ActivityList";
 import { AddressBook } from "./wallet/AddressBook";
 import { SettingsView } from "./wallet/SettingsView";
+import { TimestampPanel } from "./wallet/TimestampPanel";
+import { CollectiblesPanel } from "./wallet/CollectiblesPanel";
 
 const VIEWS: Record<string, ComponentType> = {
   overview: Overview,
   send: SendPanel,
   receive: ReceivePanel,
   history: ActivityList,
+  timestamp: TimestampPanel,
+  collectibles: CollectiblesPanel,
   addressbook: AddressBook,
   settings: SettingsView,
 };
