@@ -1,0 +1,15 @@
+[package]
+name = "dd69-supervisor"
+version = "0.1.0"
+edition = "2021"
+description = "Divi Desktop 6.9 node supervisor: runs, watches, safely stops, and recovers a divid full node"
+license = "MIT"
+
+[[bin]]
+name = "dd69"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+ureq = "2"
+base64 = "0.22"
