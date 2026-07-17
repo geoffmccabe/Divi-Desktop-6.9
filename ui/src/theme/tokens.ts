@@ -47,9 +47,14 @@ export const TOKENS: TokenDef[] = [
   { key: "fontHeading", label: "Heading font", group: "Typography", type: "font", cssVar: "--font-heading", default: SYSTEM, options: FONTS },
   { key: "fontBody", label: "Body font", group: "Typography", type: "font", cssVar: "--font-body", default: SYSTEM, options: FONTS },
 
-  // Shape — value carries its unit.
-  { key: "panelRadius", label: "Panel corners", group: "Shape", type: "range", cssVar: "--panel-radius", default: "12px", min: 0, max: 28, step: 1, unit: "px" },
-  { key: "panelBlur", label: "Panel blur", group: "Shape", type: "range", cssVar: "--panel-blur", default: "24px", min: 0, max: 40, step: 1, unit: "px" },
+  // Panel — the frosted, glowing look (mirrors Kinet.ink). Color values are
+  // HSL triplets; range values carry their unit.
+  { key: "panelBg", label: "Panel background", group: "Panel", type: "color", cssVar: "--panel-bg", default: "240 6% 10%" },
+  { key: "panelOpacity", label: "Transparency", group: "Panel", type: "range", cssVar: "--panel-opacity", default: "0.45", min: 0.1, max: 1, step: 0.05, unit: "" },
+  { key: "panelRadius", label: "Corners", group: "Panel", type: "range", cssVar: "--panel-radius", default: "12px", min: 0, max: 28, step: 1, unit: "px" },
+  { key: "panelBlur", label: "Frost / blur", group: "Panel", type: "range", cssVar: "--panel-blur", default: "24px", min: 0, max: 40, step: 1, unit: "px" },
+  { key: "glowColor", label: "Glow color", group: "Panel", type: "color", cssVar: "--glow-color", default: "280 80% 60%" },
+  { key: "glowStrength", label: "Glow amount", group: "Panel", type: "range", cssVar: "--glow-strength", default: "22px", min: 0, max: 60, step: 2, unit: "px" },
 ];
 
-export const TOKEN_GROUPS = ["Colors", "Typography", "Shape"];
+export const TOKEN_GROUPS = ["Colors", "Typography", "Panel"];
