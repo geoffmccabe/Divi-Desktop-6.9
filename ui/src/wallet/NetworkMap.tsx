@@ -245,8 +245,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         for (const [ip, kp] of Object.entries(knownRef.current)) {
           if (liveIps.has(ip)) continue; // connected ones are drawn below
           const [px, py] = project(kp.lon, kp.lat, w, h);
-          const st = probeRef.current.get(ip) ?? "offline";
-          if (st === "probing") {
+          // Default to "probing" so arcs appear the instant the map opens (the
+          // same moment as the grey dots), then persist for reachable peers.
+          // Only peers the probe found unreachable drop to a static grey dot.
+          const st = probeRef.current.get(ip) ?? "probing";
+          if (st !== "offline") {
             // A 1px arc that bows UP; each ~1s a pulse grows from us out to the
             // peer, opacity ramping to a max of 50% at the advancing tip. Peers
             // are desynced by a per-IP phase so they don't all pulse together.
