@@ -98,18 +98,18 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
             <span>—</span>
           )}
         </div>
-        <div className={"glass-chip px-4 py-2 peers-chip" + (peerFlash ? " peer-flash" : "")}>
-          <button
-            type="button"
-            className="peers-globe"
-            title="Show the network map"
-            onClick={onOpenNetwork}
-          >
-            <Icon name="globe" size={13} />
-          </button>
-          Peers<br />
+        <button
+          type="button"
+          className={"glass-chip px-4 py-2 peers-chip" + (peerFlash ? " peer-flash" : "")}
+          title="Show the network map"
+          onClick={onOpenNetwork}
+        >
+          <span className="peers-label">
+            Peers <Icon name="globe" size={14} />
+          </span>
+          <br />
           <span>{peers}</span>
-        </div>
+        </button>
       </div>
     </div>
   );

@@ -262,6 +262,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .act-receive { color: hsl(var(--success)); }
 .act-send { color: hsl(var(--warning)); }
 .act-stake { color: hsl(var(--primary)); }
+.act-stake-earned { color: hsl(var(--success)); font-weight: 600; }
 .act-amt { font-weight: 600; }
 .act-amt.pos { color: hsl(var(--success)); }
 .act-amt.neg { color: hsl(var(--foreground)); }
@@ -472,12 +473,11 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 
 /* ── Network map (Peers globe) ─────────────────────────────────────────────── */
-.peers-chip { position: relative; }
-.peers-globe {
-  position: absolute; top: 4px; right: 4px; padding: 2px; z-index: 2;
-  background: transparent; border: none; cursor: pointer; color: hsl(var(--primary)); opacity: 0.85;
-}
-.peers-globe:hover { opacity: 1; }
+/* The Peers chip is a button that opens the network map. */
+.peers-chip { cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.peers-chip:hover { border-color: hsl(var(--primary) / 0.6); }
+.peers-label { display: inline-flex; align-items: center; gap: 5px; }
+.peers-label .ic { color: hsl(var(--primary)); }
 
 .netmap { display: flex; flex-direction: column; height: 100%; gap: 12px; }
 .netmap-legend { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; font-size: 0.78rem; color: hsl(var(--muted-foreground)); }

@@ -25,7 +25,13 @@ function Row({ t }: { t: Tx }) {
   return (
     <li className="activity-row">
       <div className="act-top">
-        <span className={"act-kind act-" + t.kind}>{KIND_LABEL[t.kind] ?? "Transaction"}</span>
+        {t.kind === "stake" ? (
+          <span className="act-kind">
+            Transaction - <span className="act-stake-earned">Stake Earned!</span>
+          </span>
+        ) : (
+          <span className={"act-kind act-" + t.kind}>{KIND_LABEL[t.kind] ?? "Transaction"}</span>
+        )}
         <span className={"act-amt " + (t.amount < 0 ? "neg" : "pos")}>
           {t.amount > 0 ? "+" : ""}
           {fmtDivi(t.amount)} DIVI

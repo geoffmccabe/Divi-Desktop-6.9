@@ -33,11 +33,13 @@ pub fn addresses(cfg: &NodeConfig) -> Vec<AddrInfo> {
                     continue;
                 }
                 let e = map.entry(addr.to_string()).or_insert((0, 0, 0));
-                match t["category"].as_str().unwrap_or("") {
-                    "receive" => e.0 += 1,
-                    "send" => e.1 += 1,
-                    "generate" | "stake" | "mint" | "immature" | "orphan" => e.2 += 1,
-                    _ => {}
+                let cat = t["category"].as_str().unwrap_or("");
+                if cat == "receive" {
+                    e.0 += 1;
+                } else if cat == "send" {
+                    e.1 += 1;
+                } else if is_stake_cat(cat) {
+                    e.2 += 1;
                 }
             }
         }
@@ -82,7 +84,9 @@ pub struct StakeWallet {
 }
 
 fn is_stake_cat(c: &str) -> bool {
-    matches!(c, "generate" | "stake" | "mint" | "immature" | "orphan")
+    // Divi reports staking rewards as "stake_reward" (also stake/stake_split/
+    // orphaned_stake on other builds); coinbase-style rewards as generate/mint.
+    c.contains("stake") || matches!(c, "generate" | "mint" | "immature" | "orphan")
 }
 
 /// The wallet's addresses that hold stakeable coins and/or have staked, largest
@@ -283,11 +287,15 @@ pub fn list(cfg: &NodeConfig, count: i64, from: i64) -> Option<Vec<Tx>> {
 }
 
 fn tx_from_json(t: &serde_json::Value) -> Tx {
-    let kind = match t["category"].as_str().unwrap_or("") {
-        "receive" => "receive",
-        "send" => "send",
-        "generate" | "immature" | "stake" | "mint" | "orphan" => "stake",
-        _ => "other",
+    let cat = t["category"].as_str().unwrap_or("");
+    let kind = if cat == "receive" {
+        "receive"
+    } else if cat == "send" {
+        "send"
+    } else if is_stake_cat(cat) {
+        "stake"
+    } else {
+        "other"
     };
     Tx {
         kind: kind.to_string(),
@@ -310,11 +318,15 @@ pub fn recent(cfg: &NodeConfig, count: i64) -> Vec<Tx> {
         .iter()
         .rev()
         .map(|t| {
-            let kind = match t["category"].as_str().unwrap_or("") {
-                "receive" => "receive",
-                "send" => "send",
-                "generate" | "immature" | "stake" | "mint" | "orphan" => "stake",
-                _ => "other",
+            let cat = t["category"].as_str().unwrap_or("");
+            let kind = if cat == "receive" {
+                "receive"
+            } else if cat == "send" {
+                "send"
+            } else if is_stake_cat(cat) {
+                "stake"
+            } else {
+                "other"
             };
             Tx {
                 kind: kind.to_string(),
