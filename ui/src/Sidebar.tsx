@@ -5,7 +5,7 @@ export function Sidebar({ active, onSelect }: { active: string; onSelect: (id: s
   return (
     <nav className="glass-panel sidebar">
       <div className="sidebar-brand">
-        <h1>Divi</h1>
+        <h1>Divi Desktop</h1>
         <span className="ver">6.9</span>
       </div>
       <ul className="nav">

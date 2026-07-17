@@ -248,8 +248,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .status-panel .glass-chip { padding: 6px 10px; font-size: 0.72rem; }
 .header-panel { flex-shrink: 0; padding: 16px 22px; }
 .header-panel .balance-cards { margin-bottom: 0; }
-.sidebar-brand { display: flex; align-items: baseline; gap: 8px; padding: 0 10px 22px; }
-.sidebar-brand h1 { margin: 0; font-size: 1.4rem; font-weight: 700; color: hsl(var(--foreground)); }
+.sidebar-brand { display: flex; align-items: baseline; gap: 6px; padding: 0 10px 22px; flex-wrap: wrap; }
+.sidebar-brand h1 { margin: 0; font-size: 1.2rem; font-weight: 700; color: hsl(var(--foreground)); }
 .sidebar-brand .ver { font-size: 0.85rem; color: hsl(var(--primary)); }
 .nav { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .nav-item {
