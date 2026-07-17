@@ -1,5 +1,4 @@
-use dd69_supervisor::{config::NodeConfig, health, process, rpc::RpcClient, state};
-use serde_json::json;
+use dd69_supervisor::{config::NodeConfig, health, process, report, rpc::RpcClient};
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -67,45 +66,15 @@ fn status(args: &Args) -> Result<(), String> {
         health::LastShutdown::Unknown => println!("Last shutdown: unknown (no log entry found)."),
     }
 
-    match process::daemon_pid(&cfg.datadir) {
-        Some(pid) => println!("The node is running (pid {pid})."),
-        None => {
-            if health::stale_pid_file(&cfg.datadir, false) {
-                println!(
-                    "[{}] The node is not running — and it did NOT stop cleanly (crashed, killed, or lost power). It will repair itself on next start; your coins are safe.",
-                    state::Phase::CrashedNeedsRepair.slug()
-                );
-            } else {
-                println!("[{}] The node is not running.", state::Phase::Stopped.slug());
-            }
-            return Ok(());
-        }
+    let r = report::status_report(&cfg);
+    if r.running {
+        println!("The node is running.");
     }
-
-    let rpc = RpcClient::new(&cfg);
-    let peers = rpc.call("getconnectioncount", json!([]))?.as_i64().unwrap_or(0);
-    let blocks = rpc.call("getblockcount", json!([]))?;
-    let staking = rpc.call("getstakingstatus", json!([]))?;
-    let tip_age = tip_age_secs(&rpc).unwrap_or(i64::MAX);
-
-    let health = state::assess(peers, tip_age, &staking);
-    println!("Blocks: {blocks}   Peers: {peers}");
-    println!("[{}] {}", health.phase.slug(), health.headline);
+    if let (Some(b), Some(p)) = (r.blocks, r.peers) {
+        println!("Blocks: {b}   Peers: {p}");
+    }
+    println!("[{}] {}", r.phase.slug(), r.headline);
     Ok(())
-}
-
-/// Seconds between the newest block's timestamp and now. The basis of the
-/// sync heuristic — no version-specific RPC fields needed.
-fn tip_age_secs(rpc: &RpcClient) -> Result<i64, String> {
-    let hash = rpc.call("getbestblockhash", json!([]))?;
-    let hash = hash.as_str().ok_or("no best block hash")?;
-    let block = rpc.call("getblock", json!([hash]))?;
-    let tip_time = block["time"].as_i64().ok_or("block has no time")?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(tip_time);
-    Ok((now - tip_time).max(0))
 }
 
 fn start(args: &Args) -> Result<(), String> {

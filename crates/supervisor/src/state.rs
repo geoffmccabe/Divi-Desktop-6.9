@@ -13,6 +13,7 @@ pub const SYNC_FRESH_SECS: i64 = 180;
 pub enum Phase {
     Stopped,
     CrashedNeedsRepair,
+    Starting,
     NoPeers,
     Syncing,
     Synced,
@@ -25,6 +26,7 @@ impl Phase {
         match self {
             Phase::Stopped => "stopped",
             Phase::CrashedNeedsRepair => "crashed",
+            Phase::Starting => "starting",
             Phase::NoPeers => "no-peers",
             Phase::Syncing => "syncing",
             Phase::Synced => "synced",

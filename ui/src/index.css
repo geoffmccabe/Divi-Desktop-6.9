@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design tokens — mirrored from the Kinet.ink standard app ─────────────── */
+:root {
+  --background: 240 6% 10%;
+  --foreground: 0 0% 95%;
+  --card: 240 5% 15%;
+  --primary: 280 80% 60%;
+  --primary-foreground: 0 0% 100%;
+  --accent: 320 70% 55%;
+  --accent-foreground: 0 0% 100%;
+  --muted: 240 5% 20%;
+  --muted-foreground: 0 0% 70%;
+  --border: 240 4% 25%;
+  --success: 142 76% 36%;
+  --warning: 45 93% 47%;
+  --destructive: 0 84% 60%;
+  --info: 207 90% 54%;
+}
+
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  overflow: hidden; /* the desktop window owns scrolling per-panel */
+}
+
+/* ── Frosted-glass panels — same recipe as Kinet.ink .glass-panel ────────── */
+@layer components {
+  .glass-panel {
+    @apply backdrop-blur-xl rounded-lg shadow-xl;
+    background-color: hsl(var(--background) / 0.45);
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+  .glass-chip {
+    @apply backdrop-blur-md rounded-md;
+    background-color: hsl(var(--background) / 0.4);
+    border: 1px solid hsl(var(--border) / 0.4);
+  }
+}
+
+/* ── Backdrop animations — ported from Kinet.ink index.css ───────────────── */
+@keyframes hex-grid-white-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 0; }
+}
+@keyframes hex-grid-black-pulse {
+  0%, 100% { opacity: 0; }
+  50% { opacity: 0.25; }
+}
+@keyframes status-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}

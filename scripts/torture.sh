@@ -58,8 +58,8 @@ PID=$(cat "$SB/divid.pid" 2>/dev/null)
 sleep 2
 kill -9 "$PID" 2>/dev/null; sleep 1
 check "kill -9 delivered to pid ${PID:-?}" $?
-$DD status --datadir "$SB" | grep -q "did NOT stop cleanly"
-check "dirty crash detected IMMEDIATELY (stale pid heuristic)" $?
+$DD status --datadir "$SB" | grep -q "crashed"
+check "dirty crash detected IMMEDIATELY (stale pid heuristic → [crashed])" $?
 
 echo "── C. auto-recovery: restart over the kill-9 corruption ──"
 OUT=$($DD start --datadir "$SB" --divid "$DIVID" 2>&1)
