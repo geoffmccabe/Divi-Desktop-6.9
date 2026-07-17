@@ -220,3 +220,42 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .act-amt.pos { color: hsl(var(--success)); }
 .act-amt.neg { color: hsl(var(--foreground)); }
 .act-time { grid-column: 1 / 3; font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
+
+/* ── Icons: masked, colored by currentColor, shape from --icon-<name> ──────── */
+.ic {
+  display: inline-block; flex-shrink: 0;
+  background-color: currentColor;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain;
+}
+
+/* ── Two-panel shell: thin left sidebar + large right panel ────────────────── */
+.shell {
+  position: relative; z-index: 10; height: 100%;
+  display: flex; gap: 18px; padding: 26px;
+}
+.sidebar {
+  width: 220px; flex-shrink: 0;
+  display: flex; flex-direction: column;
+  padding: 22px 14px;
+}
+.sidebar-brand { display: flex; align-items: baseline; gap: 8px; padding: 0 10px 22px; }
+.sidebar-brand h1 { margin: 0; font-size: 1.4rem; font-weight: 700; color: hsl(var(--foreground)); }
+.sidebar-brand .ver { font-size: 0.85rem; color: hsl(var(--primary)); }
+.nav { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.nav-item {
+  width: 100%; display: flex; align-items: center; gap: 12px;
+  padding: 11px 12px; border: none; border-radius: 10px; cursor: pointer;
+  background: transparent; color: hsl(var(--muted-foreground));
+  font-size: 0.92rem; text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.nav-item:hover { background: hsl(var(--foreground) / 0.06); color: hsl(var(--foreground)); }
+.nav-item-active { background: hsl(var(--primary) / 0.18); color: hsl(var(--foreground)); }
+.nav-item-active .ic { color: hsl(var(--primary)); }
+.sidebar-foot { padding: 12px 8px 4px; display: flex; }
+
+.main-panel { flex: 1; min-width: 0; padding: 26px 32px; overflow: auto; display: flex; flex-direction: column; }
+.view-title { margin: 0 0 20px; font-size: 1.3rem; font-weight: 600; color: hsl(var(--foreground)); }
+.view-body { flex: 1; }
