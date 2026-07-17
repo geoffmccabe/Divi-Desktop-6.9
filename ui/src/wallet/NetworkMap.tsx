@@ -26,6 +26,19 @@ const phaseOf = (ip: string) => {
   return (h / 1000) * Math.PI * 2;
 };
 
+// A quadratic bezier that always bows UP (control point lifted in -y).
+function upArc(sx: number, sy: number, px: number, py: number): (u: number) => [number, number] {
+  const mx = (sx + px) / 2;
+  const my = (sy + py) / 2;
+  const len = Math.hypot(px - sx, py - sy) || 1;
+  const cx = mx;
+  const cy = my - Math.min(90, len * 0.3);
+  return (u: number) => {
+    const v = 1 - u;
+    return [v * v * sx + 2 * v * u * cx + u * u * px, v * v * sy + 2 * v * u * cy + u * u * py];
+  };
+}
+
 function hslVar(name: string): (a: number) => string {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "0 0% 100%";
   const m = raw.match(/([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/);
@@ -47,6 +60,20 @@ interface Pulse {
   inbound: boolean;
 }
 
+interface HoverPoint {
+  x: number;
+  y: number;
+  title: string;
+  lines: string[];
+}
+
+function fmtDur(secs: number): string {
+  if (secs < 90) return `${Math.max(0, secs)}s`;
+  if (secs < 5400) return `${Math.round(secs / 60)}m`;
+  if (secs < 172800) return `${Math.round(secs / 3600)}h`;
+  return `${Math.round(secs / 86400)}d`;
+}
+
 export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -54,6 +81,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const [geos, setGeos] = useState<Record<string, Geo>>({});
   const [self, setSelf] = useState<Geo | null>(null);
   const [located, setLocated] = useState(0);
+  const [hover, setHover] = useState<HoverPoint | null>(null);
+  const pointsRef = useRef<HoverPoint[]>([]);
 
   const geosRef = useRef(geos);
   geosRef.current = geos;
@@ -113,13 +142,17 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           setGeos({ ...m });
           setLocated(s.peers.filter((p) => m[p.ip]).length);
           const seen: { ip: string; lat: number; lon: number }[] = [];
+          let newIdx = 0;
           for (const p of s.peers) {
             const pg = m[p.ip];
             if (!pg) continue;
             seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon });
             probeRef.current.set(p.ip, "online"); // connected = definitely online
-            // mark newly-located peers for the green "appear" animation
-            if (!revealed.current.has(p.ip)) revealed.current.set(p.ip, performance.now());
+            // Stagger reveal times so peers pop in one-by-one, not all at once.
+            if (!revealed.current.has(p.ip)) {
+              revealed.current.set(p.ip, performance.now() + newIdx * 350);
+              newIdx++;
+            }
           }
           if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
         });
@@ -215,6 +248,25 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     const ro = new ResizeObserver(resize);
     ro.observe(wrap);
 
+    const onMove = (e: MouseEvent) => {
+      const rect = wrap.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      let best: HoverPoint | null = null;
+      let bestD = 16 * 16;
+      for (const pt of pointsRef.current) {
+        const d = (pt.x - mx) ** 2 + (pt.y - my) ** 2;
+        if (d < bestD) {
+          bestD = d;
+          best = pt;
+        }
+      }
+      setHover(best ? { ...best, x: mx, y: my } : null);
+    };
+    const onLeave = () => setHover(null);
+    wrap.addEventListener("mousemove", onMove);
+    wrap.addEventListener("mouseleave", onLeave);
+
     let raf = 0;
     const draw = () => {
       const w = wrap.clientWidth;
@@ -249,23 +301,14 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           // same moment as the grey dots), then persist for reachable peers.
           // Only peers the probe found unreachable drop to a static grey dot.
           const st = probeRef.current.get(ip) ?? "probing";
-          if (st !== "offline") {
-            // A 1px arc that bows UP; each ~1s a pulse grows from us out to the
-            // peer, opacity ramping to a max of 50% at the advancing tip. Peers
-            // are desynced by a per-IP phase so they don't all pulse together.
-            const mx = (sx + px) / 2, my = (sy + py) / 2;
+          if (st === "probing") {
+            // Actively checking: a 1px up-arc whose pulse grows from us out to the
+            // peer (≤50% at the tip), desynced per-IP, with a flashing "?".
             const dx = px - sx, dy = py - sy;
             const len = Math.hypot(dx, dy) || 1;
-            const cx = mx; // control point lifted upward → consistent up-arc
-            const cy = my - Math.min(90, len * 0.3);
-            const bez = (u: number): [number, number] => {
-              const v = 1 - u;
-              return [v * v * sx + 2 * v * u * cx + u * u * px, v * v * sy + 2 * v * u * cy + u * u * py];
-            };
-            const period = 1400; // ms per pulse (1s travel + short gap)
-            const travel = 1000;
-            const off = (phaseOf(ip) / (Math.PI * 2)) * period;
-            const local = (now + off) % period;
+            const bez = upArc(sx, sy, px, py);
+            const period = 1400, travel = 1000;
+            const local = (now + (phaseOf(ip) / (Math.PI * 2)) * period) % period;
             if (local < travel) {
               const headU = local / travel;
               let prev = bez(0);
@@ -274,7 +317,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
                 ctx.beginPath();
                 ctx.moveTo(prev[0], prev[1]);
                 ctx.lineTo(p2[0], p2[1]);
-                ctx.strokeStyle = GREEN(0.5 * (u / headU)); // brightest at the tip, ≤50%
+                ctx.strokeStyle = GREEN(0.5 * (u / headU));
                 ctx.lineWidth = 1;
                 ctx.stroke();
                 prev = p2;
@@ -285,19 +328,25 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               ctx.fillStyle = GREEN(0.5);
               ctx.fill();
             }
-            // flashing "?" just beyond the peer (away from us)
             const qx = px + (dx / len) * 12, qy = py + (dy / len) * 12;
             ctx.fillStyle = GREEN(0.2 + 0.3 * Math.abs(Math.sin(now / 450)));
             ctx.font = "bold 12px system-ui";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             ctx.fillText("?", qx, qy);
+          } else if (st === "online") {
+            // Reachable but not (yet) connected: a calm green dot — no "?" left
+            // hanging around. Gentle pulse so it reads as "available".
+            const a = 0.5 + 0.2 * Math.sin(now / 700 + phaseOf(ip));
+            ctx.beginPath();
+            ctx.arc(px, py, 3, 0, Math.PI * 2);
+            ctx.fillStyle = GREEN(a);
+            ctx.fill();
           } else {
-            // known but not connected: faint grey dot (offline / idle)
-            const alpha = st === "offline" ? 0.28 : 0.4;
+            // known but unreachable: faint grey dot
             ctx.beginPath();
             ctx.arc(px, py, 2.5, 0, Math.PI * 2);
-            ctx.fillStyle = GREY(alpha);
+            ctx.fillStyle = GREY(0.28);
             ctx.fill();
           }
         }
@@ -317,18 +366,25 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }
       }
 
-      // pulsing links self→peer (green while a peer is first appearing)
+      // arced links self→peer, revealed one-by-one (staggered reveal time), each
+      // greeting with a brief green flash then settling to its inbound/outbound
+      // colour with a gentle pulse.
       if (s && selfXY) {
         for (const p of s.peers) {
           const pg = g[p.ip];
           if (!pg) continue;
+          const rev = revealed.current.get(p.ip);
+          if (rev == null || rev > now) continue; // its turn hasn't come yet
           const [px, py] = project(pg.lon, pg.lat, w, h);
-          const revAge = now - (revealed.current.get(p.ip) ?? 0);
+          const revAge = now - rev;
           const fresh = revAge < 2200;
           const pulse = 0.12 + 0.1 * (0.5 + 0.5 * Math.sin(now / 500 + phaseOf(p.ip)));
+          const bez = upArc(selfXY[0], selfXY[1], px, py);
           ctx.beginPath();
-          ctx.moveTo(selfXY[0], selfXY[1]);
-          ctx.lineTo(px, py);
+          for (let u = 0; u <= 1.0001; u += 0.05) {
+            const [x, y] = bez(u);
+            u === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          }
           ctx.strokeStyle = fresh ? GREEN(0.6 * (1 - revAge / 2200) + 0.2) : (p.inbound ? inbound : outbound)(pulse);
           ctx.lineWidth = fresh ? 1.6 : 0.8;
           ctx.stroke();
@@ -355,6 +411,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         for (const p of s.peers) {
           const pg = g[p.ip];
           if (!pg) continue;
+          const rev = revealed.current.get(p.ip);
+          if (rev == null || rev > now) continue; // not revealed yet
           const k = clusterKey(pg.lat, pg.lon);
           const [x, y] = project(pg.lon, pg.lat, w, h);
           const c = clusters.get(k) ?? { x, y, n: 0, inbound: 0 };
@@ -379,7 +437,9 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         for (const p of s.peers) {
           const pg = g[p.ip];
           if (!pg) continue;
-          const revAge = now - (revealed.current.get(p.ip) ?? 0);
+          const rev = revealed.current.get(p.ip);
+          if (rev == null || rev > now) continue;
+          const revAge = now - rev;
           if (revAge >= 1800) continue;
           const t = revAge / 1800;
           const [x, y] = project(pg.lon, pg.lat, w, h);
@@ -409,12 +469,61 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         ctx.stroke();
       }
 
+      // Collect hover targets (screen positions + real details). Note: a peer's
+      // IP tells us nothing about any wallet address — that isn't on the network,
+      // so it's never shown here.
+      const pts: HoverPoint[] = [];
+      if (selfXY && selfG) {
+        pts.push({
+          x: selfXY[0],
+          y: selfXY[1],
+          title: "Your node",
+          lines: [selfG.ip, [selfG.city, selfG.country].filter(Boolean).join(", ")].filter(Boolean),
+        });
+      }
+      if (s) {
+        for (const p of s.peers) {
+          const pg = g[p.ip];
+          if (!pg) continue;
+          const rev = revealed.current.get(p.ip);
+          if (rev == null || rev > now) continue;
+          const [x, y] = project(pg.lon, pg.lat, w, h);
+          pts.push({
+            x,
+            y,
+            title: pg.city ? `${pg.city}, ${pg.country}` : p.ip,
+            lines: [
+              p.ip,
+              p.inbound ? "Inbound peer" : "Outbound peer",
+              `Ping ${Math.round(p.pingMs)} ms · connected ${fmtDur(p.connSecs)}`,
+              p.subver || "",
+              `Block ${p.height.toLocaleString()}`,
+            ].filter(Boolean),
+          });
+        }
+      }
+      const liveNow = new Set((s?.peers ?? []).filter((p) => g[p.ip]).map((p) => p.ip));
+      for (const [ip, kp] of Object.entries(knownRef.current)) {
+        if (liveNow.has(ip)) continue;
+        const [x, y] = project(kp.lon, kp.lat, w, h);
+        const st = probeRef.current.get(ip) ?? "probing";
+        pts.push({
+          x,
+          y,
+          title: ip,
+          lines: [st === "online" ? "Reachable (not connected)" : st === "probing" ? "Checking…" : "Idle / unreachable", "Seen in the last 30 days"],
+        });
+      }
+      pointsRef.current = pts;
+
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      wrap.removeEventListener("mousemove", onMove);
+      wrap.removeEventListener("mouseleave", onLeave);
     };
   }, []);
 
@@ -438,6 +547,20 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       </div>
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
+        {hover && (
+          <div
+            className="netmap-tip"
+            style={{
+              left: Math.min(hover.x + 14, (wrapRef.current?.clientWidth ?? 9999) - 220),
+              top: Math.max(8, hover.y - 10),
+            }}
+          >
+            <div className="netmap-tip-title">{hover.title}</div>
+            {hover.lines.map((l, i) => (
+              <div key={i} className="netmap-tip-line">{l}</div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

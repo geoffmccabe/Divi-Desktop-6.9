@@ -501,6 +501,13 @@ h1, h2, h3 { font-family: var(--font-heading); }
   border: 1px solid hsl(var(--border) / 0.5);
 }
 .netmap-canvas { display: block; width: 100%; height: 100%; }
+.netmap-tip {
+  position: absolute; z-index: 5; pointer-events: none; min-width: 150px; max-width: 220px;
+  background: hsl(var(--background) / 0.95); border: 1px solid hsl(var(--primary) / 0.5);
+  border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+}
+.netmap-tip-title { font-size: 0.82rem; font-weight: 600; color: hsl(var(--foreground)); margin-bottom: 3px; }
+.netmap-tip-line { font-size: 0.72rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; word-break: break-all; }
 .netmap-empty {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: hsl(var(--muted-foreground)); font-size: 0.9rem;
