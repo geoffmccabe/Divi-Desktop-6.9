@@ -344,7 +344,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .addr-full { font-family: ui-monospace, monospace; font-size: 0.7rem; color: hsl(var(--muted-foreground)); word-break: break-all; }
 .addr-counts { display: flex; gap: 14px; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
-.sidebar-brand { display: flex; align-items: baseline; gap: 6px; padding: 0 10px 22px; flex-wrap: wrap; }
+.sidebar-brand { display: flex; align-items: center; gap: 7px; padding: 0 10px 22px; flex-wrap: wrap; }
+.brand-logo { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; }
 .sidebar-brand h1 { margin: 0; font-size: 1.2rem; font-weight: 700; color: hsl(var(--foreground)); }
 .sidebar-brand .ver { font-size: 0.85rem; color: hsl(var(--primary)); }
 .nav { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
