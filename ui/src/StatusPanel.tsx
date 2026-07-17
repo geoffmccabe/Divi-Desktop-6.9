@@ -11,6 +11,9 @@ export function StatusPanel() {
   // Last block height we ever saw, so we can keep showing it (greyed) while the
   // node is behind instead of dropping to a dash.
   const [lastBlocks, setLastBlocks] = useState<number | null>(null);
+  // Last peer count we actually read, so a slow RPC spell keeps showing it
+  // instead of dropping to 0.
+  const [lastPeers, setLastPeers] = useState<number | null>(null);
   const [peerFlash, setPeerFlash] = useState(false);
   const prevPeers = useRef<number | null>(null);
 
@@ -23,14 +26,18 @@ export function StatusPanel() {
         setStatus(s);
         setError(false);
         if (s.blocks != null) setLastBlocks(s.blocks);
-        // A newly-added peer: brief yellow flash + low click.
-        const p = s.peers ?? 0;
-        if (prevPeers.current != null && p > prevPeers.current) {
-          setPeerFlash(true);
-          playSound("peer");
-          setTimeout(() => setPeerFlash(false), 1000);
+        if (s.peers != null) setLastPeers(s.peers);
+        // A newly-added peer: brief yellow flash + low click. Only compare when
+        // we actually got a fresh reading, so a missed poll doesn't false-flash.
+        if (s.peers != null) {
+          const p = s.peers;
+          if (prevPeers.current != null && p > prevPeers.current) {
+            setPeerFlash(true);
+            playSound("peer");
+            setTimeout(() => setPeerFlash(false), 1000);
+          }
+          prevPeers.current = p;
         }
-        prevPeers.current = p;
       } catch {
         if (alive) setError(true);
       }
@@ -48,8 +55,8 @@ export function StatusPanel() {
   const working = phase === "syncing" || phase === "no-peers" || phase === "starting" || phase === "unreachable";
   const caughtUp = phase === "synced" || phase === "staking";
 
-  // Peers: 0 rather than a dash when we simply have none yet.
-  const peers = status?.peers ?? 0;
+  // Peers: the fresh reading, else the last one we saw, else 0 (never a dash).
+  const peers = status?.peers ?? lastPeers ?? 0;
 
   // Block height: live value when caught up; otherwise the last-known value in
   // grey with a "+?" to show it's behind and still climbing.

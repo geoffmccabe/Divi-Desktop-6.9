@@ -46,15 +46,27 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
 
     let rpc = RpcClient::new(cfg);
 
-    // Probe with one cheap call first. If the node doesn't answer promptly,
-    // report "starting" immediately instead of stacking up more slow calls.
-    let peers = match rpc.call("getconnectioncount", json!([])).ok().and_then(|v| v.as_i64()) {
+    // Probe with one cheap call. The legacy node's RPC is bursty, so a single
+    // miss doesn't mean it's down — retry once before concluding anything.
+    let peers = rpc
+        .call("getconnectioncount", json!([]))
+        .ok()
+        .and_then(|v| v.as_i64())
+        .or_else(|| {
+            rpc.call("getconnectioncount", json!([]))
+                .ok()
+                .and_then(|v| v.as_i64())
+        });
+    let peers = match peers {
         Some(p) => p,
         None => {
+            // Running (pid present) but RPC didn't answer even on retry: it's
+            // busy/warming up, not "starting from scratch". Say so, and let the
+            // UI keep the last-known peers/height rather than blanking them.
             return StatusReport {
                 running: true,
                 phase: Phase::Starting,
-                headline: "The node is starting up…".into(),
+                headline: "The node is busy — reconnecting…".into(),
                 blocks: None,
                 peers: None,
                 last_shutdown,

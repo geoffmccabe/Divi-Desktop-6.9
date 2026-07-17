@@ -36,9 +36,13 @@ impl RpcClient {
         let body = json!({"jsonrpc": "1.0", "id": "dd69", "method": method, "params": params});
         let resp = ureq::post(&self.url)
             .set("Authorization", &self.auth)
-            // Short timeout: a healthy local node answers in milliseconds, so a
-            // stall means "not ready" — report that fast rather than hang the UI.
-            .timeout(Duration::from_secs(5))
+            // Patient timeout: the legacy Divi node's RPC is bursty — a cold call
+            // can take 10-25s before it warms up and answers instantly. These
+            // calls run off the UI thread (spawn_blocking), so waiting doesn't
+            // freeze anything; giving up too early just mislabels a live node as
+            // "starting". 30s tolerates the slow spells; truly-down fails fast
+            // because the connection is refused, not merely slow.
+            .timeout(Duration::from_secs(30))
             .send_string(&body.to_string());
         let text = match resp {
             Ok(r) => r.into_string().map_err(|e| e.to_string())?,

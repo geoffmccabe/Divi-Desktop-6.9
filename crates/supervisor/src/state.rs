@@ -44,15 +44,17 @@ pub struct Health {
 }
 
 fn human_duration(secs: i64) -> String {
+    // saturating_add so a sentinel like i64::MAX ("age unknown / very stale")
+    // can't overflow the rounding offsets and panic.
     let s = secs.max(0);
     if s < 90 {
         format!("{s} seconds")
     } else if s < 5400 {
-        format!("about {} minutes", (s + 30) / 60)
+        format!("about {} minutes", s.saturating_add(30) / 60)
     } else if s < 172_800 {
-        format!("about {} hours", (s + 1800) / 3600)
+        format!("about {} hours", s.saturating_add(1800) / 3600)
     } else {
-        format!("about {} days", (s + 43_200) / 86_400)
+        format!("about {} days", s.saturating_add(43_200) / 86_400)
     }
 }
 
