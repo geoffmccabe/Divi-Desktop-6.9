@@ -1,5 +1,6 @@
 import { NAV } from "./nav";
 import { Icon } from "./Icon";
+import { AdminGear } from "./admin/AdminGear";
 
 export function Sidebar({ active, onSelect }: { active: string; onSelect: (id: string) => void }) {
   return (
@@ -22,6 +23,7 @@ export function Sidebar({ active, onSelect }: { active: string; onSelect: (id: s
           </li>
         ))}
       </ul>
+      <AdminGear />
     </nav>
   );
 }

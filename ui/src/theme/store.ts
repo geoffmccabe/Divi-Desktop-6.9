@@ -24,6 +24,9 @@ export function applyTheme(theme: Theme): void {
   for (const t of TOKENS) {
     root.style.setProperty(t.cssVar, theme[t.key] ?? t.default);
   }
+  // Drive native controls (scrollbars, dropdowns, sliders) directly too — more
+  // reliable than color-scheme via a CSS var across engines.
+  root.style.colorScheme = theme["controlScheme"] === "light" ? "light" : "dark";
 }
 
 export function loadActive(): Theme {

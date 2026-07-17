@@ -56,12 +56,20 @@ export const TOKENS: TokenDef[] = [
 
   // Panel — the frosted, glowing look (mirrors Kinet.ink). Color values are
   // HSL triplets; range values carry their unit.
+  { key: "controlScheme", label: "Menus & sliders", group: "Panel", type: "select", cssVar: "--control-scheme", default: "dark", options: [{ label: "Dark", value: "dark" }, { label: "Light", value: "light" }] },
   { key: "panelBg", label: "Panel background", group: "Panel", type: "color", cssVar: "--panel-bg", default: "240 6% 10%" },
-  { key: "panelOpacity", label: "Transparency", group: "Panel", type: "range", cssVar: "--panel-opacity", default: "0.45", min: 0.1, max: 1, step: 0.05, unit: "" },
+  { key: "panelOpacity", label: "Panel opacity", group: "Panel", type: "range", cssVar: "--panel-opacity", default: "85%", min: 10, max: 100, step: 5, unit: "%" },
   { key: "panelRadius", label: "Corners", group: "Panel", type: "range", cssVar: "--panel-radius", default: "12px", min: 0, max: 28, step: 1, unit: "px" },
   { key: "panelBlur", label: "Frost / blur", group: "Panel", type: "range", cssVar: "--panel-blur", default: "24px", min: 0, max: 40, step: 1, unit: "px" },
   { key: "glowColor", label: "Glow color", group: "Panel", type: "color", cssVar: "--glow-color", default: "280 80% 60%" },
   { key: "glowStrength", label: "Glow amount", group: "Panel", type: "range", cssVar: "--glow-strength", default: "22px", min: 0, max: 60, step: 2, unit: "px" },
+
+  // Sub-panels — the nested boxes on a panel (balance cards, chips). Their own
+  // background/opacity/outline, independent of the parent panel.
+  { key: "subPanelBg", label: "Sub-panel background", group: "Sub-panels", type: "color", cssVar: "--subpanel-bg", default: "0 0% 0%" },
+  { key: "subPanelOpacity", label: "Sub-panel opacity", group: "Sub-panels", type: "range", cssVar: "--subpanel-opacity", default: "100%", min: 10, max: 100, step: 5, unit: "%" },
+  { key: "subPanelOutline", label: "Sub-panel outline", group: "Sub-panels", type: "range", cssVar: "--subpanel-outline-width", default: "0px", min: 0, max: 8, step: 1, unit: "px" },
+  { key: "subPanelOutlineColor", label: "Outline color", group: "Sub-panels", type: "color", cssVar: "--subpanel-outline-color", default: "0 0% 50%" },
 
   // Sounds — generated tones (see sound.ts). Values feed the Web Audio engine.
   { key: "soundVolume", label: "Volume", group: "Sounds", type: "range", cssVar: "--sound-volume", default: "0.15", min: 0, max: 0.5, step: 0.05, unit: "" },
@@ -73,4 +81,4 @@ export const TOKENS: TokenDef[] = [
   { key: "receiveFreq", label: "Receive pitch", group: "Sounds", type: "range", cssVar: "--sound-receive-freq", default: "523", min: 200, max: 1200, step: 10, unit: "" },
 ];
 
-export const TOKEN_GROUPS = ["Colors", "Typography", "Panel", "Sounds"];
+export const TOKEN_GROUPS = ["Colors", "Typography", "Panel", "Sub-panels", "Sounds"];

@@ -2,7 +2,8 @@ import { useState } from "react";
 import { TOKENS, TOKEN_GROUPS, type TokenDef } from "../../theme/tokens";
 import { useTheme } from "../../theme/ThemeProvider";
 import { hexToHslTriplet, hslTripletToHex } from "../../theme/color";
-import { playSound } from "../../sound";
+import { playSound, type SoundEvent } from "../../sound";
+import { Icon } from "../../Icon";
 
 function Control({ token }: { token: TokenDef }) {
   const { theme, setToken } = useTheme();
@@ -23,20 +24,37 @@ function Control({ token }: { token: TokenDef }) {
   }
 
   if (token.type === "font" || token.type === "select") {
+    // Sound waveform selects (clickWave/sendWave/receiveWave) get a note button
+    // and play the tone the instant you change or click it.
+    const soundEvent =
+      token.group === "Sounds" ? (token.key.replace("Wave", "") as SoundEvent) : null;
+    const onSelect = (v: string) => {
+      if (soundEvent) document.documentElement.style.setProperty(token.cssVar, v);
+      setToken(token.key, v);
+      if (soundEvent) playSound(soundEvent);
+    };
     return (
       <label className="style-row">
         <span>{token.label}</span>
-        <select
-          className="style-select"
-          value={value}
-          onChange={(e) => setToken(token.key, e.target.value)}
-        >
-          {token.options?.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
+        <span className="style-select-wrap">
+          <select className="style-select" value={value} onChange={(e) => onSelect(e.target.value)}>
+            {token.options?.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          {soundEvent && (
+            <button
+              type="button"
+              className="note-btn"
+              aria-label={`Play ${soundEvent} sound`}
+              onClick={() => playSound(soundEvent)}
+            >
+              <Icon name="note" size={15} />
+            </button>
+          )}
+        </span>
       </label>
     );
   }
