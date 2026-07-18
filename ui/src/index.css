@@ -492,9 +492,11 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .netmap-legend { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
 .nm-item { display: inline-flex; align-items: center; gap: 6px; }
 .nm-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
-.nm-out { background: hsl(var(--primary)); }
-.nm-in { background: hsl(var(--info)); }
+.nm-out { background: hsl(var(--primary)); } /* Active Peers — matches connection arcs */
+.nm-in { background: hsl(210 85% 62%); } /* Full Network — matches the blue background mesh */
 .nm-self { background: hsl(var(--warning)); }
+.netmap-canvas-wrap { cursor: grab; }
+.netmap-canvas-wrap:active { cursor: grabbing; }
 .nm-count { margin-left: auto; color: hsl(var(--foreground)); }
 .netmap-canvas-wrap {
   flex: 1; position: relative; min-height: 320px; border-radius: 12px; overflow: hidden;

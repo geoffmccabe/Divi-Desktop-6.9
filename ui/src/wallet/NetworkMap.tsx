@@ -237,7 +237,25 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     const ro = new ResizeObserver(resize);
     ro.observe(wrap);
 
+    // Keep the view in bounds: never zoom out past the full map (scale ≥ 1) and
+    // never pan the world off the viewport.
+    const clampView = () => {
+      const v = viewRef.current;
+      const cw = wrap.clientWidth, ch = wrap.clientHeight;
+      v.scale = Math.min(Math.max(v.scale, 1), 40);
+      v.tx = Math.min(0, Math.max(cw - cw * v.scale, v.tx));
+      v.ty = Math.min(0, Math.max(ch - ch * v.scale, v.ty));
+    };
+    let dragging = false;
+    let dsx = 0, dsy = 0, dtx = 0, dty = 0;
     const onMove = (e: MouseEvent) => {
+      if (dragging) {
+        const v = viewRef.current;
+        v.tx = dtx + (e.clientX - dsx);
+        v.ty = dty + (e.clientY - dsy);
+        clampView();
+        return;
+      }
       const rect = wrap.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
@@ -253,8 +271,15 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       setHover(best ? { ...best, x: mx, y: my } : null);
     };
     const onLeave = () => setHover(null);
-    // Scroll wheel zooms about the cursor (turns off auto-fit); double-click
-    // re-enables auto-fit to the active network.
+    const onDown = (e: MouseEvent) => {
+      dragging = true;
+      dsx = e.clientX; dsy = e.clientY;
+      dtx = viewRef.current.tx; dty = viewRef.current.ty;
+      viewRef.current.auto = false;
+      setHover(null);
+    };
+    const onUp = () => { dragging = false; };
+    // Scroll wheel zooms about the cursor; double-click re-enables auto-fit.
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const rect = wrap.getBoundingClientRect();
@@ -263,10 +288,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const v = viewRef.current;
       v.auto = false;
       const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-      const ns = Math.min(Math.max(v.scale * factor, 0.5), 40);
+      const ns = Math.min(Math.max(v.scale * factor, 1), 40);
       v.tx = mx - ((mx - v.tx) / v.scale) * ns;
       v.ty = my - ((my - v.ty) / v.scale) * ns;
       v.scale = ns;
+      clampView();
     };
     const onDbl = () => {
       viewRef.current.auto = true;
@@ -275,6 +301,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     wrap.addEventListener("mouseleave", onLeave);
     wrap.addEventListener("wheel", onWheel, { passive: false });
     wrap.addEventListener("dblclick", onDbl);
+    wrap.addEventListener("mousedown", onDown);
+    window.addEventListener("mouseup", onUp);
 
     let raf = 0;
     const draw = () => {
@@ -310,16 +338,30 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               .slice(0, 40)
           : [];
 
-      // ── View transform: auto-fit the active network (self + live peers + active
-      // background nodes) into the viewport with a 2% edge margin, or honour the
-      // user's manual scroll-zoom. project() = full-world pixels; the view then
-      // scales/pans those onto the screen, and P() applies it.
+      // ── View transform: auto-fit into the viewport with a 2% margin, or honour
+      // the user's manual pan/zoom. project() = full-world pixels; the view then
+      // scales/pans those onto the screen, and P() applies it. The fit must cover
+      // BOTH the node points AND the arcs, which bow up above the nodes.
       const wpx = (lon: number, lat: number) => project(lon, lat, w, h);
       if (viewRef.current.auto) {
-        const pts: [number, number][] = [];
-        if (selfG) pts.push(wpx(selfG.lon, selfG.lat));
-        if (s) for (const p of s.peers) { const pg = g[p.ip]; if (pg) pts.push(wpx(pg.lon, pg.lat)); }
-        for (const [, kp] of blueNodes) pts.push(wpx(kp.lon, kp.lat));
+        const selfPt = selfG ? wpx(selfG.lon, selfG.lat) : null;
+        const nodePts: [number, number][] = [];
+        if (selfPt) nodePts.push(selfPt);
+        if (s) for (const p of s.peers) { const pg = g[p.ip]; if (pg) nodePts.push(wpx(pg.lon, pg.lat)); }
+        for (const [, kp] of blueNodes) nodePts.push(wpx(kp.lon, kp.lat));
+        const pts: [number, number][] = [...nodePts];
+        // add each arc's apex: it rises above the self→node midpoint by the (green,
+        // worst-case) lift, which is in screen px — convert to world via the scale.
+        if (selfPt) {
+          const ps = viewRef.current.scale || 1;
+          for (const b of nodePts) {
+            if (b === selfPt) continue;
+            const mx = (selfPt[0] + b[0]) / 2, my = (selfPt[1] + b[1]) / 2;
+            const worldLen = Math.hypot(b[0] - selfPt[0], b[1] - selfPt[1]);
+            const liftWorld = Math.min(90, worldLen * ps * 0.3) / ps;
+            pts.push([mx, my - liftWorld]);
+          }
+        }
         if (pts.length >= 2) {
           let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
           for (const [x, y] of pts) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
@@ -646,6 +688,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       wrap.removeEventListener("mouseleave", onLeave);
       wrap.removeEventListener("wheel", onWheel);
       wrap.removeEventListener("dblclick", onDbl);
+      wrap.removeEventListener("mousedown", onDown);
+      window.removeEventListener("mouseup", onUp);
     };
   }, []);
 
@@ -656,8 +700,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <Icon name="overview" size={14} /> Return to Overview
         </button>
         <div className="netmap-legend">
-          <span className="nm-item"><span className="nm-dot nm-out" /> Outbound</span>
-          <span className="nm-item"><span className="nm-dot nm-in" /> Inbound</span>
+          <span className="nm-item"><span className="nm-dot nm-out" /> Active Peers</span>
+          <span className="nm-item"><span className="nm-dot nm-in" /> Full Network</span>
           <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
         </div>
       </div>
