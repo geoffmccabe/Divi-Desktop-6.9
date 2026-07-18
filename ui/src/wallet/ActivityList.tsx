@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { openUrl, explorerTxUrl, type Tx } from "./api";
 import { useTransactions, type TxStatus } from "./useTransactions";
+import { confDisplay } from "./confirmations";
 import { fmtDivi, relTime } from "../status";
 import { Icon } from "../Icon";
 
@@ -17,7 +18,7 @@ function Row({ t }: { t: Tx }) {
   const prevConf = useRef(t.confirmations);
   const [flash, setFlash] = useState(false);
   useEffect(() => {
-    if (t.confirmations > prevConf.current && t.confirmations >= 1) {
+    if (t.confirmations > prevConf.current && t.confirmations >= 1 && prevConf.current >= 0) {
       setFlash(true);
       const id = setTimeout(() => setFlash(false), 3000);
       prevConf.current = t.confirmations;
@@ -38,23 +39,36 @@ function Row({ t }: { t: Tx }) {
 
   // Receive lifecycle: in the mempool (0 conf) → INCOMING; in a block → RECEIVED.
   const isReceive = t.kind === "receive";
-  const inMempool = t.confirmations === 0;
-  // "Unconfirmed" until it's in a block; then 0, 1, 2… (blocks after inclusion).
-  const confText = inMempool ? "Unconfirmed" : `${t.confirmations - 1} confirmations`;
+  const conf = confDisplay(t.confirmations, t.kind);
+  const inMempool = conf.state === "mempool";
+  // Orphaned/conflicted: it never made it into the chain, so it must not be
+  // dressed up as money earned. Grey it out and strike the amount through.
+  const dead = conf.state === "orphaned" || conf.state === "conflicted";
+  const deadStyle = { color: "hsl(var(--muted-foreground))" };
 
   return (
     <li className="activity-row">
       <div className="act-top">
         {isReceive ? (
-          <span className={"act-kind act-big " + (inMempool ? "act-incoming" : "act-received")}>
-            {inMempool ? "INCOMING TRANSACTION" : "TRANSACTION RECEIVED"}
+          <span
+            className={"act-kind act-big " + (dead ? "" : inMempool ? "act-incoming" : "act-received")}
+            style={dead ? deadStyle : undefined}
+          >
+            {dead ? "TRANSACTION CONFLICTED" : inMempool ? "INCOMING TRANSACTION" : "TRANSACTION RECEIVED"}
           </span>
         ) : t.kind === "stake" ? (
-          <span className="act-kind act-stake-earned">Stake Earned!</span>
+          <span className={dead ? "act-kind" : "act-kind act-stake-earned"} style={dead ? deadStyle : undefined}>
+            {dead ? "Stake Orphaned" : "Stake Earned!"}
+          </span>
         ) : (
-          <span className={"act-kind act-" + t.kind}>{KIND_LABEL[t.kind] ?? "Transaction"}</span>
+          <span className={"act-kind act-" + t.kind} style={dead ? deadStyle : undefined}>
+            {KIND_LABEL[t.kind] ?? "Transaction"}
+          </span>
         )}
-        <span className={"act-amt " + (t.amount < 0 ? "neg" : "pos")}>
+        <span
+          className={dead ? "act-amt" : "act-amt " + (t.amount < 0 ? "neg" : "pos")}
+          style={dead ? { ...deadStyle, textDecoration: "line-through" } : undefined}
+        >
           {t.amount > 0 ? "+" : ""}
           {fmtDivi(t.amount)} DIVI
         </span>
@@ -63,13 +77,14 @@ function Row({ t }: { t: Tx }) {
       <div className="act-bottom">
         <span className="act-time">
           {relTime(t.time)} ·{" "}
-          {isReceive ? (
-            <span className={"act-conf" + (flash ? " act-conf-flash" : "")}>{confText}</span>
-          ) : t.confirmations < 10 ? (
-            `${t.confirmations} confirmations`
-          ) : (
-            "confirmed"
-          )}
+          {/* Every kind of row now reads off the same scale, so a stake and a
+              receive at the same depth can't show different numbers. */}
+          <span
+            className={"act-conf" + (flash && conf.settled ? " act-conf-flash" : "")}
+            style={dead ? deadStyle : undefined}
+          >
+            {conf.text}
+          </span>
         </span>
         <span className="act-actions">
           <button type="button" className="icon-btn" title={copied ? "Copied!" : "Copy transaction ID"} onClick={copy}>

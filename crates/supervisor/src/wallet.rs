@@ -38,7 +38,7 @@ pub fn addresses(cfg: &NodeConfig) -> Vec<AddrInfo> {
                     e.0 += 1;
                 } else if cat == "send" {
                     e.1 += 1;
-                } else if is_stake_cat(cat) {
+                } else if is_won_stake(t) {
                     e.2 += 1;
                 }
             }
@@ -133,6 +133,16 @@ fn is_stake_cat(c: &str) -> bool {
     c.contains("stake") || matches!(c, "generate" | "mint" | "immature" | "orphan")
 }
 
+/// Did this stake actually EARN anything? `is_stake_cat` deliberately also
+/// matches orphaned stakes so we can still show them in the activity list, but
+/// an orphaned stake is a block our node minted and then lost the race with —
+/// no reward. Counting those inflated every stake statistic. A negative
+/// confirmation count is the wallet's way of saying "conflicts with the chain".
+fn is_won_stake(t: &serde_json::Value) -> bool {
+    let cat = t["category"].as_str().unwrap_or("");
+    is_stake_cat(cat) && !cat.contains("orphan") && t["confirmations"].as_i64().unwrap_or(0) >= 0
+}
+
 // ── Blockchain visualization: recent blocks + their transactions ────────────
 
 pub struct BlockSummary {
@@ -218,7 +228,7 @@ pub fn staking_wallets(cfg: &NodeConfig) -> Vec<StakeWallet> {
         if let Some(arr) = txs.as_array() {
             for t in arr {
                 let addr = t["address"].as_str().unwrap_or("");
-                if addr.is_empty() || !is_stake_cat(t["category"].as_str().unwrap_or("")) {
+                if addr.is_empty() || !is_won_stake(t) {
                     continue;
                 }
                 let time = t["time"].as_i64();

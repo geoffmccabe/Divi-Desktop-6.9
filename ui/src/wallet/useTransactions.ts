@@ -59,7 +59,10 @@ export function useTransactions() {
       }
 
       setStatus({ state: "checking" });
+      // `map` is the cache-merged view we show WHILE syncing (so nothing blinks
+      // out); `fresh` is only what the node actually reported this pass.
       const map = new Map<string, Tx>(txsRef.current.map((t) => [keyOf(t), t]));
+      const fresh = new Map<string, Tx>();
       let from = 0;
       let parsed = 0;
       let failed = false;
@@ -73,6 +76,7 @@ export function useTransactions() {
         for (const t of page) {
           parsed++;
           map.set(keyOf(t), t);
+          fresh.set(keyOf(t), t);
         }
         const cur = sortTx([...map.values()]);
         setTxs(cur);
@@ -86,7 +90,11 @@ export function useTransactions() {
       if (failed) {
         setStatus({ state: phase === "syncing" ? "syncing" : "unreachable" });
       } else {
-        const final = sortTx([...map.values()]);
+        // The sync completed, so what the node returned IS the wallet's history.
+        // Keep only that — otherwise rows the node no longer reports (a different
+        // wallet, a rescanned or abandoned transaction) linger in the cache
+        // forever with their confirmation counts frozen at whatever they were.
+        const final = sortTx([...fresh.values()]);
         saveCache(final);
         setTxs(final);
         txsRef.current = final;
