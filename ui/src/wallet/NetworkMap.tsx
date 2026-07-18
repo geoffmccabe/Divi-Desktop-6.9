@@ -26,17 +26,30 @@ const phaseOf = (ip: string) => {
   return (h / 1000) * Math.PI * 2;
 };
 
-// A quadratic bezier that always bows UP (control point lifted in -y).
-function upArc(sx: number, sy: number, px: number, py: number): (u: number) => [number, number] {
+// A quadratic bezier that always bows UP (control point lifted in -y). `mult`
+// scales the curvature — established (purple) arcs use 0.5 so they sit flatter
+// than the green probing arcs and don't overlap them.
+function upArc(sx: number, sy: number, px: number, py: number, mult = 1): (u: number) => [number, number] {
   const mx = (sx + px) / 2;
   const my = (sy + py) / 2;
   const len = Math.hypot(px - sx, py - sy) || 1;
   const cx = mx;
-  const cy = my - Math.min(90, len * 0.3);
+  const cy = my - Math.min(90, len * 0.3) * mult;
   return (u: number) => {
     const v = 1 - u;
     return [v * v * sx + 2 * v * u * cx + u * u * px, v * v * sy + 2 * v * u * cy + u * u * py];
   };
+}
+
+// Time-based label visibility: each peer's label appears for `visibleMs` on a
+// per-peer randomised cycle (periodMin..periodMax), fading in and out, so labels
+// stagger in time and never all crowd the map at once. Returns 0..1 opacity.
+function labelPulse(now: number, ip: string, periodMin: number, periodMax: number, visibleMs: number): number {
+  const seed = phaseOf(ip) / (Math.PI * 2); // stable 0..1 per IP
+  const period = periodMin + seed * (periodMax - periodMin);
+  const local = (now + seed * period) % period;
+  if (local >= visibleMs) return 0;
+  return Math.sin((local / visibleMs) * Math.PI); // fade in → out
 }
 
 function hslVar(name: string): (a: number) => string {
@@ -50,15 +63,6 @@ const GREY = (a: number) => `hsla(0, 0%, 62%, ${a})`;
 
 type ProbeState = "probing" | "online" | "offline";
 
-interface Pulse {
-  fx: number;
-  fy: number;
-  tx: number;
-  ty: number;
-  born: number;
-  strength: number;
-  inbound: boolean;
-}
 
 interface HoverPoint {
   x: number;
@@ -89,8 +93,6 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   snapRef.current = snap;
   const selfRef = useRef(self);
   selfRef.current = self;
-  const prevBytes = useRef<Map<string, number>>(new Map());
-  const pulses = useRef<Pulse[]>([]);
   const revealed = useRef<Map<string, number>>(new Map()); // ip -> first-seen ms
   const baseRef = useRef<HTMLCanvasElement | null>(null);
   // Peers seen in the last 30 days (grey at startup), and the live probe result.
@@ -111,6 +113,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     const ips = Object.keys(known);
     if (ips.length) {
       for (const ip of ips) probeRef.current.set(ip, "probing");
+      // geolocate the cached peers so their city names are available for labels
+      resolveGeos(ips, (m) => {
+        if (alive) setGeos((prev) => ({ ...prev, ...m }));
+      });
       probePeers(ips)
         .then((res) => {
           if (!alive) return;
@@ -154,35 +160,6 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           }
           if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
         });
-        // real received-byte deltas → traffic pulses
-        const g = geosRef.current;
-        const selfG = (s.selfIp && g[s.selfIp]) || selfRef.current;
-        const wrap = wrapRef.current;
-        if (selfG && wrap) {
-          const w = wrap.clientWidth;
-          const h = wrap.clientHeight;
-          const [sx, sy] = project(selfG.lon, selfG.lat, w, h);
-          for (const p of s.peers) {
-            const pg = g[p.ip];
-            if (!pg) continue;
-            const prev = prevBytes.current.get(p.ip);
-            prevBytes.current.set(p.ip, p.bytesRecv);
-            if (prev == null) continue;
-            const delta = p.bytesRecv - prev;
-            if (delta > 200) {
-              const [px, py] = project(pg.lon, pg.lat, w, h);
-              pulses.current.push({
-                fx: px,
-                fy: py,
-                tx: sx,
-                ty: sy,
-                born: performance.now(),
-                strength: Math.min(1, delta / 20000),
-                inbound: p.inbound,
-              });
-            }
-          }
-        }
       } catch {
         /* keep last */
       }
@@ -286,6 +263,9 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const selfXY = selfG ? project(selfG.lon, selfG.lat, w, h) : null;
       const peerCount = s?.peers.filter((p) => g[p.ip]).length ?? 0;
       const liveIps = new Set((s?.peers ?? []).filter((p) => g[p.ip]).map((p) => p.ip));
+      // Anchors of labels already drawn this frame — shared by both loops so a
+      // green (discovery) and purple (connected) label can't stack on each other.
+      const labelAnchors: [number, number][] = [];
 
       // Known peers (last 30 days) that aren't currently connected: faint grey so
       // there's something at startup, or a green "probing" arc + flashing "?"
@@ -333,13 +313,23 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               ctx.fillStyle = GREEN(0.5);
               ctx.fill();
             }
-            if (st === "probing") {
-              const qx = px + (dx / len) * 12, qy = py + (dy / len) * 12;
-              ctx.fillStyle = GREEN(0.2 + 0.3 * Math.abs(Math.sin(now / 450)));
-              ctx.font = "bold 12px system-ui";
-              ctx.textAlign = "center";
-              ctx.textBaseline = "middle";
-              ctx.fillText("?", qx, qy);
+            // "city ?" on the FAR side of the dot (across from the green arc),
+            // small Courier — one machine hailing another. Flashes ~every 2-5s for
+            // 2s (desynced per IP), and is skipped if it'd land on another label.
+            const env = labelPulse(now, ip, 4000, 7000, 2000);
+            if (env > 0.02) {
+              const label = kp.city || g[ip]?.city || ip;
+              const ux = dx / len, uy = dy / len;
+              const lx = px + ux * 9, ly = py + uy * 9;
+              const overlaps = labelAnchors.some(([ax, ay]) => Math.hypot(ax - lx, ay - ly) < 22);
+              if (!overlaps) {
+                labelAnchors.push([lx, ly]);
+                ctx.font = "10px 'Courier New', Courier, monospace";
+                ctx.textAlign = ux >= 0 ? "left" : "right";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = GREEN(0.7 * env);
+                ctx.fillText(`${label} ?`, lx, ly);
+              }
             }
           }
         }
@@ -359,9 +349,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }
       }
 
-      // arced links self→peer, revealed one-by-one (staggered reveal time), each
-      // greeting with a brief green flash then settling to its inbound/outbound
-      // colour with a gentle pulse.
+      // Established connections: a solid purple/blue arc at HALF the curvature of
+      // the green probing arcs (so they don't overlap), revealed one-by-one. Each
+      // carries a slow, per-peer desynced pulse travelling peer→you — continual
+      // communication, much slower than the probes, NOT a synchronised burst.
       if (s && selfXY) {
         for (const p of s.peers) {
           const pg = g[p.ip];
@@ -371,31 +362,49 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           const [px, py] = project(pg.lon, pg.lat, w, h);
           const revAge = now - rev;
           const fresh = revAge < 2200;
-          const pulse = 0.12 + 0.1 * (0.5 + 0.5 * Math.sin(now / 500 + phaseOf(p.ip)));
-          const bez = upArc(selfXY[0], selfXY[1], px, py);
+          const col = p.inbound ? inbound : outbound;
+          const bez = upArc(selfXY[0], selfXY[1], px, py, 0.5); // half curvature
           ctx.beginPath();
           for (let u = 0; u <= 1.0001; u += 0.05) {
             const [x, y] = bez(u);
             u === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
           }
-          ctx.strokeStyle = fresh ? GREEN(0.6 * (1 - revAge / 2200) + 0.2) : (p.inbound ? inbound : outbound)(pulse);
-          ctx.lineWidth = fresh ? 1.6 : 0.8;
+          // green flash while first connecting, then a clearly-visible colour arc
+          ctx.strokeStyle = fresh ? GREEN(0.6 * (1 - revAge / 2200) + 0.2) : col(0.55);
+          ctx.lineWidth = fresh ? 1.6 : 1;
           ctx.stroke();
+          // slow continual comms pulse (desynced per peer), up to ~80% opacity
+          if (!fresh) {
+            const period = 4200; // much slower than the green ~1.4s
+            const travel = 3000;
+            const local = (now + (phaseOf(p.ip) / (Math.PI * 2)) * period) % period;
+            if (local < travel) {
+              const u = 1 - local / travel; // travel from the peer (u=1) toward you (u=0)
+              const [hx, hy] = bez(u);
+              ctx.beginPath();
+              ctx.arc(hx, hy, 2.4, 0, Math.PI * 2);
+              ctx.fillStyle = col(0.8);
+              ctx.fill();
+            }
+            // city label in the peer's colour, flashing only ~every 10-20s so
+            // connected nodes stay uncluttered.
+            const env = labelPulse(now, p.ip, 10000, 20000, 2500);
+            if (env > 0.02) {
+              const dx = px - selfXY[0], dy = py - selfXY[1];
+              const len = Math.hypot(dx, dy) || 1;
+              const ux = dx / len, uy = dy / len;
+              const lx = px + ux * 9, ly = py + uy * 9;
+              if (!labelAnchors.some(([ax, ay]) => Math.hypot(ax - lx, ay - ly) < 22)) {
+                labelAnchors.push([lx, ly]);
+                ctx.font = "10px 'Courier New', Courier, monospace";
+                ctx.textAlign = ux >= 0 ? "left" : "right";
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = col(0.85 * env);
+                ctx.fillText(g[p.ip]?.city || p.ip, lx, ly);
+              }
+            }
+          }
         }
-      }
-
-      // traffic pulses (fade over ~3s, travel peer→self)
-      pulses.current = pulses.current.filter((p) => now - p.born < 3000);
-      for (const p of pulses.current) {
-        const t = (now - p.born) / 3000;
-        const life = 1 - t;
-        const x = p.fx + (p.tx - p.fx) * t;
-        const y = p.fy + (p.ty - p.fy) * t;
-        const col = p.inbound ? inbound : outbound;
-        ctx.beginPath();
-        ctx.arc(x, y, 2 + 2 * p.strength, 0, Math.PI * 2);
-        ctx.fillStyle = col(0.7 * life);
-        ctx.fill();
       }
 
       // peer dots, clustered by ~1° cell (size by count)
