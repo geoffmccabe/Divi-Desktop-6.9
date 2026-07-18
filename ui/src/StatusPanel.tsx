@@ -62,7 +62,8 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
           if (prevPeers.current != null && p > prevPeers.current) {
             setPeerFlash(true);
             playSound("peer");
-            setTimeout(() => setPeerFlash(false), 1000);
+            // 3s gold pulse — the app-wide "something just updated" signal.
+            setTimeout(() => setPeerFlash(false), 3000);
           }
           prevPeers.current = p;
         }
@@ -71,7 +72,9 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
       }
     };
     poll();
-    const id = setInterval(poll, 10000);
+    // Poll a bit faster so a new peer shows up close to when it connects. This
+    // is a light call; the heavy pollers are elsewhere.
+    const id = setInterval(poll, 5000);
     return () => {
       alive = false;
       clearInterval(id);
@@ -131,12 +134,12 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
         <div className="wl-chip-row">
           <button
             type="button"
-            className={"glass-chip px-4 py-2 peers-chip" + (peerFlash ? " peer-flash" : "")}
+            className="glass-chip px-4 py-2 peers-chip"
             title="Peers you're connected to"
             onClick={onOpenNetwork}
           >
-            <span className="chip-label chip-label-peers">Peers</span>
-            <span className="chip-num">{peers}</span>
+            <span className={"chip-label chip-label-peers" + (peerFlash ? " gold-flash" : "")}>Peers</span>
+            <span className={"chip-num" + (peerFlash ? " gold-flash" : "")}>{peers}</span>
           </button>
           <button
             type="button"

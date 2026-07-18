@@ -710,3 +710,15 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .value-cur-rm:disabled { opacity: 0.3; cursor: default; }
 .value-add { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 .value-add .wl-input { flex: 1; min-width: 0; }
+
+/* ---- Reusable "something just updated" pulse: bright gold → back to the
+   element's own colour over 3s, with a glow that fades out. Apply .gold-flash
+   for 3s whenever a value updates (peers, confirmations, etc.). ---- */
+.gold-flash { animation: gold-flash 3s ease-out; }
+@keyframes gold-flash {
+  0% {
+    color: hsl(48 100% 58%);
+    text-shadow: 0 0 12px hsl(48 100% 58% / 0.95), 0 0 5px hsl(48 100% 58% / 0.9);
+  }
+  100% { text-shadow: 0 0 0 transparent; }
+}
