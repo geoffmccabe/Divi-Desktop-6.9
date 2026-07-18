@@ -6,9 +6,20 @@ import { walletAddresses, lotteryBoard, type LotteryBoard } from "./api";
 
 const short = (a: string) => (a.length > 16 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a);
 
+// Cache the computed leaderboard so it shows instantly and never blanks to
+// "no wins" while the (expensive) recompute runs or the node is busy.
+const CACHE = "dd69.lotteryBoard";
+function loadCache(): LotteryBoard | null {
+  try {
+    return JSON.parse(localStorage.getItem(CACHE) || "null");
+  } catch {
+    return null;
+  }
+}
+
 export function LotteryDropdown({ open }: { open: boolean }) {
   const [render, setRender] = useState(open);
-  const [board, setBoard] = useState<LotteryBoard | null>(null);
+  const [board, setBoard] = useState<LotteryBoard | null>(() => loadCache());
   const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
@@ -23,9 +34,18 @@ export function LotteryDropdown({ open }: { open: boolean }) {
       try {
         const addrs = await walletAddresses();
         const b = await lotteryBoard(addrs.map((a) => a.address));
-        if (alive) setBoard(b);
+        // Only replace what we show if the recompute actually returned data —
+        // otherwise keep the last-known board rather than blanking it.
+        if (alive && b.leaders.length > 0) {
+          setBoard(b);
+          try {
+            localStorage.setItem(CACHE, JSON.stringify(b));
+          } catch {
+            /* storage full */
+          }
+        }
       } catch {
-        if (alive) setBoard({ leaders: [], yourBig: 0, yourSmall: 0, yourPoints: 0 });
+        /* keep the cached board */
       } finally {
         if (alive) setScanning(false);
       }
