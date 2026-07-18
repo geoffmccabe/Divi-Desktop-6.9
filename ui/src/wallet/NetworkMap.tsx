@@ -61,6 +61,27 @@ function hslVar(name: string): (a: number) => string {
 }
 const GREEN = (a: number) => `hsla(145, 80%, 50%, ${a})`;
 
+// Dark sunglasses drawn above the centre of a node's circle (the "face"), scaled
+// to it — the stake-winner marker. Drawn last so nothing covers it.
+function drawGlasses(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
+  const s = Math.max(6, r * 1.5); // glasses half-width
+  const gy = cy - r * 0.35; // sit above centre
+  const lx = cx - s * 0.5, rx = cx + s * 0.5;
+  const lensRx = s * 0.42, lensRy = s * 0.34;
+  ctx.save();
+  ctx.fillStyle = "rgba(8,8,12,0.95)";
+  ctx.strokeStyle = "rgba(8,8,12,0.95)";
+  ctx.lineWidth = Math.max(1, s * 0.16);
+  ctx.beginPath(); ctx.ellipse(lx, gy, lensRx, lensRy, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(rx, gy, lensRx, lensRy, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(lx + lensRx * 0.7, gy - lensRy * 0.2); ctx.lineTo(rx - lensRx * 0.7, gy - lensRy * 0.2); ctx.stroke();
+  // subtle shine on each lens
+  ctx.fillStyle = "rgba(255,255,255,0.25)";
+  ctx.beginPath(); ctx.ellipse(lx - lensRx * 0.3, gy - lensRy * 0.3, lensRx * 0.25, lensRy * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(rx - lensRx * 0.3, gy - lensRy * 0.3, lensRx * 0.25, lensRy * 0.2, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
 type ProbeState = "probing" | "online" | "offline";
 
 
@@ -120,6 +141,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const knownRef = useRef<Known>({});
   const probeRef = useRef<Map<string, ProbeState>>(new Map());
   const lastProbe = useRef(0); // last re-ping time (re-ping every 60s)
+  // The node currently wearing the "stake winner" sunglasses. NOTE: the real
+  // winner (an address) can't be mapped to a node/IP, so for now this rotates to
+  // a peer each block-interval as a visual placeholder.
+  const winnerRef = useRef<string | null>(null);
+  const winnerAt = useRef(0);
   // View transform: auto-fit the active network to the viewport, or the user's
   // manual scroll-zoom. `auto` re-fits every frame until the user scrolls.
   const viewRef = useRef({ scale: 1, tx: 0, ty: 0, auto: true });
@@ -152,6 +178,14 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         const s = await networkPeers();
         if (!alive || !s) return;
         setSnap(s);
+        // Rotate the "stake winner" sunglasses to a peer each ~block-interval
+        // (placeholder — the real winner address can't be mapped to a node).
+        const nowW = performance.now();
+        if (s.peers.length && nowW - winnerAt.current > 60000) {
+          winnerAt.current = nowW;
+          const idx = Math.floor(((nowW / 60000) % s.peers.length + s.peers.length) % s.peers.length);
+          winnerRef.current = s.peers[idx].ip;
+        }
         // Once well-connected (20+ peers), (re)ping the 30-day known nodes to see
         // which are still active — first at 20 peers, then every 60s. Each wave
         // flips nodes back to "probing" (a green wave) before settling to blue
@@ -648,6 +682,16 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         ctx.strokeStyle = selfCol(0.5);
         ctx.lineWidth = 1.5;
         ctx.stroke();
+      }
+
+      // stake-winner sunglasses — drawn LAST so no other node's circle covers it
+      {
+        const wip = winnerRef.current;
+        const wg = wip ? g[wip] : null;
+        if (wg) {
+          const [wx, wy] = P(wg.lon, wg.lat);
+          drawGlasses(ctx, wx, wy, 6);
+        }
       }
 
       // Collect hover targets (screen positions + real details). Note: a peer's
