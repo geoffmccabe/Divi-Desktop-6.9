@@ -72,6 +72,24 @@ interface HoverPoint {
   tone?: "blue"; // active-but-not-connected background node
 }
 
+// The node's last-known location, persisted so the map shows instantly on boot
+// (even offline / before the node answers) and only updates once verified.
+function loadSelfGeo(): Geo | null {
+  try {
+    const s = localStorage.getItem("dd69.selfGeo");
+    return s ? (JSON.parse(s) as Geo) : null;
+  } catch {
+    return null;
+  }
+}
+function saveSelfGeo(g: Geo) {
+  try {
+    localStorage.setItem("dd69.selfGeo", JSON.stringify(g));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 function fmtDur(secs: number): string {
   if (secs < 90) return `${Math.max(0, secs)}s`;
   if (secs < 5400) return `${Math.round(secs / 60)}m`;
@@ -108,6 +126,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
 
   useEffect(() => {
     let alive = true;
+    // Show the last-known node location immediately, from disk.
+    selfRef.current = loadSelfGeo();
 
     // Load the 30-day known peers + geolocate them (for city labels). We DON'T
     // ping them yet — that starts once we have 20 live peers (see the poll).
@@ -158,6 +178,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         await resolveGeos(ips, (m) => {
           if (!alive) return;
           setGeos({ ...m });
+          // The node's verified location → cache it (stable + persisted to disk).
+          if (s.selfIp && m[s.selfIp]) {
+            selfRef.current = m[s.selfIp];
+            saveSelfGeo(m[s.selfIp]);
+          }
           const seen: { ip: string; lat: number; lon: number; city?: string; country?: string }[] = [];
           let newIdx = 0;
           for (const p of s.peers) {
