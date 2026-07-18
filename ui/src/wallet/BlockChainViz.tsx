@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { recentBlocks, type Block } from "./api";
 import nyan from "../assets/nyan_cat.webp";
 
-// TEST: show the Nyan cat on every block. In production it should only appear on
-// blocks where the USER won the stake/lottery (gate on the winner being one of
-// the user's addresses).
+// TEST FLAGS — while approving the look. In production these become real:
+//   nyan/rainbow/"BY YOU" only when the winner is one of the user's addresses.
 const SHOW_NYAN_ALL = true;
+const TEST_USER_WON = true; // rainbow border + "STAKE WON BY YOU" on every block
 
 // The block-chain visualization: a chain of translucent panels drifting slowly
 // right→left across the map bottom at ONE CONSTANT speed (5 minutes to cross).
@@ -123,10 +123,11 @@ export function BlockChainViz() {
       {blocks.map((b) => {
         const scroll = b.txids.length > 6;
         const list = scroll ? [...b.txids, ...b.txids] : b.txids;
+        const wonByUser = TEST_USER_WON; // later: winner ∈ user's addresses
         return (
           <div
             key={b.height}
-            className="bv-panel"
+            className={"bv-panel" + (wonByUser ? " bv-rainbow" : "")}
             ref={(el) => {
               if (el) panelRefs.current.set(b.height, el);
               else panelRefs.current.delete(b.height);
@@ -136,7 +137,7 @@ export function BlockChainViz() {
             <div className="bv-height">Block #{b.height.toLocaleString()}</div>
             {b.stakeWinner && (
               <div className="bv-stake">
-                <div className="bv-stake-hdr">STAKE WON</div>
+                <div className="bv-stake-hdr">{wonByUser ? "STAKE WON BY YOU" : "STAKE WON"}</div>
                 {b.stakeAmount != null && (
                   <div className="bv-stake-amt">+{b.stakeAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} $DIVI</div>
                 )}

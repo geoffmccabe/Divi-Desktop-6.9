@@ -521,7 +521,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .netmap-tip-blue { border-color: hsl(210 85% 62% / 0.7); }
 .netmap-tip-blue .netmap-tip-title { color: hsl(210 85% 66%); }
 .netmap-tip-blue .netmap-tip-line { color: hsl(210 60% 70%); }
-.netmap-tip-line { font-size: 0.72rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; word-break: break-all; }
+.netmap-tip-line { font-size: 0.72rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; word-break: break-all; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.netmap-tip-won { color: hsl(var(--warning)); font-weight: 700; white-space: nowrap; flex-shrink: 0; }
 .netmap-empty {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: hsl(var(--muted-foreground)); font-size: 0.9rem;
@@ -538,6 +539,17 @@ h1, h2, h3 { font-family: var(--font-heading); }
   border: 1px solid hsl(var(--primary) / 0.55); /* thin, matches node lines */
   border-radius: 8px; padding: 8px 10px; box-sizing: border-box; overflow: hidden;
   display: flex; flex-direction: column; gap: 4px; will-change: transform, width;
+}
+/* Rainbow border for a block the user won — cycles the full hue, 2×/second. */
+.bv-rainbow { animation: bv-rainbow 0.5s linear infinite; }
+@keyframes bv-rainbow {
+  0%   { border-color: hsl(0   90% 60%); }
+  17%  { border-color: hsl(60  90% 60%); }
+  33%  { border-color: hsl(120 90% 60%); }
+  50%  { border-color: hsl(180 90% 60%); }
+  67%  { border-color: hsl(240 90% 60%); }
+  83%  { border-color: hsl(300 90% 60%); }
+  100% { border-color: hsl(360 90% 60%); }
 }
 .bv-height { font-size: 0.9rem; font-weight: 600; color: hsl(var(--primary)); font-family: ui-monospace, monospace; white-space: nowrap; }
 .bv-stake { display: flex; flex-direction: column; gap: 1px; }

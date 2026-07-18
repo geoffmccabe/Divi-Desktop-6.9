@@ -61,6 +61,10 @@ function hslVar(name: string): (a: number) => string {
 }
 const GREEN = (a: number) => `hsla(145, 80%, 50%, ${a})`;
 
+// TEST: treat the user as the current stake winner (big gold node + glasses +
+// bright pulse + "STAKE WON!" on hover). Later this becomes a real condition.
+const USER_IS_WINNER = true;
+
 // Dark sunglasses drawn above the centre of a node's circle (the "face"), scaled
 // to it — the stake-winner marker. Drawn last so nothing covers it.
 function drawGlasses(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
@@ -91,6 +95,7 @@ interface HoverPoint {
   title: string;
   lines: string[];
   tone?: "blue"; // active-but-not-connected background node
+  won?: boolean; // this node just won the stake (shows STAKE WON! in the tooltip)
 }
 
 // The node's last-known location, persisted so the map shows instantly on boot
@@ -670,28 +675,43 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }
       }
 
-      // our node — pulsing ring
+      // our node — gold dot (3× and decked out when the user is the stake winner)
       if (selfXY) {
-        const pulse = 4 + 2 * Math.sin(now / 400);
+        const r = USER_IS_WINNER ? 15 : 5;
+        // when winning: bright, bigger concentric pulse rings (like the search intro)
+        if (USER_IS_WINNER) {
+          const maxR = 75;
+          for (let k = 0; k < 4; k++) {
+            const prog = (now / 900 + k / 4) % 1;
+            ctx.beginPath();
+            ctx.arc(selfXY[0], selfXY[1], r + prog * maxR, 0, Math.PI * 2);
+            ctx.strokeStyle = selfCol((1 - prog) * 0.85);
+            ctx.lineWidth = 2.5;
+            ctx.stroke();
+          }
+        }
         ctx.beginPath();
-        ctx.arc(selfXY[0], selfXY[1], 5, 0, Math.PI * 2);
+        ctx.arc(selfXY[0], selfXY[1], r, 0, Math.PI * 2);
         ctx.fillStyle = selfCol(1);
         ctx.fill();
+        const pulse = 4 + 2 * Math.sin(now / 400);
         ctx.beginPath();
-        ctx.arc(selfXY[0], selfXY[1], 5 + pulse, 0, Math.PI * 2);
+        ctx.arc(selfXY[0], selfXY[1], r + pulse, 0, Math.PI * 2);
         ctx.strokeStyle = selfCol(0.5);
         ctx.lineWidth = 1.5;
         ctx.stroke();
+        if (USER_IS_WINNER) drawGlasses(ctx, selfXY[0], selfXY[1], r);
         // "YOU" label below the dot, in matching gold
         ctx.fillStyle = selfCol(1);
         ctx.font = "bold 11px system-ui";
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillText("YOU", selfXY[0], selfXY[1] + 11);
+        ctx.fillText("YOU", selfXY[0], selfXY[1] + r + 6);
       }
 
-      // stake-winner sunglasses — drawn LAST so no other node's circle covers it
-      {
+      // stake-winner sunglasses on a peer (only when the winner ISN'T the user —
+      // when it is, the glasses are on our own big gold node above). Drawn LAST.
+      if (!USER_IS_WINNER) {
         const wip = winnerRef.current;
         const wg = wip ? g[wip] : null;
         if (wg) {
@@ -710,6 +730,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           y: selfXY[1],
           title: "Your node",
           lines: [selfG.ip, [selfG.city, selfG.country].filter(Boolean).join(", "), selfG.isp || ""].filter(Boolean),
+          won: USER_IS_WINNER,
         });
       }
       if (s) {
@@ -731,6 +752,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               p.subver || "",
               `Block ${p.height.toLocaleString()}`,
             ].filter(Boolean),
+            won: !USER_IS_WINNER && p.ip === winnerRef.current,
           });
         }
       }
@@ -795,7 +817,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           >
             <div className="netmap-tip-title">{hover.title}</div>
             {hover.lines.map((l, i) => (
-              <div key={i} className="netmap-tip-line">{l}</div>
+              <div key={i} className="netmap-tip-line">
+                {l}
+                {hover.won && i === hover.lines.length - 1 && <span className="netmap-tip-won">STAKE WON!</span>}
+              </div>
             ))}
           </div>
         )}
