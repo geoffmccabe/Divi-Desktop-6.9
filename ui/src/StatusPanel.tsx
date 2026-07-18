@@ -111,48 +111,52 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
         {reconnecting && <span className="wl-refreshing"> · refreshing…</span>}
       </p>
       <div className="wl-status-chips">
-        <div className="glass-chip px-4 py-2">
-          <span className="chip-label">Block height</span>
-          {showBlocks != null ? (
-            liveBlocks != null ? (
-              <span className="chip-num">{showBlocks.toLocaleString()}</span>
+        <div className="wl-chip-row">
+          <div className="glass-chip px-4 py-2">
+            <span className="chip-label">Block height</span>
+            {showBlocks != null ? (
+              liveBlocks != null ? (
+                <span className="chip-num">{showBlocks.toLocaleString()}</span>
+              ) : (
+                <span className="chip-num blk-stale">
+                  {showBlocks.toLocaleString()}
+                  <span className="blk-more">+?</span>
+                </span>
+              )
             ) : (
-              <span className="chip-num blk-stale">
-                {showBlocks.toLocaleString()}
-                <span className="blk-more">+?</span>
-              </span>
-            )
-          ) : (
-            <span className="chip-num">—</span>
-          )}
+              <span className="chip-num">—</span>
+            )}
+          </div>
         </div>
-        <button
-          type="button"
-          className={"glass-chip px-4 py-2 peers-chip" + (peerFlash ? " peer-flash" : "")}
-          title="Peers you're connected to"
-          onClick={onOpenNetwork}
-        >
-          <span className="chip-label chip-label-peers">Peers</span>
-          <span className="chip-num">{peers}</span>
-        </button>
-        <button
-          type="button"
-          className="glass-chip px-4 py-2 peers-chip"
-          title="All nodes discovered on the network (peers + 30-day known)"
-          onClick={onOpenNetwork}
-        >
-          <span className="chip-label chip-label-nodes">Nodes</span>
-          <span className="chip-num">{nodeCount.toLocaleString()}</span>
-        </button>
-        <button
-          type="button"
-          className="glass-chip px-4 py-2 peers-chip"
-          title="Open the network map"
-          onClick={onOpenNetwork}
-        >
-          <span className="chip-label chip-label-map">Map</span>
-          <span className="chip-num chip-map-icon"><Icon name="globe" size={18} /></span>
-        </button>
+        <div className="wl-chip-row">
+          <button
+            type="button"
+            className={"glass-chip px-4 py-2 peers-chip" + (peerFlash ? " peer-flash" : "")}
+            title="Peers you're connected to"
+            onClick={onOpenNetwork}
+          >
+            <span className="chip-label chip-label-peers">Peers</span>
+            <span className="chip-num">{peers}</span>
+          </button>
+          <button
+            type="button"
+            className="glass-chip px-4 py-2 peers-chip"
+            title="All nodes discovered on the network (peers + 30-day known)"
+            onClick={onOpenNetwork}
+          >
+            <span className="chip-label chip-label-nodes">Nodes</span>
+            <span className="chip-num">{nodeCount.toLocaleString()}</span>
+          </button>
+          <button
+            type="button"
+            className="glass-chip px-4 py-2 peers-chip"
+            title="Open the network map"
+            onClick={onOpenNetwork}
+          >
+            <span className="chip-label chip-label-map">Map</span>
+            <span className="chip-num chip-map-icon"><Icon name="globe" size={18} /></span>
+          </button>
+        </div>
       </div>
     </div>
   );

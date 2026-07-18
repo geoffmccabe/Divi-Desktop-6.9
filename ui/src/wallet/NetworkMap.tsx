@@ -3,6 +3,7 @@ import { networkPeers, probePeers, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, type Known } from "./knownPeers";
 import { BlockChainViz } from "./BlockChainViz";
+import { userWonRecently } from "./stakeWin";
 import { Icon } from "../Icon";
 import worldmap from "../assets/worldmap.json";
 
@@ -60,10 +61,6 @@ function hslVar(name: string): (a: number) => string {
   return (a: number) => `hsla(${h}, ${s}%, ${l}%, ${a})`;
 }
 const GREEN = (a: number) => `hsla(145, 80%, 50%, ${a})`;
-
-// TEST: treat the user as the current stake winner (big gold node + glasses +
-// bright pulse + "STAKE WON!" on hover). Later this becomes a real condition.
-const USER_IS_WINNER = true;
 
 // Dark sunglasses drawn above the centre of a node's circle (the "face"), scaled
 // to it — the stake-winner marker. Drawn last so nothing covers it.
@@ -383,6 +380,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const g = geosRef.current;
       const now = performance.now();
       const BLUE = (a: number) => `hsla(210, 85%, 62%, ${a})`;
+      const USER_IS_WINNER = userWonRecently(); // deck out our node right after a win
 
       // The node's true location comes from its own public IP; cache it so it's
       // stable (and never falls back to the app machine's location).

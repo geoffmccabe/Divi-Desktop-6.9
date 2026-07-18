@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { recentBlocks, type Block } from "./api";
+import { recentBlocks, walletAddresses, type Block } from "./api";
+import { markUserWon } from "./stakeWin";
 import nyan from "../assets/nyan_cat.webp";
-
-// TEST FLAGS — while approving the look. In production these become real:
-//   nyan/rainbow/"BY YOU" only when the winner is one of the user's addresses.
-const SHOW_NYAN_ALL = true;
-const TEST_USER_WON = true; // rainbow border + "STAKE WON BY YOU" on every block
 
 // The block-chain visualization: a chain of translucent panels drifting slowly
 // right→left across the map bottom at ONE CONSTANT speed (5 minutes to cross).
@@ -31,6 +27,26 @@ export function BlockChainViz() {
   const panelRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const lastHeight = useRef(0);
   const lastAdd = useRef(0);
+  const userAddrs = useRef<Set<string>>(new Set());
+
+  // The node-wallet's own addresses — used to tell if a block was won by the user.
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const a = await walletAddresses();
+        if (alive && a.length) userAddrs.current = new Set(a.map((x) => x.address));
+      } catch {
+        /* keep what we have */
+      }
+    };
+    load();
+    const id = setInterval(load, 120000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -65,6 +81,8 @@ export function BlockChainViz() {
             });
             lastHeight.current = newOnes[newOnes.length - 1].height;
             lastAdd.current = now;
+            // If the user won any of these new blocks, flag it (lights up our node).
+            if (added.some((b) => b.stakeWinner && userAddrs.current.has(b.stakeWinner))) markUserWon();
             setBlocks((prev) => [...prev, ...added]);
           }
         }
@@ -123,7 +141,7 @@ export function BlockChainViz() {
       {blocks.map((b) => {
         const scroll = b.txids.length > 6;
         const list = scroll ? [...b.txids, ...b.txids] : b.txids;
-        const wonByUser = TEST_USER_WON; // later: winner ∈ user's addresses
+        const wonByUser = !!(b.stakeWinner && userAddrs.current.has(b.stakeWinner));
         return (
           <div
             key={b.height}
@@ -133,7 +151,7 @@ export function BlockChainViz() {
               else panelRefs.current.delete(b.height);
             }}
           >
-            {SHOW_NYAN_ALL && <img className="bv-nyan" src={nyan} alt="" />}
+            {wonByUser && <img className="bv-nyan" src={nyan} alt="" />}
             <div className="bv-height">Block #{b.height.toLocaleString()}</div>
             {b.stakeWinner && (
               <div className="bv-stake">

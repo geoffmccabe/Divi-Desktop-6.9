@@ -225,7 +225,9 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .wl-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
 .wl-status-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; }
 .wl-status-line { font-size: 1rem; color: hsl(var(--foreground)); margin: 4px 0 14px; }
-.wl-status-chips { display: flex; gap: 12px; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+.wl-status-chips { display: flex; flex-direction: column; gap: 8px; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+.wl-chip-row { display: flex; gap: 8px; }
+.wl-chip-row > .glass-chip { flex: 1 1 0; min-width: 0; } /* Block height full-width; Peers/Nodes/Map equal thirds */
 .wl-status-chips span { color: hsl(var(--foreground)); font-size: 0.95rem; }
 
 .receive { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
@@ -262,7 +264,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .act-receive { color: hsl(var(--success)); }
 .act-send { color: hsl(var(--warning)); }
 .act-stake { color: hsl(var(--primary)); }
-.act-stake-earned { color: hsl(var(--success)); font-weight: 600; }
+.act-stake-earned { color: hsl(var(--success)); font-weight: 600; font-size: 1rem; }
 .act-amt { font-weight: 600; }
 .act-amt.pos { color: hsl(var(--success)); }
 .act-amt.neg { color: hsl(var(--foreground)); }

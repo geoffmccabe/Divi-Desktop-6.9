@@ -26,9 +26,7 @@ function Row({ t }: { t: Tx }) {
     <li className="activity-row">
       <div className="act-top">
         {t.kind === "stake" ? (
-          <span className="act-kind">
-            Transaction - <span className="act-stake-earned">Stake Earned!</span>
-          </span>
+          <span className="act-kind act-stake-earned">Stake Earned!</span>
         ) : (
           <span className={"act-kind act-" + t.kind}>{KIND_LABEL[t.kind] ?? "Transaction"}</span>
         )}
