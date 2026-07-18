@@ -384,6 +384,7 @@ struct GeoDto {
     lon: f64,
     city: String,
     country: String,
+    isp: String,
 }
 
 #[derive(Serialize)]
@@ -409,7 +410,7 @@ async fn probe_peers(ips: Vec<String>) -> Vec<ProbeDto> {
 #[tauri::command]
 async fn self_geo() -> Option<GeoDto> {
     tauri::async_runtime::spawn_blocking(|| {
-        network::self_geo().map(|g| GeoDto { ip: g.ip, lat: g.lat, lon: g.lon, city: g.city, country: g.country })
+        network::self_geo().map(|g| GeoDto { ip: g.ip, lat: g.lat, lon: g.lon, city: g.city, country: g.country, isp: g.isp })
     })
     .await
     .ok()
@@ -422,7 +423,7 @@ async fn geolocate_ips(ips: Vec<String>) -> Vec<GeoDto> {
     tauri::async_runtime::spawn_blocking(move || {
         network::geolocate(&ips)
             .into_iter()
-            .map(|g| GeoDto { ip: g.ip, lat: g.lat, lon: g.lon, city: g.city, country: g.country })
+            .map(|g| GeoDto { ip: g.ip, lat: g.lat, lon: g.lon, city: g.city, country: g.country, isp: g.isp })
             .collect()
     })
     .await

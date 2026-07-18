@@ -71,6 +71,7 @@ export interface Geo {
   lon: number;
   city: string;
   country: string;
+  isp?: string;
 }
 export const networkPeers = () => invoke<PeerSnapshot | null>("network_peers");
 export const geolocateIps = (ips: string[]) => invoke<Geo[]>("geolocate_ips", { ips });

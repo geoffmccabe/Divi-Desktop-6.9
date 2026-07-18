@@ -3,6 +3,7 @@ import { nodeStatus, type NodeStatus } from "./bridge";
 import { PHASE_COLOR, PHASE_LABEL } from "./status";
 import { playSound } from "./sound";
 import { Icon } from "./Icon";
+import { loadKnown } from "./wallet/knownPeers";
 
 // The node status block for the Overview tab. No glass wrapper — it nests
 // inside the wallet panel.
@@ -17,6 +18,8 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
   const [lastPeers, setLastPeers] = useState<number | null>(null);
   const [peerFlash, setPeerFlash] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  // Total nodes discovered across the network (peers + the 30-day known set).
+  const [nodeCount, setNodeCount] = useState(0);
   const prevPeers = useRef<number | null>(null);
   // The last status where the node actually answered, so a brief connection miss
   // keeps showing the true state instead of flapping to a scary message.
@@ -30,6 +33,7 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
         const s = await nodeStatus();
         if (!alive) return;
         setError(false);
+        setNodeCount(Object.keys(loadKnown()).length); // grows as the map discovers nodes
         const answered = s.peers != null; // got real data back from the node
         const definitive = answered || s.phase === "stopped" || s.phase === "crashed";
         if (answered) lastGood.current = s;
@@ -133,6 +137,15 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
           </span>
           <br />
           <span>{peers}</span>
+        </button>
+        <button
+          type="button"
+          className="glass-chip px-4 py-2 peers-chip"
+          title="All nodes discovered on the network (peers + 30-day known)"
+          onClick={onOpenNetwork}
+        >
+          Nodes<br />
+          <span>{nodeCount.toLocaleString()}</span>
         </button>
       </div>
     </div>

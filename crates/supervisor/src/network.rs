@@ -78,6 +78,7 @@ pub struct Geo {
     pub lon: f64,
     pub city: String,
     pub country: String,
+    pub isp: String,
 }
 
 /// A real liveness probe: try to open a TCP connection to each peer's Divi P2P
@@ -108,7 +109,7 @@ pub fn probe(ips: &[String], port: u16) -> Vec<(String, bool)> {
 /// Our own approximate location, from the caller IP as the geo service sees it.
 /// Works before any peer connects, so the map can center on us at boot.
 pub fn self_geo() -> Option<Geo> {
-    let resp = ureq::get("http://ip-api.com/json?fields=status,country,city,lat,lon,query")
+    let resp = ureq::get("http://ip-api.com/json?fields=status,country,city,lat,lon,isp,query")
         .timeout(Duration::from_secs(10))
         .call()
         .ok()?;
@@ -122,6 +123,7 @@ pub fn self_geo() -> Option<Geo> {
         lon: v["lon"].as_f64()?,
         city: v["city"].as_str().unwrap_or("").to_string(),
         country: v["country"].as_str().unwrap_or("").to_string(),
+        isp: v["isp"].as_str().unwrap_or("").to_string(),
     })
 }
 
@@ -133,7 +135,7 @@ pub fn geolocate(ips: &[String]) -> Vec<Geo> {
         return Vec::new();
     }
     let body = Value::Array(ips.iter().take(100).map(|ip| json!(ip)).collect());
-    let resp = ureq::post("http://ip-api.com/batch?fields=status,country,city,lat,lon,query")
+    let resp = ureq::post("http://ip-api.com/batch?fields=status,country,city,lat,lon,isp,query")
         .timeout(Duration::from_secs(12))
         .send_string(&body.to_string());
     let text = match resp {
@@ -152,6 +154,7 @@ pub fn geolocate(ips: &[String]) -> Vec<Geo> {
                         lon: e["lon"].as_f64()?,
                         city: e["city"].as_str().unwrap_or("").to_string(),
                         country: e["country"].as_str().unwrap_or("").to_string(),
+                        isp: e["isp"].as_str().unwrap_or("").to_string(),
                     })
                 })
                 .collect()

@@ -59,7 +59,6 @@ function hslVar(name: string): (a: number) => string {
   return (a: number) => `hsla(${h}, ${s}%, ${l}%, ${a})`;
 }
 const GREEN = (a: number) => `hsla(145, 80%, 50%, ${a})`;
-const GREY = (a: number) => `hsla(0, 0%, 62%, ${a})`;
 
 type ProbeState = "probing" | "online" | "offline";
 
@@ -69,6 +68,7 @@ interface HoverPoint {
   y: number;
   title: string;
   lines: string[];
+  tone?: "blue"; // active-but-not-connected background node
 }
 
 function fmtDur(secs: number): string {
@@ -98,7 +98,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // Peers seen in the last 30 days (grey at startup), and the live probe result.
   const knownRef = useRef<Known>({});
   const probeRef = useRef<Map<string, ProbeState>>(new Map());
-  const probeStarted = useRef(false); // pinging the 30-day nodes waits for 20 peers
+  const lastProbe = useRef(0); // last re-ping time (re-ping every 60s)
+  // View transform: auto-fit the active network to the viewport, or the user's
+  // manual scroll-zoom. `auto` re-fits every frame until the user scrolls.
+  const viewRef = useRef({ scale: 1, tx: 0, ty: 0, auto: true });
 
   // Center on us right away (caller-IP lookup), before any peer connects.
   useEffect(() => {
@@ -130,12 +133,16 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         const s = await networkPeers();
         if (!alive || !s) return;
         setSnap(s);
-        // Once we're well-connected (20+ peers), start pinging the 30-day known
-        // nodes to see which are still active — the blue background network.
-        if (s.peers.length >= 20 && !probeStarted.current) {
-          probeStarted.current = true;
+        // Once well-connected (20+ peers), (re)ping the 30-day known nodes to see
+        // which are still active — first at 20 peers, then every 60s. Each wave
+        // flips nodes back to "probing" (a green wave) before settling to blue
+        // (active) or dropping off the map (dead).
+        const nowMs = performance.now();
+        if (s.peers.length >= 20 && nowMs - lastProbe.current > 60000) {
+          lastProbe.current = nowMs;
           const kips = Object.keys(knownRef.current);
           if (kips.length) {
+            for (const ip of kips) if (probeRef.current.get(ip) === "offline") probeRef.current.set(ip, "probing");
             probePeers(kips)
               .then((res) => {
                 if (!alive) return;
@@ -246,8 +253,28 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       setHover(best ? { ...best, x: mx, y: my } : null);
     };
     const onLeave = () => setHover(null);
+    // Scroll wheel zooms about the cursor (turns off auto-fit); double-click
+    // re-enables auto-fit to the active network.
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = wrap.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const v = viewRef.current;
+      v.auto = false;
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      const ns = Math.min(Math.max(v.scale * factor, 0.5), 40);
+      v.tx = mx - ((mx - v.tx) / v.scale) * ns;
+      v.ty = my - ((my - v.ty) / v.scale) * ns;
+      v.scale = ns;
+    };
+    const onDbl = () => {
+      viewRef.current.auto = true;
+    };
     wrap.addEventListener("mousemove", onMove);
     wrap.addEventListener("mouseleave", onLeave);
+    wrap.addEventListener("wheel", onWheel, { passive: false });
+    wrap.addEventListener("dblclick", onDbl);
 
     let raf = 0;
     const draw = () => {
@@ -257,7 +284,6 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       if (!ctx) return;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
-      if (baseRef.current) ctx.drawImage(baseRef.current, 0, 0, w, h);
 
       const outbound = hslVar("--primary");
       const inbound = hslVar("--info"); // blue — clearly distinct from purple outbound
@@ -265,27 +291,60 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const s = snapRef.current;
       const g = geosRef.current;
       const now = performance.now();
+      const BLUE = (a: number) => `hsla(210, 85%, 62%, ${a})`;
 
       const selfG = (s?.selfIp && g[s.selfIp]) || selfRef.current;
-      const selfXY = selfG ? project(selfG.lon, selfG.lat, w, h) : null;
       const peerCount = s?.peers.filter((p) => g[p.ip]).length ?? 0;
       const liveCount = s?.peers.length ?? 0;
       const liveIps = new Set((s?.peers ?? []).filter((p) => g[p.ip]).map((p) => p.ip));
-      // Anchors of labels already drawn this frame — shared by all loops so
-      // labels can't stack on each other.
+      // Anchors of labels already drawn this frame — shared by all loops.
       const labelAnchors: [number, number][] = [];
 
-      // ── Background network mesh: 30-day known nodes verified active, once we're
-      // well-connected (20+ peers). Faint blue, drawn FIRST so it sits underneath
-      // the real connection arcs. Each node links to its 3 nearest neighbours — a
-      // plausible (not literal) topology — so the wider network looks alive.
+      // The active background nodes (verified-active 30-day nodes, not connected),
+      // computed once and reused for both the auto-fit and the mesh drawing.
+      const blueNodes =
+        liveCount >= 20
+          ? Object.entries(knownRef.current)
+              .filter(([ip]) => !liveIps.has(ip) && probeRef.current.get(ip) === "online")
+              .sort((a, b) => b[1].lastSeen - a[1].lastSeen)
+              .slice(0, 40)
+          : [];
+
+      // ── View transform: auto-fit the active network (self + live peers + active
+      // background nodes) into the viewport with a 2% edge margin, or honour the
+      // user's manual scroll-zoom. project() = full-world pixels; the view then
+      // scales/pans those onto the screen, and P() applies it.
+      const wpx = (lon: number, lat: number) => project(lon, lat, w, h);
+      if (viewRef.current.auto) {
+        const pts: [number, number][] = [];
+        if (selfG) pts.push(wpx(selfG.lon, selfG.lat));
+        if (s) for (const p of s.peers) { const pg = g[p.ip]; if (pg) pts.push(wpx(pg.lon, pg.lat)); }
+        for (const [, kp] of blueNodes) pts.push(wpx(kp.lon, kp.lat));
+        if (pts.length >= 2) {
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          for (const [x, y] of pts) { minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y); }
+          const bw = Math.max(maxX - minX, 30), bh = Math.max(maxY - minY, 30);
+          const scale = Math.min((w * 0.96) / bw, (h * 0.96) / bh, 14);
+          viewRef.current.scale = scale;
+          viewRef.current.tx = w / 2 - ((minX + maxX) / 2) * scale;
+          viewRef.current.ty = h / 2 - ((minY + maxY) / 2) * scale;
+        }
+      }
+      const view = viewRef.current;
+      const P = (lon: number, lat: number): [number, number] => {
+        const [x, y] = wpx(lon, lat);
+        return [x * view.scale + view.tx, y * view.scale + view.ty];
+      };
+
+      // base world map, scaled/panned by the view
+      if (baseRef.current) ctx.drawImage(baseRef.current, view.tx, view.ty, w * view.scale, h * view.scale);
+
+      const selfXY = selfG ? P(selfG.lon, selfG.lat) : null;
+
+      // ── Background network mesh: active 30-day nodes as a faint-blue living
+      // network UNDER the real connection arcs (3-nearest-neighbour topology).
       if (selfXY && liveCount >= 20) {
-        const BLUE = (a: number) => `hsla(210, 85%, 62%, ${a})`;
-        const blue = Object.entries(knownRef.current)
-          .filter(([ip]) => !liveIps.has(ip) && probeRef.current.get(ip) === "online")
-          .sort((a, b) => b[1].lastSeen - a[1].lastSeen)
-          .slice(0, 40)
-          .map(([ip, kp]) => ({ ip, kp, xy: project(kp.lon, kp.lat, w, h) }));
+        const blue = blueNodes.map(([ip, kp]) => ({ ip, kp, xy: P(kp.lon, kp.lat) }));
         // 3-nearest-neighbour mesh lines (faint, slowly pulsing, ≤20%)
         for (let i = 0; i < blue.length; i++) {
           const a = blue[i];
@@ -327,27 +386,19 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }
       }
 
-      // Known peers (last 30 days), the DISCOVERY phase (before 20 peers): green
-      // probing arcs + city labels while we're still finding the network.
-      if (selfXY && liveCount < 20) {
+      // DISCOVERY pings: any known node currently being pinged shows a green
+      // probing arc + "city ?" label. Before the first ping (pre-20-peers) every
+      // node is "probing" → continuous green; afterward the periodic re-ping
+      // (every 60s) makes green waves. Reachable nodes live in the blue layer
+      // above; dead ones simply aren't drawn.
+      if (selfXY) {
         const [sx, sy] = selfXY;
         for (const [ip, kp] of Object.entries(knownRef.current)) {
           if (liveIps.has(ip)) continue; // connected ones are drawn below
-          const [px, py] = project(kp.lon, kp.lat, w, h);
-          // Default to "probing" so arcs appear the instant the map opens (the
-          // same moment as the grey dots), then persist for reachable peers.
-          // Only peers the probe found unreachable drop to a static grey dot.
           const st = probeRef.current.get(ip) ?? "probing";
-          if (st === "offline") {
-            // known but unreachable: faint grey dot
-            ctx.beginPath();
-            ctx.arc(px, py, 2.5, 0, Math.PI * 2);
-            ctx.fillStyle = GREY(0.28);
-            ctx.fill();
-          } else {
-            // probing OR reachable → the pulsing green up-arc (grows from us to
-            // the peer, ≤50% at the tip, desynced per-IP). The flashing "?" only
-            // shows while we're still checking; once reachable it drops away.
+          if (st !== "probing") continue; // online → blue layer; offline → hidden
+          const [px, py] = P(kp.lon, kp.lat);
+          {
             const dx = px - sx, dy = py - sy;
             const len = Math.hypot(dx, dy) || 1;
             const bez = upArc(sx, sy, px, py);
@@ -418,7 +469,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           if (!pg) continue;
           const rev = revealed.current.get(p.ip);
           if (rev == null || rev > now) continue; // its turn hasn't come yet
-          const [px, py] = project(pg.lon, pg.lat, w, h);
+          const [px, py] = P(pg.lon, pg.lat);
           const revAge = now - rev;
           const fresh = revAge < 2200;
           const col = p.inbound ? inbound : outbound;
@@ -475,7 +526,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           const rev = revealed.current.get(p.ip);
           if (rev == null || rev > now) continue; // not revealed yet
           const k = clusterKey(pg.lat, pg.lon);
-          const [x, y] = project(pg.lon, pg.lat, w, h);
+          const [x, y] = P(pg.lon, pg.lat);
           const c = clusters.get(k) ?? { x, y, n: 0, inbound: 0 };
           c.n += 1;
           if (p.inbound) c.inbound += 1;
@@ -503,7 +554,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           const revAge = now - rev;
           if (revAge >= 1800) continue;
           const t = revAge / 1800;
-          const [x, y] = project(pg.lon, pg.lat, w, h);
+          const [x, y] = P(pg.lon, pg.lat);
           ctx.beginPath();
           ctx.arc(x, y, 4 + 26 * t, 0, Math.PI * 2);
           ctx.strokeStyle = GREEN((1 - t) * 0.8);
@@ -539,7 +590,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           x: selfXY[0],
           y: selfXY[1],
           title: "Your node",
-          lines: [selfG.ip, [selfG.city, selfG.country].filter(Boolean).join(", ")].filter(Boolean),
+          lines: [selfG.ip, [selfG.city, selfG.country].filter(Boolean).join(", "), selfG.isp || ""].filter(Boolean),
         });
       }
       if (s) {
@@ -548,7 +599,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           if (!pg) continue;
           const rev = revealed.current.get(p.ip);
           if (rev == null || rev > now) continue;
-          const [x, y] = project(pg.lon, pg.lat, w, h);
+          const [x, y] = P(pg.lon, pg.lat);
           pts.push({
             x,
             y,
@@ -557,6 +608,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               p.ip,
               p.inbound ? "Inbound peer" : "Outbound peer",
               `Ping ${Math.round(p.pingMs)} ms · connected ${fmtDur(p.connSecs)}`,
+              pg.isp || "",
               p.subver || "",
               `Block ${p.height.toLocaleString()}`,
             ].filter(Boolean),
@@ -566,19 +618,21 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const liveNow = new Set((s?.peers ?? []).filter((p) => g[p.ip]).map((p) => p.ip));
       for (const [ip, kp] of Object.entries(knownRef.current)) {
         if (liveNow.has(ip)) continue;
-        const [x, y] = project(kp.lon, kp.lat, w, h);
         const st = probeRef.current.get(ip) ?? "probing";
-        const loc = [kp.city, kp.country].filter(Boolean).join(", ");
-        pts.push({
-          x,
-          y,
-          title: loc || ip,
-          lines: [
-            loc ? ip : "",
-            st === "online" ? "Reachable (not connected)" : st === "probing" ? "Checking…" : "Idle / unreachable",
-            "Seen in the last 30 days",
-          ].filter(Boolean),
-        });
+        const [x, y] = P(kp.lon, kp.lat);
+        const loc = [kp.city || g[ip]?.city, kp.country || g[ip]?.country].filter(Boolean).join(", ");
+        const isp = g[ip]?.isp || "";
+        if (st === "online") {
+          // Active background node (not one of our peers) — styled blue.
+          pts.push({ x, y, title: loc || ip, lines: ["Active Network", "Not Connected", isp, loc ? ip : ""].filter(Boolean), tone: "blue" });
+        } else {
+          pts.push({
+            x,
+            y,
+            title: loc || ip,
+            lines: [loc ? ip : "", st === "probing" ? "Checking…" : "Idle / unreachable", isp, "Seen in the last 30 days"].filter(Boolean),
+          });
+        }
       }
       pointsRef.current = pts;
 
@@ -590,6 +644,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       ro.disconnect();
       wrap.removeEventListener("mousemove", onMove);
       wrap.removeEventListener("mouseleave", onLeave);
+      wrap.removeEventListener("wheel", onWheel);
+      wrap.removeEventListener("dblclick", onDbl);
     };
   }, []);
 
@@ -609,7 +665,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         <canvas ref={canvasRef} className="netmap-canvas" />
         {hover && (
           <div
-            className="netmap-tip"
+            className={"netmap-tip" + (hover.tone === "blue" ? " netmap-tip-blue" : "")}
             style={{
               left: Math.min(hover.x + 14, (wrapRef.current?.clientWidth ?? 9999) - 220),
               top: Math.max(8, hover.y - 10),
