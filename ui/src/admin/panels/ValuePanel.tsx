@@ -12,7 +12,14 @@ import {
 // CoinGecko built-but-off) and which fiat currencies to offer. The Spendable
 // card shows the value in the chosen display currency.
 
-const COMMON = ["USD", "EUR", "GBP", "CRC", "CAD", "AUD", "MXN", "JPY", "CHF", "BRL", "INR", "CNY", "KRW"];
+// Top ~60 currencies by economy/population (incl. Argentina, Costa Rica).
+const COMMON = [
+  "USD", "EUR", "JPY", "GBP", "CNY", "AUD", "CAD", "CHF", "HKD", "SGD", "SEK", "KRW",
+  "NOK", "NZD", "INR", "MXN", "TWD", "ZAR", "BRL", "DKK", "PLN", "THB", "ILS", "IDR",
+  "CZK", "TRY", "HUF", "CLP", "PHP", "MYR", "COP", "RUB", "RON", "PEN", "ARS", "VND",
+  "EGP", "NGN", "BDT", "PKR", "UAH", "KZT", "GHS", "LKR", "NPR", "UYU", "BGN", "CRC",
+  "AED", "SAR", "QAR", "KWD", "BHD", "OMR", "MAD", "DZD", "KES", "ETB", "MMK", "IQD", "VES",
+];
 
 export function ValuePanel() {
   const [s, setS] = useState<ValueSettings>(() => getValueSettings());

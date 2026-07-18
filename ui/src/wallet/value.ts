@@ -30,15 +30,26 @@ export function setValueSettings(s: ValueSettings) {
 }
 
 export const CURRENCY_SYMBOLS: Record<string, string> = {
-  USD: "$", EUR: "€", GBP: "£", JPY: "¥", CNY: "¥", CRC: "₡", CAD: "C$", AUD: "A$",
-  MXN: "$", BRL: "R$", CHF: "Fr", INR: "₹", KRW: "₩", RUB: "₽", ZAR: "R", NGN: "₦",
+  USD: "$", EUR: "€", JPY: "¥", GBP: "£", CNY: "¥", AUD: "A$", CAD: "C$", CHF: "Fr",
+  HKD: "HK$", SGD: "S$", SEK: "kr", KRW: "₩", NOK: "kr", NZD: "NZ$", INR: "₹", MXN: "$",
+  TWD: "NT$", ZAR: "R", BRL: "R$", DKK: "kr", PLN: "zł", THB: "฿", ILS: "₪", IDR: "Rp",
+  CZK: "Kč", TRY: "₺", HUF: "Ft", CLP: "$", PHP: "₱", MYR: "RM", COP: "$", RUB: "₽",
+  RON: "lei", PEN: "S/", ARS: "$", VND: "₫", EGP: "£", NGN: "₦", BDT: "৳", PKR: "₨",
+  UAH: "₴", KZT: "₸", GHS: "₵", LKR: "₨", NPR: "₨", UYU: "$U", BGN: "лв", CRC: "₡",
+  AED: "د.إ", SAR: "﷼", QAR: "﷼", KWD: "د.ك", BHD: "ب.د", OMR: "﷼", MAD: "د.م", DZD: "د.ج",
+  KES: "Sh", ETB: "Br", MMK: "K", IQD: "ع.د", VES: "Bs",
 };
 export const symbolFor = (code: string) => CURRENCY_SYMBOLS[code.toUpperCase()] ?? "";
 
-export function formatFiat(amount: number, code: string): string {
-  const sym = symbolFor(code);
+// Value + code split so callers can style the code (e.g. small grey "USD").
+export function fiatParts(amount: number, code: string): { value: string; code: string } {
   const n = amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return `${sym}${n} ${code.toUpperCase()}`;
+  return { value: `${symbolFor(code)}${n}`, code: code.toUpperCase() };
+}
+
+export function formatFiat(amount: number, code: string): string {
+  const p = fiatParts(amount, code);
+  return `${p.value} ${p.code}`;
 }
 
 // Module-level cache shared across components; short TTL to stay live but light.
@@ -61,9 +72,10 @@ export async function fetchPrices(force = false): Promise<DiviPrices> {
   return inflight;
 }
 
-// The fiat value of a DIVI amount in the display currency, or null if we have no
-// price yet (never fabricated). Re-fetches every 2 min and on settings changes.
-export function useDiviValue(diviAmount: number | null): string | null {
+// The fiat value of a DIVI amount in the display currency as {value, code}, or
+// null if we have no price yet (never fabricated). Re-fetches every 2 min and on
+// settings changes.
+export function useDiviValue(diviAmount: number | null): { value: string; code: string } | null {
   const [prices, setPrices] = useState<DiviPrices | null>(cache?.data ?? null);
   const [display, setDisplay] = useState(() => getValueSettings().display);
 
@@ -90,5 +102,5 @@ export function useDiviValue(diviAmount: number | null): string | null {
   if (diviAmount == null || !prices) return null;
   const per = prices.prices[display.toLowerCase()];
   if (per == null) return null;
-  return formatFiat(diviAmount * per, display);
+  return fiatParts(diviAmount * per, display);
 }

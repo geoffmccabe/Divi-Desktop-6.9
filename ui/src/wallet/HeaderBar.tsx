@@ -86,20 +86,24 @@ export function HeaderBar() {
     <div className="header-bar" ref={barRef}>
       {/* Spendable */}
       <div className="hdr-panel glass-panel">
-        <div className="hdr-spend-top">
-          <span className="bl-label">Spendable</span>
-          {fiat && <span className="bl-fiat">{fiat}</span>}
-        </div>
+        <span className="bl-label">Spendable</span>
         <span className="bl-amt">
-          {spend ? (
-            <>
-              {spend.whole}
-              <span className="bl-frac">.{spend.frac}</span>
-            </>
-          ) : (
-            "—"
-          )}{" "}
-          <em>DIVI</em>
+          <span className="bl-divi">
+            {spend ? (
+              <>
+                {spend.whole}
+                <span className="bl-frac">.{spend.frac}</span>
+              </>
+            ) : (
+              "—"
+            )}{" "}
+            <em>DIVI</em>
+          </span>
+          {fiat && (
+            <span className="bl-fiat">
+              {fiat.value} <span className="bl-fiat-code">{fiat.code}</span>
+            </span>
+          )}
         </span>
       </div>
 

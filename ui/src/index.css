@@ -217,7 +217,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
   display: flex; flex-direction: column; gap: 6px;
 }
 .bl-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: hsl(var(--muted-foreground)); }
-.bl-amt { font-size: 1.5rem; font-weight: 600; color: hsl(var(--foreground)); }
+.bl-amt { font-size: 1.5rem; font-weight: 600; color: hsl(var(--foreground)); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.bl-divi { white-space: nowrap; }
 .bl-amt em { font-size: 0.85rem; font-style: normal; color: hsl(var(--muted-foreground)); }
 .bl-sub { width: 100%; font-size: 0.8rem; color: hsl(var(--muted-foreground)); display: flex; gap: 12px; }
 
@@ -714,8 +715,10 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .send-done { font-size: 1.1rem; font-weight: 600; color: hsl(var(--success)); }
 
 /* ---- Spendable fiat value (header) ---- */
-.hdr-spend-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.bl-fiat { font-size: 0.8rem; font-weight: 600; color: hsl(var(--primary)); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Fiat value: same size as the DIVI amount, white, right-justified in the row;
+   the currency code is small grey to match the DIVI decimals. */
+.bl-fiat { color: hsl(var(--foreground)); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bl-fiat-code { font-size: 0.6em; color: hsl(var(--muted-foreground)); font-weight: 400; }
 
 /* ---- Admin: Value panel ---- */
 .value-panel { display: flex; flex-direction: column; gap: 18px; }
