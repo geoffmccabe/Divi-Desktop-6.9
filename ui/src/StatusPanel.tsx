@@ -129,12 +129,10 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
         <button
           type="button"
           className={"glass-chip px-4 py-2 peers-chip" + (peerFlash ? " peer-flash" : "")}
-          title="Show the network map"
+          title="Peers you're connected to"
           onClick={onOpenNetwork}
         >
-          <span className="chip-label chip-label-peers">
-            Peers <Icon name="globe" size={13} />
-          </span>
+          <span className="chip-label chip-label-peers">Peers</span>
           <span className="chip-num">{peers}</span>
         </button>
         <button
@@ -145,6 +143,15 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
         >
           <span className="chip-label chip-label-nodes">Nodes</span>
           <span className="chip-num">{nodeCount.toLocaleString()}</span>
+        </button>
+        <button
+          type="button"
+          className="glass-chip px-4 py-2 peers-chip"
+          title="Open the network map"
+          onClick={onOpenNetwork}
+        >
+          <span className="chip-label chip-label-map">Map</span>
+          <span className="chip-num chip-map-icon"><Icon name="globe" size={18} /></span>
         </button>
       </div>
     </div>

@@ -464,13 +464,15 @@ h1, h2, h3 { font-family: var(--font-heading); }
 /* Block height that's behind: greyed last-known value with a "+?" hint. */
 .wl-refreshing { color: hsl(var(--muted-foreground)); font-style: italic; }
 /* Uniform status chips: same label size + same number size across all three. */
-.wl-status-chips .glass-chip { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left; }
+.wl-status-chips .glass-chip { display: flex; flex-direction: column; gap: 2px; align-items: center; text-align: center; }
 .chip-label { font-size: 0.72rem; color: hsl(var(--muted-foreground)); display: inline-flex; align-items: center; gap: 4px; }
 .chip-num { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); }
 .chip-num.blk-stale { color: hsl(var(--muted-foreground)); }
 .chip-label-peers { color: hsl(var(--primary)); }
-.chip-label-peers .ic { color: hsl(var(--primary)); }
 .chip-label-nodes { color: hsl(210 85% 62%); } /* blue, matches Full Network */
+.chip-label-map { color: #fff; }
+.chip-map-icon { display: inline-flex; }
+.chip-map-icon .ic { color: #fff; }
 .blk-stale { color: hsl(var(--muted-foreground)); }
 .blk-more { color: hsl(var(--muted-foreground)); font-size: 0.8em; margin-left: 2px; }
 
