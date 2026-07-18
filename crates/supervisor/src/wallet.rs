@@ -255,6 +255,39 @@ pub struct LotteryWin {
     pub small: i64,
 }
 
+/// One entry in the live lottery leaderboard (the current top candidates for the
+/// next draw): the address, its rank (0 = would win the big prize) and score.
+pub struct LotteryEntry {
+    pub rank: i64,
+    pub address: String,
+    pub score: String,
+}
+
+/// The current lottery candidates (the live leaderboard for the next draw),
+/// ordered best rank first.
+pub fn lottery_leaderboard(cfg: &NodeConfig) -> Vec<LotteryEntry> {
+    let rpc = RpcClient::new(cfg);
+    let Ok(v) = rpc.call("getlotteryblockwinners", json!([])) else {
+        return Vec::new();
+    };
+    let mut out: Vec<LotteryEntry> = v["Lottery Candidates"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|c| {
+                    Some(LotteryEntry {
+                        rank: c["Rank"].as_i64().unwrap_or(0),
+                        address: c["Address"].as_str()?.to_string(),
+                        score: c["Score"].as_str().unwrap_or("").to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort_by_key(|e| e.rank);
+    out
+}
+
 pub fn lottery_wins(cfg: &NodeConfig, addrs: &[String]) -> Vec<LotteryWin> {
     let rpc = RpcClient::new(cfg);
     let want: HashSet<&str> = addrs.iter().map(|s| s.as_str()).collect();

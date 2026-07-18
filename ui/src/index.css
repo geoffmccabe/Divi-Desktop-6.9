@@ -463,6 +463,25 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .stake-win-big { color: hsl(var(--warning)); }
 .stake-win-small { color: hsl(var(--foreground)); }
 
+/* Next-lottery toggle button + lottery dropdown */
+.hdr-lottery-btn { display: inline-flex; align-items: flex-start; gap: 5px; background: none; border: none; cursor: pointer; color: inherit; padding: 0; }
+.lot-mywins { padding: 4px 4px 10px; border-bottom: 1px solid hsl(var(--border) / 0.4); margin-bottom: 8px; }
+.lot-mywins-hdr { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--muted-foreground)); margin-bottom: 5px; }
+.lot-mywins-row { display: flex; gap: 16px; font-size: 0.9rem; align-items: baseline; }
+.lot-win-big { color: hsl(var(--warning)); }
+.lot-total { margin-left: auto; font-weight: 600; color: hsl(var(--primary)); }
+.lot-board-hdr { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
+.lot-board { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.lot-row {
+  display: flex; align-items: center; gap: 10px; font-size: 0.75rem;
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
+  border-radius: 6px; padding: 6px 8px;
+}
+.lot-rank { color: hsl(var(--primary)); font-weight: 600; flex-shrink: 0; width: 28px; }
+.lot-addr { flex: 1; font-family: ui-monospace, monospace; color: hsl(var(--muted-foreground)); word-break: break-all; }
+.lot-score { font-family: ui-monospace, monospace; color: hsl(var(--muted-foreground)); flex-shrink: 0; }
+
 /* Block height that's behind: greyed last-known value with a "+?" hint. */
 .wl-refreshing { color: hsl(var(--muted-foreground)); font-style: italic; }
 /* Uniform status chips: same label size + same number size across all three. */

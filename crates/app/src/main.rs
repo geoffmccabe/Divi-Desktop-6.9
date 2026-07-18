@@ -454,11 +454,33 @@ async fn recent_blocks(count: i64) -> Vec<BlockDto> {
     .unwrap_or_default()
 }
 
+#[derive(Serialize)]
+struct LotteryEntryDto {
+    rank: i64,
+    address: String,
+    score: String,
+}
+
+/// The live lottery leaderboard (current candidates for the next draw).
+#[tauri::command]
+async fn lottery_leaderboard() -> Vec<LotteryEntryDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else { return Vec::new() };
+        wallet::lottery_leaderboard(&cfg)
+            .into_iter()
+            .map(|e| LotteryEntryDto { rank: e.rank, address: e.address, score: e.score })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             node_status,
             recent_blocks,
+            lottery_leaderboard,
             wallet_balance,
             wallet_addresses,
             new_receive_address,

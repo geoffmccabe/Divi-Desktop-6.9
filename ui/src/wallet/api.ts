@@ -93,6 +93,12 @@ export const probePeers = (ips: string[]) => invoke<Probe[]>("probe_peers", { ip
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
 export const lotteryWins = (addresses: string[]) => invoke<LotteryWin[]>("lottery_wins", { addresses });
+export interface LotteryEntry {
+  rank: number;
+  address: string;
+  score: string;
+}
+export const lotteryLeaderboard = () => invoke<LotteryEntry[]>("lottery_leaderboard");
 export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");
 export const newReceiveAddress = () => invoke<string>("new_receive_address");
 export const recentActivity = () => invoke<Tx[]>("recent_activity");

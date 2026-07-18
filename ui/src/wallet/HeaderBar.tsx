@@ -3,10 +3,11 @@ import { walletBalance, walletAddresses, lotteryInfo, type Balance, type AddrInf
 import { fmtDiviParts } from "../status";
 import { AddressDropdown } from "./AddressDropdown";
 import { StakingDropdown } from "./StakingDropdown";
+import { LotteryDropdown } from "./LotteryDropdown";
 import { LotteryCountdown } from "./LotteryCountdown";
 import { Icon } from "../Icon";
 
-type OpenPanel = null | "staking" | "addresses";
+type OpenPanel = null | "staking" | "addresses" | "lottery";
 
 export function HeaderBar() {
   const [bal, setBal] = useState<Balance | null>(null);
@@ -107,8 +108,12 @@ export function HeaderBar() {
             {bal ? fmtDiviParts(bal.staking).whole : "—"} <em>DIVI</em>
           </span>
         </button>
-        <LotteryCountdown info={lottery} />
+        <button type="button" className="hdr-lottery-btn" onClick={() => toggle("lottery")}>
+          <LotteryCountdown info={lottery} />
+          <span className={"addr-chevron" + (openPanel === "lottery" ? " up" : "")}>▾</span>
+        </button>
         <StakingDropdown open={openPanel === "staking"} />
+        <LotteryDropdown open={openPanel === "lottery"} />
       </div>
 
       {/* My Addresses */}
