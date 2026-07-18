@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { recentBlocks, type Block } from "./api";
+import nyan from "../assets/nyan_cat.webp";
+
+// TEST: show the Nyan cat on every block. In production it should only appear on
+// blocks where the USER won the stake/lottery (gate on the winner being one of
+// the user's addresses).
+const SHOW_NYAN_ALL = true;
 
 // The block-chain visualization: a chain of translucent panels drifting slowly
 // right→left across the map bottom at ONE CONSTANT speed (5 minutes to cross).
@@ -126,6 +132,7 @@ export function BlockChainViz() {
               else panelRefs.current.delete(b.height);
             }}
           >
+            {SHOW_NYAN_ALL && <img className="bv-nyan" src={nyan} alt="" />}
             <div className="bv-height">Block #{b.height.toLocaleString()}</div>
             {b.stakeWinner && (
               <div className="bv-stake">

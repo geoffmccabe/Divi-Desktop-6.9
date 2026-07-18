@@ -550,3 +550,5 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .bv-txs-inner.bv-scrolling { animation: bv-scroll linear infinite; }
 @keyframes bv-scroll { from { transform: translateY(0); } to { transform: translateY(-50%); } }
 .bv-tx { font-size: 0.6rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; white-space: nowrap; }
+/* Nyan cat — a win! top-right, on top of the stats, right-justified. */
+.bv-nyan { position: absolute; top: 5px; right: 6px; height: 24px; width: auto; z-index: 3; pointer-events: none; image-rendering: pixelated; }
