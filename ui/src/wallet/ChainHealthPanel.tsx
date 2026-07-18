@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { chainOrphans } from "./api";
 import { loadHealth, mergeHealth, healthStats, type ChainHealthStore } from "./chainHealth";
+import { ForkTree } from "./ForkTree";
 
 // Settings → CHAIN HEALTH. Reads the node's fork list, keeps our own running
 // history of it, and says plainly how the chain is behaving.
@@ -88,6 +89,8 @@ export function ChainHealthPanel() {
       <p className="set-note" style={{ color: tint, fontWeight: 600 }}>
         {s.verdictText}
       </p>
+
+      <ForkTree forks={store.forks} tip={store.maxTip} />
 
       {s.forkCount > 0 && (
         <>
