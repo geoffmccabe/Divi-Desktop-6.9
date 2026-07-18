@@ -611,8 +611,33 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 
 /* ---- Settings sections (Password, Coin Maturity) ---- */
-.settings-view { display: flex; flex-direction: column; gap: 26px; max-width: 560px; }
-.set-section { display: flex; flex-direction: column; gap: 10px; }
+.settings-view { display: flex; flex-direction: column; gap: 20px; max-width: 600px; }
+/* Each settings section is its own black panel on the dark-grey settings area. */
+.set-section {
+  display: flex; flex-direction: column; gap: 10px;
+  background: rgba(0, 0, 0, 0.38);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--panel-radius);
+  padding: 20px 22px;
+}
+/* Wrapper the tabs scroll to; scroll-margin clears the sticky tab bar. */
+.set-panel-wrap { scroll-margin-top: 64px; }
+
+/* Sticky tab row: jump to a panel; you can also just scroll. */
+.set-tabs {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; gap: 8px; flex-wrap: wrap;
+  padding: 10px 0 12px;
+  background: hsl(var(--panel-bg));
+  margin-bottom: -4px;
+}
+.set-tab {
+  border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 7px 14px;
+  background: rgba(0, 0, 0, 0.3); color: hsl(var(--muted-foreground));
+  font-size: 0.85rem; cursor: pointer; white-space: nowrap;
+}
+.set-tab:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary) / 0.6); }
+.set-tab-active { color: #fff; background: hsl(var(--primary)); border-color: transparent; }
 .set-title { font-size: 1.05rem; margin: 0; color: hsl(var(--foreground)); }
 .set-note { font-size: 0.85rem; color: hsl(var(--muted-foreground)); margin: 0; line-height: 1.5; }
 
