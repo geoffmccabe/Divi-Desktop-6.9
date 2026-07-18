@@ -2,7 +2,8 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{config::NodeConfig, poe, report, wallet};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use dd69_supervisor::{collectibles, config::NodeConfig, poe, report, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -253,6 +254,48 @@ async fn poe_verify(txid: String, hash: String) -> Result<PoeProofDto, String> {
     .map_err(|_| "internal error".to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NfdMintDto {
+    txid: String,
+    owner_addr: String,
+    content_hash: String,
+    arweave_ptr: String,
+}
+
+/// Mint a Divi Collectible (NFD). The UI passes the file bytes as base64; the
+/// content is encrypted to the owner locally and only the encrypted bundle is
+/// stored. Returns the handle the UI keeps to view it later.
+#[tauri::command]
+async fn nfd_mint(content_b64: String) -> Result<NfdMintDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let bytes = STANDARD.decode(&content_b64).map_err(|_| "bad file data".to_string())?;
+        let d = collectibles::mint(&cfg, &bytes)?;
+        Ok(NfdMintDto {
+            txid: d.txid,
+            owner_addr: d.owner_addr,
+            content_hash: d.content_hash,
+            arweave_ptr: d.arweave_ptr,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Fetch, decrypt, and authenticate a collectible you own. Returns the original
+/// file bytes as base64 for the UI to display. Errors if not authentic / not yours.
+#[tauri::command]
+async fn nfd_view(owner_addr: String, arweave_ptr: String, content_hash: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let bytes = collectibles::view(&cfg, &owner_addr, &arweave_ptr, &content_hash)?;
+        Ok(STANDARD.encode(bytes))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -266,7 +309,9 @@ fn main() {
             address_qr,
             open_url,
             poe_timestamp,
-            poe_verify
+            poe_verify,
+            nfd_mint,
+            nfd_view
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

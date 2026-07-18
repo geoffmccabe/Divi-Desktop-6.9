@@ -699,6 +699,7 @@ dependencies = [
 name = "divi-desktop-69"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "dd69-supervisor",
  "qrcode",
  "serde",

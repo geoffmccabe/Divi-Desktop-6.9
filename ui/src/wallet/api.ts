@@ -33,6 +33,17 @@ export interface Proof {
 export const walletBalance = () => invoke<Balance | null>("wallet_balance");
 export const poeTimestamp = (hash: string) => invoke<string>("poe_timestamp", { hash });
 export const poeVerify = (txid: string, hash: string) => invoke<Proof>("poe_verify", { txid, hash });
+
+// ── Divi Collectibles (NFD) ──────────────────────────────────────────────────
+export interface NfdMint {
+  txid: string;
+  ownerAddr: string;
+  contentHash: string;
+  arweavePtr: string;
+}
+export const nfdMint = (contentB64: string) => invoke<NfdMint>("nfd_mint", { contentB64 });
+export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string) =>
+  invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash });
 export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");
 export const newReceiveAddress = () => invoke<string>("new_receive_address");
 export const recentActivity = () => invoke<Tx[]>("recent_activity");
