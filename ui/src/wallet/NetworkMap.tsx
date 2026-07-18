@@ -547,7 +547,9 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             {
               const label = kp.city || g[ip]?.city || ip;
               const ux = dx / len, uy = dy / len;
-              const lx = px + ux * 9, ly = py + uy * 9;
+              // 15px (was 9) = one extra Courier char out, so the dot-side "?"
+              // clears the node circle instead of hiding under it.
+              const lx = px + ux * 15, ly = py + uy * 15;
               const overlaps = labelAnchors.some(([ax, ay]) => Math.hypot(ax - lx, ay - ly) < 22);
               if (!overlaps) {
                 labelAnchors.push([lx, ly]);
@@ -555,7 +557,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
                 ctx.textAlign = ux >= 0 ? "left" : "right";
                 ctx.textBaseline = "middle";
                 ctx.fillStyle = GREEN(0.7 * env);
-                ctx.fillText(`${label} ?`, lx, ly);
+                ctx.fillText(`?${label}?`, lx, ly);
               }
             }
           }
