@@ -670,3 +670,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .pw-mode-label { font-size: 0.85rem; }
 .pw-mode-hint { grid-column: 2; font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
 .pw-soon { opacity: 0.85; }
+.cm-rewards {
+  font-size: 0.8rem; color: hsl(var(--muted-foreground)); line-height: 1.5;
+  border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 8px 10px; background: hsl(var(--background) / 0.4);
+}
+.cm-rewards em { font-style: normal; opacity: 0.7; font-size: 0.8em; }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { coinMaturity, type Utxo } from "./api";
+import { coinMaturity, walletBalance, type Utxo } from "./api";
 import { fmtDivi } from "../status";
 
 // How long until a unix time, as "2d 3h 14m" / "48m 12s" — coarse when far off,
@@ -18,14 +18,21 @@ function countdown(unixTarget: number, nowMs: number): string {
 
 export function CoinMaturity() {
   const [utxos, setUtxos] = useState<Utxo[] | null>(null);
+  // Staking rewards that are confirmed but still immature don't appear in
+  // listunspent, so they can't be itemized — but they show in the balance's
+  // "immature" total. We surface that as an aggregate line so the panel matches
+  // what the header shows as "maturing".
+  const [immature, setImmature] = useState(0);
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     let alive = true;
     const load = async () => {
       try {
-        const u = await coinMaturity();
-        if (alive) setUtxos(u);
+        const [u, b] = await Promise.all([coinMaturity(), walletBalance()]);
+        if (!alive) return;
+        setUtxos(u);
+        setImmature(b?.immature ?? 0);
       } catch {
         /* node busy — keep last */
       }
@@ -56,7 +63,7 @@ export function CoinMaturity() {
 
       {utxos === null ? (
         <p className="wl-empty">Loading your coins…</p>
-      ) : list.length === 0 ? (
+      ) : list.length === 0 && immature <= 0 ? (
         <p className="wl-empty">No coins in this wallet yet.</p>
       ) : (
         <>
@@ -64,6 +71,12 @@ export function CoinMaturity() {
             <div className="cm-summary">
               {fmtDivi(maturingTotal)} <em>DIVI</em> still maturing across {maturing.length}{" "}
               {maturing.length === 1 ? "deposit" : "deposits"}
+            </div>
+          )}
+          {immature > 0 && (
+            <div className="cm-rewards">
+              {fmtDivi(immature)} <em>DIVI</em> in recent staking rewards is still maturing — these
+              need ~20 confirmations (about 20 minutes) before they can restake.
             </div>
           )}
           <ul className="cm-list">
