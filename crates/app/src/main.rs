@@ -674,6 +674,18 @@ async fn resume_staking() -> StakeStartDto {
     .unwrap_or(StakeStartDto { staking: false, needs_passphrase: false, message: "internal error".into() })
 }
 
+/// Send DIVI. `passphrase` is supplied only when the wallet must be unlocked
+/// just for this send (encrypted + ask-on-send). Returns the txid.
+#[tauri::command]
+async fn send_coins(address: String, amount: f64, passphrase: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        wallet::send_coins(&cfg, &address, amount, passphrase.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -707,7 +719,8 @@ fn main() {
             wallet_seed,
             remember_password,
             forget_password,
-            resume_staking
+            resume_staking,
+            send_coins
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

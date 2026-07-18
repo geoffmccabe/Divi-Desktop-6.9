@@ -152,6 +152,8 @@ export const walletSeed = () => invoke<string>("wallet_seed");
 export const rememberPassword = (passphrase: string) => invoke<void>("remember_password", { passphrase });
 export const forgetPassword = () => invoke<void>("forget_password");
 export const resumeStaking = () => invoke<StakeStart>("resume_staking");
+export const sendCoins = (address: string, amount: number, passphrase?: string) =>
+  invoke<string>("send_coins", { address, amount, passphrase: passphrase ?? null });
 
 // Divi block explorer for a transaction.
 export const explorerTxUrl = (txid: string) => `https://chainz.cryptoid.info/divi/tx.dws?${txid}.htm`;

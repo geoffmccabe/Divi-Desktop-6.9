@@ -675,3 +675,15 @@ h1, h2, h3 { font-family: var(--font-heading); }
   border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 8px 10px; background: hsl(var(--background) / 0.4);
 }
 .cm-rewards em { font-style: normal; opacity: 0.7; font-size: 0.8em; }
+
+/* ---- Send ---- */
+.send-panel { display: flex; flex-direction: column; gap: 16px; max-width: 440px; }
+.send-field { display: flex; flex-direction: column; gap: 5px; }
+.send-label { font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+.send-avail { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
+.send-confirm { display: flex; flex-direction: column; gap: 8px; border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 14px; }
+.send-confirm-line { margin: 0; font-size: 0.95rem; }
+.send-confirm-addr { margin: 0; font-family: ui-monospace, monospace; font-size: 0.85rem; word-break: break-all; color: hsl(var(--foreground)); }
+.send-warn { margin: 0; font-size: 0.8rem; color: hsl(var(--warning)); }
+.send-actions { display: flex; gap: 8px; margin-top: 4px; }
+.send-done { font-size: 1.1rem; font-weight: 600; color: hsl(var(--success)); }

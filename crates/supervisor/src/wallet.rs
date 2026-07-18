@@ -507,3 +507,32 @@ pub fn recent(cfg: &NodeConfig, count: i64) -> Vec<Tx> {
     out.truncate(count.max(0) as usize);
     out
 }
+
+/// Send DIVI to an address. Irreversible. If `passphrase` is given (encrypted
+/// wallet, ask-on-send), we FULL-unlock just long enough to send, then restore
+/// the safe staking-only state so staking keeps running but spends stay locked.
+/// If no passphrase (unencrypted, or a wallet the user left open), we send as-is.
+pub fn send_coins(cfg: &NodeConfig, address: &str, amount: f64, passphrase: Option<&str>) -> Result<String, String> {
+    if amount <= 0.0 {
+        return Err("Amount must be greater than zero.".into());
+    }
+    let rpc = RpcClient::new(cfg);
+
+    // Just-in-time full unlock (120s window) only when a password was supplied.
+    if let Some(pass) = passphrase {
+        rpc.call("walletpassphrase", json!([pass, 120, false]))
+            .map_err(|e| format!("Unlock failed: {e}"))?;
+    }
+
+    let result = rpc
+        .call("sendtoaddress", json!([address, amount]))
+        .map(|v| v.as_str().unwrap_or_default().to_string());
+
+    // Whether the send succeeded or not, re-lock spends: drop back to staking-only
+    // so a full-unlock window is never left open after a send.
+    if let Some(pass) = passphrase {
+        let _ = rpc.call("walletpassphrase", json!([pass, 0, true]));
+    }
+
+    result
+}
