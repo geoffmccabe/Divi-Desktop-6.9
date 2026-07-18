@@ -12,3 +12,21 @@ export function markUserWon() {
 export function userWonRecently(windowMs = 120000): boolean {
   return lastWinAt > 0 && Date.now() - lastWinAt < windowMs;
 }
+
+// Whether the wallet should be staking — remembered so it auto-resumes on open
+// (the user shouldn't have to restart staking every time they open the wallet).
+const STAKING_KEY = "dd69.stakingDesired";
+export function setStakingDesired(v: boolean) {
+  try {
+    localStorage.setItem(STAKING_KEY, v ? "1" : "0");
+  } catch {
+    /* storage unavailable */
+  }
+}
+export function stakingDesired(): boolean {
+  try {
+    return localStorage.getItem(STAKING_KEY) === "1";
+  } catch {
+    return false;
+  }
+}

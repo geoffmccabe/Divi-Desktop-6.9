@@ -71,6 +71,50 @@ pub struct Balance {
     pub immature: f64,
 }
 
+pub struct StakeStart {
+    pub staking: bool,
+    pub needs_passphrase: bool,
+    pub message: String,
+}
+
+/// Start staking. If the wallet is encrypted+locked, unlock it FOR STAKING ONLY
+/// (`walletpassphrase pass 0 true`) — it can stake but not spend — using the
+/// supplied passphrase; if none is supplied it asks for one. An unencrypted
+/// wallet stakes automatically, so this just reports the status/reason.
+pub fn start_staking(cfg: &NodeConfig, passphrase: Option<&str>) -> StakeStart {
+    let rpc = RpcClient::new(cfg);
+    let winfo = rpc.call("getwalletinfo", json!([])).unwrap_or(json!({}));
+    let encrypted = winfo.get("unlocked_until").is_some();
+    let unlocked = winfo["unlocked_until"].as_i64().map(|u| u != 0).unwrap_or(true);
+
+    if encrypted && !unlocked {
+        match passphrase {
+            Some(pass) => {
+                // timeout 0 = stay unlocked until locked; true = staking-only
+                if let Err(e) = rpc.call("walletpassphrase", json!([pass, 0, true])) {
+                    return StakeStart { staking: false, needs_passphrase: true, message: e };
+                }
+            }
+            None => {
+                return StakeStart {
+                    staking: false,
+                    needs_passphrase: true,
+                    message: "Enter your wallet password to start staking.".into(),
+                };
+            }
+        }
+    }
+
+    let s = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
+    let staking = s["staking status"].as_bool().unwrap_or(false);
+    let message = if staking {
+        "Staking is now active. ✓".into()
+    } else {
+        crate::state::staking_reason_not_staking(&s)
+    };
+    StakeStart { staking, needs_passphrase: false, message }
+}
+
 // ── Staking details ────────────────────────────────────────────────────────
 
 /// One address's staking picture: how much sits there ("size"), how many times

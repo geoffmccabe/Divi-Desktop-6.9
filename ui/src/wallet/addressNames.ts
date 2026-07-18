@@ -10,9 +10,11 @@ export function loadNames(): Record<string, string> {
   }
 }
 
+// Stores the name as typed (so spaces work while editing); callers trim on
+// commit (blur / Enter). Empty (after trim) removes the name.
 export function setName(address: string, name: string): Record<string, string> {
   const m = loadNames();
-  if (name.trim()) m[address] = name.trim();
+  if (name.trim()) m[address] = name;
   else delete m[address];
   localStorage.setItem(KEY, JSON.stringify(m));
   return m;

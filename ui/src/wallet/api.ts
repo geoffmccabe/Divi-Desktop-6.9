@@ -99,6 +99,12 @@ export interface LotteryEntry {
   score: string;
 }
 export const lotteryLeaderboard = () => invoke<LotteryEntry[]>("lottery_leaderboard");
+export interface StakeStart {
+  staking: boolean;
+  needsPassphrase: boolean;
+  message: string;
+}
+export const startStaking = (passphrase?: string) => invoke<StakeStart>("start_staking", { passphrase: passphrase ?? null });
 export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");
 export const newReceiveAddress = () => invoke<string>("new_receive_address");
 export const recentActivity = () => invoke<Tx[]>("recent_activity");

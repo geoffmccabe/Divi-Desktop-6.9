@@ -1,5 +1,7 @@
-import { useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { NAV } from "./nav";
+import { startStaking } from "./wallet/api";
+import { stakingDesired } from "./wallet/stakeWin";
 import { Sidebar } from "./Sidebar";
 import { StatusPanel } from "./StatusPanel";
 import { HeaderBar } from "./wallet/HeaderBar";
@@ -33,6 +35,12 @@ const EXTRA_TITLES: Record<string, string> = { network: "Network Map" };
 export function Shell() {
   // Boot into the network map — a nice "finding peers" intro; the map's own
   // Return-to-Overview button (and any nav click) leaves it.
+  // Auto-resume staking on open if it was on before (unencrypted wallets resume
+  // automatically; encrypted ones will need the password once that flow lands).
+  useEffect(() => {
+    if (stakingDesired()) startStaking().catch(() => {});
+  }, []);
+
   const [view, setView] = useState("network");
   const Active = VIEWS[view] ?? Overview;
   const label = NAV.find((n) => n.id === view)?.label ?? EXTRA_TITLES[view] ?? "";

@@ -1,8 +1,60 @@
 import { useEffect, useState } from "react";
-import { stakingWallets, lotteryWins, type StakeWallet, type LotteryWin } from "./api";
+import { stakingWallets, lotteryWins, startStaking, type StakeWallet, type LotteryWin } from "./api";
 import { loadNames } from "./addressNames";
+import { setStakingDesired } from "./stakeWin";
 import { fmtDivi } from "../status";
 import { Icon } from "../Icon";
+
+function StartStaking() {
+  const [msg, setMsg] = useState<string | null>(null);
+  const [needPass, setNeedPass] = useState(false);
+  const [pass, setPass] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const go = async (passphrase?: string) => {
+    setBusy(true);
+    try {
+      const r = await startStaking(passphrase);
+      setNeedPass(r.needsPassphrase);
+      setMsg(r.message);
+      if (r.staking) {
+        setStakingDesired(true); // remember: resume staking on next open
+        setPass("");
+      }
+    } catch (e) {
+      setMsg(String(e));
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="stake-start">
+      <button type="button" className="wl-btn wl-btn-primary" disabled={busy} onClick={() => go()}>
+        {busy ? "Starting…" : "Start Staking"}
+      </button>
+      {needPass && (
+        <form
+          className="stake-start-pass"
+          onSubmit={(e) => {
+            e.preventDefault();
+            go(pass);
+          }}
+        >
+          <input
+            className="wl-input"
+            type="password"
+            placeholder="Wallet password"
+            value={pass}
+            onChange={(e) => setPass(e.target.value)}
+            autoFocus
+          />
+          <button type="submit" className="wl-btn" disabled={busy || !pass}>Unlock &amp; stake</button>
+        </form>
+      )}
+      {msg && <p className="stake-start-msg">{msg}</p>}
+    </div>
+  );
+}
 
 // Opened from the Staking header panel: every staking address by size, with its
 // stake count, first/last stake dates, and big/small lottery wins.
@@ -104,6 +156,7 @@ export function StakingDropdown({ open }: { open: boolean }) {
       }}
     >
       <div className="stake-dropdown-inner">
+        <StartStaking />
         {wallets === null ? (
           <p className="wl-empty">Loading staking wallets…</p>
         ) : list.length === 0 ? (

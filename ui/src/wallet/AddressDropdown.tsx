@@ -25,6 +25,10 @@ function AddressRow({ a }: { a: AddrInfo }) {
           placeholder="Name this address…"
           value={names[a.address] ?? ""}
           onChange={(e) => setNames(setName(a.address, e.target.value))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur(); // Enter accepts the name
+          }}
+          onBlur={(e) => setNames(setName(a.address, e.target.value.trim()))}
         />
         {a.isMain && <span className="addr-main-badge">Main</span>}
         <button type="button" className="icon-btn" title={copied ? "Copied!" : "Copy address"} onClick={copy}>

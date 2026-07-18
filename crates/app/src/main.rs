@@ -455,6 +455,28 @@ async fn recent_blocks(count: i64) -> Vec<BlockDto> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StakeStartDto {
+    staking: bool,
+    needs_passphrase: bool,
+    message: String,
+}
+
+/// Start staking (staking-only-unlocks an encrypted wallet with the passphrase).
+#[tauri::command]
+async fn start_staking(passphrase: Option<String>) -> StakeStartDto {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(cfg) = NodeConfig::load() else {
+            return StakeStartDto { staking: false, needs_passphrase: false, message: "No node.".into() };
+        };
+        let r = wallet::start_staking(&cfg, passphrase.as_deref());
+        StakeStartDto { staking: r.staking, needs_passphrase: r.needs_passphrase, message: r.message }
+    })
+    .await
+    .unwrap_or(StakeStartDto { staking: false, needs_passphrase: false, message: "internal error".into() })
+}
+
+#[derive(Serialize)]
 struct LotteryEntryDto {
     rank: i64,
     address: String,
@@ -481,6 +503,7 @@ fn main() {
             node_status,
             recent_blocks,
             lottery_leaderboard,
+            start_staking,
             wallet_balance,
             wallet_addresses,
             new_receive_address,
