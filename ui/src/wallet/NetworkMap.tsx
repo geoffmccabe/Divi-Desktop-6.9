@@ -98,6 +98,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // Peers seen in the last 30 days (grey at startup), and the live probe result.
   const knownRef = useRef<Known>({});
   const probeRef = useRef<Map<string, ProbeState>>(new Map());
+  const probeStarted = useRef(false); // pinging the 30-day nodes waits for 20 peers
 
   // Center on us right away (caller-IP lookup), before any peer connects.
   useEffect(() => {
@@ -106,27 +107,16 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       if (alive && g) setSelf(g);
     });
 
-    // Load known peers and immediately probe them for reachability, so the map
-    // has something to show at boot and lights up the ones that are online.
+    // Load the 30-day known peers + geolocate them (for city labels). We DON'T
+    // ping them yet — that starts once we have 20 live peers (see the poll).
     const known = loadKnown();
     knownRef.current = known;
     const ips = Object.keys(known);
     if (ips.length) {
       for (const ip of ips) probeRef.current.set(ip, "probing");
-      // geolocate the cached peers so their city names are available for labels
       resolveGeos(ips, (m) => {
         if (alive) setGeos((prev) => ({ ...prev, ...m }));
       });
-      probePeers(ips)
-        .then((res) => {
-          if (!alive) return;
-          for (const r of res) probeRef.current.set(r.ip, r.online ? "online" : "offline");
-          // any not returned → offline
-          for (const ip of ips) if (probeRef.current.get(ip) === "probing") probeRef.current.set(ip, "offline");
-        })
-        .catch(() => {
-          for (const ip of ips) probeRef.current.set(ip, "offline");
-        });
     }
     return () => {
       alive = false;
@@ -140,6 +130,23 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         const s = await networkPeers();
         if (!alive || !s) return;
         setSnap(s);
+        // Once we're well-connected (20+ peers), start pinging the 30-day known
+        // nodes to see which are still active — the blue background network.
+        if (s.peers.length >= 20 && !probeStarted.current) {
+          probeStarted.current = true;
+          const kips = Object.keys(knownRef.current);
+          if (kips.length) {
+            probePeers(kips)
+              .then((res) => {
+                if (!alive) return;
+                for (const r of res) probeRef.current.set(r.ip, r.online ? "online" : "offline");
+                for (const ip of kips) if (probeRef.current.get(ip) === "probing") probeRef.current.set(ip, "offline");
+              })
+              .catch(() => {
+                for (const ip of kips) probeRef.current.set(ip, "offline");
+              });
+          }
+        }
         const ips = s.peers.map((p) => p.ip);
         if (s.selfIp) ips.push(s.selfIp);
         await resolveGeos(ips, (m) => {
@@ -262,15 +269,67 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const selfG = (s?.selfIp && g[s.selfIp]) || selfRef.current;
       const selfXY = selfG ? project(selfG.lon, selfG.lat, w, h) : null;
       const peerCount = s?.peers.filter((p) => g[p.ip]).length ?? 0;
+      const liveCount = s?.peers.length ?? 0;
       const liveIps = new Set((s?.peers ?? []).filter((p) => g[p.ip]).map((p) => p.ip));
-      // Anchors of labels already drawn this frame — shared by both loops so a
-      // green (discovery) and purple (connected) label can't stack on each other.
+      // Anchors of labels already drawn this frame — shared by all loops so
+      // labels can't stack on each other.
       const labelAnchors: [number, number][] = [];
 
-      // Known peers (last 30 days) that aren't currently connected: faint grey so
-      // there's something at startup, or a green "probing" arc + flashing "?"
-      // while we're checking if they're reachable.
-      if (selfXY) {
+      // ── Background network mesh: 30-day known nodes verified active, once we're
+      // well-connected (20+ peers). Faint blue, drawn FIRST so it sits underneath
+      // the real connection arcs. Each node links to its 3 nearest neighbours — a
+      // plausible (not literal) topology — so the wider network looks alive.
+      if (selfXY && liveCount >= 20) {
+        const BLUE = (a: number) => `hsla(210, 85%, 62%, ${a})`;
+        const blue = Object.entries(knownRef.current)
+          .filter(([ip]) => !liveIps.has(ip) && probeRef.current.get(ip) === "online")
+          .sort((a, b) => b[1].lastSeen - a[1].lastSeen)
+          .slice(0, 40)
+          .map(([ip, kp]) => ({ ip, kp, xy: project(kp.lon, kp.lat, w, h) }));
+        // 3-nearest-neighbour mesh lines (faint, slowly pulsing, ≤20%)
+        for (let i = 0; i < blue.length; i++) {
+          const a = blue[i];
+          const near = blue
+            .map((b, j) => ({ j, d: j === i ? Infinity : Math.hypot(a.xy[0] - b.xy[0], a.xy[1] - b.xy[1]) }))
+            .sort((x, y) => x.d - y.d)
+            .slice(0, 3);
+          for (const { j } of near) {
+            const b = blue[j];
+            const pulse = 0.1 + 0.1 * (0.5 + 0.5 * Math.sin(now / 1600 + phaseOf(a.ip)));
+            ctx.beginPath();
+            ctx.moveTo(a.xy[0], a.xy[1]);
+            ctx.lineTo(b.xy[0], b.xy[1]);
+            ctx.strokeStyle = BLUE(pulse);
+            ctx.lineWidth = 0.6;
+            ctx.stroke();
+          }
+        }
+        // small slowly-pulsing blue dots (≈35%) + blue city labels (≈30%, every 20-50s for 3s)
+        for (const b of blue) {
+          const r = 1.6 + 0.5 * Math.sin(now / 1300 + phaseOf(b.ip));
+          ctx.beginPath();
+          ctx.arc(b.xy[0], b.xy[1], r, 0, Math.PI * 2);
+          ctx.fillStyle = BLUE(0.35);
+          ctx.fill();
+          const env = labelPulse(now, b.ip, 20000, 50000, 3000);
+          if (env > 0.02) {
+            const label = b.kp.city || g[b.ip]?.city || b.ip;
+            const lx = b.xy[0] + 6, ly = b.xy[1];
+            if (!labelAnchors.some(([ax, ay]) => Math.hypot(ax - lx, ay - ly) < 20)) {
+              labelAnchors.push([lx, ly]);
+              ctx.font = "10px 'Courier New', Courier, monospace";
+              ctx.textAlign = "left";
+              ctx.textBaseline = "middle";
+              ctx.fillStyle = BLUE(0.3 * env);
+              ctx.fillText(label, lx, ly);
+            }
+          }
+        }
+      }
+
+      // Known peers (last 30 days), the DISCOVERY phase (before 20 peers): green
+      // probing arcs + city labels while we're still finding the network.
+      if (selfXY && liveCount < 20) {
         const [sx, sy] = selfXY;
         for (const [ip, kp] of Object.entries(knownRef.current)) {
           if (liveIps.has(ip)) continue; // connected ones are drawn below
