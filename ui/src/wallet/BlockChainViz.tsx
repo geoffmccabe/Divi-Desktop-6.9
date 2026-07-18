@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { recentBlocks, walletAddresses, chainOrphans, type Block, type StaleBlock } from "./api";
+import { recentBlocks, walletAddresses, type Block, type StaleBlock } from "./api";
+import { loadHealth } from "./chainHealth";
 import { markUserWon } from "./stakeWin";
 import nyan from "../assets/nyan_cat.webp";
 
@@ -54,24 +55,16 @@ export function BlockChainViz() {
     };
   }, []);
 
-  // Stale blocks our node has seen. Polled slowly — they appear a couple of
-  // times a day, so there is nothing to gain from asking often.
+  // Stale blocks. Read from the stored history rather than asking the node:
+  // getchaintips costs ~18 seconds and stalls the node's block processing, so
+  // it is fetched only when the user opens Settings → Chain Health. Orphans
+  // appear a couple of times a day, so nothing is lost by reading a cache.
   useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const r = await chainOrphans();
-        if (alive && r) setOrphans(r.stale);
-      } catch {
-        /* keep what we have */
-      }
-    };
-    load();
-    const id = setInterval(load, 120000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
+    const read = () =>
+      setOrphans(loadHealth().forks.map((f) => ({ height: f.height, status: f.status, branchLen: f.branchLen })));
+    read();
+    const id = setInterval(read, 60000);
+    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {

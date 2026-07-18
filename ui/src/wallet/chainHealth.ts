@@ -65,12 +65,28 @@ export function mergeHealth(report: OrphanReport, prev = loadHealth()): ChainHea
       firstSeen: old?.firstSeen ?? now,
     });
   }
-  // A node that resyncs from scratch would drag minTip down to genesis and make
-  // the rate meaningless, so only ever extend the window upward from the first
-  // tip we saw in this installation.
-  const minTip = prev.minTip > 0 ? Math.min(prev.minTip, report.tip) : report.tip;
+  // The window this rate is measured over.
+  //
+  // Getting this wrong cries wolf. The node hands us every fork it remembers —
+  // a whole batch at once on the first read — but those happened over ITS
+  // history, not ours. Starting our window at the current tip would divide a
+  // pile of inherited forks by a handful of freshly-watched blocks and report
+  // something like 6%, tripping the "elevated" warning on a perfectly healthy
+  // chain. So seed the window with the node's own span (tip back to its oldest
+  // known fork) and never let it move down afterwards — a resyncing node would
+  // otherwise drag it toward genesis and bury a real problem in a huge divisor.
+  const seed = report.span > 0 ? report.tip - report.span : report.tip;
+  const forks = [...byHeight.values()].sort((a, b) => b.height - a.height);
+  // The window must at least reach back to the oldest fork we know about, or we
+  // divide those forks by a window that never contained them. This also repairs
+  // a store written before that was understood, which read 15% on a chain
+  // actually running at 0.7%.
+  const oldestFork = forks.length ? forks[forks.length - 1].height : 0;
+  const base = prev.minTip > 0 ? prev.minTip : Math.max(0, seed);
+  const minTip = oldestFork > 0 ? Math.min(base, oldestFork) : base;
   const next: ChainHealthStore = {
-    forks: [...byHeight.values()].sort((a, b) => b.height - a.height),
+    // Cap the history so this can't grow without bound in local storage.
+    forks: forks.slice(0, 500),
     minTip,
     maxTip: Math.max(prev.maxTip, report.tip),
     since: prev.since || now,

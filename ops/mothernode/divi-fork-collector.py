@@ -6,12 +6,22 @@ every restart, and the daemon's tip log only survives as long as journald keeps
 it. Neither can answer "are forks getting worse this month?". This writes what
 we see to SQLite, which does.
 
-Two independent sources, deliberately:
-  * getchaintips  — every branch tip we know of, with its length. Tells us DEPTH.
-  * UpdateTip log — the daemon prints every tip change. A height accepted twice
-                    with two different hashes is a reorg we actually performed.
-                    Divi never logs the word "reorg", so this is the only way to
-                    see them.
+Two sources, with very different costs:
+
+  * UpdateTip log — FREE. The daemon already prints every tip change, so this
+                    costs nothing but reading the journal. It gives real reorgs
+                    (Divi never logs the word "reorg"; a height accepted twice
+                    with two different hashes is the only signal) and the window
+                    we have observed. This is the PRIMARY source.
+
+  * getchaintips  — EXPENSIVE. Measured at ~18 SECONDS on a healthy node at the
+                    4.1M-block tip, holding the daemon's main lock throughout,
+                    which stalls block processing and every other RPC. Polling
+                    it once a minute wedged this node solid: the chain stopped
+                    advancing and RPC stopped answering. It now runs at most
+                    once every TIPS_EVERY_SECS (default 6 hours), and only to
+                    add the one thing the log cannot give us — forks we merely
+                    witnessed but never followed.
 
 Blocks seen during initial sync are excluded: catching up is not fork activity,
 and counting it would wreck the rate. We only count once the tip is advancing
@@ -33,7 +43,10 @@ RPC_URL = os.environ.get("DIVI_RPC_URL", "http://127.0.0.1:51473/")
 RPC_USER = os.environ.get("DIVI_RPC_USER", "")
 RPC_PASS = os.environ.get("DIVI_RPC_PASS", "")
 DB_PATH = os.environ.get("FORK_DB", "/var/lib/divi-forks/forks.db")
-POLL_SECS = int(os.environ.get("FORK_POLL_SECS", "60"))
+POLL_SECS = int(os.environ.get("FORK_POLL_SECS", "300"))
+# How often we may pay the ~18s getchaintips cost. 0 disables it entirely and
+# leaves the (free) log parsing as the only source.
+TIPS_EVERY_SECS = int(os.environ.get("FORK_TIPS_EVERY_SECS", str(6 * 3600)))
 
 # A tip more than this far behind wall-clock means we're still syncing, so the
 # sample is not evidence about live fork behaviour.
@@ -50,7 +63,7 @@ def rpc(method, params=None):
     req = urllib.request.Request(RPC_URL, data=body, headers={"Content-Type": "text/plain"})
     auth = base64.b64encode(f"{RPC_USER}:{RPC_PASS}".encode()).decode()
     req.add_header("Authorization", f"Basic {auth}")
-    with urllib.request.urlopen(req, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=180) as r:  # getchaintips is slow by nature
         return json.load(r)["result"]
 
 
@@ -84,10 +97,19 @@ def db_init():
     return c
 
 
-def note_window(c, tip):
+def note_window(c, tip, seed_from=None):
+    """Track the block window our rate is measured over.
+
+    Seeding matters: the node hands us a batch of forks it already knew about,
+    which happened over ITS history. Dividing those by the few blocks we have
+    personally watched reports a wildly overstated rate. So the window starts at
+    the oldest fork we inherited, and never moves down afterwards.
+    """
     cur = {r[0]: r[1] for r in c.execute("SELECT k, v FROM window")}
     lo = cur.get("min_tip")
-    c.execute("INSERT OR REPLACE INTO window VALUES ('min_tip', ?)", (tip if lo is None else min(lo, tip),))
+    if lo is None:
+        lo = seed_from if seed_from else tip
+    c.execute("INSERT OR REPLACE INTO window VALUES ('min_tip', ?)", (lo,))
     c.execute("INSERT OR REPLACE INTO window VALUES ('max_tip', ?)", (max(cur.get("max_tip", 0), tip),))
     if "started" not in cur:
         c.execute("INSERT OR REPLACE INTO window VALUES ('started', ?)", (int(time.time()),))
@@ -120,8 +142,9 @@ def collect_tips(c):
                  last_seen=excluded.last_seen""",
             (t["height"], t.get("hash", ""), t.get("status", "?"), t.get("branchlen", 1), now, now),
         )
-        n += c.total_changes and 1 or 0
-    note_window(c, tip)
+        n += 1
+    oldest = min((t["height"] for t in tips if t.get("status") != "active"), default=None)
+    note_window(c, tip, seed_from=oldest)
     c.commit()
     return tip, n
 
@@ -167,16 +190,24 @@ def collect_reorgs(c, since_secs=900):
                 except Exception:
                     pass
         high = max(high, h)
+    # The log also tells us, for free, how many blocks we have observed.
+    if seq:
+        note_window(c, max(s[0] for s in seq), seed_from=min(s[0] for s in seq))
     c.commit()
     return found
 
 
 def main():
     c = db_init()
+    last_tips = 0.0
     while True:
         try:
-            tip, _ = collect_tips(c)
-            collect_reorgs(c)
+            # The free source, every cycle.
+            collect_reorgs(c, since_secs=POLL_SECS * 3)
+            # The expensive one, rarely, and never while the node is catching up.
+            if TIPS_EVERY_SECS > 0 and time.time() - last_tips >= TIPS_EVERY_SECS:
+                collect_tips(c)
+                last_tips = time.time()
         except Exception as e:  # never die; a node blip is not fatal
             print(f"collector: {e}", flush=True)
         time.sleep(POLL_SECS)

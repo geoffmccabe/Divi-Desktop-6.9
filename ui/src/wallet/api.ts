@@ -95,7 +95,10 @@ export interface OrphanReport {
   span: number;
   ratePct: number;
 }
-export const chainOrphans = () => invoke<OrphanReport | null>("chain_orphans");
+// ⚠ Costs ~18 seconds on the node and stalls its block processing while it
+// runs. On-demand only — never put this on a timer. Without `force` the Rust
+// side serves a cached report.
+export const chainOrphans = (force = false) => invoke<OrphanReport | null>("chain_orphans", { force });
 export interface Probe {
   ip: string;
   online: boolean;

@@ -10,8 +10,24 @@
 //!   * The list lives in memory, so it starts empty at every node restart. The
 //!     rate is "what we've seen since we started", not an absolute chain metric.
 
+//! ⚠ COST: getchaintips is NOT a cheap call. Measured on a healthy node at the
+//! 4.1M-block tip it takes ~18 SECONDS (a normal call is ~9ms) and it holds the
+//! daemon's main lock while it runs, which stalls block processing and every
+//! other RPC behind it. Polling it on a timer wedged the test node solid.
+//!
+//! So: never call this on a schedule. It is on-demand only, and the result is
+//! cached below so repeated asks are free.
+
 use crate::config::NodeConfig;
 use crate::rpc::RpcClient;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+/// How long a fetched report stays fresh. Generous on purpose — forks appear a
+/// couple of times a day, so there is nothing to gain from asking more often.
+const CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+
+static CACHE: Mutex<Option<(Instant, OrphanReport)>> = Mutex::new(None);
 
 #[derive(Debug, Clone)]
 pub struct StaleBlock {
@@ -33,7 +49,21 @@ pub struct OrphanReport {
     pub rate_pct: f64,
 }
 
-pub fn orphans(cfg: &NodeConfig) -> Option<OrphanReport> {
+/// Returns the cached report if it is still fresh, without touching the node.
+pub fn cached() -> Option<OrphanReport> {
+    let g = CACHE.lock().ok()?;
+    let (at, r) = g.as_ref()?;
+    (at.elapsed() < CACHE_TTL).then(|| r.clone())
+}
+
+/// Fetch fork data. `force` bypasses the cache — only ever in response to a
+/// direct user action, given the ~18s cost.
+pub fn orphans(cfg: &NodeConfig, force: bool) -> Option<OrphanReport> {
+    if !force {
+        if let Some(r) = cached() {
+            return Some(r);
+        }
+    }
     let rpc = RpcClient::new(cfg);
     // Optional: a node build without getchaintips just yields no orphan data
     // rather than an error the user has to see.
@@ -64,5 +94,9 @@ pub fn orphans(cfg: &NodeConfig) -> Option<OrphanReport> {
     let span = (tip - oldest).max(0);
     let rate_pct = if span > 0 { stale.len() as f64 * 100.0 / span as f64 } else { 0.0 };
 
-    Some(OrphanReport { stale, tip, span, rate_pct })
+    let report = OrphanReport { stale, tip, span, rate_pct };
+    if let Ok(mut g) = CACHE.lock() {
+        *g = Some((Instant::now(), report.clone()));
+    }
+    Some(report)
 }

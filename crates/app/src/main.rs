@@ -471,12 +471,16 @@ struct OrphanReportDto {
     rate_pct: f64,
 }
 
-/// Stale ("orphan") blocks our node has seen, for the block-chain visualization.
+/// Stale ("orphan") blocks our node has seen.
+///
+/// ⚠ The underlying getchaintips takes ~18 SECONDS and holds the node's main
+/// lock. Never call this on a timer — `force` only in response to a user
+/// action; otherwise it serves a cached report.
 #[tauri::command]
-async fn chain_orphans() -> Option<OrphanReportDto> {
+async fn chain_orphans(force: Option<bool>) -> Option<OrphanReportDto> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().ok()?;
-        let r = chaintips::orphans(&cfg)?;
+        let r = chaintips::orphans(&cfg, force.unwrap_or(false))?;
         Some(OrphanReportDto {
             stale: r
                 .stale

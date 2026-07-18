@@ -38,29 +38,32 @@ function Stat({ label, value, tint }: { label: string; value: string; tint?: str
 export function ChainHealthPanel() {
   const [store, setStore] = useState<ChainHealthStore>(() => loadHealth());
   const [reachable, setReachable] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Asking the node for its fork list costs ~18 seconds and stalls its block
+  // processing for that whole time, so this NEVER runs on a timer. Opening the
+  // panel does one read (usually answered from the Rust-side cache); the button
+  // forces a fresh one.
+  const load = async (force: boolean) => {
+    setBusy(true);
+    try {
+      const r = await chainOrphans(force);
+      if (!r) {
+        setReachable(false);
+        return;
+      }
+      setReachable(true);
+      setStore(mergeHealth(r));
+    } catch {
+      setReachable(false);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   useEffect(() => {
-    let alive = true;
-    const load = async () => {
-      try {
-        const r = await chainOrphans();
-        if (!alive) return;
-        if (!r) {
-          setReachable(false);
-          return;
-        }
-        setReachable(true);
-        setStore(mergeHealth(r));
-      } catch {
-        if (alive) setReachable(false);
-      }
-    };
-    load();
-    const id = setInterval(load, 120000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
+    load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const s = healthStats(store);
@@ -73,6 +76,7 @@ export function ChainHealthPanel() {
       {reachable === false ? (
         <p className="set-note">Can't reach the node right now, so this is the last picture we had.</p>
       ) : null}
+      {busy && <p className="set-note">Asking the node for its fork list — this takes about 20 seconds…</p>}
 
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "10px 0 4px" }}>
         <Stat label="Forks seen" value={s.forkCount.toLocaleString()} />
@@ -124,10 +128,30 @@ export function ChainHealthPanel() {
         </>
       )}
 
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => load(true)}
+        style={{
+          marginTop: 12,
+          padding: "5px 12px",
+          fontSize: "0.7rem",
+          borderRadius: 6,
+          border: "1px solid hsl(var(--border))",
+          background: "transparent",
+          color: "inherit",
+          cursor: busy ? "default" : "pointer",
+          opacity: busy ? 0.5 : 1,
+        }}
+      >
+        {busy ? "Checking…" : "Check the node now"}
+      </button>
+
       <p className="set-note" style={{ marginTop: 10, fontSize: "0.68rem", opacity: 0.75 }}>
         Forks are normal: two stakers occasionally mint a block at the same height and one loses. Only deep or
         frequent forks suggest a problem. This counts what <em>your</em> node saw — a fork that never reached it is
-        invisible here, so this is a view from one vantage point, not the whole network.
+        invisible here, so this is a view from one vantage point, not the whole network. Checking is deliberately
+        manual: the question costs the node about 20 seconds of work, so it isn't asked on a schedule.
       </p>
     </section>
   );
