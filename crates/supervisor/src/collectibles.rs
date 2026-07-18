@@ -8,7 +8,7 @@
 // enforced on view: the decrypted content must hash to the on-chain content_hash.
 
 use crate::config::NodeConfig;
-use crate::nfd_storage::{LocalDir, Storage};
+use crate::nfd_storage;
 use crate::rpc::RpcClient;
 use crate::{crypto_nfd, nfd_record};
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -143,7 +143,7 @@ pub fn mint(cfg: &NodeConfig, plaintext: &[u8]) -> Result<MintDraft, String> {
 
     let (content_blob, wrapped_ck) = crypto_nfd::encrypt_content(&salted, &owner_pub)?;
     let bundle = pack_bundle(&content_blob, &wrapped_ck);
-    let arweave_ptr = LocalDir::under_datadir(&cfg.datadir).put(&bundle)?;
+    let arweave_ptr = nfd_storage::for_node(&cfg.datadir).put(&bundle)?;
 
     let record = nfd_record::encode_mint(&arweave_ptr, &content_hash, 0x01)?;
     let txid = anchor_record(&rpc, &utxo, &record)?;
@@ -153,7 +153,7 @@ pub fn mint(cfg: &NodeConfig, plaintext: &[u8]) -> Result<MintDraft, String> {
 /// Fetch, decrypt, and AUTHENTICATE a collectible you own. Errors unless the
 /// decrypted content hashes to the on-chain `content_hash`.
 pub fn view(cfg: &NodeConfig, owner_addr: &str, arweave_ptr: &str, content_hash: &str) -> Result<Vec<u8>, String> {
-    let bundle = LocalDir::under_datadir(&cfg.datadir).get(arweave_ptr)?;
+    let bundle = nfd_storage::for_node(&cfg.datadir).get(arweave_ptr)?;
     let (content_blob, wrapped_ck) = unpack_bundle(&bundle)?;
     let rpc = RpcClient::new(cfg);
     let (sk, _pk) = owner_keypair(&rpc, owner_addr)?;
