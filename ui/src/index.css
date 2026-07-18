@@ -528,10 +528,10 @@ h1, h2, h3 { font-family: var(--font-heading); }
   position: absolute; top: 0; height: 100%;
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid hsl(var(--primary) / 0.55); /* thin, matches node lines */
-  border-radius: 8px; padding: 8px 10px; box-sizing: border-box;
-  display: flex; flex-direction: column; gap: 4px; will-change: transform;
+  border-radius: 8px; padding: 8px 10px; box-sizing: border-box; overflow: hidden;
+  display: flex; flex-direction: column; gap: 4px; will-change: transform, width;
 }
-.bv-height { font-size: 0.9rem; font-weight: 600; color: hsl(var(--primary)); font-family: ui-monospace, monospace; }
+.bv-height { font-size: 0.9rem; font-weight: 600; color: hsl(var(--primary)); font-family: ui-monospace, monospace; white-space: nowrap; }
 .bv-stake { font-size: 0.62rem; color: hsl(var(--warning)); font-family: ui-monospace, monospace; }
 .bv-txs { flex: 1; overflow: hidden; position: relative; }
 .bv-txs-inner { display: flex; flex-direction: column; gap: 2px; }
