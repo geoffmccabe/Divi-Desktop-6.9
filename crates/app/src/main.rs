@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{config::NodeConfig, network, poe, report, wallet};
+use dd69_supervisor::{coins, config::NodeConfig, network, poe, report, security, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -512,6 +512,168 @@ async fn lottery_board(addresses: Vec<String>) -> LotteryBoardDto {
     .unwrap_or(LotteryBoardDto { leaders: vec![], your_big: 0, your_small: 0, your_points: 0 })
 }
 
+// ---- Coin maturity ------------------------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UtxoDto {
+    address: String,
+    amount: f64,
+    confirmations: i64,
+    matured: bool,
+    pct: f64,
+    stakeable_at: i64,
+}
+
+/// Every unspent output with how mature it is for staking (combined across all
+/// addresses). A single listunspent call; the countdown is approximate.
+#[tauri::command]
+async fn coin_maturity() -> Vec<UtxoDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else { return Vec::new() };
+        coins::coin_maturity(&cfg)
+            .into_iter()
+            .map(|u| UtxoDto {
+                address: u.address,
+                amount: u.amount,
+                confirmations: u.confirmations,
+                matured: u.matured,
+                pct: u.pct,
+                stakeable_at: u.stakeable_at,
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+// ---- Wallet password / encryption ---------------------------------------
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WalletStatusDto {
+    encrypted: bool,
+    unlocked: bool,
+    staking_only: bool,
+    remembered: bool,
+    status: String,
+}
+
+/// Lock/encryption state, plus whether a password is saved in the OS store.
+#[tauri::command]
+async fn wallet_status() -> WalletStatusDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else {
+            return WalletStatusDto {
+                encrypted: false,
+                unlocked: true,
+                staking_only: false,
+                remembered: false,
+                status: "no-node".into(),
+            };
+        };
+        let s = security::status(&cfg);
+        WalletStatusDto {
+            encrypted: s.encrypted,
+            unlocked: s.unlocked,
+            staking_only: s.staking_only,
+            remembered: security::recall().is_some(),
+            status: s.status,
+        }
+    })
+    .await
+    .unwrap_or(WalletStatusDto {
+        encrypted: false,
+        unlocked: true,
+        staking_only: false,
+        remembered: false,
+        status: "error".into(),
+    })
+}
+
+/// Unlock: staking-only (seconds 0 = until locked) or full for sends.
+#[tauri::command]
+async fn unlock_wallet(passphrase: String, staking_only: bool, seconds: i64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        security::unlock(&cfg, &passphrase, staking_only, seconds)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn lock_wallet() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        security::lock(&cfg)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn change_passphrase(old: String, new: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        security::change_passphrase(&cfg, &old, &new)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn encrypt_wallet(passphrase: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        security::encrypt(&cfg, &passphrase)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// BIP39 seed words for the forced backup (wallet must be unlocked if encrypted).
+#[tauri::command]
+async fn wallet_seed() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        security::seed_words(&cfg)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Save / clear the passphrase in the OS credential store (opt-in).
+#[tauri::command]
+async fn remember_password(passphrase: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || security::remember(&passphrase))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn forget_password() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(security::forget)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Auto-resume staking on launch: recall the saved password (if any), staking-
+/// only unlock, and start. The password never crosses into the UI layer.
+#[tauri::command]
+async fn resume_staking() -> StakeStartDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else {
+            return StakeStartDto { staking: false, needs_passphrase: false, message: "No node.".into() };
+        };
+        let pass = security::recall();
+        let r = wallet::start_staking(&cfg, pass.as_deref());
+        StakeStartDto { staking: r.staking, needs_passphrase: r.needs_passphrase, message: r.message }
+    })
+    .await
+    .unwrap_or(StakeStartDto { staking: false, needs_passphrase: false, message: "internal error".into() })
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -535,7 +697,17 @@ fn main() {
             network_peers,
             geolocate_ips,
             self_geo,
-            probe_peers
+            probe_peers,
+            coin_maturity,
+            wallet_status,
+            unlock_wallet,
+            lock_wallet,
+            change_passphrase,
+            encrypt_wallet,
+            wallet_seed,
+            remember_password,
+            forget_password,
+            resume_staking
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

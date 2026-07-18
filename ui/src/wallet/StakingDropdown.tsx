@@ -4,6 +4,11 @@ import { loadNames } from "./addressNames";
 import { setStakingDesired } from "./stakeWin";
 import { fmtDivi } from "../status";
 import { Icon } from "../Icon";
+import { InfoDot } from "../InfoDot";
+
+const MATURITY_HELP =
+  "Coins you receive must “age” for about 1 hour before they can stake — this keeps staking fair. " +
+  "Once mature they stake for good. See Settings → Coin Maturity for a live countdown of each deposit.";
 
 function StartStaking() {
   const [msg, setMsg] = useState<string | null>(null);
@@ -51,7 +56,12 @@ function StartStaking() {
           <button type="submit" className="wl-btn" disabled={busy || !pass}>Unlock &amp; stake</button>
         </form>
       )}
-      {msg && <p className="stake-start-msg">{msg}</p>}
+      {msg && (
+        <p className="stake-start-msg">
+          {msg}
+          {/mature/i.test(msg) && <InfoDot text={MATURITY_HELP} />}
+        </p>
+      )}
     </div>
   );
 }

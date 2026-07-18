@@ -609,3 +609,64 @@ h1, h2, h3 { font-family: var(--font-heading); }
   position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
   height: 48px; width: auto; opacity: 0.9; z-index: 3; pointer-events: none; image-rendering: pixelated;
 }
+
+/* ---- Settings sections (Password, Coin Maturity) ---- */
+.settings-view { display: flex; flex-direction: column; gap: 26px; max-width: 560px; }
+.set-section { display: flex; flex-direction: column; gap: 10px; }
+.set-title { font-size: 1.05rem; margin: 0; color: hsl(var(--foreground)); }
+.set-note { font-size: 0.85rem; color: hsl(var(--muted-foreground)); margin: 0; line-height: 1.5; }
+
+/* ---- Info "?" dot ---- */
+.info-dot-wrap { position: relative; display: inline-flex; margin-left: 6px; vertical-align: middle; }
+.info-dot {
+  width: 16px; height: 16px; border-radius: 50%; border: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.5); color: hsl(var(--muted-foreground));
+  font-size: 0.7rem; line-height: 1; cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.info-dot:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary)); }
+.info-dot-bubble {
+  position: absolute; bottom: 130%; left: 50%; transform: translateX(-50%); z-index: 40;
+  width: 240px; padding: 9px 11px; border-radius: 8px; border: 1px solid hsl(var(--border));
+  background: hsl(var(--panel-bg) / 0.98); color: hsl(var(--foreground));
+  font-size: 0.78rem; line-height: 1.45; box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+}
+
+/* ---- Coin maturity ---- */
+.cm-summary { font-size: 0.85rem; color: hsl(var(--warning)); }
+.cm-summary em { font-style: normal; opacity: 0.7; font-size: 0.8em; }
+.cm-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.cm-row { display: flex; flex-direction: column; gap: 6px; }
+.cm-row-top { display: flex; justify-content: space-between; align-items: baseline; }
+.cm-amt { font-size: 0.95rem; font-weight: 600; }
+.cm-amt em { font-style: normal; opacity: 0.6; font-size: 0.72em; }
+.cm-when { font-size: 0.82rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; }
+.cm-mature .cm-when { color: hsl(var(--success)); }
+.cm-bar { height: 5px; border-radius: 3px; background: hsl(var(--muted) / 0.5); overflow: hidden; }
+.cm-bar-fill { height: 100%; background: hsl(var(--primary)); border-radius: 3px; transition: width 0.6s ease; }
+.cm-mature .cm-bar-fill { background: hsl(var(--success)); }
+.cm-row-sub { display: flex; justify-content: space-between; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+
+/* ---- Password panel ---- */
+.pw-sub { font-size: 0.9rem; margin: 12px 0 2px; color: hsl(var(--foreground)); }
+.pw-box { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; max-width: 340px; }
+.pw-box .wl-input { width: 100%; }
+.pw-warn {
+  font-size: 0.8rem; color: hsl(var(--warning)); border: 1px solid hsl(var(--warning) / 0.4);
+  background: hsl(var(--warning) / 0.08); border-radius: 8px; padding: 8px 10px; line-height: 1.45;
+}
+.pw-seed {
+  font-family: ui-monospace, monospace; font-size: 0.85rem; line-height: 1.6; word-spacing: 4px;
+  border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 10px 12px; background: hsl(var(--background) / 0.5);
+}
+.pw-check { display: flex; gap: 8px; align-items: flex-start; font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
+.pw-err { color: hsl(var(--destructive)); font-size: 0.8rem; margin: 0; }
+.pw-msg { font-size: 0.8rem; color: hsl(var(--muted-foreground)); margin: 0; }
+.pw-modes { display: flex; flex-direction: column; gap: 6px; }
+.pw-mode {
+  display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: center;
+  padding: 8px 10px; border: 1px solid hsl(var(--border)); border-radius: 8px; cursor: pointer;
+}
+.pw-mode-on { border-color: hsl(var(--primary)); background: hsl(var(--primary) / 0.08); }
+.pw-mode-label { font-size: 0.85rem; }
+.pw-mode-hint { grid-column: 2; font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+.pw-soon { opacity: 0.85; }

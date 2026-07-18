@@ -122,5 +122,36 @@ export const validateAddress = (address: string) => invoke<boolean>("validate_ad
 export const addressQr = (address: string) => invoke<string>("address_qr", { address });
 export const openUrl = (url: string) => invoke<void>("open_url", { url });
 
+// ---- Coin maturity ----
+export interface Utxo {
+  address: string;
+  amount: number;
+  confirmations: number;
+  matured: boolean;
+  pct: number; // 0..100
+  stakeableAt: number; // unix seconds, 0 once matured
+}
+export const coinMaturity = () => invoke<Utxo[]>("coin_maturity");
+
+// ---- Wallet password / encryption ----
+export interface WalletStatus {
+  encrypted: boolean;
+  unlocked: boolean;
+  stakingOnly: boolean;
+  remembered: boolean;
+  status: string;
+}
+export const walletStatus = () => invoke<WalletStatus>("wallet_status");
+export const unlockWallet = (passphrase: string, stakingOnly: boolean, seconds: number) =>
+  invoke<void>("unlock_wallet", { passphrase, stakingOnly, seconds });
+export const lockWallet = () => invoke<void>("lock_wallet");
+export const changePassphrase = (oldPass: string, newPass: string) =>
+  invoke<void>("change_passphrase", { old: oldPass, new: newPass });
+export const encryptWallet = (passphrase: string) => invoke<string>("encrypt_wallet", { passphrase });
+export const walletSeed = () => invoke<string>("wallet_seed");
+export const rememberPassword = (passphrase: string) => invoke<void>("remember_password", { passphrase });
+export const forgetPassword = () => invoke<void>("forget_password");
+export const resumeStaking = () => invoke<StakeStart>("resume_staking");
+
 // Divi block explorer for a transaction.
 export const explorerTxUrl = (txid: string) => `https://chainz.cryptoid.info/divi/tx.dws?${txid}.htm`;

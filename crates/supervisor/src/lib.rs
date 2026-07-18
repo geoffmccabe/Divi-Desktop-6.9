@@ -1,5 +1,7 @@
+pub mod coins;
 pub mod config;
 pub mod health;
+pub mod security;
 pub mod process;
 pub mod network;
 pub mod poe;
