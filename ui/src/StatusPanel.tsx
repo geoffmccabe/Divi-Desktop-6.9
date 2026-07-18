@@ -112,18 +112,18 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
       </p>
       <div className="wl-status-chips">
         <div className="glass-chip px-4 py-2">
-          Block height<br />
+          <span className="chip-label">Block height</span>
           {showBlocks != null ? (
             liveBlocks != null ? (
-              <span>{showBlocks.toLocaleString()}</span>
+              <span className="chip-num">{showBlocks.toLocaleString()}</span>
             ) : (
-              <span className="blk-stale">
+              <span className="chip-num blk-stale">
                 {showBlocks.toLocaleString()}
                 <span className="blk-more">+?</span>
               </span>
             )
           ) : (
-            <span>—</span>
+            <span className="chip-num">—</span>
           )}
         </div>
         <button
@@ -132,11 +132,10 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
           title="Show the network map"
           onClick={onOpenNetwork}
         >
-          <span className="peers-label">
-            Peers <Icon name="globe" size={14} />
+          <span className="chip-label chip-label-peers">
+            Peers <Icon name="globe" size={13} />
           </span>
-          <br />
-          <span>{peers}</span>
+          <span className="chip-num">{peers}</span>
         </button>
         <button
           type="button"
@@ -144,8 +143,8 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
           title="All nodes discovered on the network (peers + 30-day known)"
           onClick={onOpenNetwork}
         >
-          Nodes<br />
-          <span>{nodeCount.toLocaleString()}</span>
+          <span className="chip-label chip-label-nodes">Nodes</span>
+          <span className="chip-num">{nodeCount.toLocaleString()}</span>
         </button>
       </div>
     </div>

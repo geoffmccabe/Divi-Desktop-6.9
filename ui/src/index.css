@@ -373,10 +373,10 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .addr-full { font-family: ui-monospace, monospace; font-size: 0.7rem; color: hsl(var(--muted-foreground)); word-break: break-all; }
 .addr-counts { display: flex; gap: 14px; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
-.sidebar-brand { display: flex; align-items: center; gap: 7px; padding: 0 10px 22px; flex-wrap: wrap; }
-.brand-logo { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; }
-.sidebar-brand h1 { margin: 0; font-size: 1.2rem; font-weight: 700; color: hsl(var(--foreground)); }
-.sidebar-brand .ver { font-size: 0.85rem; color: hsl(var(--primary)); }
+.sidebar-brand { display: flex; align-items: baseline; gap: 7px; padding: 0 10px 22px; flex-wrap: nowrap; }
+.brand-logo { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; align-self: center; }
+.sidebar-brand h1 { margin: 0; font-size: 1.2rem; font-weight: 700; color: hsl(var(--foreground)); white-space: nowrap; }
+.sidebar-brand .ver { font-size: 1.2rem; font-weight: 700; color: hsl(var(--primary)); }
 .nav { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .nav-item {
   width: 100%; display: flex; align-items: center; gap: 12px;
@@ -463,6 +463,14 @@ h1, h2, h3 { font-family: var(--font-heading); }
 
 /* Block height that's behind: greyed last-known value with a "+?" hint. */
 .wl-refreshing { color: hsl(var(--muted-foreground)); font-style: italic; }
+/* Uniform status chips: same label size + same number size across all three. */
+.wl-status-chips .glass-chip { display: flex; flex-direction: column; gap: 2px; align-items: flex-start; text-align: left; }
+.chip-label { font-size: 0.72rem; color: hsl(var(--muted-foreground)); display: inline-flex; align-items: center; gap: 4px; }
+.chip-num { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); }
+.chip-num.blk-stale { color: hsl(var(--muted-foreground)); }
+.chip-label-peers { color: hsl(var(--primary)); }
+.chip-label-peers .ic { color: hsl(var(--primary)); }
+.chip-label-nodes { color: hsl(210 85% 62%); } /* blue, matches Full Network */
 .blk-stale { color: hsl(var(--muted-foreground)); }
 .blk-more { color: hsl(var(--muted-foreground)); font-size: 0.8em; margin-left: 2px; }
 
@@ -532,7 +540,11 @@ h1, h2, h3 { font-family: var(--font-heading); }
   display: flex; flex-direction: column; gap: 4px; will-change: transform, width;
 }
 .bv-height { font-size: 0.9rem; font-weight: 600; color: hsl(var(--primary)); font-family: ui-monospace, monospace; white-space: nowrap; }
-.bv-stake { font-size: 0.62rem; color: hsl(var(--warning)); font-family: ui-monospace, monospace; }
+.bv-stake { display: flex; flex-direction: column; gap: 1px; }
+.bv-stake-hdr { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em; color: hsl(var(--warning)); }
+.bv-stake-amt { font-size: 0.7rem; font-weight: 600; color: hsl(var(--success)); font-family: ui-monospace, monospace; }
+.bv-stake-line { font-size: 0.58rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; white-space: nowrap; }
+.bv-txs-hdr { font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--muted-foreground)); margin-top: 2px; }
 .bv-txs { flex: 1; overflow: hidden; position: relative; }
 .bv-txs-inner { display: flex; flex-direction: column; gap: 2px; }
 .bv-txs-inner.bv-scrolling { animation: bv-scroll linear infinite; }

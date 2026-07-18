@@ -97,6 +97,8 @@ pub struct BlockSummary {
     pub txids: Vec<String>,
     /// The staker's payout address (coinstake), if we can read it — the "winner".
     pub stake_winner: Option<String>,
+    /// The staking reward = coinstake outputs − inputs (the DIVI actually won).
+    pub stake_amount: Option<f64>,
 }
 
 /// The newest `count` blocks with their transaction ids (for the moving block
@@ -120,13 +122,31 @@ pub fn recent_blocks(cfg: &NodeConfig, count: i64) -> Vec<BlockSummary> {
             .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
             .unwrap_or_default();
         // The coinstake is the 2nd tx in a PoS block; its output pays the staker.
-        let stake_winner = txids.get(1).and_then(|txid| {
-            let tx = rpc.call("getrawtransaction", json!([txid, 1])).ok()?;
-            tx["vout"].as_array()?.iter().find_map(|v| {
-                v["scriptPubKey"]["addresses"].as_array().and_then(|a| a.first()).and_then(|x| x.as_str()).map(str::to_string)
-            })
-        });
-        out.push(BlockSummary { height: h, time, txids, stake_winner });
+        // The reward = its outputs minus the inputs it spent.
+        let mut stake_winner = None;
+        let mut stake_amount = None;
+        if let Some(txid) = txids.get(1) {
+            if let Ok(tx) = rpc.call("getrawtransaction", json!([txid, 1])) {
+                stake_winner = tx["vout"].as_array().and_then(|vs| {
+                    vs.iter().find_map(|v| {
+                        v["scriptPubKey"]["addresses"].as_array().and_then(|a| a.first()).and_then(|x| x.as_str()).map(str::to_string)
+                    })
+                });
+                let out_sum: f64 = tx["vout"].as_array().map(|vs| vs.iter().map(|v| v["value"].as_f64().unwrap_or(0.0)).sum()).unwrap_or(0.0);
+                let mut in_sum = 0.0;
+                if let Some(vins) = tx["vin"].as_array() {
+                    for vin in vins {
+                        if let (Some(it), Some(iv)) = (vin["txid"].as_str(), vin["vout"].as_u64()) {
+                            if let Ok(itx) = rpc.call("getrawtransaction", json!([it, 1])) {
+                                in_sum += itx["vout"][iv as usize]["value"].as_f64().unwrap_or(0.0);
+                            }
+                        }
+                    }
+                }
+                stake_amount = Some((out_sum - in_sum).max(0.0));
+            }
+        }
+        out.push(BlockSummary { height: h, time, txids, stake_winner, stake_amount });
     }
     out
 }

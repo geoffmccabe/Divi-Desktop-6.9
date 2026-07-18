@@ -81,6 +81,7 @@ export interface Block {
   time: number;
   txids: string[];
   stakeWinner: string | null;
+  stakeAmount: number | null;
 }
 export const recentBlocks = (count: number) => invoke<Block[]>("recent_blocks", { count });
 export interface Probe {

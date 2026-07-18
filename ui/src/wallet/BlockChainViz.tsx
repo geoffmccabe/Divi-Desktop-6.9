@@ -126,8 +126,17 @@ export function BlockChainViz() {
               else panelRefs.current.delete(b.height);
             }}
           >
-            <div className="bv-height">#{b.height.toLocaleString()}</div>
-            {b.stakeWinner && <div className="bv-stake">stake → {short(b.stakeWinner)}</div>}
+            <div className="bv-height">Block #{b.height.toLocaleString()}</div>
+            {b.stakeWinner && (
+              <div className="bv-stake">
+                <div className="bv-stake-hdr">STAKE WON</div>
+                {b.stakeAmount != null && (
+                  <div className="bv-stake-amt">+{b.stakeAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} $DIVI</div>
+                )}
+                <div className="bv-stake-line">Winner: {short(b.stakeWinner)}</div>
+              </div>
+            )}
+            <div className="bv-txs-hdr">Transactions ({b.txids.length})</div>
             <div className="bv-txs">
               <div
                 className={"bv-txs-inner" + (scroll ? " bv-scrolling" : "")}

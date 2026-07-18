@@ -437,6 +437,7 @@ struct BlockDto {
     time: i64,
     txids: Vec<String>,
     stake_winner: Option<String>,
+    stake_amount: Option<f64>,
 }
 
 /// Newest blocks + their transactions, for the block-chain visualization.
@@ -446,7 +447,7 @@ async fn recent_blocks(count: i64) -> Vec<BlockDto> {
         let Ok(cfg) = NodeConfig::load() else { return Vec::new() };
         wallet::recent_blocks(&cfg, count.clamp(1, 20))
             .into_iter()
-            .map(|b| BlockDto { height: b.height, time: b.time, txids: b.txids, stake_winner: b.stake_winner })
+            .map(|b| BlockDto { height: b.height, time: b.time, txids: b.txids, stake_winner: b.stake_winner, stake_amount: b.stake_amount })
             .collect()
     })
     .await
