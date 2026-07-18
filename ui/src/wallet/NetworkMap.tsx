@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { networkPeers, selfGeo, probePeers, type Peer, type Geo } from "./api";
+import { networkPeers, probePeers, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, type Known } from "./knownPeers";
 import { BlockChainViz } from "./BlockChainViz";
@@ -84,7 +84,6 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [snap, setSnap] = useState<{ peers: Peer[]; selfIp: string | null } | null>(null);
   const [geos, setGeos] = useState<Record<string, Geo>>({});
-  const [self, setSelf] = useState<Geo | null>(null);
   const [hover, setHover] = useState<HoverPoint | null>(null);
   const pointsRef = useRef<HoverPoint[]>([]);
 
@@ -92,8 +91,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   geosRef.current = geos;
   const snapRef = useRef(snap);
   snapRef.current = snap;
-  const selfRef = useRef(self);
-  selfRef.current = self;
+  // The node's OWN location, from its real public IP (as peers report it). This
+  // is where the node actually runs — cached so it stays put and never flickers.
+  // We deliberately do NOT use the app's caller IP: with a remote node that's a
+  // different machine, which would place the node in the wrong city.
+  const selfRef = useRef<Geo | null>(null);
   const revealed = useRef<Map<string, number>>(new Map()); // ip -> first-seen ms
   const baseRef = useRef<HTMLCanvasElement | null>(null);
   // Peers seen in the last 30 days (grey at startup), and the live probe result.
@@ -104,12 +106,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // manual scroll-zoom. `auto` re-fits every frame until the user scrolls.
   const viewRef = useRef({ scale: 1, tx: 0, ty: 0, auto: true });
 
-  // Center on us right away (caller-IP lookup), before any peer connects.
   useEffect(() => {
     let alive = true;
-    selfGeo().then((g) => {
-      if (alive && g) setSelf(g);
-    });
 
     // Load the 30-day known peers + geolocate them (for city labels). We DON'T
     // ping them yet — that starts once we have 20 live peers (see the poll).
@@ -322,7 +320,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const now = performance.now();
       const BLUE = (a: number) => `hsla(210, 85%, 62%, ${a})`;
 
-      const selfG = (s?.selfIp && g[s.selfIp]) || selfRef.current;
+      // The node's true location comes from its own public IP; cache it so it's
+      // stable (and never falls back to the app machine's location).
+      if (s?.selfIp && g[s.selfIp]) selfRef.current = g[s.selfIp];
+      const selfG = selfRef.current;
       const peerCount = s?.peers.filter((p) => g[p.ip]).length ?? 0;
       const liveCount = s?.peers.length ?? 0;
       const liveIps = new Set((s?.peers ?? []).filter((p) => g[p.ip]).map((p) => p.ip));
