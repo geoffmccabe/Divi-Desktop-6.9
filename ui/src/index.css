@@ -265,6 +265,18 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .act-send { color: hsl(var(--warning)); }
 .act-stake { color: hsl(var(--primary)); }
 .act-stake-earned { color: hsl(var(--success)); font-weight: 600; font-size: 1rem; }
+/* Receive lifecycle labels — 2pt larger than the normal kind label. */
+.act-big { font-size: 1.02rem; font-weight: 700; letter-spacing: 0.02em; }
+.act-incoming { color: hsl(var(--warning)); } /* gold — in the mempool */
+.act-received { color: hsl(var(--success)); } /* green — in a block */
+/* Confirmation count: white normally; flashes gold with a glow on each new one,
+   then fades back to white over 3 seconds. */
+.act-conf { color: hsl(var(--foreground)); }
+.act-conf-flash { animation: act-conf-flash 3s ease-out forwards; }
+@keyframes act-conf-flash {
+  0% { color: hsl(var(--warning)); text-shadow: 0 0 10px hsl(var(--warning) / 0.95), 0 0 4px hsl(var(--warning) / 0.9); }
+  100% { color: hsl(var(--foreground)); text-shadow: 0 0 0 transparent; }
+}
 .act-amt { font-weight: 600; }
 .act-amt.pos { color: hsl(var(--success)); }
 .act-amt.neg { color: hsl(var(--foreground)); }

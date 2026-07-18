@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { openUrl, explorerTxUrl, type Tx } from "./api";
 import { useTransactions, type TxStatus } from "./useTransactions";
 import { fmtDivi, relTime } from "../status";
@@ -13,6 +13,19 @@ const KIND_LABEL: Record<string, string> = {
 
 function Row({ t }: { t: Tx }) {
   const [copied, setCopied] = useState(false);
+  // Flash the confirmation count gold each time a new confirmation lands.
+  const prevConf = useRef(t.confirmations);
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (t.confirmations > prevConf.current && t.confirmations >= 1) {
+      setFlash(true);
+      const id = setTimeout(() => setFlash(false), 3000);
+      prevConf.current = t.confirmations;
+      return () => clearTimeout(id);
+    }
+    prevConf.current = t.confirmations;
+  }, [t.confirmations]);
+
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(t.txid);
@@ -22,10 +35,21 @@ function Row({ t }: { t: Tx }) {
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   };
+
+  // Receive lifecycle: in the mempool (0 conf) → INCOMING; in a block → RECEIVED.
+  const isReceive = t.kind === "receive";
+  const inMempool = t.confirmations === 0;
+  // "Unconfirmed" until it's in a block; then 0, 1, 2… (blocks after inclusion).
+  const confText = inMempool ? "Unconfirmed" : `${t.confirmations - 1} confirmations`;
+
   return (
     <li className="activity-row">
       <div className="act-top">
-        {t.kind === "stake" ? (
+        {isReceive ? (
+          <span className={"act-kind act-big " + (inMempool ? "act-incoming" : "act-received")}>
+            {inMempool ? "INCOMING TRANSACTION" : "TRANSACTION RECEIVED"}
+          </span>
+        ) : t.kind === "stake" ? (
           <span className="act-kind act-stake-earned">Stake Earned!</span>
         ) : (
           <span className={"act-kind act-" + t.kind}>{KIND_LABEL[t.kind] ?? "Transaction"}</span>
@@ -38,8 +62,14 @@ function Row({ t }: { t: Tx }) {
       {t.address && <div className="act-addr-full">{t.address}</div>}
       <div className="act-bottom">
         <span className="act-time">
-          {relTime(t.time)}
-          {t.confirmations < 10 ? ` · ${t.confirmations} confirmations` : " · confirmed"}
+          {relTime(t.time)} ·{" "}
+          {isReceive ? (
+            <span className={"act-conf" + (flash ? " act-conf-flash" : "")}>{confText}</span>
+          ) : t.confirmations < 10 ? (
+            `${t.confirmations} confirmations`
+          ) : (
+            "confirmed"
+          )}
         </span>
         <span className="act-actions">
           <button type="button" className="icon-btn" title={copied ? "Copied!" : "Copy transaction ID"} onClick={copy}>

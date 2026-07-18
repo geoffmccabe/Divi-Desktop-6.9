@@ -99,11 +99,33 @@ export function useTransactions() {
     }
   }, []);
 
+  // A light, frequent poll of just the newest transactions, so an incoming tx
+  // shows within a couple seconds and confirmations tick up live — without the
+  // cost of the full history sync.
+  const fastPoll = useCallback(async () => {
+    try {
+      const page = await listTransactions(15, 0);
+      if (page === null) return;
+      const map = new Map<string, Tx>(txsRef.current.map((t) => [keyOf(t), t]));
+      for (const t of page) map.set(keyOf(t), t);
+      const cur = sortTx([...map.values()]);
+      setTxs(cur);
+      txsRef.current = cur;
+      saveCache(cur);
+    } catch {
+      /* keep last */
+    }
+  }, []);
+
   useEffect(() => {
     sync();
-    const id = setInterval(sync, 60000);
-    return () => clearInterval(id);
-  }, [sync]);
+    const idSlow = setInterval(sync, 60000);
+    const idFast = setInterval(fastPoll, 3000);
+    return () => {
+      clearInterval(idSlow);
+      clearInterval(idFast);
+    };
+  }, [sync, fastPoll]);
 
   return { txs, status, refresh: sync };
 }
