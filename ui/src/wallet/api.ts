@@ -76,6 +76,13 @@ export interface Geo {
 export const networkPeers = () => invoke<PeerSnapshot | null>("network_peers");
 export const geolocateIps = (ips: string[]) => invoke<Geo[]>("geolocate_ips", { ips });
 export const selfGeo = () => invoke<Geo | null>("self_geo");
+export interface Block {
+  height: number;
+  time: number;
+  txids: string[];
+  stakeWinner: string | null;
+}
+export const recentBlocks = (count: number) => invoke<Block[]>("recent_blocks", { count });
 export interface Probe {
   ip: string;
   online: boolean;

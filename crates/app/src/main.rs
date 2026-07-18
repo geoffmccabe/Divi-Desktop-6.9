@@ -430,10 +430,34 @@ async fn geolocate_ips(ips: Vec<String>) -> Vec<GeoDto> {
     .unwrap_or_default()
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BlockDto {
+    height: i64,
+    time: i64,
+    txids: Vec<String>,
+    stake_winner: Option<String>,
+}
+
+/// Newest blocks + their transactions, for the block-chain visualization.
+#[tauri::command]
+async fn recent_blocks(count: i64) -> Vec<BlockDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(cfg) = NodeConfig::load() else { return Vec::new() };
+        wallet::recent_blocks(&cfg, count.clamp(1, 20))
+            .into_iter()
+            .map(|b| BlockDto { height: b.height, time: b.time, txids: b.txids, stake_winner: b.stake_winner })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             node_status,
+            recent_blocks,
             wallet_balance,
             wallet_addresses,
             new_receive_address,

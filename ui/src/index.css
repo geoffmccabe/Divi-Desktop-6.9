@@ -518,3 +518,23 @@ h1, h2, h3 { font-family: var(--font-heading); }
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: hsl(var(--muted-foreground)); font-size: 0.9rem;
 }
+
+/* ── Block-chain visualization (moving blocks across the map bottom) ────────── */
+.bv-wrap {
+  position: absolute; left: 0; right: 0; bottom: 10px; height: 130px;
+  pointer-events: none; overflow: hidden; z-index: 4;
+}
+.bv-panel {
+  position: absolute; top: 0; height: 100%;
+  background: rgba(0, 0, 0, 0.8);
+  border: 1px solid hsl(var(--primary) / 0.55); /* thin, matches node lines */
+  border-radius: 8px; padding: 8px 10px; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 4px; will-change: transform;
+}
+.bv-height { font-size: 0.9rem; font-weight: 600; color: hsl(var(--primary)); font-family: ui-monospace, monospace; }
+.bv-stake { font-size: 0.62rem; color: hsl(var(--warning)); font-family: ui-monospace, monospace; }
+.bv-txs { flex: 1; overflow: hidden; position: relative; }
+.bv-txs-inner { display: flex; flex-direction: column; gap: 2px; }
+.bv-txs-inner.bv-scrolling { animation: bv-scroll linear infinite; }
+@keyframes bv-scroll { from { transform: translateY(0); } to { transform: translateY(-50%); } }
+.bv-tx { font-size: 0.6rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; white-space: nowrap; }

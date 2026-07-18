@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { networkPeers, selfGeo, probePeers, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, type Known } from "./knownPeers";
+import { BlockChainViz } from "./BlockChainViz";
 import { Icon } from "../Icon";
 import worldmap from "../assets/worldmap.json";
 
@@ -707,6 +708,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       </div>
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
+        <BlockChainViz />
         {hover && (
           <div
             className={"netmap-tip" + (hover.tone === "blue" ? " netmap-tip-blue" : "")}

@@ -89,6 +89,48 @@ fn is_stake_cat(c: &str) -> bool {
     c.contains("stake") || matches!(c, "generate" | "mint" | "immature" | "orphan")
 }
 
+// ── Blockchain visualization: recent blocks + their transactions ────────────
+
+pub struct BlockSummary {
+    pub height: i64,
+    pub time: i64,
+    pub txids: Vec<String>,
+    /// The staker's payout address (coinstake), if we can read it — the "winner".
+    pub stake_winner: Option<String>,
+}
+
+/// The newest `count` blocks with their transaction ids (for the moving block
+/// chain on the map). Light: one getblock per block, plus one lookup for the
+/// coinstake winner. Newest last.
+pub fn recent_blocks(cfg: &NodeConfig, count: i64) -> Vec<BlockSummary> {
+    let rpc = RpcClient::new(cfg);
+    let Some(tip) = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64()) else {
+        return Vec::new();
+    };
+    let start = (tip - count + 1).max(0);
+    let mut out = Vec::new();
+    for h in start..=tip {
+        let Some(hash) = rpc.call("getblockhash", json!([h])).ok().and_then(|v| v.as_str().map(str::to_string)) else {
+            continue;
+        };
+        let Ok(b) = rpc.call("getblock", json!([hash])) else { continue };
+        let time = b["time"].as_i64().unwrap_or(0);
+        let txids: Vec<String> = b["tx"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        // The coinstake is the 2nd tx in a PoS block; its output pays the staker.
+        let stake_winner = txids.get(1).and_then(|txid| {
+            let tx = rpc.call("getrawtransaction", json!([txid, 1])).ok()?;
+            tx["vout"].as_array()?.iter().find_map(|v| {
+                v["scriptPubKey"]["addresses"].as_array().and_then(|a| a.first()).and_then(|x| x.as_str()).map(str::to_string)
+            })
+        });
+        out.push(BlockSummary { height: h, time, txids, stake_winner });
+    }
+    out
+}
+
 /// The wallet's addresses that hold stakeable coins and/or have staked, largest
 /// first. Size comes from spendable UTXOs; stake counts/dates from history.
 pub fn staking_wallets(cfg: &NodeConfig) -> Vec<StakeWallet> {
