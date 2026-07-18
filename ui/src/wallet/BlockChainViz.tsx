@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { recentBlocks, walletAddresses, type Block } from "./api";
+import { recentBlocks, walletAddresses, chainOrphans, type Block, type StaleBlock } from "./api";
 import { markUserWon } from "./stakeWin";
 import nyan from "../assets/nyan_cat.webp";
 
@@ -12,6 +12,10 @@ import nyan from "../assets/nyan_cat.webp";
 
 const CROSS_MS = 5 * 60 * 1000; // 5 minutes to traverse the panel width
 const NOMINAL_MS = 60 * 1000; // seed spacing (~1 block/min)
+// A stale block sits at the fork point as a narrow 1:3 marker (the wrap is
+// 130px tall). These are genuinely rare — measured ~0.8% of blocks — so this
+// is a seldom-seen event marker, not a regular feature of the display.
+const ORPHAN_W = 43;
 
 interface LiveBlock extends Block {
   born: number; // client time this block entered the chain (its timeline point)
@@ -23,8 +27,10 @@ function short(txid: string) {
 
 export function BlockChainViz() {
   const [blocks, setBlocks] = useState<LiveBlock[]>([]);
+  const [orphans, setOrphans] = useState<StaleBlock[]>([]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const panelRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const orphanRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const lastHeight = useRef(0);
   const lastAdd = useRef(0);
   const userAddrs = useRef<Set<string>>(new Set());
@@ -36,6 +42,26 @@ export function BlockChainViz() {
       try {
         const a = await walletAddresses();
         if (alive && a.length) userAddrs.current = new Set(a.map((x) => x.address));
+      } catch {
+        /* keep what we have */
+      }
+    };
+    load();
+    const id = setInterval(load, 120000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  // Stale blocks our node has seen. Polled slowly — they appear a couple of
+  // times a day, so there is nothing to gain from asking often.
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await chainOrphans();
+        if (alive && r) setOrphans(r.stale);
       } catch {
         /* keep what we have */
       }
@@ -120,6 +146,19 @@ export function BlockChainViz() {
           el.style.transform = `translateX(${xL}px)`;
           el.style.width = `${Math.max(0, xR - xL)}px`;
         }
+        // Park each stale block against the left edge of the block that beat
+        // it — that boundary is exactly where the chain forked.
+        for (const o of orphans) {
+          const el = orphanRefs.current.get(o.height);
+          if (!el) continue;
+          const b = blocks.find((x) => x.height === o.height);
+          if (!b) {
+            el.style.display = "none";
+            continue;
+          }
+          el.style.display = "";
+          el.style.transform = `translateX(${cw - (now - b.born) * v - ORPHAN_W}px)`;
+        }
         if (anyOff) {
           setBlocks((prev) => {
             const n = Date.now();
@@ -134,10 +173,57 @@ export function BlockChainViz() {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [blocks]);
+  }, [blocks, orphans]);
+
+  const shownHeights = new Set(blocks.map((b) => b.height));
 
   return (
     <div className="bv-wrap" ref={wrapRef}>
+      {/* Stale blocks — only those whose winning block is currently on screen.
+          Styled inline: index.css is the shared collision hotspot. */}
+      {orphans
+        .filter((o) => shownHeights.has(o.height))
+        .map((o) => (
+          <div
+            key={`orphan-${o.height}`}
+            ref={(el) => {
+              if (el) orphanRefs.current.set(o.height, el);
+              else orphanRefs.current.delete(o.height);
+            }}
+            title={`Stale block at height ${o.height.toLocaleString()} — minted, then beaten by the block next to it (${o.status}${o.branchLen > 1 ? `, ${o.branchLen}-block branch` : ""}). Seen by this node only.`}
+            style={{
+              position: "absolute",
+              top: 0,
+              height: "100%",
+              width: ORPHAN_W,
+              boxSizing: "border-box",
+              background: "rgba(0, 0, 0, 0.5)",
+              border: "1px solid rgba(255, 120, 105, 0.55)",
+              borderRadius: 8,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              overflow: "hidden",
+              pointerEvents: "auto",
+              willChange: "transform",
+              zIndex: 5,
+            }}
+          >
+            <span
+              style={{
+                writingMode: "vertical-rl",
+                transform: "rotate(180deg)",
+                fontSize: "0.58rem",
+                fontWeight: 700,
+                letterSpacing: "0.14em",
+                color: "rgba(255, 140, 125, 0.92)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              ORPHAN BLOCK
+            </span>
+          </div>
+        ))}
       {blocks.map((b) => {
         const scroll = b.txids.length > 6;
         const list = scroll ? [...b.txids, ...b.txids] : b.txids;

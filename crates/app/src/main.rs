@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{coins, config::NodeConfig, network, poe, report, security, wallet};
+use dd69_supervisor::{chaintips, coins, config::NodeConfig, network, poe, report, security, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -456,6 +456,45 @@ async fn recent_blocks(count: i64) -> Vec<BlockDto> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct StaleBlockDto {
+    height: i64,
+    status: String,
+    branch_len: i64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OrphanReportDto {
+    stale: Vec<StaleBlockDto>,
+    tip: i64,
+    span: i64,
+    rate_pct: f64,
+}
+
+/// Stale ("orphan") blocks our node has seen, for the block-chain visualization.
+#[tauri::command]
+async fn chain_orphans() -> Option<OrphanReportDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().ok()?;
+        let r = chaintips::orphans(&cfg)?;
+        Some(OrphanReportDto {
+            stale: r
+                .stale
+                .into_iter()
+                .map(|s| StaleBlockDto { height: s.height, status: s.status, branch_len: s.branch_len })
+                .collect(),
+            tip: r.tip,
+            span: r.span,
+            rate_pct: r.rate_pct,
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StakeStartDto {
     staking: bool,
     needs_passphrase: bool,
@@ -691,6 +730,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             node_status,
             recent_blocks,
+            chain_orphans,
             lottery_board,
             start_staking,
             wallet_balance,

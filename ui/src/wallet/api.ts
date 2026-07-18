@@ -84,6 +84,18 @@ export interface Block {
   stakeAmount: number | null;
 }
 export const recentBlocks = (count: number) => invoke<Block[]>("recent_blocks", { count });
+export interface StaleBlock {
+  height: number;
+  status: string;
+  branchLen: number;
+}
+export interface OrphanReport {
+  stale: StaleBlock[];
+  tip: number;
+  span: number;
+  ratePct: number;
+}
+export const chainOrphans = () => invoke<OrphanReport | null>("chain_orphans");
 export interface Probe {
   ip: string;
   online: boolean;
