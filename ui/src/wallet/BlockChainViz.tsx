@@ -155,9 +155,20 @@ export function BlockChainViz() {
             <div className="bv-height">Block #{b.height.toLocaleString()}</div>
             {b.stakeWinner && (
               <div className="bv-stake">
-                {/* STAKE · +amount · sunglasses — the glasses inherit the gold via
-                    currentColor (styles inline to stay out of the shared index.css) */}
+                {/* [node badge] STAKE · +amount — the badge is a purple node circle
+                    wearing the black glasses, drawn at exactly the map's proportions
+                    (r=6, glasses half-width r*1.5, seated at -r*0.35) so the link to
+                    the winning node on the map is unmistakable. Styles are inline on
+                    purpose: index.css is the shared collision hotspot. */}
                 <div style={{ display: "flex", alignItems: "center", gap: 5, color: "hsl(var(--warning))" }}>
+                  <svg viewBox="-9 -7 18 14" width="18" height="14" aria-hidden style={{ flexShrink: 0 }}>
+                    <circle cx="0" cy="0" r="6" fill="hsl(var(--primary))" />
+                    <ellipse cx="-4.5" cy="-2.1" rx="3.78" ry="3.06" fill="rgba(8,8,12,0.95)" />
+                    <ellipse cx="4.5" cy="-2.1" rx="3.78" ry="3.06" fill="rgba(8,8,12,0.95)" />
+                    <line x1="-1.854" y1="-2.712" x2="1.854" y2="-2.712" stroke="rgba(8,8,12,0.95)" strokeWidth="1.44" />
+                    <ellipse cx="-5.634" cy="-3.018" rx="0.945" ry="0.612" fill="rgba(255,255,255,0.25)" />
+                    <ellipse cx="3.366" cy="-3.018" rx="0.945" ry="0.612" fill="rgba(255,255,255,0.25)" />
+                  </svg>
                   <span style={{ fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.06em" }}>
                     {wonByUser ? "STAKE WON BY YOU" : "STAKE"}
                   </span>
@@ -173,11 +184,6 @@ export function BlockChainViz() {
                       +{b.stakeAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} $DIVI
                     </span>
                   )}
-                  <svg viewBox="0 0 24 14" width="16" height="9" aria-hidden style={{ fill: "currentColor", flexShrink: 0 }}>
-                    <ellipse cx="6" cy="7" rx="5.5" ry="4.5" />
-                    <ellipse cx="18" cy="7" rx="5.5" ry="4.5" />
-                    <rect x="10.5" y="5.8" width="3" height="1.6" rx="0.6" />
-                  </svg>
                 </div>
                 <div className="bv-stake-line">Winner: {short(b.stakeWinner)}</div>
               </div>
