@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Print what the fork collector has banked so far. JSON with --json."""
+import json
+import os
+import sqlite3
+import sys
+import time
+
+DB = os.environ.get("FORK_DB", "/var/lib/divi-forks/forks.db")
+c = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+w = {k: v for k, v in c.execute("SELECT k, v FROM window")}
+forks = list(c.execute("SELECT height, status, branch_len, first_seen FROM forks ORDER BY height DESC"))
+reorgs = list(c.execute("SELECT height, depth, at FROM reorgs ORDER BY at DESC"))
+
+span = max(0, w.get("max_tip", 0) - w.get("min_tip", 0))
+followed = sum(1 for f in forks if "fork" in (f[1] or ""))
+deepest = max((f[2] for f in forks), default=0)
+rate = (len(forks) * 100 / span) if span else 0.0
+depths = {}
+for _, _, bl, _ in forks:
+    depths[bl] = depths.get(bl, 0) + 1
+
+out = {
+    "observed_blocks": span,
+    "observing_since": w.get("started"),
+    "forks": len(forks),
+    "followed": followed,
+    "witnessed": len(forks) - followed,
+    "deepest_branch": deepest,
+    "fork_rate_pct": round(rate, 3),
+    "depth_histogram": depths,
+    "reorgs": len(reorgs),
+    "deepest_reorg": max((r[1] for r in reorgs), default=0),
+    "recent_reorgs": [{"height": r[0], "depth": r[1], "at": r[2]} for r in reorgs[:10]],
+}
+
+if "--json" in sys.argv:
+    print(json.dumps(out, indent=2))
+else:
+    since = out["observing_since"]
+    print(f"observing since : {time.strftime('%Y-%b-%d %H:%M', time.localtime(since)) if since else '—'}")
+    print(f"blocks watched  : {span:,}")
+    print(f"forks seen      : {len(forks)}  ({followed} we rolled back, {len(forks)-followed} witnessed)")
+    print(f"fork rate       : {rate:.2f}%")
+    print(f"deepest branch  : {deepest} block(s)")
+    print(f"reorgs recorded : {len(reorgs)}  deepest {out['deepest_reorg']}")
+    if depths:
+        print("depth histogram : " + " · ".join(f"{d} blk ×{n}" for d, n in sorted(depths.items())))
+    for r in reorgs[:5]:
+        print(f"   reorg h={r[0]:,} depth={r[1]} at {time.strftime('%Y-%b-%d %H:%M', time.localtime(r[2]))}")
