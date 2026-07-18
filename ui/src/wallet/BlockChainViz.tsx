@@ -155,10 +155,30 @@ export function BlockChainViz() {
             <div className="bv-height">Block #{b.height.toLocaleString()}</div>
             {b.stakeWinner && (
               <div className="bv-stake">
-                <div className="bv-stake-hdr">{wonByUser ? "STAKE WON BY YOU" : "STAKE WON"}</div>
-                {b.stakeAmount != null && (
-                  <div className="bv-stake-amt">+{b.stakeAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} $DIVI</div>
-                )}
+                {/* STAKE · +amount · sunglasses — the glasses inherit the gold via
+                    currentColor (styles inline to stay out of the shared index.css) */}
+                <div style={{ display: "flex", alignItems: "center", gap: 5, color: "hsl(var(--warning))" }}>
+                  <span style={{ fontSize: "0.62rem", fontWeight: 700, letterSpacing: "0.06em" }}>
+                    {wonByUser ? "STAKE WON BY YOU" : "STAKE"}
+                  </span>
+                  {b.stakeAmount != null && (
+                    <span
+                      style={{
+                        fontSize: "0.7rem",
+                        fontWeight: 600,
+                        color: "hsl(var(--success))",
+                        fontFamily: "ui-monospace, monospace",
+                      }}
+                    >
+                      +{b.stakeAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} $DIVI
+                    </span>
+                  )}
+                  <svg viewBox="0 0 24 14" width="16" height="9" aria-hidden style={{ fill: "currentColor", flexShrink: 0 }}>
+                    <ellipse cx="6" cy="7" rx="5.5" ry="4.5" />
+                    <ellipse cx="18" cy="7" rx="5.5" ry="4.5" />
+                    <rect x="10.5" y="5.8" width="3" height="1.6" rx="0.6" />
+                  </svg>
+                </div>
                 <div className="bv-stake-line">Winner: {short(b.stakeWinner)}</div>
               </div>
             )}
