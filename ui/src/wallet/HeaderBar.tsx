@@ -5,6 +5,7 @@ import { AddressDropdown } from "./AddressDropdown";
 import { StakingDropdown } from "./StakingDropdown";
 import { LotteryDropdown } from "./LotteryDropdown";
 import { LotteryCountdown } from "./LotteryCountdown";
+import { useDiviValue } from "./value";
 import { Icon } from "../Icon";
 
 type OpenPanel = null | "staking" | "addresses" | "lottery";
@@ -66,6 +67,7 @@ export function HeaderBar() {
 
   const main = addrs?.find((a) => a.isMain) ?? addrs?.[0] ?? null;
   const spend = bal ? fmtDiviParts(bal.spendable) : null;
+  const fiat = useDiviValue(bal ? bal.spendable : null);
 
   const copyMain = async () => {
     if (!main) return;
@@ -84,7 +86,10 @@ export function HeaderBar() {
     <div className="header-bar" ref={barRef}>
       {/* Spendable */}
       <div className="hdr-panel glass-panel">
-        <span className="bl-label">Spendable</span>
+        <div className="hdr-spend-top">
+          <span className="bl-label">Spendable</span>
+          {fiat && <span className="bl-fiat">{fiat}</span>}
+        </div>
         <span className="bl-amt">
           {spend ? (
             <>

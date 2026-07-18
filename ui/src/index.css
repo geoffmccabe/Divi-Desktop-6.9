@@ -687,3 +687,26 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .send-warn { margin: 0; font-size: 0.8rem; color: hsl(var(--warning)); }
 .send-actions { display: flex; gap: 8px; margin-top: 4px; }
 .send-done { font-size: 1.1rem; font-weight: 600; color: hsl(var(--success)); }
+
+/* ---- Spendable fiat value (header) ---- */
+.hdr-spend-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.bl-fiat { font-size: 0.8rem; font-weight: 600; color: hsl(var(--primary)); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---- Admin: Value panel ---- */
+.value-panel { display: flex; flex-direction: column; gap: 18px; }
+.value-field { display: flex; flex-direction: column; gap: 5px; }
+.value-toggle { display: flex; align-items: flex-start; gap: 8px; font-size: 0.85rem; margin-top: 8px; }
+.value-toggle .set-note { display: inline; }
+.value-status { display: flex; align-items: center; gap: 14px; font-size: 0.78rem; margin-top: 8px; }
+.src-ok { color: hsl(var(--success)); }
+.src-off { color: hsl(var(--muted-foreground)); }
+.value-cur-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.value-cur { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 6px 4px; }
+.value-cur-pick { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+.value-cur-code { font-weight: 600; font-size: 0.9rem; }
+.value-cur-price { font-size: 0.78rem; color: hsl(var(--muted-foreground)); text-align: right; font-variant-numeric: tabular-nums; }
+.value-cur-rm { border: none; background: none; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 0.9rem; }
+.value-cur-rm:hover:not(:disabled) { color: hsl(var(--destructive)); }
+.value-cur-rm:disabled { opacity: 0.3; cursor: default; }
+.value-add { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.value-add .wl-input { flex: 1; min-width: 0; }

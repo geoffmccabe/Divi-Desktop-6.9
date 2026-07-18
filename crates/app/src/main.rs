@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{chaintips, coins, config::NodeConfig, network, poe, report, security, wallet};
+use dd69_supervisor::{chaintips, coins, config::NodeConfig, network, poe, price, report, security, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -725,6 +725,34 @@ async fn send_coins(address: String, amount: f64, passphrase: Option<String>) ->
     .map_err(|e| e.to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PriceDto {
+    prices: std::collections::HashMap<String, f64>,
+    coingecko_ok: bool,
+    coinmarketcap_ok: bool,
+}
+
+/// Current DIVI price in the requested fiat currencies (CoinGecko + optional
+/// CoinMarketCap). Runs off the UI thread; empty prices = sources unavailable.
+#[tauri::command]
+async fn divi_prices(currencies: Vec<String>, cmc_key: Option<String>, use_coingecko: bool) -> PriceDto {
+    tauri::async_runtime::spawn_blocking(move || {
+        let r = price::divi_prices(&currencies, cmc_key.as_deref(), use_coingecko);
+        PriceDto {
+            prices: r.prices,
+            coingecko_ok: r.coingecko_ok,
+            coinmarketcap_ok: r.coinmarketcap_ok,
+        }
+    })
+    .await
+    .unwrap_or(PriceDto {
+        prices: std::collections::HashMap::new(),
+        coingecko_ok: false,
+        coinmarketcap_ok: false,
+    })
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -760,7 +788,8 @@ fn main() {
             remember_password,
             forget_password,
             resume_staking,
-            send_coins
+            send_coins,
+            divi_prices
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

@@ -6,6 +6,7 @@ pub mod security;
 pub mod process;
 pub mod network;
 pub mod poe;
+pub mod price;
 pub mod report;
 pub mod rpc;
 pub mod state;

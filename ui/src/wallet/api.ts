@@ -167,5 +167,14 @@ export const resumeStaking = () => invoke<StakeStart>("resume_staking");
 export const sendCoins = (address: string, amount: number, passphrase?: string) =>
   invoke<string>("send_coins", { address, amount, passphrase: passphrase ?? null });
 
+// ---- DIVI price / value ----
+export interface DiviPrices {
+  prices: Record<string, number>; // lowercase currency code -> price per DIVI
+  coingeckoOk: boolean;
+  coinmarketcapOk: boolean;
+}
+export const diviPrices = (currencies: string[], cmcKey: string, useCoingecko: boolean) =>
+  invoke<DiviPrices>("divi_prices", { currencies, cmcKey: cmcKey || null, useCoingecko });
+
 // Divi block explorer for a transaction.
 export const explorerTxUrl = (txid: string) => `https://chainz.cryptoid.info/divi/tx.dws?${txid}.htm`;
