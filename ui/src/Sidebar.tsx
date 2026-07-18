@@ -1,7 +1,7 @@
 import { NAV } from "./nav";
 import { Icon } from "./Icon";
 import { AdminGear } from "./admin/AdminGear";
-import logo from "./assets/divi-logo.webp";
+import logo from "./assets/divi-logo.png";
 
 export function Sidebar({ active, onSelect }: { active: string; onSelect: (id: string) => void }) {
   return (
