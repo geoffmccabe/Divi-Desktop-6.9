@@ -84,7 +84,9 @@ pub fn encode_key_announce(enc_pubkey: &str) -> Result<String, String> {
 
 /// Pull the pushed payload out of an OP_META scriptPubKey hex, bounds-checked.
 fn extract_payload(script_hex: &str) -> Option<&str> {
-    if script_hex.len() < 4 || !script_hex.starts_with("6a") {
+    // ASCII guard: all slicing below is by byte index, so a non-ASCII char
+    // straddling a boundary would panic. Hex is ASCII; anything else isn't ours.
+    if script_hex.len() < 4 || !script_hex.is_ascii() || !script_hex.starts_with("6a") {
         return None;
     }
     let (off, plen) = match &script_hex[2..4] {
@@ -185,6 +187,13 @@ mod tests {
             &op_meta_script(&format!("445658500102 01{}", "ab".repeat(10)).replace(' ', "")),
         ] {
             assert!(parse(bad).is_none(), "should reject {bad}");
+        }
+    }
+
+    #[test]
+    fn non_ascii_input_returns_none_not_panic() {
+        for s in ["6aaé00", "6a😀", "445658500102🎨"] {
+            assert!(parse(s).is_none(), "should safely reject {s}");
         }
     }
 

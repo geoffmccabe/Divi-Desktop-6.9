@@ -21,6 +21,11 @@ const KEY_DOMAIN: &[u8] = b"DIVI-NFD-KEY-v1"; // the phrase the wallet signs
 /// Derive a stable X25519 encryption keypair from a `signmessage` signature.
 /// Because Divi's signmessage is deterministic (verified on-node), the same
 /// address always yields the same keypair, and the raw wallet key is never used.
+///
+/// SECURITY: this signature IS the master decryption key for every NFD the
+/// address owns. `signmessage` signatures are conventionally public, so this one
+/// must never be surfaced, logged, or verified elsewhere, and the phrase below
+/// must stay globally unique to NFD. Anyone who obtains it can decrypt.
 pub fn derive_enc_keypair(signature_bytes: &[u8]) -> (StaticSecret, PublicKey) {
     let seed: [u8; 32] = Sha256::digest(signature_bytes).into();
     let secret = StaticSecret::from(seed);
@@ -40,6 +45,16 @@ fn hkdf_key(ikm: &[u8], info: &[u8]) -> Result<[u8; 32], String> {
     Ok(okm)
 }
 
+/// KDF context: binds the wrap key to BOTH the ephemeral and recipient pubkeys,
+/// so a captured wrapped key can't be replayed/reinterpreted under another pair.
+fn wrap_info(epk: &PublicKey, recipient_pub: &PublicKey) -> Vec<u8> {
+    let mut info = Vec::with_capacity(WRAP_INFO.len() + 64);
+    info.extend_from_slice(WRAP_INFO);
+    info.extend_from_slice(epk.as_bytes());
+    info.extend_from_slice(recipient_pub.as_bytes());
+    info
+}
+
 fn rand_bytes<const N: usize>() -> Result<[u8; N], String> {
     let mut b = [0u8; N];
     getrandom::getrandom(&mut b).map_err(|e| e.to_string())?;
@@ -53,7 +68,10 @@ fn wrap_key(ck: &[u8; 32], recipient_pub: &PublicKey) -> Result<Vec<u8>, String>
     let esk = StaticSecret::from(eph_seed);
     let epk = PublicKey::from(&esk);
     let shared = esk.diffie_hellman(recipient_pub);
-    let wk = hkdf_key(shared.as_bytes(), WRAP_INFO)?;
+    if !shared.was_contributory() {
+        return Err("refusing a low-order recipient key".into());
+    }
+    let wk = hkdf_key(shared.as_bytes(), &wrap_info(&epk, recipient_pub))?;
     let nonce: [u8; 12] = rand_bytes()?;
     let cipher = Aes256Gcm::new_from_slice(&wk).map_err(|e| e.to_string())?;
     let ct = cipher
@@ -76,7 +94,10 @@ fn unwrap_key(blob: &[u8], my_secret: &StaticSecret) -> Result<[u8; 32], String>
     let nonce = &blob[32..44];
     let ct = &blob[44..];
     let shared = my_secret.diffie_hellman(&epk);
-    let wk = hkdf_key(shared.as_bytes(), WRAP_INFO)?;
+    if !shared.was_contributory() {
+        return Err("rejected a low-order ephemeral key".into());
+    }
+    let wk = hkdf_key(shared.as_bytes(), &wrap_info(&epk, &PublicKey::from(my_secret)))?;
     let cipher = Aes256Gcm::new_from_slice(&wk).map_err(|e| e.to_string())?;
     let ck = cipher
         .decrypt(Nonce::from_slice(nonce), ct)
@@ -173,6 +194,17 @@ mod tests {
         let n = wrapped.len() - 1;
         wrapped[n] ^= 0x01;
         assert!(decrypt_content(&blob, &wrapped, &osk).is_err());
+    }
+
+    #[test]
+    fn rejects_low_order_ephemeral_key() {
+        // A forged wrapped-key whose ephemeral pubkey is the all-zero (low-order)
+        // point forces shared=0; must be rejected, not silently unwrapped.
+        let (osk, _opk) = kp(b"alice-sig");
+        let mut blob = vec![0u8; 32]; // epk = 0 (low order)
+        blob.extend_from_slice(&[0u8; 12]); // nonce
+        blob.extend_from_slice(&[0u8; 48]); // ct+tag
+        assert!(decrypt_content(&[0u8; 28], &blob, &osk).is_err());
     }
 
     #[test]
