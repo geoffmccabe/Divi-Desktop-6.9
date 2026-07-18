@@ -8,6 +8,9 @@ pub struct NodeConfig {
     pub rpc_user: String,
     pub rpc_pass: String,
     pub rpc_port: u16,
+    /// True when we're talking to a node on another machine (over an SSH tunnel),
+    /// so there's no local pid/datadir to inspect — status comes purely from RPC.
+    pub remote: bool,
 }
 
 fn home() -> PathBuf {
@@ -40,7 +43,24 @@ pub fn parse_conf(text: &str) -> HashMap<String, String> {
 
 impl NodeConfig {
     pub fn load() -> Result<Self, String> {
-        // DIVI_DATADIR lets you point the wallet at a specific node (a test /
+        // DIVI_REMOTE=1 points the wallet at a node reached over an SSH tunnel
+        // (127.0.0.1:PORT forwarded to a server), using creds from the env. No
+        // local datadir/pid exists, so status is derived from RPC only.
+        if std::env::var("DIVI_REMOTE").is_ok() {
+            let user = std::env::var("DIVI_RPC_USER").unwrap_or_default();
+            let pass = std::env::var("DIVI_RPC_PASS").unwrap_or_default();
+            if user.is_empty() || pass.is_empty() {
+                return Err("DIVI_REMOTE set but DIVI_RPC_USER/DIVI_RPC_PASS are missing".into());
+            }
+            return Ok(NodeConfig {
+                datadir: default_datadir(),
+                rpc_user: user,
+                rpc_pass: pass,
+                rpc_port: std::env::var("DIVI_RPC_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(51473),
+                remote: true,
+            });
+        }
+        // DIVI_DATADIR lets you point the wallet at a specific local node (a test /
         // regtest node, or a non-standard install) instead of the default.
         let dir = std::env::var("DIVI_DATADIR")
             .map(PathBuf::from)
@@ -64,6 +84,7 @@ impl NodeConfig {
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(51473),
             datadir,
+            remote: false,
         };
         if cfg.rpc_user.is_empty() || cfg.rpc_pass.is_empty() {
             return Err(format!(

@@ -80,7 +80,7 @@ pub fn assess(peers: i64, tip_age_secs: Option<i64>, staking: &Value) -> Health 
         return Health {
             phase: Phase::Syncing,
             headline: format!(
-                "Syncing the blockchain — about {} behind. This catches up on its own; you can keep using the wallet.",
+                "Syncing the blockchain — {} behind. This catches up on its own; you can keep using the wallet.",
                 human_duration(tip_age_secs)
             ),
         };

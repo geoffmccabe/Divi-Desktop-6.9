@@ -30,9 +30,15 @@ pub fn tip_age_secs(rpc: &RpcClient) -> Option<i64> {
 }
 
 pub fn status_report(cfg: &NodeConfig) -> StatusReport {
-    let last_shutdown = health::last_shutdown(&cfg.datadir);
+    // A remote node (over an SSH tunnel) has no local pid/datadir to inspect —
+    // its whole status comes from RPC, so skip the local-file checks entirely.
+    let last_shutdown = if cfg.remote {
+        LastShutdown::Unknown
+    } else {
+        health::last_shutdown(&cfg.datadir)
+    };
 
-    if process::daemon_pid(&cfg.datadir).is_none() {
+    if !cfg.remote && process::daemon_pid(&cfg.datadir).is_none() {
         let (phase, headline) = if health::stale_pid_file(&cfg.datadir, false) {
             (
                 Phase::CrashedNeedsRepair,
