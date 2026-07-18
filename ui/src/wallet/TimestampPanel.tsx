@@ -42,7 +42,12 @@ export function TimestampPanel() {
     setErr(null);
     setTxid(null);
     setName(f.name);
-    setHash(await sha256Hex(f));
+    try {
+      setHash(await sha256Hex(f));
+    } catch {
+      setHash(null);
+      setErr("Could not read that file.");
+    }
   }
 
   async function anchor() {
@@ -95,8 +100,9 @@ export function TimestampPanel() {
       <section className="ts-section">
         <h3 className="ts-head">Create a timestamp</h3>
         <p className="wl-note">
-          Prove a file existed today without revealing it. The file stays on your computer — only its
-          fingerprint (a SHA-256 hash) goes on the Divi blockchain, and the block’s time is the proof.
+          Prove a file existed, without revealing it. The file stays on your computer — only its
+          fingerprint (a SHA-256 hash) goes on the Divi blockchain. Once the transaction confirms in a
+          block, that block’s timestamp is the proof. Anchoring spends a small network fee (~0.0001 DIVI).
         </p>
 
         <label className="wl-btn ts-file">
@@ -121,7 +127,8 @@ export function TimestampPanel() {
         {txid && (
           <div className="ts-result">
             <p className="wl-note">
-              Done. Keep this transaction id — it’s the receipt you’ll use to prove the file later.
+              Submitted. Keep this transaction id — it’s your receipt. The timestamp becomes final once
+              the transaction is included in a block (about a minute); use Verify below to confirm it.
             </p>
             <div className="addr-box">
               <code>{txid}</code>

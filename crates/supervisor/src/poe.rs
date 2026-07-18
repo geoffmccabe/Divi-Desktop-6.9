@@ -21,8 +21,17 @@ pub struct Proof {
     pub block_time: Option<i64>,
 }
 
+// Anchor economics, in satoshis so the arithmetic is exact.
+const FEE_SATS: i64 = 10_000; // 0.0001 DIVI
+const MIN_CHANGE_SATS: i64 = 1_000; // keep change comfortably above dust
+
 fn is_sha256_hex(h: &str) -> bool {
     h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// A JSON amount (DIVI, up to 8 decimals) as integer satoshis.
+fn to_sats(v: &Value) -> i64 {
+    (v.as_f64().unwrap_or(0.0) * 1e8).round() as i64
 }
 
 /// Anchor `hash_hex` (a 32-byte SHA-256, 64 hex chars) on-chain. Returns the txid.
@@ -33,30 +42,38 @@ pub fn timestamp(cfg: &NodeConfig, hash_hex: &str) -> Result<String, String> {
     }
     let rpc = RpcClient::new(cfg);
 
-    // Pick the largest spendable output to cover the tiny anchor fee.
+    // Pick the SMALLEST spendable output that still covers the fee plus a
+    // non-dust change. Smallest-sufficient leaves the big coins (and any stake
+    // riding on them) untouched, keeps the amount small enough that satoshi math
+    // stays exact, and never builds a dust/zero-change tx the node would reject.
+    let need_sats = FEE_SATS + MIN_CHANGE_SATS;
     let unspent = rpc.call("listunspent", json!([]))?;
     let utxo = unspent
         .as_array()
         .and_then(|a| {
-            a.iter().max_by(|x, y| {
-                let ax = x["amount"].as_f64().unwrap_or(0.0);
-                let ay = y["amount"].as_f64().unwrap_or(0.0);
-                ax.partial_cmp(&ay).unwrap_or(std::cmp::Ordering::Equal)
-            })
+            a.iter()
+                .filter(|u| {
+                    u["spendable"].as_bool().unwrap_or(false) && to_sats(&u["amount"]) >= need_sats
+                })
+                .min_by_key(|u| to_sats(&u["amount"]))
         })
-        .ok_or("You need a small amount of DIVI to pay the anchor fee.")?;
+        .ok_or("You need a little spendable DIVI (about 0.0002) to anchor a timestamp.")?;
 
-    let amount = utxo["amount"].as_f64().unwrap_or(0.0);
-    let fee = 0.0001_f64;
-    if amount < fee {
-        return Err("Not enough funds for the anchor fee.".into());
-    }
-    let change = ((amount - fee) * 1e8).round() / 1e8;
+    let change_sats = to_sats(&utxo["amount"]) - FEE_SATS; // >= MIN_CHANGE_SATS by selection
+    let change = change_sats as f64 / 1e8;
+
     let change_addr = rpc
         .call("getnewaddress", json!([]))?
         .as_str()
         .ok_or("could not get a change address")?
         .to_string();
+    // The change (the whole input minus the fee) returns here, so make sure the
+    // node agrees this address is really ours before we sign the input away --
+    // a tampered/proxied node can't redirect the funds without failing this.
+    let val = rpc.call("validateaddress", json!([change_addr]))?;
+    if !val["ismine"].as_bool().unwrap_or(false) {
+        return Err("Change address is not owned by this wallet; aborting for safety.".into());
+    }
 
     let inputs = json!([{ "txid": utxo["txid"], "vout": utxo["vout"] }]);
     let record_hex = format!("{}{}", RECORD_PREFIX, hash_hex);
@@ -113,8 +130,16 @@ fn parse_poe_hash(script_hex: &str) -> Option<String> {
         }
     };
     let payload = s.get(payload_off..payload_off + plen * 2)?; // *2: hex chars
-    // magic "DVXP"(4) | ver(1) | type(1)=PoE | alg(1) | hash(32) => 39 bytes => 78 hex
-    if payload.len() < 78 || !payload.starts_with("44565850") || &payload[10..12] != "01" {
+    // magic "DVXP"(4) | ver(1)=01 | type(1)=01 PoE | alg(1)=01 SHA-256 | hash(32)
+    // => 39 bytes => 78 hex. Pin version and hash-algorithm too, so a record with
+    // a different layout/algorithm can't be read as a SHA-256 v1 PoE match.
+    if payload.len() < 78
+        || !payload.starts_with("44565850") // "DVXP"
+        || &payload[8..10] != "01" // version 1
+        || &payload[10..12] != "01" // type PoE
+        || &payload[12..14] != "01"
+    // hashAlg SHA-256
+    {
         return None;
     }
     Some(payload[14..78].to_lowercase())
@@ -132,15 +157,23 @@ pub fn verify(cfg: &NodeConfig, txid: &str, hash_hex: &str) -> Result<Proof, Str
     let confirmations = tx["confirmations"].as_i64().unwrap_or(0);
     let block_time = tx["blocktime"].as_i64();
 
-    let anchored = tx["vout"].as_array().and_then(|vouts| {
-        vouts.iter().find_map(|v| {
-            v["scriptPubKey"]["hex"]
-                .as_str()
-                .and_then(parse_poe_hash)
+    // Scan EVERY output for a matching anchor -- a transaction may carry more
+    // than one PoE record, and checking only the first would falsely report a
+    // genuine anchor in a later output as "no match".
+    let matched = tx["vout"]
+        .as_array()
+        .map(|vouts| {
+            vouts.iter().any(|v| {
+                v["scriptPubKey"]["hex"]
+                    .as_str()
+                    .and_then(parse_poe_hash)
+                    .as_deref()
+                    == Some(hash_hex.as_str())
+            })
         })
-    });
+        .unwrap_or(false);
     Ok(Proof {
-        matched: anchored.as_deref() == Some(hash_hex.as_str()),
+        matched,
         confirmations,
         block_time,
     })
@@ -162,6 +195,19 @@ mod tests {
         for bad in ["", "6a", "6a02445658", "6a2700", "ff00", "6a2744565850"] {
             assert_eq!(parse_poe_hash(bad), None, "should reject {bad}");
         }
+    }
+
+    #[test]
+    fn rejects_wrong_version_type_or_alg() {
+        let hash = "a".repeat(64);
+        // wrong version(02..), wrong type(..02..), wrong alg(..02) each rejected
+        for prefix in ["44565850020101", "44565850010201", "44565850010102"] {
+            let script = format!("6a27{}{}", prefix, hash);
+            assert_eq!(parse_poe_hash(&script), None, "should reject prefix {prefix}");
+        }
+        // the fully-correct DVXP/v1/PoE/SHA-256 record still parses
+        let good = format!("6a27{}{}", RECORD_PREFIX, hash);
+        assert_eq!(parse_poe_hash(&good).as_deref(), Some(hash.as_str()));
     }
 
     #[test]
