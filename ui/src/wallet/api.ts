@@ -93,12 +93,19 @@ export const probePeers = (ips: string[]) => invoke<Probe[]>("probe_peers", { ip
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
 export const lotteryWins = (addresses: string[]) => invoke<LotteryWin[]>("lottery_wins", { addresses });
-export interface LotteryEntry {
-  rank: number;
+export interface LotteryLeader {
   address: string;
-  score: string;
+  big: number;
+  small: number;
+  points: number;
 }
-export const lotteryLeaderboard = () => invoke<LotteryEntry[]>("lottery_leaderboard");
+export interface LotteryBoard {
+  leaders: LotteryLeader[];
+  yourBig: number;
+  yourSmall: number;
+  yourPoints: number;
+}
+export const lotteryBoard = (addresses: string[]) => invoke<LotteryBoard>("lottery_board", { addresses });
 export interface StakeStart {
   staking: boolean;
   needsPassphrase: boolean;

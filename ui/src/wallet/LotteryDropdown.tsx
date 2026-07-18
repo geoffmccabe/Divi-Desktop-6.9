@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
-import { walletAddresses, lotteryWins, lotteryLeaderboard, type LotteryEntry } from "./api";
+import { walletAddresses, lotteryBoard, type LotteryBoard } from "./api";
 
-// Opened from the Next Lottery header: the user's cumulative lottery wins (big /
-// small / total) on top, then the live leaderboard — the current top candidates
-// for the next draw (from getlotteryblockwinners).
+// Opened from the Next Lottery header: your cumulative lottery block wins on top
+// (Big×10 + Small = points), then the leaderboard — top 10 addresses by points.
+
+const short = (a: string) => (a.length > 16 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a);
 
 export function LotteryDropdown({ open }: { open: boolean }) {
   const [render, setRender] = useState(open);
-  const [wins, setWins] = useState<{ big: number; small: number } | null>(null);
-  const [board, setBoard] = useState<LotteryEntry[] | null>(null);
+  const [board, setBoard] = useState<LotteryBoard | null>(null);
   const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
@@ -19,19 +19,13 @@ export function LotteryDropdown({ open }: { open: boolean }) {
     if (!open) return;
     let alive = true;
     (async () => {
+      setScanning(true);
       try {
-        const lb = await lotteryLeaderboard();
-        if (alive) setBoard(lb);
-      } catch {
-        if (alive) setBoard([]);
-      }
-      try {
-        setScanning(true);
         const addrs = await walletAddresses();
-        const won = await lotteryWins(addrs.map((a) => a.address));
-        if (alive) setWins({ big: won.reduce((s, w) => s + w.big, 0), small: won.reduce((s, w) => s + w.small, 0) });
+        const b = await lotteryBoard(addrs.map((a) => a.address));
+        if (alive) setBoard(b);
       } catch {
-        /* leave as-is */
+        if (alive) setBoard({ leaders: [], yourBig: 0, yourSmall: 0, yourPoints: 0 });
       } finally {
         if (alive) setScanning(false);
       }
@@ -42,7 +36,6 @@ export function LotteryDropdown({ open }: { open: boolean }) {
   }, [open]);
 
   if (!render) return null;
-  const total = wins ? wins.big + wins.small : 0;
 
   return (
     <div
@@ -53,26 +46,31 @@ export function LotteryDropdown({ open }: { open: boolean }) {
     >
       <div className="stake-dropdown-inner">
         <div className="lot-mywins">
-          <div className="lot-mywins-hdr">Your Lottery Wins</div>
+          <div className="lot-mywins-hdr">Your Lottery Block Wins</div>
           <div className="lot-mywins-row">
-            <span className="lot-win-big">🏆 {wins?.big ?? 0} big</span>
-            <span className="lot-win-small">🎟 {wins?.small ?? 0} small</span>
-            <span className="lot-total">{total.toLocaleString()} total</span>
+            <span className="lot-win-big"><span className="lot-trophy-gold">🏆</span> {board?.yourBig ?? 0} Big (x10)</span>
+            <span className="lot-win-small"><span className="lot-trophy-silver">🏆</span> {board?.yourSmall ?? 0} Small</span>
+            <span className="lot-total">{(board?.yourPoints ?? 0).toLocaleString()}</span>
           </div>
-          {scanning && <div className="stake-scan">Counting your wins from the chain…</div>}
+          {scanning && <div className="stake-scan">Counting lottery wins from the chain…</div>}
         </div>
-        <div className="lot-board-hdr">Current Lottery Leaderboard</div>
+        <div className="lot-board-hdr">Lottery Leaderboards</div>
         {board === null ? (
           <p className="wl-empty">Loading leaderboard…</p>
-        ) : board.length === 0 ? (
-          <p className="wl-empty">No lottery candidates yet.</p>
+        ) : board.leaders.length === 0 ? (
+          <p className="wl-empty">No lottery wins found yet.</p>
         ) : (
           <ul className="lot-board">
-            {board.map((e, i) => (
+            {board.leaders.map((e, i) => (
               <li key={i} className="lot-row">
-                <span className="lot-rank">#{e.rank + 1}</span>
-                <span className="lot-addr">{e.address}</span>
-                <span className="lot-score">{e.score}</span>
+                <div className="lot-row-top">
+                  <span className="lot-rank">#{i + 1}</span>
+                  <span className="lot-addr">{short(e.address)}</span>
+                  <span className="lot-score">{e.points.toLocaleString()}</span>
+                </div>
+                <div className="lot-row-sub">
+                  <span className="lot-trophy-gold">🏆</span> {e.big} Big (10x) · <span className="lot-trophy-silver">🏆</span> {e.small} Small
+                </div>
               </li>
             ))}
           </ul>

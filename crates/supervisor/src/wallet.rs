@@ -299,37 +299,64 @@ pub struct LotteryWin {
     pub small: i64,
 }
 
-/// One entry in the live lottery leaderboard (the current top candidates for the
-/// next draw): the address, its rank (0 = would win the big prize) and score.
-pub struct LotteryEntry {
-    pub rank: i64,
+/// A lottery leaderboard entry: cumulative Big (rank 0) and Small (rank 1-10)
+/// wins for an address, scored Big×10 + Small.
+pub struct LotteryLeader {
     pub address: String,
-    pub score: String,
+    pub big: i64,
+    pub small: i64,
+    pub points: i64,
 }
 
-/// The current lottery candidates (the live leaderboard for the next draw),
-/// ordered best rank first.
-pub fn lottery_leaderboard(cfg: &NodeConfig) -> Vec<LotteryEntry> {
+pub struct LotteryBoard {
+    pub leaders: Vec<LotteryLeader>,
+    pub your_big: i64,
+    pub your_small: i64,
+    pub your_points: i64,
+}
+
+/// Scan recent lottery blocks, tally Big/Small wins per address, and return the
+/// top 10 by points (Big×10 + Small) plus the user's own tally — all from one
+/// pass. The window is capped because each block is a separate RPC round-trip.
+pub fn lottery_board(cfg: &NodeConfig, user_addrs: &[String]) -> LotteryBoard {
     let rpc = RpcClient::new(cfg);
-    let Ok(v) = rpc.call("getlotteryblockwinners", json!([])) else {
-        return Vec::new();
+    let want: HashSet<&str> = user_addrs.iter().map(|s| s.as_str()).collect();
+    let mut tally: HashMap<String, (i64, i64)> = HashMap::new();
+    let Some(tip) = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64()) else {
+        return LotteryBoard { leaders: Vec::new(), your_big: 0, your_small: 0, your_points: 0 };
     };
-    let mut out: Vec<LotteryEntry> = v["Lottery Candidates"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|c| {
-                    Some(LotteryEntry {
-                        rank: c["Rank"].as_i64().unwrap_or(0),
-                        address: c["Address"].as_str()?.to_string(),
-                        score: c["Score"].as_str().unwrap_or("").to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    out.sort_by_key(|e| e.rank);
-    out
+    let (_, cycle) = lottery_cycle(&rpc);
+    let mut h = (tip / cycle) * cycle; // most recent lottery height
+    let mut scanned = 0;
+    while h >= cycle && scanned < 120 {
+        if let Ok(v) = rpc.call("getlotteryblockwinners", json!([h])) {
+            if let Some(cands) = v["Lottery Candidates"].as_array() {
+                for c in cands {
+                    let rank = c["Rank"].as_i64().unwrap_or(-1);
+                    if let Some(a) = c["Address"].as_str().and_then(|s| s.split(':').next()) {
+                        let e = tally.entry(a.to_string()).or_insert((0, 0));
+                        if rank == 0 {
+                            e.0 += 1;
+                        } else if rank > 0 {
+                            e.1 += 1;
+                        }
+                    }
+                }
+            }
+        }
+        h -= cycle;
+        scanned += 1;
+    }
+    let mut leaders: Vec<LotteryLeader> = tally
+        .iter()
+        .map(|(a, (b, s))| LotteryLeader { address: a.clone(), big: *b, small: *s, points: b * 10 + s })
+        .collect();
+    leaders.sort_by(|x, y| y.points.cmp(&x.points).then(y.big.cmp(&x.big)));
+    leaders.truncate(10);
+    let (yb, ys) = tally.iter().fold((0i64, 0i64), |(b, s), (a, (tb, ts))| {
+        if want.contains(a.as_str()) { (b + tb, s + ts) } else { (b, s) }
+    });
+    LotteryBoard { leaders, your_big: yb, your_small: ys, your_points: yb * 10 + ys }
 }
 
 pub fn lottery_wins(cfg: &NodeConfig, addrs: &[String]) -> Vec<LotteryWin> {

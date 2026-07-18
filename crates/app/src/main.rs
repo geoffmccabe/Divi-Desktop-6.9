@@ -477,24 +477,39 @@ async fn start_staking(passphrase: Option<String>) -> StakeStartDto {
 }
 
 #[derive(Serialize)]
-struct LotteryEntryDto {
-    rank: i64,
+struct LotteryLeaderDto {
     address: String,
-    score: String,
+    big: i64,
+    small: i64,
+    points: i64,
 }
 
-/// The live lottery leaderboard (current candidates for the next draw).
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LotteryBoardDto {
+    leaders: Vec<LotteryLeaderDto>,
+    your_big: i64,
+    your_small: i64,
+    your_points: i64,
+}
+
+/// Lottery leaderboard (top 10 by Big×10+Small) + the user's own win tally.
 #[tauri::command]
-async fn lottery_leaderboard() -> Vec<LotteryEntryDto> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let Ok(cfg) = NodeConfig::load() else { return Vec::new() };
-        wallet::lottery_leaderboard(&cfg)
-            .into_iter()
-            .map(|e| LotteryEntryDto { rank: e.rank, address: e.address, score: e.score })
-            .collect()
+async fn lottery_board(addresses: Vec<String>) -> LotteryBoardDto {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(cfg) = NodeConfig::load() else {
+            return LotteryBoardDto { leaders: vec![], your_big: 0, your_small: 0, your_points: 0 };
+        };
+        let b = wallet::lottery_board(&cfg, &addresses);
+        LotteryBoardDto {
+            leaders: b.leaders.into_iter().map(|e| LotteryLeaderDto { address: e.address, big: e.big, small: e.small, points: e.points }).collect(),
+            your_big: b.your_big,
+            your_small: b.your_small,
+            your_points: b.your_points,
+        }
     })
     .await
-    .unwrap_or_default()
+    .unwrap_or(LotteryBoardDto { leaders: vec![], your_big: 0, your_small: 0, your_points: 0 })
 }
 
 fn main() {
@@ -502,7 +517,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             node_status,
             recent_blocks,
-            lottery_leaderboard,
+            lottery_board,
             start_staking,
             wallet_balance,
             wallet_addresses,
