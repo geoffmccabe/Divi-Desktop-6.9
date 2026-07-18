@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { nodeStatus, type NodeStatus } from "./bridge";
 import { PHASE_COLOR, PHASE_LABEL } from "./status";
 import { playSound } from "./sound";
 import { Icon } from "./Icon";
 import { loadKnown } from "./wallet/knownPeers";
+import { onPeerCount } from "./wallet/peerEvents";
 
 // The node status block for the Overview tab. No glass wrapper — it nests
 // inside the wallet panel.
@@ -25,6 +26,23 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
   // keeps showing the true state instead of flapping to a scary message.
   const lastGood = useRef<NodeStatus | null>(null);
   const misses = useRef(0);
+
+  // One place that records a peer reading, whichever source saw it first — the
+  // status poll or the map. Every increase flashes gold for 3 seconds and gives
+  // the low click, once per peer gained.
+  const notePeers = useCallback((p: number) => {
+    setLastPeers(p);
+    if (prevPeers.current != null && p > prevPeers.current) {
+      setPeerFlash(true);
+      playSound("peer");
+      setTimeout(() => setPeerFlash(false), 3000);
+    }
+    prevPeers.current = p;
+  }, []);
+
+  // The map polls peers on its own clock; when it sees one connect, the count
+  // here moves at that instant instead of waiting for the next status poll.
+  useEffect(() => onPeerCount(notePeers), [notePeers]);
 
   useEffect(() => {
     let alive = true;
@@ -56,17 +74,7 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
         }
 
         if (s.blocks != null) setLastBlocks(s.blocks);
-        if (s.peers != null) {
-          setLastPeers(s.peers);
-          const p = s.peers;
-          if (prevPeers.current != null && p > prevPeers.current) {
-            setPeerFlash(true);
-            playSound("peer");
-            // 3s gold pulse — the app-wide "something just updated" signal.
-            setTimeout(() => setPeerFlash(false), 3000);
-          }
-          prevPeers.current = p;
-        }
+        if (s.peers != null) notePeers(s.peers);
       } catch {
         if (alive) setError(true);
       }

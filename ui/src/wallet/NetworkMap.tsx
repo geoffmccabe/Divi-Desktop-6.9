@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { networkPeers, probePeers, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, type Known } from "./knownPeers";
+import { emitPeerCount } from "./peerEvents";
 import { BlockChainViz } from "./BlockChainViz";
 import { userWonRecently } from "./stakeWin";
 import { Icon } from "../Icon";
@@ -180,6 +181,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         const s = await networkPeers();
         if (!alive || !s) return;
         setSnap(s);
+        // Tell the Peers counter what we just saw, so it ticks up (and flashes)
+        // at the same moment the peer turns pink on the map rather than up to
+        // five seconds later on its own poll.
+        emitPeerCount(s.peers.length);
         // Rotate the "stake winner" sunglasses to a peer each ~block-interval
         // (placeholder — the real winner address can't be mapped to a node).
         const nowW = performance.now();
@@ -530,10 +535,16 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               ctx.fill();
             }
             // "city ?" on the FAR side of the dot (across from the green arc),
-            // small Courier — one machine hailing another. Flashes ~every 2-5s for
-            // 2s (desynced per IP), and is skipped if it'd land on another label.
-            const env = labelPulse(now, ip, 4000, 7000, 2000);
-            if (env > 0.02) {
+            // small Courier — one machine hailing another, questioning whether
+            // anyone is still there.
+            //
+            // This is held VISIBLE for as long as the node is being probed. It
+            // used to only appear on the same random 2s-every-4-7s flash the
+            // other labels use, and since a node is only "probing" briefly, the
+            // question mark almost never actually made it onto the screen. The
+            // pulse now just adds a shimmer on top of a steady floor.
+            const env = Math.max(0.75, labelPulse(now, ip, 4000, 7000, 2000));
+            {
               const label = kp.city || g[ip]?.city || ip;
               const ux = dx / len, uy = dy / len;
               const lx = px + ux * 9, ly = py + uy * 9;
