@@ -682,6 +682,12 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         ctx.strokeStyle = selfCol(0.5);
         ctx.lineWidth = 1.5;
         ctx.stroke();
+        // "YOU" label below the dot, in matching gold
+        ctx.fillStyle = selfCol(1);
+        ctx.font = "bold 11px system-ui";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.fillText("YOU", selfXY[0], selfXY[1] + 11);
       }
 
       // stake-winner sunglasses — drawn LAST so no other node's circle covers it
