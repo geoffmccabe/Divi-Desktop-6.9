@@ -37,7 +37,9 @@ export function SendPanel() {
     const load = async () => {
       try {
         const b = await walletBalance();
-        if (alive) setBal(b);
+        // Keep the last good balance — never overwrite a real value with a null
+        // from a momentarily-busy node (that's what made Send read 0 and block).
+        if (alive && b) setBal(b);
       } catch {
         /* keep last */
       }
@@ -51,8 +53,10 @@ export function SendPanel() {
   }, []);
 
   const amount = parseAmount(amountStr);
-  const spendable = bal?.spendable ?? 0;
-  const overBalance = amount != null && amount > spendable;
+  // Only treat it as "over balance" when we actually have a balance to compare
+  // against. An unknown/failed read must never block the send — the node is the
+  // real authority and will reject a genuine over-spend.
+  const overBalance = bal != null && amount != null && amount > bal.spendable;
 
   const reset = () => {
     setStage("form");
@@ -67,7 +71,6 @@ export function SendPanel() {
   const review = async () => {
     setErr(null);
     if (amount == null) return setErr("Enter a valid amount (up to 8 decimals).");
-    if (overBalance) return setErr("That's more than your spendable balance.");
     let ok = false;
     try {
       ok = await validateAddress(address.trim());
@@ -148,7 +151,10 @@ export function SendPanel() {
           inputMode="decimal"
           disabled={stage !== "form"}
         />
-        <span className="send-avail">Spendable: {fmtDivi(spendable)} DIVI · leave a little for the network fee</span>
+        <span className="send-avail">
+          Spendable: {bal ? fmtDivi(bal.spendable) : "—"} DIVI · leave a little for the network fee
+        </span>
+        {overBalance && <span className="wl-err">More than your spendable balance — the send may be rejected.</span>}
       </label>
 
       {stage === "form" && (
@@ -156,7 +162,7 @@ export function SendPanel() {
           type="button"
           className="wl-btn wl-btn-primary"
           onClick={review}
-          disabled={amount == null || !address.trim() || overBalance}
+          disabled={amount == null || !address.trim()}
         >
           Review send
         </button>
