@@ -1,0 +1,260 @@
+/* ============================================================================
+   DIVI LOVE — DESIGN SYSTEM
+   Extracted verbatim from the Divi Desktop 6.9 wallet so the website matches
+   the app exactly. Self-contained: no Tailwind, no build step, no dependencies.
+
+   HOW TO USE
+   1. Link this file.
+   2. Put <div class="dl-backdrop"></div> as the first element in <body>.
+   3. Wrap content in .dl-page, and build sections from .glass-panel / .dl-card.
+
+   Everything is driven by the CSS variables in :root — change a value there and
+   the whole site follows, exactly like the wallet's Style editor does.
+   ========================================================================== */
+
+/* ── Design tokens (the wallet's real defaults) ───────────────────────────── */
+:root {
+  /* Colours are HSL triplets, used as hsl(var(--x)) so opacity is easy:
+     hsl(var(--primary) / 0.4) */
+  --background: 240 6% 10%;      /* near-black, slightly blue */
+  --foreground: 0 0% 95%;        /* body text */
+  --card: 240 5% 15%;
+  --primary: 280 80% 60%;        /* Divi purple — the signature colour */
+  --primary-foreground: 0 0% 100%;
+  --accent: 320 70% 55%;         /* pink, used sparingly as a counterpoint */
+  --accent-foreground: 0 0% 100%;
+  --muted: 240 5% 20%;
+  --muted-foreground: 0 0% 70%;  /* secondary/label text */
+  --border: 240 4% 25%;
+  --success: 142 76% 36%;        /* green — confirmed / healthy */
+  --warning: 45 93% 47%;         /* amber — attention */
+  --destructive: 0 84% 60%;      /* red — danger */
+  --info: 207 90% 54%;
+
+  --font-heading: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* The frosted panel look */
+  --panel-bg: 240 6% 10%;
+  --panel-opacity: 0.85;
+  --panel-radius: 12px;
+  --panel-blur: 24px;
+  --glow-color: 280 80% 60%;
+  --glow-strength: 22px;
+
+  /* Nested boxes sitting on a panel */
+  --subpanel-bg: 0 0% 0%;
+  --subpanel-opacity: 1;
+  --subpanel-outline-width: 0px;
+  --subpanel-outline-color: 0 0% 50%;
+
+  --gold: 48 100% 58%;           /* the "something updated" pulse */
+}
+
+/* ── Base ────────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html { color-scheme: dark; scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: var(--font-body);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+h1, h2, h3, h4 { font-family: var(--font-heading); line-height: 1.2; margin: 0 0 .5em; }
+h1 { font-size: clamp(2rem, 5vw, 3.25rem); font-weight: 700; letter-spacing: -0.02em; }
+h2 { font-size: clamp(1.5rem, 3.5vw, 2.25rem); font-weight: 650; letter-spacing: -0.01em; }
+h3 { font-size: 1.15rem; font-weight: 600; }
+p { margin: 0 0 1em; }
+a { color: hsl(var(--primary)); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, .dl-mono { font-family: var(--font-mono); font-size: 0.9em; }
+
+/* ── The signature animated hex-grid backdrop ─────────────────────────────
+   A deep indigo radial gradient with two hexagon grids cross-fading over 20s.
+   Fixed behind everything; frosted panels layer on top. This is THE look —
+   don't replace it with a flat colour. */
+.dl-backdrop {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-color: hsl(var(--background));
+}
+.dl-backdrop::before,
+.dl-backdrop::after {
+  content: ""; position: absolute; inset: 0;
+  background-size: 56px 100px;
+}
+.dl-backdrop::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cpath d='M28 66L0 50L0 16L28 0L56 16L56 50L28 66L28 100' fill='none' stroke='white' stroke-width='1'/%3E%3Cpath d='M28 0L28 34L0 50L0 84L28 100L56 84L56 50L28 34' fill='none' stroke='white' stroke-width='1'/%3E%3C/svg%3E");
+  animation: hex-grid-white-pulse 20s steps(200) infinite;
+}
+.dl-backdrop::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='100' viewBox='0 0 56 100'%3E%3Cpath d='M28 66L0 50L0 16L28 0L56 16L56 50L28 66L28 100' fill='none' stroke='black' stroke-width='1'/%3E%3Cpath d='M28 0L28 34L0 50L0 84L28 100L56 84L56 50L28 34' fill='none' stroke='black' stroke-width='1'/%3E%3C/svg%3E");
+  animation: hex-grid-black-pulse 20s steps(200) infinite;
+}
+/* The indigo wash that sits between the flat background and the grids. */
+.dl-backdrop > .dl-wash,
+.dl-backdrop::marker { }
+.dl-wash {
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at center,
+    hsl(247 25% 28% / 0.55) 0%,
+    hsl(247 20% 15% / 0.7) 70%,
+    hsl(247 20% 10% / 0.85) 100%);
+}
+@keyframes hex-grid-white-pulse { 0%, 100% { opacity: 0.25; } 50% { opacity: 0; } }
+@keyframes hex-grid-black-pulse { 0%, 100% { opacity: 0; } 50% { opacity: 0.25; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .dl-backdrop::before, .dl-backdrop::after { animation: none; opacity: 0.125; }
+  html { scroll-behavior: auto; }
+}
+
+/* ── Page shell ──────────────────────────────────────────────────────────── */
+.dl-page {
+  position: relative; z-index: 1;
+  max-width: 1100px; margin: 0 auto; padding: 48px 24px 96px;
+}
+.dl-narrow { max-width: 760px; margin-inline: auto; }
+.dl-center { text-align: center; }
+.dl-lede { font-size: 1.15rem; color: hsl(var(--muted-foreground)); }
+
+/* ── Frosted glass panel — the core surface ──────────────────────────────── */
+.glass-panel {
+  background-color: hsl(var(--panel-bg) / var(--panel-opacity));
+  border: 1px solid hsl(var(--border) / 0.5);
+  border-radius: var(--panel-radius);
+  backdrop-filter: blur(var(--panel-blur));
+  -webkit-backdrop-filter: blur(var(--panel-blur));
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35),
+              0 0 var(--glow-strength) hsl(var(--glow-color) / 0.4);
+  transition: box-shadow 0.3s ease;
+}
+/* The panel "activates" on hover — a stronger purple glow. */
+.glass-panel:hover {
+  box-shadow: 0 12px 44px rgba(0, 0, 0, 0.4),
+              0 0 calc(var(--glow-strength) * 1.6) hsl(var(--glow-color) / 0.6);
+}
+
+/* A nested box sitting on a panel (the wallet's chips / balance cards). */
+.glass-chip {
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
+  border-radius: 6px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  padding: 10px 16px;
+}
+
+/* Black card on the dark-grey surface — how the wallet's Settings sections
+   look. Use this for each feature block. */
+.dl-card {
+  background: rgba(0, 0, 0, 0.38);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--panel-radius);
+  padding: 28px 30px;
+}
+
+/* ── Feature section with a media slot (video or image) ──────────────────── */
+.dl-feature { margin: 0 0 28px; }
+.dl-feature-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+.dl-feature-title { font-size: 1.45rem; font-weight: 650; margin: 0; }
+.dl-feature-sub { color: hsl(var(--muted-foreground)); font-size: 1.02rem; margin: 0 0 18px; }
+.dl-feature-body { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+.dl-feature-body.dl-stack { grid-template-columns: 1fr; }
+@media (max-width: 820px) { .dl-feature-body { grid-template-columns: 1fr; } }
+
+/* Drop a <video>, <img>, or an <iframe> in here — it keeps the app's framing. */
+.dl-media {
+  position: relative; width: 100%; overflow: hidden;
+  border-radius: var(--panel-radius);
+  border: 1px solid hsl(var(--border) / 0.7);
+  background: rgba(0, 0, 0, 0.5);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35), 0 0 18px hsl(var(--glow-color) / 0.25);
+  aspect-ratio: 16 / 9;
+}
+.dl-media > img, .dl-media > video, .dl-media > iframe {
+  display: block; width: 100%; height: 100%; object-fit: cover; border: 0;
+}
+.dl-media-tall { aspect-ratio: 4 / 3; }
+.dl-media-auto { aspect-ratio: auto; }
+.dl-caption { font-size: 0.82rem; color: hsl(var(--muted-foreground)); margin-top: 8px; }
+
+/* Bullet list, styled like the wallet's feature copy. */
+.dl-bullets { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.dl-bullets li { position: relative; padding-left: 20px; }
+.dl-bullets li::before {
+  content: ""; position: absolute; left: 0; top: 0.6em;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: hsl(var(--primary));
+  box-shadow: 0 0 8px hsl(var(--primary) / 0.8);
+}
+
+/* ── Labels, numbers, status ─────────────────────────────────────────────── */
+.dl-label {
+  font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: hsl(var(--muted-foreground));
+}
+.dl-num { font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* Small grey trailing detail (the wallet uses this for decimals and currency
+   codes sitting beside a big number). */
+.dl-num-sub { font-size: 0.6em; color: hsl(var(--muted-foreground)); font-weight: 400; }
+
+.dl-pill {
+  display: inline-block; padding: 4px 10px; border-radius: 999px;
+  font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;
+  border: 1px solid hsl(var(--border));
+  background: rgba(0, 0, 0, 0.35); color: hsl(var(--muted-foreground));
+}
+.dl-pill-live { color: hsl(var(--success)); border-color: hsl(var(--success) / 0.5); }
+.dl-pill-soon { color: hsl(var(--warning)); border-color: hsl(var(--warning) / 0.5); }
+.dl-pill-new  { color: hsl(var(--primary)); border-color: hsl(var(--primary) / 0.5); }
+
+/* ── Buttons & inputs (identical to the wallet's) ────────────────────────── */
+.dl-btn {
+  display: inline-block;
+  border: 1px solid hsl(var(--border)); border-radius: 8px;
+  padding: 10px 20px; cursor: pointer; white-space: nowrap;
+  background: hsl(var(--background) / 0.5); color: hsl(var(--foreground));
+  font-size: 0.92rem; font-family: inherit; text-decoration: none;
+  transition: border-color .2s ease, background .2s ease;
+}
+.dl-btn:hover { border-color: hsl(var(--primary) / 0.6); text-decoration: none; }
+.dl-btn-primary {
+  background: hsl(var(--primary)); border-color: transparent; color: #fff;
+  box-shadow: 0 0 18px hsl(var(--primary) / 0.45);
+}
+.dl-btn-primary:hover { box-shadow: 0 0 26px hsl(var(--primary) / 0.7); }
+.dl-input {
+  width: 100%; padding: 9px 12px; border-radius: 8px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.5); color: hsl(var(--foreground));
+  font-family: inherit; font-size: 0.9rem;
+}
+
+/* ── Motion: the app-wide "something updated" gold pulse ─────────────────── */
+.gold-flash { animation: gold-flash 3s ease-out; }
+@keyframes gold-flash {
+  0% {
+    color: hsl(var(--gold));
+    text-shadow: 0 0 12px hsl(var(--gold) / 0.95), 0 0 5px hsl(var(--gold) / 0.9);
+  }
+  100% { text-shadow: 0 0 0 transparent; }
+}
+@keyframes status-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.dl-dot {
+  display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+  background: hsl(var(--success));
+  box-shadow: 0 0 12px hsl(var(--success) / 0.8);
+  animation: status-dot-pulse 1.4s ease-in-out infinite;
+}
+
+/* ── Scrollbars (so they aren't a bright OS default) ─────────────────────── */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--border) / 0.9);
+  border-radius: 8px; border: 2px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: hsl(var(--muted-foreground) / 0.7); }
