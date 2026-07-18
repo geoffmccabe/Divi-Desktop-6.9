@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PasswordPanel } from "./PasswordPanel";
 import { CoinMaturity } from "./CoinMaturity";
-import { ChainHealthPanel } from "./ChainHealthPanel";
 
-// Settings: three stacked panels (Password, Coin Maturity, Chain Health). The
+// Settings: stacked panels (Password, Coin Maturity). Chain Health lives in
+// the Admin drawer instead — its node check is expensive and admin-only. The
 // tab row jumps to a panel by smooth-scrolling to it; you can also just scroll.
 const TABS = [
   { id: "password", label: "Password" },
   { id: "maturity", label: "Coin Maturity" },
-  { id: "chain", label: "Chain Health" },
 ];
 
 export function SettingsView() {
@@ -59,7 +58,6 @@ export function SettingsView() {
 
       {panel("password", <PasswordPanel />)}
       {panel("maturity", <CoinMaturity />)}
-      {panel("chain", <ChainHealthPanel />)}
 
       <section className="set-section">
         <h3 className="set-title">Appearance</h3>
