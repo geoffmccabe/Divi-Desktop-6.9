@@ -12,11 +12,12 @@ export interface ValueSettings {
 }
 
 const KEY = "dd69.value";
-// CoinGecko is ON by default and needs no API key — verified live: DIVI quotes
-// at /simple/price?ids=divi. It used to default OFF with an empty CMC key,
-// which left the app with NO price source at all, so no fiat value could ever
-// appear until someone pasted in a CoinMarketCap key. Shipping a feature that
-// does nothing until configured is not shipping it.
+// CoinGecko is ON only as a LAST RESORT, so that an unconfigured wallet shows
+// something rather than nothing. Be aware of what it means: CoinGecko prices
+// DIVI off the wrapped ERC-20 on Uniswap (~$3/day of volume), which currently
+// reads about 4.5x LOWER than the CoinMarketCap quote the Divi community uses.
+// For a figure that matches CMC, an admin must add a free CMC key in the Value
+// tab; CoinMarketCap then takes precedence. See crates/supervisor/src/price.rs.
 const DEFAULTS: ValueSettings = { currencies: ["USD"], display: "USD", cmcKey: "", useCoingecko: true };
 
 export function getValueSettings(): ValueSettings {

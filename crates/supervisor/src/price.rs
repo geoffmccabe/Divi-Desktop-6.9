@@ -1,8 +1,16 @@
-//! DIVI price discovery. The DIVI→USD price comes from CoinGecko (no key needed)
-//! and optionally CoinMarketCap (the user's free API key) — averaged when both
-//! report, otherwise whichever worked. DIVI DOES quote on CoinGecko; an earlier
-//! note here said otherwise and the source was left disabled because of it,
-//! which is why no fiat value ever appeared. USD is then converted to every requested currency
+//! DIVI price discovery.
+//!
+//! Read this before changing the source order. DIVI has almost no liquid market,
+//! and the aggregators disagree by ~4.5x because they price different illiquid
+//! venues:
+//!   * CoinGecko / CoinPaprika (~$0.000286) follow the wrapped ERC-20 on
+//!     Uniswap V2 — the only pair with ANY trading, and that is ~$3 a day.
+//!   * CoinMarketCap (~$0.00129) follows StakeCube DIVI/BTC, whose 24h volume
+//!     is ZERO. It is a stale last-traded price on a dead order book.
+//! Neither is "the" price. CoinMarketCap is preferred because it is what the
+//! Divi community quotes, but it needs a free API key.
+//!
+//! USD is then converted to every requested currency
 //! with live FX rates, so any fiat (EUR, CRC, …) works off one crypto price and
 //! we don't burn CMC credits on multi-currency conversions.
 //! Never fabricate: no source → no price (empty result).
@@ -75,8 +83,16 @@ pub fn divi_prices(currencies: &[String], cmc_key: Option<&str>, use_coingecko: 
     let nothing_configured = cmc_usd.is_none() && !use_coingecko;
     let cg_usd = if use_coingecko || nothing_configured { coingecko_usd() } else { None };
 
+    // Do NOT blend disagreeing sources. These two can be 4.5x apart, and the
+    // midpoint of two prices that far apart is a number no market ever traded
+    // at — worse than either input. Average only when they corroborate each
+    // other; otherwise trust CoinMarketCap, which is the quote users compare
+    // against.
     let divi_usd = match (cmc_usd, cg_usd) {
-        (Some(a), Some(b)) => Some((a + b) / 2.0),
+        (Some(a), Some(b)) => {
+            let spread = (a - b).abs() / a.max(b);
+            Some(if spread <= 0.20 { (a + b) / 2.0 } else { a })
+        }
         (Some(a), None) => Some(a),
         (None, Some(b)) => Some(b),
         (None, None) => None,
