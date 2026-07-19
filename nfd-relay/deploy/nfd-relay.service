@@ -1,0 +1,30 @@
+# systemd unit for a plain Linux server (Ubuntu/Debian).
+# Install: copy the nfd-relay folder to /opt/nfd-relay, put the key file in
+# /opt/nfd-relay/secret/, run `npm install --omit=dev --ignore-scripts`, then:
+#   sudo cp deploy/nfd-relay.service /etc/systemd/system/
+#   sudo systemctl enable --now nfd-relay
+[Unit]
+Description=NFD (Divi Collectibles) Arweave upload relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nfdrelay
+WorkingDirectory=/opt/nfd-relay
+Environment=PORT=8787
+Environment=NFD_MAX_BYTES=5242880
+Environment=NFD_ARWEAVE_KEY=/opt/nfd-relay/secret/turbo-eth-key.txt
+Environment=NFD_UPLOAD_TOKEN=CHANGE_ME_TO_A_LONG_RANDOM_SECRET
+ExecStart=/usr/bin/node server.js
+Restart=on-failure
+RestartSec=5
+# hardening: no privileges, read-only except the secret dir
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/opt/nfd-relay
+ReadWritePaths=
+
+[Install]
+WantedBy=multi-user.target
