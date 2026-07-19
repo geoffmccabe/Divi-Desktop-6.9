@@ -14,6 +14,12 @@ async function sha256Hex(file: File): Promise<string> {
     .join("");
 }
 
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} bytes`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 function whenProven(t: number | null): string {
   if (!t) return "unconfirmed (waiting for a block)";
   return new Date(t * 1000).toLocaleString();
@@ -23,6 +29,11 @@ export function TimestampPanel() {
   // Create
   const [name, setName] = useState<string | null>(null);
   const [hash, setHash] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  // Object URL for the preview. Only images get one; it's revoked on replace so
+  // repeatedly choosing files can't leak memory.
+  const [preview, setPreview] = useState<string | null>(null);
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
   const [txid, setTxid] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -62,6 +73,14 @@ export function TimestampPanel() {
     };
   }, [txid, hash, confirmedAt]);
 
+  // The preview URL is tied to component life, not to a single pick, so it is
+  // released when the panel closes as well as when the file is swapped.
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview);
+    };
+  }, [preview]);
+
   async function pickCreate(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -69,6 +88,21 @@ export function TimestampPanel() {
     setTxid(null);
     setConfirmedAt(null);
     setName(f.name);
+    setFile(f);
+    setDims(null);
+
+    if (preview) URL.revokeObjectURL(preview);
+    if (f.type.startsWith("image/")) {
+      const url = URL.createObjectURL(f);
+      setPreview(url);
+      // Natural dimensions are part of what identifies the image, so show them.
+      const img = new Image();
+      img.onload = () => setDims({ w: img.naturalWidth, h: img.naturalHeight });
+      img.src = url;
+    } else {
+      setPreview(null);
+    }
+
     setHash(await sha256Hex(f));
   }
 
@@ -119,7 +153,7 @@ export function TimestampPanel() {
   }
 
   return (
-    <div className="timestamp">
+    <div className={"timestamp" + (file ? " timestamp-wide" : "")}>
       <section className="ts-section">
         <h3 className="ts-head">Create a timestamp</h3>
         <p className="wl-note">
@@ -127,45 +161,87 @@ export function TimestampPanel() {
           fingerprint (a SHA-256 hash) goes on the Divi blockchain, and the block’s time is the proof.
         </p>
 
-        <label className="wl-btn ts-file">
-          {name ? "Choose a different file" : "Choose a file"}
-          <input type="file" onChange={pickCreate} hidden />
-        </label>
+        {/* Once a file is chosen the section goes wide and splits: controls on
+            the left, the file itself on the right. */}
+        <div className={"ts-layout" + (file ? " ts-layout-split" : "")}>
+          <div className="ts-col-main">
+            <label className="wl-btn ts-file">
+              {name ? "Choose a different file" : "Choose a file"}
+              <input type="file" onChange={pickCreate} hidden />
+            </label>
 
-        {name && hash && (
-          <div className="ts-fileinfo">
-            <div className="ts-filename">{name}</div>
-            <code className="ts-hash">{hash}</code>
-          </div>
-        )}
-
-        {hash && !txid && (
-          <button className="wl-btn wl-btn-primary" disabled={busy} onClick={anchor}>
-            {busy ? "Anchoring…" : "Timestamp this file on the blockchain"}
-          </button>
-        )}
-        {err && <p className="wl-err">{err}</p>}
-
-        {txid && (
-          <div className="ts-result">
-            {confirmedAt ? (
-              <p className="ts-confirmed">✓ Timestamped on {whenProven(confirmedAt)}.</p>
-            ) : (
-              <p className="ts-pending">
-                <span className="ts-spin" /> Submitted — confirming on the blockchain… (about a minute)
-              </p>
+            {name && hash && (
+              <div className="ts-fileinfo">
+                <div className="ts-hash-label">SHA-256 fingerprint</div>
+                <code className="ts-hash">{hash}</code>
+              </div>
             )}
-            <p className="wl-note">
-              Keep this transaction id — it’s the receipt you’ll use to prove the file later.
-            </p>
-            <div className="addr-box">
-              <code>{txid}</code>
-              <button className="wl-btn" onClick={copyTxid}>
-                {copied ? "Copied ✓" : "Copy"}
+
+            {hash && !txid && (
+              <button className="wl-btn wl-btn-primary" disabled={busy} onClick={anchor}>
+                {busy ? "Anchoring…" : "Timestamp this file on the blockchain"}
               </button>
-            </div>
+            )}
+            {err && <p className="wl-err">{err}</p>}
+
+            {txid && (
+              <div className="ts-result">
+                {confirmedAt ? (
+                  <p className="ts-confirmed">✓ Timestamped on {whenProven(confirmedAt)}.</p>
+                ) : (
+                  <p className="ts-pending">
+                    <span className="ts-spin" /> Submitted — confirming on the blockchain… (about a
+                    minute)
+                  </p>
+                )}
+                <p className="wl-note">
+                  Keep this transaction id — it’s the receipt you’ll use to prove the file later.
+                </p>
+                <div className="addr-box">
+                  <code>{txid}</code>
+                  <button className="wl-btn" onClick={copyTxid}>
+                    {copied ? "Copied ✓" : "Copy"}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
-        )}
+
+          {file && (
+            <aside className="ts-col-preview">
+              {preview ? (
+                <img className="ts-preview-img" src={preview} alt={name ?? "Selected file"} />
+              ) : (
+                <div className="ts-preview-none">
+                  {/* Non-images still get a placeholder so the layout holds. */}
+                  <span>{(name?.split(".").pop() ?? "file").toUpperCase()}</span>
+                </div>
+              )}
+              <dl className="ts-meta">
+                <dt>File</dt>
+                <dd title={name ?? ""}>{name}</dd>
+                <dt>Size</dt>
+                <dd>{fmtBytes(file.size)}</dd>
+                <dt>Type</dt>
+                <dd>{file.type || "unknown"}</dd>
+                {dims && (
+                  <>
+                    <dt>Dimensions</dt>
+                    <dd>
+                      {dims.w} × {dims.h} px
+                    </dd>
+                  </>
+                )}
+                {file.lastModified > 0 && (
+                  <>
+                    <dt>Modified</dt>
+                    <dd>{new Date(file.lastModified).toLocaleDateString()}</dd>
+                  </>
+                )}
+              </dl>
+            </aside>
+          )}
+        </div>
       </section>
 
       <section className="ts-section">
