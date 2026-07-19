@@ -49,10 +49,20 @@ export interface LotteryWin {
 }
 
 export const walletBalance = () => invoke<Balance | null>("wallet_balance");
-// `fee` is the DIVI paid to anchor. Null falls back to the node-side minimum,
-// so a missing price quote can never silently overspend.
-export const poeTimestamp = (hash: string, fee?: number | null) =>
-  invoke<string>("poe_timestamp", { hash, fee: fee ?? null });
+// `fee` is left to the staker; `payoutDivi` goes to `payoutAddr`. Nulls fall
+// back to the node-side minimum, so a missing price quote can never overspend.
+export const poeTimestamp = (
+  hash: string,
+  fee?: number | null,
+  payoutAddr?: string | null,
+  payoutDivi?: number | null,
+) =>
+  invoke<string>("poe_timestamp", {
+    hash,
+    fee: fee ?? null,
+    payoutAddr: payoutAddr?.trim() || null,
+    payoutDivi: payoutDivi ?? null,
+  });
 export const poeVerify = (txid: string, hash: string) => invoke<Proof>("poe_verify", { txid, hash });
 export interface Peer {
   ip: string;

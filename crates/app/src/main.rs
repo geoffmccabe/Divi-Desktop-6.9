@@ -221,10 +221,23 @@ async fn node_status() -> NodeStatusDto {
 /// the file locally (Web Crypto) and passes only the hash, so the document never
 /// leaves the machine. Returns the anchoring transaction id.
 #[tauri::command]
-async fn poe_timestamp(hash: String, fee: Option<f64>) -> Result<String, String> {
+async fn poe_timestamp(
+    hash: String,
+    fee: Option<f64>,
+    payoutAddr: Option<String>,
+    payoutDivi: Option<f64>,
+) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
-        poe::timestamp(&cfg, &hash, fee)
+        poe::timestamp(
+            &cfg,
+            &hash,
+            poe::AnchorCost {
+                fee_divi: fee,
+                payout_addr: payoutAddr,
+                payout_divi: payoutDivi,
+            },
+        )
     })
     .await
     .map_err(|_| "internal error".to_string())?

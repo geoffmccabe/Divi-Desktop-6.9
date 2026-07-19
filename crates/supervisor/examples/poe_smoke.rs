@@ -8,8 +8,8 @@ fn main() {
     let cfg = NodeConfig::load().expect("load node config (set DIVI_DATADIR)");
     let hash = "4caad21afba16c5d9ceda9cb297665040e3b88daa82201dc6b62d0d88423a061";
 
-    // None = node-side minimum fee; the smoke test shouldn't spend real value.
-    let txid = poe::timestamp(&cfg, hash, None).expect("anchor");
+    // Defaults = minimum fee, no payout; the smoke test shouldn't spend real value.
+    let txid = poe::timestamp(&cfg, hash, poe::AnchorCost::default()).expect("anchor");
     println!("anchored txid = {txid}");
 
     // Confirm it (regtest mines on demand).

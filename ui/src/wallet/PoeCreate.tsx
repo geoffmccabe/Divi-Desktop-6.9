@@ -2,12 +2,11 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { poeTimestamp, poeVerify } from "./api";
 import { fetchPrices } from "./value";
 import { addPoeRecord, makeThumb, markPoeConfirmed } from "./poeHistory";
+import { getPoePayout, splitForAnchor } from "./poePayout";
 
 // Create tab: pick a file, see it, anchor its fingerprint on the chain.
 // The file never leaves the machine — only the SHA-256 goes out.
 
-/** What an anchor should cost the user, in USD. */
-const TARGET_USD = 1;
 /** Floor, so a bad price feed can never produce a fee the node would reject. */
 const MIN_FEE_DIVI = 0.0001;
 
@@ -84,7 +83,9 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
     };
   }, [txid, hash, confirmedAt]);
 
-  const feeDivi = usdPerDivi && usdPerDivi > 0 ? Math.max(MIN_FEE_DIVI, TARGET_USD / usdPerDivi) : null;
+  // Cost and its split come from the admin Payouts settings.
+  const payout = getPoePayout();
+  const split = splitForAnchor(payout, usdPerDivi, MIN_FEE_DIVI);
 
   async function pickCreate(e: ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
@@ -116,7 +117,12 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
     setErr(null);
     setConfirmedAt(null);
     try {
-      const id = await poeTimestamp(hash, feeDivi);
+      const id = await poeTimestamp(
+        hash,
+        split?.feeDivi ?? null,
+        payout.address,
+        split?.payoutDivi ?? null,
+      );
       setTxid(id);
       // Record it locally so the History tab can show what this proof was FOR;
       // the chain only ever knows the fingerprint.
@@ -172,8 +178,9 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
                 <>
                   <span>Timestamp this file</span>
                   <span className="ts-cost">
-                    {feeDivi
-                      ? `${feeDivi.toLocaleString(undefined, { maximumFractionDigits: 0 })} DIVI ≈ $${TARGET_USD.toFixed(2)}`
+                    {split
+                      ? `${split.totalDivi.toLocaleString(undefined, { maximumFractionDigits: 0 })} DIVI` +
+                        (payout.address.trim() ? ` ≈ $${payout.targetUsd.toFixed(2)}` : "")
                       : "cost unavailable"}
                   </span>
                 </>
@@ -181,9 +188,11 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
             </button>
             <p className="wl-note ts-costnote">
               {/* Never imply a price we haven't actually priced. */}
-              {feeDivi
-                ? "Paid as the transaction fee. The quote uses the current DIVI price."
-                : "The DIVI price is unavailable, so the cost can't be quoted right now."}
+              {!split
+                ? "The DIVI price is unavailable, so the cost can't be quoted right now."
+                : payout.address.trim()
+                  ? `Quoted at the current DIVI price. ${payout.payoutPercent}% supports Divi; the rest goes to the staker who mines the block.`
+                  : "No payout address is configured, so this costs only the network minimum."}
             </p>
           </>
         )}

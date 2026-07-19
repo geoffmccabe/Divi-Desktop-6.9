@@ -39,12 +39,27 @@ pub const MIN_FEE_DIVI: f64 = 0.0001;
 /// wallet-emptying fee. Well above any sane anchor cost.
 pub const MAX_FEE_DIVI: f64 = 100_000.0;
 
+/// What an anchor costs and where that value goes.
+///
+/// The anchor price is split: a share is paid to a configured address, and the
+/// remainder is simply left unspent so the staker who mines the block collects
+/// it as the transaction fee. Note this split is enforced by THIS app, not by
+/// consensus — the chain has no notion of it.
+#[derive(Default)]
+pub struct AnchorCost {
+    /// Left to the block's staker as the transaction fee.
+    pub fee_divi: Option<f64>,
+    /// Address receiving the configured share, if one is set.
+    pub payout_addr: Option<String>,
+    /// Amount sent to `payout_addr`.
+    pub payout_divi: Option<f64>,
+}
+
 /// Anchor `hash_hex` (a 32-byte SHA-256, 64 hex chars) on-chain. Returns the txid.
 ///
-/// `fee_divi` is what the caller wants to pay; None (or anything out of range)
-/// falls back to the minimum, so a missing or nonsensical price quote can never
-/// silently overspend.
-pub fn timestamp(cfg: &NodeConfig, hash_hex: &str, fee_divi: Option<f64>) -> Result<String, String> {
+/// Amounts in `cost` are clamped; anything missing or out of range falls back to
+/// the relay minimum, so a broken price quote can never silently overspend.
+pub fn timestamp(cfg: &NodeConfig, hash_hex: &str, cost: AnchorCost) -> Result<String, String> {
     let hash_hex = hash_hex.trim().to_lowercase();
     if !is_sha256_hex(&hash_hex) {
         return Err("That doesn't look like a SHA-256 hash.".into());
@@ -65,7 +80,7 @@ pub fn timestamp(cfg: &NodeConfig, hash_hex: &str, fee_divi: Option<f64>) -> Res
         return Err("the node accepted the anchor but returned no transaction id".into());
     }
 
-    timestamp_forkless(&rpc, &hash_hex, fee_divi)
+    timestamp_forkless(&rpc, &hash_hex, cost)
 }
 
 /// Build the forkless OP_META "DVXP" anchor by hand (used until the node ships
@@ -73,7 +88,7 @@ pub fn timestamp(cfg: &NodeConfig, hash_hex: &str, fee_divi: Option<f64>) -> Res
 fn timestamp_forkless(
     rpc: &RpcClient,
     hash_hex: &str,
-    fee_divi: Option<f64>,
+    cost: AnchorCost,
 ) -> Result<String, String> {
     // Pick the largest spendable output to cover the tiny anchor fee.
     let unspent = rpc.call("listunspent", json!([]))?;
@@ -88,20 +103,43 @@ fn timestamp_forkless(
         })
         .ok_or("You need a small amount of DIVI to pay the anchor fee.")?;
 
+    let round8 = |v: f64| (v * 1e8).round() / 1e8;
     let amount = utxo["amount"].as_f64().unwrap_or(0.0);
+
     // Clamp rather than trust: an out-of-range request becomes the minimum.
-    let fee = match fee_divi {
-        Some(f) if f.is_finite() && (MIN_FEE_DIVI..=MAX_FEE_DIVI).contains(&f) => {
-            (f * 1e8).round() / 1e8
-        }
+    let fee = match cost.fee_divi {
+        Some(f) if f.is_finite() && (MIN_FEE_DIVI..=MAX_FEE_DIVI).contains(&f) => round8(f),
         _ => MIN_FEE_DIVI,
     };
-    if amount < fee {
+
+    // The configured share, paid as a real output. Only honoured when the
+    // address actually validates on this chain — a typo must not burn funds.
+    let payout = match (&cost.payout_addr, cost.payout_divi) {
+        (Some(addr), Some(v))
+            if !addr.trim().is_empty() && v.is_finite() && v > 0.0 && v <= MAX_FEE_DIVI =>
+        {
+            let valid = rpc
+                .call("validateaddress", json!([addr.trim()]))
+                .ok()
+                .and_then(|r| r["isvalid"].as_bool())
+                .unwrap_or(false);
+            if valid {
+                Some((addr.trim().to_string(), round8(v)))
+            } else {
+                return Err("The configured payout address isn't a valid Divi address.".into());
+            }
+        }
+        _ => None,
+    };
+    let payout_divi = payout.as_ref().map(|(_, v)| *v).unwrap_or(0.0);
+
+    let spend = fee + payout_divi;
+    if amount < spend {
         return Err(format!(
-            "Not enough funds for the anchor fee ({fee} DIVI). Your largest single coin is {amount} DIVI."
+            "Not enough funds to anchor ({spend} DIVI needed). Your largest single coin is {amount} DIVI."
         ));
     }
-    let change = ((amount - fee) * 1e8).round() / 1e8;
+    let change = round8(amount - spend);
     let change_addr = rpc
         .call("getnewaddress", json!([]))?
         .as_str()
@@ -111,18 +149,33 @@ fn timestamp_forkless(
     let inputs = json!([{ "txid": utxo["txid"], "vout": utxo["vout"] }]);
     let record_hex = format!("{}{}", RECORD_PREFIX, hash_hex);
 
+    // Outputs are keyed by address, so a payout to our own change address would
+    // collide and silently drop one of them. Merge instead.
+    let add_outs = |outs: &mut serde_json::Map<String, Value>| {
+        if let Some((addr, v)) = &payout {
+            if addr == &change_addr {
+                outs.insert(addr.clone(), json!(round8(change + v)));
+            } else {
+                outs.insert(addr.clone(), json!(*v));
+                outs.insert(change_addr.clone(), json!(change));
+            }
+        } else {
+            outs.insert(change_addr.clone(), json!(change));
+        }
+    };
+
     // Prefer the "data" convention (divid wraps it in OP_META for us). Some
     // builds reject it ("value is type str, expected real") -- fall back to a
     // raw OP_META script output: 0x6a + single-byte push length + payload.
     let mut outs = serde_json::Map::new();
-    outs.insert(change_addr.clone(), json!(change));
+    add_outs(&mut outs);
     outs.insert("data".into(), json!(record_hex));
     let raw = match rpc.call("createrawtransaction", json!([inputs, Value::Object(outs)])) {
         Ok(v) => v,
         Err(_) => {
             let script = format!("6a{:02x}{}", record_hex.len() / 2, record_hex);
             let mut outs = serde_json::Map::new();
-            outs.insert(change_addr, json!(change));
+            add_outs(&mut outs);
             outs.insert(script, json!(0));
             rpc.call("createrawtransaction", json!([inputs, Value::Object(outs)]))?
         }
