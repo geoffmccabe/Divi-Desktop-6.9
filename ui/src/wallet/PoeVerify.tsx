@@ -1,0 +1,129 @@
+import { useEffect, useState, type ChangeEvent } from "react";
+import { poeVerify, type Proof } from "./api";
+import type { PoeRecord } from "./poeHistory";
+
+// Verify tab: does this file match what was anchored by this transaction?
+// Arrives either blank, or pre-filled from the History tab.
+
+async function sha256Hex(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+const whenProven = (t: number | null) =>
+  t ? new Date(t * 1000).toLocaleString() : "unconfirmed (waiting for a block)";
+
+export function PoeVerify({ prefill }: { prefill: PoeRecord | null }) {
+  const [vName, setVName] = useState<string | null>(null);
+  const [vHash, setVHash] = useState<string | null>(null);
+  const [vTxid, setVTxid] = useState("");
+  const [proof, setProof] = useState<Proof | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // Coming from History: fill the id and clear any previous attempt, so all the
+  // user has to do is point at the original file.
+  useEffect(() => {
+    if (!prefill) return;
+    setVTxid(prefill.txid);
+    setProof(null);
+    setErr(null);
+    setVName(null);
+    setVHash(null);
+  }, [prefill]);
+
+  async function pick(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setErr(null);
+    setProof(null);
+    setVName(f.name);
+    setVHash(await sha256Hex(f));
+  }
+
+  async function check() {
+    if (!vHash || !vTxid.trim()) return;
+    setBusy(true);
+    setErr(null);
+    setProof(null);
+    try {
+      setProof(await poeVerify(vTxid.trim(), vHash));
+    } catch (e) {
+      setErr(String(e));
+    }
+    setBusy(false);
+  }
+
+  // When we know what was originally anchored we can say something far more
+  // useful than "no match": specifically that the file differs.
+  const expectedName = prefill && prefill.txid === vTxid.trim() ? prefill.name : null;
+
+  return (
+    <>
+      <p className="wl-note">
+        Have a file and a transaction id? Confirm the file matches what was anchored, and see when.
+      </p>
+
+      {prefill && (
+        <div className="poe-prefill">
+          <div className="poe-prefill-head">Checking your proof of</div>
+          <div className="poe-prefill-name">{prefill.name}</div>
+          <div className="wl-note">
+            Choose the original file below. If it has changed at all since you timestamped it, it
+            won’t match.
+          </div>
+        </div>
+      )}
+
+      <label className="wl-btn ts-file">
+        {vName ? "Choose a different file" : "Choose the file"}
+        <input type="file" onChange={pick} hidden />
+      </label>
+      {vName && <div className="ts-filename">{vName}</div>}
+
+      <input
+        className="wl-input"
+        placeholder="Transaction id"
+        value={vTxid}
+        onChange={(e) => setVTxid(e.target.value)}
+      />
+
+      <button
+        className="wl-btn wl-btn-primary"
+        disabled={busy || !vHash || !vTxid.trim()}
+        onClick={check}
+      >
+        {busy ? "Checking…" : "Check proof"}
+      </button>
+      {err && <p className="wl-err">{err}</p>}
+
+      {proof && (
+        <div className={proof.matched ? "ts-proof ts-proof-ok" : "ts-proof ts-proof-bad"}>
+          {proof.matched ? (
+            <>
+              <div className="ts-proof-title">✓ Match</div>
+              <div>This file existed by {whenProven(proof.block_time)}.</div>
+              <div className="wl-note">{proof.confirmations} confirmations.</div>
+            </>
+          ) : (
+            <>
+              <div className="ts-proof-title">✗ No match</div>
+              <div>
+                That transaction doesn’t anchor this file’s fingerprint.
+                {expectedName && vName && vName !== expectedName && (
+                  <> You timestamped <strong>{expectedName}</strong> — this is a different file.</>
+                )}
+                {expectedName && vName === expectedName && (
+                  <> The name matches, so the contents must have changed since you timestamped it.</>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </>
+  );
+}

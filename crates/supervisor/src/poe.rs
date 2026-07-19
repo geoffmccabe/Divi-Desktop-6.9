@@ -33,8 +33,18 @@ fn is_sha256_hex(h: &str) -> bool {
     h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Smallest anchor fee the node will relay.
+pub const MIN_FEE_DIVI: f64 = 0.0001;
+/// Hard ceiling so a broken price feed can never turn a $1 quote into a
+/// wallet-emptying fee. Well above any sane anchor cost.
+pub const MAX_FEE_DIVI: f64 = 100_000.0;
+
 /// Anchor `hash_hex` (a 32-byte SHA-256, 64 hex chars) on-chain. Returns the txid.
-pub fn timestamp(cfg: &NodeConfig, hash_hex: &str) -> Result<String, String> {
+///
+/// `fee_divi` is what the caller wants to pay; None (or anything out of range)
+/// falls back to the minimum, so a missing or nonsensical price quote can never
+/// silently overspend.
+pub fn timestamp(cfg: &NodeConfig, hash_hex: &str, fee_divi: Option<f64>) -> Result<String, String> {
     let hash_hex = hash_hex.trim().to_lowercase();
     if !is_sha256_hex(&hash_hex) {
         return Err("That doesn't look like a SHA-256 hash.".into());
@@ -55,12 +65,16 @@ pub fn timestamp(cfg: &NodeConfig, hash_hex: &str) -> Result<String, String> {
         return Err("the node accepted the anchor but returned no transaction id".into());
     }
 
-    timestamp_forkless(&rpc, &hash_hex)
+    timestamp_forkless(&rpc, &hash_hex, fee_divi)
 }
 
 /// Build the forkless OP_META "DVXP" anchor by hand (used until the node ships
 /// the native OP_POE RPCs).
-fn timestamp_forkless(rpc: &RpcClient, hash_hex: &str) -> Result<String, String> {
+fn timestamp_forkless(
+    rpc: &RpcClient,
+    hash_hex: &str,
+    fee_divi: Option<f64>,
+) -> Result<String, String> {
     // Pick the largest spendable output to cover the tiny anchor fee.
     let unspent = rpc.call("listunspent", json!([]))?;
     let utxo = unspent
@@ -75,9 +89,17 @@ fn timestamp_forkless(rpc: &RpcClient, hash_hex: &str) -> Result<String, String>
         .ok_or("You need a small amount of DIVI to pay the anchor fee.")?;
 
     let amount = utxo["amount"].as_f64().unwrap_or(0.0);
-    let fee = 0.0001_f64;
+    // Clamp rather than trust: an out-of-range request becomes the minimum.
+    let fee = match fee_divi {
+        Some(f) if f.is_finite() && (MIN_FEE_DIVI..=MAX_FEE_DIVI).contains(&f) => {
+            (f * 1e8).round() / 1e8
+        }
+        _ => MIN_FEE_DIVI,
+    };
     if amount < fee {
-        return Err("Not enough funds for the anchor fee.".into());
+        return Err(format!(
+            "Not enough funds for the anchor fee ({fee} DIVI). Your largest single coin is {amount} DIVI."
+        ));
     }
     let change = ((amount - fee) * 1e8).round() / 1e8;
     let change_addr = rpc

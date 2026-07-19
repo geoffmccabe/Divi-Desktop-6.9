@@ -1,290 +1,90 @@
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
-import { poeTimestamp, poeVerify, type Proof } from "./api";
+import { useState } from "react";
+import { PoeCreate } from "./PoeCreate";
+import { PoeHistoryTab } from "./PoeHistoryTab";
+import { PoeVerify } from "./PoeVerify";
+import { PoeInfoModal } from "./PoeInfoModal";
+import { loadPoeHistory, type PoeRecord } from "./poeHistory";
 
-// Proof-of-Existence UI. The file NEVER leaves the machine: we read it in the
-// browser, hash it with Web Crypto (SHA-256), and send only the 32-byte hash to
-// the backend. The chain stores the hash; the block's timestamp proves the file
-// existed by then. Nobody can read the file from the chain, only confirm a hash.
+// Proof-of-Existence. Three tabs: make a proof, review the ones you've made,
+// and check one. The file NEVER leaves the machine — it's hashed in the browser
+// and only the 32-byte fingerprint is written to the chain, so nobody can read
+// the file from the blockchain, only confirm a hash matches.
 
-async function sha256Hex(file: File): Promise<string> {
-  const buf = await file.arrayBuffer();
-  const digest = await crypto.subtle.digest("SHA-256", buf);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} bytes`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-function whenProven(t: number | null): string {
-  if (!t) return "unconfirmed (waiting for a block)";
-  return new Date(t * 1000).toLocaleString();
-}
+type Tab = "create" | "history" | "verify";
 
 export function TimestampPanel() {
-  // Create
-  const [name, setName] = useState<string | null>(null);
-  const [hash, setHash] = useState<string | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  // Object URL for the preview. Only images get one; it's revoked on replace so
-  // repeatedly choosing files can't leak memory.
-  const [preview, setPreview] = useState<string | null>(null);
-  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
-  const [txid, setTxid] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  // Confirmation: null until the anchor is in a block, then the block time.
-  const [confirmedAt, setConfirmedAt] = useState<number | null>(null);
+  const [tab, setTab] = useState<Tab>("create");
+  const [info, setInfo] = useState(false);
+  // Set when the user jumps from History to Verify, so the target proof is known.
+  const [prefill, setPrefill] = useState<PoeRecord | null>(null);
+  // The Create tab widens the panel once a file is loaded so the preview fits.
+  const [hasFile, setHasFile] = useState(false);
 
-  // Verify
-  const [vName, setVName] = useState<string | null>(null);
-  const [vHash, setVHash] = useState<string | null>(null);
-  const [vTxid, setVTxid] = useState("");
-  const [proof, setProof] = useState<Proof | null>(null);
-  const [vBusy, setVBusy] = useState(false);
-  const [vErr, setVErr] = useState<string | null>(null);
+  const count = loadPoeHistory().length;
+  const wide = tab === "create" && hasFile;
 
-  const pollRef = useRef<number | null>(null);
-
-  // While we have a broadcast txid but no confirmation yet, poll the chain until
-  // the anchor lands in a block. Only then do we claim "Timestamped" — never
-  // before there's a real block time behind the proof.
-  useEffect(() => {
-    if (!txid || !hash || confirmedAt) return;
-    let stop = false;
-    const tick = async () => {
-      try {
-        const p = await poeVerify(txid, hash);
-        if (!stop && p.matched && p.block_time) setConfirmedAt(p.block_time);
-      } catch {
-        /* keep waiting; a transient node hiccup shouldn't end the poll */
-      }
-    };
-    tick();
-    pollRef.current = window.setInterval(tick, 5000);
-    return () => {
-      stop = true;
-      if (pollRef.current) window.clearInterval(pollRef.current);
-    };
-  }, [txid, hash, confirmedAt]);
-
-  // The preview URL is tied to component life, not to a single pick, so it is
-  // released when the panel closes as well as when the file is swapped.
-  useEffect(() => {
-    return () => {
-      if (preview) URL.revokeObjectURL(preview);
-    };
-  }, [preview]);
-
-  async function pickCreate(e: ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setErr(null);
-    setTxid(null);
-    setConfirmedAt(null);
-    setName(f.name);
-    setFile(f);
-    setDims(null);
-
-    if (preview) URL.revokeObjectURL(preview);
-    if (f.type.startsWith("image/")) {
-      const url = URL.createObjectURL(f);
-      setPreview(url);
-      // Natural dimensions are part of what identifies the image, so show them.
-      const img = new Image();
-      img.onload = () => setDims({ w: img.naturalWidth, h: img.naturalHeight });
-      img.src = url;
-    } else {
-      setPreview(null);
-    }
-
-    setHash(await sha256Hex(f));
-  }
-
-  async function anchor() {
-    if (!hash) return;
-    setBusy(true);
-    setErr(null);
-    setConfirmedAt(null);
-    try {
-      setTxid(await poeTimestamp(hash));
-    } catch (e) {
-      setErr(String(e));
-    }
-    setBusy(false);
-  }
-
-  async function copyTxid() {
-    if (!txid) return;
-    try {
-      await navigator.clipboard.writeText(txid);
-    } catch {
-      /* clipboard may be unavailable; the id is still shown */
-    }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  }
-
-  async function pickVerify(e: ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setVErr(null);
-    setProof(null);
-    setVName(f.name);
-    setVHash(await sha256Hex(f));
-  }
-
-  async function check() {
-    if (!vHash || !vTxid.trim()) return;
-    setVBusy(true);
-    setVErr(null);
-    setProof(null);
-    try {
-      setProof(await poeVerify(vTxid.trim(), vHash));
-    } catch (e) {
-      setVErr(String(e));
-    }
-    setVBusy(false);
-  }
+  const openVerify = (rec: PoeRecord) => {
+    setPrefill(rec);
+    setTab("verify");
+  };
 
   return (
-    <div className={"timestamp" + (file ? " timestamp-wide" : "")}>
-      <section className="ts-section">
-        <h3 className="ts-head">Create a timestamp</h3>
-        <p className="wl-note">
-          Prove a file existed today without revealing it. The file stays on your computer — only its
-          fingerprint (a SHA-256 hash) goes on the Divi blockchain, and the block’s time is the proof.
-        </p>
-
-        {/* Once a file is chosen the section goes wide and splits: controls on
-            the left, the file itself on the right. */}
-        <div className={"ts-layout" + (file ? " ts-layout-split" : "")}>
-          <div className="ts-col-main">
-            <label className="wl-btn ts-file">
-              {name ? "Choose a different file" : "Choose a file"}
-              <input type="file" onChange={pickCreate} hidden />
-            </label>
-
-            {name && hash && (
-              <div className="ts-fileinfo">
-                <div className="ts-hash-label">SHA-256 fingerprint</div>
-                <code className="ts-hash">{hash}</code>
-              </div>
-            )}
-
-            {hash && !txid && (
-              <button className="wl-btn wl-btn-primary" disabled={busy} onClick={anchor}>
-                {busy ? "Anchoring…" : "Timestamp this file on the blockchain"}
-              </button>
-            )}
-            {err && <p className="wl-err">{err}</p>}
-
-            {txid && (
-              <div className="ts-result">
-                {confirmedAt ? (
-                  <p className="ts-confirmed">✓ Timestamped on {whenProven(confirmedAt)}.</p>
-                ) : (
-                  <p className="ts-pending">
-                    <span className="ts-spin" /> Submitted — confirming on the blockchain… (about a
-                    minute)
-                  </p>
-                )}
-                <p className="wl-note">
-                  Keep this transaction id — it’s the receipt you’ll use to prove the file later.
-                </p>
-                <div className="addr-box">
-                  <code>{txid}</code>
-                  <button className="wl-btn" onClick={copyTxid}>
-                    {copied ? "Copied ✓" : "Copy"}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {file && (
-            <aside className="ts-col-preview">
-              {preview ? (
-                <img className="ts-preview-img" src={preview} alt={name ?? "Selected file"} />
-              ) : (
-                <div className="ts-preview-none">
-                  {/* Non-images still get a placeholder so the layout holds. */}
-                  <span>{(name?.split(".").pop() ?? "file").toUpperCase()}</span>
-                </div>
-              )}
-              <dl className="ts-meta">
-                <dt>File</dt>
-                <dd title={name ?? ""}>{name}</dd>
-                <dt>Size</dt>
-                <dd>{fmtBytes(file.size)}</dd>
-                <dt>Type</dt>
-                <dd>{file.type || "unknown"}</dd>
-                {dims && (
-                  <>
-                    <dt>Dimensions</dt>
-                    <dd>
-                      {dims.w} × {dims.h} px
-                    </dd>
-                  </>
-                )}
-                {file.lastModified > 0 && (
-                  <>
-                    <dt>Modified</dt>
-                    <dd>{new Date(file.lastModified).toLocaleDateString()}</dd>
-                  </>
-                )}
-              </dl>
-            </aside>
-          )}
+    <div className={"timestamp" + (wide ? " timestamp-wide" : "")}>
+      <header className="poe-intro">
+        <div className="poe-intro-text">
+          <h3 className="ts-head">
+            Proof of Existence
+            <button
+              className="poe-help"
+              onClick={() => setInfo(true)}
+              aria-label="What is Proof of Existence?"
+              title="What is this for?"
+            >
+              ?
+            </button>
+          </h3>
+          <p className="wl-note">
+            Prove a file existed on a certain date — a signed contract, a photo of damage, a piece
+            of artwork — without revealing the file to anyone. Your file stays on this computer;
+            only its fingerprint goes on the Divi blockchain, and the block’s time is the proof.
+          </p>
         </div>
-      </section>
+      </header>
+
+      <nav className="poe-tabs" role="tablist">
+        <button
+          className={"poe-tab" + (tab === "create" ? " poe-tab-on" : "")}
+          onClick={() => setTab("create")}
+          role="tab"
+          aria-selected={tab === "create"}
+        >
+          Create a Timestamp
+        </button>
+        <button
+          className={"poe-tab" + (tab === "history" ? " poe-tab-on" : "")}
+          onClick={() => setTab("history")}
+          role="tab"
+          aria-selected={tab === "history"}
+        >
+          My Timestamps{count ? ` (${count})` : ""}
+        </button>
+        <button
+          className={"poe-tab" + (tab === "verify" ? " poe-tab-on" : "")}
+          onClick={() => setTab("verify")}
+          role="tab"
+          aria-selected={tab === "verify"}
+        >
+          Verify
+        </button>
+      </nav>
 
       <section className="ts-section">
-        <h3 className="ts-head">Verify a timestamp</h3>
-        <p className="wl-note">
-          Have a file and a transaction id? Confirm the file matches what was anchored, and see when.
-        </p>
-
-        <label className="wl-btn ts-file">
-          {vName ? "Choose a different file" : "Choose the file"}
-          <input type="file" onChange={pickVerify} hidden />
-        </label>
-        {vName && <div className="ts-filename">{vName}</div>}
-
-        <input
-          className="wl-input"
-          placeholder="Transaction id"
-          value={vTxid}
-          onChange={(e) => setVTxid(e.target.value)}
-        />
-
-        <button className="wl-btn wl-btn-primary" disabled={vBusy || !vHash || !vTxid.trim()} onClick={check}>
-          {vBusy ? "Checking…" : "Check proof"}
-        </button>
-        {vErr && <p className="wl-err">{vErr}</p>}
-
-        {proof && (
-          <div className={proof.matched ? "ts-proof ts-proof-ok" : "ts-proof ts-proof-bad"}>
-            {proof.matched ? (
-              <>
-                <div className="ts-proof-title">✓ Match</div>
-                <div>This file existed by {whenProven(proof.block_time)}.</div>
-                <div className="wl-note">{proof.confirmations} confirmations.</div>
-              </>
-            ) : (
-              <>
-                <div className="ts-proof-title">✗ No match</div>
-                <div>That transaction doesn’t anchor this file’s fingerprint.</div>
-              </>
-            )}
-          </div>
-        )}
+        {tab === "create" && <PoeCreate onFileState={setHasFile} />}
+        {tab === "history" && <PoeHistoryTab onVerify={openVerify} />}
+        {tab === "verify" && <PoeVerify prefill={prefill} />}
       </section>
+
+      {info && <PoeInfoModal onClose={() => setInfo(false)} />}
     </div>
   );
 }

@@ -467,6 +467,106 @@ h1, h2, h3 { font-family: var(--font-heading); }
   .ts-col-preview { max-width: none; width: 100%; }
 }
 
+/* ── PoE: intro, tabs, history, info modal ──────────────────────────────── */
+.poe-intro { width: 100%; }
+.poe-intro-text .ts-head { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; }
+.poe-help {
+  width: 20px; height: 20px; flex: 0 0 20px; border-radius: 50%;
+  border: 1px solid hsl(var(--primary) / 0.6); background: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary)); font-size: 0.72rem; font-weight: 700; line-height: 1;
+  cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0;
+}
+.poe-help:hover { background: hsl(var(--primary) / 0.28); }
+
+.poe-tabs { display: flex; gap: 4px; width: 100%; border-bottom: 1px solid hsl(var(--border)); }
+.poe-tab {
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  padding: 8px 14px; margin-bottom: -1px; cursor: pointer;
+  color: hsl(var(--muted-foreground)); font-size: 0.86rem; font-weight: 500;
+}
+.poe-tab:hover { color: hsl(var(--foreground)); }
+.poe-tab-on { color: hsl(var(--primary)); border-bottom-color: hsl(var(--primary)); font-weight: 600; }
+
+/* Cost is part of the decision, so it sits on the button itself. */
+.ts-anchor { display: inline-flex; align-items: center; gap: 10px; }
+.ts-cost {
+  font-family: ui-monospace, monospace; font-size: 0.74rem; font-weight: 600;
+  padding: 2px 8px; border-radius: 999px;
+  background: hsl(0 0% 0% / 0.28); color: hsl(var(--warning));
+}
+.ts-costnote { font-size: 0.74rem; }
+
+.poe-hist { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+.poe-hist-grid {
+  display: grid; gap: 12px; width: 100%;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+.poe-card {
+  display: flex; gap: 11px; padding: 10px;
+  background: hsl(var(--background) / 0.45);
+  border: 1px solid hsl(var(--border)); border-radius: 10px;
+}
+.poe-card-thumb {
+  flex: 0 0 76px; width: 76px; height: 76px; padding: 0; cursor: pointer;
+  border: 1px solid hsl(var(--border)); border-radius: 8px; overflow: hidden;
+  background: hsl(var(--background) / 0.7);
+  display: flex; align-items: center; justify-content: center;
+}
+.poe-card-thumb:hover { border-color: hsl(var(--primary)); }
+.poe-card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.poe-card-ext {
+  font-family: ui-monospace, monospace; font-size: 0.7rem; font-weight: 700;
+  color: hsl(var(--muted-foreground));
+}
+.poe-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.poe-card-name {
+  font-size: 0.86rem; color: hsl(var(--foreground)); font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.poe-card-sub, .poe-card-txid { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+.poe-card-txid { font-family: ui-monospace, monospace; }
+.poe-card-when { font-size: 0.74rem; font-weight: 600; }
+.poe-card-when.ok { color: hsl(var(--success)); }
+.poe-card-when.pending { color: hsl(var(--warning)); }
+.poe-card-actions { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; }
+.poe-card-actions .wl-btn { padding: 3px 9px; font-size: 0.72rem; }
+.poe-card-forget { opacity: 0.65; }
+
+.poe-prefill {
+  width: 100%; padding: 10px 12px; border-radius: 9px;
+  background: hsl(var(--primary) / 0.1); border: 1px solid hsl(var(--primary) / 0.35);
+}
+.poe-prefill-head {
+  font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+.poe-prefill-name { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); margin-bottom: 4px; }
+
+.poe-modal-backdrop {
+  position: fixed; inset: 0; z-index: 200;
+  background: hsl(0 0% 0% / 0.6);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+}
+.poe-modal {
+  width: min(680px, 100%); max-height: 84vh; display: flex; flex-direction: column;
+  background: hsl(var(--card)); border: 1px solid hsl(var(--border)); border-radius: 14px;
+  box-shadow: 0 20px 60px hsl(0 0% 0% / 0.6);
+}
+.poe-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px; border-bottom: 1px solid hsl(var(--border));
+}
+.poe-modal-head h3 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+.poe-modal-x { padding: 3px 9px; }
+.poe-modal-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.poe-modal-sub {
+  margin: 8px 0 0; font-size: 0.9rem; font-weight: 600; color: hsl(var(--foreground));
+}
+.poe-uses { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 9px; }
+.poe-uses li { display: flex; flex-direction: column; gap: 2px; }
+.poe-uses strong { font-size: 0.86rem; color: hsl(var(--primary)); }
+.poe-uses span { font-size: 0.82rem; line-height: 1.5; color: hsl(var(--muted-foreground)); }
+
 .ts-result { display: flex; flex-direction: column; gap: 10px; width: 100%; }
 .ts-confirmed { color: hsl(var(--success)); font-size: 0.95rem; font-weight: 600; }
 .ts-pending { color: hsl(var(--warning)); font-size: 0.92rem; display: flex; align-items: center; gap: 8px; }
