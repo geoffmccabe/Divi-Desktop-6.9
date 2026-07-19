@@ -593,28 +593,54 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           const fresh = revAge < 2200;
           const col = p.inbound ? inbound : outbound;
           const bez = upArc(selfXY[0], selfXY[1], px, py, 0.5); // half curvature
-          ctx.beginPath();
-          for (let u = 0; u <= 1.0001; u += 0.05) {
-            const [x, y] = bez(u);
-            u === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-          }
-          // green flash while first connecting, then a clearly-visible colour arc
-          ctx.strokeStyle = fresh ? GREEN(0.6 * (1 - revAge / 2200) + 0.2) : col(0.55);
-          ctx.lineWidth = fresh ? 1.6 : 1;
-          ctx.stroke();
-          // slow continual comms pulse (desynced per peer), up to ~80% opacity
-          if (!fresh) {
-            const period = 4200; // much slower than the green ~1.4s
-            const travel = 3000;
-            const local = (now + (phaseOf(p.ip) / (Math.PI * 2)) * period) % period;
-            if (local < travel) {
-              const u = 1 - local / travel; // travel from the peer (u=1) toward you (u=0)
-              const [hx, hy] = bez(u);
-              ctx.beginPath();
-              ctx.arc(hx, hy, 2.4, 0, Math.PI * 2);
-              ctx.fillStyle = col(0.8);
-              ctx.fill();
+
+          if (fresh) {
+            // green flash while first connecting — solid arc, no travelling dot yet
+            ctx.beginPath();
+            for (let u = 0; u <= 1.0001; u += 0.05) {
+              const [x, y] = bez(u);
+              u === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
             }
+            ctx.strokeStyle = GREEN(0.6 * (1 - revAge / 2200) + 0.2);
+            ctx.lineWidth = 1.6;
+            ctx.stroke();
+          } else {
+            // A dot bounces back and forth along the arc (you⇄peer), desynced per
+            // peer. The arc glows around the dot and fades to ~10% at both ends, so
+            // the bright patch travels with it.
+            const period = 6000; // full there-and-back
+            const cycle = ((now + (phaseOf(p.ip) / (Math.PI * 2)) * period) % period) / period;
+            const uDot = 0.5 - 0.5 * Math.cos(2 * Math.PI * cycle); // eased 0(you)↔1(peer)
+
+            ctx.lineWidth = 1;
+            const STEP = 0.05;
+            let prev = bez(0);
+            for (let u = STEP; u <= 1.0001; u += STEP) {
+              const cur = bez(u);
+              const d = Math.abs(u - STEP / 2 - uDot); // arc-distance from the dot
+              const glow = Math.exp(-((d / 0.28) * (d / 0.28)));
+              ctx.beginPath();
+              ctx.moveTo(prev[0], prev[1]);
+              ctx.lineTo(cur[0], cur[1]);
+              ctx.strokeStyle = col(0.1 + 0.7 * glow); // 10% far ends → ~80% at the dot
+              ctx.stroke();
+              prev = cur;
+            }
+
+            // the travelling dot, pulsing in size + opacity so it feels alive
+            const pulse = 0.5 + 0.5 * Math.sin(now / 260 + phaseOf(p.ip) * 3);
+            const [hx, hy] = bez(uDot);
+            const dotR = 2.0 + 1.6 * pulse;
+            const dotOp = 0.55 + 0.45 * pulse;
+            ctx.beginPath(); // soft halo for glow
+            ctx.arc(hx, hy, dotR + 2.6, 0, Math.PI * 2);
+            ctx.fillStyle = col(0.12 * dotOp);
+            ctx.fill();
+            ctx.beginPath(); // core
+            ctx.arc(hx, hy, dotR, 0, Math.PI * 2);
+            ctx.fillStyle = col(dotOp);
+            ctx.fill();
+
             // city label in the peer's colour, flashing only ~every 10-20s so
             // connected nodes stay uncluttered.
             const env = labelPulse(now, p.ip, 10000, 20000, 2500);
