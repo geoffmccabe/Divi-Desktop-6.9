@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { createPortal } from "react-dom";
 import { poeTimestamp, poeVerify } from "./api";
 import { fetchPrices } from "./value";
 import { addPoeRecord, makeThumb, markPoeConfirmed } from "./poeHistory";
@@ -38,6 +39,8 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmedAt, setConfirmedAt] = useState<number | null>(null);
+  // Full-size view of the chosen image, opened by double-clicking the preview.
+  const [zoom, setZoom] = useState(false);
 
   // Price per DIVI in USD, used to quote the anchor cost.
   const [usdPerDivi, setUsdPerDivi] = useState<number | null>(null);
@@ -58,6 +61,13 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
   useEffect(() => () => {
     if (preview) URL.revokeObjectURL(preview);
   }, [preview]);
+
+  useEffect(() => {
+    if (!zoom) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setZoom(false);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [zoom]);
 
   // Poll until the anchor lands in a block. Only then is it a proof — never
   // claim "timestamped" before there is a real block time behind it.
@@ -225,7 +235,13 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
       {file && (
         <aside className="ts-col-preview">
           {preview ? (
-            <img className="ts-preview-img" src={preview} alt={name ?? "Selected file"} />
+            <img
+              className="ts-preview-img ts-preview-zoomable"
+              src={preview}
+              alt={name ?? "Selected file"}
+              onDoubleClick={() => setZoom(true)}
+              title="Double-click to view full size"
+            />
           ) : (
             <div className="ts-preview-none">
               <span>{(name?.split(".").pop() ?? "file").toUpperCase()}</span>
@@ -249,6 +265,29 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
           </dl>
         </aside>
       )}
+
+      {/* Portalled to <body>: the app's main area is a .glass-panel, and
+          backdrop-filter makes it the containing block for position:fixed
+          children, which would otherwise strand this overlay off-screen. */}
+      {zoom &&
+        preview &&
+        createPortal(
+          <div className="poe-zoom" onClick={() => setZoom(false)} role="presentation">
+            <img src={preview} alt={name ?? "Selected file"} onClick={(e) => e.stopPropagation()} />
+            <div className="poe-zoom-bar">
+              <span>{name}</span>
+              {dims && (
+                <span className="muted">
+                  {dims.w} × {dims.h} px
+                </span>
+              )}
+              <button className="wl-btn" onClick={() => setZoom(false)}>
+                Close
+              </button>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

@@ -79,7 +79,15 @@ export function TimestampPanel() {
       </nav>
 
       <section className="ts-section">
-        {tab === "create" && <PoeCreate onFileState={setHasFile} />}
+        {/* Create stays MOUNTED and is merely hidden, so the chosen file,
+            its preview and any in-flight confirmation survive a trip to
+            another tab. Unmounting it would throw the file away — the browser
+            gives no way to re-open one without the user picking it again.
+            `contents` keeps the wrapper invisible to the flex layout.
+            (App restart still clears it, which is the intended behaviour.) */}
+        <div style={{ display: tab === "create" ? "contents" : "none" }}>
+          <PoeCreate onFileState={setHasFile} />
+        </div>
         {tab === "history" && <PoeHistoryTab onVerify={openVerify} />}
         {tab === "verify" && <PoeVerify prefill={prefill} />}
       </section>

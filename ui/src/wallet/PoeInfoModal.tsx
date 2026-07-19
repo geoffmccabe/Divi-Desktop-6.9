@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 
 // The "what is this actually for?" modal behind the (?) button. Proof of
 // Existence is unfamiliar to most people, and the value only lands once you see
@@ -53,7 +54,11 @@ export function PoeInfoModal({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  return (
+  // Portalled to <body>: the app's main area is a .glass-panel, and
+  // backdrop-filter makes an element the containing block for position:fixed
+  // descendants — so a modal left in place would be positioned against that
+  // panel rather than the window, and land off-screen.
+  return createPortal(
     <div className="poe-modal-backdrop" onClick={onClose} role="presentation">
       <div
         className="poe-modal"
@@ -111,6 +116,7 @@ export function PoeInfoModal({ onClose }: { onClose: () => void }) {
           </p>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
