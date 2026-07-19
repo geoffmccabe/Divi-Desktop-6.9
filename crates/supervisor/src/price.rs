@@ -1,7 +1,8 @@
-//! DIVI price discovery. The DIVI→USD price comes from CoinMarketCap (the user's
-//! free API key) and optionally CoinGecko — averaged when both report, otherwise
-//! whichever worked. CoinGecko is built but off by default (DIVI has no active
-//! markets there right now). USD is then converted to every requested currency
+//! DIVI price discovery. The DIVI→USD price comes from CoinGecko (no key needed)
+//! and optionally CoinMarketCap (the user's free API key) — averaged when both
+//! report, otherwise whichever worked. DIVI DOES quote on CoinGecko; an earlier
+//! note here said otherwise and the source was left disabled because of it,
+//! which is why no fiat value ever appeared. USD is then converted to every requested currency
 //! with live FX rates, so any fiat (EUR, CRC, …) works off one crypto price and
 //! we don't burn CMC credits on multi-currency conversions.
 //! Never fabricate: no source → no price (empty result).
@@ -32,7 +33,7 @@ fn coinmarketcap_usd(key: &str) -> Option<f64> {
         .or_else(|| node[0]["quote"]["USD"]["price"].as_f64())
 }
 
-/// CoinGecko: DIVI in USD (no key). Built but gated off by default.
+/// CoinGecko: DIVI in USD (no key required).
 fn coingecko_usd() -> Option<f64> {
     let url = "https://api.coingecko.com/api/v3/simple/price?ids=divi&vs_currencies=usd";
     let resp = ureq::get(url).timeout(Duration::from_secs(10)).call().ok()?;
@@ -66,7 +67,13 @@ fn fx_rates_usd() -> HashMap<String, f64> {
 pub fn divi_prices(currencies: &[String], cmc_key: Option<&str>, use_coingecko: bool) -> PriceResult {
     // DIVI → USD, from CMC and (optionally) CoinGecko.
     let cmc_usd = cmc_key.filter(|k| !k.is_empty()).and_then(coinmarketcap_usd);
-    let cg_usd = if use_coingecko { coingecko_usd() } else { None };
+    // If nothing at all is configured, fall back to CoinGecko rather than
+    // returning no price. That state means "unconfigured", not a deliberate
+    // choice to have no source — and silently showing nothing is the worst
+    // possible answer. A user who has a key but turns CoinGecko off is making a
+    // real choice, and that is still respected.
+    let nothing_configured = cmc_usd.is_none() && !use_coingecko;
+    let cg_usd = if use_coingecko || nothing_configured { coingecko_usd() } else { None };
 
     let divi_usd = match (cmc_usd, cg_usd) {
         (Some(a), Some(b)) => Some((a + b) / 2.0),

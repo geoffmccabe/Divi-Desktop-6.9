@@ -7,17 +7,28 @@ import { diviPrices, type DiviPrices } from "./api";
 export interface ValueSettings {
   currencies: string[]; // configured fiat codes (uppercase)
   display: string; // which one shows on the Spendable card
-  cmcKey: string; // CoinMarketCap API key (CMC is the active source)
-  useCoingecko: boolean; // built but off by default — no active DIVI markets there yet
+  cmcKey: string; // CoinMarketCap API key (optional — CoinGecko needs none)
+  useCoingecko: boolean; // ON by default: DIVI trades there and it needs no key
 }
 
 const KEY = "dd69.value";
-const DEFAULTS: ValueSettings = { currencies: ["USD"], display: "USD", cmcKey: "", useCoingecko: false };
+// CoinGecko is ON by default and needs no API key — verified live: DIVI quotes
+// at /simple/price?ids=divi. It used to default OFF with an empty CMC key,
+// which left the app with NO price source at all, so no fiat value could ever
+// appear until someone pasted in a CoinMarketCap key. Shipping a feature that
+// does nothing until configured is not shipping it.
+const DEFAULTS: ValueSettings = { currencies: ["USD"], display: "USD", cmcKey: "", useCoingecko: true };
 
 export function getValueSettings(): ValueSettings {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) || "null");
-    if (v && Array.isArray(v.currencies) && v.currencies.length) return { ...DEFAULTS, ...v };
+    if (v && Array.isArray(v.currencies) && v.currencies.length) {
+      const merged = { ...DEFAULTS, ...v };
+      // Repair settings saved while the old default was off: with no key AND no
+      // CoinGecko there is no source, which is never what anyone intended.
+      if (!merged.useCoingecko && !merged.cmcKey) merged.useCoingecko = true;
+      return merged;
+    }
   } catch {
     /* fall through */
   }

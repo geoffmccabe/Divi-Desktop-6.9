@@ -45,8 +45,15 @@ function layout(forkHeights: number[], tip: number): Cell[] {
   return cells;
 }
 
+// The store keeps up to 500 forks. Drawing all of them would be a ~35,000px
+// SVG with thousands of nodes in it, so only the most recent stretch is drawn —
+// the older ones still count towards the statistics above.
+const MAX_DRAWN = 40;
+
 export function ForkTree({ forks, tip }: { forks: SeenFork[]; tip: number }) {
-  const asc = [...forks].sort((a, b) => a.height - b.height);
+  const all = [...forks].sort((a, b) => a.height - b.height);
+  const asc = all.slice(-MAX_DRAWN);
+  const hidden = all.length - asc.length;
   const byHeight = new Map(asc.map((f) => [f.height, f]));
   const cells = layout(asc.map((f) => f.height), tip);
 
@@ -157,6 +164,7 @@ export function ForkTree({ forks, tip }: { forks: SeenFork[]; tip: number }) {
         <span><span style={{ color: "rgb(255, 140, 125)" }}>■</span> we rolled back</span>
         <span><span style={{ color: "rgba(160, 170, 200, 0.9)" }}>■</span> witnessed</span>
         {deep && <span style={{ color: "rgb(255, 90, 80)", fontWeight: 700 }}>■ deeper than 1 block</span>}
+        {hidden > 0 && <span>+{hidden.toLocaleString()} older not drawn</span>}
         <span style={{ marginLeft: "auto" }}>numbers = blocks collapsed</span>
       </div>
     </div>
