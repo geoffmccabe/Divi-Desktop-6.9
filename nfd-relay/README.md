@@ -1,12 +1,27 @@
-# NFD relay — `nfds.divi.love`
+# NFD relay — a run-anywhere Arweave uploader for Divi Collectibles
 
 Upload-only relay that stores **already-encrypted** Divi Collectibles bundles on
-Arweave via ArDrive Turbo, paid from a Divi-funded Turbo account. The wallet's
+Arweave via ArDrive Turbo, paid from a funded Turbo account. The wallet's
 `Relay` storage backend (`crates/supervisor/src/nfd_storage.rs`) POSTs here.
 
 - `POST /upload` — body = raw encrypted bundle → `{ "id": "<arweave tx id>" }`
 - `GET /health` — `{ ok, balanceWinc }` (watch the funded balance)
 - Downloads bypass this service — the wallet fetches `https://arweave.net/<id>`.
+
+## Open-source and not a single point of failure (MIT)
+
+**You do not have to use Divi's uploader.** This is open source (MIT) and
+stateless — anyone can run their own copy anywhere. Divi runs one at
+`nfds.divi.love` as a free default so minting "just works," but the wallet can be
+pointed at **any** uploader URL, or a user can bring their own Arweave key.
+
+This matters: the uploader only touches **encrypted** bundles and a **spending**
+key — it can never read anyone's content or steal ownership, so it is safe for
+strangers to run. And it is only needed to *mint* (save) new collectibles;
+viewing and owning existing ones never touch it (they read straight from
+Arweave). **If Divi's uploader ever goes away, nothing is lost** — existing
+collectibles stay on Arweave forever, and anyone can stand up a new uploader in
+minutes (Docker, a plain server, or Cloudflare — see below).
 
 ## One-time: the funded Turbo account (Geoff)
 
