@@ -8,7 +8,8 @@
 // Arweave gateway (arweave.net/<id>). This service is upload-only.
 //
 // Env:
-//   NFD_ARWEAVE_KEY   REQUIRED — path to the Arweave JWK keyfile (the funded acct)
+//   NFD_ARWEAVE_KEY   REQUIRED — path to the funded key file: either an Arweave
+//                     JWK keyfile (JSON) or an Ethereum private key (hex).
 //   PORT              listen port (default 8787; put TLS/nginx in front)
 //   NFD_MAX_BYTES     max bundle size (default 5 MiB)
 //   NFD_UPLOAD_TOKEN  if set, require `Authorization: Bearer <token>` on /upload
@@ -27,8 +28,19 @@ if (!KEY_PATH) {
   process.exit(1);
 }
 
-const jwk = JSON.parse(fs.readFileSync(KEY_PATH, 'utf-8'));
-const turbo = TurboFactory.authenticated({ privateKey: jwk });
+// The funded account may be an Arweave keyfile (JSON JWK) or an Ethereum
+// private key (hex). Auto-detect so either works.
+const rawKey = fs.readFileSync(KEY_PATH, 'utf-8').trim();
+let turbo;
+try {
+  const jwk = JSON.parse(rawKey); // Arweave keyfile
+  turbo = TurboFactory.authenticated({ privateKey: jwk });
+  console.log('auth: Arweave keyfile');
+} catch {
+  const pk = rawKey.startsWith('0x') ? rawKey : `0x${rawKey}`; // Ethereum hex key
+  turbo = TurboFactory.authenticated({ privateKey: pk, token: 'ethereum' });
+  console.log('auth: Ethereum key');
+}
 
 const app = express();
 app.disable('x-powered-by');

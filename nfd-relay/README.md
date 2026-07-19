@@ -8,13 +8,17 @@ Arweave via ArDrive Turbo, paid from a Divi-funded Turbo account. The wallet's
 - `GET /health` — `{ ok, balanceWinc }` (watch the funded balance)
 - Downloads bypass this service — the wallet fetches `https://arweave.net/<id>`.
 
-## One-time: the funded Arweave account (Geoff)
+## One-time: the funded Turbo account (Geoff)
 
-1. Go to **https://turbo.ardrive.net** and create/download an **Arweave keyfile**
-   (a `.json` JWK). **Keep it secret** — it holds the funds.
-2. Buy **Turbo Credits** with a credit card (start ~$10–$25 to test). Docs:
-   **https://docs.ardrive.io** (Turbo section).
-3. Put the keyfile on the server (see below); never commit it.
+The Turbo wallet can be **Arweave** (a JSON JWK keyfile) or **Ethereum** (a 64-char
+hex private key). The relay auto-detects which. Geoff's is an Ethereum wallet.
+
+1. In **https://turbo.ardrive.net**, export the wallet's private key and save it
+   to a file (Arweave → the JSON keyfile; Ethereum → the hex string in a `.txt`).
+   **Keep it secret** — it controls the funds.
+2. Buy **Turbo Credits** for that wallet with a credit card (start ~$10–$25 to
+   test). Docs: **https://docs.ardrive.io** (Turbo section).
+3. Put the key file on the server (see below); never commit it.
 
 ## Deploy (server for nfds.divi.love)
 
