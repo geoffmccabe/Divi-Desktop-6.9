@@ -40,6 +40,17 @@ impl LocalDir {
     pub fn under_datadir(datadir: &Path) -> Self {
         Self::new(datadir.join("nfd_store"))
     }
+
+    /// Store a bundle at an explicit pointer (used as a cache keyed by the
+    /// Arweave id, so a just-uploaded item is viewable before the gateway serves it).
+    pub fn put_at(&self, pointer_hex: &str, bundle: &[u8]) -> Result<(), String> {
+        if !is_pointer(pointer_hex) {
+            return Err("bad storage pointer".into());
+        }
+        std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
+        std::fs::write(self.dir.join(format!("{pointer_hex}.bin")), bundle).map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }
 
 impl Storage for LocalDir {
@@ -128,13 +139,42 @@ impl Storage for Relay {
     }
 }
 
+/// Relay + local cache. Uploads go to Arweave (permanent source of truth) AND a
+/// local copy, so view is instant even before the gateway serves the new item;
+/// get() prefers the cache and falls back to the gateway.
+pub struct CachedRelay {
+    relay: Relay,
+    cache: LocalDir,
+}
+
+impl CachedRelay {
+    pub fn new(relay: Relay, cache: LocalDir) -> Self {
+        Self { relay, cache }
+    }
+}
+
+impl Storage for CachedRelay {
+    fn put(&self, bundle: &[u8]) -> Result<String, String> {
+        let ptr = self.relay.put(bundle)?; // Arweave id = the on-chain pointer
+        let _ = self.cache.put_at(&ptr, bundle); // best-effort local cache
+        Ok(ptr)
+    }
+
+    fn get(&self, pointer_hex: &str) -> Result<Vec<u8>, String> {
+        match self.cache.get(pointer_hex) {
+            Ok(b) => Ok(b),
+            Err(_) => self.relay.get(pointer_hex),
+        }
+    }
+}
+
 /// Pick the storage backend. Default is the local stub (works offline, for
 /// testing); set `NFD_STORAGE=relay` to use the Divi-funded Arweave relay
-/// (`NFD_RELAY_URL` overrides the default host).
+/// (`NFD_RELAY_URL` overrides the default host), which also caches locally.
 pub fn for_node(datadir: &Path) -> Box<dyn Storage> {
     if std::env::var("NFD_STORAGE").as_deref() == Ok("relay") {
         let url = std::env::var("NFD_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
-        Box::new(Relay::new(&url))
+        Box::new(CachedRelay::new(Relay::new(&url), LocalDir::under_datadir(datadir)))
     } else {
         Box::new(LocalDir::under_datadir(datadir))
     }
@@ -164,6 +204,17 @@ mod tests {
         assert_eq!(s.get(&ptr).unwrap(), bundle);
         // same content -> same pointer (content-addressed dedup)
         assert_eq!(s.put(bundle).unwrap(), ptr);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn put_at_explicit_pointer() {
+        let dir = std::env::temp_dir().join(format!("nfd_cache_test_{}", std::process::id()));
+        let s = LocalDir::new(dir.clone());
+        let ptr = "cd".repeat(32);
+        s.put_at(&ptr, b"cached bundle").unwrap();
+        assert_eq!(s.get(&ptr).unwrap(), b"cached bundle");
+        assert!(s.put_at("bad", b"x").is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
