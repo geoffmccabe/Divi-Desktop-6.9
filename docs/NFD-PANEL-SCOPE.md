@@ -48,12 +48,35 @@ full-resolution encrypted art in a grid.
 on top. Arweave content is immutable, so cache entries never need invalidating —
 a genuinely nice property.
 
-**2.3 Decrypted-art cache — a security decision, not a performance one.**
-Caching decrypted originals on disk makes reopening instant but weakens the
-"owner-only" promise: anyone with filesystem access reads the art without a key.
-Options: memory-only (safest, slowest), encrypted-at-rest with a session key, or
-plain disk. **Recommend memory-only + LRU for v1**, revisit if it feels slow.
-Do not make this call silently.
+**2.3 Decrypted-art cache — DECIDED: cache on disk, encrypted at rest.**
+
+Geoff's call (2026-Jul-20): cache decrypted artwork *and* the user's thumbnails
+on disk, so a collection loads fast. The cache is split by what the data actually
+is:
+
+| What | Cached how | Why |
+|---|---|---|
+| **Thumbnails** | plain | already public on Arweave; encrypting them protects nothing and costs speed |
+| **Decrypted originals** | **AES-256-GCM at rest** | keeps "only the owner can see it" true even off-machine |
+
+The cache key is a random 256-bit value generated once per install and held in
+the **OS credential store** — the `keyring` crate is already a dependency
+(macOS Keychain / Windows Credential Manager / Linux Secret Service, see
+`security.rs`). AES-GCM runs at gigabytes per second, so the cost is invisible
+next to the disk read it replaces.
+
+This matters because plaintext art on disk leaks through paths the user never
+thinks about: Time Machine and other backups, cloud-synced folders, a stolen or
+resold drive, and any other process on the machine. Encrypting at rest keeps the
+product's central claim honest at effectively zero performance cost. Cache is
+disposable — on any key or decrypt failure, delete and re-fetch.
+
+**Web version (IndexedDB).** Same split: thumbnails plain, originals encrypted.
+A browser has no OS keychain, but it has a good equivalent — a **WebCrypto
+`CryptoKey` created with `extractable: false` and stored in IndexedDB**. It
+persists across sessions and can decrypt, yet its key material can never be read
+back out by JavaScript, so an XSS or a rogue extension cannot exfiltrate it.
+Use that rather than keeping raw key bytes in IndexedDB or localStorage.
 
 **2.4 Grid component.** One reusable virtualised grid used by all three tabs:
 selectable tiles, keyboard navigation, lazy image loading, skeleton placeholders,
@@ -156,11 +179,9 @@ Browse-only is genuinely useful, ships early, and needs no escrow.
 
 ## 7. Open questions
 
-1. **Decrypted-art cache policy** (§2.3) — memory-only, encrypted-at-rest, or
-   plain disk? Security/comfort trade-off.
-2. **Collection exhaustion** — what happens after the 240th reward is claimed?
-3. **Rarity schema** — the exact `traits_ptr` shape the grid sorts on. Needs to
+1. **Collection exhaustion** — what happens after the 240th reward is claimed?
+2. **Rarity schema** — the exact `traits_ptr` shape the grid sorts on. Needs to
    be fixed before the collection is produced, since it is baked into the mints.
-4. **Marketplace fee**, if any, and who receives it.
-5. **Does the wallet need to show NFDs it can see but not decrypt** (someone
+3. **Marketplace fee**, if any, and who receives it.
+4. **Does the wallet need to show NFDs it can see but not decrypt** (someone
    else's, via thumbnail) outside the marketplace tab?
