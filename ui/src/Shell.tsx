@@ -14,6 +14,7 @@ import { SettingsView } from "./wallet/SettingsView";
 import { TimestampPanel } from "./wallet/TimestampPanel";
 import { PaymentRequests } from "./wallet/PaymentRequests";
 import { CollectiblesPanel } from "./wallet/CollectiblesPanel";
+import { TokensPanel } from "./wallet/TokensPanel";
 import { NetworkMap } from "./wallet/NetworkMap";
 
 const VIEWS: Record<string, ComponentType> = {
@@ -24,6 +25,7 @@ const VIEWS: Record<string, ComponentType> = {
   payreq: PaymentRequests,
   timestamp: TimestampPanel,
   collectibles: CollectiblesPanel,
+  tokens: TokensPanel,
   addressbook: AddressBook,
   settings: SettingsView,
   network: NetworkMap,

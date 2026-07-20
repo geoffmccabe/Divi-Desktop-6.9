@@ -33,6 +33,9 @@ export const ICONS: Record<string, string> = {
   collectibles: svg(
     "<path d='M6 3h12l4 6-10 12L2 9Z'/><path d='M2 9h20'/><path d='M12 3 8 9l4 12 4-12-4-6'/>"
   ),
+  tokens: svg(
+    "<ellipse cx='12' cy='6' rx='8' ry='3'/><path d='M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6'/><path d='M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6'/>"
+  ),
   note: svg("<path d='M9 18V5l12-2v13'/><circle cx='6' cy='18' r='3'/><circle cx='18' cy='16' r='3'/>"),
   external: svg("<path d='M15 3h6v6'/><path d='M10 14 21 3'/><path d='M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/>"),
   refresh: svg("<path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/>"),
