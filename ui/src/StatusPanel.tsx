@@ -14,33 +14,29 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
   // Last block height we ever saw, so we can keep showing it (greyed) while the
   // node is behind instead of dropping to a dash.
   const [lastBlocks, setLastBlocks] = useState<number | null>(null);
-  // Last peer count we actually read, so a slow RPC spell keeps showing it
-  // instead of dropping to 0.
+  // Last peer count we actually read, so a slow RPC spell keeps showing it.
   const [lastPeers, setLastPeers] = useState<number | null>(null);
-  const [peerFlash, setPeerFlash] = useState(false);
-  const [reconnecting, setReconnecting] = useState(false);
   // Total nodes discovered across the network (peers + the 30-day known set).
   const [nodeCount, setNodeCount] = useState(0);
-  const prevPeers = useRef<number | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
+
+  // The Peers/Nodes numbers you SEE climb one-by-one toward their real totals, so
+  // discovery reads as a live tally instead of snapping (0→79). Each step bumps a
+  // token used as a React key to restart a 3-second gold pulse; rapid steps keep
+  // it lit and it fades 3s after the last one.
+  const [dispPeers, setDispPeers] = useState(0);
+  const [dispNodes, setDispNodes] = useState(0);
+  const [peerTok, setPeerTok] = useState(0);
+  const [nodeTok, setNodeTok] = useState(0);
+
   // The last status where the node actually answered, so a brief connection miss
   // keeps showing the true state instead of flapping to a scary message.
   const lastGood = useRef<NodeStatus | null>(null);
   const misses = useRef(0);
 
-  // One place that records a peer reading, whichever source saw it first — the
-  // status poll or the map. Every increase flashes gold for 3 seconds and gives
-  // the low click, once per peer gained.
-  const notePeers = useCallback((p: number) => {
-    setLastPeers(p);
-    if (prevPeers.current != null && p > prevPeers.current) {
-      setPeerFlash(true);
-      playSound("peer");
-      setTimeout(() => setPeerFlash(false), 3000);
-    }
-    prevPeers.current = p;
-  }, []);
-
-  // The map polls peers on its own clock; when it sees one connect, the count
+  // Record a peer reading, whichever source saw it first (status poll or map).
+  const notePeers = useCallback((p: number) => setLastPeers(p), []);
+  // The map polls peers on its own clock; when it sees one connect, the target
   // here moves at that instant instead of waiting for the next status poll.
   useEffect(() => onPeerCount(notePeers), [notePeers]);
 
@@ -80,22 +76,47 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
       }
     };
     poll();
-    // Poll a bit faster so a new peer shows up close to when it connects. This
-    // is a light call; the heavy pollers are elsewhere.
+    // Poll a bit faster so a new peer shows up close to when it connects.
     const id = setInterval(poll, 5000);
     return () => {
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [notePeers]);
 
   const phase = status?.phase ?? "unreachable";
   const color = PHASE_COLOR[phase] ?? "var(--muted-foreground)";
   const working = phase === "syncing" || phase === "no-peers" || phase === "starting" || phase === "unreachable";
   const caughtUp = phase === "synced" || phase === "staking";
 
-  // Peers: the fresh reading, else the last one we saw, else 0 (never a dash).
-  const peers = status?.peers ?? lastPeers ?? 0;
+  // Targets the displayed counts climb toward (freshest reading, kept last-good).
+  const peersTarget = lastPeers ?? status?.peers ?? 0;
+  const nodesTarget = nodeCount;
+
+  // Climb peers by one at a time; gold pulse on every step. The low click only on
+  // a genuine single addition, not the startup rush.
+  useEffect(() => {
+    if (dispPeers === peersTarget) return;
+    if (dispPeers > peersTarget) return setDispPeers(peersTarget); // a drop: snap, no pulse
+    const gap = peersTarget - dispPeers;
+    const t = setTimeout(() => {
+      setDispPeers((n) => n + 1);
+      setPeerTok((k) => k + 1);
+      if (gap === 1) playSound("peer");
+    }, 220);
+    return () => clearTimeout(t);
+  }, [dispPeers, peersTarget]);
+
+  // Climb nodes by one at a time; gold pulse on every step.
+  useEffect(() => {
+    if (dispNodes === nodesTarget) return;
+    if (dispNodes > nodesTarget) return setDispNodes(nodesTarget);
+    const t = setTimeout(() => {
+      setDispNodes((n) => n + 1);
+      setNodeTok((k) => k + 1);
+    }, 160);
+    return () => clearTimeout(t);
+  }, [dispNodes, nodesTarget]);
 
   // Block height: live value when caught up; otherwise the last-known value in
   // grey with a "+?" to show it's behind and still climbing.
@@ -146,8 +167,8 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
             title="Peers you're connected to"
             onClick={onOpenNetwork}
           >
-            <span className={"chip-label chip-label-peers" + (peerFlash ? " gold-flash" : "")}>Peers</span>
-            <span className={"chip-num" + (peerFlash ? " gold-flash" : "")}>{peers}</span>
+            <span key={`pl${peerTok}`} className={"chip-label chip-label-peers" + (peerTok ? " gold-flash" : "")}>Peers</span>
+            <span key={`pn${peerTok}`} className={"chip-num" + (peerTok ? " gold-flash" : "")}>{dispPeers}</span>
           </button>
           <button
             type="button"
@@ -155,8 +176,8 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
             title="All nodes discovered on the network (peers + 30-day known)"
             onClick={onOpenNetwork}
           >
-            <span className="chip-label chip-label-nodes">Nodes</span>
-            <span className="chip-num">{nodeCount.toLocaleString()}</span>
+            <span key={`nl${nodeTok}`} className={"chip-label chip-label-nodes" + (nodeTok ? " gold-flash" : "")}>Nodes</span>
+            <span key={`nn${nodeTok}`} className={"chip-num" + (nodeTok ? " gold-flash" : "")}>{dispNodes.toLocaleString()}</span>
           </button>
           <button
             type="button"
