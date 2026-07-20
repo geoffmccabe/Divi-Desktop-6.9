@@ -12,6 +12,7 @@ import nyan from "../assets/nyan_cat.webp";
 // thin purple edges, like the node-connection lines.
 
 const CROSS_MS = 5 * 60 * 1000; // 5 minutes to traverse the panel width
+const MIN_MS = 2000; // floor on a block's timeline slice (out-of-order / near-zero gaps)
 // A stale block sits at the fork point as a narrow 1:3 marker (the wrap is
 // 130px tall). These are genuinely rare — measured ~0.8% of blocks — so this
 // is a seldom-seen event marker, not a regular feature of the display.
@@ -32,6 +33,8 @@ export function BlockChainViz() {
   const panelRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const orphanRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const lastHeight = useRef(0);
+  const lastBorn = useRef(0); // running monotonic timeline point of the newest block
+  const lastBlockTime = useRef(0); // its real block time, to measure the next interval
   const userAddrs = useRef<Set<string>>(new Set());
 
   // The node-wallet's own addresses — used to tell if a block was won by the user.
@@ -76,20 +79,41 @@ export function BlockChainViz() {
         if (!alive || bs.length === 0) return;
         if (!seeded) {
           seeded = true;
-          // Anchor each block to its REAL timestamp, so its position and width
-          // never depend on WHEN we polled. This is what makes it immune to the
-          // app being backgrounded (rAF paused, polls throttled): on return the
-          // blocks are placed by real time, not by an accumulated wall-clock gap.
-          const seedBlocks = bs.map((b) => ({ ...b, born: b.time * 1000 }));
-          lastHeight.current = bs[bs.length - 1].height;
+          // Position each block from MONOTONIC, CLAMPED cumulative block intervals.
+          // PoS block timestamps aren't strictly increasing (staker clock drift) and
+          // can jump, so a raw timestamp produces negative widths (blocks collapse)
+          // or huge ones (blocks stretch) — the very distortion we saw. Clamping each
+          // step to [MIN_MS, CROSS_MS] keeps widths true to block time for normal
+          // blocks yet sane for outliers, and it's poll-independent so backgrounding
+          // can't distort it.
+          const sorted = [...bs].sort((a, b) => a.height - b.height);
+          let born = sorted[0].time * 1000;
+          let prevT = sorted[0].time;
+          const seedBlocks = sorted.map((b, i) => {
+            if (i > 0) {
+              born += Math.min(CROSS_MS, Math.max(MIN_MS, (b.time - prevT) * 1000));
+              prevT = b.time;
+            }
+            return { ...b, born };
+          });
+          lastHeight.current = sorted[sorted.length - 1].height;
+          lastBorn.current = born;
+          lastBlockTime.current = prevT;
           setBlocks(seedBlocks);
         } else {
           const newOnes = bs.filter((b) => b.height > lastHeight.current).sort((a, b) => a.height - b.height);
           if (newOnes.length) {
-            // born = the block's real timestamp; its width is then the true
-            // interval to the next block, independent of poll cadence.
-            const added = newOnes.map((b) => ({ ...b, born: b.time * 1000 }));
+            // Continue the same monotonic clamped-interval timeline from the newest.
+            let born = lastBorn.current;
+            let prevT = lastBlockTime.current;
+            const added = newOnes.map((b) => {
+              born += Math.min(CROSS_MS, Math.max(MIN_MS, (b.time - prevT) * 1000));
+              prevT = b.time;
+              return { ...b, born };
+            });
             lastHeight.current = newOnes[newOnes.length - 1].height;
+            lastBorn.current = born;
+            lastBlockTime.current = prevT;
             // If the user won any of these new blocks, flag it (lights up our node).
             if (added.some((b) => b.stakeWinner && userAddrs.current.has(b.stakeWinner))) markUserWon();
             setBlocks((prev) => [...prev, ...added]);
@@ -122,7 +146,7 @@ export function BlockChainViz() {
           if (!el) continue;
           // block i owns the timeline slice [born(i), born(i+1)] (or → now for
           // the newest, which grows until the next block is found)
-          const rightT = i < blocks.length - 1 ? blocks[i + 1].born : now;
+          const rightT = i < blocks.length - 1 ? blocks[i + 1].born : Math.min(now, b.born + CROSS_MS);
           const xL = cw - (now - b.born) * v;
           const xR = cw - (now - rightT) * v;
           if (xR < 0) anyOff = true;
