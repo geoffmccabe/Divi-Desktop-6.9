@@ -188,6 +188,7 @@ export interface DiviPrices {
   prices: Record<string, number>; // lowercase currency code -> price per DIVI
   coingeckoOk: boolean;
   coinmarketcapOk: boolean;
+  cmcError?: string | null; // why CoinMarketCap failed, when a key is set
 }
 export const diviPrices = (currencies: string[], cmcKey: string, useCoingecko: boolean) =>
   invoke<DiviPrices>("divi_prices", { currencies, cmcKey: cmcKey || null, useCoingecko });

@@ -748,6 +748,7 @@ struct PriceDto {
     prices: std::collections::HashMap<String, f64>,
     coingecko_ok: bool,
     coinmarketcap_ok: bool,
+    cmc_error: Option<String>,
 }
 
 /// Current DIVI price in the requested fiat currencies (CoinGecko + optional
@@ -760,6 +761,7 @@ async fn divi_prices(currencies: Vec<String>, cmc_key: Option<String>, use_coing
             prices: r.prices,
             coingecko_ok: r.coingecko_ok,
             coinmarketcap_ok: r.coinmarketcap_ok,
+            cmc_error: r.cmc_error,
         }
     })
     .await
@@ -767,6 +769,7 @@ async fn divi_prices(currencies: Vec<String>, cmc_key: Option<String>, use_coing
         prices: std::collections::HashMap::new(),
         coingecko_ok: false,
         coinmarketcap_ok: false,
+        cmc_error: None,
     })
 }
 

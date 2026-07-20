@@ -23,22 +23,42 @@ pub struct PriceResult {
     pub prices: HashMap<String, f64>, // lowercase currency code -> price per DIVI
     pub coingecko_ok: bool,
     pub coinmarketcap_ok: bool,
+    /// Why CoinMarketCap failed, when a key was configured. Surfaced to the
+    /// admin panel so a bad key or exhausted quota is visible, not guessed at.
+    pub cmc_error: Option<String>,
 }
 
 /// CoinMarketCap: DIVI in USD (one convert keeps it to a single credit).
-fn coinmarketcap_usd(key: &str) -> Option<f64> {
+///
+/// Returns the reason on failure instead of swallowing it. This used to return
+/// Option, so a rejected key or an exhausted quota looked identical to "not
+/// configured" and the caller quietly used a different exchange's price
+/// instead — the user saw a wrong number with nothing explaining why.
+fn coinmarketcap_usd(key: &str) -> Result<f64, String> {
     let url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=DIVI&convert=USD";
     let resp = ureq::get(url)
         .set("X-CMC_PRO_API_KEY", key)
         .timeout(Duration::from_secs(10))
         .call()
-        .ok()?;
-    let v: Value = serde_json::from_str(&resp.into_string().ok()?).ok()?;
-    // data.DIVI may be an object (v1) or an array (v2-style) — handle both.
+        .map_err(|e| match e {
+            ureq::Error::Status(code, r) => {
+                let body = r.into_string().unwrap_or_default();
+                let msg = serde_json::from_str::<Value>(&body)
+                    .ok()
+                    .and_then(|v| v["status"]["error_message"].as_str().map(str::to_string))
+                    .unwrap_or_else(|| body.chars().take(120).collect());
+                format!("CoinMarketCap returned HTTP {code}: {msg}")
+            }
+            other => format!("Could not reach CoinMarketCap: {other}"),
+        })?;
+    let text = resp.into_string().map_err(|e| format!("Unreadable CoinMarketCap reply: {e}"))?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("Bad CoinMarketCap JSON: {e}"))?;
+    // data.DIVI may be an object (v1) or an array (several coins share a symbol).
     let node = &v["data"]["DIVI"];
     node["quote"]["USD"]["price"]
         .as_f64()
         .or_else(|| node[0]["quote"]["USD"]["price"].as_f64())
+        .ok_or_else(|| "CoinMarketCap returned no USD quote for DIVI".to_string())
 }
 
 /// CoinGecko: DIVI in USD (no key required).
@@ -74,14 +94,24 @@ fn fx_rates_usd() -> HashMap<String, f64> {
 
 pub fn divi_prices(currencies: &[String], cmc_key: Option<&str>, use_coingecko: bool) -> PriceResult {
     // DIVI → USD, from CMC and (optionally) CoinGecko.
-    let cmc_usd = cmc_key.filter(|k| !k.is_empty()).and_then(coinmarketcap_usd);
-    // If nothing at all is configured, fall back to CoinGecko rather than
-    // returning no price. That state means "unconfigured", not a deliberate
-    // choice to have no source — and silently showing nothing is the worst
-    // possible answer. A user who has a key but turns CoinGecko off is making a
-    // real choice, and that is still respected.
-    let nothing_configured = cmc_usd.is_none() && !use_coingecko;
-    let cg_usd = if use_coingecko || nothing_configured { coingecko_usd() } else { None };
+    let key = cmc_key.filter(|k| !k.trim().is_empty());
+    let key_configured = key.is_some();
+    let mut cmc_error: Option<String> = None;
+    let cmc_usd = key.and_then(|k| match coinmarketcap_usd(k.trim()) {
+        Ok(v) => Some(v),
+        Err(e) => {
+            cmc_error = Some(e);
+            None
+        }
+    });
+
+    // Once a key is configured, CoinMarketCap is authoritative. If it fails we
+    // report that and show NO price, rather than silently swapping in
+    // CoinGecko's number — the two disagree by ~4.5x, so the substitution reads
+    // as "your coins are worth a quarter of what you thought" with nothing on
+    // screen to say the source changed. CoinGecko is only a fallback for a
+    // wallet with no key at all.
+    let cg_usd = if key_configured { None } else { coingecko_usd() };
 
     // Do NOT blend disagreeing sources. These two can be 4.5x apart, and the
     // midpoint of two prices that far apart is a number no market ever traded
@@ -112,5 +142,6 @@ pub fn divi_prices(currencies: &[String], cmc_key: Option<&str>, use_coingecko: 
         prices,
         coingecko_ok: cg_usd.is_some(),
         coinmarketcap_ok: cmc_usd.is_some(),
+        cmc_error,
     }
 }

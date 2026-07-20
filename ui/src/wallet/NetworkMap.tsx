@@ -456,23 +456,91 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       // network UNDER the real connection arcs (3-nearest-neighbour topology).
       if (selfXY && liveCount >= 20) {
         const blue = blueNodes.map(([ip, kp]) => ({ ip, kp, xy: P(kp.lon, kp.lat) }));
-        // 3-nearest-neighbour mesh lines (faint, slowly pulsing, ≤20%)
-        for (let i = 0; i < blue.length; i++) {
-          const a = blue[i];
-          const near = blue
+        // Mesh lines to each node's 3–5 nearest neighbours (faint, slowly pulsing).
+        //
+        // Nodes sharing a city land on IDENTICAL coordinates, and a zero-length
+        // line draws nothing. Because those duplicates sort first by distance,
+        // a node's "nearest neighbours" were often all co-located with it, so it
+        // spent its whole quota on invisible lines and the mesh looked far
+        // sparser than the node count suggested. Anything closer than a pixel is
+        // now skipped so the quota goes to neighbours you can actually see.
+        // Our connected peers (the purple points) take part in the mesh too, so
+        // they read as nodes sitting IN the network rather than floating above
+        // an unrelated one.
+        const meshSeen = new Set<string>();
+        const mesh: { ip: string; xy: [number, number] }[] = [];
+        for (const b of blue) {
+          if (meshSeen.has(b.ip)) continue;
+          meshSeen.add(b.ip);
+          mesh.push({ ip: b.ip, xy: b.xy });
+        }
+        for (const p of s?.peers ?? []) {
+          const pg = g[p.ip];
+          if (!pg || meshSeen.has(p.ip)) continue;
+          meshSeen.add(p.ip);
+          mesh.push({ ip: p.ip, xy: P(pg.lon, pg.lat) });
+        }
+
+        // Each node links to its 3–5 nearest neighbours. Pairs are de-duplicated
+        // so a link isn't drawn (and animated) twice from both ends.
+        const drawn = new Set<string>();
+        const links: { a: [number, number]; b: [number, number]; ip: string }[] = [];
+        for (let i = 0; i < mesh.length; i++) {
+          const a = mesh[i];
+          const want = 3 + Math.floor((phaseOf(a.ip) / (Math.PI * 2)) * 3);
+          const near = mesh
             .map((b, j) => ({ j, d: j === i ? Infinity : Math.hypot(a.xy[0] - b.xy[0], a.xy[1] - b.xy[1]) }))
+            .filter((n) => n.d > 1 && n.d < Infinity)
             .sort((x, y) => x.d - y.d)
-            .slice(0, 3);
+            .slice(0, want);
           for (const { j } of near) {
-            const b = blue[j];
-            const pulse = 0.1 + 0.1 * (0.5 + 0.5 * Math.sin(now / 1600 + phaseOf(a.ip)));
-            ctx.beginPath();
-            ctx.moveTo(a.xy[0], a.xy[1]);
-            ctx.lineTo(b.xy[0], b.xy[1]);
-            ctx.strokeStyle = BLUE(pulse);
-            ctx.lineWidth = 0.6;
-            ctx.stroke();
+            const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+            if (drawn.has(key)) continue;
+            drawn.add(key);
+            links.push({ a: a.xy, b: mesh[j].xy, ip: a.ip + mesh[j].ip });
           }
+        }
+
+        // Each link carries a dot running along it, mirroring the purple arcs but
+        // at HALF the period (twice as fast) and 60% of the size. The line itself
+        // breathes between 10% and 50% opacity, brightest around the dot.
+        const MESH_PERIOD = 3000; // purple arcs use 6000
+        const STEP_M = 0.125;
+        for (const ln of links) {
+          const bez = upArc(ln.a[0], ln.a[1], ln.b[0], ln.b[1], 0.35);
+          const ph = phaseOf(ln.ip);
+          const cycle = ((now + (ph / (Math.PI * 2)) * MESH_PERIOD) % MESH_PERIOD) / MESH_PERIOD;
+          const uDot = 0.5 - 0.5 * Math.cos(2 * Math.PI * cycle);
+          const wave = 0.5 + 0.5 * Math.sin(now / 1600 + ph);
+
+          ctx.lineWidth = 0.6;
+          let prev = bez(0);
+          for (let u = STEP_M; u <= 1.0001; u += STEP_M) {
+            const cur = bez(u);
+            const d = Math.abs(u - STEP_M / 2 - uDot);
+            const glow = Math.exp(-((d / 0.3) * (d / 0.3)));
+            ctx.beginPath();
+            ctx.moveTo(prev[0], prev[1]);
+            ctx.lineTo(cur[0], cur[1]);
+            // held inside 10%–50%: a slow breath, lifted where the dot is
+            ctx.strokeStyle = BLUE(0.1 + 0.4 * Math.max(0.35 * wave, glow));
+            ctx.stroke();
+            prev = cur;
+          }
+
+          // 60% of the purple dot's size, pulsing twice as fast (260ms → 130ms)
+          const pulse = 0.5 + 0.5 * Math.sin(now / 130 + ph * 3);
+          const [hx, hy] = bez(uDot);
+          const dotR = (2.0 + 1.6 * pulse) * 0.6;
+          const dotOp = 0.55 + 0.45 * pulse;
+          ctx.beginPath();
+          ctx.arc(hx, hy, dotR + 1.6, 0, Math.PI * 2);
+          ctx.fillStyle = BLUE(0.12 * dotOp);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(hx, hy, dotR, 0, Math.PI * 2);
+          ctx.fillStyle = BLUE(dotOp * 0.85);
+          ctx.fill();
         }
         // small slowly-pulsing blue dots (≈35%) + blue city labels (≈30%, every 20-50s for 3s)
         for (const b of blue) {
@@ -794,13 +862,21 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }
       }
       const liveNow = new Set((s?.peers ?? []).filter((p) => g[p.ip]).map((p) => p.ip));
+      // Only offer a tooltip where something is actually PAINTED. This loop used
+      // to walk every known node, while the blue dots are limited to the 40 most
+      // recently seen active ones (and only once we have 20+ peers). Everything
+      // beyond that — and every offline node, which is deliberately not drawn —
+      // became an invisible hover target: a popup over blank ocean.
+      const drawnBlue = new Set(blueNodes.map(([ip]) => ip));
       for (const [ip, kp] of Object.entries(knownRef.current)) {
         if (liveNow.has(ip)) continue;
         const st = probeRef.current.get(ip) ?? "probing";
+        const isDrawn = drawnBlue.has(ip) || (st === "probing" && !!selfXY);
+        if (!isDrawn) continue;
         const [x, y] = P(kp.lon, kp.lat);
         const loc = [kp.city || g[ip]?.city, kp.country || g[ip]?.country].filter(Boolean).join(", ");
         const isp = g[ip]?.isp || "";
-        if (st === "online") {
+        if (drawnBlue.has(ip)) {
           // Active background node (not one of our peers) — styled blue.
           pts.push({ x, y, title: loc || ip, lines: ["Active Network", "Not Connected", isp, loc ? ip : ""].filter(Boolean), tone: "blue" });
         } else {

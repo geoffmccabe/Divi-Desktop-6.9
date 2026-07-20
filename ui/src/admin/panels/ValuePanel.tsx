@@ -107,6 +107,11 @@ export function ValuePanel() {
             {loading ? "…" : "Refresh"}
           </button>
         </div>
+        {prices?.cmcError && (
+          <p style={{ fontSize: "0.7rem", color: "rgb(255, 140, 125)", marginTop: 6 }}>
+            {prices.cmcError} — showing no value rather than another exchange's price, which differs by several times.
+          </p>
+        )}
       </section>
 
       <section className="style-group">
