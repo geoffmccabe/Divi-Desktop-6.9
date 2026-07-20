@@ -84,8 +84,8 @@ pub fn encode_transfer(mint_txid: &str, new_owner: &str, wrapkey_ptr: &str) -> R
     if !is_hex_len(mint_txid, 32) {
         return Err("mint_txid must be 32 bytes hex".into());
     }
-    if !is_hex_len(new_owner, 20) {
-        return Err("new_owner must be a 20-byte address hash (hex)".into());
+    if !is_hex_len(new_owner, 21) {
+        return Err("new_owner must be a 21-byte packed address (kind + hash160, hex)".into());
     }
     if !is_hex_len(wrapkey_ptr, 32) {
         return Err("wrapkey_ptr must be 32 bytes hex".into());
@@ -158,10 +158,10 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
                 thumb_ptr: if has_thumb { Some(body[130..194].to_string()) } else { None },
             })
         }
-        SUB_TRANSFER if body.len() == 168 => Some(NfdRecord::Transfer {
+        SUB_TRANSFER if body.len() == 170 => Some(NfdRecord::Transfer {
             mint_txid: body[0..64].to_string(),
-            new_owner: body[64..104].to_string(), // 20 bytes
-            wrapkey_ptr: body[104..168].to_string(),
+            new_owner: body[64..106].to_string(), // 21 bytes packed (kind + hash160)
+            wrapkey_ptr: body[106..170].to_string(),
         }),
         SUB_KEYANNOUNCE if body.len() == 64 => Some(NfdRecord::KeyAnnounce {
             enc_pubkey: body[0..64].to_string(),
@@ -227,7 +227,7 @@ mod tests {
     fn transfer_roundtrip_uses_pushdata1() {
         // transfer body is 91 bytes total payload -> needs OP_PUSHDATA1
         let txid = "11".repeat(32);
-        let owner = "22".repeat(20);
+        let owner = "22".repeat(21); // 21-byte packed address (kind + hash160)
         let wk = "33".repeat(32);
         let payload = encode_transfer(&txid, &owner, &wk).unwrap();
         let script = op_meta_script(&payload);

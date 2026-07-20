@@ -115,6 +115,7 @@ fn anchor_record(
         let mut outs = serde_json::Map::new();
         let mut change_amt = change;
         if let Some((addr, fee)) = fee_output {
+            let fee = (fee * 1e8).round() / 1e8; // round to duffs or createrawtransaction rejects
             if addr == change_addr {
                 change_amt = ((change + fee) * 1e8).round() / 1e8; // same address -> merge
             } else {
@@ -220,17 +221,18 @@ fn pubkey_from_hex(h: &str) -> Result<PublicKey, String> {
     Ok(PublicKey::from(b))
 }
 
-/// Validate a recipient address and return its 20-byte hash160 (hex). v1 accepts
-/// standard P2PKH recipients only.
-fn address_to_hash160(rpc: &RpcClient, addr: &str) -> Result<String, String> {
+/// Validate a recipient address and return its PACKED 21-byte form as hex
+/// (kind byte + 20-byte hash160) — the shared address encoding used across the
+/// overlay protocols. v1 accepts standard P2PKH recipients only.
+fn address_to_packed(rpc: &RpcClient, addr: &str) -> Result<String, String> {
     let v = rpc.call("validateaddress", json!([addr]))?;
     if !v["isvalid"].as_bool().unwrap_or(false) {
         return Err("recipient address is not valid".into());
     }
     let spk = v["scriptPubKey"].as_str().ok_or("could not read the recipient's script")?;
-    // P2PKH: 76 a9 14 <20-byte hash> 88 ac
-    if spk.len() >= 50 && spk.starts_with("76a914") && spk.ends_with("88ac") {
-        Ok(spk[6..46].to_lowercase())
+    // P2PKH scriptPubKey is exactly 76 a9 14 <20-byte hash> 88 ac (50 hex chars).
+    if spk.len() == 50 && spk.starts_with("76a914") && spk.ends_with("88ac") {
+        Ok(format!("00{}", &spk[6..46]).to_lowercase()) // kind 0x00 = P2PKH
     } else {
         Err("recipient must be a standard (P2PKH) address".into())
     }
@@ -282,47 +284,57 @@ pub struct TransferOutcome {
 pub fn transfer(
     cfg: &NodeConfig,
     owner_addr: &str,
-    arweave_ptr: &str,
     mint_txid: &str,
     recipient_addr: &str,
     recipient_enc_pubkey: &str,
 ) -> Result<TransferOutcome, String> {
     let rpc = RpcClient::new(cfg);
     let recipient_pub = pubkey_from_hex(recipient_enc_pubkey)?;
-    let recipient_hash160 = address_to_hash160(&rpc, recipient_addr)?;
+    let recipient_packed = address_to_packed(&rpc, recipient_addr)?;
 
+    // The bundle pointer comes from the on-chain mint record (authoritative).
+    let arweave_ptr = match read_record(cfg, mint_txid)? {
+        Some(nfd_record::NfdRecord::Mint { arweave_ptr, .. }) => arweave_ptr,
+        _ => return Err("no NFD mint record was found for that transaction".into()),
+    };
     // Re-wrap the content key from the bundle's current wrapping to the recipient.
     let storage = nfd_storage::for_node(&cfg.datadir);
-    let bundle = storage.get(arweave_ptr)?;
+    let bundle = storage.get(&arweave_ptr)?;
     let (_content_blob, wrapped_ck) = unpack_bundle(&bundle)?;
     let (my_sk, _my_pk) = owner_keypair(&rpc, owner_addr)?;
     let new_wrapped = crypto_nfd::rewrap(&wrapped_ck, &my_sk, &recipient_pub)?;
     let wrapkey_ptr = storage.put(&new_wrapped)?; // opaque (it's already ciphertext)
 
-    let record = nfd_record::encode_transfer(mint_txid, &recipient_hash160, &wrapkey_ptr)?;
+    let record = nfd_record::encode_transfer(mint_txid, &recipient_packed, &wrapkey_ptr)?;
     let utxo = pick_owner_utxo(&rpc, owner_addr)?;
     let txid = anchor_record(&rpc, &utxo, &record, None)?; // transfers charge no treasury fee
     Ok(TransferOutcome { txid, wrapkey_ptr })
 }
 
 /// Claim (fetch + decrypt + authenticate) a collectible transferred to you.
+/// The `arweave_ptr` and `content_hash` are taken from the ON-CHAIN mint record
+/// (looked up by `mint_txid`), never from the sender's claim code — so a sender
+/// can't hand a code pointing at different content than the record proves.
 /// Uses the re-wrapped key at `wrapkey_ptr`, not the bundle's original wrapping.
 pub fn claim(
     cfg: &NodeConfig,
     my_addr: &str,
-    arweave_ptr: &str,
+    mint_txid: &str,
     wrapkey_ptr: &str,
-    content_hash: &str,
 ) -> Result<Vec<u8>, String> {
+    let (arweave_ptr, content_hash) = match read_record(cfg, mint_txid)? {
+        Some(nfd_record::NfdRecord::Mint { arweave_ptr, content_hash, .. }) => (arweave_ptr, content_hash),
+        _ => return Err("no NFD mint record was found for that transaction".into()),
+    };
     let storage = nfd_storage::for_node(&cfg.datadir);
-    let bundle = storage.get(arweave_ptr)?;
+    let bundle = storage.get(&arweave_ptr)?;
     let (content_blob, _old_wrapped) = unpack_bundle(&bundle)?;
     let new_wrapped = storage.get(wrapkey_ptr)?;
     let rpc = RpcClient::new(cfg);
     let (sk, _pk) = owner_keypair(&rpc, my_addr)?;
     let salted = crypto_nfd::decrypt_content(&content_blob, &new_wrapped, &sk)?;
     if sha256_hex(&salted) != content_hash.to_lowercase() {
-        return Err("content does not match the on-chain record — not authentic".into());
+        return Err("content does not match the on-chain mint record — not authentic".into());
     }
     if salted.len() < SALT_LEN {
         return Err("content is malformed".into());

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent } from "react";
-import { nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, newReceiveAddress, type NfdMint } from "./api";
+import { nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, newReceiveAddress } from "./api";
 
 // Divi Collectibles (NFDs). Mint, view, transfer, and receive collectibles. The
 // file is encrypted locally before it leaves the machine; only the encrypted
@@ -7,11 +7,16 @@ import { nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, newReceiveAddr
 // publish an UNENCRYPTED ≤500px preview (WebP). Transfers use a receive-code /
 // claim-code handoff until the chain indexer can enumerate + look up on-chain.
 
-interface Item extends NfdMint {
+interface Item {
+  txid: string; // the mint txid — the NFD's stable id
+  ownerAddr: string;
   name: string;
   mime: string;
   ts: number;
   thumb?: string; // data-URL of the public preview, for instant card display
+  arweavePtr?: string; // minted-by-me items (for view)
+  contentHash?: string; // minted-by-me items
+  thumbPtr?: string | null;
   wrapkeyPtr?: string; // present on a CLAIMED item — unlock via claim, not view
 }
 
@@ -69,12 +74,10 @@ async function makeThumbnail(file: File): Promise<{ b64: string; mime: string; d
 
 // A claim code carries everything the recipient needs to unlock a transfer.
 interface ClaimCode {
-  arweavePtr: string;
+  mintTxid: string;
   wrapkeyPtr: string;
-  contentHash: string;
   name: string;
   mime: string;
-  thumbPtr: string | null;
 }
 
 export function CollectiblesPanel() {
@@ -131,7 +134,7 @@ export function CollectiblesPanel() {
   }
 
   async function openItem(it: Item) {
-    setViewing(it.arweavePtr);
+    setViewing(it.txid);
     setViewSrc(null);
     setViewErr(null);
     setXferCode("");
@@ -139,8 +142,8 @@ export function CollectiblesPanel() {
     setClaimCodeOut(null);
     try {
       const b64 = it.wrapkeyPtr
-        ? await nfdClaim(it.ownerAddr, it.arweavePtr, it.wrapkeyPtr, it.contentHash)
-        : await nfdView(it.ownerAddr, it.arweavePtr, it.contentHash);
+        ? await nfdClaim(it.ownerAddr, it.txid, it.wrapkeyPtr)
+        : await nfdView(it.ownerAddr, it.arweavePtr ?? "", it.contentHash ?? "");
       setViewSrc(`data:${it.mime};base64,${b64}`);
     } catch (e) {
       setViewErr(String(e));
@@ -163,18 +166,16 @@ export function CollectiblesPanel() {
     setXferBusy(true);
     setXferErr(null);
     try {
-      const res = await nfdTransfer(it.ownerAddr, it.arweavePtr, it.txid, parts[0], parts[1]);
+      const res = await nfdTransfer(it.ownerAddr, it.txid, parts[0], parts[1]);
       const code: ClaimCode = {
-        arweavePtr: it.arweavePtr,
+        mintTxid: it.txid,
         wrapkeyPtr: res.wrapkeyPtr,
-        contentHash: it.contentHash,
         name: it.name,
         mime: it.mime,
-        thumbPtr: it.thumbPtr,
       };
       setClaimCodeOut(btoa(JSON.stringify(code)));
       // we no longer own it
-      setItems((prev) => prev.filter((x) => x.arweavePtr !== it.arweavePtr));
+      setItems((prev) => prev.filter((x) => x.txid !== it.txid));
     } catch (e) {
       setXferErr(String(e));
     }
@@ -200,13 +201,10 @@ export function CollectiblesPanel() {
     try {
       const code = JSON.parse(atob(claimIn.trim())) as ClaimCode;
       const addr = await myNfdAddress();
-      const b64 = await nfdClaim(addr, code.arweavePtr, code.wrapkeyPtr, code.contentHash);
+      const b64 = await nfdClaim(addr, code.mintTxid, code.wrapkeyPtr);
       const item: Item = {
-        txid: "",
+        txid: code.mintTxid,
         ownerAddr: addr,
-        contentHash: code.contentHash,
-        arweavePtr: code.arweavePtr,
-        thumbPtr: code.thumbPtr,
         wrapkeyPtr: code.wrapkeyPtr,
         name: code.name,
         mime: code.mime,
@@ -222,7 +220,7 @@ export function CollectiblesPanel() {
     setRecvBusy(false);
   }
 
-  const active = items.find((i) => i.arweavePtr === viewing) ?? null;
+  const active = items.find((i) => i.txid === viewing) ?? null;
 
   return (
     <div className="collectibles">
@@ -255,7 +253,7 @@ export function CollectiblesPanel() {
         ) : (
           <div className="coll-grid">
             {items.map((it) => (
-              <button key={it.arweavePtr} className="coll-card" onClick={() => openItem(it)}>
+              <button key={it.txid} className="coll-card" onClick={() => openItem(it)}>
                 {it.thumb ? (
                   <img className="coll-card-thumb" src={it.thumb} alt={it.name} />
                 ) : (

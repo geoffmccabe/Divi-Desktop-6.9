@@ -54,15 +54,10 @@ export interface NfdTransfer {
   wrapkeyPtr: string;
 }
 export const nfdReceiveCode = (address: string) => invoke<ReceiveCode>("nfd_receive_code", { address });
-export const nfdTransfer = (
-  ownerAddr: string,
-  arweavePtr: string,
-  mintTxid: string,
-  recipientAddr: string,
-  recipientEncPubkey: string,
-) => invoke<NfdTransfer>("nfd_transfer", { ownerAddr, arweavePtr, mintTxid, recipientAddr, recipientEncPubkey });
-export const nfdClaim = (myAddr: string, arweavePtr: string, wrapkeyPtr: string, contentHash: string) =>
-  invoke<string>("nfd_claim", { myAddr, arweavePtr, wrapkeyPtr, contentHash });
+export const nfdTransfer = (ownerAddr: string, mintTxid: string, recipientAddr: string, recipientEncPubkey: string) =>
+  invoke<NfdTransfer>("nfd_transfer", { ownerAddr, mintTxid, recipientAddr, recipientEncPubkey });
+export const nfdClaim = (myAddr: string, mintTxid: string, wrapkeyPtr: string) =>
+  invoke<string>("nfd_claim", { myAddr, mintTxid, wrapkeyPtr });
 
 // ── Admin: fees / treasury + Arweave status ──────────────────────────────────
 export interface FeeConfig {

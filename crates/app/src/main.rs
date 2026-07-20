@@ -342,14 +342,13 @@ struct TransferDto {
 #[tauri::command]
 async fn nfd_transfer(
     owner_addr: String,
-    arweave_ptr: String,
     mint_txid: String,
     recipient_addr: String,
     recipient_enc_pubkey: String,
 ) -> Result<TransferDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
-        let t = collectibles::transfer(&cfg, &owner_addr, &arweave_ptr, &mint_txid, &recipient_addr, &recipient_enc_pubkey)?;
+        let t = collectibles::transfer(&cfg, &owner_addr, &mint_txid, &recipient_addr, &recipient_enc_pubkey)?;
         Ok(TransferDto { txid: t.txid, wrapkey_ptr: t.wrapkey_ptr })
     })
     .await
@@ -358,15 +357,10 @@ async fn nfd_transfer(
 
 /// Claim (fetch + decrypt) a collectible transferred to you. Returns base64.
 #[tauri::command]
-async fn nfd_claim(
-    my_addr: String,
-    arweave_ptr: String,
-    wrapkey_ptr: String,
-    content_hash: String,
-) -> Result<String, String> {
+async fn nfd_claim(my_addr: String, mint_txid: String, wrapkey_ptr: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
-        let bytes = collectibles::claim(&cfg, &my_addr, &arweave_ptr, &wrapkey_ptr, &content_hash)?;
+        let bytes = collectibles::claim(&cfg, &my_addr, &mint_txid, &wrapkey_ptr)?;
         Ok(STANDARD.encode(bytes))
     })
     .await
