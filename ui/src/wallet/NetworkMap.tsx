@@ -385,6 +385,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const g = geosRef.current;
       const now = performance.now();
       const BLUE = (a: number) => `hsla(210, 85%, 62%, ${a})`;
+      const GREY = (a: number) => `hsla(215, 14%, 58%, ${a})`; // remembered but not verified-live now
       const USER_IS_WINNER = userWonRecently(); // deck out our node right after a win
 
       // The node's true location comes from its own public IP; cache it so it's
@@ -392,20 +393,21 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       if (s?.selfIp && g[s.selfIp]) selfRef.current = g[s.selfIp];
       const selfG = selfRef.current;
       const peerCount = s?.peers.filter((p) => g[p.ip]).length ?? 0;
-      const liveCount = s?.peers.length ?? 0;
       const liveIps = new Set((s?.peers ?? []).filter((p) => g[p.ip]).map((p) => p.ip));
       // Anchors of labels already drawn this frame — shared by all loops.
       const labelAnchors: [number, number][] = [];
 
       // The active background nodes (verified-active 30-day nodes, not connected),
       // computed once and reused for both the auto-fit and the mesh drawing.
-      const blueNodes =
-        liveCount >= 20
-          ? Object.entries(knownRef.current)
-              .filter(([ip]) => !liveIps.has(ip) && probeRef.current.get(ip) === "online")
-              .sort((a, b) => b[1].lastSeen - a[1].lastSeen)
-              .slice(0, 40)
-          : [];
+      // EVERY node seen in the last 30 days (minus current live peers), newest
+      // first. We no longer require a live probe-online result or a 20-peer floor:
+      // a node you connected to yesterday belongs on the map even if it's offline
+      // or firewalled right now (most nodes won't accept our probe). Verified-live
+      // ones draw blue; the rest draw faint grey. Cap high, not at 40.
+      const blueNodes = Object.entries(knownRef.current)
+        .filter(([ip]) => !liveIps.has(ip))
+        .sort((a, b) => b[1].lastSeen - a[1].lastSeen)
+        .slice(0, 150);
 
       // ── View transform: auto-fit into the viewport with a 2% margin, or honour
       // the user's manual pan/zoom. project() = full-world pixels; the view then
@@ -454,8 +456,13 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
 
       // ── Background network mesh: active 30-day nodes as a faint-blue living
       // network UNDER the real connection arcs (3-nearest-neighbour topology).
-      if (selfXY && liveCount >= 20) {
-        const blue = blueNodes.map(([ip, kp]) => ({ ip, kp, xy: P(kp.lon, kp.lat) }));
+      if (selfXY && blueNodes.length) {
+        const blue = blueNodes.map(([ip, kp]) => ({
+          ip,
+          kp,
+          xy: P(kp.lon, kp.lat),
+          online: probeRef.current.get(ip) === "online", // verified reachable right now
+        }));
         // Mesh lines to each node's 3–5 nearest neighbours (faint, slowly pulsing).
         //
         // Nodes sharing a city land on IDENTICAL coordinates, and a zero-length
@@ -470,7 +477,9 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         const meshSeen = new Set<string>();
         const mesh: { ip: string; xy: [number, number] }[] = [];
         for (const b of blue) {
-          if (meshSeen.has(b.ip)) continue;
+          // Only verified-live nodes join the mesh, so faint remembered nodes
+          // don't imply connections we can't confirm — they still get a dot.
+          if (!b.online || meshSeen.has(b.ip)) continue;
           meshSeen.add(b.ip);
           mesh.push({ ip: b.ip, xy: b.xy });
         }
@@ -547,7 +556,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           const r = 1.6 + 0.5 * Math.sin(now / 1300 + phaseOf(b.ip));
           ctx.beginPath();
           ctx.arc(b.xy[0], b.xy[1], r, 0, Math.PI * 2);
-          ctx.fillStyle = BLUE(0.35);
+          ctx.fillStyle = b.online ? BLUE(0.35) : GREY(0.3); // blue = verified-live, grey = remembered
           ctx.fill();
           const env = labelPulse(now, b.ip, 20000, 50000, 3000);
           if (env > 0.02) {
@@ -558,7 +567,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               ctx.font = "10px 'Courier New', Courier, monospace";
               ctx.textAlign = "left";
               ctx.textBaseline = "middle";
-              ctx.fillStyle = BLUE(0.3 * env);
+              ctx.fillStyle = b.online ? BLUE(0.3 * env) : GREY(0.3 * env);
               ctx.fillText(label, lx, ly);
             }
           }
@@ -862,31 +871,28 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }
       }
       const liveNow = new Set((s?.peers ?? []).filter((p) => g[p.ip]).map((p) => p.ip));
-      // Only offer a tooltip where something is actually PAINTED. This loop used
-      // to walk every known node, while the blue dots are limited to the 40 most
-      // recently seen active ones (and only once we have 20+ peers). Everything
-      // beyond that — and every offline node, which is deliberately not drawn —
-      // became an invisible hover target: a popup over blank ocean.
+      // Offer a tooltip on every painted node. blueNodes now includes ALL nodes
+      // seen in the last 30 days (drawn blue when verified-live, grey otherwise),
+      // so each gets an accurate hover instead of "Active Network" for everything.
       const drawnBlue = new Set(blueNodes.map(([ip]) => ip));
       for (const [ip, kp] of Object.entries(knownRef.current)) {
-        if (liveNow.has(ip)) continue;
+        if (liveNow.has(ip) || !drawnBlue.has(ip)) continue;
         const st = probeRef.current.get(ip) ?? "probing";
-        const isDrawn = drawnBlue.has(ip) || (st === "probing" && !!selfXY);
-        if (!isDrawn) continue;
+        const online = st === "online";
         const [x, y] = P(kp.lon, kp.lat);
         const loc = [kp.city || g[ip]?.city, kp.country || g[ip]?.country].filter(Boolean).join(", ");
         const isp = g[ip]?.isp || "";
-        if (drawnBlue.has(ip)) {
-          // Active background node (not one of our peers) — styled blue.
-          pts.push({ x, y, title: loc || ip, lines: ["Active Network", "Not Connected", isp, loc ? ip : ""].filter(Boolean), tone: "blue" });
-        } else {
-          pts.push({
-            x,
-            y,
-            title: loc || ip,
-            lines: [loc ? ip : "", st === "probing" ? "Checking…" : "Idle / unreachable", isp, "Seen in the last 30 days"].filter(Boolean),
-          });
-        }
+        pts.push({
+          x,
+          y,
+          title: loc || ip,
+          lines: [
+            loc ? ip : "",
+            online ? "Active now · not connected" : st === "probing" ? "Checking…" : "Seen in the last 30 days",
+            isp,
+          ].filter(Boolean),
+          tone: online ? "blue" : undefined,
+        });
       }
       pointsRef.current = pts;
 
