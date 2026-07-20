@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { addressQr, newReceiveAddress, walletAddresses, openUrl } from "./api";
 import { playSound } from "../sound";
+import { PaymentRequests } from "./PaymentRequests";
 
 export function ReceivePanel() {
+  const [tab, setTab] = useState<"receive" | "requests">("receive");
   const [addr, setAddr] = useState<string | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,17 +89,13 @@ export function ReceivePanel() {
     </div>
   );
 
-  if (!addr) {
-    return (
-      <div className="receive">
-        {Explain}
-        <p className="wl-note">Loading your receiving address…</p>
-        {err && <p className="wl-err">{err}</p>}
-      </div>
-    );
-  }
-
-  return (
+  const receiveBody = !addr ? (
+    <div className="receive">
+      {Explain}
+      <p className="wl-note">Loading your receiving address…</p>
+      {err && <p className="wl-err">{err}</p>}
+    </div>
+  ) : (
     <div className="receive">
       {Explain}
       {qr && <div className="qr" dangerouslySetInnerHTML={{ __html: qr }} />}
@@ -122,6 +120,30 @@ export function ReceivePanel() {
         {busy ? "Generating…" : "Use a new address"}
       </button>
       {err && <p className="wl-err">{err}</p>}
+    </div>
+  );
+
+  return (
+    <div className="rcv-tabbed">
+      <nav className="poe-tabs" role="tablist">
+        <button
+          className={"poe-tab" + (tab === "receive" ? " poe-tab-on" : "")}
+          onClick={() => setTab("receive")}
+          role="tab"
+          aria-selected={tab === "receive"}
+        >
+          Receive
+        </button>
+        <button
+          className={"poe-tab" + (tab === "requests" ? " poe-tab-on" : "")}
+          onClick={() => setTab("requests")}
+          role="tab"
+          aria-selected={tab === "requests"}
+        >
+          Payment Requests
+        </button>
+      </nav>
+      {tab === "requests" ? <PaymentRequests /> : receiveBody}
     </div>
   );
 }
