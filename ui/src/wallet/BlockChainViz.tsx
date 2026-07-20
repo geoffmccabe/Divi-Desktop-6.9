@@ -12,7 +12,11 @@ import nyan from "../assets/nyan_cat.webp";
 // thin purple edges, like the node-connection lines.
 
 const CROSS_MS = 5 * 60 * 1000; // 5 minutes to traverse the panel width
-const MIN_MS = 2000; // floor on a block's timeline slice (out-of-order / near-zero gaps)
+// Divi's PoS block timestamps are far too jittery to use as widths (they swing
+// wildly and can even run backwards), so each block gets a UNIFORM one-minute
+// slice — exactly 5 across the 5-minute window — and simply slides in as it's
+// found. This is timestamp-independent, so nothing (noise, backgrounding) distorts it.
+const NOMINAL_MS = 60 * 1000;
 // A stale block sits at the fork point as a narrow 1:3 marker (the wrap is
 // 130px tall). These are genuinely rare — measured ~0.8% of blocks — so this
 // is a seldom-seen event marker, not a regular feature of the display.
@@ -33,8 +37,8 @@ export function BlockChainViz() {
   const panelRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const orphanRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const lastHeight = useRef(0);
-  const lastBorn = useRef(0); // running monotonic timeline point of the newest block
-  const lastBlockTime = useRef(0); // its real block time, to measure the next interval
+  const lastBorn = useRef(0); // uniform timeline point (left edge) of the newest block
+  const chainNow = useRef(0); // eased right-edge position; slides to follow new blocks
   const userAddrs = useRef<Set<string>>(new Set());
 
   // The node-wallet's own addresses — used to tell if a block was won by the user.
@@ -79,41 +83,24 @@ export function BlockChainViz() {
         if (!alive || bs.length === 0) return;
         if (!seeded) {
           seeded = true;
-          // Position each block from MONOTONIC, CLAMPED cumulative block intervals.
-          // PoS block timestamps aren't strictly increasing (staker clock drift) and
-          // can jump, so a raw timestamp produces negative widths (blocks collapse)
-          // or huge ones (blocks stretch) — the very distortion we saw. Clamping each
-          // step to [MIN_MS, CROSS_MS] keeps widths true to block time for normal
-          // blocks yet sane for outliers, and it's poll-independent so backgrounding
-          // can't distort it.
+          // Uniform one-minute slices, tiled by order (height). No timestamps.
           const sorted = [...bs].sort((a, b) => a.height - b.height);
-          let born = sorted[0].time * 1000;
-          let prevT = sorted[0].time;
-          const seedBlocks = sorted.map((b, i) => {
-            if (i > 0) {
-              born += Math.min(CROSS_MS, Math.max(MIN_MS, (b.time - prevT) * 1000));
-              prevT = b.time;
-            }
-            return { ...b, born };
-          });
+          const seedBlocks = sorted.map((b, i) => ({ ...b, born: i * NOMINAL_MS }));
           lastHeight.current = sorted[sorted.length - 1].height;
-          lastBorn.current = born;
-          lastBlockTime.current = prevT;
+          lastBorn.current = (sorted.length - 1) * NOMINAL_MS;
+          chainNow.current = lastBorn.current + NOMINAL_MS; // newest block's right edge
           setBlocks(seedBlocks);
         } else {
           const newOnes = bs.filter((b) => b.height > lastHeight.current).sort((a, b) => a.height - b.height);
           if (newOnes.length) {
-            // Continue the same monotonic clamped-interval timeline from the newest.
+            // Each new block gets the next uniform slice; the strip slides to reveal it.
             let born = lastBorn.current;
-            let prevT = lastBlockTime.current;
             const added = newOnes.map((b) => {
-              born += Math.min(CROSS_MS, Math.max(MIN_MS, (b.time - prevT) * 1000));
-              prevT = b.time;
+              born += NOMINAL_MS;
               return { ...b, born };
             });
             lastHeight.current = newOnes[newOnes.length - 1].height;
             lastBorn.current = born;
-            lastBlockTime.current = prevT;
             // If the user won any of these new blocks, flag it (lights up our node).
             if (added.some((b) => b.stakeWinner && userAddrs.current.has(b.stakeWinner))) markUserWon();
             setBlocks((prev) => [...prev, ...added]);
@@ -137,18 +124,24 @@ export function BlockChainViz() {
       const wrap = wrapRef.current;
       if (wrap && blocks.length) {
         const cw = wrap.clientWidth;
-        const v = cw / CROSS_MS; // px per ms — one constant speed
-        const now = Date.now();
+        const v = cw / CROSS_MS; // px per ms
+        // Ease the right edge toward the newest block so new blocks slide in; snap
+        // if it has fallen far behind (e.g. returning from the background) rather
+        // than crawling for a long time.
+        const now = chainNow.current;
+        const target = lastBorn.current + NOMINAL_MS;
+        if (target - now > CROSS_MS) chainNow.current = target - CROSS_MS;
+        chainNow.current += (target - chainNow.current) * 0.06;
+        const cn = chainNow.current;
         let anyOff = false;
         for (let i = 0; i < blocks.length; i++) {
           const b = blocks[i];
           const el = panelRefs.current.get(b.height);
           if (!el) continue;
-          // block i owns the timeline slice [born(i), born(i+1)] (or → now for
-          // the newest, which grows until the next block is found)
-          const rightT = i < blocks.length - 1 ? blocks[i + 1].born : Math.min(now, b.born + CROSS_MS);
-          const xL = cw - (now - b.born) * v;
-          const xR = cw - (now - rightT) * v;
+          // every block is one uniform minute wide
+          const rightT = b.born + NOMINAL_MS;
+          const xL = cw - (cn - b.born) * v;
+          const xR = cw - (cn - rightT) * v;
           if (xR < 0) anyOff = true;
           el.style.transform = `translateX(${xL}px)`;
           el.style.width = `${Math.max(0, xR - xL)}px`;
@@ -164,15 +157,12 @@ export function BlockChainViz() {
             continue;
           }
           el.style.display = "";
-          el.style.transform = `translateX(${cw - (now - b.born) * v - ORPHAN_W}px)`;
+          el.style.transform = `translateX(${cw - (cn - b.born) * v - ORPHAN_W}px)`;
         }
         if (anyOff) {
           setBlocks((prev) => {
-            const n = Date.now();
-            return prev.filter((_b, i) => {
-              const rt = i < prev.length - 1 ? prev[i + 1].born : n;
-              return cw - (n - rt) * v >= 0;
-            });
+            const n = chainNow.current;
+            return prev.filter((b) => cw - (n - (b.born + NOMINAL_MS)) * v >= 0);
           });
         }
       }
