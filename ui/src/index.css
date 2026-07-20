@@ -939,3 +939,16 @@ h1, h2, h3 { font-family: var(--font-heading); }
   50%      { box-shadow: 0 0 8px 3px hsl(var(--success) / 0.9); }
 }
 .bl-fiat-recovered { color: hsl(var(--success)); transition: color 1.5s ease; }
+
+/* ---- Receive: explanation + share ---- */
+.rcv-explain { max-width: 440px; display: flex; flex-direction: column; gap: 8px; margin-bottom: 6px; }
+.rcv-explain-title { color: hsl(var(--primary)); font-weight: 700; font-size: 1.05rem; }
+.rcv-explain p { margin: 0; font-size: 0.85rem; color: hsl(var(--muted-foreground)); line-height: 1.55; }
+.rcv-explain strong { color: hsl(var(--foreground)); font-weight: 600; }
+.rcv-explain em { font-style: italic; color: hsl(var(--foreground)); }
+.rcv-steps { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 5px; }
+.rcv-steps li { font-size: 0.85rem; color: hsl(var(--muted-foreground)); line-height: 1.45; }
+.rcv-steps strong { color: hsl(var(--foreground)); font-weight: 600; }
+.rcv-safe { border-left: 2px solid hsl(var(--primary) / 0.5); padding-left: 10px; }
+.rcv-share { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+.rcv-share-soon { font-size: 0.72rem; color: hsl(var(--muted-foreground)); opacity: 0.8; }

@@ -149,7 +149,7 @@ async fn validate_address(address: String) -> bool {
 /// Open an http(s) URL in the user's default browser (e.g. a block explorer).
 #[tauri::command]
 fn open_url(url: String) {
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
+    if !(url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:")) {
         return;
     }
     #[cfg(target_os = "macos")]
