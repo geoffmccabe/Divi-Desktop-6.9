@@ -93,35 +93,66 @@ export async function fetchPrices(force = false): Promise<DiviPrices> {
  * never fabricated, but its absence is now always explained.
  */
 export type DiviValue =
-  | { state: "ok"; value: string; code: string }
+  | { state: "ok"; value: string; code: string; recovered?: boolean }
   | { state: "loading" }
   | { state: "unavailable"; reason: string };
+
+/** Normal refresh once a price is flowing. */
+const OK_INTERVAL = 120_000;
+/** Faster while broken, so a recovery is noticed quickly rather than up to two
+ *  minutes later — the point is that it visibly heals itself. */
+const RETRY_INTERVAL = 30_000;
+/** How long the "it came back" signal stays on screen. */
+const RECOVERED_MS = 6_000;
 
 export function useDiviValue(diviAmount: number | null): DiviValue {
   const [prices, setPrices] = useState<DiviPrices | null>(cache?.data ?? null);
   const [display, setDisplay] = useState(() => getValueSettings().display);
   const [failed, setFailed] = useState(false);
+  // Set briefly when a price returns after a failure, so the UI can show that
+  // it healed rather than silently flipping back as if nothing happened.
+  const [recovered, setRecovered] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    const load = (force = false) =>
+    let timer: number | undefined;
+    let wasFailing = false;
+
+    const schedule = (broken: boolean) => {
+      window.clearTimeout(timer);
+      // Retry quickly while broken; settle back to the slow poll once healthy.
+      timer = window.setTimeout(() => run(), broken ? RETRY_INTERVAL : OK_INTERVAL);
+    };
+
+    const run = (force = false) =>
       fetchPrices(force)
         .then((d) => {
           if (!alive) return;
           setPrices(d);
           setFailed(false);
+          if (wasFailing) {
+            wasFailing = false;
+            setRecovered(true);
+            window.setTimeout(() => alive && setRecovered(false), RECOVERED_MS);
+          }
+          schedule(false);
         })
-        .catch(() => alive && setFailed(true));
+        .catch(() => {
+          if (!alive) return;
+          wasFailing = true;
+          setFailed(true);
+          schedule(true);
+        });
+
     const onChange = () => {
       setDisplay(getValueSettings().display);
-      load(true);
+      run(true);
     };
-    load();
-    const id = setInterval(() => load(), 120000);
+    run();
     window.addEventListener("dd69-value-changed", onChange);
     return () => {
       alive = false;
-      clearInterval(id);
+      window.clearTimeout(timer);
       window.removeEventListener("dd69-value-changed", onChange);
     };
   }, []);
@@ -130,7 +161,7 @@ export function useDiviValue(diviAmount: number | null): DiviValue {
 
   if (!prices) {
     return failed
-      ? { state: "unavailable", reason: "Price unavailable" }
+      ? { state: "unavailable", reason: "Checking price availability" }
       : { state: "loading" };
   }
 
@@ -140,5 +171,5 @@ export function useDiviValue(diviAmount: number | null): DiviValue {
     // different problem from being offline, and worth saying so.
     return { state: "unavailable", reason: `No ${display} price` };
   }
-  return { state: "ok", ...fiatParts(diviAmount * per, display) };
+  return { state: "ok", ...fiatParts(diviAmount * per, display), recovered };
 }

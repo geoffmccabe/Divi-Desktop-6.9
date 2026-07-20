@@ -100,13 +100,19 @@ export function HeaderBar() {
             <em>DIVI</em>
           </span>
           {fiat.state === "unavailable" ? (
-            <span className="bl-fiat bl-fiat-missing" title="Set a CoinMarketCap key in Admin → Value, or check the connection.">
-              {fiat.reason}
+            <span
+              className="bl-fiat bl-fiat-missing"
+              title="Retrying every 30 seconds. Add a CoinMarketCap key in Admin → Value, or check the connection."
+            >
+              <span className="bl-price-dot bl-price-dot-trying" /> {fiat.reason}
             </span>
           ) : fiat.state === "loading" ? (
-            <span className="bl-fiat bl-fiat-missing">…</span>
+            <span className="bl-fiat bl-fiat-missing">
+              <span className="bl-price-dot bl-price-dot-trying" /> …
+            </span>
           ) : (
-            <span className="bl-fiat">
+            <span className={"bl-fiat" + (fiat.recovered ? " bl-fiat-recovered" : "")}>
+              {fiat.recovered && <span className="bl-price-dot bl-price-dot-ok" />}
               {fiat.value} <span className="bl-fiat-code">{fiat.code}</span>
             </span>
           )}

@@ -914,3 +914,28 @@ h1, h2, h3 { font-family: var(--font-heading); }
 /* A missing price is stated, never left blank — a value that silently vanishes
    reads as a broken app rather than an unavailable quote. */
 .bl-fiat-missing { opacity: 0.6; font-style: italic; cursor: help; }
+
+/* Price availability. A value that vanishes reads as a broken app, so an outage
+   is stated, retried visibly, and its recovery is shown rather than the number
+   just reappearing as though nothing happened. */
+.bl-price-dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  margin-right: 5px; vertical-align: middle;
+}
+.bl-price-dot-trying {
+  background: hsl(var(--warning));
+  animation: bl-price-glow 1.4s ease-in-out infinite;
+}
+.bl-price-dot-ok {
+  background: hsl(var(--success));
+  animation: bl-price-pulse 1s ease-in-out 3;
+}
+@keyframes bl-price-glow {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--warning) / 0.7); opacity: 0.75; }
+  50%      { box-shadow: 0 0 7px 2px hsl(var(--warning) / 0.8); opacity: 1; }
+}
+@keyframes bl-price-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--success) / 0.7); }
+  50%      { box-shadow: 0 0 8px 3px hsl(var(--success) / 0.9); }
+}
+.bl-fiat-recovered { color: hsl(var(--success)); transition: color 1.5s ease; }
