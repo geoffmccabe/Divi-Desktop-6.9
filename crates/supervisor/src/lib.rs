@@ -6,6 +6,7 @@ pub mod health;
 pub mod security;
 pub mod process;
 pub mod network;
+pub mod payreq;
 pub mod poe;
 pub mod price;
 pub mod report;

@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{c2pa_read, chaintips, coins, config::NodeConfig, network, poe, price, report, security, wallet};
+use dd69_supervisor::{c2pa_read, chaintips, coins, config::NodeConfig, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -744,6 +744,65 @@ async fn send_coins(address: String, amount: f64, passphrase: Option<String>) ->
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct PayReqDto {
+    txid: String,
+    pay_to: String,
+    pay_to_address: Option<String>,
+    amount_sats: u64,
+    expiry: u32,
+    memo: String,
+    confirmations: i64,
+    time: i64,
+    notify_vout: Option<u32>,
+}
+
+/// Send an on-chain payment request to someone.
+///
+/// This only ASKS. It cannot move the recipient's money -- paying is a separate
+/// act they sign themselves.
+#[tauri::command]
+async fn payment_request_create(
+    payer: String,
+    payTo: String,
+    amount: f64,
+    expiry: u32,
+    memo: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        payreq::create(&cfg, &payer, &payTo, amount, expiry, &memo)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Payment requests addressed to this wallet, newest first.
+#[tauri::command]
+async fn payment_requests_inbox(count: Option<i64>) -> Result<Vec<PayReqDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let list = payreq::inbox(&cfg, count.unwrap_or(100))?;
+        Ok(list
+            .into_iter()
+            .map(|r| PayReqDto {
+                pay_to_address: payreq::pay_to_address(&cfg, &r.pay_to),
+                txid: r.txid,
+                pay_to: r.pay_to,
+                amount_sats: r.amount_sats,
+                expiry: r.expiry,
+                memo: r.memo,
+                confirmations: r.confirmations,
+                time: r.time,
+                notify_vout: r.notify_vout,
+            })
+            .collect())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct C2paDto {
     present: bool,
     state: String,
@@ -822,6 +881,8 @@ fn main() {
             node_status,
             recent_blocks,
             c2pa_inspect,
+            payment_request_create,
+            payment_requests_inbox,
             chain_orphans,
             lottery_board,
             start_staking,

@@ -12,6 +12,7 @@ import { ActivityList } from "./wallet/ActivityList";
 import { AddressBook } from "./wallet/AddressBook";
 import { SettingsView } from "./wallet/SettingsView";
 import { TimestampPanel } from "./wallet/TimestampPanel";
+import { PaymentRequests } from "./wallet/PaymentRequests";
 import { CollectiblesPanel } from "./wallet/CollectiblesPanel";
 import { NetworkMap } from "./wallet/NetworkMap";
 
@@ -20,6 +21,7 @@ const VIEWS: Record<string, ComponentType> = {
   send: SendPanel,
   receive: ReceivePanel,
   history: ActivityList,
+  payreq: PaymentRequests,
   timestamp: TimestampPanel,
   collectibles: CollectiblesPanel,
   addressbook: AddressBook,

@@ -65,6 +65,30 @@ export const poeTimestamp = (
   });
 export const poeVerify = (txid: string, hash: string) => invoke<Proof>("poe_verify", { txid, hash });
 
+// ---- Payment requests (DVXP type 0x05) ----
+// A request only ASKS. Receiving one moves no money; paying is a separate,
+// explicitly signed act by the payer.
+export interface PayRequest {
+  txid: string;
+  payTo: string;            // 21-byte address encoding, hex
+  payToAddress: string | null; // decoded back to a Divi address
+  amountSats: number;       // 0 = payer chooses
+  expiry: number;           // unix seconds, 0 = never
+  memo: string;
+  confirmations: number;
+  time: number;
+  notifyVout: number | null;
+}
+export const paymentRequestCreate = (
+  payer: string,
+  payTo: string,
+  amount: number,
+  expiry: number,
+  memo: string,
+) => invoke<string>("payment_request_create", { payer, payTo, amount, expiry, memo });
+export const paymentRequestsInbox = (count = 100) =>
+  invoke<PayRequest[]>("payment_requests_inbox", { count });
+
 // ---- C2PA Content Credentials (READ only; we never create or sign them) ----
 export interface C2paSummary {
   present: boolean;
