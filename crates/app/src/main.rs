@@ -373,6 +373,60 @@ async fn nfd_claim(
     .map_err(|_| "internal error".to_string())?
 }
 
+// ── Admin: fees / treasury (public config only — no keys) ──────────────────
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FeeConfigDto {
+    treasury_address: String,
+    nfd_mint: f64,
+}
+
+/// Read the fee/treasury config (public address + per-action amounts).
+#[tauri::command]
+async fn nfd_fee_config() -> Result<FeeConfigDto, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let f = dd69_supervisor::fees::FeeConfig::load(&cfg);
+        Ok(FeeConfigDto { treasury_address: f.treasury_address, nfd_mint: f.nfd_mint })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Set the fee/treasury config (superadmin). Stores only the public address +
+/// amounts — never any key.
+#[tauri::command]
+async fn nfd_set_fee_config(treasury_address: String, nfd_mint: f64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dd69_supervisor::fees::FeeConfig { treasury_address, nfd_mint }.save(&cfg)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayStatusDto {
+    relay_url: String,
+    reachable: bool,
+    balance_winc: Option<String>,
+}
+
+/// Arweave uploader status: its URL, reachability, and Turbo credit balance.
+#[tauri::command]
+async fn nfd_relay_status() -> RelayStatusDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let url = dd69_supervisor::nfd_storage::relay_url();
+        match dd69_supervisor::nfd_storage::relay_balance(&url) {
+            Ok(b) => RelayStatusDto { relay_url: url, reachable: true, balance_winc: Some(b) },
+            Err(_) => RelayStatusDto { relay_url: url, reachable: false, balance_winc: None },
+        }
+    })
+    .await
+    .unwrap_or(RelayStatusDto { relay_url: String::new(), reachable: false, balance_winc: None })
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -391,7 +445,10 @@ fn main() {
             nfd_view,
             nfd_receive_code,
             nfd_transfer,
-            nfd_claim
+            nfd_claim,
+            nfd_fee_config,
+            nfd_set_fee_config,
+            nfd_relay_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

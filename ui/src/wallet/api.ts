@@ -63,6 +63,22 @@ export const nfdTransfer = (
 ) => invoke<NfdTransfer>("nfd_transfer", { ownerAddr, arweavePtr, mintTxid, recipientAddr, recipientEncPubkey });
 export const nfdClaim = (myAddr: string, arweavePtr: string, wrapkeyPtr: string, contentHash: string) =>
   invoke<string>("nfd_claim", { myAddr, arweavePtr, wrapkeyPtr, contentHash });
+
+// ── Admin: fees / treasury + Arweave status ──────────────────────────────────
+export interface FeeConfig {
+  treasuryAddress: string;
+  nfdMint: number;
+}
+export const nfdFeeConfig = () => invoke<FeeConfig>("nfd_fee_config");
+export const nfdSetFeeConfig = (treasuryAddress: string, nfdMint: number) =>
+  invoke<void>("nfd_set_fee_config", { treasuryAddress, nfdMint });
+
+export interface RelayStatus {
+  relayUrl: string;
+  reachable: boolean;
+  balanceWinc: string | null;
+}
+export const nfdRelayStatus = () => invoke<RelayStatus>("nfd_relay_status");
 export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string) =>
   invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash });
 export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");

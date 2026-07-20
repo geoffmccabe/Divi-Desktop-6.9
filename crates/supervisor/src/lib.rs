@@ -1,6 +1,7 @@
 pub mod collectibles;
 pub mod config;
 pub mod crypto_nfd;
+pub mod fees;
 pub mod health;
 pub mod nfd_record;
 pub mod nfd_storage;

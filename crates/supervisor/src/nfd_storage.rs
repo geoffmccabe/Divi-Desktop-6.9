@@ -14,6 +14,25 @@ use std::path::{Path, PathBuf};
 /// Default Divi-funded Arweave relay host (see nfd-relay/).
 pub const DEFAULT_RELAY_URL: &str = "https://nfds.divi.love";
 
+/// The configured relay URL (NFD_RELAY_URL override, else the default host).
+pub fn relay_url() -> String {
+    std::env::var("NFD_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string())
+}
+
+/// GET the relay's /health, returning the Turbo credit balance (winc) or an
+/// error if the relay isn't reachable/configured.
+pub fn relay_balance(base_url: &str) -> Result<String, String> {
+    let url = format!("{}/health", base_url.trim_end_matches('/'));
+    let resp = ureq::get(&url).timeout(std::time::Duration::from_secs(12)).call().map_err(|e| format!("relay unreachable: {e}"))?;
+    let body = resp.into_string().map_err(|e| e.to_string())?;
+    let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    v["balanceWinc"]
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| v["balanceWinc"].as_i64().map(|n| n.to_string()))
+        .ok_or_else(|| "relay returned no balance".to_string())
+}
+
 pub trait Storage {
     /// Store a bundle; return its 32-byte pointer as hex (Arweave tx id for the
     /// real backend; content hash for the local stub).

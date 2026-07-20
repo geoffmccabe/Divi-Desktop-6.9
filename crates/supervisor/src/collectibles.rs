@@ -92,26 +92,44 @@ fn pick_funding_utxo(rpc: &RpcClient) -> Result<Value, String> {
         .ok_or_else(|| "You need a small amount of DIVI to mint.".to_string())
 }
 
-fn anchor_record(rpc: &RpcClient, utxo: &Value, record_hex: &str) -> Result<String, String> {
+fn anchor_record(
+    rpc: &RpcClient,
+    utxo: &Value,
+    record_hex: &str,
+    fee_output: Option<(&str, f64)>,
+) -> Result<String, String> {
     let amount = utxo["amount"].as_f64().unwrap_or(0.0);
-    let change = ((amount - FEE) * 1e8).round() / 1e8;
+    let treasury_fee = fee_output.map(|(_, f)| f).unwrap_or(0.0);
+    let change = ((amount - FEE - treasury_fee) * 1e8).round() / 1e8;
+    if change < 0.0 {
+        return Err("Not enough DIVI to cover the network + treasury fee.".into());
+    }
     // Change returns to the input's OWN address, so the owner address stays
     // funded and can authorize future transfers (spec §2b), instead of being
     // drained to a fresh change address on every mint/transfer.
     let change_addr = utxo["address"].as_str().ok_or("funding UTXO has no address")?.to_string();
     let inputs = json!([{ "txid": utxo["txid"], "vout": utxo["vout"] }]);
 
-    let mut outs = serde_json::Map::new();
-    outs.insert(change_addr.clone(), json!(change));
-    outs.insert("data".into(), json!(record_hex));
-    let raw = match rpc.call("createrawtransaction", json!([inputs, Value::Object(outs)])) {
+    // Build the outputs: change + optional treasury-fee payment + the data record.
+    let outputs = |data_key: String, data_val: Value| -> serde_json::Map<String, Value> {
+        let mut outs = serde_json::Map::new();
+        let mut change_amt = change;
+        if let Some((addr, fee)) = fee_output {
+            if addr == change_addr {
+                change_amt = ((change + fee) * 1e8).round() / 1e8; // same address -> merge
+            } else {
+                outs.insert(addr.to_string(), json!(fee));
+            }
+        }
+        outs.insert(change_addr.clone(), json!(change_amt));
+        outs.insert(data_key, data_val);
+        outs
+    };
+    let raw = match rpc.call("createrawtransaction", json!([inputs, Value::Object(outputs("data".into(), json!(record_hex)))])) {
         Ok(v) => v,
         Err(_) => {
             let script = nfd_record::op_meta_script(record_hex);
-            let mut outs = serde_json::Map::new();
-            outs.insert(change_addr, json!(change));
-            outs.insert(script, json!(0));
-            rpc.call("createrawtransaction", json!([inputs, Value::Object(outs)]))?
+            rpc.call("createrawtransaction", json!([inputs, Value::Object(outputs(script, json!(0)))]))?
         }
     };
     let signed = rpc.call("signrawtransaction", json!([raw]))?;
@@ -163,7 +181,9 @@ pub fn mint(
 
     let record =
         nfd_record::encode_mint(&arweave_ptr, &content_hash, nfd_record::FLAG_ENCRYPTED, thumb_ptr.as_deref())?;
-    let txid = anchor_record(&rpc, &utxo, &record)?;
+    // charge the configured NFD mint fee to the treasury (disabled until set)
+    let fee = crate::fees::FeeConfig::load(cfg).nfd_mint_fee();
+    let txid = anchor_record(&rpc, &utxo, &record, fee.as_ref().map(|(a, f)| (a.as_str(), *f)))?;
     Ok(MintDraft { txid, owner_addr, content_hash, arweave_ptr, thumb_ptr })
 }
 
@@ -281,7 +301,7 @@ pub fn transfer(
 
     let record = nfd_record::encode_transfer(mint_txid, &recipient_hash160, &wrapkey_ptr)?;
     let utxo = pick_owner_utxo(&rpc, owner_addr)?;
-    let txid = anchor_record(&rpc, &utxo, &record)?;
+    let txid = anchor_record(&rpc, &utxo, &record, None)?; // transfers charge no treasury fee
     Ok(TransferOutcome { txid, wrapkey_ptr })
 }
 
