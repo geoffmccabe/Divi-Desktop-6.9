@@ -145,16 +145,65 @@ fn anchor_record(
     Ok(txid)
 }
 
+/// Result of creating a collection: the anchoring txid IS the collection id.
+pub struct CollectionOutcome {
+    pub txid: String,
+    pub meta_ptr: String,
+}
+
+/// How to mint an item INTO a collection. The item must be funded from — and is
+/// owned by — the collection's creator, so the ledger's creator-only rule accepts
+/// it. `traits_json` is the public ERC-721 attributes metadata.
+pub struct CollectionMint<'a> {
+    pub creator_addr: &'a str,
+    pub collection_id: &'a str,
+    pub traits_json: &'a [u8],
+}
+
+/// Create a collection (creator-only, optionally capped). The collection id is
+/// the returned txid; the creator is `creator_addr` and MUST be the same address
+/// that later mints items into it. `cover` is an optional public banner image.
+pub fn create_collection(
+    cfg: &NodeConfig,
+    creator_addr: &str,
+    name: &str,
+    description: &str,
+    cover: Option<(&[u8], &str)>,
+    max_supply: u32,
+) -> Result<CollectionOutcome, String> {
+    let rpc = RpcClient::new(cfg);
+    // A spendable UTXO on the creator address funds (and thereby authors) it.
+    let utxo = pick_owner_utxo(&rpc, creator_addr)?;
+    let storage = nfd_storage::for_node(&cfg.datadir);
+    // Optional public cover -> a resolvable gateway URL inside the metadata JSON.
+    let image = match cover {
+        Some((bytes, ct)) => nfd_storage::gateway_url(&storage.put_public(bytes, ct)?).ok(),
+        None => None,
+    };
+    let meta = json!({ "name": name, "description": description, "image": image });
+    let meta_ptr = storage.put_public(meta.to_string().as_bytes(), "application/json")?;
+    let record = nfd_record::encode_collection_create(max_supply, &meta_ptr)?;
+    let txid = anchor_record(&rpc, &utxo, &record, None)?;
+    Ok(CollectionOutcome { txid, meta_ptr })
+}
+
 /// Mint a collectible from `plaintext`. Owner = the funding UTXO's address.
 /// `thumbnail` is an optional (bytes, content_type) public preview the creator
 /// chose to publish — stored UNENCRYPTED on Arweave, its id anchored in the record.
+/// `collection` mints the item into a collection (public traits + membership).
 pub fn mint(
     cfg: &NodeConfig,
     plaintext: &[u8],
     thumbnail: Option<(&[u8], &str)>,
+    collection: Option<CollectionMint>,
 ) -> Result<MintDraft, String> {
     let rpc = RpcClient::new(cfg);
-    let utxo = pick_funding_utxo(&rpc)?;
+    // Collection items fund from the creator (so creator-only passes); standalone
+    // mints use the largest available UTXO.
+    let utxo = match &collection {
+        Some(cm) => pick_owner_utxo(&rpc, cm.creator_addr)?,
+        None => pick_funding_utxo(&rpc)?,
+    };
     let owner_addr = utxo["address"].as_str().ok_or("funding UTXO has no address")?.to_string();
     let (_sk, owner_pub) = owner_keypair(&rpc, &owner_addr)?;
 
@@ -180,12 +229,21 @@ pub fn mint(
         None => None,
     };
 
+    // Collection membership: publish the public traits JSON, anchor id + pointer.
+    let traits_ptr = match &collection {
+        Some(cm) => Some(storage.put_public(cm.traits_json, "application/json")?),
+        None => None,
+    };
+    let coll_fields = match (&collection, &traits_ptr) {
+        (Some(cm), Some(tp)) => Some((cm.collection_id, tp.as_str())),
+        _ => None,
+    };
     let record = nfd_record::encode_mint(
         &arweave_ptr,
         &content_hash,
         nfd_record::FLAG_ENCRYPTED,
         thumb_ptr.as_deref(),
-        None, // standalone mint (collection minting is a separate flow)
+        coll_fields,
     )?;
     // charge the configured NFD mint fee to the treasury (disabled until set)
     let fee = crate::fees::FeeConfig::load(cfg).nfd_mint_fee();

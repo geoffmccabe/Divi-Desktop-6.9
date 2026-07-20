@@ -15,7 +15,7 @@ fn main() {
 
     let art = b"a one-of-a-kind Divi Collectible: the crown-jewels image bytes";
     let thumb = b"fake-webp-thumbnail-bytes-for-the-smoke-test";
-    let draft = collectibles::mint(&cfg, art, Some((thumb, "image/webp"))).expect("mint");
+    let draft = collectibles::mint(&cfg, art, Some((thumb, "image/webp")), None).expect("mint");
     println!("thumb_ptr       = {:?}", draft.thumb_ptr);
     println!("owner (funding) = {}", draft.owner_addr);
     println!("minted txid     = {}", draft.txid);
@@ -78,5 +78,40 @@ fn main() {
     );
     println!("stranger claim  = blocked (correct)");
 
-    println!("\n>>> NFD MINT + VIEW + TRANSFER VERIFIED END-TO-END ON REGTEST");
+    // ── Collections: create one, mint an item into it, view it ──────────────
+    // The creator needs a spendable UTXO on a stable address for both the create
+    // and the item-mint (creator-only rule). Fund a fresh address and use it.
+    let creator = addr(&rpc);
+    let _ = rpc.call("sendtoaddress", json!([creator, 1.0]));
+    let _ = rpc.call("setgenerate", json!([1]));
+    std::thread::sleep(std::time::Duration::from_millis(600));
+
+    let cover = b"fake-webp-collection-cover";
+    let col = collectibles::create_collection(&cfg, &creator, "Divi Genesis", "the first drop", Some((cover, "image/webp")), 3)
+        .expect("create collection");
+    println!("\ncollection id   = {}", col.txid);
+    let _ = rpc.call("setgenerate", json!([1]));
+    std::thread::sleep(std::time::Duration::from_millis(600));
+
+    let traits = br#"{"name":"Genesis #1","attributes":[{"trait_type":"Background","value":"Nebula"},{"trait_type":"Rarity","value":"Legendary"}]}"#;
+    let cm = collectibles::CollectionMint { creator_addr: &creator, collection_id: &col.txid, traits_json: traits };
+    let item = collectibles::mint(&cfg, b"genesis-item-1 secret original", Some((thumb, "image/webp")), Some(cm)).expect("mint into collection");
+    println!("item txid       = {} (owner {})", item.txid, item.owner_addr);
+    assert_eq!(item.owner_addr, creator, "collection item must be owned by the creator");
+    let _ = rpc.call("setgenerate", json!([1]));
+    std::thread::sleep(std::time::Duration::from_millis(600));
+
+    match collectibles::read_record(&cfg, &item.txid).expect("read").expect("a record") {
+        NfdRecord::Mint { collection_id, traits_ptr, .. } => {
+            assert_eq!(collection_id.as_deref(), Some(col.txid.as_str()), "item must reference its collection");
+            assert!(traits_ptr.is_some(), "item must carry a public traits pointer");
+            println!("collection item = OK (member of {})", col.txid);
+        }
+        other => panic!("expected a Mint record, got {other:?}"),
+    }
+    let recovered = collectibles::view(&cfg, &creator, &item.arweave_ptr, &item.content_hash).expect("view item");
+    assert_eq!(recovered, b"genesis-item-1 secret original");
+    println!("creator view    = OK ({} bytes)", recovered.len());
+
+    println!("\n>>> NFD MINT + VIEW + TRANSFER + COLLECTIONS VERIFIED END-TO-END ON REGTEST");
 }

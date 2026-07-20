@@ -42,8 +42,47 @@ export interface NfdMint {
   arweavePtr: string;
   thumbPtr: string | null;
 }
-export const nfdMint = (contentB64: string, thumbnailB64?: string, thumbnailMime?: string) =>
-  invoke<NfdMint>("nfd_mint", { contentB64, thumbnailB64, thumbnailMime });
+export interface CollectionMintArgs {
+  collectionId: string;
+  creatorAddr: string;
+  traitsJson: string; // ERC-721 attributes JSON, public
+}
+export const nfdMint = (
+  contentB64: string,
+  thumbnailB64?: string,
+  thumbnailMime?: string,
+  collection?: CollectionMintArgs,
+) =>
+  invoke<NfdMint>("nfd_mint", {
+    contentB64,
+    thumbnailB64,
+    thumbnailMime,
+    collectionId: collection?.collectionId,
+    creatorAddr: collection?.creatorAddr,
+    traitsJson: collection?.traitsJson,
+  });
+
+export interface NfdCollection {
+  txid: string; // the collection id
+  metaPtr: string;
+  creatorAddr: string;
+}
+export const nfdCreateCollection = (
+  creatorAddr: string,
+  name: string,
+  description: string,
+  maxSupply: number,
+  coverB64?: string,
+  coverMime?: string,
+) =>
+  invoke<NfdCollection>("nfd_create_collection", {
+    creatorAddr,
+    name,
+    description,
+    maxSupply,
+    coverB64,
+    coverMime,
+  });
 
 export interface ReceiveCode {
   address: string;

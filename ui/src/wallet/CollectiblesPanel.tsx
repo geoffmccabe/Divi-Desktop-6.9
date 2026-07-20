@@ -1,5 +1,5 @@
 import { useEffect, useState, type ChangeEvent } from "react";
-import { nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, newReceiveAddress } from "./api";
+import { nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateCollection, newReceiveAddress } from "./api";
 
 // Divi Collectibles (NFDs). Mint, view, transfer, and receive collectibles. The
 // file is encrypted locally before it leaves the machine; only the encrypted
@@ -18,15 +18,41 @@ interface Item {
   contentHash?: string; // minted-by-me items
   thumbPtr?: string | null;
   wrapkeyPtr?: string; // present on a CLAIMED item — unlock via claim, not view
+  collectionId?: string; // set when this item was minted into a collection
+}
+
+// A collection I created (creator-only minting, optional supply cap).
+interface Collection {
+  id: string; // the COLLECTION-CREATE txid
+  name: string;
+  creatorAddr: string; // must fund every mint into it
+  maxSupply: number; // 0 = unlimited
+  minted: number;
+  cover?: string; // data-URL for card display
+}
+
+// One ERC-721 trait row (public).
+interface Trait {
+  type: string;
+  value: string;
 }
 
 const STORE_KEY = "nfd.collectibles.v1";
+const COLLECTIONS_KEY = "nfd.collections.v1";
 const RECV_ADDR_KEY = "nfd.receiveAddr.v1";
 const THUMB_MAX_PX = 500;
 
 function loadItems(): Item[] {
   try {
     return JSON.parse(localStorage.getItem(STORE_KEY) || "[]") as Item[];
+  } catch {
+    return [];
+  }
+}
+
+function loadCollections(): Collection[] {
+  try {
+    return JSON.parse(localStorage.getItem(COLLECTIONS_KEY) || "[]") as Collection[];
   } catch {
     return [];
   }
@@ -82,9 +108,21 @@ interface ClaimCode {
 
 export function CollectiblesPanel() {
   const [items, setItems] = useState<Item[]>(loadItems);
+  const [collections, setCollections] = useState<Collection[]>(loadCollections);
   const [withThumb, setWithThumb] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Mint-into-a-collection: chosen collection ("" = standalone) + public traits.
+  const [mintInto, setMintInto] = useState("");
+  const [traits, setTraits] = useState<Trait[]>([{ type: "", value: "" }]);
+
+  // Create-a-collection form.
+  const [colName, setColName] = useState("");
+  const [colMax, setColMax] = useState("");
+  const [colCover, setColCover] = useState<{ b64: string; mime: string; dataUrl: string } | null>(null);
+  const [colBusy, setColBusy] = useState(false);
+  const [colErr, setColErr] = useState<string | null>(null);
 
   const [viewing, setViewing] = useState<string | null>(null);
   const [viewSrc, setViewSrc] = useState<string | null>(null);
@@ -106,6 +144,10 @@ export function CollectiblesPanel() {
     localStorage.setItem(STORE_KEY, JSON.stringify(items));
   }, [items]);
 
+  useEffect(() => {
+    localStorage.setItem(COLLECTIONS_KEY, JSON.stringify(collections));
+  }, [collections]);
+
   // The wallet's stable NFD address (generated once, reused for receive + claim).
   async function myNfdAddress(): Promise<string> {
     const existing = localStorage.getItem(RECV_ADDR_KEY);
@@ -113,6 +155,33 @@ export function CollectiblesPanel() {
     const a = await newReceiveAddress();
     localStorage.setItem(RECV_ADDR_KEY, a);
     return a;
+  }
+
+  async function pickCover(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setColCover(await makeThumbnail(f));
+  }
+
+  async function createCollection() {
+    if (!colName.trim()) return;
+    setColBusy(true);
+    setColErr(null);
+    try {
+      const creator = await myNfdAddress();
+      const max = Math.max(0, Math.floor(Number(colMax) || 0));
+      const res = await nfdCreateCollection(creator, colName.trim(), "", max, colCover?.b64, colCover?.mime);
+      const col: Collection = { id: res.txid, name: colName.trim(), creatorAddr: res.creatorAddr, maxSupply: max, minted: 0, cover: colCover?.dataUrl };
+      setCollections((prev) => [col, ...prev]);
+      setColName("");
+      setColMax("");
+      setColCover(null);
+      setMintInto(col.id); // convenient: mint the next file straight into it
+    } catch (e) {
+      setColErr(String(e));
+    }
+    setColBusy(false);
   }
 
   async function mintFile(e: ChangeEvent<HTMLInputElement>) {
@@ -124,9 +193,32 @@ export function CollectiblesPanel() {
     try {
       const b64 = await fileToBase64(f);
       const thumb = withThumb ? await makeThumbnail(f) : null;
-      const res = await nfdMint(b64, thumb?.b64, thumb?.mime);
-      const item: Item = { ...res, name: f.name, mime: f.type || "application/octet-stream", ts: Date.now(), thumb: thumb?.dataUrl };
+      const col = collections.find((c) => c.id === mintInto) ?? null;
+      let collectionArg;
+      if (col) {
+        const attributes = traits
+          .filter((t) => t.type.trim() && t.value.trim())
+          .map((t) => ({ trait_type: t.type.trim(), value: t.value.trim() }));
+        collectionArg = {
+          collectionId: col.id,
+          creatorAddr: col.creatorAddr,
+          traitsJson: JSON.stringify({ name: f.name, attributes }),
+        };
+      }
+      const res = await nfdMint(b64, thumb?.b64, thumb?.mime, collectionArg);
+      const item: Item = {
+        ...res,
+        name: f.name,
+        mime: f.type || "application/octet-stream",
+        ts: Date.now(),
+        thumb: thumb?.dataUrl,
+        collectionId: col?.id,
+      };
       setItems((prev) => [item, ...prev]);
+      if (col) {
+        setCollections((prev) => prev.map((c) => (c.id === col.id ? { ...c, minted: c.minted + 1 } : c)));
+        setTraits([{ type: "", value: "" }]);
+      }
     } catch (e) {
       setErr(String(e));
     }
@@ -221,9 +313,55 @@ export function CollectiblesPanel() {
   }
 
   const active = items.find((i) => i.txid === viewing) ?? null;
+  const selectedCol = collections.find((c) => c.id === mintInto) ?? null;
+  const mintedOut = !!selectedCol && selectedCol.maxSupply > 0 && selectedCol.minted >= selectedCol.maxSupply;
+
+  function setTrait(i: number, patch: Partial<Trait>) {
+    setTraits((prev) => prev.map((t, j) => (j === i ? { ...t, ...patch } : t)));
+  }
 
   return (
     <div className="collectibles">
+      <section className="ts-section">
+        <h3 className="ts-head">Create a collection</h3>
+        <p className="wl-note">
+          A collection is a themed set with a fixed supply and shared branding — like an ERC-721 series. Only
+          you can mint into it, up to its cap. Items you add can carry public traits (background, rarity, …) so
+          marketplaces can browse and rank them, while each original stays encrypted for its owner.
+        </p>
+        <input className="wl-input" placeholder="Collection name" value={colName} onChange={(e) => setColName(e.target.value)} />
+        <input
+          className="wl-input"
+          placeholder="Max supply (blank or 0 = unlimited)"
+          value={colMax}
+          inputMode="numeric"
+          onChange={(e) => setColMax(e.target.value.replace(/[^0-9]/g, ""))}
+        />
+        <label className="wl-btn ts-file">
+          {colCover ? "Cover image ✓ — change" : "Add a cover image (optional)"}
+          <input type="file" accept="image/*" onChange={pickCover} hidden />
+        </label>
+        <button className="wl-btn wl-btn-primary" disabled={colBusy || !colName.trim()} onClick={createCollection}>
+          {colBusy ? "Creating…" : "Create collection"}
+        </button>
+        {colErr && <p className="wl-err">{colErr}</p>}
+        {collections.length > 0 && (
+          <div className="coll-grid">
+            {collections.map((c) => (
+              <div key={c.id} className="coll-card" title={c.id}>
+                {c.cover ? (
+                  <img className="coll-card-thumb" src={c.cover} alt={c.name} />
+                ) : (
+                  <span className="coll-card-noimg" aria-hidden="true">📦</span>
+                )}
+                <span className="coll-card-name">{c.name}</span>
+                <span className="coll-card-meta">{c.minted}{c.maxSupply > 0 ? ` / ${c.maxSupply}` : ""} minted</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       <section className="ts-section">
         <h3 className="ts-head">Mint a collectible</h3>
         <p className="wl-note">
@@ -231,6 +369,33 @@ export function CollectiblesPanel() {
           only you can unlock it — and ownership is anchored on the Divi blockchain. Minting spends a small
           network fee (~0.0001 DIVI).
         </p>
+        <label className="coll-field">
+          <span>Mint into</span>
+          <select className="wl-input" value={mintInto} onChange={(e) => setMintInto(e.target.value)}>
+            <option value="">Standalone (no collection)</option>
+            {collections.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+                {c.maxSupply > 0 ? ` (${c.minted}/${c.maxSupply})` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        {selectedCol && (
+          <div className="coll-traits">
+            <p className="wl-note">Public traits (optional) — shown to everyone, like ERC-721 attributes.</p>
+            {traits.map((t, i) => (
+              <div key={i} className="coll-trait-row">
+                <input className="wl-input" placeholder="Trait (e.g. Background)" value={t.type} onChange={(e) => setTrait(i, { type: e.target.value })} />
+                <input className="wl-input" placeholder="Value (e.g. Nebula)" value={t.value} onChange={(e) => setTrait(i, { value: e.target.value })} />
+              </div>
+            ))}
+            <button className="wl-btn" onClick={() => setTraits((p) => [...p, { type: "", value: "" }])}>
+              + Add trait
+            </button>
+            {mintedOut && <p className="wl-err">This collection is minted out.</p>}
+          </div>
+        )}
         <label className="coll-check">
           <input type="checkbox" checked={withThumb} onChange={(e) => setWithThumb(e.target.checked)} />
           <span>
@@ -239,9 +404,9 @@ export function CollectiblesPanel() {
             encrypted and only the owner unlocks it. (Images only.)
           </span>
         </label>
-        <label className="wl-btn ts-file">
-          {busy ? "Minting…" : "Choose a file to mint"}
-          <input type="file" onChange={mintFile} hidden disabled={busy} />
+        <label className={"wl-btn ts-file" + (busy || mintedOut ? " wl-btn-disabled" : "")}>
+          {busy ? "Minting…" : selectedCol ? `Choose a file to mint into “${selectedCol.name}”` : "Choose a file to mint"}
+          <input type="file" onChange={mintFile} hidden disabled={busy || mintedOut} />
         </label>
         {err && <p className="wl-err">{err}</p>}
       </section>
@@ -262,7 +427,9 @@ export function CollectiblesPanel() {
                   </span>
                 )}
                 <span className="coll-card-name">{it.name}</span>
-                <span className="coll-card-meta">owned · tap to open</span>
+                <span className="coll-card-meta">
+                  {it.collectionId ? (collections.find((c) => c.id === it.collectionId)?.name ?? "in a collection") : "owned · tap to open"}
+                </span>
               </button>
             ))}
           </div>

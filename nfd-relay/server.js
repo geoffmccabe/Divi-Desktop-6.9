@@ -98,7 +98,9 @@ app.post('/upload', async (req, res) => {
   // Whitelist content types. Thumbnails are WebP-only and bundles are opaque;
   // anything else (e.g. image/svg+xml, text/html) could be served by a gateway
   // as executable content and run script in a viewer — reject it.
-  const ALLOWED_TYPES = new Set(['application/octet-stream', 'image/webp']);
+  // octet-stream = encrypted bundle; image/webp = preview; application/json =
+  // public collection/traits metadata. JSON is not executable, so it's safe.
+  const ALLOWED_TYPES = new Set(['application/octet-stream', 'image/webp', 'application/json']);
   const contentType = req.get('content-type') || 'application/octet-stream';
   if (!ALLOWED_TYPES.has(contentType)) {
     return res.status(415).json({ error: 'unsupported content-type' });

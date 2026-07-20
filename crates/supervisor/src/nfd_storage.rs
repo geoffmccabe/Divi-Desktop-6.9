@@ -107,6 +107,12 @@ fn arweave_id_to_ptr(id_b64url: &str) -> Result<String, String> {
     Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// Public gateway URL for a stored pointer — used to embed a public asset (a
+/// collection cover image) inside metadata JSON so marketplaces can resolve it.
+pub fn gateway_url(ptr_hex: &str) -> Result<String, String> {
+    Ok(format!("https://arweave.net/{}", ptr_to_arweave_id(ptr_hex)?))
+}
+
 fn ptr_to_arweave_id(ptr_hex: &str) -> Result<String, String> {
     if !is_pointer(ptr_hex) {
         return Err("bad storage pointer".into());

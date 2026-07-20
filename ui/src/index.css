@@ -438,6 +438,11 @@ h1, h2, h3 { font-family: var(--font-heading); }
   font-size: 0.85rem; color: hsl(var(--foreground));
 }
 .coll-check input { margin-top: 3px; flex-shrink: 0; }
+.coll-field { display: flex; flex-direction: column; gap: 4px; max-width: 520px; font-size: 0.85rem; color: hsl(var(--foreground)); }
+.coll-traits { display: flex; flex-direction: column; gap: 6px; max-width: 520px; }
+.coll-trait-row { display: flex; gap: 8px; }
+.coll-trait-row .wl-input { flex: 1; }
+.wl-btn-disabled { opacity: 0.5; pointer-events: none; }
 .coll-xfer { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .admin-panel-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
 .pay-row { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: hsl(var(--foreground)); }

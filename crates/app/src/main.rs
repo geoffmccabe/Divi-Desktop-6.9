@@ -274,6 +274,9 @@ async fn nfd_mint(
     content_b64: String,
     thumbnail_b64: Option<String>,
     thumbnail_mime: Option<String>,
+    collection_id: Option<String>,
+    creator_addr: Option<String>,
+    traits_json: Option<String>,
 ) -> Result<NfdMintDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
@@ -286,7 +289,17 @@ async fn nfd_mint(
             (Some(b), Some(mime)) => Some((b.as_slice(), mime.as_str())),
             _ => None,
         };
-        let d = collectibles::mint(&cfg, &bytes, thumbnail)?;
+        // Mint into a collection when the UI supplied the collection id, its
+        // creator address, and the public traits JSON.
+        let collection = match (&collection_id, &creator_addr, &traits_json) {
+            (Some(cid), Some(ca), Some(tj)) => Some(collectibles::CollectionMint {
+                creator_addr: ca.as_str(),
+                collection_id: cid.as_str(),
+                traits_json: tj.as_bytes(),
+            }),
+            _ => None,
+        };
+        let d = collectibles::mint(&cfg, &bytes, thumbnail, collection)?;
         Ok(NfdMintDto {
             txid: d.txid,
             owner_addr: d.owner_addr,
@@ -307,6 +320,43 @@ async fn nfd_view(owner_addr: String, arweave_ptr: String, content_hash: String)
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
         let bytes = collectibles::view(&cfg, &owner_addr, &arweave_ptr, &content_hash)?;
         Ok(STANDARD.encode(bytes))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NfdCollectionDto {
+    txid: String,
+    meta_ptr: String,
+    creator_addr: String,
+}
+
+/// Create a collection. `creator_addr` is the stable address that owns the
+/// collection and must mint every item into it; it needs a little DIVI. `cover`
+/// is an optional public banner image. Returns the collection id (the txid).
+#[tauri::command]
+async fn nfd_create_collection(
+    creator_addr: String,
+    name: String,
+    description: String,
+    max_supply: u32,
+    cover_b64: Option<String>,
+    cover_mime: Option<String>,
+) -> Result<NfdCollectionDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let cover_bytes = match &cover_b64 {
+            Some(b64) => Some(STANDARD.decode(b64).map_err(|_| "bad cover data".to_string())?),
+            None => None,
+        };
+        let cover = match (&cover_bytes, &cover_mime) {
+            (Some(b), Some(mime)) => Some((b.as_slice(), mime.as_str())),
+            _ => None,
+        };
+        let c = collectibles::create_collection(&cfg, &creator_addr, &name, &description, cover, max_supply)?;
+        Ok(NfdCollectionDto { txid: c.txid, meta_ptr: c.meta_ptr, creator_addr })
     })
     .await
     .map_err(|_| "internal error".to_string())?
@@ -442,7 +492,8 @@ fn main() {
             nfd_claim,
             nfd_fee_config,
             nfd_set_fee_config,
-            nfd_relay_status
+            nfd_relay_status,
+            nfd_create_collection
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");
