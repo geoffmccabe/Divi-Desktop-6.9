@@ -40,8 +40,10 @@ export interface NfdMint {
   ownerAddr: string;
   contentHash: string;
   arweavePtr: string;
+  thumbPtr: string | null;
 }
-export const nfdMint = (contentB64: string) => invoke<NfdMint>("nfd_mint", { contentB64 });
+export const nfdMint = (contentB64: string, thumbnailB64?: string, thumbnailMime?: string) =>
+  invoke<NfdMint>("nfd_mint", { contentB64, thumbnailB64, thumbnailMime });
 export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string) =>
   invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash });
 export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");

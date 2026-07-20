@@ -65,13 +65,17 @@ app.post('/upload', async (req, res) => {
     return res.status(400).json({ error: 'empty or invalid body' });
   }
   try {
+    // Tag the Arweave upload with the caller's content type, so a gateway serves
+    // it correctly: opaque for the encrypted bundle, the real image type for a
+    // public thumbnail.
+    const contentType = req.get('content-type') || 'application/octet-stream';
     const { id } = await turbo.uploadFile({
       fileStreamFactory: () => Readable.from(data),
       fileSizeFactory: () => data.length,
       dataItemOpts: {
         tags: [
           { name: 'App-Name', value: 'DiviCollectibles' },
-          { name: 'Content-Type', value: 'application/octet-stream' },
+          { name: 'Content-Type', value: contentType },
         ],
       },
     });

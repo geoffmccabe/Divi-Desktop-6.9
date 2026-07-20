@@ -14,11 +14,13 @@ fn main() {
     let rpc = RpcClient::new(&cfg);
 
     let art = b"a one-of-a-kind Divi Collectible: the crown-jewels image bytes";
-    let draft = collectibles::mint(&cfg, art).expect("mint");
+    let thumb = b"fake-webp-thumbnail-bytes-for-the-smoke-test";
+    let draft = collectibles::mint(&cfg, art, Some((thumb, "image/webp"))).expect("mint");
+    println!("thumb_ptr       = {:?}", draft.thumb_ptr);
     println!("owner (funding) = {}", draft.owner_addr);
     println!("minted txid     = {}", draft.txid);
     println!("content_hash    = {}", draft.content_hash);
-    println!("arweave_ptr     = {} (local stub)", draft.arweave_ptr);
+    println!("arweave_ptr     = {}", draft.arweave_ptr);
 
     // regtest mines on demand -> confirm the mint
     let _ = rpc.call("setgenerate", json!([1]));
@@ -27,10 +29,12 @@ fn main() {
     // read the on-chain record back and check it matches
     let rec = collectibles::read_record(&cfg, &draft.txid).expect("read").expect("a record");
     match &rec {
-        NfdRecord::Mint { arweave_ptr, content_hash, flags } => {
-            println!("on-chain mint   = ptr={arweave_ptr} hash={content_hash} flags={flags}");
+        NfdRecord::Mint { arweave_ptr, content_hash, flags, thumb_ptr } => {
+            println!("on-chain mint   = ptr={arweave_ptr} hash={content_hash} flags={flags} thumb={thumb_ptr:?}");
             assert_eq!(arweave_ptr, &draft.arweave_ptr);
             assert_eq!(content_hash, &draft.content_hash);
+            assert_eq!(thumb_ptr, &draft.thumb_ptr, "on-chain thumb pointer must match");
+            assert!(thumb_ptr.is_some(), "this mint included a thumbnail");
         }
         other => panic!("expected a Mint record, got {other:?}"),
     }

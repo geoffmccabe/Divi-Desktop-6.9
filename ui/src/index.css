@@ -427,6 +427,17 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .coll-card:hover { border-color: hsl(var(--primary)); background: hsl(var(--primary) / 0.08); }
 .coll-card-name { font-weight: 600; font-size: 0.9rem; word-break: break-word; }
 .coll-card-meta { font-size: 0.76rem; color: hsl(var(--muted-foreground)); }
+.coll-card-thumb { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; background: hsl(var(--background) / 0.5); }
+.coll-card-noimg {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; aspect-ratio: 1; border-radius: 8px; font-size: 1.7rem;
+  background: hsl(var(--background) / 0.5);
+}
+.coll-check {
+  display: flex; gap: 10px; align-items: flex-start; max-width: 520px; cursor: pointer;
+  font-size: 0.85rem; color: hsl(var(--foreground));
+}
+.coll-check input { margin-top: 3px; flex-shrink: 0; }
 .coll-viewer {
   position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.6); padding: 24px;

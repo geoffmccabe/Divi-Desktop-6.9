@@ -20,6 +20,12 @@ pub trait Storage {
     fn put(&self, bundle: &[u8]) -> Result<String, String>;
     /// Fetch a bundle by its pointer hex.
     fn get(&self, pointer_hex: &str) -> Result<Vec<u8>, String>;
+    /// Store PUBLIC (unencrypted) bytes tagged with a content type, so a gateway
+    /// serves them correctly — used for the optional public thumbnail. Defaults
+    /// to `put` for backends that don't distinguish (the local stub).
+    fn put_public(&self, bytes: &[u8], _content_type: &str) -> Result<String, String> {
+        self.put(bytes)
+    }
 }
 
 fn is_pointer(hex: &str) -> bool {
@@ -110,19 +116,30 @@ impl Relay {
             gateway: "https://arweave.net".to_string(),
         }
     }
-}
 
-impl Storage for Relay {
-    fn put(&self, bundle: &[u8]) -> Result<String, String> {
-        let mut req = ureq::post(&self.upload_url).set("Content-Type", "application/octet-stream");
+    // The relay tags the Arweave upload with this Content-Type, so a gateway
+    // serves it correctly (opaque octet-stream for the encrypted bundle; the
+    // real image type for a public thumbnail).
+    fn upload(&self, bytes: &[u8], content_type: &str) -> Result<String, String> {
+        let mut req = ureq::post(&self.upload_url).set("Content-Type", content_type);
         if let Ok(token) = std::env::var("NFD_UPLOAD_TOKEN") {
             req = req.set("Authorization", &format!("Bearer {token}"));
         }
-        let resp = req.send_bytes(bundle).map_err(|e| format!("upload failed: {e}"))?;
+        let resp = req.send_bytes(bytes).map_err(|e| format!("upload failed: {e}"))?;
         let body = resp.into_string().map_err(|e| e.to_string())?;
         let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
         let id = v["id"].as_str().ok_or("relay returned no id")?;
         arweave_id_to_ptr(id)
+    }
+}
+
+impl Storage for Relay {
+    fn put(&self, bundle: &[u8]) -> Result<String, String> {
+        self.upload(bundle, "application/octet-stream")
+    }
+
+    fn put_public(&self, bytes: &[u8], content_type: &str) -> Result<String, String> {
+        self.upload(bytes, content_type)
     }
 
     fn get(&self, pointer_hex: &str) -> Result<Vec<u8>, String> {
@@ -157,6 +174,12 @@ impl Storage for CachedRelay {
     fn put(&self, bundle: &[u8]) -> Result<String, String> {
         let ptr = self.relay.put(bundle)?; // Arweave id = the on-chain pointer
         let _ = self.cache.put_at(&ptr, bundle); // best-effort local cache
+        Ok(ptr)
+    }
+
+    fn put_public(&self, bytes: &[u8], content_type: &str) -> Result<String, String> {
+        let ptr = self.relay.put_public(bytes, content_type)?;
+        let _ = self.cache.put_at(&ptr, bytes);
         Ok(ptr)
     }
 

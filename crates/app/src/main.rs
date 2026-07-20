@@ -261,22 +261,38 @@ struct NfdMintDto {
     owner_addr: String,
     content_hash: String,
     arweave_ptr: String,
+    thumb_ptr: Option<String>,
 }
 
 /// Mint a Divi Collectible (NFD). The UI passes the file bytes as base64; the
 /// content is encrypted to the owner locally and only the encrypted bundle is
-/// stored. Returns the handle the UI keeps to view it later.
+/// stored. If the creator opted into a public preview, `thumbnail_b64` +
+/// `thumbnail_mime` carry a small unencrypted thumbnail. Returns the handle the
+/// UI keeps to view it later.
 #[tauri::command]
-async fn nfd_mint(content_b64: String) -> Result<NfdMintDto, String> {
+async fn nfd_mint(
+    content_b64: String,
+    thumbnail_b64: Option<String>,
+    thumbnail_mime: Option<String>,
+) -> Result<NfdMintDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
         let bytes = STANDARD.decode(&content_b64).map_err(|_| "bad file data".to_string())?;
-        let d = collectibles::mint(&cfg, &bytes)?;
+        let thumb_bytes = match &thumbnail_b64 {
+            Some(b64) => Some(STANDARD.decode(b64).map_err(|_| "bad thumbnail data".to_string())?),
+            None => None,
+        };
+        let thumbnail = match (&thumb_bytes, &thumbnail_mime) {
+            (Some(b), Some(mime)) => Some((b.as_slice(), mime.as_str())),
+            _ => None,
+        };
+        let d = collectibles::mint(&cfg, &bytes, thumbnail)?;
         Ok(NfdMintDto {
             txid: d.txid,
             owner_addr: d.owner_addr,
             content_hash: d.content_hash,
             arweave_ptr: d.arweave_ptr,
+            thumb_ptr: d.thumb_ptr,
         })
     })
     .await

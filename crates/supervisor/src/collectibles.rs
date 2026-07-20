@@ -26,6 +26,8 @@ pub struct MintDraft {
     pub owner_addr: String,
     pub content_hash: String,
     pub arweave_ptr: String,
+    /// Arweave id of the unencrypted public thumbnail, if the creator added one.
+    pub thumb_ptr: Option<String>,
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -126,7 +128,13 @@ fn anchor_record(rpc: &RpcClient, utxo: &Value, record_hex: &str) -> Result<Stri
 }
 
 /// Mint a collectible from `plaintext`. Owner = the funding UTXO's address.
-pub fn mint(cfg: &NodeConfig, plaintext: &[u8]) -> Result<MintDraft, String> {
+/// `thumbnail` is an optional (bytes, content_type) public preview the creator
+/// chose to publish — stored UNENCRYPTED on Arweave, its id anchored in the record.
+pub fn mint(
+    cfg: &NodeConfig,
+    plaintext: &[u8],
+    thumbnail: Option<(&[u8], &str)>,
+) -> Result<MintDraft, String> {
     let rpc = RpcClient::new(cfg);
     let utxo = pick_funding_utxo(&rpc)?;
     let owner_addr = utxo["address"].as_str().ok_or("funding UTXO has no address")?.to_string();
@@ -143,11 +151,19 @@ pub fn mint(cfg: &NodeConfig, plaintext: &[u8]) -> Result<MintDraft, String> {
 
     let (content_blob, wrapped_ck) = crypto_nfd::encrypt_content(&salted, &owner_pub)?;
     let bundle = pack_bundle(&content_blob, &wrapped_ck);
-    let arweave_ptr = nfd_storage::for_node(&cfg.datadir).put(&bundle)?;
+    let storage = nfd_storage::for_node(&cfg.datadir);
+    let arweave_ptr = storage.put(&bundle)?;
 
-    let record = nfd_record::encode_mint(&arweave_ptr, &content_hash, 0x01)?;
+    // Optional public preview: uploaded UNENCRYPTED with its image content type.
+    let thumb_ptr = match thumbnail {
+        Some((bytes, content_type)) => Some(storage.put_public(bytes, content_type)?),
+        None => None,
+    };
+
+    let record =
+        nfd_record::encode_mint(&arweave_ptr, &content_hash, nfd_record::FLAG_ENCRYPTED, thumb_ptr.as_deref())?;
     let txid = anchor_record(&rpc, &utxo, &record)?;
-    Ok(MintDraft { txid, owner_addr, content_hash, arweave_ptr })
+    Ok(MintDraft { txid, owner_addr, content_hash, arweave_ptr, thumb_ptr })
 }
 
 /// Fetch, decrypt, and AUTHENTICATE a collectible you own. Errors unless the
