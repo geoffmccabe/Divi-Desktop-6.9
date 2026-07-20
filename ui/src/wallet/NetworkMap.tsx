@@ -496,13 +496,31 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         const links: { a: [number, number]; b: [number, number]; ip: string }[] = [];
         for (let i = 0; i < mesh.length; i++) {
           const a = mesh[i];
-          const want = 3 + Math.floor((phaseOf(a.ip) / (Math.PI * 2)) * 3);
-          const near = mesh
+          const cand = mesh
             .map((b, j) => ({ j, d: j === i ? Infinity : Math.hypot(a.xy[0] - b.xy[0], a.xy[1] - b.xy[1]) }))
             .filter((n) => n.d > 1 && n.d < Infinity)
-            .sort((x, y) => x.d - y.d)
-            .slice(0, want);
-          for (const { j } of near) {
+            .sort((x, y) => x.d - y.d);
+
+          // 3 nearest, PLUS 2 from further out. Nearest-only made the mesh clump:
+          // every node linked to whoever it was already sitting next to, so cities
+          // formed tight knots with nothing spanning between them. The long links
+          // are what make it read as one network instead of separate clusters.
+          const near = cand.slice(0, 3);
+          const rest = cand.slice(3);
+          // Draw the long links from the MIDDLE of what's left, not the far tail —
+          // the tail is all the way across the world and would just crosshatch the
+          // whole map.
+          const band = rest.slice(Math.floor(rest.length * 0.2), Math.max(1, Math.floor(rest.length * 0.7)));
+          const far: typeof cand = [];
+          // Deterministic per-node choice: it must pick the SAME two every frame,
+          // or the long links strobe.
+          const seed = phaseOf(a.ip) / (Math.PI * 2);
+          for (let k = 0; k < 2 && band.length; k++) {
+            const idx = Math.floor((seed * (k + 1) * 9973) % band.length);
+            const pick = band.splice(idx, 1)[0];
+            if (pick) far.push(pick);
+          }
+          for (const { j } of [...near, ...far]) {
             const key = i < j ? `${i}-${j}` : `${j}-${i}`;
             if (drawn.has(key)) continue;
             drawn.add(key);
