@@ -910,3 +910,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   }
   100% { text-shadow: 0 0 0 transparent; }
 }
+
+/* A missing price is stated, never left blank — a value that silently vanishes
+   reads as a broken app rather than an unavailable quote. */
+.bl-fiat-missing { opacity: 0.6; font-style: italic; cursor: help; }

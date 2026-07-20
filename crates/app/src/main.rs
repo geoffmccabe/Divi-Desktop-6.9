@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{chaintips, coins, config::NodeConfig, network, poe, price, report, security, wallet};
+use dd69_supervisor::{c2pa_read, chaintips, coins, config::NodeConfig, network, poe, price, report, security, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -744,6 +744,49 @@ async fn send_coins(address: String, amount: f64, passphrase: Option<String>) ->
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct C2paDto {
+    present: bool,
+    state: String,
+    signer: Option<String>,
+    generator: Option<String>,
+    signed_at: Option<String>,
+    title: Option<String>,
+    assertions: Vec<String>,
+    ingredients: usize,
+    issues: Vec<String>,
+    divi_txid: Option<String>,
+    json: String,
+}
+
+/// Read C2PA Content Credentials out of a file the user picked.
+///
+/// The bytes come from the UI because a browser File has no real path. Nothing
+/// is uploaded anywhere: the SDK is built without remote-manifest fetching, so
+/// this reads the file and nothing else.
+#[tauri::command]
+async fn c2pa_inspect(bytes: Vec<u8>, format: String) -> Result<C2paDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s = c2pa_read::read(bytes, &format)?;
+        Ok(C2paDto {
+            present: s.present,
+            state: s.state,
+            signer: s.signer,
+            generator: s.generator,
+            signed_at: s.signed_at,
+            title: s.title,
+            assertions: s.assertions,
+            ingredients: s.ingredients,
+            issues: s.issues,
+            divi_txid: s.divi_txid,
+            json: s.json,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PriceDto {
     prices: std::collections::HashMap<String, f64>,
     coingecko_ok: bool,
@@ -778,6 +821,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             node_status,
             recent_blocks,
+            c2pa_inspect,
             chain_orphans,
             lottery_board,
             start_staking,

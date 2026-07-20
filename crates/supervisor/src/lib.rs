@@ -1,4 +1,5 @@
 pub mod coins;
+pub mod c2pa_read;
 pub mod chaintips;
 pub mod config;
 pub mod health;

@@ -23,18 +23,35 @@ export const PHASE_LABEL: Record<string, string> = {
   unreachable: "Starting",
 };
 
+// TRUNCATE, never round. Rounding a balance UP claims money the wallet does not
+// have: 930.9999774 rounded to four places is 931, which is simply false.
+function truncate4(n: number): number {
+  return (n < 0 ? Math.ceil(n * 1e4) : Math.floor(n * 1e4)) / 1e4;
+}
+
 export function fmtDivi(n: number): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  return truncate4(n).toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
+  });
 }
 
 // Split into the whole part (grouped) and a fixed 4-digit fraction, so the UI
 // can render the fraction smaller/greyer than the whole number.
+//
+// This previously did `(n - trunc(n)).toFixed(4).slice(2)`, which broke twice
+// over on a balance like 930.9999774: toFixed ROUNDED the fraction to "1.0000",
+// and slice(2) then stripped "1." instead of the expected "0.", leaving "000".
+// The wallet showed 930.0000 while actually holding 930.9999774.
 export function fmtDiviParts(n: number): { whole: string; frac: string } {
-  const whole = Math.trunc(n).toLocaleString();
-  const frac = Math.abs(n - Math.trunc(n))
-    .toFixed(4)
-    .slice(2); // drop the "0."
-  return { whole, frac };
+  const t = truncate4(n);
+  const whole = Math.trunc(t);
+  // Derived from the already-truncated value, so it can never carry into the
+  // whole number and can never overstate the balance.
+  const frac = Math.round(Math.abs(t - whole) * 1e4)
+    .toString()
+    .padStart(4, "0");
+  return { whole: whole.toLocaleString(), frac };
 }
 
 export function relTime(unix: number): string {

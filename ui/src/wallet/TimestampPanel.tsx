@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { PoeCreate } from "./PoeCreate";
 import { PoeHistoryTab } from "./PoeHistoryTab";
+import { C2paInspect } from "./C2paInspect";
 import { PoeVerify } from "./PoeVerify";
 import { PoeInfoModal } from "./PoeInfoModal";
 import { loadPoeHistory, type PoeRecord } from "./poeHistory";
@@ -10,7 +11,7 @@ import { loadPoeHistory, type PoeRecord } from "./poeHistory";
 // and only the 32-byte fingerprint is written to the chain, so nobody can read
 // the file from the blockchain, only confirm a hash matches.
 
-type Tab = "create" | "history" | "verify";
+type Tab = "create" | "history" | "verify" | "credentials";
 
 export function TimestampPanel() {
   const [tab, setTab] = useState<Tab>("create");
@@ -76,6 +77,14 @@ export function TimestampPanel() {
         >
           Verify
         </button>
+        <button
+          className={"poe-tab" + (tab === "credentials" ? " poe-tab-on" : "")}
+          onClick={() => setTab("credentials")}
+          role="tab"
+          aria-selected={tab === "credentials"}
+        >
+          Credentials
+        </button>
       </nav>
 
       <section className="ts-section">
@@ -90,6 +99,7 @@ export function TimestampPanel() {
         </div>
         {tab === "history" && <PoeHistoryTab onVerify={openVerify} />}
         {tab === "verify" && <PoeVerify prefill={prefill} />}
+        {tab === "credentials" && <C2paInspect />}
       </section>
 
       {info && <PoeInfoModal onClose={() => setInfo(false)} />}

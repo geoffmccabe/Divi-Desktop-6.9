@@ -99,7 +99,13 @@ export function HeaderBar() {
             )}{" "}
             <em>DIVI</em>
           </span>
-          {fiat && (
+          {fiat.state === "unavailable" ? (
+            <span className="bl-fiat bl-fiat-missing" title="Set a CoinMarketCap key in Admin → Value, or check the connection.">
+              {fiat.reason}
+            </span>
+          ) : fiat.state === "loading" ? (
+            <span className="bl-fiat bl-fiat-missing">…</span>
+          ) : (
             <span className="bl-fiat">
               {fiat.value} <span className="bl-fiat-code">{fiat.code}</span>
             </span>

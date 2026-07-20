@@ -64,6 +64,25 @@ export const poeTimestamp = (
     payoutDivi: payoutDivi ?? null,
   });
 export const poeVerify = (txid: string, hash: string) => invoke<Proof>("poe_verify", { txid, hash });
+
+// ---- C2PA Content Credentials (READ only; we never create or sign them) ----
+export interface C2paSummary {
+  present: boolean;
+  state: string; // Trusted | Valid | Invalid, from the C2PA SDK
+  signer: string | null;
+  generator: string | null;
+  signedAt: string | null;
+  title: string | null;
+  assertions: string[];
+  ingredients: number;
+  issues: string[];
+  diviTxid: string | null;
+  json: string;
+}
+// Bytes are passed in because a browser File has no real path. The SDK is built
+// without remote-manifest fetching, so this never touches the network.
+export const c2paInspect = (bytes: number[], format: string) =>
+  invoke<C2paSummary>("c2pa_inspect", { bytes, format });
 export interface Peer {
   ip: string;
   inbound: boolean;

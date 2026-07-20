@@ -84,19 +84,34 @@ export async function fetchPrices(force = false): Promise<DiviPrices> {
   return inflight;
 }
 
-// The fiat value of a DIVI amount in the display currency as {value, code}, or
-// null if we have no price yet (never fabricated). Re-fetches every 2 min and on
-// settings changes.
-export function useDiviValue(diviAmount: number | null): { value: string; code: string } | null {
+/**
+ * The fiat value of a DIVI amount, or an explicit reason it can't be shown.
+ *
+ * This used to return null for every failure, and the header rendered it as
+ * `{fiat && ...}` — so a price outage made the value silently VANISH with no
+ * explanation, which reads as a bug rather than a missing price. A value is
+ * never fabricated, but its absence is now always explained.
+ */
+export type DiviValue =
+  | { state: "ok"; value: string; code: string }
+  | { state: "loading" }
+  | { state: "unavailable"; reason: string };
+
+export function useDiviValue(diviAmount: number | null): DiviValue {
   const [prices, setPrices] = useState<DiviPrices | null>(cache?.data ?? null);
   const [display, setDisplay] = useState(() => getValueSettings().display);
+  const [failed, setFailed] = useState(false);
 
   useEffect(() => {
     let alive = true;
     const load = (force = false) =>
       fetchPrices(force)
-        .then((d) => alive && setPrices(d))
-        .catch(() => {});
+        .then((d) => {
+          if (!alive) return;
+          setPrices(d);
+          setFailed(false);
+        })
+        .catch(() => alive && setFailed(true));
     const onChange = () => {
       setDisplay(getValueSettings().display);
       load(true);
@@ -111,8 +126,19 @@ export function useDiviValue(diviAmount: number | null): { value: string; code: 
     };
   }, []);
 
-  if (diviAmount == null || !prices) return null;
+  if (diviAmount == null) return { state: "loading" };
+
+  if (!prices) {
+    return failed
+      ? { state: "unavailable", reason: "Price unavailable" }
+      : { state: "loading" };
+  }
+
   const per = prices.prices[display.toLowerCase()];
-  if (per == null) return null;
-  return fiatParts(diviAmount * per, display);
+  if (per == null) {
+    // We reached a price source but it doesn't quote this currency — a
+    // different problem from being offline, and worth saying so.
+    return { state: "unavailable", reason: `No ${display} price` };
+  }
+  return { state: "ok", ...fiatParts(diviAmount * per, display) };
 }

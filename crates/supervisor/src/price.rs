@@ -111,7 +111,11 @@ pub fn divi_prices(currencies: &[String], cmc_key: Option<&str>, use_coingecko: 
     // as "your coins are worth a quarter of what you thought" with nothing on
     // screen to say the source changed. CoinGecko is only a fallback for a
     // wallet with no key at all.
-    let cg_usd = if key_configured { None } else { coingecko_usd() };
+    // No key: CoinGecko is the only source, and the toggle is respected — a
+    // user who turns it off has explicitly asked us not to call it, and gets no
+    // price rather than a silent one. (It defaults ON, so the out-of-the-box
+    // case still shows a value.)
+    let cg_usd = if key_configured || !use_coingecko { None } else { coingecko_usd() };
 
     // Do NOT blend disagreeing sources. These two can be 4.5x apart, and the
     // midpoint of two prices that far apart is a number no market ever traded

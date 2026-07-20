@@ -101,8 +101,27 @@ export function PoeVerify({ prefill }: { prefill: PoeRecord | null }) {
       {err && <p className="wl-err">{err}</p>}
 
       {proof && (
-        <div className={proof.matched ? "ts-proof ts-proof-ok" : "ts-proof ts-proof-bad"}>
-          {proof.matched ? (
+        // A match that isn't in a block yet proves NOTHING — the transaction can
+        // still be dropped or replaced — so it must not wear the success colour.
+        // Only a confirmed anchor is a proof.
+        <div
+          className={
+            proof.matched && proof.confirmations > 0
+              ? "ts-proof ts-proof-ok"
+              : proof.matched
+                ? "ts-proof"
+                : "ts-proof ts-proof-bad"
+          }
+        >
+          {proof.matched && proof.confirmations < 1 ? (
+            <>
+              <div className="ts-proof-title">Waiting for a block</div>
+              <div>
+                This transaction carries the file's fingerprint, but it isn't in a block yet — so it doesn't prove
+                anything so far. Check again in a minute.
+              </div>
+            </>
+          ) : proof.matched ? (
             <>
               <div className="ts-proof-title">✓ Match</div>
               <div>This file existed by {whenProven(proof.block_time)}.</div>

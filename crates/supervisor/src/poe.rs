@@ -66,21 +66,61 @@ pub fn timestamp(cfg: &NodeConfig, hash_hex: &str, cost: AnchorCost) -> Result<S
     }
     let rpc = RpcClient::new(cfg);
 
-    // Prefer the native soft-fork RPC: one call funds + builds + signs +
-    // broadcasts the OP_POE anchor and returns the txid. Only if the node
-    // doesn't have it (pre-soft-fork) do we build the forkless anchor ourselves.
-    if let Some(v) = rpc.call_optional("createpoe", json!([hash_hex, false]))? {
-        // createpoe returns the txid (string), or an object carrying it.
-        if let Some(id) = v.as_str() {
-            return Ok(id.to_string());
+    // ⚠ Which on-chain form to use is NOT just "whichever the node supports".
+    //
+    // An OP_POE output is unrecognised by nodes that predate the soft fork, so
+    // they treat the transaction as non-standard and DROP IT rather than relay
+    // it. Today essentially the whole mainnet is such nodes. An anchor built
+    // that way would very likely never reach a staker and never confirm — the
+    // user would be told their file was timestamped while the proof quietly
+    // never happened. Regtest hides this completely, because there the one node
+    // mines its own transactions.
+    //
+    // So: use the native form only where it can actually propagate (regtest and
+    // testnet), or when someone knowingly opts in. On mainnet stay with the
+    // forkless OP_META record, which every node relays today. Once the upgraded
+    // node is widely deployed this gate is the single thing to flip.
+    let native_ok = match std::env::var("DIVI_POE_NATIVE").ok().as_deref() {
+        Some("1") => true,
+        Some("0") => false,
+        _ => !is_mainnet(&rpc),
+    };
+
+    if native_ok {
+        if let Some(id) = try_native_anchor(&rpc, &hash_hex)? {
+            return Ok(id);
         }
-        if let Some(id) = v["txid"].as_str() {
-            return Ok(id.to_string());
-        }
-        return Err("the node accepted the anchor but returned no transaction id".into());
     }
 
     timestamp_forkless(&rpc, &hash_hex, cost)
+}
+
+/// True unless the node clearly says it is on something other than mainnet.
+/// Unknown / unreachable is treated AS mainnet — the cautious direction, since
+/// guessing wrong there is what silently loses a proof.
+fn is_mainnet(rpc: &RpcClient) -> bool {
+    match rpc.call("getblockchaininfo", json!([])) {
+        Ok(v) => match v["chain"].as_str() {
+            Some(c) => c == "main",
+            None => true,
+        },
+        Err(_) => true,
+    }
+}
+
+/// Anchor via the node's native OP_POE RPC. Ok(None) = this node doesn't have it.
+fn try_native_anchor(rpc: &RpcClient, hash_hex: &str) -> Result<Option<String>, String> {
+    if let Some(v) = rpc.call_optional("createpoe", json!([hash_hex, false]))? {
+        // createpoe returns the txid (string), or an object carrying it.
+        if let Some(id) = v.as_str() {
+            return Ok(Some(id.to_string()));
+        }
+        if let Some(id) = v["txid"].as_str() {
+            return Ok(Some(id.to_string()));
+        }
+        return Err("the node accepted the anchor but returned no transaction id".into());
+    }
+    Ok(None)
 }
 
 /// Build the forkless OP_META "DVXP" anchor by hand (used until the node ships
