@@ -63,6 +63,33 @@ function hslVar(name: string): (a: number) => string {
 }
 const GREEN = (a: number) => `hsla(145, 80%, 50%, ${a})`;
 
+// Per-arc "flex" animation + colour blend, chosen randomly and kept per peer so
+// each connection arc bends and shifts colour independently.
+interface ArcFx {
+  arcT: number; // colour blend 0..1 (base → HSB 268,67,100) for the arc
+  dotT: number; // colour blend for the travelling dot
+  amp: number; // 0.5..1.5 × the base curvature
+  half: number; // ms to flex from one extreme to the other (1..10s)
+  cycles: number; // 3..10 full flexes before re-rolling amplitude + speed
+  anchor: number; // time this parameter set began
+}
+function newArcFx(t: number): ArcFx {
+  return {
+    arcT: Math.random(),
+    dotT: Math.random(),
+    amp: 0.5 + Math.random(),
+    half: 1000 + Math.random() * 9000,
+    cycles: 3 + Math.floor(Math.random() * 8),
+    anchor: t,
+  };
+}
+// Read a CSS HSL token (e.g. --primary) as numeric [h, s, l] for interpolation.
+function parseHslNums(name: string): [number, number, number] {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const m = raw.match(/([\d.]+)\s+([\d.]+)%\s+([\d.]+)%/);
+  return m ? [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3])] : [280, 80, 60];
+}
+
 // Dark sunglasses drawn above the centre of a node's circle (the "face"), scaled
 // to it — the stake-winner marker. Drawn last so nothing covers it.
 function drawGlasses(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
@@ -144,6 +171,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const knownRef = useRef<Known>({});
   const probeRef = useRef<Map<string, ProbeState>>(new Map());
   const lastProbe = useRef(0); // last re-ping time (re-ping every 60s)
+  const arcFx = useRef<Map<string, ArcFx>>(new Map()); // per-peer flex + colour state
   // The node currently wearing the "stake winner" sunglasses. NOTE: the real
   // winner (an address) can't be mapped to a node/IP, so for now this rotates to
   // a peer each block-interval as a visual placeholder.
@@ -380,6 +408,17 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
 
       const outbound = hslVar("--primary");
       const inbound = hslVar("--info"); // blue — clearly distinct from purple outbound
+      // Peer arcs vary their colour between their base and HSB(268,67,100); each
+      // arc (and its dot) picks a random point in that range.
+      const primaryHsl = parseHslNums("--primary");
+      const infoHsl = parseHslNums("--info");
+      const ARC_TARGET: [number, number, number] = [268, 100, 66.5]; // HSB 268,67,100 in HSL
+      const mixArcCol = (base: [number, number, number], t: number) => {
+        const h = base[0] + (ARC_TARGET[0] - base[0]) * t;
+        const s = base[1] + (ARC_TARGET[1] - base[1]) * t;
+        const l = base[2] + (ARC_TARGET[2] - base[2]) * t;
+        return (a: number) => `hsla(${h}, ${s}%, ${l}%, ${a})`;
+      };
       const selfCol = hslVar("--warning");
       const s = snapRef.current;
       const g = geosRef.current;
@@ -686,8 +725,24 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           const [px, py] = P(pg.lon, pg.lat);
           const revAge = now - rev;
           const fresh = revAge < 2200;
-          const col = p.inbound ? inbound : outbound;
-          const bez = upArc(selfXY[0], selfXY[1], px, py, 0.5); // half curvature
+          // Per-arc flexing curvature: swings ±amp×0.5 around flat (bows up, flat,
+          // bows the other way), re-rolling amplitude + speed after cycles flexes.
+          let fx = arcFx.current.get(p.ip);
+          if (!fx) {
+            fx = newArcFx(now);
+            arcFx.current.set(p.ip, fx);
+          }
+          if (now - fx.anchor >= fx.cycles * 2 * fx.half) {
+            fx.amp = 0.5 + Math.random();
+            fx.half = 1000 + Math.random() * 9000;
+            fx.cycles = 3 + Math.floor(Math.random() * 8);
+            fx.anchor = now;
+          }
+          const mult = fx.amp * 0.5 * Math.sin((Math.PI * (now - fx.anchor)) / fx.half);
+          const baseHsl = p.inbound ? infoHsl : primaryHsl;
+          const arcCol = mixArcCol(baseHsl, fx.arcT);
+          const dotCol = mixArcCol(baseHsl, fx.dotT);
+          const bez = upArc(selfXY[0], selfXY[1], px, py, mult);
 
           if (fresh) {
             // green flash while first connecting — solid arc, no travelling dot yet
@@ -717,7 +772,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               ctx.beginPath();
               ctx.moveTo(prev[0], prev[1]);
               ctx.lineTo(cur[0], cur[1]);
-              ctx.strokeStyle = col(0.1 + 0.7 * glow); // 10% far ends → ~80% at the dot
+              ctx.strokeStyle = arcCol(0.1 + 0.7 * glow); // 10% far ends → ~80% at the dot
               ctx.stroke();
               prev = cur;
             }
@@ -729,11 +784,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             const dotOp = 0.55 + 0.45 * pulse;
             ctx.beginPath(); // soft halo for glow
             ctx.arc(hx, hy, dotR + 2.6, 0, Math.PI * 2);
-            ctx.fillStyle = col(0.12 * dotOp);
+            ctx.fillStyle = dotCol(0.12 * dotOp);
             ctx.fill();
             ctx.beginPath(); // core
             ctx.arc(hx, hy, dotR, 0, Math.PI * 2);
-            ctx.fillStyle = col(dotOp);
+            ctx.fillStyle = dotCol(dotOp);
             ctx.fill();
 
             // city label in the peer's colour, flashing only ~every 10-20s so
@@ -749,7 +804,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
                 ctx.font = "10px 'Courier New', Courier, monospace";
                 ctx.textAlign = ux >= 0 ? "left" : "right";
                 ctx.textBaseline = "middle";
-                ctx.fillStyle = col(0.85 * env);
+                ctx.fillStyle = arcCol(0.85 * env);
                 ctx.fillText(g[p.ip]?.city || p.ip, lx, ly);
               }
             }
