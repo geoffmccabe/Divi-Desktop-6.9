@@ -438,6 +438,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   font-size: 0.85rem; color: hsl(var(--foreground));
 }
 .coll-check input { margin-top: 3px; flex-shrink: 0; }
+.coll-xfer { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .coll-viewer {
   position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
   background: rgba(0, 0, 0, 0.6); padding: 24px;

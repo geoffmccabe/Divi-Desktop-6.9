@@ -59,5 +59,25 @@ fn main() {
     );
     println!("authenticity    = enforced (wrong hash rejected)");
 
-    println!("\n>>> NFD MINT + VIEW VERIFIED END-TO-END ON REGTEST");
+    // ── Transfer A -> B, then B claims ──────────────────────────────────────
+    let bob = addr(&rpc);
+    let bob_code = collectibles::receive_code(&cfg, &bob).expect("bob receive code");
+    let t = collectibles::transfer(&cfg, &draft.owner_addr, &draft.arweave_ptr, &draft.txid, &bob, &bob_code.enc_pubkey)
+        .expect("transfer");
+    println!("transfer txid   = {}", t.txid);
+    let _ = rpc.call("setgenerate", json!([1]));
+    std::thread::sleep(std::time::Duration::from_millis(600));
+
+    let claimed = collectibles::claim(&cfg, &bob, &draft.arweave_ptr, &t.wrapkey_ptr, &draft.content_hash).expect("claim");
+    assert_eq!(claimed, art, "recipient failed to claim the art");
+    println!("recipient claim = OK ({} bytes)", claimed.len());
+
+    let eve = addr(&rpc);
+    assert!(
+        collectibles::claim(&cfg, &eve, &draft.arweave_ptr, &t.wrapkey_ptr, &draft.content_hash).is_err(),
+        "a stranger claimed the transferred collectible!"
+    );
+    println!("stranger claim  = blocked (correct)");
+
+    println!("\n>>> NFD MINT + VIEW + TRANSFER VERIFIED END-TO-END ON REGTEST");
 }

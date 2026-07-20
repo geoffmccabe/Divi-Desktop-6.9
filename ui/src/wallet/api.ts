@@ -44,6 +44,25 @@ export interface NfdMint {
 }
 export const nfdMint = (contentB64: string, thumbnailB64?: string, thumbnailMime?: string) =>
   invoke<NfdMint>("nfd_mint", { contentB64, thumbnailB64, thumbnailMime });
+
+export interface ReceiveCode {
+  address: string;
+  encPubkey: string;
+}
+export interface NfdTransfer {
+  txid: string;
+  wrapkeyPtr: string;
+}
+export const nfdReceiveCode = (address: string) => invoke<ReceiveCode>("nfd_receive_code", { address });
+export const nfdTransfer = (
+  ownerAddr: string,
+  arweavePtr: string,
+  mintTxid: string,
+  recipientAddr: string,
+  recipientEncPubkey: string,
+) => invoke<NfdTransfer>("nfd_transfer", { ownerAddr, arweavePtr, mintTxid, recipientAddr, recipientEncPubkey });
+export const nfdClaim = (myAddr: string, arweavePtr: string, wrapkeyPtr: string, contentHash: string) =>
+  invoke<string>("nfd_claim", { myAddr, arweavePtr, wrapkeyPtr, contentHash });
 export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string) =>
   invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash });
 export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");

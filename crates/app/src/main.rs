@@ -312,6 +312,67 @@ async fn nfd_view(owner_addr: String, arweave_ptr: String, content_hash: String)
     .map_err(|_| "internal error".to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReceiveCodeDto {
+    address: String,
+    enc_pubkey: String,
+}
+
+/// My receive code (address + encryption pubkey) to share with a sender.
+#[tauri::command]
+async fn nfd_receive_code(address: String) -> Result<ReceiveCodeDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let c = collectibles::receive_code(&cfg, &address)?;
+        Ok(ReceiveCodeDto { address: c.address, enc_pubkey: c.enc_pubkey })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferDto {
+    txid: String,
+    wrapkey_ptr: String,
+}
+
+/// Transfer an NFD you own to a recipient's receive code.
+#[tauri::command]
+async fn nfd_transfer(
+    owner_addr: String,
+    arweave_ptr: String,
+    mint_txid: String,
+    recipient_addr: String,
+    recipient_enc_pubkey: String,
+) -> Result<TransferDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let t = collectibles::transfer(&cfg, &owner_addr, &arweave_ptr, &mint_txid, &recipient_addr, &recipient_enc_pubkey)?;
+        Ok(TransferDto { txid: t.txid, wrapkey_ptr: t.wrapkey_ptr })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Claim (fetch + decrypt) a collectible transferred to you. Returns base64.
+#[tauri::command]
+async fn nfd_claim(
+    my_addr: String,
+    arweave_ptr: String,
+    wrapkey_ptr: String,
+    content_hash: String,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let bytes = collectibles::claim(&cfg, &my_addr, &arweave_ptr, &wrapkey_ptr, &content_hash)?;
+        Ok(STANDARD.encode(bytes))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
@@ -327,7 +388,10 @@ fn main() {
             poe_timestamp,
             poe_verify,
             nfd_mint,
-            nfd_view
+            nfd_view,
+            nfd_receive_code,
+            nfd_transfer,
+            nfd_claim
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

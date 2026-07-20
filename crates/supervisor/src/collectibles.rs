@@ -95,11 +95,10 @@ fn pick_funding_utxo(rpc: &RpcClient) -> Result<Value, String> {
 fn anchor_record(rpc: &RpcClient, utxo: &Value, record_hex: &str) -> Result<String, String> {
     let amount = utxo["amount"].as_f64().unwrap_or(0.0);
     let change = ((amount - FEE) * 1e8).round() / 1e8;
-    let change_addr = rpc
-        .call("getnewaddress", json!([]))?
-        .as_str()
-        .ok_or("could not get a change address")?
-        .to_string();
+    // Change returns to the input's OWN address, so the owner address stays
+    // funded and can authorize future transfers (spec §2b), instead of being
+    // drained to a fresh change address on every mint/transfer.
+    let change_addr = utxo["address"].as_str().ok_or("funding UTXO has no address")?.to_string();
     let inputs = json!([{ "txid": utxo["txid"], "vout": utxo["vout"] }]);
 
     let mut outs = serde_json::Map::new();
@@ -176,6 +175,132 @@ pub fn view(cfg: &NodeConfig, owner_addr: &str, arweave_ptr: &str, content_hash:
     let rpc = RpcClient::new(cfg);
     let (sk, _pk) = owner_keypair(&rpc, owner_addr)?;
     let salted = crypto_nfd::decrypt_content(&content_blob, &wrapped_ck, &sk)?;
+    if sha256_hex(&salted) != content_hash.to_lowercase() {
+        return Err("content does not match the on-chain record — not authentic".into());
+    }
+    if salted.len() < SALT_LEN {
+        return Err("content is malformed".into());
+    }
+    Ok(salted[SALT_LEN..].to_vec())
+}
+
+fn to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn pubkey_from_hex(h: &str) -> Result<PublicKey, String> {
+    let h = h.trim();
+    if h.len() != 64 || !h.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("recipient key must be 32 bytes hex".into());
+    }
+    let mut b = [0u8; 32];
+    for (i, byte) in b.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&h[i * 2..i * 2 + 2], 16).map_err(|_| "bad key hex".to_string())?;
+    }
+    Ok(PublicKey::from(b))
+}
+
+/// Validate a recipient address and return its 20-byte hash160 (hex). v1 accepts
+/// standard P2PKH recipients only.
+fn address_to_hash160(rpc: &RpcClient, addr: &str) -> Result<String, String> {
+    let v = rpc.call("validateaddress", json!([addr]))?;
+    if !v["isvalid"].as_bool().unwrap_or(false) {
+        return Err("recipient address is not valid".into());
+    }
+    let spk = v["scriptPubKey"].as_str().ok_or("could not read the recipient's script")?;
+    // P2PKH: 76 a9 14 <20-byte hash> 88 ac
+    if spk.len() >= 50 && spk.starts_with("76a914") && spk.ends_with("88ac") {
+        Ok(spk[6..46].to_lowercase())
+    } else {
+        Err("recipient must be a standard (P2PKH) address".into())
+    }
+}
+
+/// Largest spendable UTXO belonging to `owner_addr` — spending it is how a
+/// transfer proves the sender is the current owner.
+fn pick_owner_utxo(rpc: &RpcClient, owner_addr: &str) -> Result<Value, String> {
+    let unspent = rpc.call("listunspent", json!([]))?;
+    unspent
+        .as_array()
+        .and_then(|a| {
+            a.iter()
+                .filter(|u| u["address"].as_str() == Some(owner_addr) && u["amount"].as_f64().unwrap_or(0.0) >= FEE)
+                .max_by(|x, y| {
+                    let ax = x["amount"].as_f64().unwrap_or(0.0);
+                    let ay = y["amount"].as_f64().unwrap_or(0.0);
+                    ax.partial_cmp(&ay).unwrap_or(std::cmp::Ordering::Equal)
+                })
+        })
+        .cloned()
+        .ok_or_else(|| format!("The owner address {owner_addr} has no spendable DIVI — top it up to transfer."))
+}
+
+/// A recipient shares this so a sender can transfer to them: their address plus
+/// the encryption pubkey derived from it. (Until the indexer can look this up
+/// on-chain, it's exchanged directly.)
+pub struct ReceiveCode {
+    pub address: String,
+    pub enc_pubkey: String,
+}
+
+/// Produce my receive code for `my_addr`.
+pub fn receive_code(cfg: &NodeConfig, my_addr: &str) -> Result<ReceiveCode, String> {
+    let rpc = RpcClient::new(cfg);
+    let (_sk, pk) = owner_keypair(&rpc, my_addr)?;
+    Ok(ReceiveCode { address: my_addr.to_string(), enc_pubkey: to_hex(pk.as_bytes()) })
+}
+
+/// Result of a transfer: the anchoring txid + the pointer to the re-wrapped key.
+pub struct TransferOutcome {
+    pub txid: String,
+    pub wrapkey_ptr: String,
+}
+
+/// Transfer an NFD you own to a recipient (their address + encryption pubkey).
+/// Re-wraps the content key to them, publishes it, and anchors a TRANSFER record
+/// funded from your owner address (which authorizes it in the ledger).
+pub fn transfer(
+    cfg: &NodeConfig,
+    owner_addr: &str,
+    arweave_ptr: &str,
+    mint_txid: &str,
+    recipient_addr: &str,
+    recipient_enc_pubkey: &str,
+) -> Result<TransferOutcome, String> {
+    let rpc = RpcClient::new(cfg);
+    let recipient_pub = pubkey_from_hex(recipient_enc_pubkey)?;
+    let recipient_hash160 = address_to_hash160(&rpc, recipient_addr)?;
+
+    // Re-wrap the content key from the bundle's current wrapping to the recipient.
+    let storage = nfd_storage::for_node(&cfg.datadir);
+    let bundle = storage.get(arweave_ptr)?;
+    let (_content_blob, wrapped_ck) = unpack_bundle(&bundle)?;
+    let (my_sk, _my_pk) = owner_keypair(&rpc, owner_addr)?;
+    let new_wrapped = crypto_nfd::rewrap(&wrapped_ck, &my_sk, &recipient_pub)?;
+    let wrapkey_ptr = storage.put(&new_wrapped)?; // opaque (it's already ciphertext)
+
+    let record = nfd_record::encode_transfer(mint_txid, &recipient_hash160, &wrapkey_ptr)?;
+    let utxo = pick_owner_utxo(&rpc, owner_addr)?;
+    let txid = anchor_record(&rpc, &utxo, &record)?;
+    Ok(TransferOutcome { txid, wrapkey_ptr })
+}
+
+/// Claim (fetch + decrypt + authenticate) a collectible transferred to you.
+/// Uses the re-wrapped key at `wrapkey_ptr`, not the bundle's original wrapping.
+pub fn claim(
+    cfg: &NodeConfig,
+    my_addr: &str,
+    arweave_ptr: &str,
+    wrapkey_ptr: &str,
+    content_hash: &str,
+) -> Result<Vec<u8>, String> {
+    let storage = nfd_storage::for_node(&cfg.datadir);
+    let bundle = storage.get(arweave_ptr)?;
+    let (content_blob, _old_wrapped) = unpack_bundle(&bundle)?;
+    let new_wrapped = storage.get(wrapkey_ptr)?;
+    let rpc = RpcClient::new(cfg);
+    let (sk, _pk) = owner_keypair(&rpc, my_addr)?;
+    let salted = crypto_nfd::decrypt_content(&content_blob, &new_wrapped, &sk)?;
     if sha256_hex(&salted) != content_hash.to_lowercase() {
         return Err("content does not match the on-chain record — not authentic".into());
     }
