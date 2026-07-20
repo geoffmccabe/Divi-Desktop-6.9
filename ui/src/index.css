@@ -976,3 +976,20 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .tx-filter:hover:not(:disabled) { background: hsl(var(--fc) / 0.16); }
 .tx-filter-on { background: hsl(var(--fc) / 0.22); font-weight: 600; }
 .tx-filter:disabled { opacity: 0.4; cursor: default; }
+
+/* ---- Nodes-by-country overlay (bottom-left of the map, above the blocks) ---- */
+.nbc {
+  position: absolute; left: 10px; bottom: 150px; z-index: 5;
+  width: 208px; max-height: 42%;
+  display: flex; flex-direction: column; gap: 6px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid hsl(210 85% 62% / 0.7); /* blue, matches the network lines */
+  border-radius: 8px; padding: 8px 10px; box-sizing: border-box; font-size: 0.75rem;
+}
+.nbc-head { display: flex; justify-content: space-between; align-items: baseline; color: hsl(210 85% 66%); font-weight: 600; font-size: 0.78rem; }
+.nbc-total { color: hsl(var(--muted-foreground)); font-weight: 500; }
+.nbc-list { overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.nbc-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.nbc-country { color: hsl(var(--foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nbc-num { color: hsl(210 60% 72%); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.nbc-empty { color: hsl(var(--muted-foreground)); }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { networkPeers, probePeers, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, type Known } from "./knownPeers";
@@ -1028,6 +1028,21 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     };
   }, []);
 
+  // Every node (live peers + 30-day known), deduped by IP, tallied by country.
+  const nodesByCountry = useMemo(() => {
+    const seen = new Set<string>();
+    const counts = new Map<string, number>();
+    const add = (ip: string, country?: string) => {
+      if (!ip || seen.has(ip)) return;
+      seen.add(ip);
+      const c = country && country.trim() ? country.trim() : "Unknown";
+      counts.set(c, (counts.get(c) ?? 0) + 1);
+    };
+    for (const p of snap?.peers ?? []) add(p.ip, geos[p.ip]?.country);
+    for (const [ip, kp] of Object.entries(knownRef.current)) add(ip, kp.country || geos[ip]?.country);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  }, [snap, geos]);
+
   return (
     <div className="netmap">
       <div className="netmap-topbar">
@@ -1042,6 +1057,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       </div>
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
+        <NodesByCountry data={nodesByCountry} />
         <BlockChainViz />
         {hover && (
           <div
@@ -1059,6 +1075,45 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               </div>
             ))}
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Bottom-left overlay: node counts by country, scrollable. Styled like the
+// moving blocks below it but blue-bordered to match the network lines. It stops
+// wheel/mousedown from reaching the map so scrolling it doesn't zoom or pan.
+function NodesByCountry({ data }: { data: [string, number][] }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const stop = (e: Event) => e.stopPropagation();
+    el.addEventListener("wheel", stop, { passive: false });
+    el.addEventListener("mousedown", stop);
+    return () => {
+      el.removeEventListener("wheel", stop);
+      el.removeEventListener("mousedown", stop);
+    };
+  }, []);
+  const total = data.reduce((s, [, n]) => s + n, 0);
+  return (
+    <div className="nbc" ref={ref}>
+      <div className="nbc-head">
+        <span>Nodes by Country</span>
+        <span className="nbc-total">{total}</span>
+      </div>
+      <div className="nbc-list">
+        {data.length === 0 ? (
+          <div className="nbc-empty">Locating nodes…</div>
+        ) : (
+          data.map(([c, n]) => (
+            <div key={c} className="nbc-row">
+              <span className="nbc-country">{c}</span>
+              <span className="nbc-num">{n}</span>
+            </div>
+          ))
         )}
       </div>
     </div>
