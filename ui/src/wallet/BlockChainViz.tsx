@@ -12,7 +12,6 @@ import nyan from "../assets/nyan_cat.webp";
 // thin purple edges, like the node-connection lines.
 
 const CROSS_MS = 5 * 60 * 1000; // 5 minutes to traverse the panel width
-const NOMINAL_MS = 60 * 1000; // seed spacing (~1 block/min)
 // A stale block sits at the fork point as a narrow 1:3 marker (the wrap is
 // 130px tall). These are genuinely rare — measured ~0.8% of blocks — so this
 // is a seldom-seen event marker, not a regular feature of the display.
@@ -33,7 +32,6 @@ export function BlockChainViz() {
   const panelRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const orphanRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const lastHeight = useRef(0);
-  const lastAdd = useRef(0);
   const userAddrs = useRef<Set<string>>(new Set());
 
   // The node-wallet's own addresses — used to tell if a block was won by the user.
@@ -78,28 +76,20 @@ export function BlockChainViz() {
         if (!alive || bs.length === 0) return;
         if (!seeded) {
           seeded = true;
-          const now = Date.now();
-          // seed spread ~1/min into the past so they tile the timeline
-          const seedBlocks = bs.map((b, i) => ({ ...b, born: now - (bs.length - 1 - i) * NOMINAL_MS }));
+          // Anchor each block to its REAL timestamp, so its position and width
+          // never depend on WHEN we polled. This is what makes it immune to the
+          // app being backgrounded (rAF paused, polls throttled): on return the
+          // blocks are placed by real time, not by an accumulated wall-clock gap.
+          const seedBlocks = bs.map((b) => ({ ...b, born: b.time * 1000 }));
           lastHeight.current = bs[bs.length - 1].height;
-          lastAdd.current = now;
           setBlocks(seedBlocks);
         } else {
           const newOnes = bs.filter((b) => b.height > lastHeight.current).sort((a, b) => a.height - b.height);
           if (newOnes.length) {
-            const now = Date.now();
-            const gap = Math.max(1, now - lastAdd.current);
-            // distribute the elapsed time across the new blocks, weighted by their
-            // real block-time intervals → a slower block ends up wider.
-            const intervals = newOnes.map((b, j) => (j === 0 ? 1 : Math.max(1, b.time - newOnes[j - 1].time)));
-            const total = intervals.reduce((a, x) => a + x, 0);
-            let acc = 0;
-            const added = newOnes.map((b, j) => {
-              acc += intervals[j];
-              return { ...b, born: lastAdd.current + (acc / total) * gap };
-            });
+            // born = the block's real timestamp; its width is then the true
+            // interval to the next block, independent of poll cadence.
+            const added = newOnes.map((b) => ({ ...b, born: b.time * 1000 }));
             lastHeight.current = newOnes[newOnes.length - 1].height;
-            lastAdd.current = now;
             // If the user won any of these new blocks, flag it (lights up our node).
             if (added.some((b) => b.stakeWinner && userAddrs.current.has(b.stakeWinner))) markUserWon();
             setBlocks((prev) => [...prev, ...added]);

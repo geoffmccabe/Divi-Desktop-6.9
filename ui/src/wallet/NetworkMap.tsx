@@ -1038,6 +1038,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const c = country && country.trim() ? country.trim() : "Unknown";
       counts.set(c, (counts.get(c) ?? 0) + 1);
     };
+    const self = selfRef.current;
+    if (self) add(self.ip, self.country); // our own node counts too
     for (const p of snap?.peers ?? []) add(p.ip, geos[p.ip]?.country);
     for (const [ip, kp] of Object.entries(knownRef.current)) add(ip, kp.country || geos[ip]?.country);
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
@@ -1097,12 +1099,12 @@ function NodesByCountry({ data }: { data: [string, number][] }) {
       el.removeEventListener("mousedown", stop);
     };
   }, []);
-  const total = data.reduce((s, [, n]) => s + n, 0);
   return (
     <div className="nbc" ref={ref}>
       <div className="nbc-head">
-        <span>Nodes by Country</span>
-        <span className="nbc-total">{total}</span>
+        <span className="nbc-title">Nodes</span>
+        <span className="nbc-h-full">FULL</span>
+        <span className="nbc-h-love" title="Lovenodes">♥</span>
       </div>
       <div className="nbc-list">
         {data.length === 0 ? (
@@ -1111,7 +1113,8 @@ function NodesByCountry({ data }: { data: [string, number][] }) {
           data.map(([c, n]) => (
             <div key={c} className="nbc-row">
               <span className="nbc-country">{c}</span>
-              <span className="nbc-num">{n}</span>
+              <span className="nbc-full">{n}</span>
+              <span className="nbc-love">0</span>
             </div>
           ))
         )}

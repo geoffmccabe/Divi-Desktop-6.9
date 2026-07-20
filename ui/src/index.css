@@ -980,16 +980,21 @@ h1, h2, h3 { font-family: var(--font-heading); }
 /* ---- Nodes-by-country overlay (bottom-left of the map, above the blocks) ---- */
 .nbc {
   position: absolute; left: 10px; bottom: 150px; z-index: 5;
-  width: 208px; max-height: 42%;
-  display: flex; flex-direction: column; gap: 6px;
+  width: 166px; max-height: 34%;
+  display: flex; flex-direction: column; gap: 5px;
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid hsl(210 85% 62% / 0.7); /* blue, matches the network lines */
-  border-radius: 8px; padding: 8px 10px; box-sizing: border-box; font-size: 0.75rem;
+  border-radius: 8px; padding: 7px 9px; box-sizing: border-box; font-size: 0.62rem;
 }
-.nbc-head { display: flex; justify-content: space-between; align-items: baseline; color: hsl(210 85% 66%); font-weight: 600; font-size: 0.78rem; }
-.nbc-total { color: hsl(var(--muted-foreground)); font-weight: 500; }
-.nbc-list { overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
-.nbc-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+/* Country | FULL count | Lovenode count — the two number columns sit close. */
+.nbc-head, .nbc-row { display: grid; grid-template-columns: 1fr 2.1em 1.6em; align-items: baseline; column-gap: 4px; }
+.nbc-head { font-size: 0.65rem; font-weight: 600; }
+.nbc-title { color: hsl(210 85% 66%); }
+.nbc-h-full { text-align: right; color: hsl(210 60% 72%); }
+.nbc-h-love { text-align: right; color: hsl(330 85% 70%); }
+.nbc-list { overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 2px; }
+.nbc-list::-webkit-scrollbar { width: 5px; }
 .nbc-country { color: hsl(var(--foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nbc-num { color: hsl(210 60% 72%); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.nbc-full { text-align: right; color: hsl(210 60% 72%); font-variant-numeric: tabular-nums; }
+.nbc-love { text-align: right; color: hsl(330 85% 72%); font-variant-numeric: tabular-nums; } /* pink */
 .nbc-empty { color: hsl(var(--muted-foreground)); }
