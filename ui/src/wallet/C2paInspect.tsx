@@ -64,7 +64,6 @@ export function C2paInspect() {
   const [name, setName] = useState<string | null>(null);
   const [res, setRes] = useState<C2paSummary | null>(null);
   const [showRaw, setShowRaw] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const pick = async (f: File) => {
@@ -90,62 +89,13 @@ export function C2paInspect() {
 
   return (
     <div className="poe-pane">
-      <p className="wl-note" style={{ marginBottom: 4 }}>
-        <strong>Content Credentials</strong> are a signed label attached inside a file, saying who made it and what was
-        done to it. Some cameras add them at the moment of capture, and editors like Photoshop can add them as you
-        work. They use an open standard called <strong>C2PA</strong>, backed by Adobe, Microsoft, the BBC and others.
-      </p>
+      {/* Action first. One line of orientation, then the control — the reference
+          material lives below the result, where it informs without blocking the
+          one thing this panel exists to do. */}
       <p className="wl-note" style={{ marginBottom: 10 }}>
-        Divi <strong>reads</strong> them. Pair one with a Divi timestamp and you cover both halves of the story: the
-        credential says who made a file and how, and your timestamp independently proves it existed by a certain
-        moment.
+        Check whether a file carries <strong>Content Credentials</strong>: a signed record of who made it and how. Divi
+        reads them; it doesn't create them.
       </p>
-
-      <button
-        type="button"
-        className="wl-link"
-        style={{ fontSize: "0.72rem", marginBottom: 10 }}
-        onClick={() => setShowHelp((v) => !v)}
-      >
-        {showHelp ? "Hide" : "How do I get Content Credentials on my own work?"}
-      </button>
-
-      {showHelp && (
-        <div className="ts-proof" style={{ marginBottom: 12 }}>
-          <div className="ts-proof-title">Adding credentials to your own files</div>
-          <p style={{ fontSize: "0.75rem", marginTop: 6 }}>
-            You don't apply for these personally, and there's nothing to buy. Credentials are issued by the
-            <strong> tool</strong> you create with, so you get them by using a tool that supports the standard:
-          </p>
-          <ul style={{ fontSize: "0.75rem", paddingLeft: 18, margin: "6px 0" }}>
-            <li>
-              <strong>Photoshop and Lightroom.</strong> Turn on Content Credentials in the app and they attach as you
-              export.
-            </li>
-            <li>
-              <strong>The free web app</strong> at contentcredentials.org, which adds them to files you upload.
-            </li>
-            <li>
-              <strong>Certain cameras</strong> (Leica, Sony and Nikon models) sign photographs the instant they are
-              taken, which is the strongest form.
-            </li>
-          </ul>
-          <p style={{ fontSize: "0.75rem" }}>
-            Only the software vendor can be formally certified, not you. That certification is what decides whether a
-            signer shows as recognised below, or merely valid.
-          </p>
-          <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-            {LINKS.map(([label, url, why]) => (
-              <div key={url}>
-                <button type="button" className="wl-link" style={{ fontSize: "0.75rem" }} onClick={() => openUrl(url)}>
-                  {label}
-                </button>
-                <div className="wl-note" style={{ fontSize: "0.68rem" }}>{why}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
 
       <input
         ref={inputRef}
@@ -249,11 +199,56 @@ export function C2paInspect() {
         </div>
       )}
 
-      <p className="wl-note" style={{ marginTop: 12, fontSize: "0.68rem", opacity: 0.75 }}>
-        Valid credentials mean a file hasn't changed since it was signed and the signer is who they claim. They don't
-        make the content true, and a file without them isn't suspicious, just unlabelled. Your file is read on this
-        computer only and never uploaded.
-      </p>
+      {/* ── Reference. Everything a first-time reader needs, kept out of the way
+             of everything a repeat user needs. ────────────────────────────── */}
+      <div style={{ marginTop: 22, paddingTop: 14, borderTop: "1px solid hsl(var(--border) / 0.5)" }}>
+        <div className="ts-proof-title" style={{ marginBottom: 6 }}>About Content Credentials</div>
+
+        <p className="wl-note" style={{ marginBottom: 8 }}>
+          A signed label carried inside a file, saying who made it and what was done to it. Some cameras add them the
+          moment a photo is taken, and editors like Photoshop can add them as you work. They use an open standard
+          called <strong>C2PA</strong>, backed by Adobe, Microsoft, the BBC and others.
+        </p>
+        <p className="wl-note" style={{ marginBottom: 8 }}>
+          Pair one with a Divi timestamp and you cover both halves of the story: the credential says who made a file
+          and how, and your timestamp independently proves it existed by a certain moment.
+        </p>
+
+        <div className="wl-note" style={{ fontWeight: 600, marginTop: 12, marginBottom: 4 }}>
+          Getting credentials onto your own work
+        </div>
+        <p className="wl-note" style={{ marginBottom: 4 }}>
+          There's nothing to apply for and nothing to buy. Credentials are issued by the <strong>tool</strong> you
+          create with, so you get them by working in one that supports the standard:
+        </p>
+        <ul className="wl-note" style={{ paddingLeft: 18, margin: "4px 0 8px" }}>
+          <li><strong>Photoshop and Lightroom.</strong> Turn Content Credentials on and they attach as you export.</li>
+          <li><strong>The free web app</strong> at contentcredentials.org, which adds them to files you upload.</li>
+          <li><strong>Certain cameras</strong> (Leica, Sony and Nikon models) sign photographs as they're taken, which
+            is the strongest form.</li>
+        </ul>
+        <p className="wl-note" style={{ marginBottom: 8 }}>
+          Only the software vendor can be formally certified, not you. That certification decides whether a signer
+          shows above as recognised, or merely valid.
+        </p>
+
+        <div style={{ display: "grid", gap: 6, margin: "10px 0" }}>
+          {LINKS.map(([label, url, why]) => (
+            <div key={url}>
+              <button type="button" className="wl-link" style={{ fontSize: "0.75rem" }} onClick={() => openUrl(url)}>
+                {label}
+              </button>
+              <div className="wl-note" style={{ fontSize: "0.68rem" }}>{why}</div>
+            </div>
+          ))}
+        </div>
+
+        <p className="wl-note" style={{ marginTop: 10, fontSize: "0.68rem", opacity: 0.75 }}>
+          Valid credentials mean a file hasn't changed since it was signed and the signer is who they claim. They don't
+          make the content true, and a file without them isn't suspicious, just unlabelled. Your file is read on this
+          computer only and never uploaded.
+        </p>
+      </div>
     </div>
   );
 }

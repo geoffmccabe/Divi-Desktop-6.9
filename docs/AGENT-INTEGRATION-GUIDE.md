@@ -176,6 +176,36 @@ OP_META(0x6a) PUSH( "DVXP"(4) | version(1) | type(1) | body )
 DVXP form** when the node lacks those RPCs (see `poe.rs`). Any verifier you build
 **must accept both**.
 
+### 6.1 C2PA / Content Credentials
+
+`crates/supervisor/src/c2pa_read.rs` + command `c2pa_inspect(bytes, mimeOrExt)`,
+UI in `ui/src/wallet/C2paInspect.tsx`. Built on the `c2pa` Rust crate.
+
+**Read-only, and this is a hard boundary.** We verify credentials other tools
+signed. We do **not** create, sign, or embed them. If you build on this:
+
+- **Do not describe Divi as "C2PA compliant."** Compliance is a formal
+  conformance listing for products that *generate* credentials. Reading them
+  requires no permission and confers no certification.
+- **Remote manifest fetching is deliberately disabled.** Opening a file never
+  causes a network request; everything reported comes from the file itself.
+  Do not switch `fetch_remote_manifests` on without a deliberate decision.
+- **"Valid" and "Trusted" are different claims** and the UI must keep them
+  apart. A signature can be cryptographically sound while the signer is absent
+  from the trust list — common for self-issued certificates. Returned `state` is
+  the SDK's own: `Trusted` > `Valid` > `Invalid`.
+- **A valid credential does not mean the content is true**, and says nothing
+  about AI unless the manifest itself asserts it.
+
+Returned summary: `present`, `state`, `signer`, `signedAt`, `generator`,
+`title`, `ingredients`, `assertions[]`, `issues[]`, `diviTxid`, `json`.
+Assertion labels carry version suffixes (`c2pa.actions.v2`), so **match by
+prefix** — exact-match lookups silently miss the most important assertion.
+
+`diviTxid` is the integration point worth knowing about: a credential and a Divi
+timestamp answer different halves of provenance. The credential says who made a
+file and how; the PoE anchor independently proves it existed by a given block.
+
 **Merkle batching uses RFC 6962** (Certificate Transparency), not Bitcoin's
 construction — leaves `SHA256(0x00||h)`, nodes `SHA256(0x01||l||r)`, odd levels
 promoted, never duplicated. The domain separation blocks CVE-2012-2459. If you
