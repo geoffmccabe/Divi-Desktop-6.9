@@ -78,7 +78,7 @@ function newArcFx(t: number): ArcFx {
     arcT: Math.random(),
     dotT: Math.random(),
     amp: 0.5 + Math.random(),
-    half: 1000 + Math.random() * 9000,
+    half: 2000 + Math.random() * 18000, // 2-20s to flex (slower/less distracting)
     cycles: 3 + Math.floor(Math.random() * 8),
     anchor: t,
   };
@@ -175,6 +175,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // Clicking our own node toggles "network only": hide the purple peer layer and
   // brighten the blue network so it isn't covered up.
   const networkOnlyRef = useRef(false);
+  // When the startup search ends, the leftover green probe lines fade out one per
+  // second instead of all at once. ip → the time its green line finishes fading.
+  const greenExit = useRef<Map<string, number>>(new Map());
+  const firstProbeDone = useRef(false);
   // The node currently wearing the "stake winner" sunglasses. NOTE: the real
   // winner (an address) can't be mapped to a node/IP, so for now this rotates to
   // a peer each block-interval as a visual placeholder.
@@ -239,6 +243,19 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
                 if (!alive) return;
                 for (const r of res) probeRef.current.set(r.ip, r.online ? "online" : "offline");
                 for (const ip of kips) if (probeRef.current.get(ip) === "probing") probeRef.current.set(ip, "offline");
+                // First search finished: fade the leftover green lines out one per
+                // second (nodes that didn't answer and didn't become peers), rather
+                // than all vanishing together.
+                if (!firstProbeDone.current) {
+                  firstProbeDone.current = true;
+                  let slot = performance.now();
+                  for (const ip of kips) {
+                    if (probeRef.current.get(ip) === "offline") {
+                      slot += 1000;
+                      greenExit.current.set(ip, slot);
+                    }
+                  }
+                }
               })
               .catch(() => {
                 for (const ip of kips) probeRef.current.set(ip, "offline");
@@ -617,10 +634,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           // 60% of the purple dot's size, pulsing twice as fast (260ms → 130ms)
           const pulse = 0.5 + 0.5 * Math.sin(now / 130 + ph * 3);
           const [hx, hy] = bez(uDot);
-          const dotR = (2.0 + 1.6 * pulse) * 0.6;
-          const dotOp = 0.55 + 0.45 * pulse;
+          const dotR = (2.0 + 1.6 * pulse) * 0.3; // 50% of former size
+          const dotOp = (0.55 + 0.45 * pulse) * 0.65; // 65% of former opacity
           ctx.beginPath();
-          ctx.arc(hx, hy, dotR + 1.6, 0, Math.PI * 2);
+          ctx.arc(hx, hy, dotR + 0.8, 0, Math.PI * 2);
           ctx.fillStyle = BLUE(0.12 * dotOp);
           ctx.fill();
           ctx.beginPath();
@@ -661,7 +678,13 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         for (const [ip, kp] of Object.entries(knownRef.current)) {
           if (liveIps.has(ip)) continue; // connected ones are drawn below
           const st = probeRef.current.get(ip) ?? "probing";
-          if (st !== "probing") continue; // online → blue layer; offline → hidden
+          // Green shows while probing, and while an offline node's line does its
+          // staggered one-per-second fade-out after the first search finishes.
+          const exit = greenExit.current.get(ip);
+          if (exit != null && now >= exit) greenExit.current.delete(ip);
+          const fading = exit != null && now < exit;
+          if (st !== "probing" && !fading) continue; // online → blue; offline+done → gone
+          const fadeK = fading ? Math.min(1, (exit! - now) / 1000) : 1;
           const [px, py] = P(kp.lon, kp.lat);
           {
             const dx = px - sx, dy = py - sy;
@@ -677,7 +700,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
                 ctx.beginPath();
                 ctx.moveTo(prev[0], prev[1]);
                 ctx.lineTo(p2[0], p2[1]);
-                ctx.strokeStyle = GREEN(0.5 * (u / headU));
+                ctx.strokeStyle = GREEN(0.5 * (u / headU) * fadeK);
                 ctx.lineWidth = 1;
                 ctx.stroke();
                 prev = p2;
@@ -685,7 +708,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               const [hx, hy] = bez(headU);
               ctx.beginPath();
               ctx.arc(hx, hy, 2, 0, Math.PI * 2);
-              ctx.fillStyle = GREEN(0.5);
+              ctx.fillStyle = GREEN(0.5 * fadeK);
               ctx.fill();
             }
             // "city ?" on the FAR side of the dot (across from the green arc),
@@ -710,7 +733,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
                 ctx.font = "10px 'Courier New', Courier, monospace";
                 ctx.textAlign = ux >= 0 ? "left" : "right";
                 ctx.textBaseline = "middle";
-                ctx.fillStyle = GREEN(0.7 * env);
+                ctx.fillStyle = GREEN(0.7 * env * fadeK);
                 ctx.fillText(`?${label}?`, lx, ly);
               }
             }
@@ -755,7 +778,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           }
           if (now - fx.anchor >= fx.cycles * 2 * fx.half) {
             fx.amp = 0.5 + Math.random();
-            fx.half = 1000 + Math.random() * 9000;
+            fx.half = 2000 + Math.random() * 18000;
             fx.cycles = 3 + Math.floor(Math.random() * 8);
             fx.anchor = now;
           }
