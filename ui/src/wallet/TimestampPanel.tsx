@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PoeCreate } from "./PoeCreate";
 import { PoeHistoryTab } from "./PoeHistoryTab";
 import { C2paInspect } from "./C2paInspect";
+import "./poe.css";
 import { PoeVerify } from "./PoeVerify";
 import { PoeInfoModal } from "./PoeInfoModal";
 import { loadPoeHistory, type PoeRecord } from "./poeHistory";

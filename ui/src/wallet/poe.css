@@ -1,0 +1,100 @@
+/* Proof of Existence panel: width and type size.
+ *
+ * Kept OUT of index.css on purpose. That file is the one a second agent is most
+ * often editing, and it currently holds their uncommitted work; a separate file
+ * means these rules can ship without dragging half-finished changes along.
+ * Imported by TimestampPanel.tsx, so it loads after index.css and wins on equal
+ * specificity.
+ *
+ * The panel was crowded into the left third of the window because THREE caps
+ * stacked up:
+ *   .timestamp  max-width 620px   the whole panel
+ *   .poe-pane   max-width 500px   each tab's contents
+ *   .wl-note    max-width 460px   every explanatory paragraph (a global rule)
+ * Undoing all three, scoped to this panel so the rest of the app keeps its
+ * comfortable reading measure.
+ *
+ * Type is raised by about one point (1pt is close to 0.08rem at a 16px root).
+ * Each rule below mirrors one in index.css; if a size changes there, change it
+ * here too.
+ */
+
+.timestamp {
+  max-width: none;
+}
+
+.timestamp .poe-pane,
+.timestamp .poe-hist {
+  max-width: none;
+  width: 100%;
+}
+
+/* Paragraphs and rows fill the panel instead of collapsing to their content
+   width, which is what left the big empty area on the right. */
+.timestamp .wl-note,
+.poe-modal .wl-note {
+  max-width: none;
+}
+.timestamp .ts-section > p,
+.timestamp .poe-pane > p,
+.timestamp .ts-fileinfo,
+.timestamp .poe-intro-text {
+  width: 100%;
+}
+
+/* Slightly wider history cards now that there is room for them. */
+.timestamp .poe-hist-grid {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+/* ---- Type, one point larger throughout ---- */
+.timestamp .ts-head,
+.poe-modal-head h3 {
+  font-size: 1.13rem;
+}
+.timestamp .wl-note,
+.timestamp .wl-err,
+.timestamp .wl-link,
+.poe-modal .wl-note {
+  font-size: 0.93rem;
+}
+.timestamp .ts-filename,
+.timestamp .poe-prefill-name,
+.timestamp .ts-confirmed {
+  font-size: 1.03rem;
+}
+.timestamp .ts-pending {
+  font-size: 1rem;
+}
+.timestamp .ts-proof-title {
+  font-size: 1.08rem;
+}
+.timestamp .ts-meta {
+  font-size: 0.88rem;
+}
+.timestamp .ts-hash,
+.timestamp .poe-card-sub,
+.timestamp .poe-card-txid,
+.timestamp .poe-card-actions .wl-btn,
+.timestamp .poe-help {
+  font-size: 0.8rem;
+}
+.timestamp .ts-costnote,
+.timestamp .poe-card-when {
+  font-size: 0.82rem;
+}
+.timestamp .poe-tab,
+.timestamp .wl-btn,
+.timestamp .wl-input,
+.timestamp select.wl-input {
+  font-size: 0.9rem;
+}
+.poe-modal .poe-uses strong {
+  font-size: 0.94rem;
+}
+.poe-modal .poe-uses span {
+  font-size: 0.9rem;
+}
+.poe-modal .poe-modal-body p {
+  font-size: 0.93rem;
+}

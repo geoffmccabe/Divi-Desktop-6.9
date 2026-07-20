@@ -234,7 +234,7 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
                 </label>
               </div>
               {file?.type.startsWith("image/") && (
-                <label style={{ display: "flex", gap: 7, alignItems: "flex-start", fontSize: "0.75rem" }}>
+                <label style={{ display: "flex", gap: 7, alignItems: "flex-start", fontSize: "0.83rem" }}>
                   <input
                     type="checkbox"
                     checked={sharePreview}
