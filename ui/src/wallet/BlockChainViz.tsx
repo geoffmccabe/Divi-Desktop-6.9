@@ -11,34 +11,27 @@ import nyan from "../assets/nyan_cat.webp";
 // slower block is simply wider. Styled to match the map: translucent black with
 // thin purple edges, like the node-connection lines.
 
-const CROSS_MS = 5 * 60 * 1000; // 5 minutes to traverse the panel width
-// Divi's PoS block timestamps are far too jittery to use as widths (they swing
-// wildly and can even run backwards), so each block gets a UNIFORM one-minute
-// slice — exactly 5 across the 5-minute window — and simply slides in as it's
-// found. This is timestamp-independent, so nothing (noise, backgrounding) distorts it.
-const NOMINAL_MS = 60 * 1000;
+// Each block is a FIXED 20% of the panel — exactly 5 across — positioned purely by
+// order (no block timestamps, no animation loop), so nothing can drift or compound
+// over time. CSS transitions the slide when a new block appears.
+const BLOCK_PCT = 20; // one block's width, % of the panel
+const MAX_BLOCKS = 8; // a few past the 5 visible, for a smooth slide-off the left
 // A stale block sits at the fork point as a narrow 1:3 marker (the wrap is
 // 130px tall). These are genuinely rare — measured ~0.8% of blocks — so this
 // is a seldom-seen event marker, not a regular feature of the display.
 const ORPHAN_W = 43;
-
-interface LiveBlock extends Block {
-  born: number; // client time this block entered the chain (its timeline point)
-}
 
 function short(txid: string) {
   return txid.length > 14 ? `${txid.slice(0, 8)}…${txid.slice(-4)}` : txid;
 }
 
 export function BlockChainViz() {
-  const [blocks, setBlocks] = useState<LiveBlock[]>([]);
+  const [blocks, setBlocks] = useState<Block[]>([]);
   const [orphans, setOrphans] = useState<StaleBlock[]>([]);
   const wrapRef = useRef<HTMLDivElement>(null);
   const panelRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const orphanRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const lastHeight = useRef(0);
-  const lastBorn = useRef(0); // uniform timeline point (left edge) of the newest block
-  const chainNow = useRef(0); // eased right-edge position; slides to follow new blocks
   const userAddrs = useRef<Set<string>>(new Set());
 
   // The node-wallet's own addresses — used to tell if a block was won by the user.
@@ -83,27 +76,16 @@ export function BlockChainViz() {
         if (!alive || bs.length === 0) return;
         if (!seeded) {
           seeded = true;
-          // Uniform one-minute slices, tiled by order (height). No timestamps.
           const sorted = [...bs].sort((a, b) => a.height - b.height);
-          const seedBlocks = sorted.map((b, i) => ({ ...b, born: i * NOMINAL_MS }));
           lastHeight.current = sorted[sorted.length - 1].height;
-          lastBorn.current = (sorted.length - 1) * NOMINAL_MS;
-          chainNow.current = lastBorn.current + NOMINAL_MS; // newest block's right edge
-          setBlocks(seedBlocks);
+          setBlocks(sorted.slice(-MAX_BLOCKS));
         } else {
           const newOnes = bs.filter((b) => b.height > lastHeight.current).sort((a, b) => a.height - b.height);
           if (newOnes.length) {
-            // Each new block gets the next uniform slice; the strip slides to reveal it.
-            let born = lastBorn.current;
-            const added = newOnes.map((b) => {
-              born += NOMINAL_MS;
-              return { ...b, born };
-            });
             lastHeight.current = newOnes[newOnes.length - 1].height;
-            lastBorn.current = born;
             // If the user won any of these new blocks, flag it (lights up our node).
-            if (added.some((b) => b.stakeWinner && userAddrs.current.has(b.stakeWinner))) markUserWon();
-            setBlocks((prev) => [...prev, ...added]);
+            if (newOnes.some((b) => b.stakeWinner && userAddrs.current.has(b.stakeWinner))) markUserWon();
+            setBlocks((prev) => [...prev, ...newOnes].slice(-MAX_BLOCKS));
           }
         }
       } catch {
@@ -118,60 +100,13 @@ export function BlockChainViz() {
     };
   }, []);
 
-  useEffect(() => {
-    let raf = 0;
-    const tick = () => {
-      const wrap = wrapRef.current;
-      if (wrap && blocks.length) {
-        const cw = wrap.clientWidth;
-        const v = cw / CROSS_MS; // px per ms
-        // Ease the right edge toward the newest block so new blocks slide in; snap
-        // if it has fallen far behind (e.g. returning from the background) rather
-        // than crawling for a long time.
-        const now = chainNow.current;
-        const target = lastBorn.current + NOMINAL_MS;
-        if (target - now > CROSS_MS) chainNow.current = target - CROSS_MS;
-        chainNow.current += (target - chainNow.current) * 0.06;
-        const cn = chainNow.current;
-        let anyOff = false;
-        for (let i = 0; i < blocks.length; i++) {
-          const b = blocks[i];
-          const el = panelRefs.current.get(b.height);
-          if (!el) continue;
-          // every block is one uniform minute wide
-          const rightT = b.born + NOMINAL_MS;
-          const xL = cw - (cn - b.born) * v;
-          const xR = cw - (cn - rightT) * v;
-          if (xR < 0) anyOff = true;
-          el.style.transform = `translateX(${xL}px)`;
-          el.style.width = `${Math.max(0, xR - xL)}px`;
-        }
-        // Park each stale block against the left edge of the block that beat
-        // it — that boundary is exactly where the chain forked.
-        for (const o of orphans) {
-          const el = orphanRefs.current.get(o.height);
-          if (!el) continue;
-          const b = blocks.find((x) => x.height === o.height);
-          if (!b) {
-            el.style.display = "none";
-            continue;
-          }
-          el.style.display = "";
-          el.style.transform = `translateX(${cw - (cn - b.born) * v - ORPHAN_W}px)`;
-        }
-        if (anyOff) {
-          setBlocks((prev) => {
-            const n = chainNow.current;
-            return prev.filter((b) => cw - (n - (b.born + NOMINAL_MS)) * v >= 0);
-          });
-        }
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [blocks, orphans]);
-
+  // Positioned by ORDER: newest in the rightmost slot, each older one stepping
+  // BLOCK_PCT left; anything past the 5 visible sits off-screen. CSS transitions
+  // the shift when a new block appears. No timestamps, no rAF → cannot drift.
+  const N = blocks.length;
+  const leftPctOf = (i: number) => 100 - (N - i) * BLOCK_PCT; // newest (i=N-1) → 80%
+  const heightLeftPct = new Map<number, number>();
+  blocks.forEach((b, i) => heightLeftPct.set(b.height, leftPctOf(i)));
   const shownHeights = new Set(blocks.map((b) => b.height));
 
   return (
@@ -191,6 +126,9 @@ export function BlockChainViz() {
             style={{
               position: "absolute",
               top: 0,
+              // sit at the left edge of the winning block
+              left: `calc(${heightLeftPct.get(o.height) ?? -100}% - ${ORPHAN_W}px)`,
+              transition: "left 0.55s ease",
               height: "100%",
               width: ORPHAN_W,
               boxSizing: "border-box",
@@ -202,7 +140,6 @@ export function BlockChainViz() {
               justifyContent: "center",
               overflow: "hidden",
               pointerEvents: "auto",
-              willChange: "transform",
               zIndex: 5,
             }}
           >
@@ -221,7 +158,7 @@ export function BlockChainViz() {
             </span>
           </div>
         ))}
-      {blocks.map((b) => {
+      {blocks.map((b, i) => {
         const scroll = b.txids.length > 6;
         const list = scroll ? [...b.txids, ...b.txids] : b.txids;
         const wonByUser = !!(b.stakeWinner && userAddrs.current.has(b.stakeWinner));
@@ -229,6 +166,7 @@ export function BlockChainViz() {
           <div
             key={b.height}
             className={"bv-panel" + (wonByUser ? " bv-rainbow" : "")}
+            style={{ left: `${leftPctOf(i)}%`, width: `${BLOCK_PCT}%`, transition: "left 0.55s ease" }}
             ref={(el) => {
               if (el) panelRefs.current.set(b.height, el);
               else panelRefs.current.delete(b.height);
