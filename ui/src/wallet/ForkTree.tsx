@@ -8,7 +8,7 @@ import type { SeenFork } from "./chainHealth";
 // height. Long uninteresting runs collapse into a thin connector reading
 // "847 blocks", so forks hundreds of blocks apart sit side by side with no dead
 // space. Without that trick a chain forking 0.8% of the time draws as a long
-// empty line — 99% of the pixels showing nothing happening.
+// empty line, 99% of the pixels showing nothing happening.
 //
 // Depth is deliberately NOT given its own axis. On this chain a fork is almost
 // always exactly one block deep, so depth is treated as an alarm channel: a
@@ -46,8 +46,8 @@ function layout(forkHeights: number[], tip: number): Cell[] {
 }
 
 // The store keeps up to 500 forks. Drawing all of them would be a ~35,000px
-// SVG with thousands of nodes in it, so only the most recent stretch is drawn —
-// the older ones still count towards the statistics above.
+// SVG with thousands of nodes in it, so only the most recent stretch is drawn.
+// The older ones still count towards the statistics above.
 const MAX_DRAWN = 40;
 
 export function ForkTree({ forks, tip }: { forks: SeenFork[]; tip: number }) {
@@ -60,7 +60,7 @@ export function ForkTree({ forks, tip }: { forks: SeenFork[]; tip: number }) {
   if (!cells.length) {
     return (
       <div style={{ fontSize: "0.72rem", opacity: 0.6, padding: "10px 0" }}>
-        No forks recorded yet — the chain has been a single unbroken line for every block watched.
+        No forks recorded yet, the chain has been a single unbroken line for every block watched.
       </div>
     );
   }
@@ -147,7 +147,7 @@ export function ForkTree({ forks, tip }: { forks: SeenFork[]; tip: number }) {
                     strokeWidth={isDeep ? 1.6 : 0.8}
                   >
                     <title>
-                      {`Stale block at ${c.height.toLocaleString()} — ${
+                      {`Stale block at ${c.height.toLocaleString()}, ${
                         followed ? "our node followed this branch, then rolled back" : "seen but never followed"
                       }; ${f.branchLen} block${f.branchLen === 1 ? "" : "s"} long (${f.status})`}
                     </title>

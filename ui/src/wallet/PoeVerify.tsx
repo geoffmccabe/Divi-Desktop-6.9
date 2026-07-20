@@ -101,8 +101,8 @@ export function PoeVerify({ prefill }: { prefill: PoeRecord | null }) {
       {err && <p className="wl-err">{err}</p>}
 
       {proof && (
-        // A match that isn't in a block yet proves NOTHING — the transaction can
-        // still be dropped or replaced — so it must not wear the success colour.
+        // A match that isn't in a block yet proves NOTHING. The transaction can
+        // still be dropped or replaced, so it must not wear the success colour.
         // Only a confirmed anchor is a proof.
         <div
           className={
@@ -117,7 +117,7 @@ export function PoeVerify({ prefill }: { prefill: PoeRecord | null }) {
             <>
               <div className="ts-proof-title">Waiting for a block</div>
               <div>
-                This transaction carries the file's fingerprint, but it isn't in a block yet — so it doesn't prove
+                This transaction carries the file's fingerprint, but it isn't in a block yet, so it doesn't prove
                 anything so far. Check again in a minute.
               </div>
             </>
@@ -133,7 +133,7 @@ export function PoeVerify({ prefill }: { prefill: PoeRecord | null }) {
               <div>
                 That transaction doesn’t anchor this file’s fingerprint.
                 {expectedName && vName && vName !== expectedName && (
-                  <> You timestamped <strong>{expectedName}</strong> — this is a different file.</>
+                  <> You timestamped <strong>{expectedName}</strong>, this is a different file.</>
                 )}
                 {expectedName && vName === expectedName && (
                   <> The name matches, so the contents must have changed since you timestamped it.</>

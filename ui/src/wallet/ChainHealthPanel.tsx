@@ -77,12 +77,12 @@ export function ChainHealthPanel() {
       {reachable === false ? (
         <p className="set-note">Can't reach the node right now, so this is the last picture we had.</p>
       ) : null}
-      {busy && <p className="set-note">Asking the node for its fork list — this takes about 20 seconds…</p>}
+      {busy && <p className="set-note">Asking the node for its fork list. This takes about 20 seconds…</p>}
 
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", margin: "10px 0 4px" }}>
         <Stat label="Forks seen" value={s.forkCount.toLocaleString()} />
-        <Stat label="Fork rate" value={s.observedBlocks > 0 ? `${s.ratePct.toFixed(2)}%` : "—"} />
-        <Stat label="Deepest" value={s.deepest > 0 ? `${s.deepest} blk` : "—"} tint={s.deepest >= 3 ? tint : undefined} />
+        <Stat label="Fork rate" value={s.observedBlocks > 0 ? `${s.ratePct.toFixed(2)}%` : "n/a"} />
+        <Stat label="Deepest" value={s.deepest > 0 ? `${s.deepest} blk` : "n/a"} tint={s.deepest >= 3 ? tint : undefined} />
         <Stat label="Blocks watched" value={s.observedBlocks.toLocaleString()} />
       </div>
 
@@ -152,9 +152,9 @@ export function ChainHealthPanel() {
 
       <p className="set-note" style={{ marginTop: 10, fontSize: "0.68rem", opacity: 0.75 }}>
         Forks are normal: two stakers occasionally mint a block at the same height and one loses. Only deep or
-        frequent forks suggest a problem. This counts what <em>your</em> node saw — a fork that never reached it is
-        invisible here, so this is a view from one vantage point, not the whole network. Checking is deliberately
-        manual: the question costs the node about 20 seconds of work, so it isn't asked on a schedule.
+        frequent forks suggest a problem. This counts what <em>your</em> node saw, so a fork that never reached it is
+        invisible here, making this a view from one vantage point rather than the whole network. Checking is
+        deliberately manual, because the question costs the node about 20 seconds of work.
       </p>
     </section>
   );

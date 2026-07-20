@@ -6,10 +6,10 @@
 // history outlives node restarts and slowly becomes worth reading.
 //
 // What the two statuses mean, because the distinction is the useful part:
-//   valid-fork    — our node actually followed this branch, then rolled back.
-//                   That was a real reorg for us.
-//   valid-headers — we saw a competing block's headers but never switched to it.
-//                   Someone else's race, witnessed from the outside.
+//   valid-fork:    our node actually followed this branch, then rolled back.
+//                  That was a real reorg for us.
+//   valid-headers: we saw a competing block's headers but never switched to it.
+//                  Someone else's race, witnessed from the outside.
 
 import type { OrphanReport } from "./api";
 
@@ -19,7 +19,7 @@ export interface SeenFork {
   height: number;
   status: string;
   branchLen: number;
-  /** When THIS APP first saw it — getchaintips carries no timestamps. */
+  /** When THIS APP first saw it, getchaintips carries no timestamps. */
   firstSeen: number;
 }
 
@@ -67,13 +67,13 @@ export function mergeHealth(report: OrphanReport, prev = loadHealth()): ChainHea
   }
   // The window this rate is measured over.
   //
-  // Getting this wrong cries wolf. The node hands us every fork it remembers —
-  // a whole batch at once on the first read — but those happened over ITS
+  // Getting this wrong cries wolf. The node hands us every fork it remembers , 
+  // a whole batch at once on the first read, but those happened over ITS
   // history, not ours. Starting our window at the current tip would divide a
   // pile of inherited forks by a handful of freshly-watched blocks and report
   // something like 6%, tripping the "elevated" warning on a perfectly healthy
   // chain. So seed the window with the node's own span (tip back to its oldest
-  // known fork) and never let it move down afterwards — a resyncing node would
+  // known fork) and never let it move down afterwards, a resyncing node would
   // otherwise drag it toward genesis and bury a real problem in a huge divisor.
   const seed = report.span > 0 ? report.tip - report.span : report.tip;
   const forks = [...byHeight.values()].sort((a, b) => b.height - a.height);
@@ -124,13 +124,13 @@ export function healthStats(s: ChainHealthStore): HealthStats {
   for (const f of s.forks) hist.set(f.branchLen, (hist.get(f.branchLen) ?? 0) + 1);
 
   let verdict: Verdict = "normal";
-  let verdictText = "Normal — short races between stakers, which is how a fast chain behaves.";
+  let verdictText = "Normal, short races between stakers, which is how a fast chain behaves.";
   if (observedBlocks < MIN_BLOCKS) {
     verdict = "unknown";
     verdictText = "Not enough observed yet to judge. Leave the wallet running and this fills in.";
   } else if (deepest >= 6) {
     verdict = "serious";
-    verdictText = "A fork 6+ blocks deep was seen. That is well beyond normal — worth investigating.";
+    verdictText = "A fork 6+ blocks deep was seen. That is well beyond normal, worth investigating.";
   } else if (deepest >= 3) {
     verdict = "watch";
     verdictText = "Forks deeper than a single block have appeared. Worth keeping an eye on.";

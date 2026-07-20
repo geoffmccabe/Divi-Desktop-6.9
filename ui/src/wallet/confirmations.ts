@@ -9,7 +9,7 @@
 
 export type ConfState = "orphaned" | "conflicted" | "mempool" | "counting" | "confirmed";
 
-// Past this depth we stop counting and simply say "confirmed" — for every kind
+// Past this depth we stop counting and simply say "confirmed", for every kind
 // of transaction alike. Counting to 500,000 is noise, not information.
 export const CONFIRMED_AT = 10;
 
@@ -26,8 +26,8 @@ export function confDisplay(confirmations: number, kind?: string): ConfDisplay {
   }
   if (confirmations < 0) {
     return kind === "stake"
-      ? { state: "orphaned", text: "orphaned — this block lost the race", settled: false }
-      : { state: "conflicted", text: "conflicted — not in the chain", settled: false };
+      ? { state: "orphaned", text: "orphaned, this block lost the race", settled: false }
+      : { state: "conflicted", text: "conflicted, not in the chain", settled: false };
   }
   if (confirmations === 0) {
     return { state: "mempool", text: "Unconfirmed", settled: false };
@@ -36,7 +36,7 @@ export function confDisplay(confirmations: number, kind?: string): ConfDisplay {
     return { state: "confirmed", text: "confirmed", settled: true };
   }
   // A transaction's own block counts as zero, so the number reads as "blocks
-  // built on top of it" — 0 the moment it lands, 1 after the next block.
+  // built on top of it", 0 the moment it lands, 1 after the next block.
   const n = confirmations - 1;
   return { state: "counting", text: n === 1 ? "1 confirmation" : `${n} confirmations`, settled: true };
 }

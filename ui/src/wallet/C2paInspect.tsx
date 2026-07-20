@@ -1,18 +1,20 @@
 import { useRef, useState } from "react";
-import { c2paInspect, type C2paSummary } from "./api";
+import { c2paInspect, openUrl, type C2paSummary } from "./api";
 
-// Reads C2PA "Content Credentials" out of a file — the provenance record that
+// Reads C2PA "Content Credentials" out of a file: the provenance record that
 // cameras and editors like Photoshop can attach, saying who made an image and
 // what was done to it.
 //
 // Deliberate limits, kept visible in the wording:
 //   * We READ credentials. We don't create or sign them, and nothing here makes
-//     Divi a "C2PA compliant" product — that's a formal listing for tools that
-//     GENERATE credentials.
+//     Divi a "C2PA compliant" product. Compliance is a formal listing for tools
+//     that GENERATE credentials.
 //   * The library is built without remote-manifest fetching, so opening a file
 //     never touches the network. Everything shown comes out of the file itself.
 //   * A valid credential means the file matches what the signer claimed. It does
 //     not mean the picture is true.
+//
+// NOTE: no em-dashes in any user-facing string here. House rule.
 
 const prettyLabel = (l: string) => {
   if (l.startsWith("c2pa.")) return l.slice(5).replace(/[._]/g, " ");
@@ -20,19 +22,41 @@ const prettyLabel = (l: string) => {
   return l;
 };
 
-// The assertion labels that actually matter to a person looking at a photo.
 // Matched by PREFIX: real labels carry a version suffix (the reference sample
 // uses "c2pa.actions.v2"), so exact-match lookups silently miss the assertion
-// that matters most — the record of what was done to the file.
+// that matters most, the record of what was done to the file.
 const NOTABLE: Array<[string, string]> = [
   ["c2pa.actions", "Records what was done to the file"],
   ["c2pa.training-mining", "States whether AI training is allowed"],
   ["c2pa.ai_generative_training", "Mentions generative AI training"],
   ["c2pa.hash", "Binds the credential to these exact bytes"],
   ["stds.schema-org", "Standard descriptive metadata"],
-  ["stds.exif", "Camera/EXIF details"],
+  ["stds.exif", "Camera and EXIF details"],
 ];
 const noteFor = (label: string) => NOTABLE.find(([k]) => label.startsWith(k))?.[1];
+
+const LINKS: Array<[string, string, string]> = [
+  [
+    "contentcredentials.org",
+    "https://contentcredentials.org/",
+    "The official site. Explains Content Credentials and has a free web app that can add them to your own files.",
+  ],
+  [
+    "Verify a file online",
+    "https://contentcredentials.org/verify",
+    "Adobe's public checker. Useful as a second opinion against what this panel says.",
+  ],
+  [
+    "Adobe Content Authenticity",
+    "https://helpx.adobe.com/creative-cloud/help/content-credentials.html",
+    "How to switch Content Credentials on in Photoshop and Lightroom.",
+  ],
+  [
+    "The C2PA standard",
+    "https://c2pa.org/",
+    "The technical standard itself, and the list of tools that have been formally certified to issue credentials.",
+  ],
+];
 
 export function C2paInspect() {
   const [busy, setBusy] = useState(false);
@@ -40,6 +64,7 @@ export function C2paInspect() {
   const [name, setName] = useState<string | null>(null);
   const [res, setRes] = useState<C2paSummary | null>(null);
   const [showRaw, setShowRaw] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const pick = async (f: File) => {
@@ -59,16 +84,68 @@ export function C2paInspect() {
 
   const state = res?.state ?? "";
   // The SDK's own words: Trusted > Valid > Invalid. "Valid" means the maths
-  // checks out but we don't recognise the signer — a real and separate thing.
+  // checks out but we don't recognise the signer, which is a separate thing.
   const good = state === "Trusted";
   const okish = state === "Valid";
 
   return (
     <div className="poe-pane">
-      <p className="wl-note" style={{ marginBottom: 10 }}>
-        Some cameras and editors attach <strong>Content Credentials</strong> — a signed record of who made a file and
-        what was done to it. Drop one in to read it. The file stays on your computer.
+      <p className="wl-note" style={{ marginBottom: 4 }}>
+        <strong>Content Credentials</strong> are a signed label attached inside a file, saying who made it and what was
+        done to it. Some cameras add them at the moment of capture, and editors like Photoshop can add them as you
+        work. They use an open standard called <strong>C2PA</strong>, backed by Adobe, Microsoft, the BBC and others.
       </p>
+      <p className="wl-note" style={{ marginBottom: 10 }}>
+        Divi <strong>reads</strong> them. Pair one with a Divi timestamp and you cover both halves of the story: the
+        credential says who made a file and how, and your timestamp independently proves it existed by a certain
+        moment.
+      </p>
+
+      <button
+        type="button"
+        className="wl-link"
+        style={{ fontSize: "0.72rem", marginBottom: 10 }}
+        onClick={() => setShowHelp((v) => !v)}
+      >
+        {showHelp ? "Hide" : "How do I get Content Credentials on my own work?"}
+      </button>
+
+      {showHelp && (
+        <div className="ts-proof" style={{ marginBottom: 12 }}>
+          <div className="ts-proof-title">Adding credentials to your own files</div>
+          <p style={{ fontSize: "0.75rem", marginTop: 6 }}>
+            You don't apply for these personally, and there's nothing to buy. Credentials are issued by the
+            <strong> tool</strong> you create with, so you get them by using a tool that supports the standard:
+          </p>
+          <ul style={{ fontSize: "0.75rem", paddingLeft: 18, margin: "6px 0" }}>
+            <li>
+              <strong>Photoshop and Lightroom.</strong> Turn on Content Credentials in the app and they attach as you
+              export.
+            </li>
+            <li>
+              <strong>The free web app</strong> at contentcredentials.org, which adds them to files you upload.
+            </li>
+            <li>
+              <strong>Certain cameras</strong> (Leica, Sony and Nikon models) sign photographs the instant they are
+              taken, which is the strongest form.
+            </li>
+          </ul>
+          <p style={{ fontSize: "0.75rem" }}>
+            Only the software vendor can be formally certified, not you. That certification is what decides whether a
+            signer shows as recognised below, or merely valid.
+          </p>
+          <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+            {LINKS.map(([label, url, why]) => (
+              <div key={url}>
+                <button type="button" className="wl-link" style={{ fontSize: "0.75rem" }} onClick={() => openUrl(url)}>
+                  {label}
+                </button>
+                <div className="wl-note" style={{ fontSize: "0.68rem" }}>{why}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <input
         ref={inputRef}
@@ -80,7 +157,7 @@ export function C2paInspect() {
         }}
       />
       <button type="button" className="wl-btn" disabled={busy} onClick={() => inputRef.current?.click()}>
-        {busy ? "Reading…" : "Choose a file"}
+        {busy ? "Reading…" : "Choose a file to check"}
       </button>
       {name && <div className="wl-note" style={{ marginTop: 6 }}>{name}</div>}
       {err && <p className="wl-err">{err}</p>}
@@ -89,25 +166,27 @@ export function C2paInspect() {
         <div className="ts-proof" style={{ marginTop: 12 }}>
           <div className="ts-proof-title">No Content Credentials</div>
           <div>
-            This file doesn't carry any. That isn't a problem — most files don't. It simply means there's no signed
-            record of where it came from.
+            This file doesn't carry any. That isn't a problem, and most files don't. It simply means there's no signed
+            record of where it came from. A Divi timestamp still proves when it existed.
           </div>
         </div>
       )}
 
       {res && res.present && (
-        <div
-          className={"ts-proof " + (good ? "ts-proof-ok" : okish ? "" : "ts-proof-bad")}
-          style={{ marginTop: 12 }}
-        >
+        <div className={"ts-proof " + (good ? "ts-proof-ok" : okish ? "" : "ts-proof-bad")} style={{ marginTop: 12 }}>
           <div className="ts-proof-title">
-            {good ? "✓ Credentials valid, signer recognised" : okish ? "Credentials valid — signer unknown" : "✗ Credentials failed validation"}
+            {good
+              ? "✓ Credentials valid, signer recognised"
+              : okish
+                ? "Credentials valid, signer not recognised"
+                : "✗ Credentials failed validation"}
           </div>
 
           {okish && (
             <div className="wl-note">
-              The signature and the file match, but this signer isn't on the official C2PA trust list — so we can't
-              vouch for who they are.
+              The signature matches the file, so nothing has been altered since signing. But this signer isn't on the
+              official C2PA list of certified issuers, so we can't confirm who they are. That is common for files
+              signed with test or self-issued certificates.
             </div>
           )}
 
@@ -119,9 +198,7 @@ export function C2paInspect() {
             {res.ingredients > 0 && (
               <div><strong>Built from:</strong> {res.ingredients} earlier file{res.ingredients === 1 ? "" : "s"}</div>
             )}
-            {res.diviTxid && (
-              <div><strong>Divi proof:</strong> <code>{res.diviTxid.slice(0, 16)}…</code></div>
-            )}
+            {res.diviTxid && <div><strong>Divi proof:</strong> <code>{res.diviTxid.slice(0, 16)}…</code></div>}
           </div>
 
           {res.assertions.length > 0 && (
@@ -131,7 +208,7 @@ export function C2paInspect() {
                 {res.assertions.map((a) => (
                   <li key={a}>
                     {prettyLabel(a)}
-                    {noteFor(a) && <span className="wl-note"> — {noteFor(a)}</span>}
+                    {noteFor(a) && <span className="wl-note"> ({noteFor(a)})</span>}
                   </li>
                 ))}
               </ul>
@@ -173,9 +250,9 @@ export function C2paInspect() {
       )}
 
       <p className="wl-note" style={{ marginTop: 12, fontSize: "0.68rem", opacity: 0.75 }}>
-        Valid credentials mean the file hasn't changed since it was signed and the signer is who they say. They don't
-        make the content true — and a file with no credentials isn't suspicious, just unlabelled. Divi reads these; it
-        doesn't issue them.
+        Valid credentials mean a file hasn't changed since it was signed and the signer is who they claim. They don't
+        make the content true, and a file without them isn't suspicious, just unlabelled. Your file is read on this
+        computer only and never uploaded.
       </p>
     </div>
   );
