@@ -172,6 +172,9 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const probeRef = useRef<Map<string, ProbeState>>(new Map());
   const lastProbe = useRef(0); // last re-ping time (re-ping every 60s)
   const arcFx = useRef<Map<string, ArcFx>>(new Map()); // per-peer flex + colour state
+  // Clicking our own node toggles "network only": hide the purple peer layer and
+  // brighten the blue network so it isn't covered up.
+  const networkOnlyRef = useRef(false);
   // The node currently wearing the "stake winner" sunglasses. NOTE: the real
   // winner (an address) can't be mapped to a node/IP, so for now this rotates to
   // a peer each block-interval as a visual placeholder.
@@ -371,7 +374,22 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       viewRef.current.auto = false;
       setHover(null);
     };
-    const onUp = () => { dragging = false; };
+    const onUp = (e: MouseEvent) => {
+      const moved = Math.hypot(e.clientX - dsx, e.clientY - dsy);
+      dragging = false;
+      // A click (not a pan) on our own node toggles the network-only view.
+      if (moved < 5) {
+        const rect = wrap.getBoundingClientRect();
+        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        let best: HoverPoint | null = null;
+        let bestD = 18 * 18;
+        for (const pt of pointsRef.current) {
+          const d = (pt.x - mx) ** 2 + (pt.y - my) ** 2;
+          if (d < bestD) { bestD = d; best = pt; }
+        }
+        if (best && best.title === "Your node") networkOnlyRef.current = !networkOnlyRef.current;
+      }
+    };
     // Scroll wheel zooms about the cursor; double-click re-enables auto-fit.
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -423,6 +441,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       const s = snapRef.current;
       const g = geosRef.current;
       const now = performance.now();
+      const netOnly = networkOnlyRef.current;
       const BLUE = (a: number) => `hsla(210, 85%, 62%, ${a})`;
       const GREY = (a: number) => `hsla(215, 14%, 58%, ${a})`; // remembered but not verified-live now
       const USER_IS_WINNER = userWonRecently(); // deck out our node right after a win
@@ -589,7 +608,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             ctx.moveTo(prev[0], prev[1]);
             ctx.lineTo(cur[0], cur[1]);
             // held inside 10%–50%: a slow breath, lifted where the dot is
-            ctx.strokeStyle = BLUE(0.1 + 0.4 * Math.max(0.35 * wave, glow));
+            // Dimmed 50% normally (too bright); back to full in network-only view.
+            ctx.strokeStyle = BLUE((0.1 + 0.4 * Math.max(0.35 * wave, glow)) * (netOnly ? 1 : 0.5));
             ctx.stroke();
             prev = cur;
           }
@@ -716,7 +736,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       // the green probing arcs (so they don't overlap), revealed one-by-one. Each
       // carries a slow, per-peer desynced pulse travelling peer→you — continual
       // communication, much slower than the probes, NOT a synchronised burst.
-      if (s && selfXY) {
+      // Hidden entirely in network-only view so the blue network isn't covered.
+      if (!netOnly && s && selfXY) {
         for (const p of s.peers) {
           const pg = g[p.ip];
           if (!pg) continue;
@@ -828,7 +849,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           clusters.set(k, c);
         }
         for (const c of clusters.values()) {
-          const r = 3 + Math.min(9, Math.log2(c.n + 1) * 3);
+          const r = (3 + Math.min(9, Math.log2(c.n + 1) * 3)) * (netOnly ? 0.5 : 1);
           const col = c.inbound > c.n / 2 ? inbound : outbound;
           ctx.beginPath();
           ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
