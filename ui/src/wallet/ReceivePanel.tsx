@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { addressQr, newReceiveAddress } from "./api";
+import { useEffect, useState } from "react";
+import { addressQr, newReceiveAddress, walletAddresses } from "./api";
 import { playSound } from "../sound";
 
 export function ReceivePanel() {
@@ -9,7 +9,26 @@ export function ReceivePanel() {
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function generate() {
+  // Show the wallet's standard (main) address right away — no click needed.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const list = await walletAddresses();
+        const main = list.find((a) => a.isMain) ?? list[0];
+        if (!alive || !main) return;
+        setAddr(main.address);
+        setQr(await addressQr(main.address));
+      } catch {
+        /* leave empty; the fresh-address button still works */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function freshAddress() {
     setBusy(true);
     setErr(null);
     try {
@@ -37,10 +56,7 @@ export function ReceivePanel() {
   if (!addr) {
     return (
       <div className="receive">
-        <p className="wl-note">Generate an address to receive DIVI. A fresh one each time keeps things private.</p>
-        <button className="wl-btn wl-btn-primary" disabled={busy} onClick={generate}>
-          {busy ? "Generating…" : "Get a receiving address"}
-        </button>
+        <p className="wl-note">Loading your receiving address…</p>
         {err && <p className="wl-err">{err}</p>}
       </div>
     );
@@ -55,9 +71,11 @@ export function ReceivePanel() {
           {copied ? "Copied ✓" : "Copy"}
         </button>
       </div>
-      <button className="wl-link" disabled={busy} onClick={generate}>
-        New address
+      <p className="wl-note">Your main address. For more privacy you can use a fresh one for each payment.</p>
+      <button className="wl-link" disabled={busy} onClick={freshAddress}>
+        {busy ? "Generating…" : "Use a new address"}
       </button>
+      {err && <p className="wl-err">{err}</p>}
     </div>
   );
 }
