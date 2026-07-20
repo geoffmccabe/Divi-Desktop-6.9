@@ -142,29 +142,28 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
     let subtype = u8::from_str_radix(&p[head.len()..head.len() + 2], 16).ok()?;
     let body = &p[head.len() + 2..];
     match subtype {
-        SUB_MINT if body.len() >= 130 => {
+        // Lengths are EXACT (no trailing bytes) so the wallet and the indexer
+        // agree on validity — divergence is the one thing the spec forbids (§8).
+        SUB_MINT if body.len() == 130 || body.len() == 194 => {
             let flags = u8::from_str_radix(&body[128..130], 16).ok()?;
-            let thumb_ptr = if flags & FLAG_HAS_THUMB != 0 {
-                if body.len() < 194 {
-                    return None; // flag set but the 32-byte thumb id is missing
-                }
-                Some(body[130..194].to_string())
-            } else {
-                None
-            };
+            let has_thumb = flags & FLAG_HAS_THUMB != 0;
+            // the HAS_THUMB flag and the record length must match exactly
+            if has_thumb != (body.len() == 194) {
+                return None;
+            }
             Some(NfdRecord::Mint {
                 arweave_ptr: body[0..64].to_string(),
                 content_hash: body[64..128].to_string(),
                 flags,
-                thumb_ptr,
+                thumb_ptr: if has_thumb { Some(body[130..194].to_string()) } else { None },
             })
         }
-        SUB_TRANSFER if body.len() >= 168 => Some(NfdRecord::Transfer {
+        SUB_TRANSFER if body.len() == 168 => Some(NfdRecord::Transfer {
             mint_txid: body[0..64].to_string(),
             new_owner: body[64..104].to_string(), // 20 bytes
             wrapkey_ptr: body[104..168].to_string(),
         }),
-        SUB_KEYANNOUNCE if body.len() >= 64 => Some(NfdRecord::KeyAnnounce {
+        SUB_KEYANNOUNCE if body.len() == 64 => Some(NfdRecord::KeyAnnounce {
             enc_pubkey: body[0..64].to_string(),
         }),
         _ => None,
@@ -202,6 +201,17 @@ mod tests {
                 thumb_ptr: Some(t),
             })
         );
+    }
+
+    #[test]
+    fn trailing_bytes_are_rejected() {
+        let a = "aa".repeat(32);
+        let h = "bb".repeat(32);
+        // a valid mint payload with one extra byte must be rejected (matches indexer)
+        let padded = format!("{}00", encode_mint(&a, &h, FLAG_ENCRYPTED, None).unwrap());
+        assert!(parse(&op_meta_script(&padded)).is_none());
+        let ka = format!("{}00", encode_key_announce(&"cd".repeat(32)).unwrap());
+        assert!(parse(&op_meta_script(&ka)).is_none());
     }
 
     #[test]

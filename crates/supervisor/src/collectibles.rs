@@ -155,8 +155,10 @@ pub fn mint(
     let arweave_ptr = storage.put(&bundle)?;
 
     // Optional public preview: uploaded UNENCRYPTED with its image content type.
+    // Non-fatal — the preview is optional, and the content bundle is already
+    // stored, so a failed thumbnail must not abort (and orphan) the mint.
     let thumb_ptr = match thumbnail {
-        Some((bytes, content_type)) => Some(storage.put_public(bytes, content_type)?),
+        Some((bytes, content_type)) => storage.put_public(bytes, content_type).ok(),
         None => None,
     };
 

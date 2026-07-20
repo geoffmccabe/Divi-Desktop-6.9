@@ -64,11 +64,15 @@ app.post('/upload', async (req, res) => {
   if (!Buffer.isBuffer(data) || data.length === 0) {
     return res.status(400).json({ error: 'empty or invalid body' });
   }
+  // Whitelist content types. Thumbnails are WebP-only and bundles are opaque;
+  // anything else (e.g. image/svg+xml, text/html) could be served by a gateway
+  // as executable content and run script in a viewer — reject it.
+  const ALLOWED_TYPES = new Set(['application/octet-stream', 'image/webp']);
+  const contentType = req.get('content-type') || 'application/octet-stream';
+  if (!ALLOWED_TYPES.has(contentType)) {
+    return res.status(415).json({ error: 'unsupported content-type' });
+  }
   try {
-    // Tag the Arweave upload with the caller's content type, so a gateway serves
-    // it correctly: opaque for the encrypted bundle, the real image type for a
-    // public thumbnail.
-    const contentType = req.get('content-type') || 'application/octet-stream';
     const { id } = await turbo.uploadFile({
       fileStreamFactory: () => Readable.from(data),
       fileSizeFactory: () => data.length,

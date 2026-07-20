@@ -46,23 +46,22 @@ function fileToBase64(file: File): Promise<string> {
 // null if the file isn't an image / can't be processed.
 async function makeThumbnail(file: File): Promise<{ b64: string; mime: string; dataUrl: string } | null> {
   if (!file.type.startsWith("image/")) return null;
-  const url = URL.createObjectURL(file);
   try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const i = new Image();
-      i.onload = () => resolve(i);
-      i.onerror = () => reject(new Error("image load failed"));
-      i.src = url;
-    });
-    const scale = Math.min(1, THUMB_MAX_PX / Math.max(img.width, img.height));
-    const w = Math.max(1, Math.round(img.width * scale));
-    const h = Math.max(1, Math.round(img.height * scale));
+    // createImageBitmap honours EXIF orientation, so photos aren't sideways.
+    const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const scale = Math.min(1, THUMB_MAX_PX / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * scale));
+    const h = Math.max(1, Math.round(bmp.height * scale));
     const canvas = document.createElement("canvas");
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return null;
-    ctx.drawImage(img, 0, 0, w, h);
+    if (!ctx) {
+      bmp.close();
+      return null;
+    }
+    ctx.drawImage(bmp, 0, 0, w, h);
+    bmp.close();
     // WebP only — never emit any other format. If this webview can't encode WebP,
     // make no thumbnail at all rather than a JPEG/PNG.
     const dataUrl = canvas.toDataURL("image/webp", 0.82);
@@ -71,8 +70,6 @@ async function makeThumbnail(file: File): Promise<{ b64: string; mime: string; d
     return { mime: "image/webp", b64: dataUrl.slice(comma + 1), dataUrl };
   } catch {
     return null;
-  } finally {
-    URL.revokeObjectURL(url);
   }
 }
 
@@ -146,9 +143,10 @@ export function CollectiblesPanel() {
         <label className="coll-check">
           <input type="checkbox" checked={withThumb} onChange={(e) => setWithThumb(e.target.checked)} />
           <span>
-            <strong>Publish a public preview</strong> — a small image (≤{THUMB_MAX_PX}px) anyone can see, so
-            your collectible can be shown and shared. Your full-quality file stays encrypted; only the owner
-            unlocks it. (Applies to image files.)
+            <strong>Publish a public preview</strong> — a small copy (≤{THUMB_MAX_PX}px, WebP) that anyone can
+            see, so your collectible can be shown and shared. This reveals a <em>low-resolution</em> version
+            publicly; your full-quality original stays encrypted and only the owner unlocks it. (Images only —
+            other files mint without a preview.)
           </span>
         </label>
 
