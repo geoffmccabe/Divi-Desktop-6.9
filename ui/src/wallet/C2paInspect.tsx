@@ -16,16 +16,23 @@ import { c2paInspect, type C2paSummary } from "./api";
 
 const prettyLabel = (l: string) => {
   if (l.startsWith("c2pa.")) return l.slice(5).replace(/[._]/g, " ");
+  if (l.startsWith("stds.schema-org.")) return l.slice(16);
   return l;
 };
 
 // The assertion labels that actually matter to a person looking at a photo.
-const NOTABLE: Record<string, string> = {
-  "c2pa.actions": "Records what was done to the file",
-  "c2pa.training-mining": "States whether AI training is allowed",
-  "c2pa.ai_generative_training": "Mentions generative AI training",
-  "c2pa.hash.data": "Binds the credential to these exact bytes",
-};
+// Matched by PREFIX: real labels carry a version suffix (the reference sample
+// uses "c2pa.actions.v2"), so exact-match lookups silently miss the assertion
+// that matters most — the record of what was done to the file.
+const NOTABLE: Array<[string, string]> = [
+  ["c2pa.actions", "Records what was done to the file"],
+  ["c2pa.training-mining", "States whether AI training is allowed"],
+  ["c2pa.ai_generative_training", "Mentions generative AI training"],
+  ["c2pa.hash", "Binds the credential to these exact bytes"],
+  ["stds.schema-org", "Standard descriptive metadata"],
+  ["stds.exif", "Camera/EXIF details"],
+];
+const noteFor = (label: string) => NOTABLE.find(([k]) => label.startsWith(k))?.[1];
 
 export function C2paInspect() {
   const [busy, setBusy] = useState(false);
@@ -124,7 +131,7 @@ export function C2paInspect() {
                 {res.assertions.map((a) => (
                   <li key={a}>
                     {prettyLabel(a)}
-                    {NOTABLE[a] && <span className="wl-note"> — {NOTABLE[a]}</span>}
+                    {noteFor(a) && <span className="wl-note"> — {noteFor(a)}</span>}
                   </li>
                 ))}
               </ul>
