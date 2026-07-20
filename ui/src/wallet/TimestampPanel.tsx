@@ -7,7 +7,7 @@ import { PoeInfoModal } from "./PoeInfoModal";
 import { loadPoeHistory, type PoeRecord } from "./poeHistory";
 
 // Proof-of-Existence. Three tabs: make a proof, review the ones you've made,
-// and check one. The file NEVER leaves the machine — it's hashed in the browser
+// and check one. The file NEVER leaves the machine: it's hashed in the browser
 // and only the 32-byte fingerprint is written to the chain, so nobody can read
 // the file from the blockchain, only confirm a hash matches.
 
@@ -34,7 +34,7 @@ export function TimestampPanel() {
       <header className="poe-intro">
         <div className="poe-intro-text">
           <h3 className="ts-head">
-            Proof of Existence
+            PoE, Why It Matters
             <button
               className="poe-help"
               onClick={() => setInfo(true)}
@@ -44,10 +44,14 @@ export function TimestampPanel() {
               ?
             </button>
           </h3>
+          {/* The heading used to repeat the panel title word for word, which
+              told the user nothing twice. This says why they should care. */}
           <p className="wl-note">
-            Prove a file existed on a certain date — a signed contract, a photo of damage, a piece
-            of artwork — without revealing the file to anyone. Your file stays on this computer;
-            only its fingerprint goes on the Divi blockchain, and the block’s time is the proof.
+            Anyone can now generate a convincing fake, so the question has shifted from “is this
+            real?” to “who had it first?”. Timestamp your work the day you make it and no
+            imitation, however good, can ever show an earlier date. A contract, a photo of damage,
+            a piece of art: your file stays on this computer, only its fingerprint goes on the Divi
+            blockchain, and the block’s time is the proof.
           </p>
         </div>
       </header>
@@ -90,7 +94,7 @@ export function TimestampPanel() {
       <section className="ts-section">
         {/* Create stays MOUNTED and is merely hidden, so the chosen file,
             its preview and any in-flight confirmation survive a trip to
-            another tab. Unmounting it would throw the file away — the browser
+            another tab. Unmounting it would throw the file away, and the browser
             gives no way to re-open one without the user picking it again.
             `contents` keeps the wrapper invisible to the flex layout.
             (App restart still clears it, which is the intended behaviour.) */}
