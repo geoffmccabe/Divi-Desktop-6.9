@@ -29,7 +29,7 @@ fn main() {
     // read the on-chain record back and check it matches
     let rec = collectibles::read_record(&cfg, &draft.txid).expect("read").expect("a record");
     match &rec {
-        NfdRecord::Mint { arweave_ptr, content_hash, flags, thumb_ptr } => {
+        NfdRecord::Mint { arweave_ptr, content_hash, flags, thumb_ptr, .. } => {
             println!("on-chain mint   = ptr={arweave_ptr} hash={content_hash} flags={flags} thumb={thumb_ptr:?}");
             assert_eq!(arweave_ptr, &draft.arweave_ptr);
             assert_eq!(content_hash, &draft.content_hash);

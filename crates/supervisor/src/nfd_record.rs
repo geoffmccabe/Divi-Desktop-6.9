@@ -9,20 +9,35 @@ const VER_TYPE: &str = "0102"; // version 0x01 | type 0x02 (NFD)
 const SUB_MINT: u8 = 0x01;
 const SUB_TRANSFER: u8 = 0x02;
 const SUB_KEYANNOUNCE: u8 = 0x03;
+const SUB_COLLECTION: u8 = 0x04;
 
 /// Mint flag bits.
 pub const FLAG_ENCRYPTED: u8 = 0x01;
 /// The mint carries an unencrypted public thumbnail (its Arweave id is appended).
 pub const FLAG_HAS_THUMB: u8 = 0x02;
+/// The mint belongs to a collection (collection_id + traits_ptr are appended).
+pub const FLAG_IN_COLLECTION: u8 = 0x04;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum NfdRecord {
     /// First appearance of an NFD. arweave_ptr -> encrypted content bundle;
-    /// content_hash is SHA-256 of salt‖plaintext. `thumb_ptr` (when the creator
-    /// opted in) is the Arweave id of an *unencrypted* public preview image.
-    Mint { arweave_ptr: String, content_hash: String, flags: u8, thumb_ptr: Option<String> },
+    /// content_hash is SHA-256 of salt‖plaintext. `thumb_ptr` (opt-in) is the
+    /// Arweave id of a public preview image. `collection_id` + `traits_ptr` are
+    /// present when the mint is part of a collection (traits_ptr -> public
+    /// ERC-721-style attributes JSON).
+    Mint {
+        arweave_ptr: String,
+        content_hash: String,
+        flags: u8,
+        thumb_ptr: Option<String>,
+        collection_id: Option<String>,
+        traits_ptr: Option<String>,
+    },
     /// Hand an NFD to new_owner; wrapkey_ptr -> the content key re-wrapped to them.
     Transfer { mint_txid: String, new_owner: String, wrapkey_ptr: String },
+    /// Create a collection: `max_supply` (0 = uncapped), `meta_ptr` -> public
+    /// collection metadata JSON (name, description, banner). Creator = the sender.
+    CollectionCreate { max_supply: u32, meta_ptr: String },
     /// Publish an address's derived X25519 encryption pubkey so it can receive.
     KeyAnnounce { enc_pubkey: String },
 }
@@ -46,13 +61,15 @@ pub fn op_meta_script(payload_hex: &str) -> String {
     }
 }
 
-/// Encode a MINT. The HAS_THUMB flag is derived from `thumb_ptr` presence, so the
-/// flag and the appended pointer can never disagree.
+/// Encode a MINT. The HAS_THUMB / IN_COLLECTION flags are derived from the
+/// optional pointers, so flags and appended data can never disagree. Optional
+/// fields are appended in flag-bit order: thumb (bit1), then collection (bit2).
 pub fn encode_mint(
     arweave_ptr: &str,
     content_hash: &str,
     flags: u8,
     thumb_ptr: Option<&str>,
+    collection: Option<(&str, &str)>, // (collection_id, traits_ptr)
 ) -> Result<String, String> {
     if !is_hex_len(arweave_ptr, 32) {
         return Err("arweave_ptr must be 32 bytes hex".into());
@@ -60,12 +77,18 @@ pub fn encode_mint(
     if !is_hex_len(content_hash, 32) {
         return Err("content_hash must be 32 bytes hex".into());
     }
-    let mut flags = flags & !FLAG_HAS_THUMB;
+    let mut flags = flags & !(FLAG_HAS_THUMB | FLAG_IN_COLLECTION);
     if let Some(t) = thumb_ptr {
         if !is_hex_len(t, 32) {
             return Err("thumb_ptr must be 32 bytes hex".into());
         }
         flags |= FLAG_HAS_THUMB;
+    }
+    if let Some((cid, tp)) = collection {
+        if !is_hex_len(cid, 32) || !is_hex_len(tp, 32) {
+            return Err("collection_id and traits_ptr must be 32 bytes hex".into());
+        }
+        flags |= FLAG_IN_COLLECTION;
     }
     let mut out = format!(
         "{}{}{}{:02x}",
@@ -77,7 +100,20 @@ pub fn encode_mint(
     if let Some(t) = thumb_ptr {
         out.push_str(&t.to_lowercase());
     }
+    if let Some((cid, tp)) = collection {
+        out.push_str(&cid.to_lowercase());
+        out.push_str(&tp.to_lowercase());
+    }
     Ok(out)
+}
+
+/// Encode a COLLECTION-CREATE. `max_supply` 0 = uncapped; `meta_ptr` -> public
+/// collection metadata JSON.
+pub fn encode_collection_create(max_supply: u32, meta_ptr: &str) -> Result<String, String> {
+    if !is_hex_len(meta_ptr, 32) {
+        return Err("meta_ptr must be 32 bytes hex".into());
+    }
+    Ok(format!("{}{:08x}{}", prefix(SUB_COLLECTION), max_supply, meta_ptr.to_lowercase()))
 }
 
 pub fn encode_transfer(mint_txid: &str, new_owner: &str, wrapkey_ptr: &str) -> Result<String, String> {
@@ -144,18 +180,36 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
     match subtype {
         // Lengths are EXACT (no trailing bytes) so the wallet and the indexer
         // agree on validity — divergence is the one thing the spec forbids (§8).
-        SUB_MINT if body.len() == 130 || body.len() == 194 => {
+        // base 130 hex (arweave 64 | content 64 | flags 2), then optional fields
+        // in flag order: thumb (+64), collection_id+traits (+128). EXACT length.
+        SUB_MINT if body.len() >= 130 => {
             let flags = u8::from_str_radix(&body[128..130], 16).ok()?;
             let has_thumb = flags & FLAG_HAS_THUMB != 0;
-            // the HAS_THUMB flag and the record length must match exactly
-            if has_thumb != (body.len() == 194) {
+            let in_coll = flags & FLAG_IN_COLLECTION != 0;
+            let expected = 130 + if has_thumb { 64 } else { 0 } + if in_coll { 128 } else { 0 };
+            if body.len() != expected {
                 return None;
             }
+            let mut off = 130;
+            let thumb_ptr = if has_thumb {
+                let t = body[off..off + 64].to_string();
+                off += 64;
+                Some(t)
+            } else {
+                None
+            };
+            let (collection_id, traits_ptr) = if in_coll {
+                (Some(body[off..off + 64].to_string()), Some(body[off + 64..off + 128].to_string()))
+            } else {
+                (None, None)
+            };
             Some(NfdRecord::Mint {
                 arweave_ptr: body[0..64].to_string(),
                 content_hash: body[64..128].to_string(),
                 flags,
-                thumb_ptr: if has_thumb { Some(body[130..194].to_string()) } else { None },
+                thumb_ptr,
+                collection_id,
+                traits_ptr,
             })
         }
         SUB_TRANSFER if body.len() == 170 => Some(NfdRecord::Transfer {
@@ -165,6 +219,10 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
         }),
         SUB_KEYANNOUNCE if body.len() == 64 => Some(NfdRecord::KeyAnnounce {
             enc_pubkey: body[0..64].to_string(),
+        }),
+        SUB_COLLECTION if body.len() == 72 => Some(NfdRecord::CollectionCreate {
+            max_supply: u32::from_str_radix(&body[0..8], 16).ok()?,
+            meta_ptr: body[8..72].to_string(),
         }),
         _ => None,
     }
@@ -178,10 +236,17 @@ mod tests {
     fn mint_roundtrip_no_thumb() {
         let a = "aa".repeat(32);
         let h = "bb".repeat(32);
-        let script = op_meta_script(&encode_mint(&a, &h, FLAG_ENCRYPTED, None).unwrap());
+        let script = op_meta_script(&encode_mint(&a, &h, FLAG_ENCRYPTED, None, None).unwrap());
         assert_eq!(
             parse(&script),
-            Some(NfdRecord::Mint { arweave_ptr: a, content_hash: h, flags: 1, thumb_ptr: None })
+            Some(NfdRecord::Mint {
+                arweave_ptr: a,
+                content_hash: h,
+                flags: 1,
+                thumb_ptr: None,
+                collection_id: None,
+                traits_ptr: None,
+            })
         );
     }
 
@@ -191,7 +256,7 @@ mod tests {
         let h = "bb".repeat(32);
         let t = "cc".repeat(32);
         // caller passes only ENCRYPTED; HAS_THUMB is derived from the pointer
-        let script = op_meta_script(&encode_mint(&a, &h, FLAG_ENCRYPTED, Some(&t)).unwrap());
+        let script = op_meta_script(&encode_mint(&a, &h, FLAG_ENCRYPTED, Some(&t), None).unwrap());
         assert_eq!(
             parse(&script),
             Some(NfdRecord::Mint {
@@ -199,8 +264,40 @@ mod tests {
                 content_hash: h,
                 flags: FLAG_ENCRYPTED | FLAG_HAS_THUMB,
                 thumb_ptr: Some(t),
+                collection_id: None,
+                traits_ptr: None,
             })
         );
+    }
+
+    #[test]
+    fn mint_in_collection_roundtrips() {
+        let a = "aa".repeat(32);
+        let h = "bb".repeat(32);
+        let cid = "dd".repeat(32);
+        let tr = "ee".repeat(32);
+        // both thumb + collection present
+        let t = "cc".repeat(32);
+        let script =
+            op_meta_script(&encode_mint(&a, &h, FLAG_ENCRYPTED, Some(&t), Some((&cid, &tr))).unwrap());
+        assert_eq!(
+            parse(&script),
+            Some(NfdRecord::Mint {
+                arweave_ptr: a,
+                content_hash: h,
+                flags: FLAG_ENCRYPTED | FLAG_HAS_THUMB | FLAG_IN_COLLECTION,
+                thumb_ptr: Some(t),
+                collection_id: Some(cid),
+                traits_ptr: Some(tr),
+            })
+        );
+    }
+
+    #[test]
+    fn collection_create_roundtrips() {
+        let m = "ff".repeat(32);
+        let script = op_meta_script(&encode_collection_create(10_000, &m).unwrap());
+        assert_eq!(parse(&script), Some(NfdRecord::CollectionCreate { max_supply: 10_000, meta_ptr: m }));
     }
 
     #[test]
@@ -208,7 +305,7 @@ mod tests {
         let a = "aa".repeat(32);
         let h = "bb".repeat(32);
         // a valid mint payload with one extra byte must be rejected (matches indexer)
-        let padded = format!("{}00", encode_mint(&a, &h, FLAG_ENCRYPTED, None).unwrap());
+        let padded = format!("{}00", encode_mint(&a, &h, FLAG_ENCRYPTED, None, None).unwrap());
         assert!(parse(&op_meta_script(&padded)).is_none());
         let ka = format!("{}00", encode_key_announce(&"cd".repeat(32)).unwrap());
         assert!(parse(&op_meta_script(&ka)).is_none());
@@ -272,8 +369,8 @@ mod tests {
 
     #[test]
     fn encode_validates_lengths() {
-        assert!(encode_mint("short", &"bb".repeat(32), 0, None).is_err());
-        assert!(encode_mint(&"aa".repeat(32), &"bb".repeat(32), 0, Some("short")).is_err());
+        assert!(encode_mint("short", &"bb".repeat(32), 0, None, None).is_err());
+        assert!(encode_mint(&"aa".repeat(32), &"bb".repeat(32), 0, Some("short"), None).is_err());
         assert!(encode_transfer(&"11".repeat(32), &"22".repeat(32), &"33".repeat(32)).is_err()); // owner wrong len
         assert!(encode_key_announce("nope").is_err());
     }

@@ -180,8 +180,13 @@ pub fn mint(
         None => None,
     };
 
-    let record =
-        nfd_record::encode_mint(&arweave_ptr, &content_hash, nfd_record::FLAG_ENCRYPTED, thumb_ptr.as_deref())?;
+    let record = nfd_record::encode_mint(
+        &arweave_ptr,
+        &content_hash,
+        nfd_record::FLAG_ENCRYPTED,
+        thumb_ptr.as_deref(),
+        None, // standalone mint (collection minting is a separate flow)
+    )?;
     // charge the configured NFD mint fee to the treasury (disabled until set)
     let fee = crate::fees::FeeConfig::load(cfg).nfd_mint_fee();
     let txid = anchor_record(&rpc, &utxo, &record, fee.as_ref().map(|(a, f)| (a.as_str(), *f)))?;
