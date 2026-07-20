@@ -90,7 +90,7 @@ function Row({ t }: { t: Tx }) {
           <button type="button" className="icon-btn" title={copied ? "Copied!" : "Copy transaction ID"} onClick={copy}>
             <Icon name="copy" size={14} />
           </button>
-          <button type="button" className="icon-btn" title="View on block explorer" onClick={() => openUrl(explorerTxUrl(t.txid))}>
+          <button type="button" className="icon-btn" title="View in Divi Love Scan" onClick={() => openUrl(explorerTxUrl(t.txid))}>
             <Icon name="external" size={14} />
           </button>
         </span>

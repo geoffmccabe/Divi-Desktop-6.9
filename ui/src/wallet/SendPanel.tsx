@@ -117,7 +117,7 @@ export function SendPanel() {
         <p className="wl-note">Your transaction is on its way. It may take a few minutes to confirm.</p>
         {txid && (
           <button type="button" className="wl-link" onClick={() => openUrl(explorerTxUrl(txid))}>
-            View in block explorer
+            View in Divi Love Scan
           </button>
         )}
         <button type="button" className="wl-btn wl-btn-primary" onClick={reset}>

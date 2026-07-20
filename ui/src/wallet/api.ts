@@ -193,5 +193,5 @@ export interface DiviPrices {
 export const diviPrices = (currencies: string[], cmcKey: string, useCoingecko: boolean) =>
   invoke<DiviPrices>("divi_prices", { currencies, cmcKey: cmcKey || null, useCoingecko });
 
-// Divi block explorer for a transaction.
-export const explorerTxUrl = (txid: string) => `https://chainz.cryptoid.info/divi/tx.dws?${txid}.htm`;
+// Divi Love Scan (scan.divi.love) — our own block explorer — transaction page.
+export const explorerTxUrl = (txid: string) => `https://scan.divi.love/tx/${txid}`;
