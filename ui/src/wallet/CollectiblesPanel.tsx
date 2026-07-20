@@ -63,11 +63,12 @@ async function makeThumbnail(file: File): Promise<{ b64: string; mime: string; d
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     ctx.drawImage(img, 0, 0, w, h);
-    let dataUrl = canvas.toDataURL("image/webp", 0.82);
-    if (!dataUrl.startsWith("data:image/webp")) dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-    const semi = dataUrl.indexOf(";");
+    // WebP only — never emit any other format. If this webview can't encode WebP,
+    // make no thumbnail at all rather than a JPEG/PNG.
+    const dataUrl = canvas.toDataURL("image/webp", 0.82);
+    if (!dataUrl.startsWith("data:image/webp")) return null;
     const comma = dataUrl.indexOf(",");
-    return { mime: dataUrl.slice(5, semi), b64: dataUrl.slice(comma + 1), dataUrl };
+    return { mime: "image/webp", b64: dataUrl.slice(comma + 1), dataUrl };
   } catch {
     return null;
   } finally {
