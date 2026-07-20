@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { openUrl, explorerTxUrl, type Tx } from "./api";
 import { useTransactions, type TxStatus } from "./useTransactions";
 import { confDisplay } from "./confirmations";
@@ -11,6 +11,17 @@ const KIND_LABEL: Record<string, string> = {
   stake: "Stake Winner!",
   other: "Transaction",
 };
+
+// Type filters, colour-matched to how each kind reads in the rows below.
+const FILTERS: { id: string; label: string; c: string; disabled?: boolean; title?: string }[] = [
+  { id: "all", label: "All", c: "var(--muted-foreground)" },
+  { id: "stake", label: "Stakes", c: "var(--success)" }, // green
+  { id: "send", label: "Sent", c: "var(--warning)" }, // gold
+  { id: "receive", label: "Received", c: "var(--success)" }, // green
+  // Lottery wins are still lumped in with stakes at the data level, so this is
+  // greyed until the backend tags them separately.
+  { id: "lottery", label: "Lottery", c: "var(--primary)", disabled: true, title: "Coming soon — lottery wins currently appear under Stakes" },
+];
 
 function Row({ t }: { t: Tx }) {
   const [copied, setCopied] = useState(false);
@@ -118,6 +129,8 @@ function statusText(s: TxStatus, n: number): string {
 
 export function ActivityList() {
   const { txs, status, refresh } = useTransactions();
+  const [filter, setFilter] = useState("all");
+  const shown = filter === "all" ? txs : txs.filter((t) => t.kind === filter);
   const bad = status.state === "unreachable";
   const ok = status.state === "uptodate";
   const working = status.state === "loading" || status.state === "checking" || status.state === "parsing" || status.state === "syncing";
@@ -139,11 +152,28 @@ export function ActivityList() {
           <Icon name="refresh" size={15} />
         </button>
       </div>
+      <div className="tx-filters">
+        {FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            style={{ "--fc": f.c } as CSSProperties}
+            className={"tx-filter" + (filter === f.id ? " tx-filter-on" : "")}
+            disabled={f.disabled}
+            title={f.title}
+            onClick={() => setFilter(f.id)}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
       <ul className="activity">
-        {txs.map((t, i) => (
+        {shown.map((t, i) => (
           <Row key={t.txid + i} t={t} />
         ))}
-        {ok && txs.length === 0 && <li className="wl-empty">No transactions yet.</li>}
+        {ok && shown.length === 0 && (
+          <li className="wl-empty">{filter === "all" ? "No transactions yet." : "No matching transactions."}</li>
+        )}
       </ul>
     </div>
   );

@@ -296,8 +296,9 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .conn-dot.ok { background: hsl(var(--success)); box-shadow: 0 0 8px hsl(var(--success) / 0.8); animation: none; }
 .conn-dot.bad { background: hsl(var(--destructive)); box-shadow: 0 0 8px hsl(var(--destructive) / 0.8); animation: none; }
 
-.activity-wrap { display: flex; flex-direction: column; gap: 12px; }
-.activity-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.activity-wrap { display: flex; flex-direction: column; }
+/* Up-to-date row sits well clear of the filters, which then hug the list. */
+.activity-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
 .activity-status { display: inline-flex; align-items: center; gap: 8px; font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
 .activity-status.bad { color: hsl(var(--destructive)); }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -478,14 +479,17 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .poe-help:hover { background: hsl(var(--primary) / 0.28); }
 
-.poe-tabs { display: flex; gap: 4px; width: 100%; border-bottom: 1px solid hsl(var(--border)); }
+/* Horizontal tabs matching the left sidenav's pill look. */
+.poe-tabs { display: flex; gap: 6px; width: 100%; margin-bottom: 16px; flex-wrap: wrap; }
 .poe-tab {
-  background: none; border: 0; border-bottom: 2px solid transparent;
-  padding: 8px 14px; margin-bottom: -1px; cursor: pointer;
-  color: hsl(var(--muted-foreground)); font-size: 0.86rem; font-weight: 500;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 14px; border: none; border-radius: 10px; cursor: pointer;
+  background: transparent; color: hsl(var(--muted-foreground));
+  font-size: 0.9rem; font-weight: 500;
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.poe-tab:hover { color: hsl(var(--foreground)); }
-.poe-tab-on { color: hsl(var(--primary)); border-bottom-color: hsl(var(--primary)); font-weight: 600; }
+.poe-tab:hover { background: hsl(var(--primary) / 0.3); color: hsl(var(--foreground)); }
+.poe-tab-on { background: hsl(var(--primary) / 0.18); color: hsl(var(--foreground)); font-weight: 600; }
 
 /* Cost is part of the decision, so it sits on the button itself. */
 .ts-anchor { display: inline-flex; align-items: center; gap: 10px; }
@@ -667,7 +671,9 @@ h1, h2, h3 { font-family: var(--font-heading); }
 /* Uniform status chips: same label size + same number size across all three. */
 .wl-status-chips .glass-chip { display: flex; flex-direction: column; gap: 2px; align-items: center; text-align: center; }
 .chip-label { font-size: 0.72rem; color: hsl(var(--muted-foreground)); display: inline-flex; align-items: center; gap: 4px; }
-.chip-num { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); }
+.chip-num { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); white-space: nowrap; }
+/* Block-height chip: never let its number be clipped by a transient narrow layout. */
+.wl-chip-row > .glass-chip.blk-chip { min-width: max-content; }
 .chip-num.blk-stale { color: hsl(var(--muted-foreground)); }
 .chip-label-peers { color: hsl(var(--primary)); }
 .chip-label-nodes { color: hsl(210 85% 62%); } /* blue, matches Full Network */
@@ -793,12 +799,13 @@ h1, h2, h3 { font-family: var(--font-heading); }
   margin-bottom: -4px;
 }
 .set-tab {
-  border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 7px 14px;
-  background: rgba(0, 0, 0, 0.3); color: hsl(var(--muted-foreground));
-  font-size: 0.85rem; cursor: pointer; white-space: nowrap;
+  border: none; border-radius: 10px; padding: 9px 14px;
+  background: transparent; color: hsl(var(--muted-foreground));
+  font-size: 0.9rem; font-weight: 500; cursor: pointer; white-space: nowrap;
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.set-tab:hover { color: hsl(var(--foreground)); border-color: hsl(var(--primary) / 0.6); }
-.set-tab-active { color: #fff; background: hsl(var(--primary)); border-color: transparent; }
+.set-tab:hover { background: hsl(var(--primary) / 0.3); color: hsl(var(--foreground)); }
+.set-tab-active { background: hsl(var(--primary) / 0.18); color: hsl(var(--foreground)); font-weight: 600; }
 .set-title { font-size: 1.05rem; margin: 0; color: hsl(var(--foreground)); }
 .set-note { font-size: 0.85rem; color: hsl(var(--muted-foreground)); margin: 0; line-height: 1.5; }
 
@@ -952,3 +959,20 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .rcv-safe { border-left: 2px solid hsl(var(--primary) / 0.5); padding-left: 10px; }
 .rcv-share { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
 .rcv-share-soon { font-size: 0.72rem; color: hsl(var(--muted-foreground)); opacity: 0.8; }
+
+/* ---- Form labels (Payment Requests, Proof of Existence) ---- */
+/* Was unstyled → inline, so labels and inputs ran together. Block + spacing. */
+.wl-label { display: block; font-size: 0.82rem; font-weight: 500; color: hsl(var(--muted-foreground)); margin: 14px 0 5px; }
+.poe-pane { display: flex; flex-direction: column; max-width: 500px; }
+.poe-pane .wl-note { margin: 0 0 4px; }
+
+/* ---- Transaction History type filters (colour-coded to the rows below) ---- */
+.tx-filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 11px; }
+.tx-filter {
+  padding: 7px 13px; border: none; border-radius: 10px; cursor: pointer;
+  background: transparent; color: hsl(var(--fc)); font-size: 0.86rem; font-weight: 500;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.tx-filter:hover:not(:disabled) { background: hsl(var(--fc) / 0.16); }
+.tx-filter-on { background: hsl(var(--fc) / 0.22); font-weight: 600; }
+.tx-filter:disabled { opacity: 0.4; cursor: default; }

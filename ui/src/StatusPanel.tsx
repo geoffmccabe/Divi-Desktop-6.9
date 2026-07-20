@@ -144,7 +144,7 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
       </p>
       <div className="wl-status-chips">
         <div className="wl-chip-row">
-          <div className="glass-chip px-4 py-2">
+          <div className="glass-chip px-4 py-2 blk-chip">
             <span className="chip-label">Block height</span>
             {showBlocks != null ? (
               liveBlocks != null ? (
