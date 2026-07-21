@@ -16,6 +16,7 @@ import nyan from "../assets/nyan_cat.webp";
 // over time. CSS transitions the slide when a new block appears.
 const BLOCK_PCT = 20; // one block's width, % of the panel
 const MAX_BLOCKS = 8; // a few past the 5 visible, for a smooth slide-off the left
+const EXPECTED_MS = 60_000; // Divi's ~1-minute block time — the drift the strip covers between blocks
 // A stale block sits at the fork point as a narrow 1:3 marker (the wrap is
 // 130px tall). These are genuinely rare — measured ~0.8% of blocks — so this
 // is a seldom-seen event marker, not a regular feature of the display.
@@ -32,6 +33,8 @@ export function BlockChainViz() {
   const panelRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const orphanRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const lastHeight = useRef(0);
+  const lastAddTime = useRef(0); // client time the newest block arrived — drives the continuous drift
+  const blocksRef = useRef<Block[]>([]);
   const userAddrs = useRef<Set<string>>(new Set());
 
   // The node-wallet's own addresses — used to tell if a block was won by the user.
@@ -78,11 +81,13 @@ export function BlockChainViz() {
           seeded = true;
           const sorted = [...bs].sort((a, b) => a.height - b.height);
           lastHeight.current = sorted[sorted.length - 1].height;
+          lastAddTime.current = performance.now();
           setBlocks(sorted.slice(-MAX_BLOCKS));
         } else {
           const newOnes = bs.filter((b) => b.height > lastHeight.current).sort((a, b) => a.height - b.height);
           if (newOnes.length) {
             lastHeight.current = newOnes[newOnes.length - 1].height;
+            lastAddTime.current = performance.now();
             // If the user won any of these new blocks, flag it (lights up our node).
             if (newOnes.some((b) => b.stakeWinner && userAddrs.current.has(b.stakeWinner))) markUserWon();
             setBlocks((prev) => [...prev, ...newOnes].slice(-MAX_BLOCKS));
@@ -100,14 +105,37 @@ export function BlockChainViz() {
     };
   }, []);
 
-  // Positioned by ORDER: newest in the rightmost slot, each older one stepping
-  // BLOCK_PCT left; anything past the 5 visible sits off-screen. CSS transitions
-  // the shift when a new block appears. No timestamps, no rAF → cannot drift.
+  // Continuous right→left drift, but ANCHORED to order so it can never drift or
+  // compound (the bug the fixed-slot version was avoiding). Each block's slot is
+  // order-based; between blocks the whole strip creeps left by up to one slot,
+  // driven by `frac` ∈ [0,1] = how far we are toward the next expected block.
+  // When a block lands, N grows and `frac` resets to 0 — and because the newest
+  // block's slot is exactly where the drift had carried the previous one, the
+  // hand-off is seamless with no jump.
   const N = blocks.length;
-  const leftPctOf = (i: number) => 100 - (N - i) * BLOCK_PCT; // newest (i=N-1) → 80%
-  const heightLeftPct = new Map<number, number>();
-  blocks.forEach((b, i) => heightLeftPct.set(b.height, leftPctOf(i)));
+  const leftPctOf = (i: number, frac: number) => 100 - (N - i + frac) * BLOCK_PCT; // newest, frac 0 → 80%
   const shownHeights = new Set(blocks.map((b) => b.height));
+  blocksRef.current = blocks;
+
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const bs = blocksRef.current;
+      const n = bs.length;
+      const frac = Math.min(1, Math.max(0, (performance.now() - lastAddTime.current) / EXPECTED_MS));
+      for (let i = 0; i < n; i++) {
+        const b = bs[i];
+        const left = 100 - (n - i + frac) * BLOCK_PCT;
+        const el = panelRefs.current.get(b.height);
+        if (el) el.style.left = `${left}%`;
+        const oel = orphanRefs.current.get(b.height);
+        if (oel) oel.style.left = `calc(${left}% - ${ORPHAN_W}px)`;
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
 
   return (
     <div className="bv-wrap" ref={wrapRef}>
@@ -126,9 +154,8 @@ export function BlockChainViz() {
             style={{
               position: "absolute",
               top: 0,
-              // sit at the left edge of the winning block
-              left: `calc(${heightLeftPct.get(o.height) ?? -100}% - ${ORPHAN_W}px)`,
-              transition: "left 0.55s ease",
+              // sit at the left edge of the winning block; the rAF keeps it there
+              left: `-${ORPHAN_W}px`,
               height: "100%",
               width: ORPHAN_W,
               boxSizing: "border-box",
@@ -166,7 +193,7 @@ export function BlockChainViz() {
           <div
             key={b.height}
             className={"bv-panel" + (wonByUser ? " bv-rainbow" : "")}
-            style={{ left: `${leftPctOf(i)}%`, width: `${BLOCK_PCT}%`, transition: "left 0.55s ease" }}
+            style={{ left: `${leftPctOf(i, 0)}%`, width: `${BLOCK_PCT}%` }}
             ref={(el) => {
               if (el) panelRefs.current.set(b.height, el);
               else panelRefs.current.delete(b.height);

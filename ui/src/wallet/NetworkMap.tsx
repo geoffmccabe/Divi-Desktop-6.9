@@ -18,10 +18,18 @@ import worldmap from "../assets/worldmap.json";
 
 const POLYS: number[][][] = (worldmap as { polys: number[][][] }).polys;
 
-const project = (lon: number, lat: number, w: number, h: number): [number, number] => [
-  ((lon + 180) / 360) * w,
-  ((90 - lat) / 180) * h,
-];
+// Equirectangular projection with SQUARE pixels: the same pixels-per-degree on
+// both axes, so the Earth is never stretched no matter the canvas shape. The
+// old version scaled x by w/360 and y by h/180 independently, which fills any
+// rectangle — and distorts the moment the canvas isn't a perfect 2:1 (a phone,
+// or right after a fullscreen toggle changes its shape). The map is sized to fit
+// inside the canvas and centred; the view transform still zooms/pans on top.
+const project = (lon: number, lat: number, w: number, h: number): [number, number] => {
+  const ppd = Math.min(w / 360, h / 180); // fit the whole world, square pixels
+  const offX = (w - 360 * ppd) / 2;
+  const offY = (h - 180 * ppd) / 2;
+  return [offX + (lon + 180) * ppd, offY + (90 - lat) * ppd];
+};
 
 const clusterKey = (lat: number, lon: number) => `${Math.round(lat)},${Math.round(lon)}`;
 // stable per-ip phase so each line pulses a little out of sync
