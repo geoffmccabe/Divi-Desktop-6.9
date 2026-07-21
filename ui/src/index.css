@@ -998,3 +998,54 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .nbc-full { text-align: right; color: hsl(210 60% 72%); font-variant-numeric: tabular-nums; }
 .nbc-love { text-align: right; color: hsl(330 85% 72%); font-variant-numeric: tabular-nums; } /* pink */
 .nbc-empty { color: hsl(var(--muted-foreground)); }
+
+/* ---- PrimerLove: fast blockchain loader, shown over the block stream ---- */
+.primer {
+  position: absolute; left: 0; right: 0; bottom: 10px;
+  display: flex; justify-content: center; z-index: 6; pointer-events: none;
+}
+.primer-panel {
+  pointer-events: auto; width: min(600px, 92%); box-sizing: border-box;
+  padding: 14px 18px; border-radius: 14px;
+  display: flex; gap: 15px; align-items: center;
+  background: rgba(10, 8, 20, 0.74);
+  border: 1px solid hsl(var(--primary) / 0.5);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.55), 0 0 46px hsl(var(--primary) / 0.28);
+}
+.primer-heart {
+  width: 54px; height: 54px; flex: none;
+  filter: drop-shadow(0 0 9px hsl(var(--primary) / 0.65));
+  animation: primer-pulse 1.4s ease-in-out infinite;
+}
+@keyframes primer-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.13); } }
+.primer-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.primer-head { display: flex; align-items: baseline; gap: 9px; }
+.primer-title {
+  font-size: 18px; font-weight: 700; letter-spacing: 0.3px;
+  background: linear-gradient(90deg, #fff, hsl(var(--primary) / 0.95));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.primer-preview {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 1px;
+  color: hsl(var(--primary)); border: 1px solid hsl(var(--primary) / 0.5);
+  border-radius: 6px; padding: 1px 5px; opacity: 0.85;
+}
+.primer-sub { font-size: 12px; color: rgba(255, 255, 255, 0.6); }
+.primer-now { font-size: 12.5px; color: rgba(255, 255, 255, 0.85); }
+.primer-now strong { color: #fff; }
+.primer-count { color: rgba(255, 255, 255, 0.55); }
+.primer-phase { color: hsl(var(--primary)); text-transform: capitalize; }
+.primer-segs { display: flex; gap: 2px; height: 8px; margin: 4px 0 2px; }
+.primer-seg { flex: 1; border-radius: 2px; background: rgba(255, 255, 255, 0.1); transition: background 0.3s; }
+.primer-seg.done { background: hsl(var(--primary) / 0.85); }
+.primer-seg.active { background: #fff; animation: primer-blink 0.9s ease-in-out infinite; }
+@keyframes primer-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.primer-bottom { display: flex; align-items: center; gap: 10px; }
+.primer-bar { flex: 1; height: 6px; border-radius: 4px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.primer-bar-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, hsl(var(--primary) / 0.7), hsl(var(--primary)));
+  box-shadow: 0 0 10px hsl(var(--primary) / 0.6); transition: width 0.25s ease;
+}
+.primer-pct { font-size: 12px; font-weight: 600; color: #fff; min-width: 36px; text-align: right; }

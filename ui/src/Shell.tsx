@@ -2,6 +2,7 @@ import { useEffect, useState, type ComponentType } from "react";
 import { NAV } from "./nav";
 import { resumeStaking } from "./wallet/api";
 import { stakingDesired } from "./wallet/stakeWin";
+import { togglePrimerPreview } from "./wallet/primerStore";
 import { Sidebar } from "./Sidebar";
 import { StatusPanel } from "./StatusPanel";
 import { HeaderBar } from "./wallet/HeaderBar";
@@ -46,6 +47,20 @@ export function Shell() {
   }, []);
 
   const [view, setView] = useState("network");
+
+  // Preview the PrimerLove fast-loader screen (Cmd/Ctrl+Shift+P) until the real
+  // download backend drives it. Switches to the network map so it's visible.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === "P" || e.key === "p")) {
+        e.preventDefault();
+        setView("network");
+        togglePrimerPreview();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const Active = VIEWS[view] ?? Overview;
   const label = NAV.find((n) => n.id === view)?.label ?? EXTRA_TITLES[view] ?? "";
 

@@ -4,6 +4,8 @@ import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
 import { BlockChainViz } from "./BlockChainViz";
+import { PrimerLove } from "./PrimerLove";
+import { usePrimer } from "./primerStore";
 import { userWonRecently } from "./stakeWin";
 import { Icon } from "../Icon";
 import worldmap from "../assets/worldmap.json";
@@ -1029,6 +1031,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   }, []);
 
   // Every node (live peers + 30-day known), deduped by IP, tallied by country.
+  const primer = usePrimer();
+
   const nodesByCountry = useMemo(() => {
     const seen = new Set<string>();
     const counts = new Map<string, number>();
@@ -1060,7 +1064,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
         <NodesByCountry data={nodesByCountry} />
-        <BlockChainViz />
+        {primer.active ? <PrimerLove /> : <BlockChainViz />}
         {hover && (
           <div
             className={"netmap-tip" + (hover.tone === "blue" ? " netmap-tip-blue" : "")}
