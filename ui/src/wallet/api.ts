@@ -249,3 +249,23 @@ export interface AiStatus {
 export const aiStatus = () => invoke<AiStatus>("ai_status");
 export const aiSetKey = (provider: string, key: string) => invoke<void>("ai_set_key", { provider, key });
 export const aiClearKey = (provider: string) => invoke<void>("ai_clear_key", { provider });
+
+// My Nodes: which node the wallet reads. Desktop is built in; personal nodes
+// (e.g. DIVI LOVE SCAN) live only in this machine's nodes.json.
+export interface NodeInfo {
+  id: string;
+  label: string;
+  mode: string; // "local" | "remote"
+  host?: string | null;
+  port?: number | null;
+  user?: string | null;
+  has_pass: boolean;
+  datadir?: string | null;
+  builtin: boolean;
+}
+export interface NodesResp {
+  active: string;
+  nodes: NodeInfo[];
+}
+export const listNodes = () => invoke<NodesResp>("list_nodes");
+export const setActiveNode = (id: string) => invoke<void>("set_active_node", { id });

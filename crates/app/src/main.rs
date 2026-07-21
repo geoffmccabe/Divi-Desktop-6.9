@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{c2pa_read, chaintips, coins, config::NodeConfig, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{c2pa_read, chaintips, coins, config, config::NodeConfig, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -752,6 +752,57 @@ async fn ai_status() -> AiStatusDto {
     .unwrap_or(AiStatusDto { claude: false, grok: false, gateway: String::new() })
 }
 
+// ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
+// like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
+#[derive(Serialize)]
+struct NodeDto {
+    id: String,
+    label: String,
+    mode: String,
+    host: Option<String>,
+    port: Option<u16>,
+    user: Option<String>,
+    has_pass: bool, // the password itself never crosses to the UI
+    datadir: Option<String>,
+    builtin: bool,
+}
+#[derive(Serialize)]
+struct NodesDto {
+    active: String,
+    nodes: Vec<NodeDto>,
+}
+
+#[tauri::command]
+async fn list_nodes() -> NodesDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let (active, profiles) = config::list_profiles();
+        let nodes = profiles
+            .into_iter()
+            .map(|p| NodeDto {
+                id: p.id,
+                label: p.label,
+                mode: p.mode,
+                host: p.rpc_host,
+                port: p.rpc_port,
+                user: p.rpc_user,
+                has_pass: p.rpc_pass.map(|s| !s.is_empty()).unwrap_or(false),
+                datadir: p.datadir,
+                builtin: p.builtin,
+            })
+            .collect();
+        NodesDto { active, nodes }
+    })
+    .await
+    .unwrap_or(NodesDto { active: "desktop".into(), nodes: vec![] })
+}
+
+#[tauri::command]
+async fn set_active_node(id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || config::set_active(&id))
+        .await
+        .unwrap_or_else(|_| Err("failed to switch node".into()))
+}
+
 /// Auto-resume staking on launch: recall the saved password (if any), staking-
 /// only unlock, and start. The password never crosses into the UI layer.
 #[tauri::command]
@@ -955,7 +1006,9 @@ fn main() {
             divi_prices,
             ai_set_key,
             ai_clear_key,
-            ai_status
+            ai_status,
+            list_nodes,
+            set_active_node
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

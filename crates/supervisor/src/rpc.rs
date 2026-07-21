@@ -43,7 +43,7 @@ impl RpcClient {
         let token = base64::engine::general_purpose::STANDARD
             .encode(format!("{}:{}", cfg.rpc_user, cfg.rpc_pass));
         RpcClient {
-            url: format!("http://127.0.0.1:{}/", cfg.rpc_port),
+            url: format!("http://{}:{}/", cfg.rpc_host, cfg.rpc_port),
             auth: format!("Basic {}", token),
         }
     }

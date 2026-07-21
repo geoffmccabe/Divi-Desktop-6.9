@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PasswordPanel } from "./PasswordPanel";
 import { CoinMaturity } from "./CoinMaturity";
+import { MyNodes } from "./MyNodes";
 
 // Settings: stacked panels (Password, Coin Maturity). Chain Health lives in
 // the Admin drawer instead — its node check is expensive and admin-only. The
 // tab row jumps to a panel by smooth-scrolling to it; you can also just scroll.
 const TABS = [
+  { id: "nodes", label: "My Nodes" },
   { id: "password", label: "Password" },
   { id: "maturity", label: "Coin Maturity" },
 ];
 
 export function SettingsView() {
-  const [active, setActive] = useState("password");
+  const [active, setActive] = useState("nodes");
   const refs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const jump = (id: string) => {
@@ -56,6 +58,7 @@ export function SettingsView() {
         ))}
       </div>
 
+      {panel("nodes", <MyNodes />)}
       {panel("password", <PasswordPanel />)}
       {panel("maturity", <CoinMaturity />)}
 

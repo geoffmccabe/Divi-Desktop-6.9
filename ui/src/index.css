@@ -1081,3 +1081,37 @@ h1, h2, h3 { font-family: var(--font-heading); }
   transition: background 0.15s, border-color 0.15s;
 }
 .node-map-btn:hover { background: hsl(var(--primary) / 0.28); border-color: hsl(var(--primary) / 0.7); }
+
+/* ---- My Nodes (Settings): switch which node the wallet reads ---- */
+.mynodes { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
+.mynode {
+  border: 1px solid hsl(var(--border)); border-radius: 12px;
+  background: hsl(var(--card) / 0.6); padding: 14px 16px;
+}
+.mynode-active { border-color: hsl(var(--primary) / 0.7); box-shadow: 0 0 0 1px hsl(var(--primary) / 0.35) inset; }
+.mynode-head { display: flex; align-items: center; gap: 9px; }
+.mynode-dot { width: 9px; height: 9px; border-radius: 50%; background: hsl(var(--muted-foreground)); flex: none; }
+.mynode-active .mynode-dot { background: hsl(var(--success)); box-shadow: 0 0 8px hsl(var(--success) / 0.8); }
+.mynode-label { font-weight: 700; font-size: 1rem; color: hsl(var(--foreground)); }
+.mynode-mode {
+  font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px;
+  color: hsl(var(--muted-foreground)); border: 1px solid hsl(var(--border));
+  border-radius: 5px; padding: 1px 6px;
+}
+.mynode-badge {
+  margin-left: auto; font-size: 0.72rem; font-weight: 600;
+  color: hsl(var(--primary)); border: 1px solid hsl(var(--primary) / 0.5);
+  border-radius: 6px; padding: 1px 8px;
+}
+.mynode-meta { margin: 10px 0 12px; display: flex; flex-direction: column; gap: 4px; }
+.mynode-meta > div { display: flex; gap: 10px; font-size: 0.85rem; }
+.mynode-meta span { color: hsl(var(--muted-foreground)); min-width: 84px; }
+.mynode-meta b { color: hsl(var(--foreground)); font-weight: 500; word-break: break-all; }
+.mynode-btn {
+  padding: 7px 15px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.16);
+  border: 1px solid hsl(var(--primary) / 0.45); transition: background 0.15s, border-color 0.15s;
+}
+.mynode-btn:hover:not(:disabled) { background: hsl(var(--primary) / 0.3); border-color: hsl(var(--primary) / 0.7); }
+.mynode-btn:disabled { opacity: 0.5; cursor: default; }
+.mynode-note { margin-top: 10px; color: hsl(var(--primary)); }
