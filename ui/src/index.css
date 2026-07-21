@@ -323,7 +323,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .sidebar {
   flex: 1; min-height: 0; position: relative;
   display: flex; flex-direction: column;
-  padding: 22px 14px;
+  padding: 13px 14px 22px; /* logo 40% closer to the top (was 22px top) */
 }
 .status-panel { flex-shrink: 0; padding: 14px 16px; }
 .status-panel .wl-status-line { font-size: 0.88rem; margin: 4px 0 12px; }
@@ -389,14 +389,14 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .addr-full { font-family: ui-monospace, monospace; font-size: 0.7rem; color: hsl(var(--muted-foreground)); word-break: break-all; }
 .addr-counts { display: flex; gap: 14px; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
-.sidebar-brand { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 0 10px 22px; }
+.sidebar-brand { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 0 10px 16.5px; }
 .brand-logo {
-  width: 72px; height: 72px; flex-shrink: 0;
+  width: 47px; height: 47px; flex-shrink: 0; /* 65% of the former 72px */
   filter: drop-shadow(0 0 7px hsl(var(--primary) / 0.55));
   animation: primer-pulse 1.4s ease-in-out infinite; /* same pulse as PrimerLove */
 }
 .sidebar-brand h1 { margin: 0; font-size: 1.2rem; font-weight: 700; color: hsl(var(--foreground)); text-align: center; white-space: nowrap; }
-.sidebar-brand .ver { font-size: 0.95rem; font-weight: 700; color: hsl(var(--primary)); text-align: center; }
+.sidebar-brand .ver { font-size: 0.63rem; font-weight: 700; color: hsl(var(--primary)); text-align: center; margin-top: -1.2px; }
 .nav { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .nav-item {
   width: 100%; display: flex; align-items: center; gap: 12px;
