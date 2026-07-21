@@ -714,6 +714,44 @@ async fn forget_password() -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+// ── AI provider keys (bring-your-own-key), OS keychain only, local machine ──
+
+/// Store a provider secret ("claude" | "grok" | "gateway"). Empty clears it.
+#[tauri::command]
+async fn ai_set_key(provider: String, key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || security::ai_set(&provider, &key))
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+#[tauri::command]
+async fn ai_clear_key(provider: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || security::ai_clear(&provider))
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+struct AiStatusDto {
+    /// Whether each key is present — the values themselves are never returned.
+    claude: bool,
+    grok: bool,
+    /// The gateway URL is not a secret, so it's safe to show.
+    gateway: String,
+}
+
+/// Which AI keys are configured (booleans only) + the gateway URL.
+#[tauri::command]
+async fn ai_status() -> AiStatusDto {
+    tauri::async_runtime::spawn_blocking(|| AiStatusDto {
+        claude: security::ai_get("claude").is_some(),
+        grok: security::ai_get("grok").is_some(),
+        gateway: security::ai_get("gateway").unwrap_or_default(),
+    })
+    .await
+    .unwrap_or(AiStatusDto { claude: false, grok: false, gateway: String::new() })
+}
+
 /// Auto-resume staking on launch: recall the saved password (if any), staking-
 /// only unlock, and start. The password never crosses into the UI layer.
 #[tauri::command]
@@ -914,7 +952,10 @@ fn main() {
             forget_password,
             resume_staking,
             send_coins,
-            divi_prices
+            divi_prices,
+            ai_set_key,
+            ai_clear_key,
+            ai_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

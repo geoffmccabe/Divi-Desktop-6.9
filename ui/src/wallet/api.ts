@@ -238,3 +238,14 @@ export const diviPrices = (currencies: string[], cmcKey: string, useCoingecko: b
 
 // Divi Love Scan (scan.divi.love) — our own block explorer — transaction page.
 export const explorerTxUrl = (txid: string) => `https://scan.divi.love/tx/${txid}`;
+
+// ── AI provider keys (bring-your-own-key), stored in the OS keychain only. The
+// actual secrets are never read back into the UI — only whether each is set.
+export interface AiStatus {
+  claude: boolean;
+  grok: boolean;
+  gateway: string;
+}
+export const aiStatus = () => invoke<AiStatus>("ai_status");
+export const aiSetKey = (provider: string, key: string) => invoke<void>("ai_set_key", { provider, key });
+export const aiClearKey = (provider: string) => invoke<void>("ai_clear_key", { provider });

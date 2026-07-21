@@ -113,10 +113,18 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .admin-nodim .admin-drawer { pointer-events: auto; }
 .admin-drawer {
-  width: 380px; max-width: 90vw; height: 100%;
+  width: 456px; max-width: 92vw; height: 100%; /* 20% wider for the AI panel */
   border-radius: 0; display: flex; flex-direction: column;
   background-color: hsl(var(--background) / 0.85);
 }
+
+/* AI admin panel */
+.ai-section-head { font-size: 0.9rem; font-weight: 600; color: hsl(var(--foreground)); margin: 18px 0 4px; }
+.ai-security { font-size: 0.8rem; }
+.ai-key-row { display: flex; gap: 8px; align-items: center; }
+.ai-key-row .wl-input { flex: 1; min-width: 0; }
+.ai-set { color: hsl(var(--success)); font-style: normal; font-size: 0.78rem; }
+.ai-unset { color: hsl(var(--muted-foreground)); font-style: normal; font-size: 0.78rem; }
 .admin-drawer-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 16px; border-bottom: 1px solid hsl(var(--border) / 0.5);

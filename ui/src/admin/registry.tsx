@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { StylePanel } from "./panels/StylePanel";
 import { ValuePanel } from "./panels/ValuePanel";
 import { PayoutPanel } from "./panels/PayoutPanel";
+import { AiPanel } from "./panels/AiPanel";
 import { ChainHealthPanel } from "../wallet/ChainHealthPanel";
 
 export interface AdminPanel {
@@ -18,6 +19,7 @@ export interface AdminPanel {
 export const ADMIN_PANELS: AdminPanel[] = [
   { id: "style", title: "Style", dim: false, render: () => <StylePanel /> },
   { id: "value", title: "Value", render: () => <ValuePanel /> },
+  { id: "ai", title: "AI", render: () => <AiPanel /> },
   { id: "payouts", title: "Payouts", render: () => <PayoutPanel /> },
   // Admin-only: the fork check costs the node ~20s, so it is deliberately
   // not somewhere an ordinary user can trigger it repeatedly.

@@ -100,3 +100,33 @@ pub fn forget() -> Result<(), String> {
         Err(e) => Err(e.to_string()),
     }
 }
+
+// ── AI provider secrets (bring-your-own-key), stored ONLY in the OS keychain of
+// this machine. These are the local user's OWN keys — never bundled, never
+// shared. The multi-user/subscription model must go through a server gateway
+// instead (a client app can't keep a shared key secret). `provider` is a short
+// slug: "claude", "grok", or "gateway" (the gateway URL isn't secret, but the
+// keychain is a fine place to keep it too).
+const AI_SERVICE: &str = "DiviDesktop69-AI";
+
+pub fn ai_set(provider: &str, secret: &str) -> Result<(), String> {
+    if secret.trim().is_empty() {
+        return ai_clear(provider);
+    }
+    keyring::Entry::new(AI_SERVICE, provider)
+        .and_then(|e| e.set_password(secret.trim()))
+        .map_err(|e| e.to_string())
+}
+
+pub fn ai_get(provider: &str) -> Option<String> {
+    keyring::Entry::new(AI_SERVICE, provider).ok()?.get_password().ok()
+}
+
+pub fn ai_clear(provider: &str) -> Result<(), String> {
+    let e = keyring::Entry::new(AI_SERVICE, provider).map_err(|e| e.to_string())?;
+    match e.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e.to_string()),
+    }
+}
