@@ -442,6 +442,11 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .coll-traits { display: flex; flex-direction: column; gap: 6px; max-width: 520px; }
 .coll-trait-row { display: flex; gap: 8px; }
 .coll-trait-row .wl-input { flex: 1; }
+.coll-traitchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.coll-traitchip {
+  font-size: 0.68rem; padding: 2px 6px; border-radius: 6px;
+  background: hsl(var(--muted)); color: hsl(var(--muted-foreground));
+}
 .wl-btn-disabled { opacity: 0.5; pointer-events: none; }
 .coll-xfer { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .admin-panel-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }

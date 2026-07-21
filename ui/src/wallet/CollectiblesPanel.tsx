@@ -19,6 +19,7 @@ interface Item {
   thumbPtr?: string | null;
   wrapkeyPtr?: string; // present on a CLAIMED item — unlock via claim, not view
   collectionId?: string; // set when this item was minted into a collection
+  traits?: Trait[]; // public ERC-721 attributes, kept for the collection view
 }
 
 // A collection I created (creator-only minting, optional supply cap).
@@ -56,6 +57,19 @@ function loadCollections(): Collection[] {
   } catch {
     return [];
   }
+}
+
+// Trait rarity across a collection's items: percent = (items with this exact
+// trait) / (total items shown). Standard ERC-721 trait-frequency rarity.
+function traitRarity(items: Item[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const it of items) {
+    for (const t of it.traits ?? []) counts.set(`${t.type}=${t.value}`, (counts.get(`${t.type}=${t.value}`) ?? 0) + 1);
+  }
+  const pct = new Map<string, number>();
+  const total = items.length || 1;
+  for (const [k, n] of counts) pct.set(k, Math.round((n / total) * 100));
+  return pct;
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -116,6 +130,9 @@ export function CollectiblesPanel() {
   // Mint-into-a-collection: chosen collection ("" = standalone) + public traits.
   const [mintInto, setMintInto] = useState("");
   const [traits, setTraits] = useState<Trait[]>([{ type: "", value: "" }]);
+
+  // Browse a collection (view its items + trait rarity).
+  const [browsing, setBrowsing] = useState<string | null>(null);
 
   // Create-a-collection form.
   const [colName, setColName] = useState("");
@@ -195,10 +212,10 @@ export function CollectiblesPanel() {
       const thumb = withThumb ? await makeThumbnail(f) : null;
       const col = collections.find((c) => c.id === mintInto) ?? null;
       let collectionArg;
+      let cleanTraits: Trait[] = [];
       if (col) {
-        const attributes = traits
-          .filter((t) => t.type.trim() && t.value.trim())
-          .map((t) => ({ trait_type: t.type.trim(), value: t.value.trim() }));
+        cleanTraits = traits.filter((t) => t.type.trim() && t.value.trim()).map((t) => ({ type: t.type.trim(), value: t.value.trim() }));
+        const attributes = cleanTraits.map((t) => ({ trait_type: t.type, value: t.value }));
         collectionArg = {
           collectionId: col.id,
           creatorAddr: col.creatorAddr,
@@ -213,6 +230,7 @@ export function CollectiblesPanel() {
         ts: Date.now(),
         thumb: thumb?.dataUrl,
         collectionId: col?.id,
+        traits: col ? cleanTraits : undefined,
       };
       setItems((prev) => [item, ...prev]);
       if (col) {
@@ -316,6 +334,10 @@ export function CollectiblesPanel() {
   const selectedCol = collections.find((c) => c.id === mintInto) ?? null;
   const mintedOut = !!selectedCol && selectedCol.maxSupply > 0 && selectedCol.minted >= selectedCol.maxSupply;
 
+  const browseCol = collections.find((c) => c.id === browsing) ?? null;
+  const browseItems = browsing ? items.filter((i) => i.collectionId === browsing) : [];
+  const browseRarity = traitRarity(browseItems);
+
   function setTrait(i: number, patch: Partial<Trait>) {
     setTraits((prev) => prev.map((t, j) => (j === i ? { ...t, ...patch } : t)));
   }
@@ -348,15 +370,15 @@ export function CollectiblesPanel() {
         {collections.length > 0 && (
           <div className="coll-grid">
             {collections.map((c) => (
-              <div key={c.id} className="coll-card" title={c.id}>
+              <button key={c.id} className="coll-card" title={c.id} onClick={() => setBrowsing(c.id)}>
                 {c.cover ? (
                   <img className="coll-card-thumb" src={c.cover} alt={c.name} />
                 ) : (
                   <span className="coll-card-noimg" aria-hidden="true">📦</span>
                 )}
                 <span className="coll-card-name">{c.name}</span>
-                <span className="coll-card-meta">{c.minted}{c.maxSupply > 0 ? ` / ${c.maxSupply}` : ""} minted</span>
-              </div>
+                <span className="coll-card-meta">{c.minted}{c.maxSupply > 0 ? ` / ${c.maxSupply}` : ""} minted · browse</span>
+              </button>
             ))}
           </div>
         )}
@@ -510,6 +532,48 @@ export function CollectiblesPanel() {
                   {xferBusy ? "Transferring…" : "Transfer to this code"}
                 </button>
                 {xferErr && <p className="wl-err">{xferErr}</p>}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {browseCol && (
+        <div className="coll-viewer" onClick={() => setBrowsing(null)}>
+          <div className="coll-viewer-inner" onClick={(e) => e.stopPropagation()}>
+            <div className="coll-viewer-head">
+              <strong>{browseCol.name}</strong>
+              <button className="wl-btn" onClick={() => setBrowsing(null)}>
+                Close
+              </button>
+            </div>
+            <p className="wl-note">
+              {browseCol.minted}{browseCol.maxSupply > 0 ? ` of ${browseCol.maxSupply}` : ""} minted.
+              {" "}Rarity is the share of items sharing each trait, across the items in this wallet.
+            </p>
+            {browseItems.length === 0 ? (
+              <p className="wl-note">No items minted into this collection yet.</p>
+            ) : (
+              <div className="coll-grid">
+                {browseItems.map((it) => (
+                  <button key={it.txid} className="coll-card" onClick={() => { setBrowsing(null); openItem(it); }}>
+                    {it.thumb ? (
+                      <img className="coll-card-thumb" src={it.thumb} alt={it.name} />
+                    ) : (
+                      <span className="coll-card-noimg" aria-hidden="true">🔒</span>
+                    )}
+                    <span className="coll-card-name">{it.name}</span>
+                    {it.traits && it.traits.length > 0 && (
+                      <span className="coll-traitchips">
+                        {it.traits.map((t, i) => (
+                          <span key={i} className="coll-traitchip">
+                            {t.type}: {t.value} · {browseRarity.get(`${t.type}=${t.value}`) ?? 100}%
+                          </span>
+                        ))}
+                      </span>
+                    )}
+                  </button>
+                ))}
               </div>
             )}
           </div>
