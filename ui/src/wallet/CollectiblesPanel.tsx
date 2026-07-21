@@ -121,6 +121,7 @@ interface ClaimCode {
 }
 
 export function CollectiblesPanel() {
+  const [tab, setTab] = useState<"collection" | "marketplace" | "builder">("collection");
   const [items, setItems] = useState<Item[]>(loadItems);
   const [collections, setCollections] = useState<Collection[]>(loadCollections);
   const [withThumb, setWithThumb] = useState(true);
@@ -342,8 +343,30 @@ export function CollectiblesPanel() {
     setTraits((prev) => prev.map((t, j) => (j === i ? { ...t, ...patch } : t)));
   }
 
+  const tabs: { key: typeof tab; label: string }[] = [
+    { key: "collection", label: "My Collection" },
+    { key: "marketplace", label: "Marketplace" },
+    { key: "builder", label: "NFD Builder" },
+  ];
+
   return (
     <div className="collectibles">
+      <div className="nfd-tabs" role="tablist">
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={tab === t.key}
+            className={"nfd-tab" + (tab === t.key ? " nfd-tab-active" : "")}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "builder" && (
+      <>
       <section className="ts-section">
         <h3 className="ts-head">Create a collection</h3>
         <p className="wl-note">
@@ -367,21 +390,6 @@ export function CollectiblesPanel() {
           {colBusy ? "Creating…" : "Create collection"}
         </button>
         {colErr && <p className="wl-err">{colErr}</p>}
-        {collections.length > 0 && (
-          <div className="coll-grid">
-            {collections.map((c) => (
-              <button key={c.id} className="coll-card" title={c.id} onClick={() => setBrowsing(c.id)}>
-                {c.cover ? (
-                  <img className="coll-card-thumb" src={c.cover} alt={c.name} />
-                ) : (
-                  <span className="coll-card-noimg" aria-hidden="true">📦</span>
-                )}
-                <span className="coll-card-name">{c.name}</span>
-                <span className="coll-card-meta">{c.minted}{c.maxSupply > 0 ? ` / ${c.maxSupply}` : ""} minted · browse</span>
-              </button>
-            ))}
-          </div>
-        )}
       </section>
 
       <section className="ts-section">
@@ -432,7 +440,39 @@ export function CollectiblesPanel() {
         </label>
         {err && <p className="wl-err">{err}</p>}
       </section>
+      </>
+      )}
 
+      {tab === "marketplace" && (
+      <section className="ts-section">
+        <h3 className="ts-head">Marketplace</h3>
+        <p className="wl-note">
+          Browse collections and their traits. This is the public gallery — you see everyone’s public previews
+          and rarity, while each original stays encrypted for its owner. <strong>Browse-only for now</strong>:
+          listings and buying/selling come next.
+        </p>
+        {collections.length === 0 ? (
+          <p className="wl-note">No collections yet. Create one in the NFD Builder tab.</p>
+        ) : (
+          <div className="coll-grid">
+            {collections.map((c) => (
+              <button key={c.id} className="coll-card" title={c.id} onClick={() => setBrowsing(c.id)}>
+                {c.cover ? (
+                  <img className="coll-card-thumb" src={c.cover} alt={c.name} />
+                ) : (
+                  <span className="coll-card-noimg" aria-hidden="true">📦</span>
+                )}
+                <span className="coll-card-name">{c.name}</span>
+                <span className="coll-card-meta">{c.minted}{c.maxSupply > 0 ? ` / ${c.maxSupply}` : ""} minted · browse</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+      )}
+
+      {tab === "collection" && (
+      <>
       <section className="ts-section">
         <h3 className="ts-head">My Collectibles</h3>
         {items.length === 0 ? (
@@ -486,6 +526,8 @@ export function CollectiblesPanel() {
         </button>
         {recvMsg && <p className="wl-note">{recvMsg}</p>}
       </section>
+      </>
+      )}
 
       {active && (
         <div className="coll-viewer" onClick={closeView}>

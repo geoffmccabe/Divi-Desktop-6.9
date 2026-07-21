@@ -441,6 +441,13 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .coll-field { display: flex; flex-direction: column; gap: 4px; max-width: 520px; font-size: 0.85rem; color: hsl(var(--foreground)); }
 .coll-traits { display: flex; flex-direction: column; gap: 6px; max-width: 520px; }
 .coll-trait-row { display: flex; gap: 8px; }
+.nfd-tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid hsl(var(--border)); }
+.nfd-tab {
+  padding: 8px 16px; background: transparent; border: none; cursor: pointer;
+  font-size: 0.9rem; color: hsl(var(--muted-foreground)); border-bottom: 2px solid transparent;
+}
+.nfd-tab:hover { color: hsl(var(--foreground)); }
+.nfd-tab-active { color: hsl(var(--foreground)); border-bottom-color: hsl(var(--primary)); font-weight: 600; }
 .coll-trait-row .wl-input { flex: 1; }
 .coll-traitchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .coll-traitchip {
