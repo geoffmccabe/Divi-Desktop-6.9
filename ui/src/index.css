@@ -389,10 +389,14 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .addr-full { font-family: ui-monospace, monospace; font-size: 0.7rem; color: hsl(var(--muted-foreground)); word-break: break-all; }
 .addr-counts { display: flex; gap: 14px; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
-.sidebar-brand { display: flex; align-items: baseline; gap: 7px; padding: 0 10px 22px; flex-wrap: nowrap; }
-.brand-logo { width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0; align-self: center; }
-.sidebar-brand h1 { margin: 0; font-size: 1.2rem; font-weight: 700; color: hsl(var(--foreground)); white-space: nowrap; }
-.sidebar-brand .ver { font-size: 1.2rem; font-weight: 700; color: hsl(var(--primary)); }
+.sidebar-brand { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 0 10px 22px; }
+.brand-logo {
+  width: 72px; height: 72px; flex-shrink: 0;
+  filter: drop-shadow(0 0 7px hsl(var(--primary) / 0.55));
+  animation: primer-pulse 1.4s ease-in-out infinite; /* same pulse as PrimerLove */
+}
+.sidebar-brand h1 { margin: 0; font-size: 1.2rem; font-weight: 700; color: hsl(var(--foreground)); text-align: center; white-space: nowrap; }
+.sidebar-brand .ver { font-size: 0.95rem; font-weight: 700; color: hsl(var(--primary)); text-align: center; }
 .nav { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
 .nav-item {
   width: 100%; display: flex; align-items: center; gap: 12px;
@@ -1049,3 +1053,16 @@ h1, h2, h3 { font-family: var(--font-heading); }
   box-shadow: 0 0 10px hsl(var(--primary) / 0.6); transition: width 0.25s ease;
 }
 .primer-pct { font-size: 12px; font-weight: 600; color: #fff; min-width: 36px; text-align: right; }
+
+/* ---- Overview title row: "Overview" left, Node Map button far right ---- */
+.view-title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.view-title-row .view-title { margin: 0; }
+.node-map-btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 13px; border-radius: 8px; cursor: pointer;
+  font-size: 0.85rem; font-weight: 600; color: hsl(var(--foreground));
+  background: hsl(var(--primary) / 0.14);
+  border: 1px solid hsl(var(--primary) / 0.45);
+  transition: background 0.15s, border-color 0.15s;
+}
+.node-map-btn:hover { background: hsl(var(--primary) / 0.28); border-color: hsl(var(--primary) / 0.7); }

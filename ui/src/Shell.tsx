@@ -3,6 +3,7 @@ import { NAV } from "./nav";
 import { resumeStaking } from "./wallet/api";
 import { stakingDesired } from "./wallet/stakeWin";
 import { togglePrimerPreview } from "./wallet/primerStore";
+import { Icon } from "./Icon";
 import { Sidebar } from "./Sidebar";
 import { StatusPanel } from "./StatusPanel";
 import { HeaderBar } from "./wallet/HeaderBar";
@@ -77,7 +78,17 @@ export function Shell() {
           <HeaderBar />
         </header>
         <section className="glass-panel main-panel">
-          {view !== "network" && <h2 className="view-title">{label}</h2>}
+          {view !== "network" && (
+            <div className="view-title-row">
+              <h2 className="view-title">{label}</h2>
+              {view === "overview" && (
+                <button type="button" className="node-map-btn" onClick={() => setView("network")}>
+                  <span>Node Map</span>
+                  <Icon name="globe" size={16} />
+                </button>
+              )}
+            </div>
+          )}
           <div className="view-body">
             {view === "network" ? <NetworkMap onReturn={() => setView("overview")} /> : <Active />}
           </div>
