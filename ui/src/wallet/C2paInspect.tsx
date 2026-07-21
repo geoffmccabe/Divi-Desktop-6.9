@@ -43,8 +43,8 @@ const LINKS: Array<[string, string, string]> = [
   ],
   [
     "Verify a File",
-    "https://inspect.contentauthenticity.org/",
-    "Check any file’s lineage with Adobe’s public Inspect tool.",
+    "https://verify.contentauthenticity.org/",
+    "Check any file’s lineage with Adobe’s public Verify tool.",
   ],
   [
     "Learn the Tech",
