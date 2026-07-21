@@ -20,6 +20,8 @@ interface Item {
   wrapkeyPtr?: string; // present on a CLAIMED item — unlock via claim, not view
   collectionId?: string; // set when this item was minted into a collection
   traits?: Trait[]; // public ERC-721 attributes, kept for the collection view
+  tier?: string; // explicit creator-assigned rarity tier (locked schema)
+  edition?: number; // 1-based index within its collection
 }
 
 // A collection I created (creator-only minting, optional supply cap).
@@ -131,6 +133,7 @@ export function CollectiblesPanel() {
   // Mint-into-a-collection: chosen collection ("" = standalone) + public traits.
   const [mintInto, setMintInto] = useState("");
   const [traits, setTraits] = useState<Trait[]>([{ type: "", value: "" }]);
+  const [mintTier, setMintTier] = useState(""); // explicit rarity tier (locked schema)
 
   // Browse a collection (view its items + trait rarity).
   const [browsing, setBrowsing] = useState<string | null>(null);
@@ -214,13 +217,18 @@ export function CollectiblesPanel() {
       const col = collections.find((c) => c.id === mintInto) ?? null;
       let collectionArg;
       let cleanTraits: Trait[] = [];
+      const edition = col ? col.minted + 1 : undefined; // 1-based index within the set
+      const tier = mintTier.trim() || undefined;
       if (col) {
         cleanTraits = traits.filter((t) => t.type.trim() && t.value.trim()).map((t) => ({ type: t.type.trim(), value: t.value.trim() }));
         const attributes = cleanTraits.map((t) => ({ trait_type: t.type, value: t.value }));
+        // Locked traits_ptr schema: name, edition, tier (explicit rarity), attributes.
+        const meta: Record<string, unknown> = { name: f.name, edition, attributes };
+        if (tier) meta.tier = tier;
         collectionArg = {
           collectionId: col.id,
           creatorAddr: col.creatorAddr,
-          traitsJson: JSON.stringify({ name: f.name, attributes }),
+          traitsJson: JSON.stringify(meta),
         };
       }
       const res = await nfdMint(b64, thumb?.b64, thumb?.mime, collectionArg);
@@ -232,11 +240,14 @@ export function CollectiblesPanel() {
         thumb: thumb?.dataUrl,
         collectionId: col?.id,
         traits: col ? cleanTraits : undefined,
+        tier: col ? tier : undefined,
+        edition: col ? edition : undefined,
       };
       setItems((prev) => [item, ...prev]);
       if (col) {
         setCollections((prev) => prev.map((c) => (c.id === col.id ? { ...c, minted: c.minted + 1 } : c)));
         setTraits([{ type: "", value: "" }]);
+        setMintTier("");
       }
     } catch (e) {
       setErr(String(e));
@@ -413,6 +424,24 @@ export function CollectiblesPanel() {
         </label>
         {selectedCol && (
           <div className="coll-traits">
+            <label className="coll-field">
+              <span>Rarity tier · edition #{selectedCol.minted + 1}</span>
+              <input
+                className="wl-input"
+                list="nfd-tier-suggestions"
+                placeholder="e.g. Legendary (public, baked into the mint)"
+                value={mintTier}
+                onChange={(e) => setMintTier(e.target.value)}
+              />
+              <datalist id="nfd-tier-suggestions">
+                <option value="Common" />
+                <option value="Uncommon" />
+                <option value="Rare" />
+                <option value="Epic" />
+                <option value="Legendary" />
+                <option value="Mythic" />
+              </datalist>
+            </label>
             <p className="wl-note">Public traits (optional) — shown to everyone, like ERC-721 attributes.</p>
             {traits.map((t, i) => (
               <div key={i} className="coll-trait-row">
@@ -604,10 +633,14 @@ export function CollectiblesPanel() {
                     ) : (
                       <span className="coll-card-noimg" aria-hidden="true">🔒</span>
                     )}
-                    <span className="coll-card-name">{it.name}</span>
-                    {it.traits && it.traits.length > 0 && (
+                    <span className="coll-card-name">
+                      {it.name}
+                      {it.edition ? ` · #${it.edition}` : ""}
+                    </span>
+                    {(it.tier || (it.traits && it.traits.length > 0)) && (
                       <span className="coll-traitchips">
-                        {it.traits.map((t, i) => (
+                        {it.tier && <span className="coll-traitchip coll-tierchip">{it.tier}</span>}
+                        {(it.traits ?? []).map((t, i) => (
                           <span key={i} className="coll-traitchip">
                             {t.type}: {t.value} · {browseRarity.get(`${t.type}=${t.value}`) ?? 100}%
                           </span>
