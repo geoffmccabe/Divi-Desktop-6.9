@@ -2,6 +2,13 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Bundled web fonts (Latin-subset variable woff2, inlined into the build).
+   Arial/Helvetica in the Style dropdown are system fonts and need no @font-face. */
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('./assets/fonts/inter.woff2') format('woff2'); }
+@font-face { font-family: 'DM Sans'; font-style: normal; font-weight: 100 1000; font-display: swap; src: url('./assets/fonts/dm-sans.woff2') format('woff2'); }
+@font-face { font-family: 'Plus Jakarta Sans'; font-style: normal; font-weight: 200 800; font-display: swap; src: url('./assets/fonts/plus-jakarta-sans.woff2') format('woff2'); }
+@font-face { font-family: 'Space Grotesk'; font-style: normal; font-weight: 300 700; font-display: swap; src: url('./assets/fonts/space-grotesk.woff2') format('woff2'); }
+
 /* ── Design tokens — defaults; the Style admin panel overrides these live ─── */
 :root {
   --background: 240 6% 10%;
