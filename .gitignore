@@ -6,3 +6,6 @@ gen/
 .env
 .env.*
 *.local
+
+# local-only (scanner infra, never commit — public repo)
+scripts/run-scanner.sh
