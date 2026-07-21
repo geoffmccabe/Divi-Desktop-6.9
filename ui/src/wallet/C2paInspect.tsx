@@ -37,24 +37,19 @@ const noteFor = (label: string) => NOTABLE.find(([k]) => label.startsWith(k))?.[
 
 const LINKS: Array<[string, string, string]> = [
   [
-    "contentcredentials.org",
+    "Add Credentials for Free",
     "https://contentcredentials.org/",
-    "The official site. Explains Content Credentials and has a free web app that can add them to your own files.",
+    "Use the free web tool, or toggle Content Credentials on in Photoshop and Lightroom settings.",
   ],
   [
-    "Verify a file online",
-    "https://contentcredentials.org/verify",
-    "Adobe's public checker. Useful as a second opinion against what this panel says.",
+    "Verify a File",
+    "https://inspect.contentauthenticity.org/",
+    "Check any file’s lineage with Adobe’s public Inspect tool.",
   ],
   [
-    "Adobe Content Authenticity",
-    "https://helpx.adobe.com/creative-cloud/help/content-credentials.html",
-    "How to switch Content Credentials on in Photoshop and Lightroom.",
-  ],
-  [
-    "The C2PA standard",
+    "Learn the Tech",
     "https://c2pa.org/",
-    "The technical standard itself, and the list of tools that have been formally certified to issue credentials.",
+    "Explore the underlying open standard.",
   ],
 ];
 
@@ -89,12 +84,41 @@ export function C2paInspect() {
 
   return (
     <div className="poe-pane">
-      {/* Action first. One line of orientation, then the control — the reference
-          material lives below the result, where it informs without blocking the
-          one thing this panel exists to do. */}
+      {/* Section 2 copy (supplied). No em-dashes: house rule. */}
+      <p className="wl-note" style={{ marginBottom: 8 }}>
+        Content Credentials are digital labels embedded directly inside your files that
+        cryptographically prove <strong>who created a file</strong> and <strong>how it was edited</strong>.
+        Backed by the open C2PA standard (supported by Adobe, Microsoft, the BBC, and others), they
+        provide an auditable history right at the source.
+      </p>
       <p className="wl-note" style={{ marginBottom: 10 }}>
-        Check whether a file carries <strong>Content Credentials</strong>: a signed record of who made it and how. Divi
-        reads them; it doesn't create them.
+        When you pair a Content Credential with a Divi blockchain timestamp, you get complete
+        defense: the credential proves origin and context, while the timestamp independently proves
+        the timeline.
+      </p>
+
+      <h4 className="poe-intro-sub">How Content Credentials Protect You</h4>
+      <ul className="poe-points">
+        <li>
+          <strong>Source-Level Integrity.</strong> Created automatically by supporting cameras (like
+          select Leica, Sony, and Nikon models) or design tools (like Photoshop and Lightroom),
+          credentials cryptographically sign your file the moment it is shot or exported.
+        </li>
+        <li>
+          <strong>Tamper-Evident Security.</strong> A valid credential guarantees the file hasn’t
+          been altered since it was signed. If anyone tampers with the pixels or metadata, the
+          signature breaks.
+        </li>
+        <li>
+          <strong>Zero-Knowledge Privacy.</strong> Checking credentials happens entirely on your
+          local device. Your private files are never uploaded to an external server.
+        </li>
+      </ul>
+
+      <p className="poe-takeaway">
+        <strong>Key Takeaway.</strong> Credentials prove <em>authorship and process</em>, but they
+        don’t guarantee <em>truth</em>. Anyone can sign a fake. That is why pairing them with an
+        immutable Divi timestamp is critical to prove your original existed first.
       </p>
 
       <input
@@ -199,54 +223,24 @@ export function C2paInspect() {
         </div>
       )}
 
-      {/* ── Reference. Everything a first-time reader needs, kept out of the way
-             of everything a repeat user needs. ────────────────────────────── */}
+      {/* Quick Resources (supplied). The explanation lives at the top of the tab;
+          this is just where to act on it. */}
       <div style={{ marginTop: 22, paddingTop: 14, borderTop: "1px solid hsl(var(--border) / 0.5)" }}>
-        <div className="ts-proof-title" style={{ marginBottom: 6 }}>About Content Credentials</div>
-
-        <p className="wl-note" style={{ marginBottom: 8 }}>
-          A signed label carried inside a file, saying who made it and what was done to it. Some cameras add them the
-          moment a photo is taken, and editors like Photoshop can add them as you work. They use an open standard
-          called <strong>C2PA</strong>, backed by Adobe, Microsoft, the BBC and others.
-        </p>
-        <p className="wl-note" style={{ marginBottom: 8 }}>
-          Pair one with a Divi timestamp and you cover both halves of the story: the credential says who made a file
-          and how, and your timestamp independently proves it existed by a certain moment.
-        </p>
-
-        <div className="wl-note" style={{ fontWeight: 600, marginTop: 12, marginBottom: 4 }}>
-          Getting credentials onto your own work
-        </div>
-        <p className="wl-note" style={{ marginBottom: 4 }}>
-          There's nothing to apply for and nothing to buy. Credentials are issued by the <strong>tool</strong> you
-          create with, so you get them by working in one that supports the standard:
-        </p>
-        <ul className="wl-note" style={{ paddingLeft: 18, margin: "4px 0 8px" }}>
-          <li><strong>Photoshop and Lightroom.</strong> Turn Content Credentials on and they attach as you export.</li>
-          <li><strong>The free web app</strong> at contentcredentials.org, which adds them to files you upload.</li>
-          <li><strong>Certain cameras</strong> (Leica, Sony and Nikon models) sign photographs as they're taken, which
-            is the strongest form.</li>
-        </ul>
-        <p className="wl-note" style={{ marginBottom: 8 }}>
-          Only the software vendor can be formally certified, not you. That certification decides whether a signer
-          shows above as recognised, or merely valid.
-        </p>
-
-        <div style={{ display: "grid", gap: 6, margin: "10px 0" }}>
+        <div className="poe-intro-sub" style={{ marginTop: 0 }}>Quick Resources</div>
+        <div style={{ display: "grid", gap: 6, margin: "8px 0" }}>
           {LINKS.map(([label, url, why]) => (
             <div key={url}>
-              <button type="button" className="wl-link" style={{ fontSize: "0.75rem" }} onClick={() => openUrl(url)}>
+              <button type="button" className="wl-link" onClick={() => openUrl(url)}>
                 {label}
               </button>
-              <div className="wl-note" style={{ fontSize: "0.68rem" }}>{why}</div>
+              <div className="wl-note" style={{ fontSize: "0.72rem" }}>{why}</div>
             </div>
           ))}
         </div>
-
-        <p className="wl-note" style={{ marginTop: 10, fontSize: "0.68rem", opacity: 0.75 }}>
-          Valid credentials mean a file hasn't changed since it was signed and the signer is who they claim. They don't
-          make the content true, and a file without them isn't suspicious, just unlabelled. Your file is read on this
-          computer only and never uploaded.
+        <p className="wl-note" style={{ marginTop: 8, fontSize: "0.72rem", opacity: 0.75 }}>
+          One note on the results above: only the software vendor can be formally certified, not you. That is what
+          decides whether a signer shows as recognised, or merely valid. Your file is read on this computer only and
+          never uploaded.
         </p>
       </div>
     </div>

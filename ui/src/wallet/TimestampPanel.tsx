@@ -31,7 +31,10 @@ export function TimestampPanel() {
   };
 
   return (
-    <div className={"timestamp" + (wide ? " timestamp-wide" : "")}>
+    <div
+      className={"timestamp" + (wide ? " timestamp-wide" : "")}
+      style={{ maxWidth: "none", width: "100%" }}
+    >
       <header className="poe-intro">
         <div className="poe-intro-text">
           <h3 className="ts-head">
@@ -45,15 +48,35 @@ export function TimestampPanel() {
               ?
             </button>
           </h3>
-          {/* The heading used to repeat the panel title word for word, which
-              told the user nothing twice. This says why they should care. */}
+          {/* Section 1 copy (supplied). No em-dashes: house rule. */}
           <p className="wl-note">
-            Anyone can now generate a convincing fake, so the question has shifted from “is this
-            real?” to “who had it first?”. Timestamp your work the day you make it and no
-            imitation, however good, can ever show an earlier date. A contract, a photo of damage,
-            a piece of art: your file stays on this computer, only its fingerprint goes on the Divi
-            blockchain, and the block’s time is the proof.
+            In an era where generative AI can effortlessly fabricate photos, video, and audio,
+            proving authenticity is no longer about detecting a fake. It is about proving timeline
+            priority. By anchoring a digital item’s cryptographic fingerprint onto an immutable
+            blockchain the moment it is created, you establish an unalterable line in the sand: a
+            timestamped proof that no future AI generation can backdate or manipulate.
           </p>
+          <h4 className="poe-intro-sub">Why Proof of Existence Is Your Defense Against Deepfakes</h4>
+          <ul className="poe-points">
+            <li>
+              <strong>Immutable Timeline Superiority.</strong> Generative models can mimic content
+              flawlessly, but even the most advanced AI cannot rewrite history. A blockchain
+              timestamp serves as mathematical proof that your original work existed <em>before</em>{" "}
+              any spoof, duplicate, or synthetic clone was created.
+            </li>
+            <li>
+              <strong>Privacy-First Verification.</strong> Your sensitive files, artwork, or legal
+              documents never leave your local device. Only an anonymous, mathematical “fingerprint”
+              (hash) is published to the Divi blockchain, giving you proof of ownership and existence
+              without exposing your actual data.
+            </li>
+            <li>
+              <strong>Tamper-Proof Legal and Creative Protection.</strong> From verifying original
+              digital art to securing photos of property damage or signed contracts, an on-chain
+              timestamp turns an easily altered digital file into an indisputable, tamper-proof
+              audit trail.
+            </li>
+          </ul>
         </div>
       </header>
 

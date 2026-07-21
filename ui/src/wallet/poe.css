@@ -98,3 +98,36 @@
 .poe-modal .poe-modal-body p {
   font-size: 0.93rem;
 }
+
+/* Section 1 / Section 2 supplied copy: subheadings, bullet lists, takeaway. */
+.poe-intro-sub {
+  margin: 14px 0 6px;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+.poe-points {
+  margin: 0 0 4px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.poe-points li {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+}
+.poe-points strong {
+  color: hsl(var(--foreground));
+}
+.poe-takeaway {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border-left: 3px solid hsl(var(--primary));
+  background: hsl(var(--primary) / 0.08);
+  border-radius: 0 8px 8px 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: hsl(var(--foreground));
+}
