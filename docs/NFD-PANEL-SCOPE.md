@@ -11,6 +11,41 @@ seam.
 
 ---
 
+## 0. Current state vs the three-tab target (2026-Jul-21)
+
+The NFD workstream has built a **single working panel** on
+`feat/nfd-collectibles` (~592 lines, 15 commits). It is real and proven, not a
+stub. What exists, mapped onto the three-tab plan:
+
+| Capability | Built? | Target tab |
+|---|---|---|
+| Mint a file → NFD | ✅ | NFD Builder |
+| Create a collection + mint into it | ✅ | NFD Builder |
+| View / decrypt an owned NFD | ✅ | My Collection |
+| Transfer (receive-code / claim-code) | ✅ | My Collection |
+| Browse a collection + trait rarity | ✅ | Marketplace (browse) |
+| Public thumbnails (WebP, ≤500px, Arweave) | ✅ | all |
+| Arweave relay (Phase 3) | ✅ | — |
+| **Three-tab shell** (Collection / Marketplace / Builder) | ❌ | — |
+| **Reusable virtualised grid + lightbox/zoom** | ❌ | all |
+| **Sort / filter / favourites / drag-reorder** | ❌ | My Collection |
+| **Encrypted-at-rest disk cache** (§2.3) | ❌ | all |
+| **Batch mint** (needed for the 240-set) | ❌ | NFD Builder |
+| **Marketplace listings + atomic trade** | ❌ | Marketplace |
+
+So the functional flows exist; what is missing is the **presentation layer** the
+user asked for — the gallery experience (grid, zoom, sort, favourites, drag) and
+the tab structure that organises the existing flows into Collection / Marketplace
+/ Builder — plus batch mint, the disk cache, and the marketplace trade mechanism.
+
+**Coordination:** the existing panel is the NFD agent's. The gallery layer (§2.4,
+§3 sort/filter/favourites/drag) is separable and could be built as **new,
+backend-agnostic components** that the flows plug into, minimising collision. Who
+builds the three-tab reorganisation vs the gallery components should be agreed
+before either starts — reorganising their 592-line panel is theirs to do.
+
+---
+
 ## 1. What already exists
 
 | Piece | Where | State |
