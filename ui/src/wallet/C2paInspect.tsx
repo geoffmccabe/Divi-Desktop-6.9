@@ -130,10 +130,24 @@ export function C2paInspect() {
           if (f) pick(f);
         }}
       />
-      <button type="button" className="wl-btn" disabled={busy} onClick={() => inputRef.current?.click()}>
-        {busy ? "Reading…" : "Choose a file to check"}
-      </button>
-      {name && <div className="wl-note" style={{ marginTop: 6 }}>{name}</div>}
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          type="button"
+          className="wl-btn wl-btn-primary"
+          style={{ flexShrink: 0 }}
+          disabled={busy}
+          onClick={() => inputRef.current?.click()}
+        >
+          {busy ? "Reading…" : "CHECK FILE"}
+        </button>
+        <span className="wl-note" style={{ margin: 0 }}>
+          {name ? (
+            <>File: <strong>{name}</strong></>
+          ) : (
+            "Use this button to check a file’s credentials"
+          )}
+        </span>
+      </div>
       {err && <p className="wl-err">{err}</p>}
 
       {res && !res.present && (
