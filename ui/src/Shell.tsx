@@ -62,6 +62,14 @@ export function Shell() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // Switching node in My Nodes jumps straight to the network map for that node.
+  useEffect(() => {
+    const onSwitch = () => setView("network");
+    window.addEventListener("dd69:nodeswitch", onSwitch);
+    return () => window.removeEventListener("dd69:nodeswitch", onSwitch);
+  }, []);
+
   const Active = VIEWS[view] ?? Overview;
   const label = NAV.find((n) => n.id === view)?.label ?? EXTRA_TITLES[view] ?? "";
 
