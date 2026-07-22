@@ -153,11 +153,8 @@
   background: hsl(var(--primary) / 0.28);
 }
 .poe-why {
-  margin-top: 18px;
-  padding-top: 14px;
-  border-top: 1px solid hsl(var(--border) / 0.5);
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
+  gap: 6px;
 }

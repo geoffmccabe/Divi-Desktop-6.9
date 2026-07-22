@@ -122,7 +122,7 @@ export function PoeHistoryTab({ onVerify }: { onVerify: (rec: PoeRecord) => void
           e.target.value = "";
         }}
       />
-      <button className="wl-btn" onClick={() => importRef.current?.click()}>
+      <button className="wl-btn wl-btn-primary" onClick={() => importRef.current?.click()}>
         Restore from JSON
       </button>
     </>
@@ -131,8 +131,12 @@ export function PoeHistoryTab({ onVerify }: { onVerify: (rec: PoeRecord) => void
   if (!list.length) {
     return (
       <div className="poe-hist">
-        <p className="wl-note">
-          No timestamps yet. Create one in the first tab and it will appear here with its picture and details.
+        <p className="wl-note" style={{ marginBottom: 12 }}>
+          <span style={{ fontSize: "1.1rem", fontWeight: 700, color: "hsl(var(--foreground))" }}>
+            No timestamps yet.
+          </span>
+          <br />
+          Create one in the first tab and it will appear here with its picture and details.
         </p>
         <p className="wl-note">
           Already have proofs from another computer? Restore them from a JSON export and they come back with their

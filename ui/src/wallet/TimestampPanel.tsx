@@ -95,12 +95,42 @@ export function TimestampPanel() {
             `contents` keeps the wrapper invisible to the flex layout.
             (App restart still clears it, which is the intended behaviour.) */}
         <div style={{ display: tab === "create" ? "contents" : "none" }}>
-          <PoeCreate onFileState={setHasFile} onMoreInfo={() => setInfo(true)} />
+          <PoeCreate onFileState={setHasFile} />
         </div>
         {tab === "history" && <PoeHistoryTab onVerify={openVerify} />}
         {tab === "verify" && <PoeVerify prefill={prefill} />}
         {tab === "credentials" && <C2paInspect />}
       </section>
+
+      {/* Deepfake-defense detail (supplied Section 1). Deliberately OUTSIDE and
+          below the bordered panel, on the Create tab only. The choose-a-file
+          panel itself holds nothing but the file workflow. */}
+      {tab === "create" && (
+        <section className="poe-why">
+          <h4 className="poe-intro-sub">Why Proof of Existence Is Your Defense Against Deepfakes</h4>
+          <ul className="poe-points">
+            <li>
+              <strong>Immutable Timeline Superiority.</strong> Generative models can mimic content
+              flawlessly, but even the most advanced AI cannot rewrite history. A blockchain
+              timestamp serves as mathematical proof that your original work existed <em>before</em>{" "}
+              any spoof, duplicate, or synthetic clone was created.
+            </li>
+            <li>
+              <strong>Privacy-First Verification.</strong> Your sensitive files, artwork, or legal
+              documents never leave your local device. Only an anonymous, mathematical “fingerprint”
+              (hash) is published to the Divi blockchain, giving you proof of ownership and existence
+              without exposing your actual data.
+            </li>
+            <li>
+              <strong>Tamper-Proof Legal and Creative Protection.</strong> From verifying original
+              digital art to securing photos of property damage or signed contracts, an on-chain
+              timestamp turns an easily altered digital file into an indisputable, tamper-proof
+              audit trail.
+            </li>
+          </ul>
+          <MoreInfoButton onClick={() => setInfo(true)} />
+        </section>
+      )}
 
       {info && <PoeInfoModal onClose={() => setInfo(false)} />}
     </div>
