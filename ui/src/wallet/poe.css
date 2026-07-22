@@ -158,3 +158,12 @@
   align-items: flex-start;
   gap: 6px;
 }
+
+/* Numbered steps in the Verify tab. */
+.poe-step {
+  flex: 0 0 auto;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: hsl(var(--primary));
+  min-width: 16px;
+}

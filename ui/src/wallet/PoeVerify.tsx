@@ -64,7 +64,8 @@ export function PoeVerify({ prefill }: { prefill: PoeRecord | null }) {
   return (
     <>
       <p className="wl-note">
-        Have a file and a transaction id? Confirm the file matches what was anchored, and see when.
+        Use your <strong>File</strong> and <strong>Transaction ID</strong> to confirm they match by
+        submitting both here.
       </p>
 
       {prefill && (
@@ -78,18 +79,25 @@ export function PoeVerify({ prefill }: { prefill: PoeRecord | null }) {
         </div>
       )}
 
-      <label className="wl-btn ts-file">
-        {vName ? "Choose a different file" : "Choose the file"}
-        <input type="file" onChange={pick} hidden />
-      </label>
-      {vName && <div className="ts-filename">{vName}</div>}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span className="poe-step">1.</span>
+        <label className="wl-btn wl-btn-primary ts-file" style={{ margin: 0 }}>
+          {vName ? "Choose a different file" : "Upload File"}
+          <input type="file" onChange={pick} hidden />
+        </label>
+      </div>
+      {vName && <div className="ts-filename" style={{ marginLeft: 26 }}>{vName}</div>}
 
-      <input
-        className="wl-input"
-        placeholder="Transaction id"
-        value={vTxid}
-        onChange={(e) => setVTxid(e.target.value)}
-      />
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span className="poe-step">2.</span>
+        <input
+          className="wl-input"
+          style={{ flex: 1 }}
+          placeholder="Paste or Type Transaction ID here"
+          value={vTxid}
+          onChange={(e) => setVTxid(e.target.value)}
+        />
+      </div>
 
       <button
         className="wl-btn wl-btn-primary"
