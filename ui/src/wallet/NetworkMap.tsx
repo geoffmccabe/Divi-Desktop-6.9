@@ -217,23 +217,13 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     if (!nodeId) return;
     let alive = true;
 
-    // Node (re)selected: wipe the previous node's accumulated map state so the
-    // map shows THIS node's view, not a union of both.
-    knownRef.current = {};
-    probeRef.current.clear();
-    revealed.current.clear();
-    greenExit.current.clear();
-    firstProbeDone.current = false;
-    lastProbe.current = 0;
-    setSnap(null);
-    setGeos({});
-
-    // Show this node's last-known location immediately, from disk.
+    // Self is per-node, so the "your node" marker follows the active node on a
+    // switch. The broader network mesh (below) is shared and stays intact.
     selfRef.current = loadSelfGeo(nodeId);
 
-    // Load this node's 30-day known peers + geolocate them (for city labels). We
-    // DON'T ping them yet — that starts once we have 20 live peers (see the poll).
-    const known = loadKnown(nodeId);
+    // Load the 30-day known network + geolocate them (for city labels). We DON'T
+    // ping them yet — that starts once we have 20 live peers (see the poll).
+    const known = loadKnown();
     knownRef.current = known;
     const ips = Object.keys(known);
     if (ips.length) {
@@ -324,7 +314,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               newIdx++;
             }
           }
-          if (seen.length) knownRef.current = recordKnown(nodeId, knownRef.current, seen);
+          if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
         });
       } catch {
         /* keep last */

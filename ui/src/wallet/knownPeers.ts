@@ -3,10 +3,10 @@
 // copy can sync this across devices once the login layer exists. Entries that
 // haven't been seen in a while are treated as dead and pruned.
 
-// Scoped per active node (Desktop, DIVI LOVE SCAN, …) so each node keeps its own
-// map view. Switching nodes then shows that node's peers, not a union of both.
+// The broader Divi network we've seen over 30 days — shared across nodes, since
+// it's the same network whichever node you view from. (Your own node and its
+// direct peers are what change on switch; those are handled in NetworkMap.)
 const KEY = "dd69.knownPeers";
-const keyFor = (scope: string) => `${KEY}.${scope || "desktop"}`;
 const TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days → considered dead, removed
 
 export interface KnownPeer {
@@ -18,10 +18,10 @@ export interface KnownPeer {
 }
 export type Known = Record<string, KnownPeer>;
 
-export function loadKnown(scope: string): Known {
+export function loadKnown(): Known {
   let k: Known = {};
   try {
-    k = JSON.parse(localStorage.getItem(keyFor(scope)) || "{}");
+    k = JSON.parse(localStorage.getItem(KEY) || "{}");
   } catch {
     k = {};
   }
@@ -33,13 +33,13 @@ export function loadKnown(scope: string): Known {
       changed = true;
     }
   }
-  if (changed) save(scope, k);
+  if (changed) save(k);
   return k;
 }
 
-function save(scope: string, k: Known) {
+function save(k: Known) {
   try {
-    localStorage.setItem(keyFor(scope), JSON.stringify(k));
+    localStorage.setItem(KEY, JSON.stringify(k));
   } catch {
     /* storage unavailable */
   }
@@ -47,13 +47,12 @@ function save(scope: string, k: Known) {
 
 /// Record the currently-seen located peers, refreshing their lastSeen.
 export function recordKnown(
-  scope: string,
   prev: Known,
   seen: { ip: string; lat: number; lon: number; city?: string; country?: string }[]
 ): Known {
   const now = Date.now();
   const k = { ...prev };
   for (const s of seen) k[s.ip] = { lat: s.lat, lon: s.lon, city: s.city, country: s.country, lastSeen: now };
-  save(scope, k);
+  save(k);
   return k;
 }
