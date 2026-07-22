@@ -206,6 +206,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const selfRef = useRef<Geo | null>(null);
   const nodeListRef = useRef<string[]>([]); // all of the user's configured node ids
   const myNodeIpsRef = useRef<Set<string>>(new Set()); // the user's own nodes — always shown, never probed off
+  const mountedRef = useRef(false); // false only on the very first load (fresh boot intro)
+  const instantRevealRef = useRef(false); // true right after a switch: show peers settled, no green
   const revealed = useRef<Map<string, number>>(new Map()); // ip -> first-seen ms
   const baseRef = useRef<HTMLCanvasElement | null>(null);
   // Peers seen in the last 30 days (grey at startup), and the live probe result.
@@ -248,10 +250,18 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     if (!nodeId) return;
     let alive = true;
 
-    // Clear only the live-peer layer so it visibly repaints for the newly-active
-    // node; the shared blue network mesh (knownRef/geos) is left untouched.
-    setSnap(null);
-    revealed.current.clear();
+    const firstLoad = !mountedRef.current;
+    mountedRef.current = true;
+    if (firstLoad) {
+      // Fresh boot: keep the staggered green "searching" intro.
+      revealed.current.clear();
+    } else {
+      // Node SWITCH: the node is already running and connected, so show its peers
+      // instantly as settled (no fake "searching" re-animation) and don't re-probe
+      // the known network. A genuinely new peer later will still flash green.
+      instantRevealRef.current = true;
+      lastProbe.current = performance.now();
+    }
 
     // Self is per-node, so the "your node" marker follows the active node on a
     // switch. The broader network mesh (below) is shared and stays intact.
@@ -275,10 +285,13 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       }
     }
 
+    // The user's own nodes are always solidly online (never a green probe). Other
+    // known nodes keep their prior state across a switch (unset → "probing" only on
+    // the fresh boot, via the draw fallback), so switching doesn't re-search them.
+    for (const ip of myNodeIpsRef.current) probeRef.current.set(ip, "online");
+
     const ips = Object.keys(knownRef.current);
     if (ips.length) {
-      // your own nodes stay solidly online; everything else starts as "probing"
-      for (const ip of ips) probeRef.current.set(ip, myNodeIpsRef.current.has(ip) ? "online" : "probing");
       resolveGeos(ips, (m) => {
         if (alive) setGeos((prev) => ({ ...prev, ...m }));
       });
@@ -361,13 +374,18 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             if (!pg) continue;
             seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon, city: pg.city, country: pg.country });
             probeRef.current.set(p.ip, "online"); // connected = definitely online
-            // Stagger reveal times so peers pop in one-by-one, not all at once.
             if (!revealed.current.has(p.ip)) {
-              revealed.current.set(p.ip, performance.now() + newIdx * 350);
+              // After a switch, reveal already-connected peers as settled (a past
+              // timestamp → no green flash). On boot, stagger them in one-by-one.
+              revealed.current.set(
+                p.ip,
+                instantRevealRef.current ? performance.now() - 5000 : performance.now() + newIdx * 350,
+              );
               newIdx++;
             }
           }
           if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
+          instantRevealRef.current = false; // only the first poll after a switch is instant
         });
       } catch {
         /* keep last */
