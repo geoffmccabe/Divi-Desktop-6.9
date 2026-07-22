@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { networkPeers, probePeers, type Peer, type Geo } from "./api";
+import { networkPeers, probePeers, listNodes, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
@@ -135,17 +135,17 @@ interface HoverPoint {
 
 // The node's last-known location, persisted so the map shows instantly on boot
 // (even offline / before the node answers) and only updates once verified.
-function loadSelfGeo(): Geo | null {
+function loadSelfGeo(scope: string): Geo | null {
   try {
-    const s = localStorage.getItem("dd69.selfGeo");
+    const s = localStorage.getItem(`dd69.selfGeo.${scope || "desktop"}`);
     return s ? (JSON.parse(s) as Geo) : null;
   } catch {
     return null;
   }
 }
-function saveSelfGeo(g: Geo) {
+function saveSelfGeo(scope: string, g: Geo) {
   try {
-    localStorage.setItem("dd69.selfGeo", JSON.stringify(g));
+    localStorage.setItem(`dd69.selfGeo.${scope || "desktop"}`, JSON.stringify(g));
   } catch {
     /* storage unavailable */
   }
@@ -162,6 +162,9 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [snap, setSnap] = useState<{ peers: Peer[]; selfIp: string | null } | null>(null);
+  // Which node the map is drawing. Refetched on mount and whenever My Nodes
+  // switches (via the dd69:nodeswitch event) so the map follows the active node.
+  const [nodeId, setNodeId] = useState<string | null>(null);
   const [geos, setGeos] = useState<Record<string, Geo>>({});
   const [hover, setHover] = useState<HoverPoint | null>(null);
   const pointsRef = useRef<HoverPoint[]>([]);
@@ -198,14 +201,39 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // manual scroll-zoom. `auto` re-fits every frame until the user scrolls.
   const viewRef = useRef({ scale: 1, tx: 0, ty: 0, auto: true });
 
+  // Track the active node; refetch on mount and on every My Nodes switch.
   useEffect(() => {
-    let alive = true;
-    // Show the last-known node location immediately, from disk.
-    selfRef.current = loadSelfGeo();
+    const load = () =>
+      listNodes()
+        .then((r) => setNodeId(r.active))
+        .catch(() => setNodeId("desktop"));
+    load();
+    const onSwitch = () => load();
+    window.addEventListener("dd69:nodeswitch", onSwitch);
+    return () => window.removeEventListener("dd69:nodeswitch", onSwitch);
+  }, []);
 
-    // Load the 30-day known peers + geolocate them (for city labels). We DON'T
-    // ping them yet — that starts once we have 20 live peers (see the poll).
-    const known = loadKnown();
+  useEffect(() => {
+    if (!nodeId) return;
+    let alive = true;
+
+    // Node (re)selected: wipe the previous node's accumulated map state so the
+    // map shows THIS node's view, not a union of both.
+    knownRef.current = {};
+    probeRef.current.clear();
+    revealed.current.clear();
+    greenExit.current.clear();
+    firstProbeDone.current = false;
+    lastProbe.current = 0;
+    setSnap(null);
+    setGeos({});
+
+    // Show this node's last-known location immediately, from disk.
+    selfRef.current = loadSelfGeo(nodeId);
+
+    // Load this node's 30-day known peers + geolocate them (for city labels). We
+    // DON'T ping them yet — that starts once we have 20 live peers (see the poll).
+    const known = loadKnown(nodeId);
     knownRef.current = known;
     const ips = Object.keys(known);
     if (ips.length) {
@@ -217,9 +245,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [nodeId]);
 
   useEffect(() => {
+    if (!nodeId) return;
     let alive = true;
     const poll = async () => {
       try {
@@ -280,7 +309,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           // The node's verified location → cache it (stable + persisted to disk).
           if (s.selfIp && m[s.selfIp]) {
             selfRef.current = m[s.selfIp];
-            saveSelfGeo(m[s.selfIp]);
+            saveSelfGeo(nodeId, m[s.selfIp]);
           }
           const seen: { ip: string; lat: number; lon: number; city?: string; country?: string }[] = [];
           let newIdx = 0;
@@ -295,7 +324,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               newIdx++;
             }
           }
-          if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
+          if (seen.length) knownRef.current = recordKnown(nodeId, knownRef.current, seen);
         });
       } catch {
         /* keep last */
@@ -307,7 +336,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [nodeId]);
 
   const buildBase = () => {
     const wrap = wrapRef.current;

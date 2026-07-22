@@ -29,6 +29,8 @@ export function MyNodes() {
     try {
       await setActiveNode(id);
       setActive(id);
+      // Tell the network map to repoint to the newly-active node immediately.
+      window.dispatchEvent(new CustomEvent("dd69:nodeswitch"));
       setNote("Switched. The balance and network view update within a few seconds.");
     } catch (e) {
       setNote(String(e));

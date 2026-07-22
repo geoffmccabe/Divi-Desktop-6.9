@@ -3,7 +3,10 @@
 // copy can sync this across devices once the login layer exists. Entries that
 // haven't been seen in a while are treated as dead and pruned.
 
+// Scoped per active node (Desktop, DIVI LOVE SCAN, …) so each node keeps its own
+// map view. Switching nodes then shows that node's peers, not a union of both.
 const KEY = "dd69.knownPeers";
+const keyFor = (scope: string) => `${KEY}.${scope || "desktop"}`;
 const TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days → considered dead, removed
 
 export interface KnownPeer {
@@ -15,10 +18,10 @@ export interface KnownPeer {
 }
 export type Known = Record<string, KnownPeer>;
 
-export function loadKnown(): Known {
+export function loadKnown(scope: string): Known {
   let k: Known = {};
   try {
-    k = JSON.parse(localStorage.getItem(KEY) || "{}");
+    k = JSON.parse(localStorage.getItem(keyFor(scope)) || "{}");
   } catch {
     k = {};
   }
@@ -30,13 +33,13 @@ export function loadKnown(): Known {
       changed = true;
     }
   }
-  if (changed) save(k);
+  if (changed) save(scope, k);
   return k;
 }
 
-function save(k: Known) {
+function save(scope: string, k: Known) {
   try {
-    localStorage.setItem(KEY, JSON.stringify(k));
+    localStorage.setItem(keyFor(scope), JSON.stringify(k));
   } catch {
     /* storage unavailable */
   }
@@ -44,12 +47,13 @@ function save(k: Known) {
 
 /// Record the currently-seen located peers, refreshing their lastSeen.
 export function recordKnown(
+  scope: string,
   prev: Known,
   seen: { ip: string; lat: number; lon: number; city?: string; country?: string }[]
 ): Known {
   const now = Date.now();
   const k = { ...prev };
   for (const s of seen) k[s.ip] = { lat: s.lat, lon: s.lon, city: s.city, country: s.country, lastSeen: now };
-  save(k);
+  save(scope, k);
   return k;
 }
