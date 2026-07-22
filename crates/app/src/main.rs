@@ -3,8 +3,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use dd69_supervisor::{collectibles, config::NodeConfig, poe, report, wallet};
+use dd69_supervisor::{collectibles, collectibles_import, config::NodeConfig, poe, report, wallet};
 use serde::Serialize;
+use serde_json::Value;
 
 #[derive(Serialize)]
 struct BalanceDto {
@@ -362,6 +363,29 @@ async fn nfd_create_collection(
     .map_err(|_| "internal error".to_string())?
 }
 
+/// Open + validate a Kinet.ink collection import (.zip). Unpacks and returns a
+/// plan (collection meta + per-item ok/error) WITHOUT publishing anything.
+#[tauri::command]
+async fn nfd_import_open(zip_path: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles_import::open(&cfg, &zip_path)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Read one item's bytes + metadata (base64) from an opened import, for minting.
+#[tauri::command]
+async fn nfd_import_read_item(import_dir: String, edition: u64) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles_import::read_item(&cfg, &import_dir, edition)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReceiveCodeDto {
@@ -493,7 +517,9 @@ fn main() {
             nfd_fee_config,
             nfd_set_fee_config,
             nfd_relay_status,
-            nfd_create_collection
+            nfd_create_collection,
+            nfd_import_open,
+            nfd_import_read_item
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

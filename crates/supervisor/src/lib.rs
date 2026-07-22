@@ -1,4 +1,5 @@
 pub mod collectibles;
+pub mod collectibles_import;
 pub mod config;
 pub mod crypto_nfd;
 pub mod fees;

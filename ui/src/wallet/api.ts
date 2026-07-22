@@ -62,6 +62,34 @@ export const nfdMint = (
     traitsJson: collection?.traitsJson,
   });
 
+export interface ImportPlanItem {
+  edition: number | null;
+  name: string;
+  tier: string | null;
+  hasPreview: boolean;
+  ok: boolean;
+  error: string | null;
+}
+export interface ImportPlan {
+  importDir: string;
+  collection: { name: string; description: string; maxSupply: number; coverB64: string | null; coverMime: string | null };
+  items: ImportPlanItem[];
+  okCount: number;
+  warnings: { edition: number | null; error: string }[];
+}
+export interface ImportItem {
+  name: string;
+  tier: string | null;
+  attributes: { trait_type: string; value: string }[];
+  originalB64: string;
+  originalMime: string;
+  previewB64: string | null;
+  previewMime: string | null;
+}
+export const nfdImportOpen = (zipPath: string) => invoke<ImportPlan>("nfd_import_open", { zipPath });
+export const nfdImportReadItem = (importDir: string, edition: number) =>
+  invoke<ImportItem>("nfd_import_read_item", { importDir, edition });
+
 export interface NfdCollection {
   txid: string; // the collection id
   metaPtr: string;

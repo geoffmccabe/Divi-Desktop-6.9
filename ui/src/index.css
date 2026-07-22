@@ -456,6 +456,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .coll-tierchip { background: hsl(var(--primary)); color: #fff; font-weight: 600; }
 .wl-btn-disabled { opacity: 0.5; pointer-events: none; }
+.import-plan { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.import-warn { margin: 0; padding-left: 18px; font-size: 0.78rem; color: hsl(var(--muted-foreground)); max-height: 140px; overflow-y: auto; }
 .coll-xfer { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .admin-panel-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
 .pay-row { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: hsl(var(--foreground)); }

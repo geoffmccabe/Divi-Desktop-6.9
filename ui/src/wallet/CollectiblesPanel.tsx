@@ -1,5 +1,6 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import { nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateCollection, newReceiveAddress } from "./api";
+import { CollectionImport } from "./CollectionImport";
 
 // Divi Collectibles (NFDs). Mint, view, transfer, and receive collectibles. The
 // file is encrypted locally before it leaves the machine; only the encrypted
@@ -7,7 +8,7 @@ import { nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateColle
 // publish an UNENCRYPTED ≤500px preview (WebP). Transfers use a receive-code /
 // claim-code handoff until the chain indexer can enumerate + look up on-chain.
 
-interface Item {
+export interface Item {
   txid: string; // the mint txid — the NFD's stable id
   ownerAddr: string;
   name: string;
@@ -25,7 +26,7 @@ interface Item {
 }
 
 // A collection I created (creator-only minting, optional supply cap).
-interface Collection {
+export interface Collection {
   id: string; // the COLLECTION-CREATE txid
   name: string;
   creatorAddr: string; // must fund every mint into it
@@ -35,7 +36,7 @@ interface Collection {
 }
 
 // One ERC-721 trait row (public).
-interface Trait {
+export interface Trait {
   type: string;
   value: string;
 }
@@ -87,11 +88,34 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+export interface Thumb {
+  b64: string;
+  mime: string;
+  dataUrl: string;
+}
+
 // Downscale an image to a ≤500px WebP preview (WebP only). null if not possible.
-async function makeThumbnail(file: File): Promise<{ b64: string; mime: string; dataUrl: string } | null> {
+async function makeThumbnail(file: File): Promise<Thumb | null> {
   if (!file.type.startsWith("image/")) return null;
+  return makeThumbnailFromBlob(file);
+}
+
+// Base64 → ≤500px WebP preview, for the collection importer. null if not possible.
+export async function makeThumbnailFromBase64(b64: string, mime: string): Promise<Thumb | null> {
+  if (!mime.startsWith("image/")) return null;
   try {
-    const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return await makeThumbnailFromBlob(new Blob([bytes], { type: mime }));
+  } catch {
+    return null;
+  }
+}
+
+async function makeThumbnailFromBlob(blob: Blob): Promise<Thumb | null> {
+  try {
+    const bmp = await createImageBitmap(blob, { imageOrientation: "from-image" });
     const scale = Math.min(1, THUMB_MAX_PX / Math.max(bmp.width, bmp.height));
     const w = Math.max(1, Math.round(bmp.width * scale));
     const h = Math.max(1, Math.round(bmp.height * scale));
@@ -520,6 +544,12 @@ export function CollectiblesPanel() {
         </label>
         {err && <p className="wl-err">{err}</p>}
       </section>
+
+      <CollectionImport
+        getMyAddress={myNfdAddress}
+        onCollection={(c) => setCollections((prev) => [c, ...prev])}
+        onItem={(it) => setItems((prev) => [it, ...prev])}
+      />
       </>
       )}
 
