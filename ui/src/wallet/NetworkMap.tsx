@@ -151,6 +151,32 @@ function saveSelfGeo(scope: string, g: Geo) {
   }
 }
 
+// Each of the user's own nodes, remembered by its public IP + location as it's
+// visited, so the OTHER node(s) can be plotted on the current map even when the
+// two aren't P2P peers (e.g. the Costa Rica desktop node on the scanner's map).
+interface SelfNode {
+  ip: string;
+  lat: number;
+  lon: number;
+  city?: string;
+  country?: string;
+}
+function loadSelfNode(scope: string): SelfNode | null {
+  try {
+    const s = localStorage.getItem(`dd69.selfNode.${scope || "desktop"}`);
+    return s ? (JSON.parse(s) as SelfNode) : null;
+  } catch {
+    return null;
+  }
+}
+function saveSelfNode(scope: string, n: SelfNode) {
+  try {
+    localStorage.setItem(`dd69.selfNode.${scope || "desktop"}`, JSON.stringify(n));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
 function fmtDur(secs: number): string {
   if (secs < 90) return `${Math.max(0, secs)}s`;
   if (secs < 5400) return `${Math.round(secs / 60)}m`;
@@ -178,6 +204,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // We deliberately do NOT use the app's caller IP: with a remote node that's a
   // different machine, which would place the node in the wrong city.
   const selfRef = useRef<Geo | null>(null);
+  const nodeListRef = useRef<string[]>([]); // all of the user's configured node ids
+  const myNodeIpsRef = useRef<Set<string>>(new Set()); // the user's own nodes — always shown, never probed off
   const revealed = useRef<Map<string, number>>(new Map()); // ip -> first-seen ms
   const baseRef = useRef<HTMLCanvasElement | null>(null);
   // Peers seen in the last 30 days (grey at startup), and the live probe result.
@@ -205,7 +233,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   useEffect(() => {
     const load = () =>
       listNodes()
-        .then((r) => setNodeId(r.active))
+        .then((r) => {
+          nodeListRef.current = r.nodes.map((n) => n.id);
+          setNodeId(r.active);
+        })
         .catch(() => setNodeId("desktop"));
     load();
     const onSwitch = () => load();
@@ -230,9 +261,24 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     // ping them yet — that starts once we have 20 live peers (see the poll).
     const known = loadKnown();
     knownRef.current = known;
-    const ips = Object.keys(known);
+
+    // Plot the user's OTHER nodes (from their remembered location) as network
+    // nodes, so e.g. the Costa Rica desktop node shows on the scanner's map even
+    // though the two aren't P2P peers. Each node is captured once it's visited.
+    myNodeIpsRef.current = new Set();
+    for (const id of nodeListRef.current) {
+      if (id === nodeId) continue;
+      const sn = loadSelfNode(id);
+      if (sn && sn.ip) {
+        knownRef.current[sn.ip] = { lat: sn.lat, lon: sn.lon, city: sn.city, country: sn.country, lastSeen: Date.now() };
+        myNodeIpsRef.current.add(sn.ip);
+      }
+    }
+
+    const ips = Object.keys(knownRef.current);
     if (ips.length) {
-      for (const ip of ips) probeRef.current.set(ip, "probing");
+      // your own nodes stay solidly online; everything else starts as "probing"
+      for (const ip of ips) probeRef.current.set(ip, myNodeIpsRef.current.has(ip) ? "online" : "probing");
       resolveGeos(ips, (m) => {
         if (alive) setGeos((prev) => ({ ...prev, ...m }));
       });
@@ -269,7 +315,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         const nowMs = performance.now();
         if (s.peers.length >= 20 && nowMs - lastProbe.current > 60000) {
           lastProbe.current = nowMs;
-          const kips = Object.keys(knownRef.current);
+          const kips = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
           if (kips.length) {
             for (const ip of kips) if (probeRef.current.get(ip) === "offline") probeRef.current.set(ip, "probing");
             probePeers(kips)
@@ -305,6 +351,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           if (s.selfIp && m[s.selfIp]) {
             selfRef.current = m[s.selfIp];
             saveSelfGeo(nodeId, m[s.selfIp]);
+            const g0 = m[s.selfIp];
+            saveSelfNode(nodeId, { ip: s.selfIp, lat: g0.lat, lon: g0.lon, city: g0.city, country: g0.country });
           }
           const seen: { ip: string; lat: number; lon: number; city?: string; country?: string }[] = [];
           let newIdx = 0;
