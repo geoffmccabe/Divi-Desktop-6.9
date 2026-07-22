@@ -24,11 +24,12 @@ export function getValueSettings(): ValueSettings {
   try {
     const v = JSON.parse(localStorage.getItem(KEY) || "null");
     if (v && Array.isArray(v.currencies) && v.currencies.length) {
-      const merged = { ...DEFAULTS, ...v };
-      // Repair settings saved while the old default was off: with no key AND no
-      // CoinGecko there is no source, which is never what anyone intended.
-      if (!merged.useCoingecko && !merged.cmcKey) merged.useCoingecko = true;
-      return merged;
+      // The user's saved choices win outright. An earlier version forced
+      // CoinGecko back on here whenever no CMC key was stored — which quietly
+      // re-checked the box every time the panel reopened, undoing a deliberate
+      // "turn CoinGecko off". Never override an explicit setting; a fresh install
+      // still starts with CoinGecko on via DEFAULTS.
+      return { ...DEFAULTS, ...v };
     }
   } catch {
     /* fall through */
@@ -53,9 +54,23 @@ export const CURRENCY_SYMBOLS: Record<string, string> = {
 };
 export const symbolFor = (code: string) => CURRENCY_SYMBOLS[code.toUpperCase()] ?? "";
 
+// How many decimals to show. Normal money gets 2. A sub-cent amount — like the
+// price of ONE DIVI (~$0.0013) — would round to "$0.00" at 2 decimals, so below
+// a cent we widen to keep ~4 significant figures (0.001332, 0.00004521, …).
+// This serves both the per-DIVI price preview and any small balance value.
+function decimalsFor(amount: number): number {
+  const abs = Math.abs(amount);
+  if (abs === 0 || abs >= 0.01) return 2;
+  const leadingZeros = Math.floor(-Math.log10(abs)); // 0.001332 → 2
+  return Math.min(leadingZeros + 4, 10);
+}
+
 // Value + code split so callers can style the code (e.g. small grey "USD").
 export function fiatParts(amount: number, code: string): { value: string; code: string } {
-  const n = amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const n = amount.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: decimalsFor(amount),
+  });
   return { value: `${symbolFor(code)}${n}`, code: code.toUpperCase() };
 }
 
