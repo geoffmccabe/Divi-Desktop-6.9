@@ -179,3 +179,20 @@
   color: hsl(0 0% 35%);
   opacity: 1;
 }
+
+/* Instant press feedback for all button-styled controls, including the
+   label-based file pickers. Kept here rather than index.css to avoid the
+   shared-file collision; CSS import scope is global, so these apply app-wide.
+   Hover brightens a little (with a quick ease); pressing brightens a lot with
+   NO transition, so the response is immediate rather than fading in. The OS
+   file-dialog open animation itself is outside our control. */
+.wl-btn {
+  transition: filter 0.1s ease, background-color 0.1s ease;
+}
+.wl-btn:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+.wl-btn:active:not(:disabled) {
+  filter: brightness(1.55);
+  transition: none;
+}

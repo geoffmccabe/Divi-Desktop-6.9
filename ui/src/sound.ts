@@ -57,7 +57,9 @@ export function installClickSound(): void {
     "pointerdown",
     (e) => {
       const el = e.target as HTMLElement | null;
-      if (el && el.closest("button")) playSound("click");
+      // Also match label-based controls styled as buttons (the file pickers are
+      // <label class="wl-btn">, not <button>), so they click-sound like the rest.
+      if (el && el.closest("button, .wl-btn")) playSound("click");
     },
     true
   );
