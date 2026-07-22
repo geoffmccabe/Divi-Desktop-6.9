@@ -217,6 +217,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     if (!nodeId) return;
     let alive = true;
 
+    // Clear only the live-peer layer so it visibly repaints for the newly-active
+    // node; the shared blue network mesh (knownRef/geos) is left untouched.
+    setSnap(null);
+    revealed.current.clear();
+
     // Self is per-node, so the "your node" marker follows the active node on a
     // switch. The broader network mesh (below) is shared and stays intact.
     selfRef.current = loadSelfGeo(nodeId);
