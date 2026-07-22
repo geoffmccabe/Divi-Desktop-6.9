@@ -122,6 +122,33 @@ interface ClaimCode {
   mime: string;
 }
 
+// A claim code is fully attacker-authored, so validate it hard before it's
+// parsed, stored, rendered, or forwarded to the backend.
+const MAX_CLAIM_B64 = 8 * 1024; // codes are tiny (two 64-hex ids + short name)
+const NAME_MAX = 200;
+const MAX_ITEMS = 5000;
+const isHex64 = (s: unknown): s is string => typeof s === "string" && /^[0-9a-f]{64}$/i.test(s);
+const isSafeMime = (s: unknown): s is string =>
+  typeof s === "string" && s.length <= 100 && /^[a-z]+\/[a-z0-9.+-]+$/i.test(s);
+const isDiviAddr = (s: string) => /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{26,48}$/.test(s);
+
+// Parse + strictly validate a pasted claim code. Returns null on anything off.
+function parseClaimCode(raw: string): ClaimCode | null {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_CLAIM_B64) return null;
+  let obj: unknown;
+  try {
+    obj = JSON.parse(atob(trimmed));
+  } catch {
+    return null;
+  }
+  if (typeof obj !== "object" || obj === null) return null;
+  const c = obj as Record<string, unknown>;
+  if (!isHex64(c.mintTxid) || !isHex64(c.wrapkeyPtr) || !isSafeMime(c.mime)) return null;
+  if (typeof c.name !== "string" || c.name.length === 0 || c.name.length > NAME_MAX) return null;
+  return { mintTxid: c.mintTxid, wrapkeyPtr: c.wrapkeyPtr, name: c.name, mime: c.mime };
+}
+
 export function CollectiblesPanel() {
   const [tab, setTab] = useState<"collection" | "marketplace" | "builder">("collection");
   const [items, setItems] = useState<Item[]>(loadItems);
@@ -162,11 +189,20 @@ export function CollectiblesPanel() {
   const [recvBusy, setRecvBusy] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem(STORE_KEY, JSON.stringify(items));
+    // A poisoned/oversized item must not throw inside the effect and wedge the panel.
+    try {
+      localStorage.setItem(STORE_KEY, JSON.stringify(items));
+    } catch {
+      /* quota or serialization failure — keep running on in-memory state */
+    }
   }, [items]);
 
   useEffect(() => {
-    localStorage.setItem(COLLECTIONS_KEY, JSON.stringify(collections));
+    try {
+      localStorage.setItem(COLLECTIONS_KEY, JSON.stringify(collections));
+    } catch {
+      /* ignore */
+    }
   }, [collections]);
 
   // The wallet's stable NFD address (generated once, reused for receive + claim).
@@ -281,7 +317,7 @@ export function CollectiblesPanel() {
 
   async function transferTo(it: Item) {
     const parts = xferCode.trim().split("|");
-    if (parts.length !== 2 || parts[1].length !== 64) {
+    if (parts.length !== 2 || !isDiviAddr(parts[0]) || !isHex64(parts[1])) {
       setXferErr("That doesn't look like a receive code.");
       return;
     }
@@ -321,7 +357,22 @@ export function CollectiblesPanel() {
     setRecvBusy(true);
     setRecvMsg(null);
     try {
-      const code = JSON.parse(atob(claimIn.trim())) as ClaimCode;
+      const code = parseClaimCode(claimIn);
+      if (!code) {
+        setRecvMsg("That doesn't look like a valid claim code.");
+        setRecvBusy(false);
+        return;
+      }
+      if (items.some((i) => i.txid === code.mintTxid)) {
+        setRecvMsg("You already have that collectible.");
+        setRecvBusy(false);
+        return;
+      }
+      if (items.length >= MAX_ITEMS) {
+        setRecvMsg("Your collection is full.");
+        setRecvBusy(false);
+        return;
+      }
       const addr = await myNfdAddress();
       const b64 = await nfdClaim(addr, code.mintTxid, code.wrapkeyPtr);
       const item: Item = {

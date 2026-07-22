@@ -164,7 +164,13 @@ fn extract_payload(script_hex: &str) -> Option<&str> {
             (4usize, n)
         }
     };
-    script_hex.get(off..off + plen * 2)
+    let payload = script_hex.get(off..off + plen * 2)?;
+    // Defense in depth: the real input is the node's hex encoding, but reject a
+    // non-hex payload so "malformed → None" holds even for a non-chain caller.
+    if !payload.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(payload)
 }
 
 /// Parse an NFD record out of an OP_META scriptPubKey hex, or None if it isn't
