@@ -4,6 +4,7 @@ import { poeTimestamp, poeVerify } from "./api";
 import { fetchPrices } from "./value";
 import { addPoeRecord, makeThumb, markPoeConfirmed, poeProjects, PUBLIC_THUMB_MAX } from "./poeHistory";
 import { getPoePayout, splitForAnchor } from "./poePayout";
+import { MoreInfoButton } from "./MoreInfoButton";
 
 // Create tab: pick a file, see it, anchor its fingerprint on the chain.
 // The file never leaves the machine: only the SHA-256 goes out.
@@ -28,7 +29,13 @@ function fmtBytes(n: number): string {
 const whenProven = (t: number | null) =>
   t ? new Date(t * 1000).toLocaleString() : "unconfirmed (waiting for a block)";
 
-export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => void }) {
+export function PoeCreate({
+  onFileState,
+  onMoreInfo,
+}: {
+  onFileState: (hasFile: boolean) => void;
+  onMoreInfo: () => void;
+}) {
   const [name, setName] = useState<string | null>(null);
   const [hash, setHash] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -186,6 +193,7 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
   }
 
   return (
+    <>
     <div className={"ts-layout" + (file ? " ts-layout-split" : "")}>
       <div className="ts-col-main">
         <label className="wl-btn ts-file">
@@ -359,6 +367,35 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
           </div>,
           document.body,
         )}
-    </div>
+      </div>
+
+      {/* Deepfake-defense detail (supplied Section 1). Moved here, below the file
+          chooser, so the top of the panel stays short. The MORE INFO capsule
+          repeats here as well as up top. No em-dashes: house rule. */}
+      <section className="poe-why">
+        <h4 className="poe-intro-sub">Why Proof of Existence Is Your Defense Against Deepfakes</h4>
+        <ul className="poe-points">
+          <li>
+            <strong>Immutable Timeline Superiority.</strong> Generative models can mimic content
+            flawlessly, but even the most advanced AI cannot rewrite history. A blockchain timestamp
+            serves as mathematical proof that your original work existed <em>before</em> any spoof,
+            duplicate, or synthetic clone was created.
+          </li>
+          <li>
+            <strong>Privacy-First Verification.</strong> Your sensitive files, artwork, or legal
+            documents never leave your local device. Only an anonymous, mathematical “fingerprint”
+            (hash) is published to the Divi blockchain, giving you proof of ownership and existence
+            without exposing your actual data.
+          </li>
+          <li>
+            <strong>Tamper-Proof Legal and Creative Protection.</strong> From verifying original
+            digital art to securing photos of property damage or signed contracts, an on-chain
+            timestamp turns an easily altered digital file into an indisputable, tamper-proof audit
+            trail.
+          </li>
+        </ul>
+        <MoreInfoButton onClick={onMoreInfo} />
+      </section>
+    </>
   );
 }

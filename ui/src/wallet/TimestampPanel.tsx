@@ -5,6 +5,7 @@ import { C2paInspect } from "./C2paInspect";
 import "./poe.css";
 import { PoeVerify } from "./PoeVerify";
 import { PoeInfoModal } from "./PoeInfoModal";
+import { MoreInfoButton } from "./MoreInfoButton";
 import { loadPoeHistory, type PoeRecord } from "./poeHistory";
 
 // Proof-of-Existence. Three tabs: make a proof, review the ones you've made,
@@ -37,46 +38,17 @@ export function TimestampPanel() {
     >
       <header className="poe-intro">
         <div className="poe-intro-text">
-          <h3 className="ts-head">
-            PoE, Why It Matters
-            <button
-              className="poe-help"
-              onClick={() => setInfo(true)}
-              aria-label="What is Proof of Existence?"
-              title="What is this for?"
-            >
-              ?
-            </button>
-          </h3>
-          {/* Section 1 copy (supplied). No em-dashes: house rule. */}
+          <h3 className="ts-head">PoE, Why It Matters</h3>
+          {/* Section 1 intro (supplied). The deepfake-defense detail + its MORE
+              INFO capsule now live under the file chooser, inside PoeCreate. */}
           <p className="wl-note">
             In an era where generative AI can effortlessly fabricate photos, video, and audio,
             proving authenticity is no longer about detecting a fake. It is about proving timeline
             priority. By anchoring a digital item’s cryptographic fingerprint onto an immutable
             blockchain the moment it is created, you establish an unalterable line in the sand: a
-            timestamped proof that no future AI generation can backdate or manipulate.
+            timestamped proof that no future AI generation can backdate or manipulate.{" "}
+            <MoreInfoButton onClick={() => setInfo(true)} />
           </p>
-          <h4 className="poe-intro-sub">Why Proof of Existence Is Your Defense Against Deepfakes</h4>
-          <ul className="poe-points">
-            <li>
-              <strong>Immutable Timeline Superiority.</strong> Generative models can mimic content
-              flawlessly, but even the most advanced AI cannot rewrite history. A blockchain
-              timestamp serves as mathematical proof that your original work existed <em>before</em>{" "}
-              any spoof, duplicate, or synthetic clone was created.
-            </li>
-            <li>
-              <strong>Privacy-First Verification.</strong> Your sensitive files, artwork, or legal
-              documents never leave your local device. Only an anonymous, mathematical “fingerprint”
-              (hash) is published to the Divi blockchain, giving you proof of ownership and existence
-              without exposing your actual data.
-            </li>
-            <li>
-              <strong>Tamper-Proof Legal and Creative Protection.</strong> From verifying original
-              digital art to securing photos of property damage or signed contracts, an on-chain
-              timestamp turns an easily altered digital file into an indisputable, tamper-proof
-              audit trail.
-            </li>
-          </ul>
         </div>
       </header>
 
@@ -123,7 +95,7 @@ export function TimestampPanel() {
             `contents` keeps the wrapper invisible to the flex layout.
             (App restart still clears it, which is the intended behaviour.) */}
         <div style={{ display: tab === "create" ? "contents" : "none" }}>
-          <PoeCreate onFileState={setHasFile} />
+          <PoeCreate onFileState={setHasFile} onMoreInfo={() => setInfo(true)} />
         </div>
         {tab === "history" && <PoeHistoryTab onVerify={openVerify} />}
         {tab === "verify" && <PoeVerify prefill={prefill} />}
