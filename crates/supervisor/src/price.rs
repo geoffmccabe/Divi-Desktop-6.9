@@ -35,7 +35,12 @@ pub struct PriceResult {
 /// configured" and the caller quietly used a different exchange's price
 /// instead — the user saw a wrong number with nothing explaining why.
 fn coinmarketcap_usd(key: &str) -> Result<f64, String> {
-    let url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol=DIVI&convert=USD";
+    // Query by SLUG, not symbol. Several coins list under the ticker "DIVI", so
+    // `symbol=DIVI` returns them all and picking the first gave a DIFFERENT
+    // token's price — a fraction of the real one. The slug `divi` is the exact
+    // coin shown at coinmarketcap.com/currencies/divi/, so it can't resolve to
+    // an impostor. (CMC id 3441 is the same coin if a hard pin is ever needed.)
+    let url = "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?slug=divi&convert=USD";
     let resp = ureq::get(url)
         .set("X-CMC_PRO_API_KEY", key)
         .timeout(Duration::from_secs(10))
@@ -53,12 +58,13 @@ fn coinmarketcap_usd(key: &str) -> Result<f64, String> {
         })?;
     let text = resp.into_string().map_err(|e| format!("Unreadable CoinMarketCap reply: {e}"))?;
     let v: Value = serde_json::from_str(&text).map_err(|e| format!("Bad CoinMarketCap JSON: {e}"))?;
-    // data.DIVI may be an object (v1) or an array (several coins share a symbol).
-    let node = &v["data"]["DIVI"];
-    node["quote"]["USD"]["price"]
-        .as_f64()
-        .or_else(|| node[0]["quote"]["USD"]["price"].as_f64())
-        .ok_or_else(|| "CoinMarketCap returned no USD quote for DIVI".to_string())
+    // A slug/id query keys `data` by numeric coin id (e.g. "3441"), not by
+    // ticker — so read the single entry under data rather than data["DIVI"].
+    v["data"]
+        .as_object()
+        .and_then(|m| m.values().next())
+        .and_then(|node| node["quote"]["USD"]["price"].as_f64())
+        .ok_or_else(|| "CoinMarketCap returned no USD quote for the divi slug".to_string())
 }
 
 /// CoinGecko: DIVI in USD (no key required).
