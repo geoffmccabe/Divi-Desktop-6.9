@@ -412,10 +412,11 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .sidebar-brand h1 { margin: 0; font-size: 1.2rem; font-weight: 700; color: hsl(var(--foreground)); text-align: center; white-space: nowrap; }
 .sidebar-brand .ver { font-size: 0.63rem; font-weight: 700; color: hsl(var(--primary)); text-align: center; margin-top: -1.2px; }
-.nav { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; }
+/* Nav rows sit 40% closer: gap 4px→2.4px and vertical padding 11px→6.6px. */
+.nav { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 2.4px; }
 .nav-item {
   width: 100%; display: flex; align-items: center; gap: 12px;
-  padding: 11px 12px; border: none; border-radius: 10px; cursor: pointer;
+  padding: 6.6px 12px; border: none; border-radius: 10px; cursor: pointer;
   background: transparent; color: hsl(var(--muted-foreground));
   font-size: 0.92rem; text-align: left;
   transition: background 0.15s ease, color 0.15s ease;
@@ -428,6 +429,33 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .main-panel { flex: 1; min-width: 0; padding: 26px 32px; overflow: auto; display: flex; flex-direction: column; position: relative; z-index: 1; }
 .view-title { margin: 0 0 20px; font-size: 1.3rem; font-weight: 600; color: hsl(var(--foreground)); }
 .view-body { flex: 1; }
+
+/* ── My Agent (placeholder setup) ─────────────────────────────────────────── */
+.agent-setup-head { margin: 0 0 18px; font-size: 1.05rem; font-weight: 600; color: hsl(var(--foreground)); }
+.agent-setup-body { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+.agent-form { display: flex; flex-direction: column; gap: 16px; flex: 0 1 300px; min-width: 240px; }
+.agent-field { display: flex; flex-direction: column; gap: 6px; }
+.agent-field > span { font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
+.agent-input { max-width: none; }
+.agent-textarea { min-height: 128px; resize: vertical; font-family: inherit; font-size: 0.85rem; line-height: 1.45; }
+.agent-chooser { display: flex; gap: 16px; align-items: stretch; flex: 1 1 360px; min-width: 0; }
+/* Character tiles reuse the theme's subpanel surface so they track the admin skin. */
+.agent-tile {
+  --agent-silhouette-fill: #4c2f86; /* dark purple placeholder portrait */
+  border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border-radius: 12px; cursor: pointer; padding: 10px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.agent-tile:hover { border-color: hsl(var(--primary) / 0.7); background-color: hsl(var(--primary) / 0.12); }
+.agent-tile-create { flex: 0 0 150px; }
+.agent-create-q { font-size: 3rem; font-weight: 700; line-height: 1; color: hsl(var(--primary)); }
+.agent-create-label { font-size: 0.76rem; font-weight: 700; letter-spacing: 0.06em; text-align: center; color: hsl(var(--foreground)); }
+.agent-grid { flex: 1 1 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.agent-grid .agent-tile { aspect-ratio: 1 / 1; }
+.agent-silhouette { width: 64%; height: 64%; }
+.agent-silhouette path { fill: var(--agent-silhouette-fill); }
 
 /* ── Proof of Existence + Divi Collectibles ───────────────────────────────── */
 .timestamp, .collectibles { display: flex; flex-direction: column; gap: 22px; max-width: 620px; }

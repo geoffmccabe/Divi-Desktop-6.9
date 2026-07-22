@@ -17,6 +17,10 @@ export const ICONS: Record<string, string> = {
   send: svg("<path d='M22 2 11 13'/><path d='M22 2 15 22 11 13 2 9Z'/>"),
   receive: svg("<path d='M12 3v12'/><path d='M7 10l5 5 5-5'/><path d='M4 20h16'/>"),
   history: svg("<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/>"),
+  // Female head with long hair — matches the filled silhouette in the agent panel.
+  agent: svg(
+    "<path d='M6 20 C5 12 5 5 12 5 C19 5 19 12 18 20'/><path d='M9 10 a3 2.6 0 0 1 6 0'/><path d='M9 10 C9 15 10 16.5 12 16.5 C14 16.5 15 15 15 10'/>"
+  ),
   addressbook: svg(
     "<rect x='3' y='4' width='18' height='16' rx='2'/><circle cx='9' cy='11' r='2.4'/><path d='M5.5 17c.8-2 2-3 3.5-3s2.7 1 3.5 3'/><path d='M15 10h3'/><path d='M15 14h3'/>"
   ),
