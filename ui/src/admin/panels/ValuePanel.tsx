@@ -74,9 +74,21 @@ export function ValuePanel() {
             type="password"
             value={s.cmcKey}
             placeholder="Paste your CMC key…"
+            // onInput as well as onChange: some webviews don't fire React's
+            // onChange on a right-click paste, which left the key looking entered
+            // but never saved.
             onChange={(e) => update({ cmcKey: e.target.value })}
+            onInput={(e) => update({ cmcKey: (e.target as HTMLInputElement).value })}
           />
         </label>
+        {/* Show plainly whether a key is actually stored — without this you can't
+            tell a saved key from an empty one, and an empty one silently falls
+            back to CoinGecko (a very different price). */}
+        <p className="set-note" style={{ marginTop: 4 }}>
+          {s.cmcKey.trim()
+            ? `Key saved (${s.cmcKey.trim().length} characters). CoinMarketCap is now the source.`
+            : "No key saved yet — the price is coming from CoinGecko, which reads far lower for DIVI."}
+        </p>
         <button
           type="button"
           className="wl-link"
