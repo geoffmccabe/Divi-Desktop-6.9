@@ -681,7 +681,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }
         // small slowly-pulsing blue dots (≈35%) + blue city labels (≈30%, every 20-50s for 3s)
         for (const b of blue) {
-          const r = 1.6 + 0.5 * Math.sin(now / 1300 + phaseOf(b.ip));
+          const r = 3.2 + 1.0 * Math.sin(now / 1300 + phaseOf(b.ip)); // 2× diameter — easier to see
           ctx.beginPath();
           ctx.arc(b.xy[0], b.xy[1], r, 0, Math.PI * 2);
           ctx.fillStyle = b.online ? BLUE(0.35) : GREY(0.3); // blue = verified-live, grey = remembered

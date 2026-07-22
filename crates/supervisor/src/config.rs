@@ -158,27 +158,9 @@ pub fn parse_conf(text: &str) -> HashMap<String, String> {
 
 impl NodeConfig {
     pub fn load() -> Result<Self, String> {
-        // DIVI_REMOTE=1 points the wallet at a node reached over an SSH tunnel
-        // (127.0.0.1:PORT forwarded to a server), using creds from the env. No
-        // local datadir/pid exists, so status is derived from RPC only.
-        if std::env::var("DIVI_REMOTE").is_ok() {
-            let user = std::env::var("DIVI_RPC_USER").unwrap_or_default();
-            let pass = std::env::var("DIVI_RPC_PASS").unwrap_or_default();
-            if user.is_empty() || pass.is_empty() {
-                return Err("DIVI_REMOTE set but DIVI_RPC_USER/DIVI_RPC_PASS are missing".into());
-            }
-            return Ok(NodeConfig {
-                datadir: default_datadir(),
-                rpc_host: "127.0.0.1".into(),
-                rpc_user: user,
-                rpc_pass: pass,
-                rpc_port: std::env::var("DIVI_RPC_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(51473),
-                remote: true,
-            });
-        }
-
-        // Otherwise the active node comes from the "My Nodes" selection (nodes.json).
-        // Desktop = the local node; a remote profile talks RPC-only over its tunnel.
+        // Settings → My Nodes (nodes.json) is the source of truth for which node
+        // the wallet talks to, and it is AUTHORITATIVE — it overrides any legacy
+        // DIVI_REMOTE environment variable, so switching in the UI always works.
         let (active, profiles) = list_profiles();
         if let Some(p) = profiles.iter().find(|p| p.id == active) {
             if p.mode == "remote" {
@@ -196,14 +178,34 @@ impl NodeConfig {
                     remote: true,
                 });
             }
-            // local profile — honour its datadir if set
-            if let Some(d) = &p.datadir {
-                return Self::load_from(PathBuf::from(d));
-            }
+            // Local node (e.g. Desktop): its own datadir if set, else DIVI_DATADIR,
+            // else the standard Divi folder for this platform.
+            let dir = p
+                .datadir
+                .clone()
+                .map(PathBuf::from)
+                .or_else(|| std::env::var("DIVI_DATADIR").ok().map(PathBuf::from))
+                .unwrap_or_else(default_datadir);
+            return Self::load_from(dir);
         }
 
-        // DIVI_DATADIR lets you point the wallet at a specific local node (a test /
-        // regtest node, or a non-standard install) instead of the default.
+        // No My Nodes profile resolved (shouldn't happen — Desktop is built in).
+        // Legacy fallbacks, kept for safety only.
+        if std::env::var("DIVI_REMOTE").is_ok() {
+            let user = std::env::var("DIVI_RPC_USER").unwrap_or_default();
+            let pass = std::env::var("DIVI_RPC_PASS").unwrap_or_default();
+            if user.is_empty() || pass.is_empty() {
+                return Err("DIVI_REMOTE set but DIVI_RPC_USER/DIVI_RPC_PASS are missing".into());
+            }
+            return Ok(NodeConfig {
+                datadir: default_datadir(),
+                rpc_host: "127.0.0.1".into(),
+                rpc_user: user,
+                rpc_pass: pass,
+                rpc_port: std::env::var("DIVI_RPC_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(51473),
+                remote: true,
+            });
+        }
         let dir = std::env::var("DIVI_DATADIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| default_datadir());
