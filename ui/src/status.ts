@@ -29,7 +29,13 @@ function truncate4(n: number): number {
   return (n < 0 ? Math.ceil(n * 1e4) : Math.floor(n * 1e4)) / 1e4;
 }
 
+// At or above this many DIVI, the fractional part is dropped and only whole
+// coins are shown — the decimals are noise on a large balance. Still truncated,
+// never rounded, so it can't display more than the wallet holds.
+const WHOLE_DIVI_AT = 100_000;
+
 export function fmtDivi(n: number): string {
+  if (Math.abs(n) >= WHOLE_DIVI_AT) return Math.trunc(n).toLocaleString();
   return truncate4(n).toLocaleString(undefined, {
     minimumFractionDigits: 0,
     maximumFractionDigits: 4,
@@ -46,6 +52,8 @@ export function fmtDivi(n: number): string {
 export function fmtDiviParts(n: number): { whole: string; frac: string } {
   const t = truncate4(n);
   const whole = Math.trunc(t);
+  // Large balances show whole coins only — no fraction to render.
+  if (Math.abs(n) >= WHOLE_DIVI_AT) return { whole: Math.trunc(n).toLocaleString(), frac: "" };
   // Derived from the already-truncated value, so it can never carry into the
   // whole number and can never overstate the balance.
   const frac = Math.round(Math.abs(t - whole) * 1e4)

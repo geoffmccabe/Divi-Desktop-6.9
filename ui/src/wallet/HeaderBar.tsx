@@ -92,7 +92,7 @@ export function HeaderBar() {
             {spend ? (
               <>
                 {spend.whole}
-                <span className="bl-frac">.{spend.frac}</span>
+                {spend.frac && <span className="bl-frac">.{spend.frac}</span>}
               </>
             ) : (
               "—"
