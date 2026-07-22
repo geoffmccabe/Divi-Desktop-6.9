@@ -167,3 +167,15 @@
   color: hsl(var(--primary));
   min-width: 16px;
 }
+
+/* Verify tab's transaction-id field: let it fill the row (the shared .wl-input
+   caps at 460px, which cut off the placeholder), and darken the placeholder
+   one step towards black (70% grey -> 35%). opacity:1 defeats the browser's
+   default placeholder dimming so the colour lands exactly. */
+.poe-txid {
+  max-width: none;
+}
+.poe-txid::placeholder {
+  color: hsl(0 0% 35%);
+  opacity: 1;
+}

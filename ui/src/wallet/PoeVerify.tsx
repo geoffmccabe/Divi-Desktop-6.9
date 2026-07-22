@@ -91,7 +91,7 @@ export function PoeVerify({ prefill }: { prefill: PoeRecord | null }) {
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <span className="poe-step">2.</span>
         <input
-          className="wl-input"
+          className="wl-input poe-txid"
           style={{ flex: 1 }}
           placeholder="Paste or Type Transaction ID here"
           value={vTxid}
