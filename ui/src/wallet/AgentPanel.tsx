@@ -190,14 +190,55 @@ export function AgentPanel() {
                     ← Back to characters
                   </button>
                   {imgErr && <p className="wl-err">{imgErr}</p>}
-                  <div className="agent-form">
-                    <div className="agent-field">
-                      <span>Image or video</span>
+
+                  {/* One dark panel: name + description on the LEFT, image on
+                      the RIGHT. */}
+                  <div className="agent-form agent-form-split">
+                    <div className="agent-form-left">
+                      <label className="agent-field">
+                        <span>Name</span>
+                        <input
+                          className="wl-input agent-input"
+                          placeholder="Give your character a name"
+                          value={name}
+                          onChange={(e) => {
+                            setName(e.target.value);
+                            setDirty(true);
+                          }}
+                          spellCheck={false}
+                        />
+                      </label>
+                      <label className="agent-field">
+                        <span>Description</span>
+                        <textarea
+                          className="wl-input agent-input agent-textarea"
+                          placeholder="Describe your character's personality, voice, and what it should help with..."
+                          value={description}
+                          onChange={(e) => {
+                            setDescription(e.target.value);
+                            setDirty(true);
+                          }}
+                        />
+                      </label>
+                      {/* Bright when there's something to save, greyed when not.
+                          Typing never writes to storage, so it can't lag. */}
+                      <button
+                        type="button"
+                        className={"wl-btn agent-save" + (dirty ? "" : " agent-save-off")}
+                        disabled={!dirty}
+                        onClick={save}
+                      >
+                        {dirty ? "SAVE" : "SAVED"}
+                      </button>
+                    </div>
+
+                    <div className="agent-form-right">
+                      <span className="agent-field-label">Image or video</span>
                       {/* The ORIGINAL file plays here, not a re-encode, so animated
                           WebP and short video keep moving. */}
                       <button
                         type="button"
-                        className={"agent-upload" + (preview ? " agent-upload-has" : "")}
+                        className={"agent-upload agent-upload-tall" + (preview ? " agent-upload-has" : "")}
                         onClick={() => fileRef.current?.click()}
                         onDragOver={(e) => e.preventDefault()}
                         onDrop={(e) => {
@@ -232,43 +273,6 @@ export function AgentPanel() {
                         </button>
                       )}
                     </div>
-
-                    <label className="agent-field">
-                      <span>Name</span>
-                      <input
-                        className="wl-input agent-input"
-                        placeholder="Give your character a name"
-                        value={name}
-                        onChange={(e) => {
-                          setName(e.target.value);
-                          setDirty(true);
-                        }}
-                        spellCheck={false}
-                      />
-                    </label>
-                    <label className="agent-field">
-                      <span>Description</span>
-                      <textarea
-                        className="wl-input agent-input agent-textarea"
-                        placeholder="Describe your character's personality, voice, and what it should help with..."
-                        value={description}
-                        onChange={(e) => {
-                          setDescription(e.target.value);
-                          setDirty(true);
-                        }}
-                      />
-                    </label>
-
-                    {/* Bright when there's something to save, greyed when not.
-                        Typing never writes to storage, so it can't lag. */}
-                    <button
-                      type="button"
-                      className={"wl-btn agent-save" + (dirty ? "" : " agent-save-off")}
-                      disabled={!dirty}
-                      onClick={save}
-                    >
-                      {dirty ? "SAVE" : "SAVED"}
-                    </button>
                   </div>
 
                   {/* Admin only: assign Kinetink characters to the six grid slots. */}

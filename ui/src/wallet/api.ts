@@ -198,6 +198,7 @@ export const recentActivity = () => invoke<Tx[]>("recent_activity");
 export const listTransactions = (count: number, from: number) =>
   invoke<Tx[] | null>("list_transactions", { count, from });
 export const validateAddress = (address: string) => invoke<boolean>("validate_address", { address });
+export const walletOwns = (addresses: string[]) => invoke<boolean>("wallet_owns", { addresses });
 export const addressQr = (address: string) => invoke<string>("address_qr", { address });
 export const openUrl = (url: string) => invoke<void>("open_url", { url });
 

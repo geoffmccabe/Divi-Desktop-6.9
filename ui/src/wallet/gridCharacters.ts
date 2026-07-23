@@ -11,7 +11,7 @@
 // localStorage is acceptable ONLY because this is the admin's own machine during
 // development; it must NOT ship to ordinary users this way.
 
-import { walletAddresses } from "./api";
+import { walletOwns } from "./api";
 
 const KEY = "dd69.gridCharacters";
 export const GRID_SIZE = 6;
@@ -20,10 +20,12 @@ export const GRID_SIZE = 6;
 // holds one of these — i.e. "only if one of my two nodes is connected", the gate
 // he specified. This is a convenience gate for the UI; real enforcement is the
 // SSO superadmin role server-side once the scanner service exists.
-const ADMIN_ADDRESSES = new Set([
-  "D6ohNJtUVbRsrfxUUC8phi6zXfUHQUYmuT", // home node (Costa Rica) main address
-  "DPGxoAGLi6wciUcf2R2tDi1GqbNYMSRvoz", // Divi Love Scan (London) main address
-]);
+// Any address each node owns works — the check uses validateaddress ismine, so
+// it does not matter which is "main" or whether it has transaction activity.
+const ADMIN_ADDRESSES = [
+  "D6ohNJtUVbRsrfxUUC8phi6zXfUHQUYmuT", // home node (Costa Rica)
+  "DPGxoAGLi6wciUcf2R2tDi1GqbNYMSRvoz", // Divi Love Scan (London)
+];
 
 export interface GridCharacter {
   name: string;
@@ -69,11 +71,10 @@ export function saveGrid(slots: GridSlots) {
   window.dispatchEvent(new Event("dd69-grid-changed"));
 }
 
-/** True when the connected node is one of the admin's own. */
+/** True when the connected node's wallet OWNS one of the admin addresses. */
 export async function isAdminNode(): Promise<boolean> {
   try {
-    const addrs = await walletAddresses();
-    return addrs.some((a) => ADMIN_ADDRESSES.has(a.address));
+    return await walletOwns(ADMIN_ADDRESSES);
   } catch {
     return false;
   }

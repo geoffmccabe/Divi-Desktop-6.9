@@ -442,6 +442,20 @@ pub fn is_valid_address(cfg: &NodeConfig, addr: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Does the connected node's wallet OWN any of these addresses? Uses
+/// validateaddress `ismine`, which is true regardless of transaction activity —
+/// the reliable "is this the admin's node" test (an address can be owned but not
+/// yet appear in the tx-derived address list).
+pub fn owns_any(cfg: &NodeConfig, addrs: &[String]) -> bool {
+    let rpc = RpcClient::new(cfg);
+    addrs.iter().any(|a| {
+        rpc.call("validateaddress", json!([a]))
+            .ok()
+            .and_then(|v| v["ismine"].as_bool())
+            .unwrap_or(false)
+    })
+}
+
 pub struct Tx {
     pub kind: String, // receive | send | stake | other
     pub amount: f64,
