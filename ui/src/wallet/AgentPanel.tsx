@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import silhouette from "../assets/agent-silhouette.webp";
+import silhouetteCreate from "../assets/agent-silhouette-create.webp";
 import { loadIdentity, saveIdentity, pickMedia, mediaUrl, clearMedia } from "./nodeIdentity";
 
 // "My Agent" — first placeholder pass. Left column: heading, tabs (CREATE / CHAT
@@ -10,6 +11,10 @@ import { loadIdentity, saveIdentity, pickMedia, mediaUrl, clearMedia } from "./n
 const gridPortrait = {
   WebkitMaskImage: `url(${silhouette})`,
   maskImage: `url(${silhouette})`,
+} as const;
+const createPortrait = {
+  WebkitMaskImage: `url(${silhouetteCreate})`,
+  maskImage: `url(${silhouetteCreate})`,
 } as const;
 
 // Six curated characters — 2 rows of 3 (the grid CSS is 3 columns wide).
@@ -35,9 +40,9 @@ export function AgentPanel() {
   // Typing must never touch storage — writing a whole persona per keystroke is
   // what would cause the lag. Nothing persists until SAVE.
   const [dirty, setDirty] = useState(false);
-  // Two separate views: CHOOSE (the curated grid) and CREATE (your own). Never
-  // both at once. Start on CREATE if the user already has their own image/name.
-  const [creating, setCreating] = useState(!!saved.mediaType || !!saved.name);
+  // Default to the chooser (Create-Your-Own tile + the six curated characters).
+  // Clicking the tile opens the Creator.
+  const [creating, setCreating] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -151,7 +156,7 @@ export function AgentPanel() {
         {/* Right: the character images, filling the right side, top-aligned. */}
         <div className="agent-image-panel">
           {tab === "create" && sub === "image" ? (
-            <div className="agent-chooser">
+            <>
               <input
                 ref={fileRef}
                 type="file"
@@ -163,126 +168,127 @@ export function AgentPanel() {
                   e.target.value = "";
                 }}
               />
-              {/* Switch between choosing a ready-made character and creating your
-                  own. Only one view shows at a time. */}
-              <div className="agent-mode">
-                <button
-                  type="button"
-                  className={"agent-mode-btn" + (!creating ? " agent-mode-on" : "")}
-                  onClick={() => setCreating(false)}
-                >
-                  CHOOSE A CHARACTER
-                </button>
-                <button
-                  type="button"
-                  className={"agent-mode-btn" + (creating ? " agent-mode-on" : "")}
-                  onClick={() => setCreating(true)}
-                >
-                  CREATE YOUR OWN
-                </button>
-              </div>
-
-              {imgErr && creating && <p className="wl-err">{imgErr}</p>}
 
               {creating ? (
-              <div className="agent-form">
-                {/* The ORIGINAL file is shown here, not a re-encode, so animated
-                    WebP and short video actually play. */}
-                <div className="agent-field">
-                  <span>Image or video</span>
+                /* ── The Creator: opened by clicking the Create Your Own tile.
+                       Image upload + name + description + Save. ── */
+                <div className="agent-creator">
+                  <button type="button" className="agent-back" onClick={() => setCreating(false)}>
+                    ← Back to characters
+                  </button>
+                  {imgErr && <p className="wl-err">{imgErr}</p>}
+                  <div className="agent-form">
+                    <div className="agent-field">
+                      <span>Image or video</span>
+                      {/* The ORIGINAL file plays here, not a re-encode, so animated
+                          WebP and short video keep moving. */}
+                      <button
+                        type="button"
+                        className={"agent-upload" + (preview ? " agent-upload-has" : "")}
+                        onClick={() => fileRef.current?.click()}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const f = e.dataTransfer.files?.[0];
+                          if (f) pickFile(f);
+                        }}
+                        title="Upload an image or short video, or drag one here"
+                      >
+                        {preview ? (
+                          isVideo ? (
+                            <video className="agent-avatar-img" src={preview} autoPlay loop muted playsInline />
+                          ) : (
+                            <img className="agent-avatar-img" src={preview} alt="" />
+                          )
+                        ) : (
+                          <span className="agent-upload-hint">
+                            Click to upload
+                            <br />
+                            <small>image, animation or short video &middot; up to 3MB</small>
+                          </span>
+                        )}
+                      </button>
+                      {preview && (
+                        <button
+                          type="button"
+                          className="wl-link"
+                          style={{ fontSize: "0.7rem", marginTop: 4 }}
+                          onClick={removeMedia}
+                        >
+                          Remove
+                        </button>
+                      )}
+                    </div>
+
+                    <label className="agent-field">
+                      <span>Name</span>
+                      <input
+                        className="wl-input agent-input"
+                        placeholder="Give your character a name"
+                        value={name}
+                        onChange={(e) => {
+                          setName(e.target.value);
+                          setDirty(true);
+                        }}
+                        spellCheck={false}
+                      />
+                    </label>
+                    <label className="agent-field">
+                      <span>Description</span>
+                      <textarea
+                        className="wl-input agent-input agent-textarea"
+                        placeholder="Describe your character's personality, voice, and what it should help with..."
+                        value={description}
+                        onChange={(e) => {
+                          setDescription(e.target.value);
+                          setDirty(true);
+                        }}
+                      />
+                    </label>
+
+                    {/* Bright when there's something to save, greyed when not.
+                        Typing never writes to storage, so it can't lag. */}
+                    <button
+                      type="button"
+                      className={"wl-btn agent-save" + (dirty ? "" : " agent-save-off")}
+                      disabled={!dirty}
+                      onClick={save}
+                    >
+                      {dirty ? "SAVE" : "SAVED"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* ── Default: the Create Your Own tile (1:2) beside the grid of
+                       six admin-set characters. ── */
+                <div className="agent-chooser">
                   <button
                     type="button"
-                    className={"agent-upload" + (preview ? " agent-upload-has" : "")}
-                    onClick={() => fileRef.current?.click()}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const f = e.dataTransfer.files?.[0];
-                      if (f) pickFile(f);
-                    }}
-                    title="Upload an image or short video, or drag one here"
+                    className="agent-tile agent-tile-create"
+                    onClick={() => setCreating(true)}
                   >
-                    {preview ? (
-                      isVideo ? (
-                        <video className="agent-avatar-img" src={preview} autoPlay loop muted playsInline />
-                      ) : (
-                        <img className="agent-avatar-img" src={preview} alt="" />
-                      )
-                    ) : (
-                      <span className="agent-upload-hint">
-                        Click to upload
-                        <br />
-                        <small>image, animation or short video &middot; up to 3MB</small>
-                      </span>
-                    )}
+                    <span className="agent-portrait" style={createPortrait} aria-hidden />
+                    <span className="agent-create-q">+</span>
+                    <span className="agent-create-label">CREATE YOUR OWN</span>
                   </button>
-                  {preview && (
-                    <button
-                      type="button"
-                      className="wl-link"
-                      style={{ fontSize: "0.7rem", marginTop: 4 }}
-                      onClick={removeMedia}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
 
-                <label className="agent-field">
-                  <span>Name</span>
-                  <input
-                    className="wl-input agent-input"
-                    placeholder="Give your character a name"
-                    value={name}
-                    onChange={(e) => {
-                      setName(e.target.value);
-                      setDirty(true);
-                    }}
-                    spellCheck={false}
-                  />
-                </label>
-                <label className="agent-field">
-                  <span>Description</span>
-                  <textarea
-                    className="wl-input agent-input agent-textarea"
-                    placeholder="Describe your character's personality, voice, and what it should help with..."
-                    value={description}
-                    onChange={(e) => {
-                      setDescription(e.target.value);
-                      setDirty(true);
-                    }}
-                  />
-                </label>
-
-                {/* Bright when there's something to save, greyed when there
-                    isn't. Typing never writes to storage, so it can't lag. */}
-                <button
-                  type="button"
-                  className={"wl-btn agent-save" + (dirty ? "" : " agent-save-off")}
-                  disabled={!dirty}
-                  onClick={save}
-                >
-                  {dirty ? "SAVE" : "SAVED"}
-                </button>
-              </div>
-              ) : (
-                /* The curated set, assigned from the Admin panel. */
-                <div className="agent-grid">
-                  {CHARACTER_SLOTS.map((i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      className={"agent-tile" + (builtin === i ? " agent-tile-on" : "")}
-                      onClick={() => chooseBuiltin(i)}
-                      aria-label={`Choose character ${i + 1}`}
-                      aria-pressed={builtin === i}
-                    >
-                      <span className="agent-portrait" style={gridPortrait} aria-hidden />
-                    </button>
-                  ))}
+                  <div className="agent-grid">
+                    {CHARACTER_SLOTS.map((i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        className={"agent-tile" + (builtin === i ? " agent-tile-on" : "")}
+                        onClick={() => chooseBuiltin(i)}
+                        aria-label={`Choose character ${i + 1}`}
+                        aria-pressed={builtin === i}
+                      >
+                        <span className="agent-portrait" style={gridPortrait} aria-hidden />
+                      </button>
+                    ))}
+                  </div>
                 </div>
               )}
-            </div>
+            </>
           ) : (
             <p className="wl-note agent-soon">{soon}</p>
           )}
