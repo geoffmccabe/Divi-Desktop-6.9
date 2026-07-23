@@ -12,6 +12,8 @@ path = "src/main.rs"
 [dependencies]
 serde_json = "1"
 ureq = "2"
+# Verifies the pinned checksum of the downloaded divid69 before it is installed.
+sha2 = "0.10"
 base64 = "0.22"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 c2pa = { version = "0.90.0", default-features = false, features = ["rust_native_crypto"] }

@@ -24,12 +24,25 @@ fn pid_alive(pid: i32) -> bool {
         .unwrap_or(false)
 }
 
-/// Find a divid binary: explicit path, then PATH, then where Divi Desktop 2.0
-/// unpacks its managed copy on macOS.
+/// Find a daemon to run, in order of preference:
+///
+///   1. an explicit path the user passed in,
+///   2. our own `divid69`, installed by `install::ensure_divid69`,
+///   3. any `divid` on PATH,
+///   4. the copy Divi Desktop 2.0 unpacks on macOS,
+///   5. `/usr/local/bin/divid`.
+///
+/// Ours comes before anything found on the system on purpose. A stock upstream
+/// `divid` left on PATH by an older install would otherwise silently win, and
+/// the whole point of `divid69` is that DD69 runs our refactored core rather
+/// than v3.0.0.
 pub fn find_divid(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Some(p) = explicit {
         candidates.push(p);
+    }
+    if let Some(ours) = crate::install::managed_divid() {
+        candidates.push(ours);
     }
     if let Ok(out) = std::process::Command::new("which").arg("divid").output() {
         let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
