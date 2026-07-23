@@ -1,7 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import silhouette from "../assets/agent-silhouette.webp";
-import silhouetteCreate from "../assets/agent-silhouette-create.webp";
-import { loadIdentity, saveIdentity, imageToAvatar } from "./nodeIdentity";
+import { loadIdentity, saveIdentity, pickMedia, mediaUrl, clearMedia } from "./nodeIdentity";
 
 // "My Agent" — first placeholder pass. Left column: heading, tabs (CREATE / CHAT
 // / STATS, reusing the Proof-of-Existence tab styling), sub-tabs (IMAGE / PERSONA
@@ -11,10 +10,6 @@ import { loadIdentity, saveIdentity, imageToAvatar } from "./nodeIdentity";
 const gridPortrait = {
   WebkitMaskImage: `url(${silhouette})`,
   maskImage: `url(${silhouette})`,
-} as const;
-const createPortrait = {
-  WebkitMaskImage: `url(${silhouetteCreate})`,
-  maskImage: `url(${silhouetteCreate})`,
 } as const;
 
 // Six curated characters — 2 rows of 3 (the grid CSS is 3 columns wide).
@@ -28,35 +23,73 @@ type SubTab = "image" | "persona" | "knowledge";
 export function AgentPanel() {
   const [tab, setTab] = useState<Tab>("create");
   const [sub, setSub] = useState<SubTab>("image");
-  const [creating, setCreating] = useState(false);
-  // Seed from the saved persona so a name/description/avatar survives a reload.
   const saved = loadIdentity();
   const [name, setName] = useState(saved.name);
   const [description, setDescription] = useState(saved.description);
-  const [avatar, setAvatar] = useState(saved.avatar);
   const [builtin, setBuiltin] = useState<number | null>(saved.builtin);
+  const [mediaType, setMediaType] = useState(saved.mediaType);
+  const [thumb, setThumb] = useState(saved.thumb);
+  // Object URL for the stored original, so animated WebP and video actually play.
+  const [preview, setPreview] = useState<string | null>(null);
   const [imgErr, setImgErr] = useState<string | null>(null);
+  // Typing must never touch storage — writing a whole persona per keystroke is
+  // what would cause the lag. Nothing persists until SAVE.
+  const [dirty, setDirty] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const persist = (patch: Partial<ReturnType<typeof loadIdentity>>) =>
-    saveIdentity({ ...loadIdentity(), name, description, avatar, builtin, ...patch });
+  useEffect(() => {
+    let dead = false;
+    let url: string | null = null;
+    mediaUrl().then((u) => {
+      if (dead) {
+        if (u) URL.revokeObjectURL(u);
+        return;
+      }
+      url = u;
+      setPreview(u);
+    });
+    return () => {
+      dead = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [mediaType, saved.updatedAt]);
+
+  const isVideo = mediaType.startsWith("video/");
 
   const pickFile = async (f: File) => {
     setImgErr(null);
     try {
-      const { avatar: a, thumb } = await imageToAvatar(f);
-      setAvatar(a);
+      const { mediaType: mt, thumb: th } = await pickMedia(f);
+      setMediaType(mt);
+      setThumb(th);
       setBuiltin(null);
-      persist({ avatar: a, thumb, builtin: null });
+      // Media is already written to IndexedDB by pickMedia, so save the metadata
+      // with it — an image you can see but that vanishes on reload is worse than
+      // no image at all.
+      saveIdentity({ ...loadIdentity(), name, description, builtin: null, mediaType: mt, thumb: th, hasMedia: true });
+      const u = await mediaUrl();
+      setPreview(u);
     } catch (e) {
       setImgErr(e instanceof Error ? e.message : String(e));
     }
   };
 
+  const removeMedia = async () => {
+    await clearMedia();
+    setPreview(null);
+    setMediaType("");
+    setThumb("");
+    saveIdentity({ ...loadIdentity(), mediaType: "", thumb: "", hasMedia: false });
+  };
+
   const chooseBuiltin = (i: number) => {
     setBuiltin(i);
-    setAvatar("");
-    persist({ builtin: i, avatar: "", thumb: "" });
+    setDirty(true);
+  };
+
+  const save = () => {
+    saveIdentity({ ...loadIdentity(), name, description, builtin, mediaType, thumb, hasMedia: !!mediaType });
+    setDirty(false);
   };
 
   const soon =
@@ -71,7 +104,7 @@ export function AgentPanel() {
       <div className="agent-layout">
         {/* Left: heading, tabs, intro. */}
         <div className="agent-left">
-          <h3 className="agent-setup-head">Set up my agent</h3>
+          <h3 className="agent-setup-head">CREATE YOUR NODE CHARACTER</h3>
 
           <nav className="poe-tabs" role="tablist">
             {(["create", "chat", "stats"] as Tab[]).map((t) => (
@@ -119,7 +152,7 @@ export function AgentPanel() {
               <input
                 ref={fileRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/*"
                 style={{ display: "none" }}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
@@ -128,102 +161,103 @@ export function AgentPanel() {
                 }}
               />
               {imgErr && <p className="wl-err">{imgErr}</p>}
-              <button
-                type="button"
-                className={"agent-tile agent-tile-create" + (creating ? " agent-tile-on" : "")}
-                onClick={() => setCreating((c) => !c)}
-              >
-                <span className="agent-portrait" style={createPortrait} aria-hidden />
-                <span className="agent-create-q">?</span>
-                <span className="agent-create-label">CREATE MY OWN</span>
-              </button>
 
-              {creating ? (
-                <div className="agent-form">
-                  {/* Your own image — click or drag a file. Shows the picked
-                      image in place so it doubles as confirmation it saved. */}
-                  <div className="agent-field">
-                    <span>Image</span>
-                    <button
-                      type="button"
-                      className={"agent-upload" + (avatar ? " agent-upload-has" : "")}
-                      onClick={() => fileRef.current?.click()}
-                      onDragOver={(e) => e.preventDefault()}
-                      onDrop={(e) => {
-                        e.preventDefault();
-                        const f = e.dataTransfer.files?.[0];
-                        if (f) pickFile(f);
-                      }}
-                      title="Upload an image, or drag one here"
-                    >
-                      {avatar ? (
-                        <img className="agent-avatar-img" src={avatar} alt="" />
+              <div className="agent-form">
+                {/* The ORIGINAL file is shown here, not a re-encode, so animated
+                    WebP and short video actually play. */}
+                <div className="agent-field">
+                  <span>Image or video</span>
+                  <button
+                    type="button"
+                    className={"agent-upload" + (preview ? " agent-upload-has" : "")}
+                    onClick={() => fileRef.current?.click()}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const f = e.dataTransfer.files?.[0];
+                      if (f) pickFile(f);
+                    }}
+                    title="Upload an image or short video, or drag one here"
+                  >
+                    {preview ? (
+                      isVideo ? (
+                        <video className="agent-avatar-img" src={preview} autoPlay loop muted playsInline />
                       ) : (
-                        <span className="agent-upload-hint">
-                          Click to upload an image
-                          <br />
-                          <small>or drag one here</small>
-                        </span>
-                      )}
-                    </button>
-                    {avatar && (
-                      <button
-                        type="button"
-                        className="wl-link"
-                        style={{ fontSize: "0.7rem", marginTop: 4 }}
-                        onClick={() => {
-                          setAvatar("");
-                          persist({ avatar: "", thumb: "" });
-                        }}
-                      >
-                        Remove image
-                      </button>
+                        <img className="agent-avatar-img" src={preview} alt="" />
+                      )
+                    ) : (
+                      <span className="agent-upload-hint">
+                        Click to upload
+                        <br />
+                        <small>image, animation or short video &middot; up to 3MB</small>
+                      </span>
                     )}
-                  </div>
-                  <label className="agent-field">
-                    <span>Name</span>
-                    <input
-                      className="wl-input agent-input"
-                      placeholder="Give your agent a name"
-                      value={name}
-                      onChange={(e) => {
-                        setName(e.target.value);
-                        persist({ name: e.target.value });
-                      }}
-                      spellCheck={false}
-                    />
-                  </label>
-                  <label className="agent-field">
-                    <span>Description</span>
-                    <textarea
-                      className="wl-input agent-input agent-textarea"
-                      placeholder="Describe your agent's personality, voice, and what it should help with..."
-                      value={description}
-                      onChange={(e) => {
-                        setDescription(e.target.value);
-                        persist({ description: e.target.value });
-                      }}
-                    />
-                  </label>
-                </div>
-              ) : (
-                // The grid is the curated character set (filled from the Admin
-                // panel). Uploading your own lives in the Creator, not here.
-                <div className="agent-grid">
-                  {CHARACTER_SLOTS.map((i) => (
+                  </button>
+                  {preview && (
                     <button
-                      key={i}
                       type="button"
-                      className={"agent-tile" + (builtin === i ? " agent-tile-on" : "")}
-                      onClick={() => chooseBuiltin(i)}
-                      aria-label={`Choose character ${i + 1}`}
-                      aria-pressed={builtin === i}
+                      className="wl-link"
+                      style={{ fontSize: "0.7rem", marginTop: 4 }}
+                      onClick={removeMedia}
                     >
-                      <span className="agent-portrait" style={gridPortrait} aria-hidden />
+                      Remove
                     </button>
-                  ))}
+                  )}
                 </div>
-              )}
+
+                <label className="agent-field">
+                  <span>Name</span>
+                  <input
+                    className="wl-input agent-input"
+                    placeholder="Give your character a name"
+                    value={name}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      setDirty(true);
+                    }}
+                    spellCheck={false}
+                  />
+                </label>
+                <label className="agent-field">
+                  <span>Description</span>
+                  <textarea
+                    className="wl-input agent-input agent-textarea"
+                    placeholder="Describe your character's personality, voice, and what it should help with..."
+                    value={description}
+                    onChange={(e) => {
+                      setDescription(e.target.value);
+                      setDirty(true);
+                    }}
+                  />
+                </label>
+
+                {/* Bright when there's something to save, greyed when there
+                    isn't. Typing never writes to storage, so it can't lag. */}
+                <button
+                  type="button"
+                  className={"wl-btn agent-save" + (dirty ? "" : " agent-save-off")}
+                  disabled={!dirty}
+                  onClick={save}
+                >
+                  {dirty ? "SAVE" : "SAVED"}
+                </button>
+              </div>
+
+              {/* The curated set, assigned from the Admin panel. */}
+              <div className="agent-grid">
+                {CHARACTER_SLOTS.map((i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    className={"agent-tile" + (builtin === i ? " agent-tile-on" : "")}
+                    onClick={() => chooseBuiltin(i)}
+                    aria-label={`Choose character ${i + 1}`}
+                    aria-pressed={builtin === i}
+                  >
+                    <span className="agent-portrait" style={gridPortrait} aria-hidden />
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <p className="wl-note agent-soon">{soon}</p>
