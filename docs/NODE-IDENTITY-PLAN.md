@@ -7,6 +7,36 @@ people chat with them.
 
 ---
 
+## 0a. Supersedes: the LW-SSO contract
+
+`~/sso/docs/DD69_SSO_AND_AGENT_INTEGRATION.md` (LW-SSO side, 281 lines) is the
+authoritative contract and **replaces several choices below**. It independently
+reached the same core constraint — *"there is never an inbound listening port on
+a user's node"* — which settles the "ping a node for its avatar" question for
+good. Where it differs from this plan, **it wins**:
+
+| This plan said | The SSO contract says | Take |
+|---|---|---|
+| Build a custom chat relay | **Supabase Realtime** (outbound WSS, presence + inbox + topic channels, RLS) | **Theirs.** No new infra; Supabase is already running |
+| Identity discovered from an on-chain DVXP record | **`GET /api/agents/directory`** + Realtime presence | **Theirs for now.** Works today, no fee per update, no chain work |
+| Persona authored in DD69 | Persona authored in **Kinetink** (Supabase row: system prompt, skills, avatar, `chat_api_key`), claimed by DD69 via `GET /api/agents/mine` | **Theirs.** DD69 becomes the runtime, not the author |
+| Central AI service, DIVI credits | **`POST /api/agents/think`** — metered proxy, model key server-side | **Same thing.** DIVI credits become the billing layer on top |
+
+The on-chain identity record is therefore **not needed for v1**. Keep it in mind
+only if we later want identity that is permanent and trustless without the SSO in
+the loop; the directory is the practical path now.
+
+**The agent runs inside the DD69 process** — that isn't a cost choice, it's the
+only correct topology: DD69 is already always-on, and nothing in the cloud can
+reach into a home node to act on it.
+
+Confirmed alignments worth noting: peer messages are explicitly called out as a
+**prompt-injection surface**, the model key must stay **off** the node, the brain
+proxy must be **rate-limited per user**, and login must use the **system browser,
+never a webview**. All of that matches the risks already listed in §4.
+
+---
+
 ## 0. The constraint that shapes everything
 
 **Other nodes cannot call your node's RPC.** Verified on the live node:
