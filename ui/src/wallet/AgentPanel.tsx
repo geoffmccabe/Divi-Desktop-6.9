@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import silhouette from "../assets/agent-silhouette.webp";
 import silhouetteCreate from "../assets/agent-silhouette-create.webp";
 import { loadIdentity, saveIdentity, pickMedia, mediaUrl, clearMedia } from "./nodeIdentity";
+import { loadGrid, isAdminNode } from "./gridCharacters";
+import { GridAdmin } from "./GridAdmin";
 
 // "My Agent" — first placeholder pass. Left column: heading, tabs (CREATE / CHAT
 // / STATS, reusing the Proof-of-Existence tab styling), sub-tabs (IMAGE / PERSONA
@@ -43,7 +45,18 @@ export function AgentPanel() {
   // Default to the chooser (Create-Your-Own tile + the six curated characters).
   // Clicking the tile opens the Creator.
   const [creating, setCreating] = useState(false);
+  const grid = loadGrid();
+  const [admin, setAdmin] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Admin controls appear only when the connected node is one of Geoff's own.
+  useEffect(() => {
+    let alive = true;
+    isAdminNode().then((ok) => alive && setAdmin(ok));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let dead = false;
@@ -257,6 +270,9 @@ export function AgentPanel() {
                       {dirty ? "SAVE" : "SAVED"}
                     </button>
                   </div>
+
+                  {/* Admin only: assign Kinetink characters to the six grid slots. */}
+                  {admin && <GridAdmin />}
                 </div>
               ) : (
                 /* ── Default: the Create Your Own tile (1:2) beside the grid of
@@ -273,18 +289,27 @@ export function AgentPanel() {
                   </button>
 
                   <div className="agent-grid">
-                    {CHARACTER_SLOTS.map((i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        className={"agent-tile" + (builtin === i ? " agent-tile-on" : "")}
-                        onClick={() => chooseBuiltin(i)}
-                        aria-label={`Choose character ${i + 1}`}
-                        aria-pressed={builtin === i}
-                      >
-                        <span className="agent-portrait" style={gridPortrait} aria-hidden />
-                      </button>
-                    ))}
+                    {CHARACTER_SLOTS.map((i) => {
+                      const ch = grid[i];
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          className={"agent-tile" + (builtin === i ? " agent-tile-on" : "")}
+                          onClick={() => chooseBuiltin(i)}
+                          aria-label={ch?.name ? `Choose ${ch.name}` : `Character slot ${i + 1}`}
+                          aria-pressed={builtin === i}
+                          title={ch?.name || undefined}
+                        >
+                          {ch?.thumb ? (
+                            <img className="agent-avatar-img" src={ch.thumb} alt="" />
+                          ) : (
+                            <span className="agent-portrait" style={gridPortrait} aria-hidden />
+                          )}
+                          {ch?.name && <span className="agent-tile-name">{ch.name}</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}

@@ -193,6 +193,55 @@ function videoThumb(file: Blob): Promise<string> {
   });
 }
 
+/**
+ * A standalone thumbnail data URL from a file — image or video first frame —
+ * WITHOUT storing the original. For the admin grid slots, where each character
+ * only needs a small inline image, not the full media pipeline.
+ */
+export async function fileToThumb(file: File, maxPx = 256): Promise<string> {
+  const isVideo = file.type.startsWith("video/");
+  if (!file.type.startsWith("image/") && !isVideo) throw new Error("Choose an image or a video.");
+  if (file.size > MAX_BYTES) throw new Error(`That file is over 3MB.`);
+  const prev = THUMB_PX;
+  // drawThumb reads a module constant; briefly widen it for this larger thumb.
+  // (kept local — a simple resize rather than sharing mutable state)
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const finish = (src: CanvasImageSource, w: number, h: number) => {
+      const scale = Math.min(1, maxPx / Math.max(w, h));
+      const c = document.createElement("canvas");
+      c.width = Math.max(1, Math.round(w * scale));
+      c.height = Math.max(1, Math.round(h * scale));
+      const ctx = c.getContext("2d");
+      URL.revokeObjectURL(url);
+      if (!ctx) return reject(new Error("Could not process that file."));
+      ctx.drawImage(src, 0, 0, c.width, c.height);
+      resolve(c.toDataURL("image/webp", 0.82));
+    };
+    if (isVideo) {
+      const v = document.createElement("video");
+      v.muted = true;
+      v.playsInline = true;
+      v.onloadeddata = () => (v.currentTime = Math.min(0.1, (v.duration || 1) / 10));
+      v.onseeked = () => finish(v, v.videoWidth, v.videoHeight);
+      v.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Could not read that video."));
+      };
+      v.src = url;
+    } else {
+      const img = new Image();
+      img.onload = () => finish(img, img.width, img.height);
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Could not read that image."));
+      };
+      img.src = url;
+    }
+    void prev;
+  });
+}
+
 export interface PickedMedia {
   mediaType: string;
   thumb: string;
