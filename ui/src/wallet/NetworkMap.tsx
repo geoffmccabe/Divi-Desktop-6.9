@@ -192,17 +192,29 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // Which node the map is drawing. Refetched on mount and whenever My Nodes
   // switches (via the dd69:nodeswitch event) so the map follows the active node.
   const [nodeId, setNodeId] = useState<string | null>(null);
+  // Label + mode of the active node, so the speed panel can say truthfully where
+  // its pings were measured from (the app always pings from THIS computer).
+  const [activeNode, setActiveNode] = useState<{ label: string; remote: boolean }>({
+    label: "this node",
+    remote: false,
+  });
   const [showFastest, setShowFastest] = useState(false);
 
   // EVERY node the map knows (live peers + 30-day known), with its country, for
   // the node-speed ping. Read fresh each time the user starts a scan.
   const fastCandidates = (): FastCandidate[] => {
     const out = new Map<string, FastCandidate>();
+    const place = (ip: string, kpCity?: string, kpCountry?: string, kpCc?: string): FastCandidate => ({
+      ip,
+      city: kpCity || geosRef.current[ip]?.city,
+      country: kpCountry || geosRef.current[ip]?.country,
+      cc: kpCc || geosRef.current[ip]?.countryCode,
+    });
     for (const [ip, kp] of Object.entries(knownRef.current)) {
-      out.set(ip, { ip, country: kp.country || geos[ip]?.country });
+      out.set(ip, place(ip, kp.city, kp.country, kp.cc));
     }
     for (const p of snap?.peers ?? []) {
-      if (!out.has(p.ip)) out.set(p.ip, { ip: p.ip, country: geos[p.ip]?.country });
+      if (!out.has(p.ip)) out.set(p.ip, place(p.ip));
     }
     return [...out.values()];
   };
@@ -251,6 +263,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       listNodes()
         .then((r) => {
           nodeListRef.current = r.nodes.map((n) => n.id);
+          const act = r.nodes.find((n) => n.id === r.active);
+          setActiveNode({ label: act?.label || "this node", remote: act?.mode === "remote" });
           setNodeId(r.active);
         })
         .catch(() => setNodeId("desktop"));
@@ -374,12 +388,19 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             const g0 = m[s.selfIp];
             saveSelfNode(nodeId, { ip: s.selfIp, lat: g0.lat, lon: g0.lon, city: g0.city, country: g0.country });
           }
-          const seen: { ip: string; lat: number; lon: number; city?: string; country?: string }[] = [];
+          const seen: {
+            ip: string;
+            lat: number;
+            lon: number;
+            city?: string;
+            country?: string;
+            cc?: string;
+          }[] = [];
           let newIdx = 0;
           for (const p of s.peers) {
             const pg = m[p.ip];
             if (!pg) continue;
-            seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon, city: pg.city, country: pg.country });
+            seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon, city: pg.city, country: pg.country, cc: pg.countryCode });
             probeRef.current.set(p.ip, "online"); // connected = definitely online
             if (!revealed.current.has(p.ip)) {
               // After a switch, reveal already-connected peers as settled (a past
@@ -1177,7 +1198,13 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
         <NodesByCountry data={nodesByCountry} />
-        {showFastest && <FastestNodes getNodes={fastCandidates} onClose={() => setShowFastest(false)} />}
+        {showFastest && (
+          <FastestNodes
+            getNodes={fastCandidates}
+            origin={activeNode}
+            onClose={() => setShowFastest(false)}
+          />
+        )}
         {primer.active ? <PrimerLove /> : <BlockChainViz />}
         {hover && (
           <div

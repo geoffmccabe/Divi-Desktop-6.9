@@ -1194,7 +1194,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .netmap-fastest:hover, .netmap-fastest.on { background: hsl(210 85% 62% / 0.32); border-color: hsl(210 85% 62% / 0.9); }
 .fastnodes {
   position: absolute; right: 10px; top: 10px; z-index: 6;
-  width: 205px; max-height: 72%;
+  width: 244px; max-height: 72%;
   display: flex; flex-direction: column; gap: 5px;
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid hsl(210 85% 62% / 0.7); /* blue, matches the network lines */
@@ -1207,6 +1207,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .fn-close:hover, .fn-rescan:hover { color: hsl(var(--foreground)); }
 .fn-rescan { font-size: 0.85rem; }
 .fn-rescan:disabled { opacity: 0.35; cursor: default; }
+.fn-note { font-size: 0.58rem; line-height: 1.25; color: hsl(var(--muted-foreground)); }
 .fn-foot { font-size: 0.58rem; color: hsl(var(--muted-foreground)); text-align: right; }
 .fn-cols, .fn-row { display: grid; grid-template-columns: 1fr 4.4em 3em; align-items: baseline; column-gap: 5px; }
 .fn-cols { font-size: 0.6rem; font-weight: 600; color: hsl(210 60% 72%); }

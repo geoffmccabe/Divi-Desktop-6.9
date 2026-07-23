@@ -391,12 +391,14 @@ async fn network_peers() -> Option<PeerSnapshotDto> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct GeoDto {
     ip: String,
     lat: f64,
     lon: f64,
     city: String,
     country: String,
+    country_code: String,
     isp: String,
 }
 
@@ -444,7 +446,7 @@ async fn ping_nodes(ips: Vec<String>) -> Vec<NodePingDto> {
 #[tauri::command]
 async fn self_geo() -> Option<GeoDto> {
     tauri::async_runtime::spawn_blocking(|| {
-        network::self_geo().map(|g| GeoDto { ip: g.ip, lat: g.lat, lon: g.lon, city: g.city, country: g.country, isp: g.isp })
+        network::self_geo().map(|g| GeoDto { ip: g.ip, lat: g.lat, lon: g.lon, city: g.city, country: g.country, country_code: g.country_code, isp: g.isp })
     })
     .await
     .ok()
@@ -457,7 +459,7 @@ async fn geolocate_ips(ips: Vec<String>) -> Vec<GeoDto> {
     tauri::async_runtime::spawn_blocking(move || {
         network::geolocate(&ips)
             .into_iter()
-            .map(|g| GeoDto { ip: g.ip, lat: g.lat, lon: g.lon, city: g.city, country: g.country, isp: g.isp })
+            .map(|g| GeoDto { ip: g.ip, lat: g.lat, lon: g.lon, city: g.city, country: g.country, country_code: g.country_code, isp: g.isp })
             .collect()
     })
     .await

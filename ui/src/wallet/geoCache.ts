@@ -25,14 +25,20 @@ function save(c: Cache) {
 /// cache). `onUpdate` fires with the merged map once new lookups return.
 export async function resolveGeos(ips: string[], onUpdate: (m: Cache) => void): Promise<Cache> {
   const cache = load();
-  const missing = ips.filter((ip) => !cache[ip]);
+  // Entries cached before we recorded the country code are refreshed once, so
+  // the map can label a node "Dallas, US" instead of just "United States".
+  const missing = ips.filter((ip) => !cache[ip] || cache[ip].countryCode === undefined);
   onUpdate(cache);
   if (missing.length === 0) return cache;
   try {
-    const found = await geolocateIps(missing);
-    for (const g of found) cache[g.ip] = g;
-    save(cache);
-    onUpdate({ ...cache });
+    // The geo service takes 100 IPs per call, so walk through in chunks rather
+    // than silently losing everything past the first hundred.
+    for (let i = 0; i < missing.length; i += 100) {
+      const found = await geolocateIps(missing.slice(i, i + 100));
+      for (const g of found) cache[g.ip] = { ...g, countryCode: g.countryCode ?? "" };
+      save(cache);
+      onUpdate({ ...cache });
+    }
   } catch {
     /* leave cache as-is; unresolved IPs simply aren't plotted */
   }

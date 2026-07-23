@@ -127,6 +127,7 @@ export interface Geo {
   lon: number;
   city: string;
   country: string;
+  countryCode?: string; // ISO-2, e.g. "US"
   isp?: string;
 }
 export const networkPeers = () => invoke<PeerSnapshot | null>("network_peers");

@@ -78,6 +78,9 @@ pub struct Geo {
     pub lon: f64,
     pub city: String,
     pub country: String,
+    /// ISO-2 code, e.g. "US" — the map shows "City, US" rather than a huge
+    /// country name that says nothing about where the node actually is.
+    pub country_code: String,
     pub isp: String,
 }
 
@@ -157,7 +160,7 @@ pub fn ping_latency(ips: &[String], port: u16) -> Vec<(String, bool, u32)> {
 /// Our own approximate location, from the caller IP as the geo service sees it.
 /// Works before any peer connects, so the map can center on us at boot.
 pub fn self_geo() -> Option<Geo> {
-    let resp = ureq::get("http://ip-api.com/json?fields=status,country,city,lat,lon,isp,query")
+    let resp = ureq::get("http://ip-api.com/json?fields=status,country,countryCode,city,lat,lon,isp,query")
         .timeout(Duration::from_secs(10))
         .call()
         .ok()?;
@@ -171,6 +174,7 @@ pub fn self_geo() -> Option<Geo> {
         lon: v["lon"].as_f64()?,
         city: v["city"].as_str().unwrap_or("").to_string(),
         country: v["country"].as_str().unwrap_or("").to_string(),
+        country_code: v["countryCode"].as_str().unwrap_or("").to_string(),
         isp: v["isp"].as_str().unwrap_or("").to_string(),
     })
 }
@@ -183,7 +187,7 @@ pub fn geolocate(ips: &[String]) -> Vec<Geo> {
         return Vec::new();
     }
     let body = Value::Array(ips.iter().take(100).map(|ip| json!(ip)).collect());
-    let resp = ureq::post("http://ip-api.com/batch?fields=status,country,city,lat,lon,isp,query")
+    let resp = ureq::post("http://ip-api.com/batch?fields=status,country,countryCode,city,lat,lon,isp,query")
         .timeout(Duration::from_secs(12))
         .send_string(&body.to_string());
     let text = match resp {
@@ -202,6 +206,7 @@ pub fn geolocate(ips: &[String]) -> Vec<Geo> {
                         lon: e["lon"].as_f64()?,
                         city: e["city"].as_str().unwrap_or("").to_string(),
                         country: e["country"].as_str().unwrap_or("").to_string(),
+                        country_code: e["countryCode"].as_str().unwrap_or("").to_string(),
                         isp: e["isp"].as_str().unwrap_or("").to_string(),
                     })
                 })

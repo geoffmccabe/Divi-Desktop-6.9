@@ -14,6 +14,7 @@ export interface KnownPeer {
   lon: number;
   city?: string;
   country?: string;
+  cc?: string; // ISO-2 country code, for "City, US" labels
   lastSeen: number;
 }
 export type Known = Record<string, KnownPeer>;
@@ -48,11 +49,12 @@ function save(k: Known) {
 /// Record the currently-seen located peers, refreshing their lastSeen.
 export function recordKnown(
   prev: Known,
-  seen: { ip: string; lat: number; lon: number; city?: string; country?: string }[]
+  seen: { ip: string; lat: number; lon: number; city?: string; country?: string; cc?: string }[]
 ): Known {
   const now = Date.now();
   const k = { ...prev };
-  for (const s of seen) k[s.ip] = { lat: s.lat, lon: s.lon, city: s.city, country: s.country, lastSeen: now };
+  for (const s of seen)
+    k[s.ip] = { lat: s.lat, lon: s.lon, city: s.city, country: s.country, cc: s.cc, lastSeen: now };
   save(k);
   return k;
 }

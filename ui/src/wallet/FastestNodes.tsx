@@ -3,7 +3,9 @@ import { pingNodes } from "./api";
 
 export interface FastCandidate {
   ip: string;
+  city?: string;
   country?: string;
+  cc?: string; // ISO-2 country code
 }
 interface Ranked extends FastCandidate {
   ms: number;
@@ -15,6 +17,16 @@ function shortIp(ip: string): string {
   return p.length === 4 ? `${p[0]}.${p[1]}…${p[3]}` : ip;
 }
 
+// "Dallas, US" — a country alone (especially a big one) says nothing about where
+// a node really is. Falls back to whatever we do know.
+function place(n: FastCandidate): string {
+  const city = n.city?.trim();
+  const cc = n.cc?.trim();
+  if (city && cc) return `${city}, ${cc}`;
+  if (city) return city;
+  return n.country?.trim() || "Unknown";
+}
+
 // Node speed ranking: time-pings EVERY node the map knows about (a TCP
 // round-trip to its P2P port) and orders the reachable ones fastest-first.
 // Times are relative to this machine, not an absolute measure of the node.
@@ -22,9 +34,11 @@ function shortIp(ip: string): string {
 // Styled like the bottom-left Nodes-by-Country panel.
 export function FastestNodes({
   getNodes,
+  origin,
   onClose,
 }: {
   getNodes: () => FastCandidate[];
+  origin: { label: string; remote: boolean };
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -60,7 +74,7 @@ export function FastestNodes({
           res
             .filter((r) => r.online && r.ms > 0)
             .sort((a, b) => a.ms - b.ms)
-            .map((r) => ({ ip: r.ip, country: byIp.get(r.ip)?.country, ms: r.ms }))
+            .map((r) => ({ ...(byIp.get(r.ip) as FastCandidate), ip: r.ip, ms: r.ms }))
         );
       })
       .catch(() => {
@@ -93,8 +107,15 @@ export function FastestNodes({
           ×
         </button>
       </div>
+      {/* The pings are made by the app, on this computer — so this only says
+          "from this node" when the active node IS this computer. */}
+      <div className="fn-note">
+        {origin.remote
+          ? `Response time, pinged from this computer (not ${origin.label}).`
+          : "Response time, pinged from this node."}
+      </div>
       <div className="fn-cols">
-        <span>Country</span>
+        <span>Location</span>
         <span>Node</span>
         <span className="fn-ms-h">ms</span>
       </div>
@@ -108,7 +129,7 @@ export function FastestNodes({
             <div key={r.ip} className="fn-row">
               <span className="fn-country">
                 <span className="fn-rank">{i + 1}</span>
-                {r.country || "Unknown"}
+                {place(r)}
               </span>
               <span className="fn-ip" title={r.ip}>
                 {shortIp(r.ip)}
