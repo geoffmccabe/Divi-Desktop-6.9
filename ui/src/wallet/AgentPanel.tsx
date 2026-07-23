@@ -35,6 +35,9 @@ export function AgentPanel() {
   // Typing must never touch storage — writing a whole persona per keystroke is
   // what would cause the lag. Nothing persists until SAVE.
   const [dirty, setDirty] = useState(false);
+  // Two separate views: CHOOSE (the curated grid) and CREATE (your own). Never
+  // both at once. Start on CREATE if the user already has their own image/name.
+  const [creating, setCreating] = useState(!!saved.mediaType || !!saved.name);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -160,8 +163,28 @@ export function AgentPanel() {
                   e.target.value = "";
                 }}
               />
-              {imgErr && <p className="wl-err">{imgErr}</p>}
+              {/* Switch between choosing a ready-made character and creating your
+                  own. Only one view shows at a time. */}
+              <div className="agent-mode">
+                <button
+                  type="button"
+                  className={"agent-mode-btn" + (!creating ? " agent-mode-on" : "")}
+                  onClick={() => setCreating(false)}
+                >
+                  CHOOSE A CHARACTER
+                </button>
+                <button
+                  type="button"
+                  className={"agent-mode-btn" + (creating ? " agent-mode-on" : "")}
+                  onClick={() => setCreating(true)}
+                >
+                  CREATE YOUR OWN
+                </button>
+              </div>
 
+              {imgErr && creating && <p className="wl-err">{imgErr}</p>}
+
+              {creating ? (
               <div className="agent-form">
                 {/* The ORIGINAL file is shown here, not a re-encode, so animated
                     WebP and short video actually play. */}
@@ -242,22 +265,23 @@ export function AgentPanel() {
                   {dirty ? "SAVE" : "SAVED"}
                 </button>
               </div>
-
-              {/* The curated set, assigned from the Admin panel. */}
-              <div className="agent-grid">
-                {CHARACTER_SLOTS.map((i) => (
-                  <button
-                    key={i}
-                    type="button"
-                    className={"agent-tile" + (builtin === i ? " agent-tile-on" : "")}
-                    onClick={() => chooseBuiltin(i)}
-                    aria-label={`Choose character ${i + 1}`}
-                    aria-pressed={builtin === i}
-                  >
-                    <span className="agent-portrait" style={gridPortrait} aria-hidden />
-                  </button>
-                ))}
-              </div>
+              ) : (
+                /* The curated set, assigned from the Admin panel. */
+                <div className="agent-grid">
+                  {CHARACTER_SLOTS.map((i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      className={"agent-tile" + (builtin === i ? " agent-tile-on" : "")}
+                      onClick={() => chooseBuiltin(i)}
+                      aria-label={`Choose character ${i + 1}`}
+                      aria-pressed={builtin === i}
+                    >
+                      <span className="agent-portrait" style={gridPortrait} aria-hidden />
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <p className="wl-note agent-soon">{soon}</p>

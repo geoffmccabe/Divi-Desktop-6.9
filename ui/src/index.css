@@ -1234,3 +1234,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .agent-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .agent-save { margin-top: 10px; align-self: flex-start; }
 .agent-save-off { opacity: 0.4; cursor: default; }
+.agent-mode { display: flex; gap: 8px; margin-bottom: 12px; }
+.agent-mode-btn { flex: 0 0 auto; padding: 6px 12px; font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; border-radius: 8px; border: 1px solid hsl(var(--border)); background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; }
+.agent-mode-btn:hover { border-color: hsl(var(--primary) / 0.7); }
+.agent-mode-on { background: hsl(var(--primary) / 0.18); color: hsl(var(--foreground)); border-color: hsl(var(--primary)); }
