@@ -17,7 +17,10 @@ const createPortrait = {
   maskImage: `url(${silhouetteCreate})`,
 } as const;
 
-const CHARACTER_SLOTS = Array.from({ length: 9 }, (_, i) => i);
+// Six curated characters — 2 rows of 3 (the grid CSS is 3 columns wide).
+// Which character sits in each slot is assigned by Geoff; see the grid-assignment
+// panel, which only appears for him.
+const CHARACTER_SLOTS = Array.from({ length: 6 }, (_, i) => i);
 
 type Tab = "create" | "chat" | "stats";
 type SubTab = "image" | "persona" | "knowledge";
