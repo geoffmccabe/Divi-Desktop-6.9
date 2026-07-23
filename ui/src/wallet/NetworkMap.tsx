@@ -194,8 +194,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const [nodeId, setNodeId] = useState<string | null>(null);
   const [showFastest, setShowFastest] = useState(false);
 
-  // Every node the map knows (live peers + 30-day known), with its country, for
-  // the fastest-nodes ping. Computed fresh when the panel opens.
+  // EVERY node the map knows (live peers + 30-day known), with its country, for
+  // the node-speed ping. Read fresh each time the user starts a scan.
   const fastCandidates = (): FastCandidate[] => {
     const out = new Map<string, FastCandidate>();
     for (const [ip, kp] of Object.entries(knownRef.current)) {
@@ -1177,7 +1177,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
         <NodesByCountry data={nodesByCountry} />
-        {showFastest && <FastestNodes nodes={fastCandidates()} onClose={() => setShowFastest(false)} />}
+        {showFastest && <FastestNodes getNodes={fastCandidates} onClose={() => setShowFastest(false)} />}
         {primer.active ? <PrimerLove /> : <BlockChainViz />}
         {hover && (
           <div

@@ -110,17 +110,28 @@ pub fn probe(ips: &[String], port: u16) -> Vec<(String, bool)> {
 /// (ip, reachable, round-trip ms). Unreachable/timed-out => (ip, false, 0). This
 /// is the "ping" behind the fastest-nodes list; it works for any node, connected
 /// or not (a connected peer also has a more exact P2P pingtime in getpeerinfo).
+/// Every node given is pinged — no slice — so the ranking covers the whole known
+/// network. A bounded worker pool keeps the thread count sane; a few hundred
+/// nodes finish in a few seconds. On-demand only (the user clicks the button).
 pub fn ping_latency(ips: &[String], port: u16) -> Vec<(String, bool, u32)> {
     use std::net::{TcpStream, ToSocketAddrs};
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
-    let handles: Vec<_> = ips
-        .iter()
-        .take(160)
-        .cloned()
-        .map(|ip| {
-            std::thread::spawn(move || {
+    let queue: Arc<Mutex<Vec<String>>> =
+        Arc::new(Mutex::new(ips.iter().take(2000).cloned().collect()));
+    let out: Arc<Mutex<Vec<(String, bool, u32)>>> = Arc::new(Mutex::new(Vec::new()));
+    let workers = ips.len().clamp(1, 96);
+    let handles: Vec<_> = (0..workers)
+        .map(|_| {
+            let queue = Arc::clone(&queue);
+            let out = Arc::clone(&out);
+            std::thread::spawn(move || loop {
+                let ip = match queue.lock().ok().and_then(|mut q| q.pop()) {
+                    Some(ip) => ip,
+                    None => break,
+                };
                 let sa = format!("{ip}:{port}").to_socket_addrs().ok().and_then(|mut a| a.next());
-                match sa {
+                let row = match sa {
                     Some(sa) => {
                         let t = Instant::now();
                         match TcpStream::connect_timeout(&sa, Duration::from_millis(3000)) {
@@ -129,11 +140,18 @@ pub fn ping_latency(ips: &[String], port: u16) -> Vec<(String, bool, u32)> {
                         }
                     }
                     None => (ip, false, 0),
+                };
+                if let Ok(mut o) = out.lock() {
+                    o.push(row);
                 }
             })
         })
         .collect();
-    handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    for h in handles {
+        let _ = h.join();
+    }
+    let rows = out.lock().map(|o| o.clone()).unwrap_or_default();
+    rows
 }
 
 /// Our own approximate location, from the caller IP as the geo service sees it.
