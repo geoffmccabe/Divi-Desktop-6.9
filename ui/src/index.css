@@ -1215,5 +1215,15 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .fn-ms { text-align: right; color: hsl(145 65% 58%); font-variant-numeric: tabular-nums; font-weight: 600; }
 .fn-empty { color: hsl(var(--muted-foreground)); }
 
-/* Node-avatar image filling an agent tile (upload preview). */
-.agent-avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
+/* Creator: upload your own agent image (click or drag). */
+.agent-upload {
+  width: 100%; aspect-ratio: 1 / 1; max-width: 190px;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed hsl(var(--border)); border-radius: 10px;
+  background: hsl(var(--primary) / 0.06); color: inherit; cursor: pointer;
+  overflow: hidden; padding: 0;
+}
+.agent-upload:hover { background: hsl(var(--primary) / 0.14); border-color: hsl(var(--primary) / 0.7); }
+.agent-upload-has { border-style: solid; }
+.agent-upload-hint { font-size: 0.72rem; opacity: 0.75; text-align: center; padding: 8px; line-height: 1.5; }
+.agent-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }

@@ -137,6 +137,46 @@ export function AgentPanel() {
 
               {creating ? (
                 <div className="agent-form">
+                  {/* Your own image — click or drag a file. Shows the picked
+                      image in place so it doubles as confirmation it saved. */}
+                  <div className="agent-field">
+                    <span>Image</span>
+                    <button
+                      type="button"
+                      className={"agent-upload" + (avatar ? " agent-upload-has" : "")}
+                      onClick={() => fileRef.current?.click()}
+                      onDragOver={(e) => e.preventDefault()}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const f = e.dataTransfer.files?.[0];
+                        if (f) pickFile(f);
+                      }}
+                      title="Upload an image, or drag one here"
+                    >
+                      {avatar ? (
+                        <img className="agent-avatar-img" src={avatar} alt="" />
+                      ) : (
+                        <span className="agent-upload-hint">
+                          Click to upload an image
+                          <br />
+                          <small>or drag one here</small>
+                        </span>
+                      )}
+                    </button>
+                    {avatar && (
+                      <button
+                        type="button"
+                        className="wl-link"
+                        style={{ fontSize: "0.7rem", marginTop: 4 }}
+                        onClick={() => {
+                          setAvatar("");
+                          persist({ avatar: "", thumb: "" });
+                        }}
+                      >
+                        Remove image
+                      </button>
+                    )}
+                  </div>
                   <label className="agent-field">
                     <span>Name</span>
                     <input
@@ -164,32 +204,9 @@ export function AgentPanel() {
                   </label>
                 </div>
               ) : (
+                // The grid is the curated character set (filled from the Admin
+                // panel). Uploading your own lives in the Creator, not here.
                 <div className="agent-grid">
-                  {/* Upload tile: shows the chosen image once picked, so the
-                      grid doubles as the preview. Drag-and-drop works too. */}
-                  <button
-                    type="button"
-                    className={"agent-tile" + (avatar ? " agent-tile-on" : "")}
-                    onClick={() => fileRef.current?.click()}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const f = e.dataTransfer.files?.[0];
-                      if (f) pickFile(f);
-                    }}
-                    aria-label="Upload your own avatar image"
-                    title="Upload an image (or drag one here)"
-                  >
-                    {avatar ? (
-                      <img className="agent-avatar-img" src={avatar} alt="" />
-                    ) : (
-                      <>
-                        <span className="agent-portrait" style={createPortrait} aria-hidden />
-                        <span className="agent-create-label">UPLOAD IMAGE</span>
-                      </>
-                    )}
-                  </button>
-
                   {CHARACTER_SLOTS.map((i) => (
                     <button
                       key={i}
