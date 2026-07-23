@@ -106,6 +106,36 @@ pub fn probe(ips: &[String], port: u16) -> Vec<(String, bool)> {
     handles.into_iter().filter_map(|h| h.join().ok()).collect()
 }
 
+/// Time a TCP connection to each node's P2P port as a latency measure. Returns
+/// (ip, reachable, round-trip ms). Unreachable/timed-out => (ip, false, 0). This
+/// is the "ping" behind the fastest-nodes list; it works for any node, connected
+/// or not (a connected peer also has a more exact P2P pingtime in getpeerinfo).
+pub fn ping_latency(ips: &[String], port: u16) -> Vec<(String, bool, u32)> {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Instant;
+    let handles: Vec<_> = ips
+        .iter()
+        .take(160)
+        .cloned()
+        .map(|ip| {
+            std::thread::spawn(move || {
+                let sa = format!("{ip}:{port}").to_socket_addrs().ok().and_then(|mut a| a.next());
+                match sa {
+                    Some(sa) => {
+                        let t = Instant::now();
+                        match TcpStream::connect_timeout(&sa, Duration::from_millis(3000)) {
+                            Ok(_) => (ip, true, t.elapsed().as_millis() as u32),
+                            Err(_) => (ip, false, 0),
+                        }
+                    }
+                    None => (ip, false, 0),
+                }
+            })
+        })
+        .collect();
+    handles.into_iter().filter_map(|h| h.join().ok()).collect()
+}
+
 /// Our own approximate location, from the caller IP as the geo service sees it.
 /// Works before any peer connects, so the map can center on us at boot.
 pub fn self_geo() -> Option<Geo> {

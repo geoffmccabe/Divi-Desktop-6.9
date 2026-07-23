@@ -419,6 +419,27 @@ async fn probe_peers(ips: Vec<String>) -> Vec<ProbeDto> {
     .unwrap_or_default()
 }
 
+#[derive(Serialize)]
+struct NodePingDto {
+    ip: String,
+    online: bool,
+    ms: u32,
+}
+
+/// Time-ping a list of nodes (TCP round-trip to the P2P port) for the
+/// fastest-nodes list. Works for any node, connected or not.
+#[tauri::command]
+async fn ping_nodes(ips: Vec<String>) -> Vec<NodePingDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        network::ping_latency(&ips, 51472)
+            .into_iter()
+            .map(|(ip, online, ms)| NodePingDto { ip, online, ms })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// Our own approximate location (caller IP), so the map can center before peers.
 #[tauri::command]
 async fn self_geo() -> Option<GeoDto> {
@@ -992,6 +1013,7 @@ fn main() {
             geolocate_ips,
             self_geo,
             probe_peers,
+            ping_nodes,
             coin_maturity,
             wallet_status,
             unlock_wallet,

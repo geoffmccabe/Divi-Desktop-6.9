@@ -6,6 +6,7 @@ import { emitPeerCount } from "./peerEvents";
 import { BlockChainViz } from "./BlockChainViz";
 import { PrimerLove } from "./PrimerLove";
 import { usePrimer } from "./primerStore";
+import { FastestNodes, type FastCandidate } from "./FastestNodes";
 import { userWonRecently } from "./stakeWin";
 import { Icon } from "../Icon";
 import worldmap from "../assets/worldmap.json";
@@ -191,6 +192,20 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // Which node the map is drawing. Refetched on mount and whenever My Nodes
   // switches (via the dd69:nodeswitch event) so the map follows the active node.
   const [nodeId, setNodeId] = useState<string | null>(null);
+  const [showFastest, setShowFastest] = useState(false);
+
+  // Every node the map knows (live peers + 30-day known), with its country, for
+  // the fastest-nodes ping. Computed fresh when the panel opens.
+  const fastCandidates = (): FastCandidate[] => {
+    const out = new Map<string, FastCandidate>();
+    for (const [ip, kp] of Object.entries(knownRef.current)) {
+      out.set(ip, { ip, country: kp.country || geos[ip]?.country });
+    }
+    for (const p of snap?.peers ?? []) {
+      if (!out.has(p.ip)) out.set(p.ip, { ip: p.ip, country: geos[p.ip]?.country });
+    }
+    return [...out.values()];
+  };
   const [geos, setGeos] = useState<Record<string, Geo>>({});
   const [hover, setHover] = useState<HoverPoint | null>(null);
   const pointsRef = useRef<HoverPoint[]>([]);
@@ -1150,10 +1165,19 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <span className="nm-item"><span className="nm-dot nm-in" /> Full Network</span>
           <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
         </div>
+        <button
+          type="button"
+          className={"netmap-fastest" + (showFastest ? " on" : "")}
+          onClick={() => setShowFastest((v) => !v)}
+          title="Top 10 fastest nodes"
+        >
+          <Icon name="speed" size={15} />
+        </button>
       </div>
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
         <NodesByCountry data={nodesByCountry} />
+        {showFastest && <FastestNodes nodes={fastCandidates()} onClose={() => setShowFastest(false)} />}
         {primer.active ? <PrimerLove /> : <BlockChainViz />}
         {hover && (
           <div

@@ -431,31 +431,69 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .view-body { flex: 1; }
 
 /* ── My Agent (placeholder setup) ─────────────────────────────────────────── */
-.agent-setup-head { margin: 0 0 18px; font-size: 1.05rem; font-weight: 600; color: hsl(var(--foreground)); }
-.agent-setup-body { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
-.agent-form { display: flex; flex-direction: column; gap: 16px; flex: 0 1 300px; min-width: 240px; }
+.agent-setup-head { margin: 0 0 16px; font-size: 1.05rem; font-weight: 600; color: hsl(var(--foreground)); }
+/* CREATE/CHAT/STATS: 30% less vertical padding (was 9px), same text/height otherwise. */
+.agent-setup .poe-tab { padding-top: 6.3px; padding-bottom: 6.3px; }
+/* Sub-tabs under CREATE: same look as the main tabs but narrower (vertically). */
+.agent-subtabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+.agent-subtab {
+  display: inline-flex; align-items: center; padding: 4px 12px; border: none;
+  border-radius: 8px; cursor: pointer; background: transparent;
+  color: hsl(var(--muted-foreground)); font-size: 0.74rem; font-weight: 600; letter-spacing: 0.05em;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.agent-subtab:hover { background: hsl(var(--primary) / 0.3); color: hsl(var(--foreground)); }
+.agent-subtab-on { background: hsl(var(--primary) / 0.18); color: hsl(var(--foreground)); }
+
+/* Left controls column + right image panel, both top-aligned (image panel
+   touches the top of the Agents panel). */
+.agent-layout { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+/* gap:0 — spacing between heading/tabs/subtabs/form is set per element so the
+   sub-tabs sit closer to the main tabs and closer to the form. */
+.agent-left { flex: 0 0 300px; min-width: 240px; display: flex; flex-direction: column; gap: 0; }
+/* Name/Description live inside the right panel (beside Create My Own) now. */
+.agent-form { display: flex; flex-direction: column; gap: 16px; width: 280px; max-width: 100%; }
+.agent-intro { line-height: 1.5; margin: 0; }
+.agent-image-panel {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 22px;
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color)); border-radius: 14px;
+}
+.agent-soon { text-align: center; padding: 48px 12px; }
 .agent-field { display: flex; flex-direction: column; gap: 6px; }
 .agent-field > span { font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
 .agent-input { max-width: none; }
 .agent-textarea { min-height: 128px; resize: vertical; font-family: inherit; font-size: 0.85rem; line-height: 1.45; }
-.agent-chooser { display: flex; gap: 16px; align-items: stretch; flex: 1 1 360px; min-width: 0; }
+/* Create tile (left) vertically centered against the grid (right). */
+.agent-chooser { display: flex; gap: 16px; align-items: center; justify-content: center; }
 /* Character tiles reuse the theme's subpanel surface so they track the admin skin. */
 .agent-tile {
-  --agent-silhouette-fill: #4c2f86; /* dark purple placeholder portrait */
+  --agent-silhouette-fill: #3d2b62; /* portrait (darkened halfway to black) */
   border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
-  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
-  border-radius: 12px; cursor: pointer; padding: 10px;
+  background-color: #1d1230; /* dark purple tile (darkened halfway to black) */
+  border-radius: 12px; cursor: pointer; padding: 10px; position: relative; overflow: hidden;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
-.agent-tile:hover { border-color: hsl(var(--primary) / 0.7); background-color: hsl(var(--primary) / 0.12); }
-.agent-tile-create { flex: 0 0 150px; }
-.agent-create-q { font-size: 3rem; font-weight: 700; line-height: 1; color: hsl(var(--primary)); }
-.agent-create-label { font-size: 0.76rem; font-weight: 700; letter-spacing: 0.06em; text-align: center; color: hsl(var(--foreground)); }
-.agent-grid { flex: 1 1 auto; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.agent-grid .agent-tile { aspect-ratio: 1 / 1; }
-.agent-silhouette { width: 64%; height: 64%; }
-.agent-silhouette path { fill: var(--agent-silhouette-fill); }
+.agent-tile:hover { background-color: #25183c; } /* a little lighter on hover */
+.agent-tile-on { border-color: hsl(var(--primary)); } /* Create My Own, while creating */
+/* Masked silhouette rendered in the theme's dark-purple fill; stands on the tile floor. */
+.agent-portrait {
+  width: 100%; height: 100%; background-color: var(--agent-silhouette-fill);
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center bottom; mask-position: center bottom;
+  -webkit-mask-size: contain; mask-size: contain;
+}
+/* Grid tiles are 2:3 (narrower than tall). */
+.agent-grid { flex: 0 0 auto; display: grid; grid-template-columns: repeat(3, 120px); gap: 12px; }
+.agent-grid .agent-tile { width: 120px; height: 180px; }
+/* Create My Own: same 156px width, 1:2 tall; ? + label stacked and vertically
+   centered together over the silhouette. inset:0 + auto size so the image fits
+   exactly edge-to-edge (no offset, so overflow:hidden can't clip her heels). */
+.agent-tile-create { flex: 0 0 auto; width: 156px; aspect-ratio: 1 / 2; justify-content: center; gap: 6px; padding: 14px 8px; }
+.agent-tile-create .agent-portrait { position: absolute; inset: 0; width: auto; height: auto; opacity: 0.85; }
+.agent-create-q { position: relative; z-index: 1; font-size: 2.6rem; font-weight: 700; line-height: 1; color: hsl(var(--primary)); }
+.agent-create-label { position: relative; z-index: 1; font-size: 0.76rem; font-weight: 700; letter-spacing: 0.06em; text-align: center; color: hsl(var(--foreground)); }
 
 /* ── Proof of Existence + Divi Collectibles ───────────────────────────────── */
 .timestamp, .collectibles { display: flex; flex-direction: column; gap: 22px; max-width: 620px; }
@@ -1143,3 +1181,36 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .mynode-btn:hover:not(:disabled) { background: hsl(var(--primary) / 0.3); border-color: hsl(var(--primary) / 0.7); }
 .mynode-btn:disabled { opacity: 0.5; cursor: default; }
 .mynode-note { margin-top: 10px; color: hsl(var(--primary)); }
+
+/* ---- Fastest Nodes: top-right icon + top-10 latency panel (matches .nbc) ---- */
+.netmap-fastest {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 26px; border-radius: 6px; cursor: pointer;
+  background: hsl(210 85% 62% / 0.14);
+  border: 1px solid hsl(210 85% 62% / 0.5);
+  color: hsl(210 85% 72%);
+  transition: background 0.15s, border-color 0.15s;
+}
+.netmap-fastest:hover, .netmap-fastest.on { background: hsl(210 85% 62% / 0.32); border-color: hsl(210 85% 62% / 0.9); }
+.fastnodes {
+  position: absolute; right: 10px; top: 10px; z-index: 6;
+  width: 205px; max-height: 44%;
+  display: flex; flex-direction: column; gap: 5px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid hsl(210 85% 62% / 0.7); /* blue, matches the network lines */
+  border-radius: 8px; padding: 7px 9px; box-sizing: border-box; font-size: 0.62rem;
+}
+.fn-head { display: flex; align-items: center; justify-content: space-between; }
+.fn-title { color: hsl(210 85% 66%); font-size: 0.72rem; font-weight: 600; }
+.fn-close { background: none; border: none; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 2px; }
+.fn-close:hover { color: hsl(var(--foreground)); }
+.fn-cols, .fn-row { display: grid; grid-template-columns: 1fr 4.4em 3em; align-items: baseline; column-gap: 5px; }
+.fn-cols { font-size: 0.6rem; font-weight: 600; color: hsl(210 60% 72%); }
+.fn-ms-h { text-align: right; }
+.fn-list { overflow-y: auto; scrollbar-width: thin; display: flex; flex-direction: column; gap: 2px; }
+.fn-list::-webkit-scrollbar { width: 5px; }
+.fn-country { color: hsl(var(--foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: baseline; gap: 4px; }
+.fn-rank { color: hsl(210 85% 66%); font-weight: 600; min-width: 1.1em; }
+.fn-ip { color: hsl(210 60% 72%); font-variant-numeric: tabular-nums; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fn-ms { text-align: right; color: hsl(145 65% 58%); font-variant-numeric: tabular-nums; font-weight: 600; }
+.fn-empty { color: hsl(var(--muted-foreground)); }

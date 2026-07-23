@@ -161,6 +161,13 @@ export interface Probe {
 }
 export const probePeers = (ips: string[]) => invoke<Probe[]>("probe_peers", { ips });
 
+export interface NodePing {
+  ip: string;
+  online: boolean;
+  ms: number;
+}
+export const pingNodes = (ips: string[]) => invoke<NodePing[]>("ping_nodes", { ips });
+
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
 export const lotteryWins = (addresses: string[]) => invoke<LotteryWin[]>("lottery_wins", { addresses });
