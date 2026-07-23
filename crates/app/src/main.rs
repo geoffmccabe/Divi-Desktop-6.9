@@ -146,6 +146,19 @@ async fn validate_address(address: String) -> bool {
     .unwrap_or(false)
 }
 
+/// Does the connected node own any of these addresses? Gates admin-only UI.
+#[tauri::command]
+async fn wallet_owns(addresses: Vec<String>) -> bool {
+    tauri::async_runtime::spawn_blocking(move || {
+        NodeConfig::load()
+            .ok()
+            .map(|cfg| wallet::owns_any(&cfg, &addresses))
+            .unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false)
+}
+
 /// Open an http(s) URL in the user's default browser (e.g. a block explorer).
 #[tauri::command]
 fn open_url(url: String) {
@@ -989,6 +1002,18 @@ async fn divi_prices(currencies: Vec<String>, cmc_key: Option<String>, use_coing
 
 fn main() {
     tauri::Builder::default()
+        .setup(|_app| {
+            // First-launch bring-up: create the config, download and verify
+            // divid69, and start the node — all in the background so the window
+            // opens immediately and the UI shows sync progress via node_status.
+            // Idempotent, so on later launches this is a near-instant no-op.
+            tauri::async_runtime::spawn_blocking(|| {
+                let _ = dd69_supervisor::install::first_run_bringup(|stage| {
+                    println!("[bringup] {stage}");
+                });
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             node_status,
             recent_blocks,
@@ -1004,6 +1029,7 @@ fn main() {
             recent_activity,
             list_transactions,
             validate_address,
+            wallet_owns,
             address_qr,
             open_url,
             poe_timestamp,

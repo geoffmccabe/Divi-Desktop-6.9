@@ -21,6 +21,39 @@ pub const DIVID69_VERSION: &str = "69.0.1";
 
 const BASE_URL: &str = "https://scan.divi.love/downloads";
 
+/// Known-live Divi peers harvested from the network, written into a fresh
+/// node's divi.conf so it connects on the first try. This is a bootstrap
+/// aid only; the node builds its own peer database after connecting once.
+const SEED_PEERS: &[&str] = &[
+    "104.168.43.240",
+    "104.223.27.104",
+    "107.161.83.106",
+    "107.172.21.13",
+    "107.173.2.10",
+    "107.174.226.101",
+    "107.175.87.211",
+    "116.203.64.121",
+    "15.204.247.193",
+    "167.160.191.142",
+    "172.245.228.178",
+    "188.245.61.6",
+    "192.210.248.47",
+    "192.227.194.191",
+    "192.3.86.223",
+    "198.12.74.110",
+    "198.23.224.242",
+    "198.46.232.135",
+    "204.152.193.22",
+    "204.44.70.163",
+    "213.136.69.210",
+    "216.144.229.195",
+    "216.45.61.244",
+    "54.197.42.63",
+    "64.23.136.158",
+    "94.130.151.81",
+];
+
+
 /// Archive name and its pinned SHA-256, per platform. A platform with no entry
 /// simply has no managed daemon yet and falls back to whatever is on the
 /// system.
@@ -203,7 +236,7 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
     // burst of concurrent calls makes the node stop answering entirely and it
     // looks dead while it is in fact healthy — a failure we have already hit
     // in production once.
-    let body = format!(
+    let mut body = format!(
         "# Written by DD69 on first run. Edit freely; DD69 will not rewrite it.\n\
          rpcuser=dd69\n\
          rpcpassword={pass}\n\
@@ -213,6 +246,17 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
          listen=1\n\
          rpcthreads=16\n"
     );
+    // A brand-new node has an empty peer database and would otherwise depend on
+    // the DNS seeder to find its first peers. That seeder has proven unreliable,
+    // so we hand the node a set of known-live peers to connect to immediately.
+    // It only needs one of these to work once; after that the node saves its own
+    // peer database and never relies on this list again.
+    body.push_str("\n# Known-live peers, so a fresh node connects without waiting on DNS seeds.\n");
+    for ip in SEED_PEERS {
+        body.push_str("addnode=");
+        body.push_str(ip);
+        body.push('\n');
+    }
     std::fs::write(&conf, body).map_err(|e| format!("cannot write divi.conf: {e}"))?;
     restrict_to_owner(&conf);
     Ok(datadir)
@@ -240,6 +284,60 @@ fn restrict_to_owner(p: &Path) {
             let _ = std::fs::set_permissions(p, perms);
         }
     }
+}
+
+/// The whole first-launch sequence, so a person who has never run Divi can
+/// install the app, open it, and end up with a syncing node without doing
+/// anything technical:
+///
+///   1. if the active node is a remote one the user chose, do nothing — they
+///      are deliberately using someone else's node, not this machine's;
+///   2. write a divi.conf (with credentials and the seed-peer list) if absent;
+///   3. download and checksum-verify divid69 if it is not already installed;
+///   4. launch the node, repairing the block database if last time was dirty.
+///
+/// `progress` reports short human stages for the UI. Every step is idempotent,
+/// so this is safe to call on every launch: once the conf exists and the daemon
+/// is installed and running, it returns almost immediately.
+pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
+    use crate::config::NodeConfig;
+    use crate::process;
+    use crate::rpc::RpcClient;
+    use std::time::Duration;
+
+    // If a remote node is already selected and reachable, respect that choice.
+    if let Ok(cfg) = NodeConfig::load() {
+        if cfg.remote {
+            return Err("using a remote node; not starting a local one".into());
+        }
+    }
+
+    progress("Preparing your node…");
+    ensure_local_node_conf()?;
+    let divid = ensure_divid69(&progress)?;
+
+    // Reload now that the conf exists, so we have real RPC credentials.
+    let cfg = NodeConfig::load().map_err(|e| format!("could not read the node settings: {e}"))?;
+    let rpc = RpcClient::new(&cfg);
+
+    // Prefer our freshly installed divid69, falling back to whatever find_divid
+    // turns up if for some reason the managed copy is not where we expect.
+    let bin = if divid.is_file() {
+        divid
+    } else {
+        process::find_divid(None)?
+    };
+
+    progress("Starting the node…");
+    let report = process::start_with_recovery(
+        &bin,
+        &cfg.datadir,
+        &rpc,
+        Duration::from_secs(180),
+        Duration::from_secs(1800),
+    )?;
+    progress("Node is running.");
+    Ok(report.pid)
 }
 
 fn make_executable(p: &Path) -> Result<(), String> {
