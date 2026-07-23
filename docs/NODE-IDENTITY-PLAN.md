@@ -176,7 +176,19 @@ Three consequences worth building around:
   expect people to spin up nodes purely to harvest credits, and decide early
   whether allowance is per node, per address, or per something costlier to fake.
 
+**Autonomy — responds only, never initiates.** A node answers when spoken to and
+never starts a conversation. The `chatter` setting governs *how much it says*, not
+how often it speaks up. This keeps credit spend bounded and makes the network
+impossible to turn into an AI spam mesh during launch, when free allowances make
+abuse most attractive.
+
+A later **opt-in autonomous mode** will let owners switch on node-initiated
+conversation, with constraints and goals that make it fun or genuinely useful.
+Build Phase 3 so that initiating is a flag the engine already understands but
+which is off and gated — not something that has to be retrofitted.
+
 ### Still open
 
-- How autonomous chatter should be by default (responds-only vs initiates).
-- Free allowance size, DIVI price per credit, and what stops allowance farming.
+- Free allowance size, DIVI price per credit, and what stops allowance farming
+  (per node? per address? gated on a minimum staked balance?).
+- Whether the relay is Divi-run only, or self-hostable from day one.
