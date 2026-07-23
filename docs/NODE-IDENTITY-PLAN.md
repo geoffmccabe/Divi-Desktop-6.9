@@ -96,6 +96,41 @@ characters are written through that gate.
 
 `ai.divi.love` keeps the job it was created for: the metered AI brain proxy.
 
+## 0c. The admin Characters panel — how it actually works (2026-Jul-23)
+
+Confirmed against `~/Downloads/kinetink-integration-prompt-for-claude-code.md`
+and `~/sso/docs/lovable-character-api-prompt.md`. **DD69 does NOT create or train
+characters** — Kinetink does. The division is clean:
+
+| Step | Where |
+|---|---|
+| Author the character's personality + train it | **Kinetink app** (app.kinet.ink) — Geoff does this there |
+| The character gets an **`api_key`** | Kinetink issues it |
+| Name it, give it an image, assign it to a grid slot | **DD69 admin panel** — just metadata + the pasted `api_key` |
+| A user chats with a grid character | DD69 embeds Kinetink's **iframe**: `https://fairytime.lovable.app/embed/chat?api_key=<key>&bg=…&accent=…` |
+
+So the admin panel is small and does not need a Kinetink iframe *for creation* —
+it needs, per slot:
+
+- a **name** and an **image/thumbnail** (the public identity, stored on the
+  scanner like any character);
+- the character's **Kinetink `api_key`** (pasted; this is what wires it to the AI);
+- **slot 0–5** assignment.
+
+Written through the SSO **superadmin** gate; stored in the scanner's public
+identity index. A non-admin picking that slot gets the name + image immediately,
+and chatting opens the Kinetink embed for that `api_key`.
+
+**The `api_key` is the one sensitive field here.** It authorises chat (and spends
+against whatever that character's usage bills to). It must live server-side on
+the scanner and be handed to the client only as the embed URL at chat time — the
+same rule as any credential, and the reason the panel writes through the SSO gate
+rather than storing the key in a user's local wallet.
+
+Chat can also be the **direct API** (`POST …/functions/v1/public-chat` with the
+`api_key`) instead of the iframe, if we want DD69's own chat UI later. The iframe
+is the fast path; the direct API is the option for a native look.
+
 ---
 
 ## 0. The constraint that shapes everything
