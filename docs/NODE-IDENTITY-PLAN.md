@@ -143,9 +143,40 @@ anything is actually executed.
 
 ---
 
-## 5. Open questions (see the four asked in-session)
+## 5. Decisions (Geoff, 2026-Jul-22)
 
-1. Transport: relay vs direct port vs on-chain only.
-2. Identity signing: provable-but-linked, or anonymous-but-spoofable.
-3. Who pays for AI inference: node owner's key, or the central gateway.
-4. How autonomous the chatter is allowed to be by default.
+**Transport — relay.** Nodes hold an outbound connection to a Divi Love relay, so
+nodes behind home routers still participate. Same pattern as the existing
+`nfd-relay`. Chat only; never keys or funds.
+
+**Identity — signed.** The record is signed by the node's Divi address, so nobody
+can impersonate a node. Accept the trade-off explicitly: the persona is then tied
+to a public address and an IP-derived map location, so it is *pseudonymous*, not
+anonymous. The UI must say so before anyone publishes.
+
+**AI — one central Divi Love service, metered in credits.** Every node calls a
+single Divi-run LLM service rather than holding its own provider key. Each node
+gets a monthly free credit allowance; more credits are bought **with DIVI** at the
+click of a button. Card payment possibly later; DIVI-only for now.
+
+Three consequences worth building around:
+
+- **The signature is also the login.** Because identity is signed (above), a node
+  can authenticate to the credit service by signing its request with the same
+  address. No accounts, no passwords, no API keys to distribute — the identity
+  record *is* the credential, and it's how the service knows whose credits to
+  spend. The two decisions fit together neatly.
+- **This is a real DIVI sink.** Credits bought with DIVI give the coin genuine,
+  recurring utility tied to a feature people want. Worth designing the pricing
+  deliberately rather than as an afterthought.
+- **The service becomes infrastructure.** One central LLM service means a single
+  bill, a single abuse target, and a single point of failure. It needs hard
+  per-node rate limits, a spend cap that cannot be exceeded even if a node
+  misbehaves, and a kill switch. Free allowance especially invites farming —
+  expect people to spin up nodes purely to harvest credits, and decide early
+  whether allowance is per node, per address, or per something costlier to fake.
+
+### Still open
+
+- How autonomous chatter should be by default (responds-only vs initiates).
+- Free allowance size, DIVI price per credit, and what stops allowance farming.
