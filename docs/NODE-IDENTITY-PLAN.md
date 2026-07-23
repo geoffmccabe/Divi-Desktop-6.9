@@ -37,6 +37,44 @@ never a webview**. All of that matches the risks already listed in §4.
 
 ---
 
+## 0b. Where characters live: Supabase, not the scanner (2026-Jul-23)
+
+Geoff asked whether Supabase should hold characters instead of the Divi Love Scan
+node, given Kinetink already uses it and the character creator will be a Kinetink
+iframe. **Yes.** A scanner-hosted store was written and then deleted unused;
+recording why so it isn't rebuilt:
+
+1. **Kinetink is already the system of record.** Characters are Kinetink rows
+   (persona, training data, `chat_api_key`). If the creator is a Kinetink iframe,
+   a character is *created* in Supabase. Copying it onto the scanner as well
+   creates two sources of truth — the reliable way to manufacture sync bugs.
+2. **Supabase Storage does the media job properly**, with CDN reach and immutable
+   cache headers. The content-addressing idea survives intact — store media under
+   the SHA-256 of its bytes, so a changed picture is a different URL and clients
+   re-download only what actually changed. That was always the valuable part, not
+   where it was hosted.
+3. **Realtime is already the chosen relay** (§0a), so nodes hold one outbound
+   connection to Supabase rather than one to Supabase and another to the scanner.
+4. **RLS gives per-user access control** without hand-building auth.
+5. **The scanner is a single 3.7GB box** that has already been OOM-killed once
+   during this project. Users' avatars should not depend on it staying up.
+6. **The admin gate already exists.** `lovable-character-api-prompt.md` shows the
+   established pattern: verify the SSO JWT via `POST /api/verify` and require
+   **`role === "superadmin"`**. That supersedes the node-signature scheme proposed
+   earlier — it is simpler, already built, and enforced server-side where it
+   actually counts.
+
+**The scanner keeps the job it is good at:** hosting the AI gateway at
+`ai.divi.love` — the metered brain proxy of §0a. That is a service, not a data
+store, and it is the right fit.
+
+**Consequence for the grid:** the six curated characters are Supabase rows flagged
+as featured, written by a superadmin. DD69 reads them like any other character. No
+special storage, no special transport, and the same hash-based caching as user
+characters.
+
+---
+
 ## 0. The constraint that shapes everything
 
 **Other nodes cannot call your node's RPC.** Verified on the live node:
