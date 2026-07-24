@@ -19,10 +19,10 @@ function cssVar(name: string, fallback: string): string {
   return v || fallback;
 }
 
-export type SoundEvent = "click" | "send" | "receive";
+export type SoundEvent = "click" | "send" | "receive" | "peer";
 
-const DEFAULT_FREQ: Record<SoundEvent, string> = { click: "660", send: "880", receive: "523" };
-const DEFAULT_WAVE: Record<SoundEvent, string> = { click: "sine", send: "triangle", receive: "sine" };
+const DEFAULT_FREQ: Record<SoundEvent, string> = { click: "660", send: "880", receive: "523", peer: "300" };
+const DEFAULT_WAVE: Record<SoundEvent, string> = { click: "sine", send: "triangle", receive: "sine", peer: "sine" };
 
 export function playSound(event: SoundEvent): void {
   const c = getCtx();
@@ -57,7 +57,9 @@ export function installClickSound(): void {
     "pointerdown",
     (e) => {
       const el = e.target as HTMLElement | null;
-      if (el && el.closest("button")) playSound("click");
+      // Also match label-based controls styled as buttons (the file pickers are
+      // <label class="wl-btn">, not <button>), so they click-sound like the rest.
+      if (el && el.closest("button, .wl-btn")) playSound("click");
     },
     true
   );

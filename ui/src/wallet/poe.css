@@ -1,0 +1,198 @@
+/* Proof of Existence panel: width and type size.
+ *
+ * Kept OUT of index.css on purpose. That file is the one a second agent is most
+ * often editing, and it currently holds their uncommitted work; a separate file
+ * means these rules can ship without dragging half-finished changes along.
+ * Imported by TimestampPanel.tsx, so it loads after index.css and wins on equal
+ * specificity.
+ *
+ * The panel was crowded into the left third of the window because THREE caps
+ * stacked up:
+ *   .timestamp  max-width 620px   the whole panel
+ *   .poe-pane   max-width 500px   each tab's contents
+ *   .wl-note    max-width 460px   every explanatory paragraph (a global rule)
+ * Undoing all three, scoped to this panel so the rest of the app keeps its
+ * comfortable reading measure.
+ *
+ * Type is raised by about one point (1pt is close to 0.08rem at a 16px root).
+ * Each rule below mirrors one in index.css; if a size changes there, change it
+ * here too.
+ */
+
+.timestamp {
+  max-width: none;
+}
+
+.timestamp .poe-pane,
+.timestamp .poe-hist {
+  max-width: none;
+  width: 100%;
+}
+
+/* Paragraphs and rows fill the panel instead of collapsing to their content
+   width, which is what left the big empty area on the right. */
+.timestamp .wl-note,
+.poe-modal .wl-note {
+  max-width: none;
+}
+.timestamp .ts-section > p,
+.timestamp .poe-pane > p,
+.timestamp .ts-fileinfo,
+.timestamp .poe-intro-text {
+  width: 100%;
+}
+
+/* Slightly wider history cards now that there is room for them. */
+.timestamp .poe-hist-grid {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+/* ---- Type, one point larger throughout ---- */
+.timestamp .ts-head,
+.poe-modal-head h3 {
+  font-size: 1.13rem;
+}
+.timestamp .wl-note,
+.timestamp .wl-err,
+.timestamp .wl-link,
+.poe-modal .wl-note {
+  font-size: 0.93rem;
+}
+.timestamp .ts-filename,
+.timestamp .poe-prefill-name,
+.timestamp .ts-confirmed {
+  font-size: 1.03rem;
+}
+.timestamp .ts-pending {
+  font-size: 1rem;
+}
+.timestamp .ts-proof-title {
+  font-size: 1.08rem;
+}
+.timestamp .ts-meta {
+  font-size: 0.88rem;
+}
+.timestamp .ts-hash,
+.timestamp .poe-card-sub,
+.timestamp .poe-card-txid,
+.timestamp .poe-card-actions .wl-btn,
+.timestamp .poe-help {
+  font-size: 0.8rem;
+}
+.timestamp .ts-costnote,
+.timestamp .poe-card-when {
+  font-size: 0.82rem;
+}
+.timestamp .poe-tab,
+.timestamp .wl-btn,
+.timestamp .wl-input,
+.timestamp select.wl-input {
+  font-size: 0.9rem;
+}
+.poe-modal .poe-uses strong {
+  font-size: 0.94rem;
+}
+.poe-modal .poe-uses span {
+  font-size: 0.9rem;
+}
+.poe-modal .poe-modal-body p {
+  font-size: 0.93rem;
+}
+
+/* Section 1 / Section 2 supplied copy: subheadings, bullet lists, takeaway. */
+.poe-intro-sub {
+  margin: 14px 0 6px;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+.poe-points {
+  margin: 0 0 4px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.poe-points li {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+}
+.poe-points strong {
+  color: hsl(var(--foreground));
+}
+.poe-takeaway {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border-left: 3px solid hsl(var(--primary));
+  background: hsl(var(--primary) / 0.08);
+  border-radius: 0 8px 8px 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: hsl(var(--foreground));
+}
+
+/* MORE INFO capsule: a small pill that opens the explainer modal. Shown after
+   the intro paragraph and again under the deepfake-defense section. */
+.poe-moreinfo {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  padding: 3px 12px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--primary) / 0.6);
+  background: hsl(var(--primary) / 0.14);
+  color: hsl(var(--primary));
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1.4;
+  cursor: pointer;
+}
+.poe-moreinfo:hover {
+  background: hsl(var(--primary) / 0.28);
+}
+.poe-why {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* Numbered steps in the Verify tab. */
+.poe-step {
+  flex: 0 0 auto;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: hsl(var(--primary));
+  min-width: 16px;
+}
+
+/* Verify tab's transaction-id field: let it fill the row (the shared .wl-input
+   caps at 460px, which cut off the placeholder), and darken the placeholder
+   one step towards black (70% grey -> 35%). opacity:1 defeats the browser's
+   default placeholder dimming so the colour lands exactly. */
+.poe-txid {
+  max-width: none;
+}
+.poe-txid::placeholder {
+  color: hsl(0 0% 35%);
+  opacity: 1;
+}
+
+/* Instant press feedback for all button-styled controls, including the
+   label-based file pickers. Kept here rather than index.css to avoid the
+   shared-file collision; CSS import scope is global, so these apply app-wide.
+   Hover brightens a little (with a quick ease); pressing brightens a lot with
+   NO transition, so the response is immediate rather than fading in. The OS
+   file-dialog open animation itself is outside our control. */
+.wl-btn {
+  transition: filter 0.1s ease, background-color 0.1s ease;
+}
+.wl-btn:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+.wl-btn:active:not(:disabled) {
+  filter: brightness(1.55);
+  transition: none;
+}

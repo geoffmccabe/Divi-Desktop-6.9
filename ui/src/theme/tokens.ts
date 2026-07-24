@@ -27,6 +27,12 @@ const ROUNDED = "ui-rounded, 'SF Pro Rounded', system-ui, sans-serif";
 
 const FONTS = [
   { label: "System", value: SYSTEM },
+  { label: "Inter", value: `'Inter', ${SYSTEM}` },
+  { label: "DM Sans", value: `'DM Sans', ${SYSTEM}` },
+  { label: "Plus Jakarta Sans", value: `'Plus Jakarta Sans', ${SYSTEM}` },
+  { label: "Space Grotesk", value: `'Space Grotesk', ${SYSTEM}` },
+  { label: "Arial", value: "Arial, 'Helvetica Neue', Helvetica, sans-serif" },
+  { label: "Helvetica", value: "Helvetica, 'Helvetica Neue', Arial, sans-serif" },
   { label: "Serif", value: SERIF },
   { label: "Mono", value: MONO },
   { label: "Rounded", value: ROUNDED },

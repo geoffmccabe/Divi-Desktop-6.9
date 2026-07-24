@@ -30,9 +30,15 @@ pub fn tip_age_secs(rpc: &RpcClient) -> Option<i64> {
 }
 
 pub fn status_report(cfg: &NodeConfig) -> StatusReport {
-    let last_shutdown = health::last_shutdown(&cfg.datadir);
+    // A remote node (over an SSH tunnel) has no local pid/datadir to inspect —
+    // its whole status comes from RPC, so skip the local-file checks entirely.
+    let last_shutdown = if cfg.remote {
+        LastShutdown::Unknown
+    } else {
+        health::last_shutdown(&cfg.datadir)
+    };
 
-    if process::daemon_pid(&cfg.datadir).is_none() {
+    if !cfg.remote && process::daemon_pid(&cfg.datadir).is_none() {
         let (phase, headline) = if health::stale_pid_file(&cfg.datadir, false) {
             (
                 Phase::CrashedNeedsRepair,
@@ -46,15 +52,28 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
 
     let rpc = RpcClient::new(cfg);
 
-    // Probe with one cheap call first. If the node doesn't answer promptly,
-    // report "starting" immediately instead of stacking up more slow calls.
-    let peers = match rpc.call("getconnectioncount", json!([])).ok().and_then(|v| v.as_i64()) {
+    // Probe with one cheap call. The legacy node's RPC is bursty, so a single
+    // miss doesn't mean it's down — retry once before concluding anything.
+    let peers = rpc
+        .call("getconnectioncount", json!([]))
+        .ok()
+        .and_then(|v| v.as_i64())
+        .or_else(|| {
+            rpc.call("getconnectioncount", json!([]))
+                .ok()
+                .and_then(|v| v.as_i64())
+        });
+    let peers = match peers {
         Some(p) => p,
         None => {
+            // Running (pid present) but the RPC connection didn't answer even on
+            // retry. We do NOT know why (often the legacy node briefly refuses a
+            // connection), so we don't claim "busy" — just that we're reaching
+            // for it. The UI keeps the last-known good status during brief misses.
             return StatusReport {
                 running: true,
                 phase: Phase::Starting,
-                headline: "The node is starting up…".into(),
+                headline: "Connecting to the node…".into(),
                 blocks: None,
                 peers: None,
                 last_shutdown,
@@ -64,7 +83,7 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
 
     let blocks = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64());
     let staking = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
-    let tip_age = tip_age_secs(&rpc).unwrap_or(i64::MAX);
+    let tip_age = tip_age_secs(&rpc);
     let h = state::assess(peers, tip_age, &staking);
     StatusReport {
         running: true,

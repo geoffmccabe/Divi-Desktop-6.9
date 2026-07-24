@@ -5,7 +5,7 @@
 use crate::config::NodeConfig;
 use crate::rpc::RpcClient;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct AddrInfo {
     pub address: String,
@@ -33,11 +33,13 @@ pub fn addresses(cfg: &NodeConfig) -> Vec<AddrInfo> {
                     continue;
                 }
                 let e = map.entry(addr.to_string()).or_insert((0, 0, 0));
-                match t["category"].as_str().unwrap_or("") {
-                    "receive" => e.0 += 1,
-                    "send" => e.1 += 1,
-                    "generate" | "stake" | "mint" | "immature" | "orphan" => e.2 += 1,
-                    _ => {}
+                let cat = t["category"].as_str().unwrap_or("");
+                if cat == "receive" {
+                    e.0 += 1;
+                } else if cat == "send" {
+                    e.1 += 1;
+                } else if is_won_stake(t) {
+                    e.2 += 1;
                 }
             }
         }
@@ -67,6 +69,344 @@ pub struct Balance {
     pub staking: f64,
     pub pending: f64,
     pub immature: f64,
+}
+
+pub struct StakeStart {
+    pub staking: bool,
+    pub needs_passphrase: bool,
+    pub message: String,
+}
+
+/// Start staking. If the wallet is encrypted+locked, unlock it FOR STAKING ONLY
+/// (`walletpassphrase pass 0 true`) — it can stake but not spend — using the
+/// supplied passphrase; if none is supplied it asks for one. An unencrypted
+/// wallet stakes automatically, so this just reports the status/reason.
+pub fn start_staking(cfg: &NodeConfig, passphrase: Option<&str>) -> StakeStart {
+    let rpc = RpcClient::new(cfg);
+    let winfo = rpc.call("getwalletinfo", json!([])).unwrap_or(json!({}));
+    let encrypted = winfo.get("unlocked_until").is_some();
+    let unlocked = winfo["unlocked_until"].as_i64().map(|u| u != 0).unwrap_or(true);
+
+    if encrypted && !unlocked {
+        match passphrase {
+            Some(pass) => {
+                // timeout 0 = stay unlocked until locked; true = staking-only
+                if let Err(e) = rpc.call("walletpassphrase", json!([pass, 0, true])) {
+                    return StakeStart { staking: false, needs_passphrase: true, message: e };
+                }
+            }
+            None => {
+                return StakeStart {
+                    staking: false,
+                    needs_passphrase: true,
+                    message: "Enter your wallet password to start staking.".into(),
+                };
+            }
+        }
+    }
+
+    let s = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
+    let staking = s["staking status"].as_bool().unwrap_or(false);
+    let message = if staking {
+        "Staking is now active. ✓".into()
+    } else {
+        crate::state::staking_reason_not_staking(&s)
+    };
+    StakeStart { staking, needs_passphrase: false, message }
+}
+
+// ── Staking details ────────────────────────────────────────────────────────
+
+/// One address's staking picture: how much sits there ("size"), how many times
+/// it has staked, and when it first/last staked.
+pub struct StakeWallet {
+    pub address: String,
+    pub size: f64,
+    pub stakes: i64,
+    pub first_stake: Option<i64>,
+    pub last_stake: Option<i64>,
+}
+
+fn is_stake_cat(c: &str) -> bool {
+    // Divi reports staking rewards as "stake_reward" (also stake/stake_split/
+    // orphaned_stake on other builds); coinbase-style rewards as generate/mint.
+    c.contains("stake") || matches!(c, "generate" | "mint" | "immature" | "orphan")
+}
+
+/// Did this stake actually EARN anything? `is_stake_cat` deliberately also
+/// matches orphaned stakes so we can still show them in the activity list, but
+/// an orphaned stake is a block our node minted and then lost the race with —
+/// no reward. Counting those inflated every stake statistic. A negative
+/// confirmation count is the wallet's way of saying "conflicts with the chain".
+fn is_won_stake(t: &serde_json::Value) -> bool {
+    let cat = t["category"].as_str().unwrap_or("");
+    is_stake_cat(cat) && !cat.contains("orphan") && t["confirmations"].as_i64().unwrap_or(0) >= 0
+}
+
+// ── Blockchain visualization: recent blocks + their transactions ────────────
+
+pub struct BlockSummary {
+    pub height: i64,
+    pub time: i64,
+    pub txids: Vec<String>,
+    /// The staker's payout address (coinstake), if we can read it — the "winner".
+    pub stake_winner: Option<String>,
+    /// The staking reward = coinstake outputs − inputs (the DIVI actually won).
+    pub stake_amount: Option<f64>,
+}
+
+/// The newest `count` blocks with their transaction ids (for the moving block
+/// chain on the map). Light: one getblock per block, plus one lookup for the
+/// coinstake winner. Newest last.
+pub fn recent_blocks(cfg: &NodeConfig, count: i64) -> Vec<BlockSummary> {
+    let rpc = RpcClient::new(cfg);
+    let Some(tip) = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64()) else {
+        return Vec::new();
+    };
+    let start = (tip - count + 1).max(0);
+    let mut out = Vec::new();
+    for h in start..=tip {
+        let Some(hash) = rpc.call("getblockhash", json!([h])).ok().and_then(|v| v.as_str().map(str::to_string)) else {
+            continue;
+        };
+        let Ok(b) = rpc.call("getblock", json!([hash])) else { continue };
+        let time = b["time"].as_i64().unwrap_or(0);
+        let txids: Vec<String> = b["tx"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        // The coinstake is the 2nd tx in a PoS block; its output pays the staker.
+        // The reward = its outputs minus the inputs it spent.
+        let mut stake_winner = None;
+        let mut stake_amount = None;
+        if let Some(txid) = txids.get(1) {
+            if let Ok(tx) = rpc.call("getrawtransaction", json!([txid, 1])) {
+                stake_winner = tx["vout"].as_array().and_then(|vs| {
+                    vs.iter().find_map(|v| {
+                        v["scriptPubKey"]["addresses"].as_array().and_then(|a| a.first()).and_then(|x| x.as_str()).map(str::to_string)
+                    })
+                });
+                let out_sum: f64 = tx["vout"].as_array().map(|vs| vs.iter().map(|v| v["value"].as_f64().unwrap_or(0.0)).sum()).unwrap_or(0.0);
+                let mut in_sum = 0.0;
+                if let Some(vins) = tx["vin"].as_array() {
+                    for vin in vins {
+                        if let (Some(it), Some(iv)) = (vin["txid"].as_str(), vin["vout"].as_u64()) {
+                            if let Ok(itx) = rpc.call("getrawtransaction", json!([it, 1])) {
+                                in_sum += itx["vout"][iv as usize]["value"].as_f64().unwrap_or(0.0);
+                            }
+                        }
+                    }
+                }
+                stake_amount = Some((out_sum - in_sum).max(0.0));
+            }
+        }
+        out.push(BlockSummary { height: h, time, txids, stake_winner, stake_amount });
+    }
+    out
+}
+
+/// The wallet's addresses that hold stakeable coins and/or have staked, largest
+/// first. Size comes from spendable UTXOs; stake counts/dates from history.
+pub fn staking_wallets(cfg: &NodeConfig) -> Vec<StakeWallet> {
+    let rpc = RpcClient::new(cfg);
+
+    // Size = sum of spendable outputs per address (what can actually stake).
+    let mut size: HashMap<String, f64> = HashMap::new();
+    if let Ok(u) = rpc.call("listunspent", json!([1, 9_999_999])) {
+        if let Some(arr) = u.as_array() {
+            for o in arr {
+                if let Some(a) = o["address"].as_str() {
+                    *size.entry(a.to_string()).or_insert(0.0) += o["amount"].as_f64().unwrap_or(0.0);
+                }
+            }
+        }
+    }
+
+    // Stake count + first/last stake time per address.
+    let mut stakes: HashMap<String, (i64, Option<i64>, Option<i64>)> = HashMap::new();
+    if let Ok(txs) = rpc.call("listtransactions", json!(["*", 2000])) {
+        if let Some(arr) = txs.as_array() {
+            for t in arr {
+                let addr = t["address"].as_str().unwrap_or("");
+                if addr.is_empty() || !is_won_stake(t) {
+                    continue;
+                }
+                let time = t["time"].as_i64();
+                let e = stakes.entry(addr.to_string()).or_insert((0, None, None));
+                e.0 += 1;
+                if let Some(ts) = time {
+                    e.1 = Some(e.1.map_or(ts, |f: i64| f.min(ts)));
+                    e.2 = Some(e.2.map_or(ts, |l: i64| l.max(ts)));
+                }
+            }
+        }
+    }
+
+    let mut keys: std::collections::HashSet<String> = HashSet::new();
+    keys.extend(size.keys().cloned());
+    keys.extend(stakes.keys().cloned());
+
+    let mut out: Vec<StakeWallet> = keys
+        .into_iter()
+        .map(|address| {
+            let s = stakes.get(&address).copied().unwrap_or((0, None, None));
+            StakeWallet {
+                size: *size.get(&address).unwrap_or(&0.0),
+                stakes: s.0,
+                first_stake: s.1,
+                last_stake: s.2,
+                address,
+            }
+        })
+        .filter(|w| w.size > 0.0 || w.stakes > 0)
+        .collect();
+    out.sort_by(|a, b| b.size.partial_cmp(&a.size).unwrap_or(std::cmp::Ordering::Equal));
+    out
+}
+
+/// Lottery cycle parameters (start height, blocks per cycle) for the active
+/// network. Divi runs a weekly lottery (10080 one-minute blocks); regtest is 10.
+fn lottery_cycle(rpc: &RpcClient) -> (i64, i64) {
+    let chain = rpc
+        .call("getblockchaininfo", json!([]))
+        .ok()
+        .and_then(|v| v["chain"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    match chain.as_str() {
+        "regtest" => (101, 10),
+        _ => (101, 10080), // main + test: weekly
+    }
+}
+
+/// Where and (roughly) when the next lottery draw happens. `next_eta` is an
+/// estimate (blocks-remaining × ~60s), so the UI should label it approximate.
+pub struct LotteryInfo {
+    pub tip: i64,
+    pub next_height: i64,
+    pub next_eta: i64,
+}
+
+pub fn lottery_info(cfg: &NodeConfig) -> Option<LotteryInfo> {
+    let rpc = RpcClient::new(cfg);
+    let tip = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64())?;
+    let (_, cycle) = lottery_cycle(&rpc);
+    let next_height = (tip / cycle + 1) * cycle;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let next_eta = now + (next_height - tip) * 60;
+    Some(LotteryInfo { tip, next_height, next_eta })
+}
+
+/// How many big (rank 0) and small (ranks 1-10) lottery prizes each of `addrs`
+/// has won, by scanning historical lottery blocks. NOTE: derived from
+/// getlotteryblockwinners; verify the totals against a synced mainnet node
+/// before presenting them as authoritative.
+pub struct LotteryWin {
+    pub address: String,
+    pub big: i64,
+    pub small: i64,
+}
+
+/// A lottery leaderboard entry: cumulative Big (rank 0) and Small (rank 1-10)
+/// wins for an address, scored Big×10 + Small.
+pub struct LotteryLeader {
+    pub address: String,
+    pub big: i64,
+    pub small: i64,
+    pub points: i64,
+}
+
+pub struct LotteryBoard {
+    pub leaders: Vec<LotteryLeader>,
+    pub your_big: i64,
+    pub your_small: i64,
+    pub your_points: i64,
+}
+
+/// Scan recent lottery blocks, tally Big/Small wins per address, and return the
+/// top 10 by points (Big×10 + Small) plus the user's own tally — all from one
+/// pass. The window is capped because each block is a separate RPC round-trip.
+pub fn lottery_board(cfg: &NodeConfig, user_addrs: &[String]) -> LotteryBoard {
+    let rpc = RpcClient::new(cfg);
+    let want: HashSet<&str> = user_addrs.iter().map(|s| s.as_str()).collect();
+    let mut tally: HashMap<String, (i64, i64)> = HashMap::new();
+    let Some(tip) = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64()) else {
+        return LotteryBoard { leaders: Vec::new(), your_big: 0, your_small: 0, your_points: 0 };
+    };
+    let (_, cycle) = lottery_cycle(&rpc);
+    let mut h = (tip / cycle) * cycle; // most recent lottery height
+    let mut scanned = 0;
+    while h >= cycle && scanned < 120 {
+        if let Ok(v) = rpc.call("getlotteryblockwinners", json!([h])) {
+            if let Some(cands) = v["Lottery Candidates"].as_array() {
+                for c in cands {
+                    let rank = c["Rank"].as_i64().unwrap_or(-1);
+                    if let Some(a) = c["Address"].as_str().and_then(|s| s.split(':').next()) {
+                        let e = tally.entry(a.to_string()).or_insert((0, 0));
+                        if rank == 0 {
+                            e.0 += 1;
+                        } else if rank > 0 {
+                            e.1 += 1;
+                        }
+                    }
+                }
+            }
+        }
+        h -= cycle;
+        scanned += 1;
+    }
+    let mut leaders: Vec<LotteryLeader> = tally
+        .iter()
+        .map(|(a, (b, s))| LotteryLeader { address: a.clone(), big: *b, small: *s, points: b * 10 + s })
+        .collect();
+    leaders.sort_by(|x, y| y.points.cmp(&x.points).then(y.big.cmp(&x.big)));
+    leaders.truncate(10);
+    let (yb, ys) = tally.iter().fold((0i64, 0i64), |(b, s), (a, (tb, ts))| {
+        if want.contains(a.as_str()) { (b + tb, s + ts) } else { (b, s) }
+    });
+    LotteryBoard { leaders, your_big: yb, your_small: ys, your_points: yb * 10 + ys }
+}
+
+pub fn lottery_wins(cfg: &NodeConfig, addrs: &[String]) -> Vec<LotteryWin> {
+    let rpc = RpcClient::new(cfg);
+    let want: HashSet<&str> = addrs.iter().map(|s| s.as_str()).collect();
+    let mut tally: HashMap<String, (i64, i64)> = HashMap::new();
+
+    let tip = match rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64()) {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    let (_, cycle) = lottery_cycle(&rpc);
+    let mut h = cycle; // lottery blocks fall on multiples of the cycle
+    let mut scanned = 0;
+    while h <= tip && scanned < 4000 {
+        if let Ok(v) = rpc.call("getlotteryblockwinners", json!([h])) {
+            if let Some(cands) = v["Lottery Candidates"].as_array() {
+                for c in cands {
+                    let rank = c["Rank"].as_i64().unwrap_or(-1);
+                    for a in c["Address"].as_str().unwrap_or("").split(':') {
+                        if want.contains(a) {
+                            let e = tally.entry(a.to_string()).or_insert((0, 0));
+                            if rank == 0 {
+                                e.0 += 1;
+                            } else if rank > 0 {
+                                e.1 += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        h += cycle;
+        scanned += 1;
+    }
+
+    tally
+        .into_iter()
+        .map(|(address, (big, small))| LotteryWin { address, big, small })
+        .collect()
 }
 
 pub fn balance(cfg: &NodeConfig) -> Option<Balance> {
@@ -102,6 +442,20 @@ pub fn is_valid_address(cfg: &NodeConfig, addr: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Does the connected node's wallet OWN any of these addresses? Uses
+/// validateaddress `ismine`, which is true regardless of transaction activity —
+/// the reliable "is this the admin's node" test (an address can be owned but not
+/// yet appear in the tx-derived address list).
+pub fn owns_any(cfg: &NodeConfig, addrs: &[String]) -> bool {
+    let rpc = RpcClient::new(cfg);
+    addrs.iter().any(|a| {
+        rpc.call("validateaddress", json!([a]))
+            .ok()
+            .and_then(|v| v["ismine"].as_bool())
+            .unwrap_or(false)
+    })
+}
+
 pub struct Tx {
     pub kind: String, // receive | send | stake | other
     pub amount: f64,
@@ -123,11 +477,15 @@ pub fn list(cfg: &NodeConfig, count: i64, from: i64) -> Option<Vec<Tx>> {
 }
 
 fn tx_from_json(t: &serde_json::Value) -> Tx {
-    let kind = match t["category"].as_str().unwrap_or("") {
-        "receive" => "receive",
-        "send" => "send",
-        "generate" | "immature" | "stake" | "mint" | "orphan" => "stake",
-        _ => "other",
+    let cat = t["category"].as_str().unwrap_or("");
+    let kind = if cat == "receive" {
+        "receive"
+    } else if cat == "send" {
+        "send"
+    } else if is_stake_cat(cat) {
+        "stake"
+    } else {
+        "other"
     };
     Tx {
         kind: kind.to_string(),
@@ -150,11 +508,15 @@ pub fn recent(cfg: &NodeConfig, count: i64) -> Vec<Tx> {
         .iter()
         .rev()
         .map(|t| {
-            let kind = match t["category"].as_str().unwrap_or("") {
-                "receive" => "receive",
-                "send" => "send",
-                "generate" | "immature" | "stake" | "mint" | "orphan" => "stake",
-                _ => "other",
+            let cat = t["category"].as_str().unwrap_or("");
+            let kind = if cat == "receive" {
+                "receive"
+            } else if cat == "send" {
+                "send"
+            } else if is_stake_cat(cat) {
+                "stake"
+            } else {
+                "other"
             };
             Tx {
                 kind: kind.to_string(),
@@ -168,4 +530,33 @@ pub fn recent(cfg: &NodeConfig, count: i64) -> Vec<Tx> {
         .collect();
     out.truncate(count.max(0) as usize);
     out
+}
+
+/// Send DIVI to an address. Irreversible. If `passphrase` is given (encrypted
+/// wallet, ask-on-send), we FULL-unlock just long enough to send, then restore
+/// the safe staking-only state so staking keeps running but spends stay locked.
+/// If no passphrase (unencrypted, or a wallet the user left open), we send as-is.
+pub fn send_coins(cfg: &NodeConfig, address: &str, amount: f64, passphrase: Option<&str>) -> Result<String, String> {
+    if amount <= 0.0 {
+        return Err("Amount must be greater than zero.".into());
+    }
+    let rpc = RpcClient::new(cfg);
+
+    // Just-in-time full unlock (120s window) only when a password was supplied.
+    if let Some(pass) = passphrase {
+        rpc.call("walletpassphrase", json!([pass, 120, false]))
+            .map_err(|e| format!("Unlock failed: {e}"))?;
+    }
+
+    let result = rpc
+        .call("sendtoaddress", json!([address, amount]))
+        .map(|v| v.as_str().unwrap_or_default().to_string());
+
+    // Whether the send succeeded or not, re-lock spends: drop back to staking-only
+    // so a full-unlock window is never left open after a send.
+    if let Some(pass) = passphrase {
+        let _ = rpc.call("walletpassphrase", json!([pass, 0, true]));
+    }
+
+    result
 }

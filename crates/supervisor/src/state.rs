@@ -44,21 +44,23 @@ pub struct Health {
 }
 
 fn human_duration(secs: i64) -> String {
+    // saturating_add so a sentinel like i64::MAX ("age unknown / very stale")
+    // can't overflow the rounding offsets and panic.
     let s = secs.max(0);
     if s < 90 {
         format!("{s} seconds")
     } else if s < 5400 {
-        format!("about {} minutes", (s + 30) / 60)
+        format!("about {} minutes", s.saturating_add(30) / 60)
     } else if s < 172_800 {
-        format!("about {} hours", (s + 1800) / 3600)
+        format!("about {} hours", s.saturating_add(1800) / 3600)
     } else {
-        format!("about {} days", (s + 43_200) / 86_400)
+        format!("about {} days", s.saturating_add(43_200) / 86_400)
     }
 }
 
 /// Derive the running-node health from three cheap facts: how many peers we
 /// have, how old the newest block is, and the staking status object.
-pub fn assess(peers: i64, tip_age_secs: i64, staking: &Value) -> Health {
+pub fn assess(peers: i64, tip_age_secs: Option<i64>, staking: &Value) -> Health {
     if peers <= 0 {
         return Health {
             phase: Phase::NoPeers,
@@ -66,11 +68,19 @@ pub fn assess(peers: i64, tip_age_secs: i64, staking: &Value) -> Health {
                 .into(),
         };
     }
+    // Tip age unknown (the block-time query didn't answer this cycle): don't
+    // invent a number — say we're checking. Never print a bogus "N days behind".
+    let Some(tip_age_secs) = tip_age_secs else {
+        return Health {
+            phase: Phase::Syncing,
+            headline: "Connected — checking sync status…".into(),
+        };
+    };
     if tip_age_secs > SYNC_FRESH_SECS {
         return Health {
             phase: Phase::Syncing,
             headline: format!(
-                "Syncing the blockchain — about {} behind. This catches up on its own; you can keep using the wallet.",
+                "Syncing the blockchain — {} behind. This catches up on its own; you can keep using the wallet.",
                 human_duration(tip_age_secs)
             ),
         };
@@ -130,27 +140,34 @@ mod tests {
 
     #[test]
     fn no_peers_beats_everything() {
-        let h = assess(0, 5, &staking_on());
+        let h = assess(0, Some(5), &staking_on());
         assert_eq!(h.phase, Phase::NoPeers);
     }
 
     #[test]
     fn stale_tip_means_syncing() {
-        let h = assess(8, 3600, &staking_on());
+        let h = assess(8, Some(3600), &staking_on());
         assert_eq!(h.phase, Phase::Syncing);
         assert!(h.headline.contains("behind"));
-        assert!(assess(8, 7200, &staking_on()).headline.contains("hours"));
+        assert!(assess(8, Some(7200), &staking_on()).headline.contains("hours"));
+    }
+
+    #[test]
+    fn unknown_tip_age_never_shows_a_number() {
+        let h = assess(8, None, &staking_on());
+        assert_eq!(h.phase, Phase::Syncing);
+        assert!(!h.headline.contains("behind"));
     }
 
     #[test]
     fn fresh_tip_and_staking() {
-        let h = assess(8, 20, &staking_on());
+        let h = assess(8, Some(20), &staking_on());
         assert_eq!(h.phase, Phase::Staking);
     }
 
     #[test]
     fn fresh_tip_not_staking_says_why() {
-        let h = assess(8, 20, &staking_off_locked());
+        let h = assess(8, Some(20), &staking_off_locked());
         assert_eq!(h.phase, Phase::Synced);
         assert!(h.headline.contains("locked"));
     }
