@@ -226,6 +226,25 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
     let datadir = crate::config::default_datadir();
     let conf = datadir.join("divi.conf");
     if conf.is_file() {
+        // One-time repair for confs written by 69.0.1: the rpcallowip line it
+        // included made the RPC port listen on every interface instead of
+        // loopback only. Strip exactly that line — and only from confs we
+        // wrote; anyone else's conf is never touched. Takes effect on the
+        // node's next restart.
+        if let Ok(text) = std::fs::read_to_string(&conf) {
+            let has_allowip = text
+                .lines()
+                .any(|l| l.trim_start().starts_with("rpcallowip="));
+            if text.contains("Written by DD69") && has_allowip {
+                let fixed: String = text
+                    .lines()
+                    .filter(|l| !l.trim_start().starts_with("rpcallowip="))
+                    .map(|l| format!("{l}\n"))
+                    .collect();
+                let _ = std::fs::write(&conf, fixed);
+                restrict_to_owner(&conf);
+            }
+        }
         return Ok(datadir);
     }
     std::fs::create_dir_all(&datadir)
