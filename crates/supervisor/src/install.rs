@@ -236,15 +236,25 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
     // burst of concurrent calls makes the node stop answering entirely and it
     // looks dead while it is in fact healthy — a failure we have already hit
     // in production once.
+    //
+    // There is deliberately NO rpcallowip here. In this codebase's RPC server,
+    // setting rpcallowip — even to 127.0.0.1 — flips the listener from
+    // loopback-only to all interfaces, leaving the allow-list as the only
+    // barrier between the LAN and a wallet's RPC port. Omitting it makes the
+    // daemon bind to loopback and nothing else, so the port is simply not
+    // reachable from the network at all.
+    //
+    // maxconnections keeps a home user from becoming a 125-peer relay hub on
+    // their own bandwidth; 32 is plenty for fast sync and good citizenship.
     let mut body = format!(
         "# Written by DD69 on first run. Edit freely; DD69 will not rewrite it.\n\
          rpcuser=dd69\n\
          rpcpassword={pass}\n\
          rpcport=51473\n\
-         rpcallowip=127.0.0.1\n\
          server=1\n\
          listen=1\n\
-         rpcthreads=16\n"
+         rpcthreads=16\n\
+         maxconnections=32\n"
     );
     // A brand-new node has an empty peer database and would otherwise depend on
     // the DNS seeder to find its first peers. That seeder has proven unreliable,
@@ -260,6 +270,23 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
     std::fs::write(&conf, body).map_err(|e| format!("cannot write divi.conf: {e}"))?;
     restrict_to_owner(&conf);
     Ok(datadir)
+}
+
+/// Free bytes available to us on the filesystem holding `path`.
+#[cfg(unix)]
+fn free_bytes(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut s: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut s) } != 0 {
+        return None;
+    }
+    Some(s.f_bavail as u64 * s.f_frsize as u64)
+}
+
+#[cfg(not(unix))]
+fn free_bytes(_path: &Path) -> Option<u64> {
+    None // no Windows build yet; the guard simply doesn't gate there
 }
 
 /// 32 bytes of kernel randomness as hex. `/dev/urandom` is used directly rather
@@ -312,8 +339,45 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
         }
     }
 
+    // A divi.conf we did not write means an existing installation — most
+    // likely Divi Desktop 2.0 — owns this datadir. Starting our daemon on it
+    // would take the datadir lock and leave their app unable to start its own
+    // node, and two different daemon builds alternating over one block
+    // database is how databases get corrupted. So: hands off entirely. If
+    // their node is running, DD69 still reads it over RPC; we just never
+    // start, stop, or rewrite anything of theirs.
+    let datadir = crate::config::default_datadir();
+    let conf = datadir.join("divi.conf");
+    if conf.is_file() {
+        let ours = std::fs::read_to_string(&conf)
+            .map(|t| t.contains("Written by DD69"))
+            .unwrap_or(false);
+        if !ours {
+            return Err(
+                "an existing Divi installation owns this datadir; leaving it untouched".into(),
+            );
+        }
+    }
+
     progress("Preparing your node…");
     ensure_local_node_conf()?;
+
+    // A first sync writes the whole chain — about 9 GB today and growing. If
+    // the disk can't hold it, refuse up front instead of filling their drive
+    // to the brim and dying at 87%. An already-synced node needs only modest
+    // headroom for new blocks.
+    let fresh = !datadir.join("blocks").is_dir();
+    let need_gb: u64 = if fresh { 15 } else { 3 };
+    if let Some(free) = free_bytes(&datadir) {
+        let free_gb = free / (1 << 30);
+        if free_gb < need_gb {
+            return Err(format!(
+                "not enough free disk space to run a node: {free_gb} GB free, \
+                 at least {need_gb} GB needed. Nothing was downloaded."
+            ));
+        }
+    }
+
     let divid = ensure_divid69(&progress)?;
 
     // Reload now that the conf exists, so we have real RPC credentials.

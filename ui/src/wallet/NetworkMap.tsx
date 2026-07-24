@@ -561,7 +561,17 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     window.addEventListener("mouseup", onUp);
 
     let raf = 0;
+    // Full-display-rate canvas repaints were burning GPU the whole time the
+    // map tab was open. 30fps is indistinguishable for drifting arcs and dots
+    // and halves the render cost (or better, on 120 Hz screens).
+    let lastFrame = 0;
     const draw = () => {
+      const nowTs = performance.now();
+      if (nowTs - lastFrame < 33) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
+      lastFrame = nowTs;
       const w = wrap.clientWidth;
       const h = wrap.clientHeight;
       const ctx = canvas.getContext("2d");
