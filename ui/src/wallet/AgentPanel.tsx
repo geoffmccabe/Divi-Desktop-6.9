@@ -92,7 +92,10 @@ export function AgentPanel() {
       // no image at all.
       saveIdentity({ ...loadIdentity(), name, description, builtin: null, mediaType: mt, thumb: th, hasMedia: true });
       const u = await mediaUrl();
-      setPreview(u);
+      setPreview((old) => {
+        if (old) URL.revokeObjectURL(old); // don't leak the previous object URL
+        return u;
+      });
     } catch (e) {
       setImgErr(e instanceof Error ? e.message : String(e));
     }
@@ -100,7 +103,10 @@ export function AgentPanel() {
 
   const removeMedia = async () => {
     await clearMedia();
-    setPreview(null);
+    setPreview((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return null;
+    });
     setMediaType("");
     setThumb("");
     saveIdentity({ ...loadIdentity(), mediaType: "", thumb: "", hasMedia: false });

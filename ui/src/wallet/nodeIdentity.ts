@@ -205,9 +205,6 @@ export async function fileToThumb(file: File, maxPx = 256): Promise<string> {
   const isVideo = file.type.startsWith("video/");
   if (!file.type.startsWith("image/") && !isVideo) throw new Error("Choose an image or a video.");
   if (file.size > MAX_BYTES) throw new Error(`That file is over 3MB.`);
-  const prev = THUMB_PX;
-  // drawThumb reads a module constant; briefly widen it for this larger thumb.
-  // (kept local — a simple resize rather than sharing mutable state)
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const finish = (src: CanvasImageSource, w: number, h: number) => {
@@ -241,7 +238,6 @@ export async function fileToThumb(file: File, maxPx = 256): Promise<string> {
       };
       img.src = url;
     }
-    void prev;
   });
 }
 
