@@ -254,6 +254,21 @@ Built and shipped, all local to the machine:
 **Nothing here leaves the machine yet** — no other node can see any of it. That
 is exactly what Phase 1 fixes.
 
+### Publish auth — BOTH wallet-signature AND SSO (Geoff, 2026-Jul-25)
+
+A node proves it owns the identity it publishes by **either** method, its choice:
+
+- **Wallet signature** — the node signs its identity record with its Divi
+  address (`signmessage`); the scanner verifies with `verifymessage` on its own
+  divid. No account, no email, fully crypto-anonymous. This is the default for
+  anyone who wants to pay for everything in DIVI and never reveal who they are.
+- **SSO login** — the owner signs in via LW-SSO (Google/email); the scanner
+  verifies the token via `POST /api/verify`. For people who want a normal
+  account, recovery, and the wider SSO benefits.
+
+Both map to the same identity record; the record just remembers which method
+authorised it. The **admin grid** stays SSO-superadmin-only regardless.
+
 ### Phase 1 — Publish + discover (**the unlock — everything needs this**)
 The scanner identity service, per §0b. Without it the Phase-0 UI is a private
 diary.
