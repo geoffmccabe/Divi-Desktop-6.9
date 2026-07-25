@@ -1,0 +1,9 @@
+# Append to /etc/caddy/Caddyfile. Its own hostname keeps identity traffic and
+# any future login cookies off ai.divi.love (the AI gateway origin).
+#
+# Media is served here too; this origin sets no cookies, so the "cookieless
+# subdomain" requirement from the audit is already met as long as nothing on
+# nodes.divi.love ever sets one.
+nodes.divi.love {
+	reverse_proxy 127.0.0.1:8772
+}
