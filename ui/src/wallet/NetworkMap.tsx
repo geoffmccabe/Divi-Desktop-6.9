@@ -1327,7 +1327,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <button
             type="button"
             className={"netmap-fastest" + (showFastest ? " on" : "")}
-            onClick={() => setShowFastest((v) => !v)}
+            onClick={() => {
+              setShowFastest((v) => !v);
+              setShowMempool(false);
+            }}
             title="Node speed"
           >
             <Icon name="speed" size={15} />
@@ -1335,7 +1338,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <button
             type="button"
             className={"netmap-fastest netmap-mem" + (showMempool ? " on" : "")}
-            onClick={() => setShowMempool((v) => !v)}
+            onClick={() => {
+              setShowMempool((v) => !v);
+              setShowFastest(false);
+            }}
             title="Live mempool"
           >
             M

@@ -1228,10 +1228,10 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .netmap-tools { display: inline-flex; align-items: center; gap: 6px; }
 .netmap-mem { font-weight: 700; font-size: 0.9rem; line-height: 1; }
 
-/* Live mempool panel — same frame as Node Speed, anchored top-LEFT so the two
-   can be open at once without overlapping. */
+/* Live mempool panel — same frame and top-right anchor as Node Speed; only one
+   of the two is ever open at a time, so they share the corner. */
 .mempool {
-  position: absolute; left: 10px; top: 10px; z-index: 6;
+  position: absolute; right: 10px; top: 10px; z-index: 6;
   width: 258px; max-height: 78%;
   display: flex; flex-direction: column; gap: 5px;
   background: rgba(0, 0, 0, 0.5);
