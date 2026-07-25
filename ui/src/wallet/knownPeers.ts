@@ -19,22 +19,48 @@ export interface KnownPeer {
 }
 export type Known = Record<string, KnownPeer>;
 
-export function loadKnown(): Known {
-  let k: Known = {};
+function parse(raw: string | null): Known {
   try {
-    k = JSON.parse(localStorage.getItem(KEY) || "{}");
+    const v = JSON.parse(raw || "{}");
+    return v && typeof v === "object" ? v : {};
   } catch {
-    k = {};
+    return {};
   }
+}
+
+export function loadKnown(): Known {
   const now = Date.now();
+  // Start from the shared store, then UNION IN any leftover per-node stores
+  // (dd69.knownPeers.desktop / .scan). An earlier version of the map split the
+  // network per node; those subsets got stranded there, so the shared list read
+  // low and nodes appeared "missing". Folding them back in — keeping the most
+  // recent sighting of each IP — recovers the full network and heals the split.
+  const k: Known = parse(localStorage.getItem(KEY));
+  const baseCount = Object.keys(k).length;
   let changed = false;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(KEY + ".")) continue; // dd69.knownPeers.<scope>
+      const sub = parse(localStorage.getItem(key));
+      for (const ip of Object.keys(sub)) {
+        if (!k[ip] || (sub[ip]?.lastSeen ?? 0) > (k[ip]?.lastSeen ?? 0)) {
+          k[ip] = sub[ip];
+          changed = true;
+        }
+      }
+    }
+  } catch {
+    /* enumerate best-effort */
+  }
+  // Drop anything not seen in 30 days.
   for (const ip of Object.keys(k)) {
     if (now - (k[ip]?.lastSeen ?? 0) > TTL_MS) {
       delete k[ip];
       changed = true;
     }
   }
-  if (changed) save(k);
+  if (changed || Object.keys(k).length !== baseCount) save(k); // heal the shared store
   return k;
 }
 
