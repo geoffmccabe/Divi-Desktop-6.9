@@ -85,7 +85,12 @@ themselves.
   co-owned with the DMT/chain agents — must be reconciled alongside the pending
   6-vs-7-byte header item before it lands.
 
-## 8. Open decisions
-1. Standalone NFDs get commissions too, or collections only? (§4)
-2. All transfers pay, with only the primary sale exempt? (§6)
-3. One payout address per collection (creator-chosen), updatable with the amount? (assumed yes)
+## 8. Locked decisions (Geoff, 2026-Jul-24)
+1. **Standalone NFDs get commissions too** — not collections only. A standalone
+   minter sets one at mint, updatable by that minter address.
+2. **Every transfer pays** — sale, direct send, and gift — with only the creator's
+   own primary sale exempt. No gift loophole.
+3. **One payout address per collection**, creator-chosen, updatable together with
+   the amount via the signed COMMISSION-SET record.
+4. Design confirmed as written; proceed. Ships forkless-indexer-enforced first,
+   `OP_NFD` consensus later, coordinated with the chain/DMT agents.

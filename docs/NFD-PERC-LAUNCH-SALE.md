@@ -72,17 +72,16 @@ Position is decided by a **sealed-bid (blind) auction, resolved block by block:*
   base price) — that's what makes bidding meaningful. (ASSUMPTION — confirm losers'
   bids simply *carry* to the next round, and whether they may top up between rounds.)
 
-**Making it truly blind.** On-chain DIVI payments are public, which would leak
-bids. Two ways to keep them sealed until a round resolves:
-- **Coordinator-held (simplest, launch):** bids go privately to the coordinator,
-  revealed only when the block's round resolves. Fine for a first-party drop where
-  Geoff runs the coordinator; requires trusting it not to peek/leak.
-- **Commit-reveal (trustless):** buyers first publish `hash(bid+nonce)` (hides it),
-  then reveal after the round; the coordinator/chain can't front-run. More UX, no
-  trust needed. Recommended if/when the sale must be trustless.
+**Kept entirely off-chain (Geoff, locked).** No extra on-chain transactions for the
+auction — it's handled in the **front end + coordinator** at launch. Bids go
+privately to the coordinator, which keeps them sealed, ranks each block's round,
+assigns that block's serials to the top bidders, and rolls the rest to the next
+round. Only the resulting purchase/transfer touches the chain. No commit-reveal,
+no on-chain bidding. This is a transient launch mechanism — it only matters for the
+first few minutes, after which ordinary buying resumes.
 
-This still sits on the same §2 architecture — pre-mint + UTXO pool + coordinator;
-the auction only changes the *order* the coordinator assigns serials each block.
+This sits on the same §2 architecture — pre-mint + UTXO pool + coordinator; the
+auction only changes the *order* the coordinator assigns serials each block.
 
 ## 5. Payment + atomicity
 
