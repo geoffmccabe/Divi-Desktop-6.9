@@ -33,21 +33,22 @@ ROUTES
   DELETE /identity/publish               auth:  revoke it
   GET    /characters/grid                public: the six curated characters (NO keys)
   PUT    /characters/grid/<slot>         superadmin: set a grid slot
+  POST   /report                         public (rate-limited): flag abuse
+  GET    /admin/reports                  superadmin: read the abuse queue
+  DELETE /admin/identity/<key>           superadmin: take down any identity
+  DELETE /admin/media/<sha256>           superadmin: take down + permanently block a media hash
 
-Storage (all under CHAR_DIR): media/<hash>, identities.json, grid.json.
-Everything served here is public by design; nothing secret is stored.
+Rate-limited (origin backstop; Cloudflare also limits at the edge): publish
+10/min/key, media 30/hour/key + 20MB/key quota, report 5/hour/IP, 120 writes/
+min/IP. A blocked media hash stays blocked even if re-uploaded.
 
-BEFORE DEPLOY (security audit 2026-Jul-25, must-do at launch):
-  * Firewall the origin to Cloudflare IP ranges (CF-Connecting-IP trust; see
-    _client_ip) and confirm CF strips client-supplied CF-Connecting-IP.
-  * Rate-limit at the Cloudflare edge AND here: per-IP + per-key caps on
-    /identity/publish and /identity/media (each publish costs a verifymessage
-    RPC; media writes to disk). Add a per-key media quota so one valid signer
-    can't fill the disk with distinct 3MB files.
-  * Avatar MODERATION / takedown path: user media is public. Provide a
-    superadmin delete + a report route before public launch (ties to the NFD
-    moderation model). Media here is deletable (not permanent), so this is a
-    process gap, not an Arweave-style permanence problem.
+Storage (all under CHAR_DIR): media/<hash>, identities.json, grid.json,
+usage.json, reports.json, blocked.json. Public by design; nothing secret stored.
+
+STILL BEFORE DEPLOY (infra, not code):
+  * Firewall the origin to Cloudflare IP ranges (CF-Connecting-IP is a map
+    display hint only, never auth; see _client_ip) and confirm CF strips a
+    client-supplied CF-Connecting-IP.
   * Serve media from a SEPARATE cookieless subdomain if the identity origin ever
     gets cookies, so a served file can't touch same-origin auth state.
 """
@@ -59,6 +60,7 @@ import os
 import re
 import threading
 import time
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -66,6 +68,9 @@ ROOT = os.environ.get("CHAR_DIR", "/var/lib/divi-identity")
 MEDIA = os.path.join(ROOT, "media")
 IDENTITIES = os.path.join(ROOT, "identities.json")
 GRID = os.path.join(ROOT, "grid.json")
+USAGE = os.path.join(ROOT, "usage.json")      # per-key media byte accounting
+REPORTS = os.path.join(ROOT, "reports.json")  # abuse reports awaiting review
+BLOCKED = os.path.join(ROOT, "blocked.json")  # media hashes taken down by an admin
 PORT = int(os.environ.get("IDENTITY_PORT", "8772"))
 
 # Local divid RPC (for verifymessage). Reuses the scan-proxy env if present.
@@ -84,7 +89,47 @@ ALLOWED_TYPES = {"image/webp", "image/png", "image/jpeg", "image/gif", "video/mp
 # A signed record older than this is rejected — bounds replay of a captured sig.
 SIG_WINDOW = 10 * 60
 
+# Per-key storage quota: how much distinct media one identity may hold. Stops a
+# single valid signer from filling the disk with many distinct 3MB files.
+MEDIA_QUOTA_BYTES = 20 * 1024 * 1024  # 20MB per key
+
 _lock = threading.Lock()
+
+
+# ── rate limiting ────────────────────────────────────────────────────────────
+# In-memory sliding window, per bucket key. Cloudflare rate-limits at the edge
+# too; this is the origin's own backstop so a single valid signer (past the edge)
+# still can't hammer verifymessage or the disk.
+class RateLimiter:
+    def __init__(self):
+        self._hits: dict[str, list[float]] = {}
+        self._lk = threading.Lock()
+
+    def allow(self, bucket: str, limit: int, window: float) -> bool:
+        now = time.time()
+        with self._lk:
+            q = [t for t in self._hits.get(bucket, []) if now - t < window]
+            if len(q) >= limit:
+                self._hits[bucket] = q
+                return False
+            q.append(now)
+            self._hits[bucket] = q
+            # opportunistic cleanup so the dict can't grow unbounded
+            if len(self._hits) > 5000:
+                for k in [k for k, v in self._hits.items() if not v or now - v[-1] > 3600]:
+                    self._hits.pop(k, None)
+            return True
+
+
+_rl = RateLimiter()
+
+# (limit, window seconds). Reads aren't limited here — Cloudflare caches them.
+LIMITS = {
+    "publish": (10, 60),      # 10 publishes/min per key (each = one verifymessage)
+    "media": (30, 3600),      # 30 uploads/hour per key
+    "report": (5, 3600),      # 5 reports/hour per IP
+    "ip": (120, 60),          # 120 write-attempts/min per IP, any route
+}
 
 
 # ── storage ──────────────────────────────────────────────────────────────────
@@ -106,6 +151,9 @@ def _save(path, obj):
 
 def _store_media(raw: bytes, mime: str) -> str:
     h = hashlib.sha256(raw).hexdigest()
+    if h in set(_load(BLOCKED, [])):
+        # A blocked hash stays blocked even if someone re-uploads the same bytes.
+        raise ValueError("this content has been removed")
     os.makedirs(MEDIA, exist_ok=True)
     path = os.path.join(MEDIA, h)
     if not os.path.exists(path):  # identical bytes stored once, ever
@@ -260,9 +308,18 @@ class Handler(BaseHTTPRequestHandler):
             # NEVER include api keys. grid.json holds only public character data.
             return self._json(200, {"grid": grid, "slots": GRID_SLOTS})
 
+        if p == "/admin/reports":
+            # Superadmin: read the abuse queue.
+            if not self._superadmin():
+                return self._json(403, {"error": "superadmin required"})
+            with _lock:
+                return self._json(200, {"reports": _load(REPORTS, [])})
+
         m = re.match(r"^/identity/media/([0-9a-f]{64})$", p)
         if m:
             h = m.group(1)
+            if h in set(_load(BLOCKED, [])):  # taken down by an admin — gone for good
+                return self._json(410, {"error": "removed"})
             path = os.path.join(MEDIA, h)
             if not os.path.isfile(path):
                 return self._json(404, {"error": "not found"})
@@ -286,6 +343,12 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404, {"error": "no such route"})
 
     # ── writes ───────────────────────────────────────────────────────────────
+    def _limited(self, bucket, key) -> bool:
+        """True if this request is over a limit (caller should 429)."""
+        lim, win = LIMITS[bucket]
+        il, iw = LIMITS["ip"]
+        return not (_rl.allow(f"ip:{self._client_ip()}", il, iw) and _rl.allow(f"{bucket}:{key}", lim, win))
+
     def do_POST(self):
         p = self.path.split("?")[0]
 
@@ -305,7 +368,24 @@ class Handler(BaseHTTPRequestHandler):
             ok, key = self._authorise({"ts": int(time.time())})
             if not ok:
                 return self._json(403, {"error": "auth required"})
-            return self._json(200, {"hash": _store_media(raw, mime)})
+            if self._limited("media", key):
+                return self._json(429, {"error": "too many uploads, slow down"})
+            # Per-key storage quota — one signer can't fill the disk.
+            with _lock:
+                usage = _load(USAGE, {})
+                have = usage.get(key, {}).get("bytes", 0)
+                if have + len(raw) > MEDIA_QUOTA_BYTES:
+                    return self._json(413, {"error": "storage quota reached for this identity"})
+                try:
+                    h = _store_media(raw, mime)  # raises if the hash is blocked
+                except ValueError as e:
+                    return self._json(410, {"error": str(e)})
+                slot = usage.setdefault(key, {"bytes": 0, "hashes": []})
+                if h not in slot["hashes"]:  # content-addressed: charge distinct bytes once
+                    slot["bytes"] = have + len(raw)
+                    slot["hashes"].append(h)
+                    _save(USAGE, usage)
+            return self._json(200, {"hash": h})
 
         if p == "/identity/publish":
             try:
@@ -315,6 +395,8 @@ class Handler(BaseHTTPRequestHandler):
             ok, key = self._authorise(rec)
             if not ok:
                 return self._json(403, {"error": "signature or token invalid"})
+            if self._limited("publish", key):
+                return self._json(429, {"error": "too many updates, slow down"})
             with _lock:
                 ids = _load(IDENTITIES, {})
                 ids[key] = {**rec, "ip": self._client_ip(), "auth": key.split(":", 1)[0],
@@ -322,19 +404,75 @@ class Handler(BaseHTTPRequestHandler):
                 _save(IDENTITIES, ids)
             return self._json(200, {"ok": True, "key": key})
 
+        if p == "/report":
+            # Anyone can flag an identity/media for review. Rate-limited by IP.
+            if not _rl.allow(f"report:{self._client_ip()}", *LIMITS["report"]):
+                return self._json(429, {"error": "too many reports"})
+            try:
+                body = json.loads(self._body())
+            except Exception:
+                return self._json(400, {"error": "bad body"})
+            with _lock:
+                reports = _load(REPORTS, [])
+                reports.append({
+                    "target": str(body.get("target", ""))[:200],
+                    "reason": str(body.get("reason", ""))[:500],
+                    "ip": self._client_ip(),
+                    "ts": int(time.time()),
+                })
+                _save(REPORTS, reports[-2000:])  # keep the last 2000
+            return self._json(200, {"ok": True})
+
         return self._json(404, {"error": "no such route"})
 
+    def _superadmin(self):
+        bearer = (self.headers.get("Authorization", "") or "").removeprefix("Bearer ").strip()
+        user = verify_sso(bearer)
+        return bool(user and user.get("role") == "superadmin")
+
     def do_DELETE(self):
-        if self.path.split("?")[0] != "/identity/publish":
-            return self._json(404, {"error": "no such route"})
-        ok, key = self._authorise({"ts": int(time.time())})
-        if not ok:
-            return self._json(403, {"error": "auth required"})
-        with _lock:
-            ids = _load(IDENTITIES, {})
-            ids.pop(key, None)
-            _save(IDENTITIES, ids)
-        return self._json(200, {"ok": True})
+        p = self.path.split("?")[0]
+
+        # A node revoking its OWN identity (signature or token proves ownership).
+        if p == "/identity/publish":
+            ok, key = self._authorise({"ts": int(time.time())})
+            if not ok:
+                return self._json(403, {"error": "auth required"})
+            with _lock:
+                ids = _load(IDENTITIES, {})
+                ids.pop(key, None)
+                _save(IDENTITIES, ids)
+            return self._json(200, {"ok": True})
+
+        # ── Moderation (superadmin) — take down anyone's identity or a media hash.
+        m = re.match(r"^/admin/identity/(.+)$", p)
+        if m:
+            if not self._superadmin():
+                return self._json(403, {"error": "superadmin required"})
+            target = urllib.parse.unquote(m.group(1))
+            with _lock:
+                ids = _load(IDENTITIES, {})
+                existed = ids.pop(target, None) is not None
+                _save(IDENTITIES, ids)
+            return self._json(200, {"ok": True, "removed": existed})
+
+        m = re.match(r"^/admin/media/([0-9a-f]{64})$", p)
+        if m:
+            if not self._superadmin():
+                return self._json(403, {"error": "superadmin required"})
+            h = m.group(1)
+            with _lock:
+                blocked = set(_load(BLOCKED, []))
+                blocked.add(h)  # tombstone: never served again, even if re-uploaded
+                _save(BLOCKED, sorted(blocked))
+                for suffix in ("", ".type"):
+                    try:
+                        os.remove(os.path.join(MEDIA, h + suffix))
+                    except OSError:
+                        pass
+            return self._json(200, {"ok": True})
+
+        return self._json(404, {"error": "no such route"})
 
     def do_PUT(self):
         m = re.match(r"^/characters/grid/(\d+)$", self.path.split("?")[0])
