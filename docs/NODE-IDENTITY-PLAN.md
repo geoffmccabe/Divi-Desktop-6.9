@@ -269,7 +269,17 @@ A node proves it owns the identity it publishes by **either** method, its choice
 Both map to the same identity record; the record just remembers which method
 authorised it. The **admin grid** stays SSO-superadmin-only regardless.
 
-### Phase 1 — Publish + discover (**the unlock — everything needs this**)
+### Phase 1 — Publish + discover — **CODE-COMPLETE + DEPLOY-READY (2026-Jul-25)**
+Built, audited, hardened, not yet live. Done: `ops/scanner/divi-identity.py`
+(publish/read, hash-addressed media, dual auth, rate limiting, per-key quota,
+superadmin moderation + report queue), the DD69 client `identityService.ts`
+(publish signed/SSO, read manifest, hash-cached media), the `wallet_sign` /
+`signing_address` commands, and the deploy kit (`ops/scanner/deploy/`).
+**Blocked only on the deploy** (Geoff's review) — after which set `BASE` in
+identityService.ts and the client goes live. The publish UI and map integration
+are deliberately NOT built yet: they need the live service to test against, and
+building them blind invites rework.
+
 The scanner identity service, per §0b. Without it the Phase-0 UI is a private
 diary.
 - **Scanner service** (`ops/scanner/`, rewrite the one that was deleted):
