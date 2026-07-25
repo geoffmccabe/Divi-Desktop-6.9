@@ -159,6 +159,27 @@ async fn wallet_owns(addresses: Vec<String>) -> bool {
     .unwrap_or(false)
 }
 
+/// The address this node signs identity records with (its account address).
+#[tauri::command]
+async fn signing_address() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(|| NodeConfig::load().ok().and_then(|cfg| wallet::signing_address(&cfg)))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Sign a message with an owned address (wallet-auth for identity publishing).
+/// Requires the wallet unlocked.
+#[tauri::command]
+async fn wallet_sign(address: String, message: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        wallet::sign_message(&cfg, &address, &message)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// Open an http(s) URL in the user's default browser (e.g. a block explorer).
 #[tauri::command]
 fn open_url(url: String) {
@@ -1030,6 +1051,8 @@ fn main() {
             list_transactions,
             validate_address,
             wallet_owns,
+            signing_address,
+            wallet_sign,
             address_qr,
             open_url,
             poe_timestamp,

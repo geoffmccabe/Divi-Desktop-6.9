@@ -442,6 +442,32 @@ pub fn is_valid_address(cfg: &NodeConfig, addr: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// An address the wallet controls, to sign identity records with — the account
+/// address (stable, always owned). None if the node/wallet isn't reachable.
+pub fn signing_address(cfg: &NodeConfig) -> Option<String> {
+    let rpc = RpcClient::new(cfg);
+    rpc.call("getaccountaddress", json!([""]))
+        .ok()
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+}
+
+/// Sign a message with `address` (must be owned). Returns the base64 signature,
+/// or an error string. Requires the wallet to be unlocked — signing uses the
+/// private key, so the caller must handle the passphrase flow first.
+pub fn sign_message(cfg: &NodeConfig, address: &str, message: &str) -> Result<String, String> {
+    let rpc = RpcClient::new(cfg);
+    match rpc.call("signmessage", json!([address, message])) {
+        Ok(v) => v
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "node returned no signature".to_string()),
+        Err(e) if e.contains("passphrase") || e.contains("locked") || e.contains("-13") => {
+            Err("Unlock the wallet to sign.".to_string())
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Does the connected node's wallet OWN any of these addresses? Uses
 /// validateaddress `ismine`, which is true regardless of transaction activity —
 /// the reliable "is this the admin's node" test (an address can be owned but not

@@ -151,9 +151,14 @@ def verify_sso(bearer: str):
 
 def canonical(record: dict) -> str:
     """Stable text a client signs / the server verifies. Only the fields that
-    define the identity, sorted, plus the timestamp — never the media bytes."""
+    define the identity, sorted, plus the timestamp — never the media bytes.
+
+    ensure_ascii=False is REQUIRED: JavaScript's JSON.stringify emits raw UTF-8,
+    while Python would otherwise escape non-ASCII to \\uXXXX. Without this, any
+    accented character or emoji in a name would make the two canonical forms
+    differ and every signature would fail to verify."""
     fields = {k: record.get(k) for k in ("name", "description", "mediaHash", "chatter", "ts")}
-    return json.dumps(fields, sort_keys=True, separators=(",", ":"))
+    return json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
 # ── the identity record ──────────────────────────────────────────────────────
