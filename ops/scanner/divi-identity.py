@@ -36,6 +36,20 @@ ROUTES
 
 Storage (all under CHAR_DIR): media/<hash>, identities.json, grid.json.
 Everything served here is public by design; nothing secret is stored.
+
+BEFORE DEPLOY (security audit 2026-Jul-25, must-do at launch):
+  * Firewall the origin to Cloudflare IP ranges (CF-Connecting-IP trust; see
+    _client_ip) and confirm CF strips client-supplied CF-Connecting-IP.
+  * Rate-limit at the Cloudflare edge AND here: per-IP + per-key caps on
+    /identity/publish and /identity/media (each publish costs a verifymessage
+    RPC; media writes to disk). Add a per-key media quota so one valid signer
+    can't fill the disk with distinct 3MB files.
+  * Avatar MODERATION / takedown path: user media is public. Provide a
+    superadmin delete + a report route before public launch (ties to the NFD
+    moderation model). Media here is deletable (not permanent), so this is a
+    process gap, not an Arweave-style permanence problem.
+  * Serve media from a SEPARATE cookieless subdomain if the identity origin ever
+    gets cookies, so a served file can't touch same-origin auth state.
 """
 
 import base64
@@ -202,7 +216,12 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(n)
 
     def _client_ip(self):
-        # Cloudflare passes the real client IP here; fall back to the socket.
+        # NOTE: this IP is a DISPLAY HINT for the map only — nothing authenticates
+        # on it (identity is proven by signature/token). So spoofing CF-Connecting-IP
+        # can at worst mislabel a node's map location, not impersonate an identity.
+        # DEPLOY REQUIREMENT: firewall this origin to Cloudflare's IP ranges so the
+        # header can't be forged by hitting the origin directly; CF overwrites any
+        # client-supplied CF-Connecting-IP.
         return self.headers.get("CF-Connecting-IP") or self.client_address[0]
 
     def _authorise(self, record):
@@ -250,6 +269,13 @@ class Handler(BaseHTTPRequestHandler):
             raw = open(path, "rb").read()
             self.send_response(200)
             self.send_header("Content-Type", _media_type(h))
+            # nosniff: a client can upload bytes that are really HTML while
+            # claiming Content-Type image/webp. Without this, a browser may sniff
+            # and render it as HTML — stored XSS on the scanner's own origin.
+            self.send_header("X-Content-Type-Options", "nosniff")
+            # Belt and braces: force download/isolation semantics for media.
+            self.send_header("Content-Disposition", "inline")
+            self.send_header("Content-Security-Policy", "default-src 'none'; sandbox")
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Cache-Control", "public, max-age=31536000, immutable")

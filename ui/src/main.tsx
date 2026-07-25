@@ -11,10 +11,16 @@ applyIcons();
 installClickSound();
 
 function showFatal(msg: string) {
-  document.body.innerHTML =
-    `<pre style="color:#ff8080;background:#15111f;margin:0;padding:24px;` +
-    `font:13px/1.5 ui-monospace,monospace;white-space:pre-wrap;height:100vh">` +
-    `Divi Desktop failed to start:\n\n${msg}</pre>`;
+  // Build the DOM, don't interpolate into innerHTML. `msg` is an error stack
+  // which can contain attacker-influenced text (a message that flows through an
+  // exception), so injecting it as HTML is a DOM-XSS sink. textContent escapes.
+  const pre = document.createElement("pre");
+  pre.setAttribute(
+    "style",
+    "color:#ff8080;background:#15111f;margin:0;padding:24px;font:13px/1.5 ui-monospace,monospace;white-space:pre-wrap;height:100vh",
+  );
+  pre.textContent = `Divi Desktop failed to start:\n\n${msg}`;
+  document.body.replaceChildren(pre);
 }
 window.addEventListener("error", (e) =>
   showFatal(String((e as ErrorEvent).error?.stack || (e as ErrorEvent).message))
