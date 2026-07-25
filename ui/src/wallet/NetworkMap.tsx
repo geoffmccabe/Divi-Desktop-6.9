@@ -8,7 +8,7 @@ import { PrimerLove } from "./PrimerLove";
 import { usePrimer } from "./primerStore";
 import { FastestNodes, type FastCandidate } from "./FastestNodes";
 import { NewestNodesPanel } from "./NewestNodesPanel";
-import { baselineNewNodes, newNodes, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
+import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
@@ -140,27 +140,36 @@ function drawSpiral(
   const outer = dia / 2;
   if (outer < 1) return;
   const TURNS = 3;
-  const revMs = highlighted ? 20000 / 3 : 20000; // 3 rev/min, 3x faster when highlighted
+  // 9 rev/min base (3x the earlier 3 rev/min), 3x faster again when highlighted.
+  const revMs = highlighted ? 20000 / 9 : 20000 / 3;
   const spin = ((now % revMs) / revMs) * Math.PI * 2;
   // hue pulses ±18° around aqua (177) once per second
   const hue = 177 + 18 * Math.sin((now / 1000) * Math.PI * 2);
+  const maxT = TURNS * Math.PI * 2;
+  const STEPS = 72;
   ctx.save();
   ctx.lineWidth = 1;
-  ctx.strokeStyle = `hsla(${hue}, 85%, 58%, ${highlighted ? 1 : 0.9})`;
-  if (highlighted) ctx.shadowColor = `hsla(${hue}, 85%, 58%, 0.9)`, (ctx.shadowBlur = 6);
-  ctx.beginPath();
-  const STEPS = 64;
-  const maxT = TURNS * Math.PI * 2;
-  for (let i = 0; i <= STEPS; i++) {
+  if (highlighted) (ctx.shadowColor = `hsla(${hue}, 85%, 58%, 0.9)`), (ctx.shadowBlur = 6);
+  // Draw segment-by-segment so opacity can fade OUTWARD: fully opaque at the
+  // centre, down to 40% at the rim.
+  let prevX = cx;
+  let prevY = cy;
+  for (let i = 1; i <= STEPS; i++) {
     const t = (i / STEPS) * maxT;
-    const r = outer * (t / maxT); // Archimedean: radius grows linearly with angle
+    const frac = t / maxT; // 0 at centre → 1 at rim
+    const r = outer * frac; // Archimedean
     const a = t + spin;
     const x = cx + r * Math.cos(a);
     const y = cy + r * Math.sin(a);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
+    const alpha = 1 - 0.6 * frac; // 100% centre → 40% rim
+    ctx.strokeStyle = `hsla(${hue}, 85%, 58%, ${alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(prevX, prevY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    prevX = x;
+    prevY = y;
   }
-  ctx.stroke();
   ctx.restore();
 }
 
@@ -470,8 +479,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             }
           }
           if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
-          // Refresh the spiral list, and fire the one-time arrival cue (a flash at
-          // the point + a soft chime) for any genuinely brand-new node this poll.
+          // Register any first-ever-seen IPs (append-only; a re-added node keeps
+          // its original date, so no false spirals), then refresh the spiral list
+          // and fire the one-time arrival cue for genuinely brand-new nodes.
+          noteSeen(seen.map((x) => x.ip));
           newNodesRef.current = newNodes(knownRef.current);
           for (const arr of takeUnannouncedArrivals(knownRef.current)) {
             arrivalFxRef.current.set(arr.ip, performance.now());
