@@ -56,25 +56,33 @@ treasury moves all of that *before* launch; the rush then only does cheap
 transfers. This also sidesteps "two people mint the same edition" entirely, since
 every PERC already exists with a fixed serial before anyone buys.
 
-## 4. Allocation policy — the product decision
+## 4. Allocation policy — blind per-block auction (Geoff, locked)
 
-Who gets the desirable **low serial numbers** when everyone buys at once?
+Position is decided by a **sealed-bid (blind) auction, resolved block by block:**
 
-- **First-come-first-served.** Whoever's payment lands first gets the lowest
-  serial. Simplest, but rewards speed and **bots** — they'll sweep the low numbers.
-- **Random-fair (recommended default).** Collect all buys in a short launch window,
-  then assign serials by a **verifiable random seed** (a future block hash no one
-  can predict or grind). Bots gain no edge; everyone has equal odds at a low serial.
-  Fixed price, simple UX.
-- **Auction for position.** Buyers bid; the highest bids get the lowest serials
-  (your idea). Captures the premium people will pay for #1-#10 and is naturally
-  anti-bot (you pay for position). Cost: a bidding window + settlement UX.
-- **Hybrid.** Fixed-price random-fair for the bulk, plus a small **auctioned tier**
-  of the ultra-low serials (say #1-#10). Best of both — fair access for most,
-  captured value on the trophies.
+- Each buyer submits a purchase with a **bid = the amount they pay**, but **nobody
+  can see anyone else's bid** — so they have to guess how much to put up to win a
+  good spot.
+- When a block closes, the coordinator ranks that round's bids: the **highest
+  bidders get that block's (lowest available) serials**, delivered in that block.
+- **Lower bidders roll to the next block**, where the same blind auction repeats
+  against whoever else is still waiting (and any new arrivals). It keeps repeating
+  until the set is sold out.
+- **Pay-your-bid:** the amount you put up is spent (it's not refunded down to a
+  base price) — that's what makes bidding meaningful. (ASSUMPTION — confirm losers'
+  bids simply *carry* to the next round, and whether they may top up between rounds.)
 
-All four sit on the same §2 architecture; they only change how the coordinator
-orders assignment.
+**Making it truly blind.** On-chain DIVI payments are public, which would leak
+bids. Two ways to keep them sealed until a round resolves:
+- **Coordinator-held (simplest, launch):** bids go privately to the coordinator,
+  revealed only when the block's round resolves. Fine for a first-party drop where
+  Geoff runs the coordinator; requires trusting it not to peek/leak.
+- **Commit-reveal (trustless):** buyers first publish `hash(bid+nonce)` (hides it),
+  then reveal after the round; the coordinator/chain can't front-run. More UX, no
+  trust needed. Recommended if/when the sale must be trustless.
+
+This still sits on the same §2 architecture — pre-mint + UTXO pool + coordinator;
+the auction only changes the *order* the coordinator assigns serials each block.
 
 ## 5. Payment + atomicity
 
