@@ -455,7 +455,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .agent-form { display: flex; flex-direction: column; gap: 16px; width: 280px; max-width: 100%; }
 .agent-intro { line-height: 1.5; margin: 0; }
 .agent-image-panel {
-  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 22px;
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; justify-content: flex-start; padding: 22px;
   background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
   border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color)); border-radius: 14px;
 }
@@ -1234,7 +1234,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .agent-avatar-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .agent-save { margin-top: 10px; align-self: flex-start; }
 .agent-save-off { opacity: 0.4; cursor: default; }
-.agent-creator { display: flex; flex-direction: column; gap: 10px; }
+.agent-creator { display: flex; flex-direction: column; gap: 10px; width: 100%; }
 .agent-back { align-self: flex-start; background: none; border: none; color: hsl(var(--primary)); font-size: 0.78rem; cursor: pointer; padding: 0; }
 .agent-back:hover { text-decoration: underline; }
 
@@ -1251,9 +1251,23 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .agent-tile-name { position: absolute; bottom: 0; left: 0; right: 0; font-size: 0.62rem; font-weight: 600; text-align: center; padding: 3px 2px; background: rgba(8,8,12,0.72); color: #fff; }
 
 /* Creator form: name/description left, image right, in one dark panel. */
-.agent-form-split { flex-direction: row; align-items: stretch; gap: 16px; width: 100%; max-width: 560px;
+.agent-form-split { flex-direction: row; align-items: stretch; gap: 20px; width: 100%; max-width: 720px;
   background: #140d22; border: 1px solid hsl(var(--border)); border-radius: 12px; padding: 16px; box-sizing: border-box; }
 .agent-form-left { flex: 1 1 0; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
-.agent-form-right { flex: 0 0 180px; display: flex; flex-direction: column; gap: 6px; }
+.agent-form-right { flex: 0 0 220px; display: flex; flex-direction: column; gap: 6px; }
 .agent-field-label { font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
 .agent-upload-tall { aspect-ratio: 2 / 3; max-width: none; width: 100%; }
+
+/* Subscription tier bubbles (Standard / Uncensored). */
+.agent-tiers { display: flex; gap: 10px; }
+.agent-tier { flex: 1 1 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 8px; border-radius: 10px; border: 1px solid hsl(var(--border)); background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; }
+.agent-tier:hover { border-color: hsl(var(--primary) / 0.7); }
+.agent-tier-on { border-color: hsl(var(--primary)); background: hsl(var(--primary) / 0.16); color: hsl(var(--foreground)); }
+.agent-tier-name { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.05em; }
+.agent-tier-price { font-size: 0.7rem; opacity: 0.85; }
+
+/* Create tile once the user has started their agent: image + name + EDIT. */
+.agent-tile-create .agent-avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.agent-create-footer { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; display: flex; flex-direction: column; gap: 2px; padding: 7px 4px; background: rgba(8,8,12,0.74); }
+.agent-create-name { font-size: 0.82rem; font-weight: 700; color: #fff; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-create-edit { font-size: 0.62rem; font-weight: 600; letter-spacing: 0.06em; color: hsl(var(--primary)); text-align: center; }

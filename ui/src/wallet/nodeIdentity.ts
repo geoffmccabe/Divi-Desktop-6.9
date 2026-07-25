@@ -41,6 +41,8 @@ export interface NodeIdentity {
   participate: boolean;
   /** 0–255: how much it says when spoken to (it never starts conversations). */
   chatter: number;
+  /** Subscription tier for the agent's AI. */
+  tier: "standard" | "uncensored";
   updatedAt: number;
 }
 
@@ -53,6 +55,7 @@ export const EMPTY: NodeIdentity = {
   builtin: null,
   participate: false,
   chatter: 128,
+  tier: "standard",
   updatedAt: 0,
 };
 
