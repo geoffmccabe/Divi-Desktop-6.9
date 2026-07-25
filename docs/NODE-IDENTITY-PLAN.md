@@ -190,7 +190,12 @@ and thumbnail slot in.
 
 ---
 
-## 2. The identity record (new DVXP subtype)
+## 2. The identity record (new DVXP subtype) — ⏸ DEFERRED, not v1
+
+**Superseded by the scanner index (§3, reconciled).** Discovery in v1 is the
+scanner manifest, not an on-chain record. This section is kept only as the future
+option for trustless identity that needs no scanner/SSO in the loop. Do not build
+it for the first release.
 
 Anchored on-chain in an `OP_META` output, same envelope as PoE/NFD:
 
@@ -213,36 +218,82 @@ lives.
 
 ---
 
-## 3. Phases
+## 3. Phases — RECONCILED (2026-Jul-25)
 
-### Phase 1 — Identity you can set and see *(no AI, no chat)*
-- Fill in the existing **My Agent → IMAGE / PERSONA** tabs: name, description,
-  avatar upload (auto-thumbnail ≤500px, EXIF stripped — the same pipeline the NFD
-  builder uses), chatter slider, participate on/off.
-- Publish/update/revoke the on-chain identity record.
-- Read other nodes' records; cache them locally.
-- **Map:** nodes with an identity show **name + thumbnail** instead of a bare IP.
-- Ship-ready on its own. This alone is a visible, differentiating feature.
+The earlier phase list assumed an on-chain identity record and a custom relay.
+The LW-SSO + Kinet.ink docs (§0a–§0c) changed the mechanism: discovery is the
+**scanner identity index**, chat is **Kinet.ink's iframe** (and later Supabase
+Realtime), and AI is the **central metered service**. The phases below match
+that. The goals are unchanged; only the plumbing moved.
 
-### Phase 2 — Chat
-- Relay service (extend the `nfd-relay` pattern): register, hold an outbound
-  connection, route messages by node id.
-- **Map:** click a node with an identity → chat panel.
-- Manual chat first — a human types, the other node's owner sees it.
+### How the two tensions resolve
 
-### Phase 3 — AI personas *(the "autonomous chatter")*
-- Build the missing `ai.rs`: call Grok/Claude through the existing gateway.
-- **PERSONA** tab becomes a real system prompt: personality, tone, what it will and
-  won't discuss.
-- **KNOWLEDGE** tab: facts the node may share about itself (uptime, version,
-  region — never balances or addresses).
-- The `chatter` setting governs how often it initiates and how much it says.
+Two contradictions had accumulated between §5 (older) and §0a–§0c (newer):
 
-### Phase 4 — Resource sharing *(storage %, donated time)*
-Deliberately last. Running other people's workloads is a far bigger security
-surface than exchanging text, and should not ride along with a cosmetic feature.
-Phase 1's `caps` field reserves space so nodes can *advertise* willingness before
-anything is actually executed.
+- **On-chain record vs scanner index.** The scanner index wins for v1
+  (discoverable today, no fee, no chain work). The on-chain DVXP record is
+  **deferred** — kept only as a future option for trustless identity without the
+  SSO/scanner in the loop. §2 stays in the doc as that future note, not as v1.
+- **Signed-by-address vs SSO superadmin.** Both, for different things:
+  - **A node publishes its OWN identity** by signing the record with its wallet
+    address; the scanner verifies the signature. No SSO account needed — most
+    node owners won't have one. This is the §5 "signed" decision, applied to
+    per-node identities.
+  - **The six curated grid characters** are written by an **SSO superadmin**
+    (§0c). Different actor, different gate.
+
+### Phase 0 — Local identity authoring — **~40% of the feature, DONE**
+Built and shipped, all local to the machine:
+- **Create Your Node Character** UI: name, description, avatar upload (animated
+  WebP + video, 3MB cap, EXIF-stripped thumbnail), SAVE. (`AgentPanel.tsx`,
+  `nodeIdentity.ts`)
+- **Admin grid panel**: six slots, each a name + image + Kinet.ink `api_key`,
+  gated to Geoff's two nodes via `wallet_owns` (validateaddress `ismine`).
+  (`GridAdmin.tsx`, `gridCharacters.ts`)
+
+**Nothing here leaves the machine yet** — no other node can see any of it. That
+is exactly what Phase 1 fixes.
+
+### Phase 1 — Publish + discover (**the unlock — everything needs this**)
+The scanner identity service, per §0b. Without it the Phase-0 UI is a private
+diary.
+- **Scanner service** (`ops/scanner/`, rewrite the one that was deleted):
+  store/serve node identities + **hash-addressed media**; a cheap **manifest**
+  endpoint listing current identities and their media hashes; Cloudflare edge
+  in front (already there).
+- **Auth on write**: a node signs its identity record with its wallet address;
+  the scanner verifies. Grid characters go through the SSO superadmin gate.
+- **DD69 side**: publish/update/revoke your identity to the scanner; read the
+  manifest; cache locally and **re-download only media whose hash changed**.
+- **Backup**: periodic dump of the scanner index to R2/Supabase (§0b bite #1).
+
+### Phase 2 — Map integration
+- The network map shows **name + thumbnail** for any node with a published
+  identity, read from the locally-cached manifest. Bare IP only for the rest.
+- This is the first *visible* payoff and is small once Phase 1 exists.
+
+### Phase 3 — Chat
+- **Talk to a grid character** via Kinet.ink's iframe
+  (`fairytime.lovable.app/embed/chat?api_key=…`). The `api_key` stays
+  server-side; the scanner/gateway hands the client a ready embed URL, never the
+  raw key.
+- **Node-to-node chat** later, over **Supabase Realtime** (§0a): each node holds
+  one outbound WSS, routes by node id. NAT-safe, no inbound port.
+- Responds-only; a node answers when spoken to and never initiates (§5).
+
+### Phase 4 — AI credits + metering
+- The central service at **`ai.divi.love`** (`/api/agents/think`-style metered
+  proxy). Free monthly allowance per node; buy more with **DIVI**, one click.
+- **Decide before launch**: what the allowance attaches to (node? address?
+  minimum staked balance?) so it can't be farmed — §5 "still open".
+- The one missing backend piece, `ai.rs`, is built here (calls the gateway, not
+  the model directly).
+
+### Phase 5 — Autonomy (opt-in) + resource sharing — later
+- Opt-in **node-initiated** conversation with owner-set goals/limits; the engine
+  from Phase 3 already understands "initiate" as a gated flag (§5).
+- **Resource sharing** (storage %, donated time) last of all — running others'
+  workloads is a far bigger security surface than exchanging text.
 
 ---
 
