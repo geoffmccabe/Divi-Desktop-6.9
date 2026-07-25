@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{c2pa_read, chaintips, coins, config, config::NodeConfig, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{c2pa_read, chaintips, coins, config, config::NodeConfig, mempool, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -417,6 +417,60 @@ async fn network_peers() -> Option<PeerSnapshotDto> {
                 })
                 .collect(),
             self_ip: s.self_ip,
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemEntryDto {
+    txid: String,
+    size: i64,
+    fee_sats: i64,
+    time: i64,
+    decoded: bool,
+    mine: bool,
+    category: String,
+    amount_mine: f64,
+    has_data: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MempoolDto {
+    tip: i64,
+    best_hash: String,
+    entries: Vec<MemEntryDto>,
+}
+
+/// Live mempool snapshot. `known` = txids the UI already classified, so only new
+/// transactions get decoded. Polled quickly while the Mempool panel is open.
+#[tauri::command]
+async fn mempool_snapshot(known: Vec<String>) -> Option<MempoolDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().ok()?;
+        let s = mempool::snapshot(&cfg, &known)?;
+        Some(MempoolDto {
+            tip: s.tip,
+            best_hash: s.best_hash,
+            entries: s
+                .entries
+                .into_iter()
+                .map(|e| MemEntryDto {
+                    txid: e.txid,
+                    size: e.size,
+                    fee_sats: e.fee_sats,
+                    time: e.time,
+                    decoded: e.decoded,
+                    mine: e.mine,
+                    category: e.category,
+                    amount_mine: e.amount_mine,
+                    has_data: e.has_data,
+                })
+                .collect(),
         })
     })
     .await
@@ -1065,6 +1119,7 @@ fn main() {
             self_geo,
             probe_peers,
             ping_nodes,
+            mempool_snapshot,
             coin_maturity,
             wallet_status,
             unlock_wallet,

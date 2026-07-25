@@ -4,6 +4,7 @@ pub mod chaintips;
 pub mod config;
 pub mod health;
 pub mod install;
+pub mod mempool;
 pub mod security;
 pub mod process;
 pub mod network;

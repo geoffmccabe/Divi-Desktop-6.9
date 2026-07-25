@@ -1224,6 +1224,63 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .fn-ms { text-align: right; color: hsl(145 65% 58%); font-variant-numeric: tabular-nums; font-weight: 600; }
 .fn-empty { color: hsl(var(--muted-foreground)); }
 
+/* Node Speed + Mempool triggers sit together at the right of the topbar. */
+.netmap-tools { display: inline-flex; align-items: center; gap: 6px; }
+.netmap-mem { font-weight: 700; font-size: 0.9rem; line-height: 1; }
+
+/* Live mempool panel — same frame as Node Speed, anchored top-LEFT so the two
+   can be open at once without overlapping. */
+.mempool {
+  position: absolute; left: 10px; top: 10px; z-index: 6;
+  width: 258px; max-height: 78%;
+  display: flex; flex-direction: column; gap: 5px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid hsl(210 85% 62% / 0.7);
+  border-radius: 8px; padding: 7px 9px; box-sizing: border-box; font-size: 0.62rem;
+}
+.mp-count {
+  font-size: 0.6rem; font-weight: 700; color: hsl(210 85% 66%);
+  background: hsl(210 85% 62% / 0.16); border-radius: 6px; padding: 0 6px; margin-left: 6px;
+}
+.mp-cols { grid-template-columns: 1fr 3.4em 4em; }
+.mp-block {
+  font-size: 0.72rem; font-weight: 700; text-align: center;
+  color: hsl(48 100% 62%); background: hsl(48 100% 55% / 0.14);
+  border: 1px solid hsl(48 100% 60% / 0.5); border-radius: 6px; padding: 3px 0;
+  animation: mp-flash 1s ease-out;
+}
+.mp-row {
+  display: grid; grid-template-columns: 1fr 3.4em 4em; align-items: baseline; column-gap: 5px;
+  border-radius: 4px; padding: 1px 3px;
+}
+.mp-txid {
+  color: hsl(var(--foreground)); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: flex; align-items: baseline; gap: 5px;
+}
+.mp-size { text-align: right; color: hsl(210 55% 72%); font-variant-numeric: tabular-nums; }
+.mp-fee { text-align: right; color: hsl(145 60% 60%); font-variant-numeric: tabular-nums; }
+.mp-tag {
+  font-size: 0.5rem; text-transform: uppercase; letter-spacing: 0.03em;
+  color: hsl(210 60% 74%); border: 1px solid hsl(210 60% 62% / 0.5);
+  border-radius: 4px; padding: 0 3px; flex: none;
+}
+/* New or changed rows: bold + a brief flash. */
+.mp-row.hot { font-weight: 700; animation: mp-flash 1.4s ease-out; }
+/* Anything touching the user's wallet: bright orange + bold, always. */
+.mp-row.mine { color: hsl(28 100% 58%); font-weight: 700; }
+.mp-row.mine .mp-txid, .mp-row.mine .mp-size, .mp-row.mine .mp-fee { color: hsl(28 100% 58%); }
+.mp-row.mine .mp-tag { color: hsl(28 100% 62%); border-color: hsl(28 100% 58% / 0.6); }
+.mp-row.mine.hot { animation: mp-flash-orange 1.4s ease-out; }
+@keyframes mp-flash {
+  0% { background: hsl(210 85% 62% / 0.55); }
+  100% { background: transparent; }
+}
+@keyframes mp-flash-orange {
+  0% { background: hsl(28 100% 55% / 0.5); }
+  100% { background: transparent; }
+}
+
 /* Creator: upload your own agent image (click or drag). */
 .agent-upload {
   width: 100%; aspect-ratio: 1 / 1; max-width: 190px;

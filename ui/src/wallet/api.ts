@@ -169,6 +169,27 @@ export interface NodePing {
 }
 export const pingNodes = (ips: string[]) => invoke<NodePing[]>("ping_nodes", { ips });
 
+// ---- Live mempool (the Mempool panel) ----
+export interface MemEntry {
+  txid: string;
+  size: number;
+  feeSats: number;
+  time: number;
+  decoded: boolean; // true only for txids decoded this call; else keep cached flags
+  mine: boolean; // involves the user's wallet (in or out)
+  category: string; // "receive" | "send" | ""
+  amountMine: number; // DIVI, net to/from the wallet
+  hasData: boolean; // carries an OP_META data payload (a "message")
+}
+export interface MempoolSnap {
+  tip: number;
+  bestHash: string;
+  entries: MemEntry[];
+}
+// `known` = txids the UI already classified, so only new txs get decoded.
+export const mempoolSnapshot = (known: string[]) =>
+  invoke<MempoolSnap | null>("mempool_snapshot", { known });
+
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
 export const lotteryWins = (addresses: string[]) => invoke<LotteryWin[]>("lottery_wins", { addresses });

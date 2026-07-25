@@ -7,6 +7,7 @@ import { BlockChainViz } from "./BlockChainViz";
 import { PrimerLove } from "./PrimerLove";
 import { usePrimer } from "./primerStore";
 import { FastestNodes, type FastCandidate } from "./FastestNodes";
+import { Mempool } from "./Mempool";
 import { NewestNodesPanel } from "./NewestNodesPanel";
 import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
 import { userWonRecently } from "./stakeWin";
@@ -250,6 +251,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     remote: false,
   });
   const [showFastest, setShowFastest] = useState(false);
+  const [showMempool, setShowMempool] = useState(false);
   const [showNewest, setShowNewest] = useState(false);
   // New-node spirals: the list the draw loop animates, refreshed off the poll (a
   // ref so drawing never triggers a re-render). highlightIp = the row the user is
@@ -1321,14 +1323,24 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <span className="nm-item"><span className="nm-dot nm-in" /> Full Network</span>
           <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
         </div>
-        <button
-          type="button"
-          className={"netmap-fastest" + (showFastest ? " on" : "")}
-          onClick={() => setShowFastest((v) => !v)}
-          title="Top 10 fastest nodes"
-        >
-          <Icon name="speed" size={15} />
-        </button>
+        <div className="netmap-tools">
+          <button
+            type="button"
+            className={"netmap-fastest" + (showFastest ? " on" : "")}
+            onClick={() => setShowFastest((v) => !v)}
+            title="Node speed"
+          >
+            <Icon name="speed" size={15} />
+          </button>
+          <button
+            type="button"
+            className={"netmap-fastest netmap-mem" + (showMempool ? " on" : "")}
+            onClick={() => setShowMempool((v) => !v)}
+            title="Live mempool"
+          >
+            M
+          </button>
+        </div>
       </div>
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
@@ -1340,6 +1352,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             onClose={() => setShowFastest(false)}
           />
         )}
+        {showMempool && <Mempool onClose={() => setShowMempool(false)} />}
         {/* Newest Nodes — bottom-right trigger + panel. Aqua sparkle icon. */}
         <button
           type="button"
