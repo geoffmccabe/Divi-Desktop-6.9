@@ -478,7 +478,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               newIdx++;
             }
           }
-          if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
+          // Always re-fold the authoritative stored list back in, so the map's
+          // ref can never sit below the full ~92 (which starved the node count).
+          knownRef.current = seen.length
+            ? recordKnown(knownRef.current, seen)
+            : { ...loadKnown(), ...knownRef.current };
           // Register any first-ever-seen IPs (append-only; a re-added node keeps
           // its original date, so no false spirals), then refresh the spiral list
           // and fire the one-time arrival cue for genuinely brand-new nodes.
@@ -1298,7 +1302,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     const self = selfRef.current;
     if (self) add(self.ip, self.country); // our own node counts too
     for (const p of snap?.peers ?? []) add(p.ip, geos[p.ip]?.country);
-    for (const [ip, kp] of Object.entries(knownRef.current)) add(ip, kp.country || geos[ip]?.country);
+    // Count from the AUTHORITATIVE stored list (union-healed to the full ~92),
+    // not the map's in-memory ref which could momentarily read low. Overlaid
+    // with the ref so any self-nodes the map injected are still included.
+    const full = { ...loadKnown(), ...knownRef.current };
+    for (const [ip, kp] of Object.entries(full)) add(ip, kp.country || geos[ip]?.country);
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [snap, geos]);
 
