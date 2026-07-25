@@ -136,6 +136,8 @@ pub fn open(cfg: &NodeConfig, zip_path: &str) -> Result<Value, String> {
     }
     let description = cap_str(col, "description");
     let max_supply = col.get("maxSupply").and_then(|x| x.as_u64()).unwrap_or(0).min(u32::MAX as u64) as u32;
+    // Content mode: default Encrypted; a Perc/public set sets "encrypted": false.
+    let encrypted = col.get("encrypted").and_then(|x| x.as_bool()).unwrap_or(true);
 
     // Optional cover, inlined (one small image) so the UI can create the collection.
     let (mut cover_b64, mut cover_mime) = (Value::Null, Value::Null);
@@ -210,7 +212,7 @@ pub fn open(cfg: &NodeConfig, zip_path: &str) -> Result<Value, String> {
         "importDir": dir.to_string_lossy(),
         "collection": {
             "name": name, "description": description, "maxSupply": max_supply,
-            "coverB64": cover_b64, "coverMime": cover_mime,
+            "coverB64": cover_b64, "coverMime": cover_mime, "encrypted": encrypted,
         },
         "items": out_items,
         "okCount": ok_count,

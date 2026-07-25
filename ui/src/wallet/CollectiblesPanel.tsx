@@ -23,6 +23,7 @@ export interface Item {
   traits?: Trait[]; // public ERC-721 attributes, kept for the collection view
   tier?: string; // explicit creator-assigned rarity tier (locked schema)
   edition?: number; // 1-based index within its collection
+  encrypted?: boolean; // false = Public content (viewed without a key)
 }
 
 // A collection I created (creator-only minting, optional supply cap).
@@ -33,6 +34,7 @@ export interface Collection {
   maxSupply: number; // 0 = unlimited
   minted: number;
   cover?: string; // data-URL for card display
+  encrypted: boolean; // content mode for items minted into this collection
 }
 
 // One ERC-721 trait row (public).
@@ -193,8 +195,12 @@ export function CollectiblesPanel() {
   const [colName, setColName] = useState("");
   const [colMax, setColMax] = useState("");
   const [colCover, setColCover] = useState<{ b64: string; mime: string; dataUrl: string } | null>(null);
+  const [colEncrypted, setColEncrypted] = useState(true); // collection content mode
   const [colBusy, setColBusy] = useState(false);
   const [colErr, setColErr] = useState<string | null>(null);
+
+  // Standalone (no-collection) mint content mode.
+  const [mintEncrypted, setMintEncrypted] = useState(true);
 
   const [viewing, setViewing] = useState<string | null>(null);
   const [viewSrc, setViewSrc] = useState<string | null>(null);
@@ -253,7 +259,7 @@ export function CollectiblesPanel() {
       const creator = await myNfdAddress();
       const max = Math.max(0, Math.floor(Number(colMax) || 0));
       const res = await nfdCreateCollection(creator, colName.trim(), "", max, colCover?.b64, colCover?.mime);
-      const col: Collection = { id: res.txid, name: colName.trim(), creatorAddr: res.creatorAddr, maxSupply: max, minted: 0, cover: colCover?.dataUrl };
+      const col: Collection = { id: res.txid, name: colName.trim(), creatorAddr: res.creatorAddr, maxSupply: max, minted: 0, cover: colCover?.dataUrl, encrypted: colEncrypted };
       setCollections((prev) => [col, ...prev]);
       setColName("");
       setColMax("");
@@ -291,17 +297,20 @@ export function CollectiblesPanel() {
           traitsJson: JSON.stringify(meta),
         };
       }
-      const res = await nfdMint(b64, thumb?.b64, thumb?.mime, collectionArg);
+      const mime = f.type || "application/octet-stream";
+      const encrypted = col ? col.encrypted : mintEncrypted;
+      const res = await nfdMint(b64, mime, encrypted, thumb?.b64, thumb?.mime, collectionArg);
       const item: Item = {
         ...res,
         name: f.name,
-        mime: f.type || "application/octet-stream",
+        mime,
         ts: Date.now(),
         thumb: thumb?.dataUrl,
         collectionId: col?.id,
         traits: col ? cleanTraits : undefined,
         tier: col ? tier : undefined,
         edition: col ? edition : undefined,
+        encrypted,
       };
       setItems((prev) => [item, ...prev]);
       if (col) {
@@ -325,7 +334,7 @@ export function CollectiblesPanel() {
     try {
       const b64 = it.wrapkeyPtr
         ? await nfdClaim(it.ownerAddr, it.txid, it.wrapkeyPtr)
-        : await nfdView(it.ownerAddr, it.arweavePtr ?? "", it.contentHash ?? "");
+        : await nfdView(it.ownerAddr, it.arweavePtr ?? "", it.contentHash ?? "", it.encrypted ?? true);
       setViewSrc(`data:${it.mime};base64,${b64}`);
     } catch (e) {
       setViewErr(String(e));
@@ -472,6 +481,13 @@ export function CollectiblesPanel() {
           {colCover ? "Cover image ✓ — change" : "Add a cover image (optional)"}
           <input type="file" accept="image/*" onChange={pickCover} hidden />
         </label>
+        <label className="coll-field">
+          <span>Content</span>
+          <select className="wl-input" value={colEncrypted ? "enc" : "pub"} onChange={(e) => setColEncrypted(e.target.value === "enc")}>
+            <option value="enc">Encrypted — only the owner can view the original</option>
+            <option value="pub">Public — anyone can view the art (e.g. Percs)</option>
+          </select>
+        </label>
         <button className="wl-btn wl-btn-primary" disabled={colBusy || !colName.trim()} onClick={createCollection}>
           {colBusy ? "Creating…" : "Create collection"}
         </button>
@@ -497,6 +513,19 @@ export function CollectiblesPanel() {
             ))}
           </select>
         </label>
+        {selectedCol ? (
+          <p className="wl-note">
+            Content: <strong>{selectedCol.encrypted ? "Encrypted (owner-only)" : "Public"}</strong> — set by this collection.
+          </p>
+        ) : (
+          <label className="coll-field">
+            <span>Content</span>
+            <select className="wl-input" value={mintEncrypted ? "enc" : "pub"} onChange={(e) => setMintEncrypted(e.target.value === "enc")}>
+              <option value="enc">Encrypted — only the owner can view the original</option>
+              <option value="pub">Public — anyone can view the art</option>
+            </select>
+          </label>
+        )}
         {selectedCol && (
           <div className="coll-traits">
             <label className="coll-field">

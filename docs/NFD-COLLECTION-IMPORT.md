@@ -34,7 +34,8 @@ divi-genesis/
     "name": "Divi Genesis",
     "description": "The first Divi Collectibles drop.",
     "maxSupply": 240,
-    "cover": "cover.webp"
+    "cover": "cover.webp",
+    "encrypted": false
   },
   "items": [
     {

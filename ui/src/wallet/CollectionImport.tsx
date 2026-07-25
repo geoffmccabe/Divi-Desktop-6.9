@@ -88,8 +88,10 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
           maxSupply: plan.collection.maxSupply,
           minted: 0,
           cover: plan.collection.coverB64 ? `data:${plan.collection.coverMime};base64,${plan.collection.coverB64}` : undefined,
+          encrypted: plan.collection.encrypted,
         });
       }
+      const encrypted = plan.collection.encrypted;
       const collectionId = resume.collectionId!;
       const creatorAddr = resume.creatorAddr!;
 
@@ -107,7 +109,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
         // Locked traits schema: { name, edition, tier, attributes }.
         const meta: Record<string, unknown> = { name: data.name, edition, attributes: data.attributes };
         if (data.tier) meta.tier = data.tier;
-        const res = await nfdMint(data.originalB64, preview?.b64, preview?.mime, {
+        const res = await nfdMint(data.originalB64, data.originalMime, encrypted, preview?.b64, preview?.mime, {
           collectionId,
           creatorAddr,
           traitsJson: JSON.stringify(meta),
@@ -122,6 +124,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
           traits: data.attributes.map((a) => ({ type: a.trait_type, value: a.value })),
           tier: data.tier || undefined,
           edition,
+          encrypted,
         });
         doneSet.add(edition);
         resume.done = [...doneSet];

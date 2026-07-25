@@ -80,12 +80,16 @@ export interface CollectionMintArgs {
 }
 export const nfdMint = (
   contentB64: string,
+  contentMime: string,
+  encrypted: boolean,
   thumbnailB64?: string,
   thumbnailMime?: string,
   collection?: CollectionMintArgs,
 ) =>
   invoke<NfdMint>("nfd_mint", {
     contentB64,
+    contentMime,
+    encrypted,
     thumbnailB64,
     thumbnailMime,
     collectionId: collection?.collectionId,
@@ -103,7 +107,7 @@ export interface ImportPlanItem {
 }
 export interface ImportPlan {
   importDir: string;
-  collection: { name: string; description: string; maxSupply: number; coverB64: string | null; coverMime: string | null };
+  collection: { name: string; description: string; maxSupply: number; coverB64: string | null; coverMime: string | null; encrypted: boolean };
   items: ImportPlanItem[];
   okCount: number;
   warnings: { edition: number | null; error: string }[];
@@ -172,8 +176,8 @@ export interface RelayStatus {
   balanceWinc: string | null;
 }
 export const nfdRelayStatus = () => invoke<RelayStatus>("nfd_relay_status");
-export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string) =>
-  invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash });
+export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string, encrypted: boolean) =>
+  invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash, encrypted });
 // ---- Payment requests (DVXP type 0x05) ----
 // A request only ASKS. Receiving one moves no money; paying is a separate,
 // explicitly signed act by the payer.
