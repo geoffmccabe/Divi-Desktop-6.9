@@ -16,6 +16,10 @@ export interface KnownPeer {
   country?: string;
   cc?: string; // ISO-2 country code, for "City, US" labels
   lastSeen: number;
+  /** When this IP was FIRST recorded. Drives the "new node" spiral (newNodes.ts).
+   *  Set once and never overwritten, so a node's age is stable. Optional so
+   *  entries saved before this field existed still load. */
+  firstSeen?: number;
 }
 export type Known = Record<string, KnownPeer>;
 
@@ -52,9 +56,22 @@ export function recordKnown(
   seen: { ip: string; lat: number; lon: number; city?: string; country?: string; cc?: string }[]
 ): Known {
   const now = Date.now();
-  const k = { ...prev };
-  for (const s of seen)
-    k[s.ip] = { lat: s.lat, lon: s.lon, city: s.city, country: s.country, cc: s.cc, lastSeen: now };
+  // Merge onto what is ON DISK, not just the caller's in-memory copy.
+  //
+  // This write used to be `{...prev}`. If a remount or a node switch handed us a
+  // `prev` that was still empty or partial — the map's ref starts as {} and is
+  // filled a tick later — the save would overwrite the whole accumulated network
+  // with only the peers seen in that one poll. That is how a 92-node history
+  // collapsed to roughly the current peer count. Folding the stored copy in
+  // first means a stale caller can only ever ADD nodes, never silently drop them;
+  // the 30-day prune in loadKnown remains the single place entries are removed.
+  const k = { ...loadKnown(), ...prev };
+  for (const s of seen) {
+    // Preserve the ORIGINAL firstSeen: a node keeps its arrival date forever, so
+    // its "new" spiral ages correctly and a re-seen node doesn't look new again.
+    const firstSeen = k[s.ip]?.firstSeen ?? now;
+    k[s.ip] = { lat: s.lat, lon: s.lon, city: s.city, country: s.country, cc: s.cc, lastSeen: now, firstSeen };
+  }
   save(k);
   return k;
 }
