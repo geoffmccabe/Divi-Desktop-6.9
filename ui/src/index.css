@@ -455,7 +455,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .agent-form { display: flex; flex-direction: column; gap: 16px; width: 280px; max-width: 100%; }
 .agent-intro { line-height: 1.5; margin: 0; }
 .agent-image-panel {
-  flex: 1 1 auto; min-width: 0; display: flex; align-items: stretch; justify-content: flex-start; padding: 22px;
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: center; justify-content: center; padding: 22px;
   background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
   border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color)); border-radius: 14px;
 }
@@ -465,7 +465,11 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .agent-input { max-width: none; }
 .agent-textarea { min-height: 128px; resize: vertical; font-family: inherit; font-size: 0.85rem; line-height: 1.45; }
 /* Create tile (left) vertically centered against the grid (right). */
-.agent-chooser { display: flex; gap: 16px; align-items: center; justify-content: center; }
+/* One responsive size drives all tiles so they fill the panel and keep their
+   aspect ratios. --gtile-w scales with the viewport; grid tiles are 2:3 off it,
+   and the Create tile (1:2) is exactly as tall as the two grid rows. */
+.agent-chooser { --gtile-w: clamp(130px, 15vw, 210px); --grid-h: calc(var(--gtile-w) * 1.5 * 2 + 14px);
+  display: flex; gap: 18px; align-items: center; justify-content: center; width: 100%; }
 /* Character tiles reuse the theme's subpanel surface so they track the admin skin. */
 .agent-tile {
   --agent-silhouette-fill: #3d2b62; /* portrait (darkened halfway to black) */
@@ -485,12 +489,12 @@ h1, h2, h3 { font-family: var(--font-heading); }
   -webkit-mask-size: contain; mask-size: contain;
 }
 /* Grid tiles are 2:3 (narrower than tall). */
-.agent-grid { flex: 0 0 auto; display: grid; grid-template-columns: repeat(3, 120px); gap: 12px; }
-.agent-grid .agent-tile { width: 120px; height: 180px; }
+.agent-grid { flex: 0 0 auto; display: grid; grid-template-columns: repeat(3, var(--gtile-w)); gap: 14px; }
+.agent-grid .agent-tile { width: var(--gtile-w); height: calc(var(--gtile-w) * 1.5); }
 /* Create My Own: same 156px width, 1:2 tall; ? + label stacked and vertically
    centered together over the silhouette. inset:0 + auto size so the image fits
    exactly edge-to-edge (no offset, so overflow:hidden can't clip her heels). */
-.agent-tile-create { flex: 0 0 auto; width: 156px; aspect-ratio: 1 / 2; justify-content: center; gap: 6px; padding: 14px 8px; }
+.agent-tile-create { flex: 0 0 auto; width: calc(var(--grid-h) / 2); height: var(--grid-h); justify-content: center; gap: 6px; padding: 14px 8px; }
 .agent-tile-create .agent-portrait { position: absolute; inset: 0; width: auto; height: auto; opacity: 0.85; }
 .agent-create-q { position: relative; z-index: 1; font-size: 2.6rem; font-weight: 700; line-height: 1; color: hsl(var(--primary)); }
 .agent-create-label { position: relative; z-index: 1; font-size: 0.76rem; font-weight: 700; letter-spacing: 0.06em; text-align: center; color: hsl(var(--foreground)); }

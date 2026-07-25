@@ -318,10 +318,17 @@ export function AgentPanel() {
                     title={hasMyAgent ? "Edit your agent" : "Create your own agent"}
                   >
                     {hasMyAgent ? (
-                      /* Started: show the agent's image + name, and EDIT MY AGENT.
-                         No "+". */
+                      /* Started: show the agent's ACTUAL uploaded media (animated
+                         WebP / video plays), name, and EDIT MY AGENT. No "+".
+                         Uses the full-res original, not the tiny thumbnail. */
                       <>
-                        {thumb ? (
+                        {preview ? (
+                          isVideo ? (
+                            <video className="agent-avatar-img" src={preview} autoPlay loop muted playsInline />
+                          ) : (
+                            <img className="agent-avatar-img" src={preview} alt="" />
+                          )
+                        ) : thumb ? (
                           <img className="agent-avatar-img" src={thumb} alt="" />
                         ) : (
                           <span className="agent-portrait" style={createPortrait} aria-hidden />
