@@ -15,7 +15,7 @@ fn main() {
 
     let art = b"a one-of-a-kind Divi Collectible: the crown-jewels image bytes";
     let thumb = b"fake-webp-thumbnail-bytes-for-the-smoke-test";
-    let draft = collectibles::mint(&cfg, art, Some((thumb, "image/webp")), None).expect("mint");
+    let draft = collectibles::mint(&cfg, art, "application/octet-stream", true, Some((thumb, "image/webp")), None).expect("mint");
     println!("thumb_ptr       = {:?}", draft.thumb_ptr);
     println!("owner (funding) = {}", draft.owner_addr);
     println!("minted txid     = {}", draft.txid);
@@ -40,24 +40,40 @@ fn main() {
     }
 
     // owner can view (fetch + decrypt + authenticity check passes)
-    let recovered = collectibles::view(&cfg, &draft.owner_addr, &draft.arweave_ptr, &draft.content_hash).expect("view");
+    let recovered = collectibles::view(&cfg, &draft.owner_addr, &draft.arweave_ptr, &draft.content_hash, true).expect("view");
     assert_eq!(recovered, art, "owner failed to recover the art");
     println!("owner view      = OK ({} bytes)", recovered.len());
 
     // a different address cannot decrypt it
     let stranger = addr(&rpc);
     assert!(
-        collectibles::view(&cfg, &stranger, &draft.arweave_ptr, &draft.content_hash).is_err(),
+        collectibles::view(&cfg, &stranger, &draft.arweave_ptr, &draft.content_hash, true).is_err(),
         "a stranger decrypted the collectible!"
     );
     println!("stranger view   = blocked (correct)");
 
     // a wrong content_hash must fail the authenticity check even for the owner
     assert!(
-        collectibles::view(&cfg, &draft.owner_addr, &draft.arweave_ptr, &"00".repeat(32)).is_err(),
+        collectibles::view(&cfg, &draft.owner_addr, &draft.arweave_ptr, &"00".repeat(32), true).is_err(),
         "authenticity check did not reject a wrong content_hash!"
     );
     println!("authenticity    = enforced (wrong hash rejected)");
+
+    // ── Public (unencrypted) mint: anyone can view, no owner key needed ─────
+    // Confirm prior change first so this mint has a spendable UTXO (the funding
+    // stall the audit flagged — real fix is UTXO pre-splitting for batches).
+    let _ = rpc.call("setgenerate", json!([1]));
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let pub_art = b"a PUBLIC Perc: the same art for everyone of this tier";
+    let pub_draft = collectibles::mint(&cfg, pub_art, "image/webp", false, None, None).expect("public mint");
+    assert!(!pub_draft.encrypted, "this mint is public");
+    let _ = rpc.call("setgenerate", json!([1]));
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    let anyone = addr(&rpc);
+    let seen = collectibles::view(&cfg, &anyone, &pub_draft.arweave_ptr, &pub_draft.content_hash, false).expect("public view");
+    assert_eq!(seen, pub_art, "public content must be readable by anyone");
+    assert!(collectibles::view(&cfg, &anyone, &pub_draft.arweave_ptr, &"00".repeat(32), false).is_err());
+    println!("public view    = OK, readable by anyone ({} bytes)", seen.len());
 
     // ── Transfer A -> B, then B claims ──────────────────────────────────────
     let bob = addr(&rpc);
@@ -95,7 +111,7 @@ fn main() {
 
     let traits = br#"{"name":"Genesis #1","attributes":[{"trait_type":"Background","value":"Nebula"},{"trait_type":"Rarity","value":"Legendary"}]}"#;
     let cm = collectibles::CollectionMint { creator_addr: &creator, collection_id: &col.txid, traits_json: traits };
-    let item = collectibles::mint(&cfg, b"genesis-item-1 secret original", Some((thumb, "image/webp")), Some(cm)).expect("mint into collection");
+    let item = collectibles::mint(&cfg, b"genesis-item-1 secret original", "application/octet-stream", true, Some((thumb, "image/webp")), Some(cm)).expect("mint into collection");
     println!("item txid       = {} (owner {})", item.txid, item.owner_addr);
     assert_eq!(item.owner_addr, creator, "collection item must be owned by the creator");
     let _ = rpc.call("setgenerate", json!([1]));
@@ -109,9 +125,9 @@ fn main() {
         }
         other => panic!("expected a Mint record, got {other:?}"),
     }
-    let recovered = collectibles::view(&cfg, &creator, &item.arweave_ptr, &item.content_hash).expect("view item");
+    let recovered = collectibles::view(&cfg, &creator, &item.arweave_ptr, &item.content_hash, true).expect("view item");
     assert_eq!(recovered, b"genesis-item-1 secret original");
     println!("creator view    = OK ({} bytes)", recovered.len());
 
-    println!("\n>>> NFD MINT + VIEW + TRANSFER + COLLECTIONS VERIFIED END-TO-END ON REGTEST");
+    println!("\n>>> NFD MINT + VIEW + TRANSFER + COLLECTIONS + PUBLIC VERIFIED END-TO-END ON REGTEST");
 }

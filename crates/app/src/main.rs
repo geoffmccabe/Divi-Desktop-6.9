@@ -1020,6 +1020,8 @@ struct NfdMintDto {
 #[tauri::command]
 async fn nfd_mint(
     content_b64: String,
+    content_mime: String,
+    encrypted: bool,
     thumbnail_b64: Option<String>,
     thumbnail_mime: Option<String>,
     collection_id: Option<String>,
@@ -1047,7 +1049,7 @@ async fn nfd_mint(
             }),
             _ => None,
         };
-        let d = collectibles::mint(&cfg, &bytes, thumbnail, collection)?;
+        let d = collectibles::mint(&cfg, &bytes, &content_mime, encrypted, thumbnail, collection)?;
         Ok(NfdMintDto {
             txid: d.txid,
             owner_addr: d.owner_addr,
@@ -1063,10 +1065,10 @@ async fn nfd_mint(
 /// Fetch, decrypt, and authenticate a collectible you own. Returns the original
 /// file bytes as base64 for the UI to display. Errors if not authentic / not yours.
 #[tauri::command]
-async fn nfd_view(owner_addr: String, arweave_ptr: String, content_hash: String) -> Result<String, String> {
+async fn nfd_view(owner_addr: String, arweave_ptr: String, content_hash: String, encrypted: bool) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
-        let bytes = collectibles::view(&cfg, &owner_addr, &arweave_ptr, &content_hash)?;
+        let bytes = collectibles::view(&cfg, &owner_addr, &arweave_ptr, &content_hash, encrypted)?;
         Ok(STANDARD.encode(bytes))
     })
     .await

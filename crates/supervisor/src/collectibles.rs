@@ -28,6 +28,8 @@ pub struct MintDraft {
     pub arweave_ptr: String,
     /// Arweave id of the unencrypted public thumbnail, if the creator added one.
     pub thumb_ptr: Option<String>,
+    /// false = Public content (art stored unencrypted, anyone can view).
+    pub encrypted: bool,
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -188,12 +190,16 @@ pub fn create_collection(
 }
 
 /// Mint a collectible from `plaintext`. Owner = the funding UTXO's address.
-/// `thumbnail` is an optional (bytes, content_type) public preview the creator
-/// chose to publish — stored UNENCRYPTED on Arweave, its id anchored in the record.
+/// `content_mime` is the art's real type (used only for Public mode's upload).
+/// `encrypted` = the creator's choice: true encrypts to the owner (owner-only),
+/// false stores the art UNENCRYPTED on Arweave (Public — anyone can view; Percs).
+/// `thumbnail` is an optional (bytes, content_type) public preview.
 /// `collection` mints the item into a collection (public traits + membership).
 pub fn mint(
     cfg: &NodeConfig,
     plaintext: &[u8],
+    content_mime: &str,
+    encrypted: bool,
     thumbnail: Option<(&[u8], &str)>,
     collection: Option<CollectionMint>,
 ) -> Result<MintDraft, String> {
@@ -205,21 +211,24 @@ pub fn mint(
         None => pick_funding_utxo(&rpc)?,
     };
     let owner_addr = utxo["address"].as_str().ok_or("funding UTXO has no address")?.to_string();
-    let (_sk, owner_pub) = owner_keypair(&rpc, &owner_addr)?;
-
-    // Salt-prefix the plaintext. content_hash = sha256(salt||plaintext): the salt
-    // is encrypted inside the bundle, so an outsider can't confirm which known
-    // file this is, yet the owner can verify authenticity after decrypting.
-    let salt = rand_salt()?;
-    let mut salted = Vec::with_capacity(SALT_LEN + plaintext.len());
-    salted.extend_from_slice(&salt);
-    salted.extend_from_slice(plaintext);
-    let content_hash = sha256_hex(&salted);
-
-    let (content_blob, wrapped_ck) = crypto_nfd::encrypt_content(&salted, &owner_pub)?;
-    let bundle = pack_bundle(&content_blob, &wrapped_ck);
     let storage = nfd_storage::for_node(&cfg.datadir);
-    let arweave_ptr = storage.put(&bundle)?;
+
+    // Encrypted: salt-prefix (so an outsider can't confirm which known file this
+    // is), encrypt to the owner, store the opaque bundle. Public: hash the art
+    // directly and store it unencrypted with its real type so a gateway serves it.
+    let (arweave_ptr, content_hash, base_flags) = if encrypted {
+        let (_sk, owner_pub) = owner_keypair(&rpc, &owner_addr)?;
+        let salt = rand_salt()?;
+        let mut salted = Vec::with_capacity(SALT_LEN + plaintext.len());
+        salted.extend_from_slice(&salt);
+        salted.extend_from_slice(plaintext);
+        let content_hash = sha256_hex(&salted);
+        let (content_blob, wrapped_ck) = crypto_nfd::encrypt_content(&salted, &owner_pub)?;
+        let bundle = pack_bundle(&content_blob, &wrapped_ck);
+        (storage.put(&bundle)?, content_hash, nfd_record::FLAG_ENCRYPTED)
+    } else {
+        (storage.put_public(plaintext, content_mime)?, sha256_hex(plaintext), 0u8)
+    };
 
     // Optional public preview: uploaded UNENCRYPTED with its image content type.
     // Non-fatal — the preview is optional, and the content bundle is already
@@ -241,20 +250,30 @@ pub fn mint(
     let record = nfd_record::encode_mint(
         &arweave_ptr,
         &content_hash,
-        nfd_record::FLAG_ENCRYPTED,
+        base_flags,
         thumb_ptr.as_deref(),
         coll_fields,
     )?;
     // charge the configured NFD mint fee to the treasury (disabled until set)
     let fee = crate::fees::FeeConfig::load(cfg).nfd_mint_fee();
     let txid = anchor_record(&rpc, &utxo, &record, fee.as_ref().map(|(a, f)| (a.as_str(), *f)))?;
-    Ok(MintDraft { txid, owner_addr, content_hash, arweave_ptr, thumb_ptr })
+    Ok(MintDraft { txid, owner_addr, content_hash, arweave_ptr, thumb_ptr, encrypted })
 }
 
-/// Fetch, decrypt, and AUTHENTICATE a collectible you own. Errors unless the
-/// decrypted content hashes to the on-chain `content_hash`.
-pub fn view(cfg: &NodeConfig, owner_addr: &str, arweave_ptr: &str, content_hash: &str) -> Result<Vec<u8>, String> {
-    let bundle = nfd_storage::for_node(&cfg.datadir).get(arweave_ptr)?;
+/// Fetch and AUTHENTICATE a collectible. For encrypted items it decrypts with the
+/// owner's key; for Public items it just fetches. Either way the content must hash
+/// to the on-chain `content_hash`. `owner_addr` is unused for Public items.
+pub fn view(cfg: &NodeConfig, owner_addr: &str, arweave_ptr: &str, content_hash: &str, encrypted: bool) -> Result<Vec<u8>, String> {
+    let storage = nfd_storage::for_node(&cfg.datadir);
+    if !encrypted {
+        // Public: content is stored unencrypted; verify sha256(content) == on-chain hash.
+        let content = storage.get(arweave_ptr)?;
+        if sha256_hex(&content) != content_hash.to_lowercase() {
+            return Err("content does not match the on-chain record — not authentic".into());
+        }
+        return Ok(content);
+    }
+    let bundle = storage.get(arweave_ptr)?;
     let (content_blob, wrapped_ck) = unpack_bundle(&bundle)?;
     let rpc = RpcClient::new(cfg);
     let (sk, _pk) = owner_keypair(&rpc, owner_addr)?;

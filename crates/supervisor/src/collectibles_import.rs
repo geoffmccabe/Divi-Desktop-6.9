@@ -283,7 +283,14 @@ mod tests {
     use std::io::Write;
 
     fn cfg(datadir: PathBuf) -> NodeConfig {
-        NodeConfig { datadir, rpc_user: String::new(), rpc_pass: String::new(), rpc_port: 0 }
+        NodeConfig {
+            datadir,
+            rpc_host: String::new(),
+            rpc_user: String::new(),
+            rpc_pass: String::new(),
+            rpc_port: 0,
+            remote: false,
+        }
     }
 
     fn write_zip(path: &Path, manifest: &str, png_name: &str) {
