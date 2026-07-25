@@ -1,9 +1,10 @@
-# Append to /etc/caddy/Caddyfile. Its own hostname keeps identity traffic and
-# any future login cookies off ai.divi.love (the AI gateway origin).
+# Append to /etc/caddy/Caddyfile. Same shape as the existing ai.divi.love block:
+# Caddy provisions a Let's Encrypt cert and reverse-proxies to the loopback
+# service. Needs nodes.divi.love as a DNS-only (grey cloud) A record → this box,
+# so Caddy's HTTP-01 challenge on :80 works (see DEPLOY.md).
 #
-# Media is served here too; this origin sets no cookies, so the "cookieless
-# subdomain" requirement from the audit is already met as long as nothing on
-# nodes.divi.love ever sets one.
+# Its own hostname keeps identity traffic + any future cookies off ai.divi.love.
+# Media served here is cookieless, satisfying the audit's isolation note.
 nodes.divi.love {
 	reverse_proxy 127.0.0.1:8772
 }
