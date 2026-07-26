@@ -39,3 +39,7 @@ export function removePinSend(txid: string): void {
     /* storage unavailable */
   }
 }
+
+export function isPinSentTxid(txid: string): boolean {
+  return loadPinSends().some((r) => r.txid === txid);
+}

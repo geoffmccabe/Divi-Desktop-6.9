@@ -4,6 +4,7 @@ import { useTransactions, type TxStatus } from "./useTransactions";
 import { confDisplay } from "./confirmations";
 import { isFastTxid } from "./fastReceiveStore";
 import { isBearerReceivedTxid, isBearerSentTxid } from "./bearerCodes";
+import { isPinSentTxid } from "./pinSends";
 import { fmtDivi, relTime } from "../status";
 import { Icon } from "../Icon";
 
@@ -63,7 +64,10 @@ function Row({ t }: { t: Tx }) {
   // Bearer claims/sends carry no on-chain marker, so we label ones this app
   // created or redeemed (tracked locally by txid).
   const bearerRecv = isReceive && !dead && !fast && isBearerReceivedTxid(t.txid);
+  // Funding a Bearer/Pin certificate is a self-transfer (the certificate address
+  // is in this wallet), which the node reports as a "send" leg. We label that.
   const bearerSent = t.kind === "send" && isBearerSentTxid(t.txid);
+  const pinSent = t.kind === "send" && isPinSentTxid(t.txid);
 
   return (
     <li className={"activity-row" + (fast ? " fast" : "")}>
@@ -93,7 +97,11 @@ function Row({ t }: { t: Tx }) {
           </span>
         ) : (
           <span className={"act-kind act-" + t.kind} style={dead ? deadStyle : undefined}>
-            {bearerSent ? "BEARER Sent" : KIND_LABEL[t.kind] ?? "Transaction"}
+            {bearerSent
+              ? "Bearer Certificate Created"
+              : pinSent
+                ? "Pin Code Send Created"
+                : KIND_LABEL[t.kind] ?? "Transaction"}
           </span>
         )}
         <span
@@ -150,7 +158,11 @@ function statusText(s: TxStatus, n: number): string {
 export function ActivityList() {
   const { txs, status, refresh } = useTransactions();
   const [filter, setFilter] = useState("all");
-  const shown = filter === "all" ? txs : txs.filter((t) => t.kind === filter);
+  const base = filter === "all" ? txs : txs.filter((t) => t.kind === filter);
+  // Hide the misleading "+amount in" leg of a Bearer/Pin certificate funding.
+  // It's a self-transfer into our own certificate address, so the node reports
+  // both a receive and a send leg; the receive leg reads like a phantom gain.
+  const shown = base.filter((t) => !(t.amount > 0 && (isBearerSentTxid(t.txid) || isPinSentTxid(t.txid))));
   const bad = status.state === "unreachable";
   const ok = status.state === "uptodate";
   const working = status.state === "loading" || status.state === "checking" || status.state === "parsing" || status.state === "syncing";
