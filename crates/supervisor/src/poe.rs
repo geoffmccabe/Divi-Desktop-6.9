@@ -233,34 +233,17 @@ fn timestamp_forkless(
 }
 
 /// Parse a PoE record out of an OP_META scriptPubKey hex; returns the anchored
-/// 32-byte hash (hex) or None. Bounds-checked against arbitrary/truncated data.
+/// 32-byte hash (hex) or None.
+///
+/// The push-decoding half now lives in `dvxp`, shared with every other overlay
+/// record the wallet reads. Only the PoE-specific shape check stays here:
+/// magic "DVXP"(4) | ver(1) | type(1)=PoE | alg(1) | hash(32) = 39 bytes.
 fn parse_poe_hash(script_hex: &str) -> Option<String> {
-    let s = script_hex;
-    if s.len() < 4 || !s.starts_with("6a") {
+    let payload = crate::dvxp::parse_op_meta_payload(script_hex)?;
+    if payload.len() < 39 || &payload[0..4] != b"DVXP" || payload[5] != 0x01 {
         return None;
     }
-    // push length (single-byte push, or OP_PUSHDATA1 = 0x4c)
-    let (payload_off, plen) = match &s[2..4] {
-        "4c" => {
-            if s.len() < 6 {
-                return None;
-            }
-            (6usize, usize::from_str_radix(&s[4..6], 16).ok()?)
-        }
-        b => {
-            let n = usize::from_str_radix(b, 16).ok()?;
-            if n > 75 {
-                return None;
-            }
-            (4usize, n)
-        }
-    };
-    let payload = s.get(payload_off..payload_off + plen * 2)?; // *2: hex chars
-    // magic "DVXP"(4) | ver(1) | type(1)=PoE | alg(1) | hash(32) => 39 bytes => 78 hex
-    if payload.len() < 78 || !payload.starts_with("44565850") || &payload[10..12] != "01" {
-        return None;
-    }
-    Some(payload[14..78].to_lowercase())
+    Some(payload[7..39].iter().map(|b| format!("{b:02x}")).collect())
 }
 
 /// Verify that `txid` anchors `hash_hex`. Returns whether it matches plus its

@@ -16,6 +16,7 @@ import { SettingsView } from "./wallet/SettingsView";
 import { TimestampPanel } from "./wallet/TimestampPanel";
 import { CollectiblesPanel } from "./wallet/CollectiblesPanel";
 import { TokensPanel } from "./wallet/TokensPanel";
+import { HraPanel } from "./wallet/HraPanel";
 import { GovernancePreview } from "./wallet/governance/GovernancePreview";
 import { AgentPanel } from "./wallet/AgentPanel";
 import { NetworkMap } from "./wallet/NetworkMap";
@@ -31,6 +32,7 @@ const VIEWS: Record<string, ComponentType> = {
   collectibles: CollectiblesPanel,
   tokens: TokensPanel,
   governance: GovernancePreview,
+  hra: HraPanel,
   addressbook: AddressBook,
   settings: SettingsView,
   network: NetworkMap,
@@ -84,7 +86,7 @@ export function Shell() {
   }, []);
 
   const Active = VIEWS[view] ?? Overview;
-  const label = NAV.find((n) => n.id === view)?.label ?? EXTRA_TITLES[view] ?? "";
+  const label = (NAV.find((n) => n.id === view)?.label ?? EXTRA_TITLES[view] ?? "").replace(/\n/g, " ");
 
   return (
     <div className="shell">

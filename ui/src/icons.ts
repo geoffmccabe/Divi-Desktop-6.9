@@ -34,6 +34,10 @@ export const ICONS: Record<string, string> = {
   history: svg("<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/>"),
   // svgrepo "woman" glyph, thicker variant (stroke 18.506 + padded viewBox).
   agent: filledIcon(WOMAN_VIEWBOX, WOMAN_PATH, 18.506),
+  // At-sign: the universally readable "this is an address" mark.
+  hra: svg(
+    "<circle cx='12' cy='12' r='4'/><path d='M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.9 7.9'/>"
+  ),
   addressbook: svg(
     "<rect x='3' y='4' width='18' height='16' rx='2'/><circle cx='9' cy='11' r='2.4'/><path d='M5.5 17c.8-2 2-3 3.5-3s2.7 1 3.5 3'/><path d='M15 10h3'/><path d='M15 14h3'/>"
   ),

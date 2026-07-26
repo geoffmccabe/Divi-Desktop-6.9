@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, fastsend, mempool, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, fastsend, mempool, names, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -298,6 +298,194 @@ async fn poe_verify(txid: String, hash: String) -> Result<PoeProofDto, String> {
     })
     .await
     .map_err(|_| "internal error".to_string())?
+}
+
+// ── Human Readable Addresses (Divi Names) ─────────────────────────────────
+//
+// Every one of these is a thin wrapper: the rules live in the vendored
+// `name-registry` crate and the flows in `supervisor::names`, so the wallet, an
+// explorer and any indexer answer identically. Nothing here decides anything.
+
+macro_rules! hra_blocking {
+    ($body:expr) => {
+        tauri::async_runtime::spawn_blocking(move || {
+            let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+            #[allow(clippy::redundant_closure_call)]
+            ($body)(&cfg)
+        })
+        .await
+        .map_err(|_| "internal error".to_string())?
+    };
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HraQuoteDto {
+    canonical: String,
+    registration_divi: u64,
+    renewal_divi: u64,
+    can_be_ticker: bool,
+    available: Option<bool>,
+    owner: Option<String>,
+}
+
+/// Validate and price a typed name, and say whether it is taken.
+#[tauri::command]
+async fn hra_quote(input: String) -> Result<HraQuoteDto, String> {
+    hra_blocking!(move |cfg: &NodeConfig| {
+        names::quote(cfg, &input).map(|q| HraQuoteDto {
+            canonical: q.canonical,
+            registration_divi: q.registration_divi,
+            renewal_divi: q.renewal_divi,
+            can_be_ticker: q.can_be_ticker,
+            available: q.available,
+            owner: q.owner,
+        })
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HraSyncDto {
+    activated: bool,
+    activation_height: u64,
+    scanned_height: u64,
+    tip: u64,
+    caught_up: bool,
+    names_known: u64,
+    treasury_configured: bool,
+    note: String,
+}
+
+/// Read another chunk of the chain into the local name index.
+#[tauri::command]
+async fn hra_sync() -> Result<HraSyncDto, String> {
+    hra_blocking!(move |cfg: &NodeConfig| {
+        names::sync(cfg).map(|s| HraSyncDto {
+            activated: s.activated,
+            activation_height: s.activation_height,
+            scanned_height: s.scanned_height,
+            tip: s.tip,
+            caught_up: s.caught_up,
+            names_known: s.names_known,
+            treasury_configured: s.treasury_configured,
+            note: s.note,
+        })
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HraPendingDto {
+    name: String,
+    txid: String,
+    commit_height: u64,
+    blocks_remaining: u64,
+    ready: bool,
+}
+
+#[tauri::command]
+async fn hra_pending() -> Result<Vec<HraPendingDto>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| {
+        names::pending(cfg).map(|v| {
+            v.into_iter()
+                .map(|p| HraPendingDto {
+                    name: p.name,
+                    txid: p.txid,
+                    commit_height: p.commit_height,
+                    blocks_remaining: p.blocks_remaining,
+                    ready: p.ready,
+                })
+                .collect()
+        })
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HraNameDto {
+    name: String,
+    owner: String,
+    registered_height: u64,
+    expires_height: u64,
+    records: Vec<(u8, String)>,
+    is_primary: bool,
+    listed_price_divi: Option<f64>,
+}
+
+#[tauri::command]
+async fn hra_my_names() -> Result<Vec<HraNameDto>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| {
+        names::my_names(cfg).map(|v| {
+            v.into_iter()
+                .map(|n| HraNameDto {
+                    name: n.name,
+                    owner: n.owner,
+                    registered_height: n.registered_height,
+                    expires_height: n.expires_height,
+                    records: n.records,
+                    is_primary: n.is_primary,
+                    listed_price_divi: n.listed_price_divi,
+                })
+                .collect()
+        })
+    })
+}
+
+/// Step 1: reserve a name by publishing only a salted hash of it.
+#[tauri::command]
+async fn hra_commit(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::commit(cfg, &name))
+}
+
+/// Step 2: reveal the name and pay the registration fee.
+#[tauri::command]
+async fn hra_register(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::register(cfg, &name))
+}
+
+#[tauri::command]
+async fn hra_forget(name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || names::forget_pending(&name))
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+#[tauri::command]
+async fn hra_set_divi_address(name: String, address: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::set_divi_address(cfg, &name, &address))
+}
+
+#[tauri::command]
+async fn hra_set_record(name: String, key: u8, valueHex: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::set_record(cfg, &name, key, &valueHex))
+}
+
+#[tauri::command]
+async fn hra_clear_record(name: String, keys: Vec<u8>) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::clear_record(cfg, &name, keys))
+}
+
+#[tauri::command]
+async fn hra_transfer(name: String, newOwner: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::transfer(cfg, &name, &newOwner))
+}
+
+#[tauri::command]
+async fn hra_set_primary(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::set_primary(cfg, &name))
+}
+
+#[tauri::command]
+async fn hra_renew(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::renew(cfg, &name))
+}
+
+/// Look up the Divi address a name points at, from THIS wallet's own index.
+/// Never asks a remote service: a wrong answer here sends money to a stranger.
+#[tauri::command]
+async fn hra_resolve(name: String) -> Result<Option<String>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::resolve(cfg, &name))
 }
 
 #[derive(Serialize)]
@@ -1240,6 +1428,20 @@ fn main() {
             open_url,
             poe_timestamp,
             poe_verify,
+            hra_quote,
+            hra_sync,
+            hra_pending,
+            hra_my_names,
+            hra_commit,
+            hra_register,
+            hra_forget,
+            hra_set_divi_address,
+            hra_set_record,
+            hra_clear_record,
+            hra_transfer,
+            hra_set_primary,
+            hra_renew,
+            hra_resolve,
             staking_wallets,
             lottery_info,
             lottery_wins,

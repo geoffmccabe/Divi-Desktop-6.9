@@ -17,6 +17,11 @@ export const NAV: NavItem[] = [
   { id: "collectibles", label: "Divi Collectibles", icon: "collectibles" },
   { id: "tokens", label: "Divi Meta Tokens", icon: "tokens" },
   { id: "governance", label: "Governance", icon: "governance" },
+  // A newline in a label wraps the row onto two tight lines (see .nav-item span
+  // in index.css). Used where a name is genuinely long rather than to save a
+  // few pixels — "Human Readable Addresses" on one line would either squeeze
+  // the whole sidebar wider or truncate.
+  { id: "hra", label: "Human Readable\nAddresses", icon: "hra" },
   { id: "addressbook", label: "Address Book", icon: "addressbook" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];

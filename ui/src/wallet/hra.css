@@ -1,0 +1,193 @@
+/* Human Readable Addresses (Divi Names).
+   Kept out of index.css deliberately: that file is edited by every workstream
+   at once and is the main source of merge conflicts. Everything here is
+   prefixed .hra- so it can never collide with another feature's styles. */
+
+.hra { display: flex; flex-direction: column; gap: 18px; max-width: 900px; }
+.hra-intro .ts-head { margin-bottom: 6px; }
+
+/* ---- state banners ---- */
+.hra-banner {
+  padding: 10px 14px;
+  border-radius: 9px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  border: 1px solid;
+}
+.hra-banner-preview {
+  background: hsl(var(--warning) / 0.12);
+  border-color: hsl(var(--warning) / 0.5);
+  color: hsl(var(--warning));
+}
+.hra-banner-halt {
+  background: hsl(var(--destructive) / 0.12);
+  border-color: hsl(var(--destructive) / 0.5);
+  color: hsl(var(--destructive));
+}
+.hra-banner-behind {
+  background: hsl(var(--muted) / 0.5);
+  border-color: hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+}
+
+/* ---- tabs ---- */
+.hra-tabs { display: flex; gap: 4px; width: 100%; border-bottom: 1px solid hsl(var(--border)); }
+.hra-tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 8px 14px;
+  margin-bottom: -1px;
+  cursor: pointer;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+.hra-tab:hover { color: hsl(var(--foreground)); }
+.hra-tab-on { color: hsl(var(--primary)); border-bottom-color: hsl(var(--primary)); font-weight: 600; }
+
+/* ---- forms ---- */
+.hra-form { display: flex; flex-direction: column; gap: 12px; max-width: 620px; }
+.hra-field { display: flex; flex-direction: column; gap: 5px; }
+.hra-field > span {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+.hra-dim { opacity: 0.78; }
+.hra-sub { margin: 0 0 8px; font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); }
+
+/* ---- availability ---- */
+.hra-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 9px;
+  background: hsl(var(--muted) / 0.35);
+}
+.hra-canon { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 1.05rem; }
+.hra-free { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: hsl(var(--primary)); }
+.hra-taken { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: hsl(var(--destructive)); }
+
+/* ---- the three steps ---- */
+.hra-steps {
+  border: 1px solid hsl(var(--border));
+  border-radius: 9px;
+  padding: 12px 16px;
+  background: hsl(var(--muted) / 0.25);
+}
+.hra-steps-head { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
+.hra-steps ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; }
+.hra-steps li { font-size: 0.84rem; line-height: 1.5; color: hsl(var(--muted-foreground)); }
+.hra-steps strong { color: hsl(var(--foreground)); }
+
+/* ---- reservations ---- */
+.hra-pending { display: flex; flex-direction: column; gap: 10px; }
+.hra-pending-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 9px;
+}
+.hra-pending-name { font-size: 0.98rem; font-weight: 600; }
+.hra-pending-actions { margin-left: auto; display: flex; gap: 8px; }
+
+/* ---- owned names ---- */
+.hra-list { display: flex; flex-direction: column; gap: 10px; }
+.hra-card { border: 1px solid hsl(var(--border)); border-radius: 11px; overflow: hidden; }
+.hra-card-open { border-color: hsl(var(--primary) / 0.55); }
+.hra-card-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; }
+.hra-card-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  color: hsl(var(--foreground));
+}
+.hra-name { font-size: 1.02rem; font-weight: 600; }
+.hra-badge {
+  font-size: 0.63rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: hsl(var(--primary) / 0.18);
+  color: hsl(var(--primary));
+}
+.hra-badge-sale { background: hsl(var(--warning) / 0.18); color: hsl(var(--warning)); }
+.hra-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 4px 14px 16px;
+  border-top: 1px solid hsl(var(--border));
+}
+
+/* ---- record table ---- */
+.hra-records { display: flex; flex-direction: column; gap: 10px; }
+.hra-table { width: 100%; border-collapse: collapse; }
+.hra-table th {
+  text-align: left;
+  font-size: 0.68rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  font-weight: 600;
+  padding: 7px 10px 7px 0;
+  white-space: nowrap;
+  vertical-align: top;
+}
+.hra-table td { padding: 7px 0; font-size: 0.84rem; color: hsl(var(--foreground)); }
+.hra-val { word-break: break-all; padding-right: 12px !important; }
+.hra-rowaction { text-align: right; white-space: nowrap; }
+.hra-addrow { display: grid; grid-template-columns: minmax(180px, 1fr) 2fr; gap: 12px; }
+
+.hra-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.hra-transfer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid hsl(var(--destructive) / 0.35);
+  border-radius: 9px;
+}
+
+/* ---- lookup answer ---- */
+.hra-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid hsl(var(--primary) / 0.5);
+  border-radius: 11px;
+  background: hsl(var(--primary) / 0.08);
+}
+.hra-answer-label { font-size: 0.68rem; letter-spacing: 0.08em; text-transform: uppercase; color: hsl(var(--muted-foreground)); }
+/* Never abbreviated: the whole point is that the user can read it and compare. */
+.hra-answer-addr { font-size: 0.95rem; word-break: break-all; color: hsl(var(--foreground)); }
+
+.hra-footnote {
+  font-size: 0.76rem;
+  line-height: 1.5;
+  color: hsl(var(--muted-foreground));
+  border-top: 1px solid hsl(var(--border));
+  padding-top: 10px;
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .hra-addrow { grid-template-columns: 1fr; }
+}

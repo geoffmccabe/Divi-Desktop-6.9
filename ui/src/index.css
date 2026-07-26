@@ -421,6 +421,10 @@ h1, h2, h3 { font-family: var(--font-heading); }
   font-size: 0.92rem; text-align: left;
   transition: background 0.15s ease, color 0.15s ease;
 }
+/* A nav label containing a newline wraps onto two lines. Line-height is pulled
+   in tight (1.05) so a two-line row is barely taller than a one-line one, and
+   the rows stay evenly spaced. Single-line labels are unaffected. */
+.nav-item span { white-space: pre-line; line-height: 1.05; }
 .nav-item:hover { background: hsl(var(--primary) / 0.3); color: hsl(var(--foreground)); }
 .nav-item-active { background: hsl(var(--primary) / 0.18); color: hsl(var(--foreground)); }
 .nav-item-active .ic { color: hsl(var(--primary)); }
