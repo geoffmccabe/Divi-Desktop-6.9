@@ -441,6 +441,32 @@ struct MemEntryDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ConflictDto {
+    outpoint: String,
+    kept: String,
+    rejected: String,
+    time: i64,
+}
+
+/// Recent double-spend conflicts the node saw. Empty on daemons without the RPC.
+#[tauri::command]
+async fn mempool_conflicts() -> Vec<ConflictDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        NodeConfig::load()
+            .map(|cfg| {
+                mempool::conflicts(&cfg)
+                    .into_iter()
+                    .map(|c| ConflictDto { outpoint: c.outpoint, kept: c.kept, rejected: c.rejected, time: c.time })
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct MempoolDto {
     tip: i64,
     best_hash: String,
@@ -1223,6 +1249,7 @@ fn main() {
             probe_peers,
             ping_nodes,
             mempool_snapshot,
+            mempool_conflicts,
             bearer_create,
             bearer_sweep,
             bearer_status,

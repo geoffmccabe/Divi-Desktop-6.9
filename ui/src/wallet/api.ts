@@ -191,6 +191,16 @@ export interface MempoolSnap {
 export const mempoolSnapshot = (known: string[]) =>
   invoke<MempoolSnap | null>("mempool_snapshot", { known });
 
+// Double-spend conflicts the node has seen. `kept` is the tx it accepted; a
+// tracked incoming payment whose txid appears as `kept` is under attack.
+export interface MempoolConflict {
+  outpoint: string;
+  kept: string;
+  rejected: string;
+  time: number;
+}
+export const mempoolConflicts = () => invoke<MempoolConflict[]>("mempool_conflicts");
+
 // ---- Bearer transactions (redeemable claim codes) ----
 export interface BearerCreated {
   code: string; // the redeemable code (this IS the money — treat as a secret)
