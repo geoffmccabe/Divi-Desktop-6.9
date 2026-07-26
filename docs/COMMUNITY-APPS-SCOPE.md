@@ -358,16 +358,38 @@ CSP work is done and verified.
    exception. Section 3.
 4. **Rejected builds** — developer pays half. Section 6.
 
+5. **Identity = sign with your Divi address.** No login, no password, no LW-SSO
+   dependency. The wallet signs a challenge with an address the user controls;
+   that address *is* the developer account, the credit balance, the app-ownership
+   record, and the payout destination. The NFD work already proved Divi's
+   `signmessage` is deterministic and safe to build on. **This takes LW-SSO off
+   the critical path entirely** — the single biggest schedule win in this plan.
+6. **Build containers run on Cloudflare.** Geoff's existing account
+   (`de32ea1587de2e94e24fab49a21d436c`, geoff@lightningworks.io) already holds
+   `containers` and `cloudchamber` write scopes, so we can provision the sandbox
+   with no new vendor, no new machine, and nothing for Geoff to set up. Nothing
+   runs on his laptop, and nothing goes near `109.228.38.104` (which runs `divid`,
+   the scan proxy and the AI gateway).
+7. **Styling: nothing hard-coded, ever.** Every colour, font, radius, blur and
+   glow in the new panels comes from `ui/src/theme/tokens.ts`, and every icon from
+   `ui/src/icons.ts` through `ui/src/Icon.tsx`. New surfaces get their own token
+   group so they appear in the Style editor and can be reskinned and sold like the
+   rest. No inline hex, no literal font names, no bespoke SVG in components.
+
 ### Still open
 
-5. **Launch posture** — curated (we approve every app by hand at first) or open
+8. **Launch posture** — curated (we approve every app by hand at first) or open
    with automated gating from day one? Recommendation: curated, same as the NFD
    marketplace plan. Can be decided as late as Phase 5.
-6. **Where the build containers run** — a new dedicated machine, or a managed
-   container service. Must not be the scanner box at `109.228.38.104`, which runs
-   `divid`, the scan proxy, and the AI gateway. Decide before Phase 2 starts.
-7. **The DIVI/USD billing rate** — the number itself, and how often you revise it.
-   Needed before Phase 4.
+9. **The DIVI/USD billing rate** — the number itself, and how often you revise it.
+   Needed before Phase 4, not before.
+10. **The seed apps.** Geoff writes these when the time comes. Phase 1 therefore
+    proves itself with a throwaway internal test harness instead (section 11), so
+    the runtime is never blocked waiting on content.
+11. **Media hosting needs one small action from Geoff.** The Cloudflare token
+    currently has no `r2` scope, so object storage for app thumbnails and videos
+    is not reachable yet. Either re-run `wrangler login` to add it, or we use the
+    existing Supabase project's storage instead. Only needed by Phase 5.
 
 ---
 
@@ -396,7 +418,100 @@ CSP work is done and verified.
 
 ---
 
-## 10. What this touches in the repo
+## 10. Action plan — the first four work blocks
+
+Written as work blocks rather than dates. Each ends in something Geoff can look at
+or click, and each is safe to stop after.
+
+### Block A — make the wallet safe to host other people's code
+
+*Nothing else can start before this. Needs nothing from Geoff.*
+
+1. Inventory what the current UI actually loads — every image, font, style and
+   script origin — so the policy is written from evidence, not guesswork.
+2. Add a content security policy to `crates/app/tauri.conf.json`, starting strict
+   and relaxing only where the inventory proves it is needed.
+3. Rebuild and walk the whole wallet: overview, send, receive, history, network
+   map, collectibles, tokens, agent, address book, settings, admin drawer, sounds,
+   skins. Anything the policy breaks gets fixed properly, not by widening the rule.
+4. Add the narrow YouTube exception, and confirm it does not widen anything else.
+5. Add a regression note so a future change cannot quietly drop the policy.
+
+**Done when:** the wallet behaves identically with the policy on, and Geoff has
+run his own normal session against the build without noticing a difference.
+
+### Block B — the runtime and the store panel
+
+*Needs nothing from Geoff except a look at the result.*
+
+1. Write the app manifest format and the permission catalogue down as a document
+   in the repo first, so the API is designed once rather than accreted.
+2. Build the broker: the only channel between an app and the wallet. Read-only
+   permissions to begin with — balance, addresses, history — with a hard deny on
+   everything else and a log of every call.
+3. Build the sandboxed host frame, immersive mode included: sidebar collapses,
+   header collapses, escape control always visible, animated to match the existing
+   admin drawer.
+4. Build the Community Apps browse panel: 3:2 cards, still image, slideshow,
+   video, click-to-load YouTube. New token group so all of it is skinnable.
+5. Write a throwaway internal test harness app whose only job is to try to break
+   out — reach the Tauri bridge, call an undeclared permission, read another app's
+   storage, phone home to a host it never declared. All of it must fail, visibly.
+6. Add bundle signature verification in Rust so DD69 refuses to run anything we
+   did not sign.
+
+**Done when:** the harness app runs full-window, every escape attempt fails, and
+the panel is reskinnable from the Style editor.
+
+### Block C — the builder
+
+*Needs the Cloudflare account, which we already have.*
+
+1. Stand up one sandbox container on Cloudflare and prove the basics: a session
+   starts, writes files, builds, tears down, and cannot reach the network except
+   where we allow it.
+2. Build the agent loop — ours, not a vendor's — with the model call behind an
+   adapter pointed at the existing `ai.divi.love` gateway. Claude first; adding
+   another model must be a config entry, and we test that claim before calling the
+   block done.
+3. Wire the builder panel: chat, live preview, model dropdown, token meter. Styled
+   from tokens like everything else.
+4. Measure real sessions. Build three or four apps of genuinely different sizes
+   and record what they actually cost. **This is the number Phase 4 pricing
+   depends on, and we currently do not have it.**
+
+**Done when:** we can build a working community app by chatting, and we know what
+a session costs to within a sensible range.
+
+### Block D — identity, gates and money
+
+1. Address-signature login: challenge, signature, session. The wallet side is
+   small because the signing already exists.
+2. Prompt scanner and code gate, plus the admin panel with the rules editor,
+   decision log and replay.
+3. Build an adversarial test set — our own honest attempts to jailbreak it — and
+   tune against that, not against imagination.
+4. DIVI credits: deposit, reserve, charge at 2x, half-charge on gate rejection,
+   refund the difference, hard caps, admin-set rate.
+
+**Done when:** an outside developer can fund an account, build an app, get billed
+correctly, and get stopped when they try something they should not.
+
+### What Geoff does, and when
+
+| When | What |
+|---|---|
+| Now | Say go |
+| End of Block A | Use the build normally for a day; tell me if anything feels off |
+| End of Block B | Look at the store panel and the immersive mode; redirect the look if it's wrong |
+| End of Block C | Read the real cost numbers, then set the DIVI/USD rate |
+| Before Block D ships | Decide curated vs open launch |
+| Before Phase 5 | Either re-run `wrangler login` for storage access, or say use Supabase |
+| Whenever | Write the seed apps |
+
+---
+
+## 11. What this touches in the repo
 
 New, so no collision with the other agents:
 
