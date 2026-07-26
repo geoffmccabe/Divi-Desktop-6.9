@@ -105,7 +105,7 @@ export function HraPanel() {
         {(
           [
             ["mine", "My Names"],
-            ["get", "Get a Name"],
+            ["get", "Register a Name"],
             ["lookup", "Look Up a Name"],
           ] as [Tab, string][]
         ).map(([id, label]) => (
