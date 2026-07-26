@@ -1043,6 +1043,12 @@ h1, h2, h3 { font-family: var(--font-heading); }
   border: 1px solid hsl(var(--primary) / 0.5); border-radius: 999px; padding: 2px 10px;
 }
 .pincode-sub { opacity: 0.85; }
+.pin-code-big {
+  align-self: center; font-family: ui-monospace, Menlo, monospace; font-weight: 700;
+  font-size: 2rem; letter-spacing: 0.35em; padding-left: 0.35em;
+  color: hsl(var(--primary)); background: hsl(var(--primary) / 0.1);
+  border: 1px solid hsl(var(--primary) / 0.45); border-radius: 10px; padding: 8px 18px;
+}
 .send-field { display: flex; flex-direction: column; gap: 5px; }
 .send-label { font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
 .send-avail { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
