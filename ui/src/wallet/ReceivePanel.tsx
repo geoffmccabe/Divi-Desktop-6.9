@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { addressQr, newReceiveAddress, walletAddresses, openUrl } from "./api";
 import { playSound } from "../sound";
 import { PaymentRequests } from "./PaymentRequests";
+import { IncomingWatch } from "./IncomingWatch";
+import { BearerRedeem } from "./BearerPanel";
 
 export function ReceivePanel() {
-  const [tab, setTab] = useState<"receive" | "requests">("receive");
+  const [tab, setTab] = useState<"receive" | "requests" | "bearer">("receive");
   const [addr, setAddr] = useState<string | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -125,6 +127,9 @@ export function ReceivePanel() {
 
   return (
     <div className="rcv-tabbed">
+      {/* Clicking Receive means the user expects money — scan the mempool
+          straight away and alert on anything arriving. */}
+      <IncomingWatch />
       <nav className="poe-tabs" role="tablist">
         <button
           className={"poe-tab" + (tab === "receive" ? " poe-tab-on" : "")}
@@ -142,8 +147,16 @@ export function ReceivePanel() {
         >
           Payment Requests
         </button>
+        <button
+          className={"poe-tab" + (tab === "bearer" ? " poe-tab-on" : "")}
+          onClick={() => setTab("bearer")}
+          role="tab"
+          aria-selected={tab === "bearer"}
+        >
+          Receive Bearer
+        </button>
       </nav>
-      {tab === "requests" ? <PaymentRequests /> : receiveBody}
+      {tab === "requests" ? <PaymentRequests /> : tab === "bearer" ? <BearerRedeem /> : receiveBody}
     </div>
   );
 }

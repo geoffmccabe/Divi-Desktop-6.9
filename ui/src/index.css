@@ -1092,6 +1092,23 @@ h1, h2, h3 { font-family: var(--font-heading); }
 /* ---- Fast Send arrivals in history ---- */
 .activity-row.fast { border-left: 3px solid hsl(25 95% 56%); padding-left: 9px; }
 .act-fast { color: hsl(25 95% 58%); font-weight: 800; letter-spacing: 0.02em; }
+/* Bearer-certificate send in history/overview */
+.act-bearer { color: hsl(280 60% 70%); font-weight: 700; letter-spacing: 0.02em; }
+
+/* ---- Receive view: incoming-payment watcher ---- */
+.rcv-watch { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.rcv-watch.idle { font-size: 0.8rem; color: hsl(var(--muted-foreground)); margin-bottom: 12px; }
+.rcv-watch-hit {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 13px; border-radius: 10px;
+  border: 1px solid hsl(145 60% 50% / 0.5); background: hsl(145 60% 50% / 0.08);
+  animation: fr-pop 0.25s ease-out;
+}
+.rcv-watch-hit.fast { border-color: hsl(25 95% 56% / 0.6); background: hsl(25 95% 55% / 0.08); }
+.rcv-watch-badge { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.03em; color: hsl(145 65% 52%); }
+.rcv-watch-hit.fast .rcv-watch-badge { color: hsl(25 95% 58%); }
+.rcv-watch-amt { font-size: 1rem; font-weight: 700; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; }
+.rcv-watch-note { font-size: 0.74rem; color: hsl(var(--muted-foreground)); margin-left: auto; }
 
 /* ---- Spendable fiat value (header) ---- */
 /* Fiat value: same size as the DIVI amount, white, right-justified in the row;

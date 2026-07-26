@@ -175,7 +175,7 @@ function BearerCreate() {
   );
 }
 
-function BearerRedeem() {
+export function BearerRedeem() {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);

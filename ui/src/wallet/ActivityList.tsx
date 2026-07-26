@@ -3,6 +3,7 @@ import { openUrl, explorerTxUrl, type Tx } from "./api";
 import { useTransactions, type TxStatus } from "./useTransactions";
 import { confDisplay } from "./confirmations";
 import { isFastTxid } from "./fastReceiveStore";
+import { loadBearerCodes } from "./bearerCodes";
 import { fmtDivi, relTime } from "../status";
 import { Icon } from "../Icon";
 
@@ -24,7 +25,7 @@ const FILTERS: { id: string; label: string; c: string; disabled?: boolean; title
   { id: "lottery", label: "Lottery", c: "var(--primary)", disabled: true, title: "Coming soon — lottery wins currently appear under Stakes" },
 ];
 
-function Row({ t }: { t: Tx }) {
+function Row({ t, bearer }: { t: Tx; bearer?: boolean }) {
   const [copied, setCopied] = useState(false);
   // Flash the confirmation count gold each time a new confirmation lands.
   const prevConf = useRef(t.confirmations);
@@ -81,6 +82,10 @@ function Row({ t }: { t: Tx }) {
         ) : t.kind === "stake" ? (
           <span className={dead ? "act-kind" : "act-kind act-stake-earned"} style={dead ? deadStyle : undefined}>
             {dead ? "Stake Orphaned" : "Stake Earned!"}
+          </span>
+        ) : bearer ? (
+          <span className="act-kind act-bearer" style={dead ? deadStyle : undefined}>
+            🎟 Bearer Certificate Sent
           </span>
         ) : (
           <span className={"act-kind act-" + t.kind} style={dead ? deadStyle : undefined}>
@@ -141,6 +146,9 @@ function statusText(s: TxStatus, n: number): string {
 export function ActivityList() {
   const { txs, status, refresh } = useTransactions();
   const [filter, setFilter] = useState("all");
+  // Bearer-certificate funding txs created on this machine, so history can label
+  // them "Bearer Certificate Sent" instead of a bare "Sent".
+  const bearerTxids = new Set(loadBearerCodes().map((b) => b.txid));
   const shown = filter === "all" ? txs : txs.filter((t) => t.kind === filter);
   const bad = status.state === "unreachable";
   const ok = status.state === "uptodate";
@@ -180,7 +188,7 @@ export function ActivityList() {
       </div>
       <ul className="activity">
         {shown.map((t, i) => (
-          <Row key={t.txid + i} t={t} />
+          <Row key={t.txid + i} t={t} bearer={bearerTxids.has(t.txid)} />
         ))}
         {ok && shown.length === 0 && (
           <li className="wl-empty">{filter === "all" ? "No transactions yet." : "No matching transactions."}</li>
