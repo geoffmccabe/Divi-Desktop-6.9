@@ -4,6 +4,7 @@ import { useTransactions, type TxStatus } from "./useTransactions";
 import { confDisplay } from "./confirmations";
 import { isFastTxid } from "./fastReceiveStore";
 import { loadBearerCodes } from "./bearerCodes";
+import { loadPinSends } from "./pinSends";
 import { fmtDivi, relTime } from "../status";
 import { Icon } from "../Icon";
 
@@ -25,7 +26,10 @@ const FILTERS: { id: string; label: string; c: string; disabled?: boolean; title
   { id: "lottery", label: "Lottery", c: "var(--primary)", disabled: true, title: "Coming soon — lottery wins currently appear under Stakes" },
 ];
 
-function Row({ t, bearer }: { t: Tx; bearer?: boolean }) {
+// `cert`: if this tx is a Bearer/Pin certificate the wallet created, the type
+// and the clean intended amount (from our local record), so the row can name it
+// and show "700 DIVI" rather than the funded "700.0001".
+function Row({ t, cert }: { t: Tx; cert?: { type: "pin" | "bearer"; amount: number } }) {
   const [copied, setCopied] = useState(false);
   // Flash the confirmation count gold each time a new confirmation lands.
   const prevConf = useRef(t.confirmations);
@@ -88,7 +92,11 @@ function Row({ t, bearer }: { t: Tx; bearer?: boolean }) {
           </span>
         ) : isMove ? (
           <span className="act-kind act-bearer" style={dead ? deadStyle : undefined}>
-            {bearer ? "🎟 Bearer Certificate Created" : "Locked in a Certificate"}
+            {cert?.type === "pin"
+              ? "🔒 Locked in a Pin Code Send"
+              : cert?.type === "bearer"
+                ? "🎟 Locked in a Bearer Certificate"
+                : "Locked in a Certificate"}
           </span>
         ) : (
           <span className={"act-kind act-" + t.kind} style={dead ? deadStyle : undefined}>
@@ -97,7 +105,7 @@ function Row({ t, bearer }: { t: Tx; bearer?: boolean }) {
         )}
         {isMove ? (
           <span className="act-amt act-amt-locked" style={dead ? deadStyle : undefined}>
-            {fmtDivi(Math.abs(t.amount))} DIVI locked
+            {fmtDivi(cert ? cert.amount : Math.abs(t.amount))} DIVI
           </span>
         ) : (
           <span
@@ -155,9 +163,16 @@ function statusText(s: TxStatus, n: number): string {
 export function ActivityList() {
   const { txs, status, refresh } = useTransactions();
   const [filter, setFilter] = useState("all");
-  // Bearer-certificate funding txs created on this machine, so history can label
-  // them "Bearer Certificate Sent" instead of a bare "Sent".
-  const bearerTxids = new Set(loadBearerCodes().map((b) => b.txid));
+  // Bearer/Pin certificate funding txs created on this machine, mapped to the
+  // clean intended amount, so history can name them and show "700" not "700.0001".
+  const pinAmt = new Map(loadPinSends().map((p) => [p.txid, p.amount]));
+  const bearerAmt = new Map(loadBearerCodes().map((b) => [b.txid, b.amount]));
+  const certOf = (txid: string): { type: "pin" | "bearer"; amount: number } | undefined =>
+    pinAmt.has(txid)
+      ? { type: "pin", amount: pinAmt.get(txid)! }
+      : bearerAmt.has(txid)
+        ? { type: "bearer", amount: bearerAmt.get(txid)! }
+        : undefined;
   const shown = filter === "all" ? txs : txs.filter((t) => t.kind === filter);
   const bad = status.state === "unreachable";
   const ok = status.state === "uptodate";
@@ -197,7 +212,7 @@ export function ActivityList() {
       </div>
       <ul className="activity">
         {shown.map((t, i) => (
-          <Row key={t.txid + i} t={t} bearer={bearerTxids.has(t.txid)} />
+          <Row key={t.txid + i} t={t} cert={certOf(t.txid)} />
         ))}
         {ok && shown.length === 0 && (
           <li className="wl-empty">{filter === "all" ? "No transactions yet." : "No matching transactions."}</li>
