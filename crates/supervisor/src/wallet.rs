@@ -508,6 +508,10 @@ fn tx_from_json(t: &serde_json::Value) -> Tx {
         "receive"
     } else if cat == "send" {
         "send"
+    } else if cat == "move" {
+        // Internal account transfer, e.g. locking coins into a Bearer/Pin
+        // certificate. Not a real receive; the UI labels/values it specially.
+        "move"
     } else if is_stake_cat(cat) {
         "stake"
     } else {
@@ -539,6 +543,8 @@ pub fn recent(cfg: &NodeConfig, count: i64) -> Vec<Tx> {
                 "receive"
             } else if cat == "send" {
                 "send"
+            } else if cat == "move" {
+                "move" // certificate-creation / internal transfer (see tx_from_json)
             } else if is_stake_cat(cat) {
                 "stake"
             } else {

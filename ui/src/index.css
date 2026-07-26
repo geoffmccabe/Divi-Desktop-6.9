@@ -296,6 +296,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .act-amt { font-weight: 600; }
 .act-amt.pos { color: hsl(var(--success)); }
 .act-amt.neg { color: hsl(var(--foreground)); }
+/* Certificate lock: not income, so shown muted, never green. */
+.act-amt-locked { color: hsl(var(--muted-foreground)); font-weight: 500; }
 .act-addr-full { font-family: ui-monospace, monospace; font-size: 0.72rem; color: hsl(var(--muted-foreground)); word-break: break-all; line-height: 1.5; }
 .act-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .act-time { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }

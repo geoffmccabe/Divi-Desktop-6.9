@@ -60,6 +60,9 @@ function Row({ t, bearer }: { t: Tx; bearer?: boolean }) {
   const deadStyle = { color: "hsl(var(--muted-foreground))" };
   // Fast Send arrivals get an orange badge so they stand out in history.
   const fast = isReceive && !dead && isFastTxid(t.txid);
+  // A "move" is coins locked into a Bearer/Pin certificate (still yours until
+  // claimed): NOT income, so it must not read as a green "+amount received".
+  const isMove = t.kind === "move";
 
   return (
     <li className={"activity-row" + (fast ? " fast" : "")}>
@@ -83,22 +86,28 @@ function Row({ t, bearer }: { t: Tx; bearer?: boolean }) {
           <span className={dead ? "act-kind" : "act-kind act-stake-earned"} style={dead ? deadStyle : undefined}>
             {dead ? "Stake Orphaned" : "Stake Earned!"}
           </span>
-        ) : bearer ? (
+        ) : isMove ? (
           <span className="act-kind act-bearer" style={dead ? deadStyle : undefined}>
-            🎟 Bearer Certificate Sent
+            {bearer ? "🎟 Bearer Certificate Created" : "Locked in a Certificate"}
           </span>
         ) : (
           <span className={"act-kind act-" + t.kind} style={dead ? deadStyle : undefined}>
             {KIND_LABEL[t.kind] ?? "Transaction"}
           </span>
         )}
-        <span
-          className={dead ? "act-amt" : "act-amt " + (t.amount < 0 ? "neg" : "pos")}
-          style={dead ? { ...deadStyle, textDecoration: "line-through" } : undefined}
-        >
-          {t.amount > 0 ? "+" : ""}
-          {fmtDivi(t.amount)} DIVI
-        </span>
+        {isMove ? (
+          <span className="act-amt act-amt-locked" style={dead ? deadStyle : undefined}>
+            {fmtDivi(Math.abs(t.amount))} DIVI locked
+          </span>
+        ) : (
+          <span
+            className={dead ? "act-amt" : "act-amt " + (t.amount < 0 ? "neg" : "pos")}
+            style={dead ? { ...deadStyle, textDecoration: "line-through" } : undefined}
+          >
+            {t.amount > 0 ? "+" : ""}
+            {fmtDivi(t.amount)} DIVI
+          </span>
+        )}
       </div>
       {t.address && <div className="act-addr-full">{t.address}</div>}
       <div className="act-bottom">
