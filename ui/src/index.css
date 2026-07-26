@@ -1409,6 +1409,94 @@ h1, h2, h3 { font-family: var(--font-heading); }
   100% { background: transparent; }
 }
 
+/* ── Contacts (Address Book) ─────────────────────────────────────────────── */
+.cb-panel { display: flex; flex-direction: column; gap: 12px; }
+.cb-toolbar { display: flex; gap: 8px; align-items: center; }
+.cb-search { flex: 1; }
+.cb-list { display: flex; flex-direction: column; gap: 8px; }
+.cb-card {
+  border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 10px 12px;
+  background: hsl(var(--card) / 0.4); display: flex; flex-direction: column; gap: 6px;
+}
+.cb-card-main { display: flex; align-items: center; gap: 10px; }
+.cb-card-id { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.cb-card-name { display: flex; align-items: center; gap: 7px; font-weight: 600; color: hsl(var(--foreground)); }
+.cb-type {
+  font-size: 0.6rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
+  border-radius: 5px; padding: 1px 5px; color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border));
+}
+.cb-type-person { color: hsl(210 70% 70%); border-color: hsl(210 70% 60% / 0.5); }
+.cb-type-service { color: hsl(275 60% 72%); border-color: hsl(275 60% 62% / 0.5); }
+.cb-type-wallet { color: hsl(145 55% 62%); border-color: hsl(145 55% 55% / 0.5); }
+.cb-known { font-size: 0.62rem; font-weight: 600; color: hsl(145 60% 58%); }
+.cb-addr {
+  display: inline-flex; align-items: center; gap: 5px; background: none; border: none; cursor: pointer;
+  color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; font-size: 0.78rem; padding: 0;
+}
+.cb-addr:hover { color: hsl(var(--foreground)); }
+.cb-addr-extra { display: flex; margin-left: 44px; }
+.cb-addr-lbl { color: hsl(210 55% 70%); margin-right: 6px; }
+.cb-note-text { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+.cb-star { background: none; border: none; cursor: pointer; font-size: 1.1rem; color: hsl(var(--muted-foreground) / 0.5); line-height: 1; }
+.cb-star.on { color: hsl(45 100% 60%); }
+.cb-more { align-self: flex-start; font-size: 0.72rem; }
+.cb-emoji-avatar { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; font-size: 22px; flex: none; }
+.cb-card-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.cb-card-actions .wl-btn { padding: 4px 10px; font-size: 0.76rem; display: inline-flex; align-items: center; gap: 5px; }
+.cb-del:hover { color: hsl(0 75% 62%); border-color: hsl(0 75% 55% / 0.6); }
+
+/* Editor */
+.cb-editor { display: flex; flex-direction: column; gap: 12px; padding: 14px; }
+.cb-editor-head { font-weight: 700; font-size: 1rem; color: hsl(var(--foreground)); }
+.cb-types button { text-transform: none; }
+.cb-emoji { max-width: 220px; }
+.cb-addr-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.cb-addr-row .wl-input { flex: 1; }
+.cb-addr-label { flex: 0 0 90px !important; }
+.cb-valid { width: 1em; text-align: center; font-weight: 700; }
+.cb-ok { color: hsl(145 60% 58%); }
+.cb-bad { color: hsl(0 75% 62%); }
+.cb-checking { color: hsl(var(--muted-foreground)); }
+.cb-note { resize: vertical; min-height: 44px; font-family: inherit; }
+
+/* QR overlay */
+.cb-qr-overlay {
+  position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+.cb-qr-card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 18px; max-width: 300px; }
+.cb-qr-name { font-weight: 700; color: hsl(var(--foreground)); }
+.cb-qr-img { width: 200px; height: 200px; background: #fff; border-radius: 8px; padding: 8px; box-sizing: border-box; }
+.cb-qr-img svg, .cb-qr-img img { width: 100%; height: 100%; display: block; }
+.cb-qr-addr { font-size: 0.72rem; color: hsl(var(--muted-foreground)); word-break: break-all; text-align: center; }
+
+/* Contact picker in Send */
+.send-to-label { display: flex; align-items: center; justify-content: space-between; }
+.cp-wrap { position: relative; }
+.cp-btn {
+  background: none; border: 1px solid hsl(var(--border)); border-radius: 6px; cursor: pointer;
+  color: hsl(var(--muted-foreground)); font-size: 0.72rem; padding: 2px 8px;
+}
+.cp-btn:hover:not(:disabled) { color: hsl(var(--foreground)); }
+.cp-btn:disabled { opacity: 0.4; cursor: default; }
+.cp-menu {
+  position: absolute; right: 0; top: 26px; z-index: 20; width: 240px; max-height: 260px; overflow-y: auto;
+  padding: 5px; display: flex; flex-direction: column; gap: 2px;
+}
+.cp-item { display: flex; align-items: center; gap: 8px; background: none; border: none; cursor: pointer; padding: 5px 6px; border-radius: 6px; text-align: left; }
+.cp-item:hover { background: hsl(var(--muted) / 0.5); }
+.cp-emoji { width: 22px; height: 22px; font-size: 16px; }
+.cp-item-id { display: flex; flex-direction: column; min-width: 0; }
+.cp-item-name { display: flex; align-items: center; gap: 6px; color: hsl(var(--foreground)); font-size: 0.82rem; }
+.cp-item-addr { color: hsl(var(--muted-foreground)); font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+
+/* Contact banner under the Send address field */
+.send-contact { display: flex; align-items: center; gap: 7px; margin-top: 6px; font-size: 0.78rem; }
+.send-contact-name { font-weight: 600; color: hsl(var(--foreground)); }
+.send-contact-known { color: hsl(145 60% 58%); font-weight: 600; }
+.send-contact-new { color: hsl(38 92% 60%); }
+
 /* Creator: upload your own agent image (click or drag). */
 .agent-upload {
   width: 100%; aspect-ratio: 1 / 1; max-width: 190px;
