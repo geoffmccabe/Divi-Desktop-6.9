@@ -55,7 +55,7 @@ fn artifact() -> Option<Artifact> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     return Some(Artifact {
         file: "c2pa-helper-macos-arm64.tar.gz",
-        sha256: "PENDING_MACOS_ARM64",
+        sha256: "a46ce6645116260620b1d26ab6e3c455410f115e1043501ab179be4096509f6c",
     });
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
