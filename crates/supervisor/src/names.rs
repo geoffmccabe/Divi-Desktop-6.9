@@ -358,14 +358,37 @@ fn save_index(idx: &Index) -> Result<(), String> {
 /// wallet, so records would be silently invisible and the panel would show an
 /// empty registry with no explanation. Detected by asking for a transaction we
 /// know exists and is not ours: the first one in a recent block.
-fn has_txindex(rpc: &RpcClient, tip: u64) -> bool {
+fn has_txindex(rpc: &RpcClient, chain: &str, tip: u64) -> bool {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+
+    // The answer cannot change without a node restart, and this runs on every
+    // sync tick, so probing each time would spend three RPC calls every few
+    // seconds to re-learn a constant.
+    if let Ok(c) = cache.lock() {
+        if let Some(known) = c.get(chain) {
+            return *known;
+        }
+    }
+
+    // ⚠ Probe an EARLY block, not a recent one. `getrawtransaction` can read a
+    // transaction that belongs to this wallet even with no index, and on a
+    // regtest or staking node the recent blocks are usually ours, so a recent
+    // probe would report an index that is not there and the panel would show an
+    // empty registry with no explanation. Block 1 is nobody's on a real chain.
     let probe = |h: u64| -> Option<bool> {
         let hash = rpc.call("getblockhash", json!([h])).ok()?.as_str()?.to_string();
         let block = rpc.call("getblock", json!([hash, true])).ok()?;
         let txid = block["tx"].as_array()?.first()?.as_str()?.to_string();
         Some(rpc.call("getrawtransaction", json!([txid, 1])).is_ok())
     };
-    probe(tip.saturating_sub(1)).or_else(|| probe(tip)).unwrap_or(false)
+    let answer = probe(1.min(tip)).or_else(|| probe(tip)).unwrap_or(false);
+
+    if let Ok(mut c) = cache.lock() {
+        c.insert(chain.to_string(), answer);
+    }
+    answer
 }
 
 /// Every DVXP payload in a block, with the address that authored each.
@@ -681,7 +704,7 @@ pub fn sync(cfg: &NodeConfig) -> Result<SyncStatus, String> {
         }
     };
 
-    if !has_txindex(&rpc, tip) {
+    if !has_txindex(&rpc, &chain, tip) {
         return Ok(SyncStatus {
             activated: true,
             activation_height: activation,
