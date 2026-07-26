@@ -28,6 +28,9 @@ pub struct MemEntry {
     pub amount_mine: f64,
     /// Carries an OP_META data payload (a "message", payment request, etc.).
     pub has_data: bool,
+    /// Carries the Fast Send on-chain marker ("DFS1") — a real, sender-declared
+    /// Fast Send, so the receiver can label it truthfully.
+    pub fast: bool,
 }
 
 pub struct MemSnapshot {
@@ -71,6 +74,7 @@ pub fn snapshot(cfg: &NodeConfig, known: &[String]) -> Option<MemSnapshot> {
             category: String::new(),
             amount_mine: 0.0,
             has_data: false,
+            fast: false,
         };
 
         if !known.contains(txid.as_str()) && decoded_budget > 0 {
@@ -99,14 +103,20 @@ fn classify(rpc: &RpcClient, txid: &str, e: &mut MemEntry) {
             .unwrap_or_else(|| if e.amount_mine >= 0.0 { "receive".into() } else { "send".into() });
     }
 
-    // Detect an OP_META data output ("message" / payment request / anchor).
+    // Detect an OP_META data output ("message" / payment request / anchor) and,
+    // specifically, the Fast Send marker.
     if let Ok(dtx) = rpc.call("getrawtransaction", json!([txid, 1])) {
         if let Some(vouts) = dtx["vout"].as_array() {
-            e.has_data = vouts.iter().any(|v| {
+            for v in vouts {
                 let asm = v["scriptPubKey"]["asm"].as_str().unwrap_or("");
                 let hex = v["scriptPubKey"]["hex"].as_str().unwrap_or("");
-                asm.starts_with("OP_META") || asm.starts_with("OP_RETURN") || hex.starts_with("6a")
-            });
+                if asm.starts_with("OP_META") || asm.starts_with("OP_RETURN") || hex.starts_with("6a") {
+                    e.has_data = true;
+                }
+                if crate::fastsend::is_fast_marker(hex) {
+                    e.fast = true;
+                }
+            }
         }
     }
 }

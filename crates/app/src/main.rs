@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, mempool, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, fastsend, mempool, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -436,6 +436,7 @@ struct MemEntryDto {
     category: String,
     amount_mine: f64,
     has_data: bool,
+    fast: bool,
 }
 
 #[derive(Serialize)]
@@ -469,6 +470,7 @@ async fn mempool_snapshot(known: Vec<String>) -> Option<MempoolDto> {
                     category: e.category,
                     amount_mine: e.amount_mine,
                     has_data: e.has_data,
+                    fast: e.fast,
                 })
                 .collect(),
         })
@@ -965,6 +967,19 @@ async fn send_coins(address: String, amount: f64, passphrase: Option<String>) ->
     .map_err(|e| e.to_string())?
 }
 
+/// Fast Send: a raw transaction paying a ~5x priority fee and carrying the
+/// on-chain "DFS1" marker. A hard fee cap is checked against the final signed
+/// tx before broadcast. Returns the txid.
+#[tauri::command]
+async fn fast_send(address: String, amount: f64, passphrase: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        fastsend::fast_send(&cfg, &address, amount, passphrase.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PayReqDto {
@@ -1222,6 +1237,7 @@ fn main() {
             forget_password,
             resume_staking,
             send_coins,
+            fast_send,
             tx_status,
             divi_prices,
             ai_set_key,

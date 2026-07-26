@@ -180,6 +180,7 @@ export interface MemEntry {
   category: string; // "receive" | "send" | ""
   amountMine: number; // DIVI, net to/from the wallet
   hasData: boolean; // carries an OP_META data payload (a "message")
+  fast: boolean; // carries the Fast Send "DFS1" on-chain marker
 }
 export interface MempoolSnap {
   tip: number;
@@ -275,6 +276,9 @@ export const forgetPassword = () => invoke<void>("forget_password");
 export const resumeStaking = () => invoke<StakeStart>("resume_staking");
 export const sendCoins = (address: string, amount: number, passphrase?: string) =>
   invoke<string>("send_coins", { address, amount, passphrase: passphrase ?? null });
+// Fast Send: raw tx with a ~5x priority fee + on-chain DFS1 marker.
+export const fastSend = (address: string, amount: number, passphrase?: string) =>
+  invoke<string>("fast_send", { address, amount, passphrase: passphrase ?? null });
 
 // Live status of one wallet transaction, for the Fast Send tracker. Negative
 // `confirmations` means the node sees a conflicting (double-spent) transaction.

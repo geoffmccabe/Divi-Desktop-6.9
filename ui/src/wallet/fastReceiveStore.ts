@@ -7,9 +7,9 @@ import { mempoolSnapshot, txStatus } from "./api";
 // single node can actually see. The network-wide rating (DiviGossip / HushProof)
 // is a later phase; every readout here is labelled as this-node-only.
 //
-// Note on the "Fast Send" label: until the on-chain marker ships, we treat every
-// incoming payment as a Fast Send arrival. During testing that is always true
-// (you are the sender pressing Fast Send); the marker will make it exact.
+// Detection is gated on the on-chain "DFS1" marker (mempool entry `fast`), so
+// only a genuine sender-declared Fast Send lights up the chime/modal/orange
+// treatment; an ordinary incoming payment stays a normal receive.
 
 const POLL_MS = 2500;
 const FULLY_CONFIRMED = 6; // Divi ~60s blocks → ~6 min to "fully confirmed"
@@ -147,7 +147,7 @@ async function poll() {
     const snap = await mempoolSnapshot([...mempoolKnown]);
     if (snap) {
       for (const e of snap.entries) {
-        if (e.decoded && e.mine && e.category === "receive" && !byId.has(e.txid)) {
+        if (e.decoded && e.mine && e.category === "receive" && e.fast && !byId.has(e.txid)) {
           const rec: FastRec = {
             txid: e.txid,
             amount: Math.abs(e.amountMine || 0),
