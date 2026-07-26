@@ -224,6 +224,13 @@ def canonical(record: dict) -> str:
 
 
 # ── the identity record ──────────────────────────────────────────────────────
+def auth_stamp(ts: int) -> str:
+    """The exact text a wallet signs to authorise a BODYLESS request (delete,
+    media upload) — where there's no record to canonicalise. Both sides must
+    build this identically."""
+    return f"divi-identity-auth:{ts}"
+
+
 def clean_record(body: dict) -> dict:
     ts = int(body.get("ts", 0))
     if abs(time.time() - ts) > SIG_WINDOW:
@@ -272,13 +279,15 @@ class Handler(BaseHTTPRequestHandler):
         # client-supplied CF-Connecting-IP.
         return self.headers.get("CF-Connecting-IP") or self.client_address[0]
 
-    def _authorise(self, record):
-        """Returns (ok, key) where key identifies the owner: 'divi:<addr>' or
-        'sso:<userid>'. record must already be canonicalised."""
+    def _authorise(self, message):
+        """Returns (ok, key) where key is 'divi:<addr>' or 'sso:<userid>'.
+        `message` is the EXACT text the wallet path must have signed — the caller
+        passes canonical(record) for a publish, or auth_stamp(ts) for a bodyless
+        request (delete / media upload). The SSO path ignores it (token auth)."""
         addr = self.headers.get("X-Divi-Address", "")
         sig = self.headers.get("X-Divi-Signature", "")
         if addr and sig:
-            if verify_divi(addr, sig, canonical(record)):
+            if verify_divi(addr, sig, message):
                 return True, f"divi:{addr}"
             return False, None
         bearer = (self.headers.get("Authorization", "") or "").removeprefix("Bearer ").strip()
@@ -286,6 +295,20 @@ class Handler(BaseHTTPRequestHandler):
         if user and user.get("id"):
             return True, f"sso:{user['id']}"
         return False, None
+
+    def _stamp_auth(self):
+        """Auth for a bodyless request: the wallet signs auth_stamp(ts) with the
+        ts sent in X-Divi-Ts (bounded by SIG_WINDOW); SSO uses its token."""
+        addr = self.headers.get("X-Divi-Address", "")
+        if addr:
+            try:
+                ts = int(self.headers.get("X-Divi-Ts", "0"))
+            except ValueError:
+                return False, None
+            if abs(time.time() - ts) > SIG_WINDOW:
+                return False, None
+            return self._authorise(auth_stamp(ts))
+        return self._authorise("")  # SSO path (message unused)
 
     # ── reads ────────────────────────────────────────────────────────────────
     def do_GET(self):
@@ -363,9 +386,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(400, {"error": "media exceeds 3MB"})
             except Exception as e:
                 return self._json(400, {"error": str(e)})
-            # A signature over an empty record still proves address ownership;
-            # media upload only needs "a real owner", not a specific record.
-            ok, key = self._authorise({"ts": int(time.time())})
+            # Bodyless auth: the wallet signs auth_stamp(ts); SSO uses its token.
+            ok, key = self._stamp_auth()
             if not ok:
                 return self._json(403, {"error": "auth required"})
             if self._limited("media", key):
@@ -392,7 +414,7 @@ class Handler(BaseHTTPRequestHandler):
                 rec = clean_record(json.loads(self._body()))
             except Exception as e:
                 return self._json(400, {"error": str(e)})
-            ok, key = self._authorise(rec)
+            ok, key = self._authorise(canonical(rec))
             if not ok:
                 return self._json(403, {"error": "signature or token invalid"})
             if self._limited("publish", key):
@@ -435,7 +457,7 @@ class Handler(BaseHTTPRequestHandler):
 
         # A node revoking its OWN identity (signature or token proves ownership).
         if p == "/identity/publish":
-            ok, key = self._authorise({"ts": int(time.time())})
+            ok, key = self._stamp_auth()
             if not ok:
                 return self._json(403, {"error": "auth required"})
             with _lock:

@@ -11,7 +11,7 @@ import { invoke } from "../tauri";
 
 // Set this to the deployed host (e.g. "https://nodes.divi.love" or
 // "https://ai.divi.love/identity") once the scanner service is live.
-const BASE = "";
+const BASE = "https://nodes.divi.love";
 
 export function enabled(): boolean {
   return BASE.length > 0;
@@ -39,14 +39,27 @@ function canonical(r: IdentityRecord): string {
 // ── auth: wallet signature OR SSO token ──────────────────────────────────────
 export type Auth = { kind: "wallet" } | { kind: "sso"; token: string };
 
-async function authHeaders(record: IdentityRecord, auth: Auth): Promise<Record<string, string>> {
-  if (auth.kind === "sso") return { Authorization: `Bearer ${auth.token}` };
-  // Wallet: sign the canonical record with the node's address. Requires the
-  // wallet unlocked — the caller surfaces the passphrase flow on failure.
+// The exact text the wallet signs for a BODYLESS request (revoke, media upload).
+// MUST match the server's auth_stamp() byte-for-byte.
+const authStamp = (ts: number) => `divi-identity-auth:${ts}`;
+
+// Sign an arbitrary message string (or use the SSO token). `extra` headers (e.g.
+// X-Divi-Ts for a stamp) are merged in.
+async function authHeaders(message: string, auth: Auth, extra: Record<string, string> = {}): Promise<Record<string, string>> {
+  if (auth.kind === "sso") return { Authorization: `Bearer ${auth.token}`, ...extra };
+  // Wallet: sign `message` with the node's address. Requires the wallet unlocked
+  // — the caller surfaces the passphrase flow on failure.
   const address = await invoke<string | null>("signing_address");
   if (!address) throw new Error("No signing address — is the node reachable?");
-  const signature = await invoke<string>("wallet_sign", { address, message: canonical(record) });
-  return { "X-Divi-Address": address, "X-Divi-Signature": signature };
+  const signature = await invoke<string>("wallet_sign", { address, message });
+  return { "X-Divi-Address": address, "X-Divi-Signature": signature, ...extra };
+}
+
+// Headers for a bodyless request: sign the timestamped stamp, send the ts so the
+// server can rebuild and verify the same string.
+async function stampHeaders(auth: Auth): Promise<Record<string, string>> {
+  const ts = Math.floor(Date.now() / 1000);
+  return authHeaders(authStamp(ts), auth, { "X-Divi-Ts": String(ts) });
 }
 
 // ── publish / revoke ─────────────────────────────────────────────────────────
@@ -68,7 +81,7 @@ export async function publishIdentity(
   };
   const res = await fetch(`${BASE}/identity/publish`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...(await authHeaders(record, auth)) },
+    headers: { "Content-Type": "application/json", ...(await authHeaders(canonical(record), auth)) },
     body: JSON.stringify(record),
   });
   if (!res.ok) throw new Error(`Publish failed (${res.status}): ${await res.text()}`);
@@ -76,18 +89,15 @@ export async function publishIdentity(
 
 export async function revokeIdentity(auth: Auth): Promise<void> {
   if (!enabled()) return;
-  const stub: IdentityRecord = { name: "", description: "", mediaHash: "", chatter: 0, ts: Math.floor(Date.now() / 1000) };
-  await fetch(`${BASE}/identity/publish`, { method: "DELETE", headers: await authHeaders(stub, auth) });
+  await fetch(`${BASE}/identity/publish`, { method: "DELETE", headers: await stampHeaders(auth) });
 }
 
 /** Upload avatar bytes; returns the content hash to put in the record. */
 export async function uploadMedia(blob: Blob, auth: Auth): Promise<string> {
   if (!enabled()) throw new Error("Network publishing isn't available yet.");
-  // Media upload needs a valid owner but no specific record — sign a bare stamp.
-  const stamp: IdentityRecord = { name: "", description: "", mediaHash: "", chatter: 0, ts: Math.floor(Date.now() / 1000) };
   const res = await fetch(`${BASE}/identity/media`, {
     method: "POST",
-    headers: { "Content-Type": blob.type, ...(await authHeaders(stamp, auth)) },
+    headers: { "Content-Type": blob.type, ...(await stampHeaders(auth)) },
     body: blob,
   });
   if (!res.ok) throw new Error(`Media upload failed (${res.status})`);
