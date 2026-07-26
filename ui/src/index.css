@@ -1001,6 +1001,74 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .fst-conflict { font-size: 0.82rem; font-weight: 600; color: hsl(0 80% 66%); line-height: 1.35; }
 .fst-note { margin: 0; font-size: 0.74rem; color: hsl(var(--muted-foreground)); line-height: 1.35; }
 
+/* ---- Fast Receive: Overview cards ---- */
+.fr-cards { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; }
+.fr-card {
+  border: 1px solid hsl(25 95% 56% / 0.55); border-left-width: 3px; border-radius: 10px;
+  padding: 13px 15px; background: hsl(25 95% 55% / 0.06); display: flex; flex-direction: column; gap: 9px;
+}
+.fr-card.confirmed { border-color: hsl(145 65% 52% / 0.6); background: hsl(145 65% 50% / 0.06); }
+.fr-card.conflicted { border-color: hsl(0 78% 60% / 0.7); background: hsl(0 78% 55% / 0.08); }
+.fr-card-top { display: flex; align-items: center; justify-content: space-between; }
+.fr-badge {
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.04em; color: hsl(25 95% 58%);
+  background: hsl(25 95% 55% / 0.16); border: 1px solid hsl(25 95% 56% / 0.5); border-radius: 6px; padding: 2px 8px;
+}
+.fr-card.confirmed .fr-badge { color: hsl(145 65% 55%); background: hsl(145 65% 50% / 0.16); border-color: hsl(145 65% 52% / 0.5); }
+.fr-amt { font-size: 1.05rem; font-weight: 700; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; }
+.fr-status { font-size: 0.9rem; font-weight: 600; color: hsl(var(--foreground)); }
+.fr-card.confirmed .fr-status { color: hsl(145 65% 55%); }
+.fr-card.conflicted .fr-status { color: hsl(0 78% 66%); }
+
+.fr-meter { display: flex; align-items: center; gap: 9px; }
+.fr-meter-track { flex: 1; height: 8px; border-radius: 5px; background: hsl(var(--muted-foreground) / 0.2); overflow: hidden; }
+.fr-meter-fill { height: 100%; border-radius: 5px; transition: width 0.4s ease, background 0.4s ease; }
+.fr-meter-num { font-size: 0.95rem; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; }
+.fr-meter-max { font-size: 0.7rem; color: hsl(var(--muted-foreground)); font-weight: 500; }
+
+.fr-warns { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.fr-warns li { font-size: 0.78rem; font-weight: 600; color: hsl(25 95% 62%); line-height: 1.3; }
+.fr-card.conflicted .fr-warns li { color: hsl(0 80% 68%); }
+
+.fr-how { font-size: 0.76rem; }
+.fr-how summary { cursor: pointer; color: hsl(var(--muted-foreground)); }
+.fr-factors { margin: 7px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.fr-factors li { display: grid; grid-template-columns: 1.2em 1fr auto; gap: 6px; align-items: baseline; }
+.fr-factors li.ok .fr-f-mark { color: hsl(145 65% 55%); }
+.fr-factors li.bad .fr-f-mark { color: hsl(25 95% 58%); }
+.fr-f-label { color: hsl(var(--foreground)); }
+.fr-f-note { color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+.fr-caveat { margin: 7px 0 0; font-size: 0.72rem; color: hsl(var(--muted-foreground)); line-height: 1.35; }
+
+.fr-conf-row { display: flex; align-items: center; gap: 5px; }
+.fr-pip { width: 14px; height: 6px; border-radius: 3px; background: hsl(var(--muted-foreground) / 0.25); }
+.fr-pip.on { background: hsl(145 65% 52%); }
+.fr-conf-txt { margin-left: 6px; font-size: 0.74rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+
+/* ---- Fast Receive: detection modal ---- */
+.fr-modal-scrim {
+  position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(2px);
+}
+.fr-modal {
+  width: min(380px, 92vw); border-radius: 14px; padding: 22px;
+  background: hsl(var(--background)); border: 1px solid hsl(25 95% 56% / 0.6);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; gap: 12px; text-align: center;
+  animation: fr-pop 0.22s ease-out;
+}
+@keyframes fr-pop { 0% { transform: scale(0.9); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+.fr-modal-badge { font-size: 1.15rem; font-weight: 800; letter-spacing: 0.04em; color: hsl(25 95% 58%); }
+.fr-modal-amt { font-size: 1.7rem; font-weight: 800; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; }
+.fr-modal-status { font-size: 0.9rem; color: hsl(var(--muted-foreground)); }
+.fr-modal .fr-warns { text-align: left; }
+.fr-modal .fr-caveat { text-align: center; }
+.fr-modal-actions { display: flex; gap: 8px; margin-top: 4px; }
+.fr-modal-actions .wl-btn { flex: 1; }
+
+/* ---- Fast Send arrivals in history ---- */
+.activity-row.fast { border-left: 3px solid hsl(25 95% 56%); padding-left: 9px; }
+.act-fast { color: hsl(25 95% 58%); font-weight: 800; letter-spacing: 0.02em; }
+
 /* ---- Spendable fiat value (header) ---- */
 /* Fiat value: same size as the DIVI amount, white, right-justified in the row;
    the currency code is small grey to match the DIVI decimals. */

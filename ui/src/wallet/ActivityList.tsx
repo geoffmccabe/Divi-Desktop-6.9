@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { openUrl, explorerTxUrl, type Tx } from "./api";
 import { useTransactions, type TxStatus } from "./useTransactions";
 import { confDisplay } from "./confirmations";
+import { isFastTxid } from "./fastReceiveStore";
 import { fmtDivi, relTime } from "../status";
 import { Icon } from "../Icon";
 
@@ -56,16 +57,26 @@ function Row({ t }: { t: Tx }) {
   // dressed up as money earned. Grey it out and strike the amount through.
   const dead = conf.state === "orphaned" || conf.state === "conflicted";
   const deadStyle = { color: "hsl(var(--muted-foreground))" };
+  // Fast Send arrivals get an orange badge so they stand out in history.
+  const fast = isReceive && !dead && isFastTxid(t.txid);
 
   return (
-    <li className="activity-row">
+    <li className={"activity-row" + (fast ? " fast" : "")}>
       <div className="act-top">
         {isReceive ? (
           <span
-            className={"act-kind act-big " + (dead ? "" : inMempool ? "act-incoming" : "act-received")}
+            className={"act-kind act-big " + (dead ? "" : fast ? "act-fast" : inMempool ? "act-incoming" : "act-received")}
             style={dead ? deadStyle : undefined}
           >
-            {dead ? "TRANSACTION CONFLICTED" : inMempool ? "INCOMING TRANSACTION" : "TRANSACTION RECEIVED"}
+            {dead
+              ? "TRANSACTION CONFLICTED"
+              : fast
+                ? inMempool
+                  ? "FAST SEND!"
+                  : "FAST SEND · RECEIVED"
+                : inMempool
+                  ? "INCOMING TRANSACTION"
+                  : "TRANSACTION RECEIVED"}
           </span>
         ) : t.kind === "stake" ? (
           <span className={dead ? "act-kind" : "act-kind act-stake-earned"} style={dead ? deadStyle : undefined}>

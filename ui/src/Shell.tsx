@@ -18,6 +18,7 @@ import { CollectiblesPanel } from "./wallet/CollectiblesPanel";
 import { TokensPanel } from "./wallet/TokensPanel";
 import { AgentPanel } from "./wallet/AgentPanel";
 import { NetworkMap } from "./wallet/NetworkMap";
+import { FastReceiveHost } from "./wallet/FastReceiveHost";
 
 const VIEWS: Record<string, ComponentType> = {
   overview: Overview,
@@ -77,6 +78,7 @@ export function Shell() {
 
   return (
     <div className="shell">
+      <FastReceiveHost onGoto={setView} />
       <div className="col-left">
         <Sidebar active={view} onSelect={setView} />
         <aside className="glass-panel status-panel">
