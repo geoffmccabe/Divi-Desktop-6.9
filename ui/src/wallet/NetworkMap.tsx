@@ -1343,16 +1343,25 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     };
     const self = selfRef.current;
     if (self) push(self.ip, self.lat, self.lon, "self", self.city, self.country);
+    // Peers first, and ALWAYS as "peer" — fall back to the stored known-node
+    // coords when the live geo lookup hasn't resolved yet, otherwise a peer would
+    // fall through and get drawn as a blue "net" tower instead of a pink one.
     for (const p of snap?.peers ?? []) {
       const g = geos[p.ip];
-      if (g) push(p.ip, g.lat, g.lon, "peer", g.city, g.country);
+      const kp = knownRef.current[p.ip];
+      const lat = g?.lat ?? kp?.lat;
+      const lon = g?.lon ?? kp?.lon;
+      if (lat != null && lon != null) push(p.ip, lat, lon, "peer", g?.city ?? kp?.city, g?.country ?? kp?.country);
     }
     const full = { ...loadKnown(), ...knownRef.current };
     for (const [ip, kp] of Object.entries(full)) push(ip, kp.lat, kp.lon, "net", kp.city, kp.country || geos[ip]?.country);
     if (self) {
       for (const p of snap?.peers ?? []) {
         const g = geos[p.ip];
-        if (g) arcs.push({ startLat: self.lat, startLng: self.lon, endLat: g.lat, endLng: g.lon });
+        const kp = knownRef.current[p.ip];
+        const lat = g?.lat ?? kp?.lat;
+        const lon = g?.lon ?? kp?.lon;
+        if (lat != null && lon != null) arcs.push({ startLat: self.lat, startLng: self.lon, endLat: lat, endLng: lon });
       }
     }
     return { pts, arcs, center: self };
