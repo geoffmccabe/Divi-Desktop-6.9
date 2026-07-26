@@ -40,12 +40,21 @@ export function ContactEditor({
     }
   };
 
-  const save = () => {
+  const save = async () => {
     setErr(null);
     if (!name.trim()) return setErr("Give this contact a name.");
     const addrs = rows.map((r) => ({ address: r.address.trim(), label: r.label.trim() || undefined })).filter((r) => r.address);
     if (!addrs.length) return setErr("Add at least one address.");
-    if (Object.values(valid).includes("bad")) return setErr("One of the addresses isn't a valid DIVI address.");
+    // Validate every address against the node now, not just the ones that were
+    // blurred, so a pasted typo can't slip in unchecked. If the node is
+    // unreachable we allow the save (send-time validation is the backstop).
+    for (const a of addrs) {
+      try {
+        if (!(await validateAddress(a.address))) return setErr(`Not a valid DIVI address: ${a.address}`);
+      } catch {
+        /* node unreachable; let it save and rely on send-time validation */
+      }
+    }
     const list = upsertContact({
       id: contact?.id,
       name: name.trim(),
@@ -82,7 +91,7 @@ export function ContactEditor({
 
       <label className="send-field">
         <span className="send-label">Avatar emoji (optional)</span>
-        <input className="wl-input cb-emoji" value={emoji} onChange={(e) => setEmoji(e.target.value.slice(0, 2))} placeholder="🙂 (leave blank for an identicon)" />
+        <input className="wl-input cb-emoji" value={emoji} onChange={(e) => setEmoji([...e.target.value].slice(0, 2).join(""))} placeholder="🙂 (leave blank for an identicon)" />
       </label>
 
       <div className="send-field">

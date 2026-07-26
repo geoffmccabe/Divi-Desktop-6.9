@@ -36,10 +36,13 @@ function QrOverlay({ address, name, onClose }: { address: string; name: string; 
         <div className="cb-qr-name">{name}</div>
         {qr == null ? (
           <p className="wl-empty">Making QR…</p>
-        ) : qr.startsWith("<svg") ? (
-          <div className="cb-qr-img" dangerouslySetInnerHTML={{ __html: qr }} />
-        ) : (
+        ) : qr === "" ? (
+          <p className="wl-empty">Couldn't make a QR.</p>
+        ) : qr.startsWith("data:") ? (
           <img className="cb-qr-img" src={qr} alt="address QR" />
+        ) : (
+          // address_qr returns raw SVG markup (same as ReceivePanel renders it).
+          <div className="cb-qr-img" dangerouslySetInnerHTML={{ __html: qr }} />
         )}
         <div className="cb-qr-addr">{address}</div>
         <button type="button" className="wl-btn" onClick={onClose}>Close</button>
