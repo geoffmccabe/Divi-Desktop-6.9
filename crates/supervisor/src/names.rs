@@ -140,6 +140,17 @@ fn store_path(kind: &str) -> PathBuf {
     dd69_config_dir().join(format!("names-{kind}.json"))
 }
 
+/// The index lives in a PER-CHAIN file.
+///
+/// One shared file would mean switching between regtest and mainnet threw the
+/// other network's index away every time and rebuilt it from scratch, which on
+/// mainnet is hours of scanning to recover something that was already correct.
+fn index_path(chain: &str) -> PathBuf {
+    let safe: String = chain.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let safe = if safe.is_empty() { "unknown".to_string() } else { safe };
+    dd69_config_dir().join(format!("names-index-{safe}.json"))
+}
+
 fn read_json(path: &PathBuf) -> Value {
     std::fs::read_to_string(path)
         .ok()
@@ -340,7 +351,7 @@ fn index_from_json(v: &Value) -> Index {
 }
 
 fn load_index(chain: &str) -> Index {
-    let idx = index_from_json(&read_json(&store_path("index")));
+    let idx = index_from_json(&read_json(&index_path(chain)));
     // An index built against another network is not stale, it is wrong. Discard.
     if idx.chain != chain {
         return Index { chain: chain.to_string(), ..Default::default() };
@@ -349,7 +360,7 @@ fn load_index(chain: &str) -> Index {
 }
 
 fn save_index(idx: &Index) -> Result<(), String> {
-    write_json(&store_path("index"), &index_to_json(idx))
+    write_json(&index_path(&idx.chain), &index_to_json(idx))
 }
 
 /// Does this node have `txindex=1`?
@@ -887,10 +898,38 @@ pub fn my_names(cfg: &NodeConfig) -> Result<Vec<OwnedName>, String> {
 
 // ── Writing records ───────────────────────────────────────────────────────
 
-fn send_record(cfg: &NodeConfig, rec: &NameRecord, payments: &[Payment]) -> Result<String, String> {
+/// Broadcast a record, authored by `from`.
+///
+/// ⚠ `from` is not optional in spirit. Every rule in this registry identifies a
+/// record's author as the address funding `vin[0]`: a reveal must come from the
+/// same address as its commit, and an edit must come from the name's owner.
+/// Letting the wallet pick coins freely produces a transaction that confirms,
+/// spends a fee, and is then correctly ignored by every indexer. That is a
+/// silent no-op, and it is the failure a live chain caught that no unit test
+/// could.
+fn send_record(
+    cfg: &NodeConfig,
+    rec: &NameRecord,
+    payments: &[Payment],
+    from: Option<&str>,
+) -> Result<dvxp::Sent, String> {
     let payload = record::encode_payload(rec).map_err(|e| format!("could not build the record: {e:?}"))?;
     let rpc = RpcClient::new(cfg);
-    dvxp::broadcast_record(&rpc, &payload, payments, dvxp::MIN_FEE_DIVI)
+    dvxp::broadcast_record(&rpc, &payload, payments, dvxp::MIN_FEE_DIVI, from)
+}
+
+/// The address that owns `name`, from the local index.
+///
+/// Every edit has to be authored by this address or the indexer ignores it, so
+/// resolving it first is not an optimisation, it is the difference between the
+/// edit happening and silently not happening.
+fn owner_of(cfg: &NodeConfig, canonical: &str) -> Result<String, String> {
+    let rpc = RpcClient::new(cfg);
+    let idx = load_index(&chain_name(&rpc));
+    idx.names
+        .get(canonical)
+        .map(|n| n.owner.clone())
+        .ok_or_else(|| format!("{canonical} is not registered, or the wallet has not read it from the chain yet."))
 }
 
 /// Step 1 of registration: publish `Hash160(salt ‖ name)` and remember the salt.
@@ -936,10 +975,16 @@ pub fn commit(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     store[&q.canonical] = entry;
     write_json(&store_path("pending"), &store)?;
 
-    let txid = send_record(cfg, &NameRecord::Commit { hash160: hash }, &[])?;
-    store[&q.canonical]["txid"] = json!(txid);
+    // Choose the author deliberately, before broadcasting: the reveal twelve
+    // blocks later must come from this same address, so it needs to be one that
+    // will still have coins then.
+    let author = dvxp::best_author_address(&rpc)?;
+    let sent = send_record(cfg, &NameRecord::Commit { hash160: hash }, &[], Some(&author))?;
+    // The reveal MUST come from this same address or the registry ignores it.
+    store[&q.canonical]["txid"] = json!(sent.txid);
+    store[&q.canonical]["author"] = json!(sent.author);
     write_json(&store_path("pending"), &store)?;
-    Ok(txid)
+    Ok(sent.txid)
 }
 
 /// 20 bytes from the operating system's cryptographic random source.
@@ -962,11 +1007,22 @@ pub fn pending(cfg: &NodeConfig) -> Result<Vec<PendingCommit>, String> {
     let rpc = RpcClient::new(cfg);
     let chain = chain_name(&rpc);
     let tip = tip_height(&rpc)?;
-    let store = read_json(&store_path("pending"));
+    let idx = load_index(&chain);
+    let mut store = read_json(&store_path("pending"));
     let mut out = Vec::new();
+    let mut done: Vec<String> = Vec::new();
+
     if let Some(map) = store.as_object() {
         for (name, v) in map {
             if v["chain"].as_str().unwrap_or_default() != chain {
+                continue;
+            }
+            // A reservation that has already become a registered name is
+            // finished. Leaving it on the list would sit there saying "ready to
+            // register" forever, and a user who believed it would pay a second
+            // registration fee for a name they already own.
+            if idx.names.contains_key(name) {
+                done.push(name.clone());
                 continue;
             }
             let h = v["height"].as_u64().unwrap_or(0);
@@ -980,6 +1036,16 @@ pub fn pending(cfg: &NodeConfig) -> Result<Vec<PendingCommit>, String> {
             });
         }
     }
+
+    if !done.is_empty() {
+        if let Some(map) = store.as_object_mut() {
+            for name in &done {
+                map.remove(name);
+            }
+        }
+        write_json(&store_path("pending"), &store)?;
+    }
+
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
 }
@@ -1035,11 +1101,24 @@ pub fn register(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     let salt_hex = entry["salt"].as_str().ok_or("the saved reservation is unreadable")?;
     let salt = unhex(salt_hex).ok_or("the saved reservation is unreadable")?;
 
+    // ⚠ Fund vin[0] from the address that made the commit. Without this the
+    // reveal is authored by whatever change address the coin picker happened to
+    // choose, the registry refuses it as a mismatched commit, and the user has
+    // paid the registration fee for nothing.
+    let author = entry["author"].as_str().map(|s| s.to_string());
+    if author.is_none() {
+        return Err(format!(
+            "This reservation for {} was made by an older version of the wallet that did not record which address authorised it, so it cannot be completed safely. Discard it and reserve again.",
+            q.canonical
+        ));
+    }
     let txid = send_record(
         cfg,
         &NameRecord::Register { salt, name: q.canonical.as_bytes().to_vec() },
         &[Payment { address: treasury, divi: q.registration_divi as f64 }],
-    )?;
+        author.as_deref(),
+    )?
+    .txid;
 
     // Keep the reservation until the reveal confirms; a dropped transaction
     // must be retryable, and the salt is the only thing that cannot be
@@ -1078,11 +1157,14 @@ pub fn set_record(cfg: &NodeConfig, name: &str, key: u8, value_hex: &str) -> Res
     if record::key_requires_privacy(key) && looks_like_plaintext_phone(&value) {
         return Err("A phone number must not be written to the chain in the clear. The chain is permanent and public, so this would be a doxxing and SIM-swap risk you could never undo. Store a hashed or encrypted form instead.".into());
     }
-    send_record(
+    let owner = owner_of(cfg, &canonical)?;
+    Ok(send_record(
         cfg,
         &NameRecord::SetRecord { name: canonical.into_bytes(), entries: vec![Entry { key, value }] },
         &[],
-    )
+        Some(&owner),
+    )?
+    .txid)
 }
 
 /// A crude but deliberate guard: mostly digits, plus the usual phone
@@ -1100,11 +1182,15 @@ pub fn clear_record(cfg: &NodeConfig, name: &str, keys: Vec<u8>) -> Result<Strin
     if keys.is_empty() {
         return Err("Nothing selected to remove.".into());
     }
-    send_record(
+    let canonical = charset::canonicalise(name);
+    let owner = owner_of(cfg, &canonical)?;
+    Ok(send_record(
         cfg,
-        &NameRecord::ClearRecord { name: charset::canonicalise(name).into_bytes(), keys },
+        &NameRecord::ClearRecord { name: canonical.into_bytes(), keys },
         &[],
-    )
+        Some(&owner),
+    )?
+    .txid)
 }
 
 /// Point a name at a Divi address. Convenience over [`set_record`], since this
@@ -1115,42 +1201,68 @@ pub fn set_divi_address(cfg: &NodeConfig, name: &str, address: &str) -> Result<S
     let mut value = Vec::with_capacity(21);
     value.push(kind);
     value.extend_from_slice(&hash);
-    send_record(
+    let canonical = charset::canonicalise(name);
+    let owner = owner_of(cfg, &canonical)?;
+    Ok(send_record(
         cfg,
         &NameRecord::SetRecord {
-            name: charset::canonicalise(name).into_bytes(),
+            name: canonical.into_bytes(),
             entries: vec![Entry { key: record::KEY_DIVI_ADDRESS, value }],
         },
         &[],
-    )
+        Some(&owner),
+    )?
+    .txid)
 }
 
 pub fn transfer(cfg: &NodeConfig, name: &str, new_owner: &str) -> Result<String, String> {
     let (kind, hash160) = base58::address_to_payload(new_owner.trim())
         .ok_or("That is not a valid Divi address, so the name was not sent.")?;
-    send_record(
+    let canonical = charset::canonicalise(name);
+    let owner = owner_of(cfg, &canonical)?;
+    Ok(send_record(
         cfg,
         &NameRecord::Transfer {
-            name: charset::canonicalise(name).into_bytes(),
+            name: canonical.into_bytes(),
             new_owner: dvxp_core::codec::Address { kind, hash160 },
         },
         &[],
-    )
+        Some(&owner),
+    )?
+    .txid)
 }
 
+/// Claim a name as the display name for the address it points at.
+///
+/// ⚠ Authored by the TARGET address, not the owner. Reverse resolution only
+/// counts when both directions agree, so this record has to be signed by the
+/// address the name points at, which may not be the address that owns the name.
 pub fn set_primary(cfg: &NodeConfig, name: &str) -> Result<String, String> {
-    send_record(cfg, &NameRecord::SetPrimary { name: charset::canonicalise(name).into_bytes() }, &[])
+    let canonical = charset::canonicalise(name);
+    let target = resolve(cfg, &canonical)?.ok_or_else(|| {
+        format!("{canonical} does not point at a Divi address yet, so there is nothing to display it for. Set its address first.")
+    })?;
+    Ok(send_record(
+        cfg,
+        &NameRecord::SetPrimary { name: canonical.into_bytes() },
+        &[],
+        Some(&target),
+    )?
+    .txid)
 }
 
 pub fn renew(cfg: &NodeConfig, name: &str) -> Result<String, String> {
     let q = name_registry::quote(name).map_err(name_registry::explain)?;
     let rpc = RpcClient::new(cfg);
     let treasury = treasury_address(&chain_name(&rpc))?;
-    send_record(
+    let owner = owner_of(cfg, &q.canonical)?;
+    Ok(send_record(
         cfg,
         &NameRecord::Renew { name: q.canonical.clone().into_bytes() },
         &[Payment { address: treasury, divi: q.renewal_divi as f64 }],
-    )
+        Some(&owner),
+    )?
+    .txid)
 }
 
 #[cfg(test)]

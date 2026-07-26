@@ -181,6 +181,31 @@ pub fn block_may_contain_record(raw_block_hex: &str) -> bool {
     raw_block_hex.contains(MAGIC_HEX)
 }
 
+/// The address best placed to author a sequence of records: the one holding the
+/// largest spendable total.
+///
+/// Used when a flow will need SEVERAL records from the same author (reserve then
+/// register, then edit), so the author is chosen once, deliberately, rather than
+/// falling out of whichever coin the picker happened to like.
+pub fn best_author_address(rpc: &RpcClient) -> Result<String, String> {
+    let unspent = rpc.call("listunspent", json!([0]))?;
+    let coins = unspent.as_array().ok_or("the node returned no coin list")?;
+    let mut totals: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for c in coins {
+        if !c["spendable"].as_bool().unwrap_or(true) {
+            continue;
+        }
+        if let (Some(addr), Some(amt)) = (c["address"].as_str(), c["amount"].as_f64()) {
+            *totals.entry(addr.to_string()).or_insert(0.0) += amt;
+        }
+    }
+    totals
+        .into_iter()
+        .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .map(|(addr, _)| addr)
+        .ok_or_else(|| "No spendable DIVI in this wallet.".to_string())
+}
+
 /// Choose coins to fund a record transaction.
 ///
 /// `minconf` is **0** deliberately. Each record spends the previous one's
@@ -193,7 +218,25 @@ pub fn block_may_contain_record(raw_block_hex: &str) -> bool {
 /// thousands of DIVI, which a single coin very often will not cover, so a
 /// one-coin-only selector would refuse transactions the wallet can easily
 /// afford.
-fn select_coins(rpc: &RpcClient, needed: f64) -> Result<(Vec<Value>, f64), String> {
+/// `from` pins **who authors the record**.
+///
+/// ⚠ This is not a preference, it is the whole authorisation model. Every
+/// overlay protocol here identifies a record's author as the address funding
+/// `vin[0]`. A wallet that picks coins freely will happily fund a record from
+/// some unrelated change address, and the indexer will then correctly refuse it:
+/// the reveal will not match its commit, and an edit will not match the name's
+/// owner. The transaction succeeds, the fee is spent, and nothing happens. That
+/// failure is invisible without a live chain, which is exactly how it survived
+/// into a build once already.
+///
+/// Only the FIRST input has to come from `from`. The rest may come from
+/// anywhere, so a 50,000 DIVI registration does not require one address to hold
+/// the whole amount.
+fn select_coins(
+    rpc: &RpcClient,
+    needed: f64,
+    from: Option<&str>,
+) -> Result<(Vec<Value>, f64), String> {
     let unspent = rpc.call("listunspent", json!([0]))?;
     let coins = unspent.as_array().ok_or("the node returned no coin list")?;
     let mut usable: Vec<&Value> = coins
@@ -204,16 +247,35 @@ fn select_coins(rpc: &RpcClient, needed: f64) -> Result<(Vec<Value>, f64), Strin
 
     // Largest first, so the fewest inputs are used and the transaction stays
     // small. Fewer inputs also means fewer signatures for a locked wallet.
-    usable.sort_by(|a, b| {
+    let by_size_desc = |a: &&Value, b: &&Value| {
         let av = a["amount"].as_f64().unwrap_or(0.0);
         let bv = b["amount"].as_f64().unwrap_or(0.0);
         bv.partial_cmp(&av).unwrap_or(std::cmp::Ordering::Equal)
-    });
+    };
+    usable.sort_by(by_size_desc);
 
-    // A single coin that covers it exactly-ish is better than the biggest one:
-    // it leaves large coins whole and staking.
-    if let Some(best) = usable
+    let mut chosen: Vec<Value> = Vec::new();
+    let mut total = 0.0f64;
+
+    if let Some(addr) = from {
+        let first = usable
+            .iter()
+            .find(|c| c["address"].as_str() == Some(addr))
+            .ok_or_else(|| format!(
+                "The address that must authorise this ({addr}) has no DIVI to spend, so the change would not be recognised. Send it a small amount of DIVI and try again."
+            ))?;
+        total = round8(first["amount"].as_f64().unwrap_or(0.0));
+        chosen.push((*first).clone());
+        usable.retain(|c| {
+            !(c["txid"] == first["txid"] && c["vout"] == first["vout"])
+        });
+        if total >= needed {
+            return Ok((chosen, total));
+        }
+    } else if let Some(best) = usable
         .iter()
+        // A single coin that covers it exactly-ish beats the biggest one: it
+        // leaves large coins whole and staking.
         .filter(|c| c["amount"].as_f64().unwrap_or(0.0) >= needed)
         .min_by(|a, b| {
             let av = a["amount"].as_f64().unwrap_or(0.0);
@@ -225,8 +287,6 @@ fn select_coins(rpc: &RpcClient, needed: f64) -> Result<(Vec<Value>, f64), Strin
         return Ok((vec![(*best).clone()], amount));
     }
 
-    let mut chosen = Vec::new();
-    let mut total = 0.0f64;
     for c in usable {
         chosen.push(c.clone());
         total = round8(total + c["amount"].as_f64().unwrap_or(0.0));
@@ -240,14 +300,26 @@ fn select_coins(rpc: &RpcClient, needed: f64) -> Result<(Vec<Value>, f64), Strin
     ))
 }
 
+/// What a broadcast record turned into on chain.
+pub struct Sent {
+    pub txid: String,
+    /// The address that funded `vin[0]`, which is who the indexer will treat as
+    /// the record's author. Callers that care about authorship must record it.
+    pub author: Option<String>,
+}
+
 /// Build, sign and broadcast a transaction carrying `payload` in an `OP_META`
-/// output, plus any real `payments`. Returns the txid.
+/// output, plus any real `payments`.
+///
+/// `from` pins who authors the record; see [`select_coins`]. Pass `None` only
+/// for records where authorship genuinely does not matter.
 pub fn broadcast_record(
     rpc: &RpcClient,
     payload: &[u8],
     payments: &[Payment],
     fee_divi: f64,
-) -> Result<String, String> {
+    from: Option<&str>,
+) -> Result<Sent, String> {
     if payload.len() > MAX_PAYLOAD_BYTES {
         return Err(format!(
             "This record is {} bytes and the chain accepts at most {MAX_PAYLOAD_BYTES}.",
@@ -288,7 +360,7 @@ pub fn broadcast_record(
     // rounds settle it; the third is a backstop, not an expectation.
     let mut fee = fee;
     let mut needed = round8(fee + total_payments);
-    let (mut utxos, mut funded) = select_coins(rpc, needed)?;
+    let (mut utxos, mut funded) = select_coins(rpc, needed, from)?;
     for _ in 0..3 {
         let sized = size_fee(utxos.len(), payments.len() + 1, payload.len(), fee);
         if sized <= fee {
@@ -299,7 +371,7 @@ pub fn broadcast_record(
         if funded >= needed {
             break;
         }
-        let (u, f) = select_coins(rpc, needed)?;
+        let (u, f) = select_coins(rpc, needed, from)?;
         utxos = u;
         funded = f;
     }
@@ -311,13 +383,20 @@ pub fn broadcast_record(
         change = 0.0;
     }
 
-    let change_addr = if change > 0.0 {
+    // ⚠ When a record has a pinned author, change goes BACK to that address.
+    // A fresh change address would drain the author, and the very next record
+    // in the sequence (a reveal after its commit, an edit after another edit)
+    // could no longer be funded by the address the rules require. That is not a
+    // tidy-wallet preference; it is what makes a two-step flow possible at all.
+    let change_addr = if change <= 0.0 {
+        String::new()
+    } else if let Some(author) = from {
+        author.to_string()
+    } else {
         rpc.call("getnewaddress", json!([]))?
             .as_str()
             .ok_or("could not get a change address")?
             .to_string()
-    } else {
-        String::new()
     };
 
     // ⚠ Divi's createrawtransaction REJECTS a duplicate output address
@@ -365,10 +444,16 @@ pub fn broadcast_record(
     if !signed["complete"].as_bool().unwrap_or(false) {
         return Err("Could not sign the transaction. If your wallet is locked, unlock it and try again.".into());
     }
-    rpc.call("sendrawtransaction", json!([signed["hex"]]))?
+    let author = utxos
+        .first()
+        .and_then(|u| u["address"].as_str())
+        .map(|s| s.to_string());
+    let txid = rpc
+        .call("sendrawtransaction", json!([signed["hex"]]))?
         .as_str()
-        .ok_or_else(|| "the node did not return a transaction id".to_string())
-        .map(|s| s.to_string())
+        .ok_or_else(|| "the node did not return a transaction id".to_string())?
+        .to_string();
+    Ok(Sent { txid, author })
 }
 
 #[cfg(test)]

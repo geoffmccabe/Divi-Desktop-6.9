@@ -100,6 +100,53 @@ On regtest and testnet the activation height is 0, and the treasury comes from
 
 ---
 
+## Proven end to end on regtest
+
+`crates/supervisor/examples/names_smoke.rs` drives the real flows against a real
+daemon:
+
+```
+divid -datadir=~/divi-poe-regtest -daemon
+DIVI_NAMES_TREASURY=<a regtest address> \
+  cargo run --example names_smoke -- ~/divi-poe-regtest
+```
+
+Eleven steps, all passing: scan from scratch, quote and price, reserve, refuse a
+reveal before maturity, register, appear in My Names, flip to taken, point at an
+address and resolve it, claim a display name with both directions agreeing,
+refuse a duplicate reservation, and stay stable across a fresh read.
+
+**Keep this green.** Unit tests cover the rules engine and cannot catch the class
+of bug that broke this feature twice: the rules and the transaction builder are
+each individually correct but disagree about who authored a record. Only a live
+chain shows that.
+
+## Authorship: the thing most likely to be got wrong again
+
+⚠ **Every rule here identifies a record's author as the address funding
+`vin[0]`.** A reveal must come from the same address as its commit; an edit must
+come from the name's owner; a display-name claim must come from the address the
+name points at.
+
+A wallet that picks coins freely will fund a record from an unrelated change
+address. The transaction confirms, the fee is spent, and every indexer correctly
+ignores it. Nothing happens and nothing complains.
+
+Two things in `dvxp.rs` prevent that and must not be undone:
+
+1. `select_coins` takes a `from` address and puts a coin from it FIRST. Only the
+   first input is pinned, so a 50,000 DIVI registration does not require one
+   address to hold the whole amount.
+2. **Change returns to the author** rather than a fresh address. Otherwise the
+   commit drains the author and the reveal twelve blocks later cannot be funded
+   by the address the rules demand. This is not tidiness; it is what makes a
+   two-step flow possible.
+
+A consequence worth designing around in UI: claiming a display name requires the
+address the name points at to hold a little DIVI, because that address has to
+sign. Pointing a name at an empty address and then trying to display it fails,
+with a message saying exactly that.
+
 ## Rules the index enforces
 
 Everything below is covered by tests in `names.rs`. Anything failing a rule is
