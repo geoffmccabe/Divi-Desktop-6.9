@@ -1,0 +1,24 @@
+[Unit]
+Description=Divi node-identity service (public personas for the network map)
+After=network.target divid.service
+Wants=divid.service
+
+[Service]
+Type=simple
+# Reuse the scan proxy's RPC creds (for verifymessage). Add SSO_VERIFY_URL if
+# the default isn't right. IDENTITY_PORT stays loopback-only; Caddy fronts it.
+EnvironmentFile=/etc/divi-scan.env
+Environment=CHAR_DIR=/var/lib/divi-identity
+Environment=IDENTITY_PORT=8772
+ExecStart=/usr/bin/python3 /usr/local/bin/divi-identity.py
+Restart=always
+RestartSec=5
+# Hardening: the service only needs its data dir; deny everything else.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/divi-identity
+
+[Install]
+WantedBy=multi-user.target

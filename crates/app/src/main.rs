@@ -3,7 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use dd69_supervisor::{c2pa_read, chaintips, coins, collectibles, collectibles_import, config, config::NodeConfig, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, collectibles, collectibles_import, config, config::NodeConfig, fastsend, mempool, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -159,6 +159,27 @@ async fn wallet_owns(addresses: Vec<String>) -> bool {
     })
     .await
     .unwrap_or(false)
+}
+
+/// The address this node signs identity records with (its account address).
+#[tauri::command]
+async fn signing_address() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(|| NodeConfig::load().ok().and_then(|cfg| wallet::signing_address(&cfg)))
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Sign a message with an owned address (wallet-auth for identity publishing).
+/// Requires the wallet unlocked.
+#[tauri::command]
+async fn wallet_sign(address: String, message: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        wallet::sign_message(&cfg, &address, &message)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
 }
 
 /// Open an http(s) URL in the user's default browser (e.g. a block explorer).
@@ -398,6 +419,62 @@ async fn network_peers() -> Option<PeerSnapshotDto> {
                 })
                 .collect(),
             self_ip: s.self_ip,
+        })
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MemEntryDto {
+    txid: String,
+    size: i64,
+    fee_sats: i64,
+    time: i64,
+    decoded: bool,
+    mine: bool,
+    category: String,
+    amount_mine: f64,
+    has_data: bool,
+    fast: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MempoolDto {
+    tip: i64,
+    best_hash: String,
+    entries: Vec<MemEntryDto>,
+}
+
+/// Live mempool snapshot. `known` = txids the UI already classified, so only new
+/// transactions get decoded. Polled quickly while the Mempool panel is open.
+#[tauri::command]
+async fn mempool_snapshot(known: Vec<String>) -> Option<MempoolDto> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().ok()?;
+        let s = mempool::snapshot(&cfg, &known)?;
+        Some(MempoolDto {
+            tip: s.tip,
+            best_hash: s.best_hash,
+            entries: s
+                .entries
+                .into_iter()
+                .map(|e| MemEntryDto {
+                    txid: e.txid,
+                    size: e.size,
+                    fee_sats: e.fee_sats,
+                    time: e.time,
+                    decoded: e.decoded,
+                    mine: e.mine,
+                    category: e.category,
+                    amount_mine: e.amount_mine,
+                    has_data: e.has_data,
+                    fast: e.fast,
+                })
+                .collect(),
         })
     })
     .await
@@ -857,6 +934,29 @@ async fn resume_staking() -> StakeStartDto {
     .unwrap_or(StakeStartDto { staking: false, needs_passphrase: false, message: "internal error".into() })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TxStatusDto {
+    found: bool,
+    confirmations: i64,
+    time: i64,
+    amount: f64,
+    category: String,
+}
+
+/// Live status of one wallet transaction, polled by the Fast Send tracker.
+#[tauri::command]
+async fn tx_status(txid: String) -> TxStatusDto {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s = NodeConfig::load()
+            .map(|cfg| wallet::tx_status(&cfg, &txid))
+            .unwrap_or(wallet::TxStatus { found: false, confirmations: 0, time: 0, amount: 0.0, category: String::new() });
+        TxStatusDto { found: s.found, confirmations: s.confirmations, time: s.time, amount: s.amount, category: s.category }
+    })
+    .await
+    .unwrap_or(TxStatusDto { found: false, confirmations: 0, time: 0, amount: 0.0, category: String::new() })
+}
+
 /// Send DIVI. `passphrase` is supplied only when the wallet must be unlocked
 /// just for this send (encrypted + ask-on-send). Returns the txid.
 #[tauri::command]
@@ -864,6 +964,19 @@ async fn send_coins(address: String, amount: f64, passphrase: Option<String>) ->
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
         wallet::send_coins(&cfg, &address, amount, passphrase.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Fast Send: a raw transaction paying a ~5x priority fee and carrying the
+/// on-chain "DFS1" marker. A hard fee cap is checked against the final signed
+/// tx before broadcast. Returns the txid.
+#[tauri::command]
+async fn fast_send(address: String, amount: f64, passphrase: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        fastsend::fast_send(&cfg, &address, amount, passphrase.as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -886,6 +999,71 @@ struct PayReqDto {
 /// Send an on-chain payment request to someone.
 ///
 /// This only ASKS. It cannot move the recipient's money -- paying is a separate
+// ---- Bearer transactions (redeemable claim codes) ----
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BearerCreatedDto {
+    code: String,
+    address: String,
+    txid: String,
+    vout: u32,
+    amount: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BearerStatusDto {
+    funded: bool,
+    claimed: bool,
+    value: f64,
+    confirmations: i64,
+}
+
+/// Create a redeemable bearer code funded with `amount` DIVI. Revocable: the
+/// key stays in this wallet, so the sender can reclaim an unredeemed code.
+#[tauri::command]
+async fn bearer_create(amount: f64, passphrase: Option<String>) -> Result<BearerCreatedDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        bearer::create(&cfg, amount, passphrase.as_deref()).map(|b| BearerCreatedDto {
+            code: b.code,
+            address: b.address,
+            txid: b.txid,
+            vout: b.vout,
+            amount: b.amount,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Sweep a bearer code to `dest`. Used to claim (recipient) or reclaim (sender).
+#[tauri::command]
+async fn bearer_sweep(code: String, dest: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        bearer::sweep(&cfg, &code, &dest)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Is a bearer code still claimable? Reads the UTXO set only.
+#[tauri::command]
+async fn bearer_status(code: String) -> Result<BearerStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        bearer::status(&cfg, &code).map(|s| BearerStatusDto {
+            funded: s.funded,
+            claimed: s.claimed,
+            value: s.value,
+            confirmations: s.confirmations,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// act they sign themselves.
 #[tauri::command]
 async fn payment_request_create(
@@ -1300,6 +1478,8 @@ fn main() {
             list_transactions,
             validate_address,
             wallet_owns,
+            signing_address,
+            wallet_sign,
             address_qr,
             open_url,
             poe_timestamp,
@@ -1312,6 +1492,10 @@ fn main() {
             self_geo,
             probe_peers,
             ping_nodes,
+            mempool_snapshot,
+            bearer_create,
+            bearer_sweep,
+            bearer_status,
             coin_maturity,
             wallet_status,
             unlock_wallet,
@@ -1323,6 +1507,8 @@ fn main() {
             forget_password,
             resume_staking,
             send_coins,
+            fast_send,
+            tx_status,
             divi_prices,
             ai_set_key,
             ai_clear_key,

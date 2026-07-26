@@ -1,0 +1,319 @@
+/* Governance preview panel styling.
+ *
+ * Kept OUT of index.css on purpose (same reason as poe.css): index.css carries a
+ * second agent's uncommitted work, so a separate file lets this ship on its own.
+ * Imported by GovernancePreview.tsx, so it loads after index.css and wins on
+ * equal specificity. Reuses the shared theme tokens (--primary purple / --accent
+ * pink, the Kinet.ink frosted look) plus the shared .ts-section / .ts-head /
+ * .wl-note classes; only the hero animation and the governance-specific bits
+ * live here.
+ */
+
+.gov {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  max-width: 720px;
+}
+
+/* Let explanatory paragraphs fill the panel instead of the global 460px cap. */
+.gov .wl-note.gov-wide {
+  max-width: none;
+}
+
+/* ── The one hero moment: a slow animated gradient banner ──────────────────── */
+.gov-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  padding: 34px 30px;
+  border: 1px solid hsl(var(--border) / 0.5);
+  background: linear-gradient(
+    120deg,
+    hsl(var(--primary) / 0.95),
+    hsl(var(--accent) / 0.95),
+    hsl(var(--primary) / 0.95)
+  );
+  background-size: 220% 220%;
+  animation: gov-hero-pan 14s ease infinite;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35), 0 0 46px hsl(var(--accent) / 0.4);
+}
+/* A soft radial highlight drifting over the gradient for a little depth. */
+.gov-hero::after {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.22), transparent 55%);
+  animation: gov-hero-glow 9s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes gov-hero-pan {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+@keyframes gov-hero-glow {
+  0% { transform: translate(0, 0); opacity: 0.7; }
+  100% { transform: translate(12%, 10%); opacity: 1; }
+}
+
+.gov-hero-inner {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.gov-hero-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #fff;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
+}
+.gov-hero-tagline {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.3);
+}
+.gov-badge {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  animation: gov-pulse 2.4s ease-in-out infinite;
+}
+@keyframes gov-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── The 13 voters ─────────────────────────────────────────────────────────── */
+.gov-voters {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+.gov-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.gov-group-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+.gov-seats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.gov-seat {
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 13px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  border: 1px solid transparent;
+}
+.gov-seat-board {
+  background: hsl(var(--primary) / 0.16);
+  border-color: hsl(var(--primary) / 0.55);
+}
+.gov-seat-team {
+  background: hsl(var(--accent) / 0.16);
+  border-color: hsl(var(--accent) / 0.55);
+}
+.gov-seat-ai {
+  background: linear-gradient(90deg, hsl(var(--primary) / 0.24), hsl(var(--accent) / 0.24));
+  border-color: hsl(var(--primary) / 0.6);
+}
+.gov-quorum {
+  margin-top: 2px;
+  padding: 10px 14px;
+  border-left: 3px solid hsl(var(--primary));
+  background: hsl(var(--primary) / 0.08);
+  border-radius: 0 8px 8px 0;
+  font-size: 0.9rem;
+  color: hsl(var(--foreground));
+}
+.gov-quorum strong {
+  color: hsl(var(--primary));
+}
+
+/* ── How funding works: numbered steps ─────────────────────────────────────── */
+.gov-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+.gov-step {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+.gov-step-num {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  color: #fff;
+  background: hsl(var(--primary));
+}
+.gov-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.gov-step-body h4 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+/* ── Example proposal card ─────────────────────────────────────────────────── */
+.gov-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  border: 1px solid hsl(var(--border) / 0.6);
+  background: hsl(var(--background) / 0.4);
+}
+.gov-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+.gov-card-title {
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+.gov-example-tag {
+  flex: 0 0 auto;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.gov-card-amount-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.gov-card-amount {
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  color: hsl(var(--primary));
+}
+.gov-miles {
+  display: flex;
+  gap: 6px;
+}
+.gov-mile {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: hsl(var(--muted) / 0.7);
+}
+.gov-mile-done {
+  background: hsl(var(--primary));
+}
+.gov-mile-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-size: 0.72rem;
+  color: hsl(var(--muted-foreground));
+}
+.gov-tally {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: hsl(var(--foreground));
+}
+.gov-tally-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: hsl(var(--muted) / 0.7);
+  overflow: hidden;
+}
+.gov-tally-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)));
+}
+
+/* ── Discussion call to action ─────────────────────────────────────────────── */
+.gov-cta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 20px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)));
+  transition: filter 0.12s ease;
+}
+.gov-cta-btn:hover {
+  filter: brightness(1.12);
+}
+.gov-cta-btn:active {
+  filter: brightness(1.4);
+}
+
+.gov-foot {
+  font-size: 0.8rem;
+  font-style: italic;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Respect users who ask the OS to reduce motion. */
+@media (prefers-reduced-motion: reduce) {
+  .gov-hero,
+  .gov-hero::after,
+  .gov-badge {
+    animation: none;
+  }
+}

@@ -7,7 +7,11 @@ import { BlockChainViz } from "./BlockChainViz";
 import { PrimerLove } from "./PrimerLove";
 import { usePrimer } from "./primerStore";
 import { FastestNodes, type FastCandidate } from "./FastestNodes";
+import { Mempool } from "./Mempool";
+import { NewestNodesPanel } from "./NewestNodesPanel";
+import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
 import { userWonRecently } from "./stakeWin";
+import { playSound } from "../sound";
 import { Icon } from "../Icon";
 import worldmap from "../assets/worldmap.json";
 
@@ -122,6 +126,54 @@ function drawGlasses(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: n
   ctx.restore();
 }
 
+// A slowly-spinning aqua spiral marking a newly-seen node. 1px Archimedean
+// spiral of ~3 turns, hue pulsing green-blue ↔ blue-green once a second, spinning
+// 3 rev/min. Drawn in a top pass so a busy (VPN) location can't bury it.
+function drawSpiral(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  diameter: number,
+  now: number,
+  highlighted: boolean,
+) {
+  const dia = highlighted ? diameter * 2 : diameter;
+  const outer = dia / 2;
+  if (outer < 1) return;
+  const TURNS = 3;
+  // 9 rev/min base (3x the earlier 3 rev/min), 3x faster again when highlighted.
+  const revMs = highlighted ? 20000 / 9 : 20000 / 3;
+  const spin = ((now % revMs) / revMs) * Math.PI * 2;
+  // hue pulses ±18° around aqua (177) once per second
+  const hue = 177 + 18 * Math.sin((now / 1000) * Math.PI * 2);
+  const maxT = TURNS * Math.PI * 2;
+  const STEPS = 72;
+  ctx.save();
+  ctx.lineWidth = 1;
+  if (highlighted) (ctx.shadowColor = `hsla(${hue}, 85%, 58%, 0.9)`), (ctx.shadowBlur = 6);
+  // Draw segment-by-segment so opacity can fade OUTWARD: fully opaque at the
+  // centre, down to 40% at the rim.
+  let prevX = cx;
+  let prevY = cy;
+  for (let i = 1; i <= STEPS; i++) {
+    const t = (i / STEPS) * maxT;
+    const frac = t / maxT; // 0 at centre → 1 at rim
+    const r = outer * frac; // Archimedean
+    const a = t + spin;
+    const x = cx + r * Math.cos(a);
+    const y = cy + r * Math.sin(a);
+    const alpha = 1 - 0.6 * frac; // 100% centre → 40% rim
+    ctx.strokeStyle = `hsla(${hue}, 85%, 58%, ${alpha})`;
+    ctx.beginPath();
+    ctx.moveTo(prevX, prevY);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+    prevX = x;
+    prevY = y;
+  }
+  ctx.restore();
+}
+
 type ProbeState = "probing" | "online" | "offline";
 
 
@@ -199,6 +251,14 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     remote: false,
   });
   const [showFastest, setShowFastest] = useState(false);
+  const [showMempool, setShowMempool] = useState(false);
+  const [showNewest, setShowNewest] = useState(false);
+  // New-node spirals: the list the draw loop animates, refreshed off the poll (a
+  // ref so drawing never triggers a re-render). highlightIp = the row the user is
+  // hovering/clicking in the panel → its spiral grows 2x and spins 3x faster.
+  const newNodesRef = useRef<NewNode[]>([]);
+  const highlightIpRef = useRef<string | null>(null);
+  const arrivalFxRef = useRef<Map<string, number>>(new Map()); // ip → flash start ms
 
   // EVERY node the map knows (live peers + 30-day known), with its country, for
   // the node-speed ping. Read fresh each time the user starts a scan.
@@ -272,6 +332,14 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     const onSwitch = () => load();
     window.addEventListener("dd69:nodeswitch", onSwitch);
     return () => window.removeEventListener("dd69:nodeswitch", onSwitch);
+  }, []);
+
+  // One-time: freeze today's known network as "existing" and seed the Costa Rica
+  // test node at day 0. Idempotent (flag-guarded in newNodes.ts). Then prime the
+  // spiral list from storage so a just-opened map shows spirals immediately.
+  useEffect(() => {
+    baselineNewNodes();
+    newNodesRef.current = newNodes(loadKnown());
   }, []);
 
   useEffect(() => {
@@ -412,7 +480,20 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               newIdx++;
             }
           }
-          if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
+          // Always re-fold the authoritative stored list back in, so the map's
+          // ref can never sit below the full ~92 (which starved the node count).
+          knownRef.current = seen.length
+            ? recordKnown(knownRef.current, seen)
+            : { ...loadKnown(), ...knownRef.current };
+          // Register any first-ever-seen IPs (append-only; a re-added node keeps
+          // its original date, so no false spirals), then refresh the spiral list
+          // and fire the one-time arrival cue for genuinely brand-new nodes.
+          noteSeen(seen.map((x) => x.ip));
+          newNodesRef.current = newNodes(knownRef.current);
+          for (const arr of takeUnannouncedArrivals(knownRef.current)) {
+            arrivalFxRef.current.set(arr.ip, performance.now());
+            playSound("receive");
+          }
           instantRevealRef.current = false; // only the first poll after a switch is instant
         });
       } catch {
@@ -561,7 +642,17 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     window.addEventListener("mouseup", onUp);
 
     let raf = 0;
+    // Full-display-rate canvas repaints were burning GPU the whole time the
+    // map tab was open. 30fps is indistinguishable for drifting arcs and dots
+    // and halves the render cost (or better, on 120 Hz screens).
+    let lastFrame = 0;
     const draw = () => {
+      const nowTs = performance.now();
+      if (nowTs - lastFrame < 33) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
+      lastFrame = nowTs;
       const w = wrap.clientWidth;
       const h = wrap.clientHeight;
       const ctx = canvas.getContext("2d");
@@ -1141,6 +1232,48 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       }
       pointsRef.current = pts;
 
+      // ── New-node spirals (TOP pass) ──────────────────────────────────────
+      // Drawn last so a busy/VPN location can never hide them. Spirals sharing a
+      // location fan out a few px apart (stable angle per IP) so each is visible.
+      const news = newNodesRef.current;
+      if (news.length) {
+        const groups = new Map<string, NewNode[]>();
+        for (const n of news) {
+          const key = `${n.lat.toFixed(1)},${n.lon.toFixed(1)}`;
+          (groups.get(key) ?? groups.set(key, []).get(key)!).push(n);
+        }
+        for (const group of groups.values()) {
+          group.forEach((n, idx) => {
+            const [bx, by] = P(n.lon, n.lat);
+            // fan-out: idx 0 centred, others nudged on a small ring (6px)
+            const ang = phaseOf(n.ip);
+            const off = idx === 0 ? 0 : 6;
+            const cx = bx + Math.cos(ang) * off;
+            const cy = by + Math.sin(ang) * off;
+            // recompute the diameter live so it shrinks over the day boundary
+            const dia = spiralDiameter(n.firstSeen);
+            if (dia <= 0) return;
+            drawSpiral(ctx, cx, cy, dia, now, highlightIpRef.current === n.ip);
+            // one-time arrival flash: an expanding aqua ring, ~800ms
+            const t0 = arrivalFxRef.current.get(n.ip);
+            if (t0 != null) {
+              const dt = now - t0;
+              if (dt > 800) arrivalFxRef.current.delete(n.ip);
+              else {
+                const p = dt / 800;
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(cx, cy, 6 + p * 26, 0, Math.PI * 2);
+                ctx.strokeStyle = `hsla(177, 85%, 60%, ${0.7 * (1 - p)})`;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.restore();
+              }
+            }
+          });
+        }
+      }
+
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
@@ -1171,7 +1304,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     const self = selfRef.current;
     if (self) add(self.ip, self.country); // our own node counts too
     for (const p of snap?.peers ?? []) add(p.ip, geos[p.ip]?.country);
-    for (const [ip, kp] of Object.entries(knownRef.current)) add(ip, kp.country || geos[ip]?.country);
+    // Count from the AUTHORITATIVE stored list (union-healed to the full ~92),
+    // not the map's in-memory ref which could momentarily read low. Overlaid
+    // with the ref so any self-nodes the map injected are still included.
+    const full = { ...loadKnown(), ...knownRef.current };
+    for (const [ip, kp] of Object.entries(full)) add(ip, kp.country || geos[ip]?.country);
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [snap, geos]);
 
@@ -1186,14 +1323,30 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <span className="nm-item"><span className="nm-dot nm-in" /> Full Network</span>
           <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
         </div>
-        <button
-          type="button"
-          className={"netmap-fastest" + (showFastest ? " on" : "")}
-          onClick={() => setShowFastest((v) => !v)}
-          title="Top 10 fastest nodes"
-        >
-          <Icon name="speed" size={15} />
-        </button>
+        <div className="netmap-tools">
+          <button
+            type="button"
+            className={"netmap-fastest" + (showFastest ? " on" : "")}
+            onClick={() => {
+              setShowFastest((v) => !v);
+              setShowMempool(false);
+            }}
+            title="Node speed"
+          >
+            <Icon name="speed" size={15} />
+          </button>
+          <button
+            type="button"
+            className={"netmap-fastest netmap-mem" + (showMempool ? " on" : "")}
+            onClick={() => {
+              setShowMempool((v) => !v);
+              setShowFastest(false);
+            }}
+            title="Live mempool"
+          >
+            M
+          </button>
+        </div>
       </div>
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
@@ -1203,6 +1356,39 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             getNodes={fastCandidates}
             origin={activeNode}
             onClose={() => setShowFastest(false)}
+          />
+        )}
+        {showMempool && <Mempool onClose={() => setShowMempool(false)} />}
+        {/* Newest Nodes — bottom-right trigger + panel. Aqua sparkle icon. */}
+        <button
+          type="button"
+          onClick={() => setShowNewest((v) => !v)}
+          title="Newest nodes"
+          style={{
+            position: "absolute",
+            right: 10,
+            bottom: 10,
+            width: 30,
+            height: 30,
+            borderRadius: 8,
+            border: "1px solid hsl(177 70% 55% / 0.5)",
+            background: showNewest ? "hsl(177 70% 55% / 0.25)" : "rgba(0,0,0,0.4)",
+            color: "hsl(177 85% 62%)",
+            cursor: "pointer",
+            zIndex: 6,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d="M12 2l1.9 5.6L19.5 9l-4.6 3.4L16.5 18 12 14.7 7.5 18l1.6-5.6L4.5 9l5.6-1.4z" />
+          </svg>
+        </button>
+        {showNewest && (
+          <NewestNodesPanel
+            onHighlight={(ip) => (highlightIpRef.current = ip)}
+            onClose={() => setShowNewest(false)}
           />
         )}
         {primer.active ? <PrimerLove /> : <BlockChainViz />}

@@ -16,6 +16,7 @@ export const NAV: NavItem[] = [
   { id: "timestamp", label: "Proof of Existence", icon: "timestamp" },
   { id: "collectibles", label: "Divi Collectibles", icon: "collectibles" },
   { id: "tokens", label: "Divi Meta Tokens", icon: "tokens" },
+  { id: "governance", label: "Governance", icon: "governance" },
   { id: "addressbook", label: "Address Book", icon: "addressbook" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];

@@ -1,21 +1,22 @@
 import { useRef, useState } from "react";
-import { loadGrid, saveGrid, GRID_SIZE, type GridCharacter, type GridSlots } from "./gridCharacters";
+import { loadGrid, saveGrid, loadKeys, saveKeys, GRID_SIZE, type GridCharacter, type GridSlots } from "./gridCharacters";
 import { fileToThumb } from "./nodeIdentity";
 
 // Admin-only: assign a Kinetink character to each of the six grid slots. Shown
 // inside the Creator when the connected node is one of the admin's own.
 //
-// Each slot holds a name, an image, a description and the character's Kinetink
-// api_key — the key is what wires the tile to its AI (chat opens the Kinetink
-// embed for that key; see docs/NODE-IDENTITY-PLAN.md §0c). Saved locally for now;
-// the scanner service is the permanent home.
+// The public character (name, image, description) and the secret api_key are
+// edited together here but STORED SEPARATELY (see gridCharacters.ts) — the key
+// never lives in the object that gets published.
 
-const EMPTY: GridCharacter = { name: "", description: "", thumb: "", apiKey: "" };
+const EMPTY: GridCharacter = { name: "", description: "", thumb: "" };
 
-function SlotEditor({ index, slot, onChange, onClear }: {
+function SlotEditor({ index, slot, apiKey, onChange, onKey, onClear }: {
   index: number;
   slot: GridCharacter | null;
+  apiKey: string;
   onChange: (c: GridCharacter) => void;
+  onKey: (k: string) => void;
   onClear: () => void;
 }) {
   const c = slot ?? EMPTY;
@@ -64,10 +65,11 @@ function SlotEditor({ index, slot, onChange, onClear }: {
       <input
         className="wl-input"
         placeholder="Kinetink API key"
-        value={c.apiKey}
-        onChange={(e) => onChange({ ...c, apiKey: e.target.value.trim() })}
+        value={apiKey}
+        onChange={(e) => onKey(e.target.value.trim())}
         spellCheck={false}
         type="password"
+        autoComplete="off"
       />
       <textarea
         className="wl-input gridadmin-desc"
@@ -75,7 +77,7 @@ function SlotEditor({ index, slot, onChange, onClear }: {
         value={c.description}
         onChange={(e) => onChange({ ...c, description: e.target.value })}
       />
-      {slot && (
+      {(slot || apiKey) && (
         <button type="button" className="wl-link" style={{ fontSize: "0.68rem" }} onClick={onClear}>
           Clear slot
         </button>
@@ -86,6 +88,7 @@ function SlotEditor({ index, slot, onChange, onClear }: {
 
 export function GridAdmin() {
   const [slots, setSlots] = useState<GridSlots>(() => loadGrid());
+  const [keys, setKeys] = useState<(string | null)[]>(() => loadKeys());
   const [dirty, setDirty] = useState(false);
   const [savedNote, setSavedNote] = useState(false);
 
@@ -96,12 +99,24 @@ export function GridAdmin() {
     setDirty(true);
     setSavedNote(false);
   };
+  const setKey = (i: number, k: string) => {
+    const next = keys.slice();
+    next[i] = k || null;
+    setKeys(next);
+    setDirty(true);
+    setSavedNote(false);
+  };
+  const clearSlot = (i: number) => {
+    set(i, null);
+    setKey(i, "");
+  };
 
   const save = () => {
-    // Drop empty slots to null so a blank editor doesn't count as a character.
-    const cleaned = slots.map((s) => (s && (s.name || s.thumb || s.apiKey) ? s : null));
-    saveGrid(cleaned);
-    setSlots(cleaned);
+    // Drop empty slots (no name/thumb/key) to null.
+    const cleaned = slots.map((s, i) => (s && (s.name || s.thumb) ? s : keys[i] ? s : null));
+    saveGrid(cleaned); // public only — the secret keys are written separately
+    saveKeys(keys);
+    setSlots(loadGrid());
     setDirty(false);
     setSavedNote(true);
   };
@@ -120,8 +135,10 @@ export function GridAdmin() {
             key={i}
             index={i}
             slot={slots[i]}
+            apiKey={keys[i] ?? ""}
             onChange={(c) => set(i, c)}
-            onClear={() => set(i, null)}
+            onKey={(k) => setKey(i, k)}
+            onClear={() => clearSlot(i)}
           />
         ))}
       </div>

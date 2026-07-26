@@ -36,6 +36,9 @@ export function AgentPanel() {
   const [builtin, setBuiltin] = useState<number | null>(saved.builtin);
   const [mediaType, setMediaType] = useState(saved.mediaType);
   const [thumb, setThumb] = useState(saved.thumb);
+  const [tier, setTier] = useState<"standard" | "uncensored">(saved.tier);
+  // The user has started their own agent once they've given it an image or name.
+  const hasMyAgent = !!(thumb || name.trim());
   // Object URL for the stored original, so animated WebP and video actually play.
   const [preview, setPreview] = useState<string | null>(null);
   const [imgErr, setImgErr] = useState<string | null>(null);
@@ -89,7 +92,10 @@ export function AgentPanel() {
       // no image at all.
       saveIdentity({ ...loadIdentity(), name, description, builtin: null, mediaType: mt, thumb: th, hasMedia: true });
       const u = await mediaUrl();
-      setPreview(u);
+      setPreview((old) => {
+        if (old) URL.revokeObjectURL(old); // don't leak the previous object URL
+        return u;
+      });
     } catch (e) {
       setImgErr(e instanceof Error ? e.message : String(e));
     }
@@ -97,7 +103,10 @@ export function AgentPanel() {
 
   const removeMedia = async () => {
     await clearMedia();
-    setPreview(null);
+    setPreview((old) => {
+      if (old) URL.revokeObjectURL(old);
+      return null;
+    });
     setMediaType("");
     setThumb("");
     saveIdentity({ ...loadIdentity(), mediaType: "", thumb: "", hasMedia: false });
@@ -109,7 +118,7 @@ export function AgentPanel() {
   };
 
   const save = () => {
-    saveIdentity({ ...loadIdentity(), name, description, builtin, mediaType, thumb, hasMedia: !!mediaType });
+    saveIdentity({ ...loadIdentity(), name, description, builtin, mediaType, thumb, tier, hasMedia: !!mediaType });
     setDirty(false);
   };
 
@@ -220,6 +229,32 @@ export function AgentPanel() {
                           }}
                         />
                       </label>
+
+                      {/* Subscription tier for the agent's AI. */}
+                      <div className="agent-field">
+                        <span>Plan</span>
+                        <div className="agent-tiers">
+                          {([
+                            ["standard", "STANDARD", "$10/mo"],
+                            ["uncensored", "UNCENSORED", "$20/mo"],
+                          ] as const).map(([id, label, price]) => (
+                            <button
+                              key={id}
+                              type="button"
+                              className={"agent-tier" + (tier === id ? " agent-tier-on" : "")}
+                              aria-pressed={tier === id}
+                              onClick={() => {
+                                setTier(id);
+                                setDirty(true);
+                              }}
+                            >
+                              <span className="agent-tier-name">{label}</span>
+                              <span className="agent-tier-price">{price}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
                       {/* Bright when there's something to save, greyed when not.
                           Typing never writes to storage, so it can't lag. */}
                       <button
@@ -286,10 +321,36 @@ export function AgentPanel() {
                     type="button"
                     className="agent-tile agent-tile-create"
                     onClick={() => setCreating(true)}
+                    title={hasMyAgent ? "Edit your agent" : "Create your own agent"}
                   >
-                    <span className="agent-portrait" style={createPortrait} aria-hidden />
-                    <span className="agent-create-q">+</span>
-                    <span className="agent-create-label">CREATE YOUR OWN</span>
+                    {hasMyAgent ? (
+                      /* Started: show the agent's ACTUAL uploaded media (animated
+                         WebP / video plays), name, and EDIT MY AGENT. No "+".
+                         Uses the full-res original, not the tiny thumbnail. */
+                      <>
+                        {preview ? (
+                          isVideo ? (
+                            <video className="agent-avatar-img" src={preview} autoPlay loop muted playsInline />
+                          ) : (
+                            <img className="agent-avatar-img" src={preview} alt="" />
+                          )
+                        ) : thumb ? (
+                          <img className="agent-avatar-img" src={thumb} alt="" />
+                        ) : (
+                          <span className="agent-portrait" style={createPortrait} aria-hidden />
+                        )}
+                        <span className="agent-create-footer">
+                          <span className="agent-create-name">{name.trim() || "My Agent"}</span>
+                          <span className="agent-create-edit">EDIT MY AGENT</span>
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="agent-portrait" style={createPortrait} aria-hidden />
+                        <span className="agent-create-q">+</span>
+                        <span className="agent-create-label">CREATE YOUR OWN</span>
+                      </>
+                    )}
                   </button>
 
                   <div className="agent-grid">

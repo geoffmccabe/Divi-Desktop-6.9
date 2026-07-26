@@ -19,22 +19,48 @@ export interface KnownPeer {
 }
 export type Known = Record<string, KnownPeer>;
 
-export function loadKnown(): Known {
-  let k: Known = {};
+function parse(raw: string | null): Known {
   try {
-    k = JSON.parse(localStorage.getItem(KEY) || "{}");
+    const v = JSON.parse(raw || "{}");
+    return v && typeof v === "object" ? v : {};
   } catch {
-    k = {};
+    return {};
   }
+}
+
+export function loadKnown(): Known {
   const now = Date.now();
+  // Start from the shared store, then UNION IN any leftover per-node stores
+  // (dd69.knownPeers.desktop / .scan). An earlier version of the map split the
+  // network per node; those subsets got stranded there, so the shared list read
+  // low and nodes appeared "missing". Folding them back in — keeping the most
+  // recent sighting of each IP — recovers the full network and heals the split.
+  const k: Known = parse(localStorage.getItem(KEY));
+  const baseCount = Object.keys(k).length;
   let changed = false;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(KEY + ".")) continue; // dd69.knownPeers.<scope>
+      const sub = parse(localStorage.getItem(key));
+      for (const ip of Object.keys(sub)) {
+        if (!k[ip] || (sub[ip]?.lastSeen ?? 0) > (k[ip]?.lastSeen ?? 0)) {
+          k[ip] = sub[ip];
+          changed = true;
+        }
+      }
+    }
+  } catch {
+    /* enumerate best-effort */
+  }
+  // Drop anything not seen in 30 days.
   for (const ip of Object.keys(k)) {
     if (now - (k[ip]?.lastSeen ?? 0) > TTL_MS) {
       delete k[ip];
       changed = true;
     }
   }
-  if (changed) save(k);
+  if (changed || Object.keys(k).length !== baseCount) save(k); // heal the shared store
   return k;
 }
 
@@ -52,7 +78,16 @@ export function recordKnown(
   seen: { ip: string; lat: number; lon: number; city?: string; country?: string; cc?: string }[]
 ): Known {
   const now = Date.now();
-  const k = { ...prev };
+  // Merge onto what is ON DISK, not just the caller's in-memory copy.
+  //
+  // This write used to be `{...prev}`. If a remount or a node switch handed us a
+  // `prev` that was still empty or partial — the map's ref starts as {} and is
+  // filled a tick later — the save would overwrite the whole accumulated network
+  // with only the peers seen in that one poll. That is how a 92-node history
+  // collapsed to roughly the current peer count. Folding the stored copy in
+  // first means a stale caller can only ever ADD nodes, never silently drop them;
+  // the 30-day prune in loadKnown remains the single place entries are removed.
+  const k = { ...loadKnown(), ...prev };
   for (const s of seen)
     k[s.ip] = { lat: s.lat, lon: s.lon, city: s.city, country: s.country, cc: s.cc, lastSeen: now };
   save(k);

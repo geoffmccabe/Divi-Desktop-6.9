@@ -442,6 +442,32 @@ pub fn is_valid_address(cfg: &NodeConfig, addr: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// An address the wallet controls, to sign identity records with — the account
+/// address (stable, always owned). None if the node/wallet isn't reachable.
+pub fn signing_address(cfg: &NodeConfig) -> Option<String> {
+    let rpc = RpcClient::new(cfg);
+    rpc.call("getaccountaddress", json!([""]))
+        .ok()
+        .and_then(|v| v.as_str().map(|s| s.to_string()))
+}
+
+/// Sign a message with `address` (must be owned). Returns the base64 signature,
+/// or an error string. Requires the wallet to be unlocked — signing uses the
+/// private key, so the caller must handle the passphrase flow first.
+pub fn sign_message(cfg: &NodeConfig, address: &str, message: &str) -> Result<String, String> {
+    let rpc = RpcClient::new(cfg);
+    match rpc.call("signmessage", json!([address, message])) {
+        Ok(v) => v
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| "node returned no signature".to_string()),
+        Err(e) if e.contains("passphrase") || e.contains("locked") || e.contains("-13") => {
+            Err("Unlock the wallet to sign.".to_string())
+        }
+        Err(e) => Err(e),
+    }
+}
+
 /// Does the connected node's wallet OWN any of these addresses? Uses
 /// validateaddress `ismine`, which is true regardless of transaction activity —
 /// the reliable "is this the admin's node" test (an address can be owned but not
@@ -536,6 +562,33 @@ pub fn recent(cfg: &NodeConfig, count: i64) -> Vec<Tx> {
 /// wallet, ask-on-send), we FULL-unlock just long enough to send, then restore
 /// the safe staking-only state so staking keeps running but spends stay locked.
 /// If no passphrase (unencrypted, or a wallet the user left open), we send as-is.
+/// Live status of one wallet transaction, for the Fast Send tracker. `found`
+/// is false when the node doesn't know the tx yet (just broadcast, not indexed).
+/// `confirmations` can be NEGATIVE: the daemon reports a conflicted / double-spent
+/// wallet transaction with a negative count, which is exactly the "someone tried
+/// to double-spend this" signal Fast Send watches for.
+pub struct TxStatus {
+    pub found: bool,
+    pub confirmations: i64,
+    pub time: i64,
+    pub amount: f64,
+    pub category: String,
+}
+
+pub fn tx_status(cfg: &NodeConfig, txid: &str) -> TxStatus {
+    let rpc = RpcClient::new(cfg);
+    match rpc.call("gettransaction", json!([txid])) {
+        Ok(t) => TxStatus {
+            found: true,
+            confirmations: t["confirmations"].as_i64().unwrap_or(0),
+            time: t["time"].as_i64().unwrap_or(0),
+            amount: t["amount"].as_f64().unwrap_or(0.0),
+            category: t["details"][0]["category"].as_str().unwrap_or("").to_string(),
+        },
+        Err(_) => TxStatus { found: false, confirmations: 0, time: 0, amount: 0.0, category: String::new() },
+    }
+}
+
 pub fn send_coins(cfg: &NodeConfig, address: &str, amount: f64, passphrase: Option<&str>) -> Result<String, String> {
     if amount <= 0.0 {
         return Err("Amount must be greater than zero.".into());

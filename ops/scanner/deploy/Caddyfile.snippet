@@ -1,0 +1,10 @@
+# Append to /etc/caddy/Caddyfile. Same shape as the existing ai.divi.love block:
+# Caddy provisions a Let's Encrypt cert and reverse-proxies to the loopback
+# service. Needs nodes.divi.love as a DNS-only (grey cloud) A record → this box,
+# so Caddy's HTTP-01 challenge on :80 works (see DEPLOY.md).
+#
+# Its own hostname keeps identity traffic + any future cookies off ai.divi.love.
+# Media served here is cookieless, satisfying the audit's isolation note.
+nodes.divi.love {
+	reverse_proxy 127.0.0.1:8772
+}

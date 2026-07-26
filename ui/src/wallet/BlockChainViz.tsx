@@ -119,17 +119,27 @@ export function BlockChainViz() {
 
   useEffect(() => {
     let raf = 0;
+    // The strip drifts one slot per minute, so repositioning at the display's
+    // full frame rate was pure waste — continuous layout work the entire time
+    // the window was open. 10 updates a second is indistinguishable for a
+    // movement this slow, and requestAnimationFrame still pauses everything
+    // when the window is hidden.
+    let lastPaint = 0;
     const tick = () => {
-      const bs = blocksRef.current;
-      const n = bs.length;
-      const frac = Math.min(1, Math.max(0, (performance.now() - lastAddTime.current) / EXPECTED_MS));
-      for (let i = 0; i < n; i++) {
-        const b = bs[i];
-        const left = 100 - (n - i + frac) * BLOCK_PCT;
-        const el = panelRefs.current.get(b.height);
-        if (el) el.style.left = `${left}%`;
-        const oel = orphanRefs.current.get(b.height);
-        if (oel) oel.style.left = `calc(${left}% - ${ORPHAN_W}px)`;
+      const now = performance.now();
+      if (now - lastPaint >= 100) {
+        lastPaint = now;
+        const bs = blocksRef.current;
+        const n = bs.length;
+        const frac = Math.min(1, Math.max(0, (now - lastAddTime.current) / EXPECTED_MS));
+        for (let i = 0; i < n; i++) {
+          const b = bs[i];
+          const left = 100 - (n - i + frac) * BLOCK_PCT;
+          const el = panelRefs.current.get(b.height);
+          if (el) el.style.left = `${left}%`;
+          const oel = orphanRefs.current.get(b.height);
+          if (oel) oel.style.left = `calc(${left}% - ${ORPHAN_W}px)`;
+        }
       }
       raf = requestAnimationFrame(tick);
     };

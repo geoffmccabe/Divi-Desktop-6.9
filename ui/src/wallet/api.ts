@@ -287,6 +287,48 @@ export interface NodePing {
 }
 export const pingNodes = (ips: string[]) => invoke<NodePing[]>("ping_nodes", { ips });
 
+// ---- Live mempool (the Mempool panel) ----
+export interface MemEntry {
+  txid: string;
+  size: number;
+  feeSats: number;
+  time: number;
+  decoded: boolean; // true only for txids decoded this call; else keep cached flags
+  mine: boolean; // involves the user's wallet (in or out)
+  category: string; // "receive" | "send" | ""
+  amountMine: number; // DIVI, net to/from the wallet
+  hasData: boolean; // carries an OP_META data payload (a "message")
+  fast: boolean; // carries the Fast Send "DFS1" on-chain marker
+}
+export interface MempoolSnap {
+  tip: number;
+  bestHash: string;
+  entries: MemEntry[];
+}
+// `known` = txids the UI already classified, so only new txs get decoded.
+export const mempoolSnapshot = (known: string[]) =>
+  invoke<MempoolSnap | null>("mempool_snapshot", { known });
+
+// ---- Bearer transactions (redeemable claim codes) ----
+export interface BearerCreated {
+  code: string; // the redeemable code (this IS the money — treat as a secret)
+  address: string;
+  txid: string;
+  vout: number;
+  amount: number;
+}
+export interface BearerStatus {
+  funded: boolean;
+  claimed: boolean; // true once swept (claimed or reclaimed) or never funded
+  value: number;
+  confirmations: number;
+}
+export const bearerCreate = (amount: number, passphrase?: string) =>
+  invoke<BearerCreated>("bearer_create", { amount, passphrase: passphrase ?? null });
+export const bearerSweep = (code: string, dest: string) =>
+  invoke<string>("bearer_sweep", { code, dest });
+export const bearerStatus = (code: string) => invoke<BearerStatus>("bearer_status", { code });
+
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
 export const lotteryWins = (addresses: string[]) => invoke<LotteryWin[]>("lottery_wins", { addresses });
@@ -352,6 +394,20 @@ export const forgetPassword = () => invoke<void>("forget_password");
 export const resumeStaking = () => invoke<StakeStart>("resume_staking");
 export const sendCoins = (address: string, amount: number, passphrase?: string) =>
   invoke<string>("send_coins", { address, amount, passphrase: passphrase ?? null });
+// Fast Send: raw tx with a ~5x priority fee + on-chain DFS1 marker.
+export const fastSend = (address: string, amount: number, passphrase?: string) =>
+  invoke<string>("fast_send", { address, amount, passphrase: passphrase ?? null });
+
+// Live status of one wallet transaction, for the Fast Send tracker. Negative
+// `confirmations` means the node sees a conflicting (double-spent) transaction.
+export interface TxStatus {
+  found: boolean;
+  confirmations: number;
+  time: number;
+  amount: number;
+  category: string;
+}
+export const txStatus = (txid: string) => invoke<TxStatus>("tx_status", { txid });
 
 // ---- DIVI price / value ----
 export interface DiviPrices {
