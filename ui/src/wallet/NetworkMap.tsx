@@ -10,6 +10,7 @@ import { FastestNodes, type FastCandidate } from "./FastestNodes";
 import { Mempool } from "./Mempool";
 import { NewestNodesPanel } from "./NewestNodesPanel";
 import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
+import { classifyNode } from "./nodeTypes";
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
@@ -463,12 +464,15 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             city?: string;
             country?: string;
             cc?: string;
+            subver?: string;
           }[] = [];
           let newIdx = 0;
           for (const p of s.peers) {
             const pg = m[p.ip];
             if (!pg) continue;
-            seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon, city: pg.city, country: pg.country, cc: pg.countryCode });
+            // Remember the client each peer advertises, so its TYPE persists in
+            // the 90-day store even after it stops being a live peer.
+            seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon, city: pg.city, country: pg.country, cc: pg.countryCode, subver: p.subver });
             probeRef.current.set(p.ip, "online"); // connected = definitely online
             if (!revealed.current.has(p.ip)) {
               // After a switch, reveal already-connected peers as settled (a past
@@ -1199,7 +1203,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               p.inbound ? "Inbound peer" : "Outbound peer",
               `Ping ${Math.round(p.pingMs)} ms · connected ${fmtDur(p.connSecs)}`,
               pg.isp || "",
-              p.subver || "",
+              classifyNode(p.subver).label,
               `Block ${p.height.toLocaleString()}`,
             ].filter(Boolean),
             won: !USER_IS_WINNER && p.ip === winnerRef.current,
@@ -1224,8 +1228,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           title: loc || ip,
           lines: [
             loc ? ip : "",
-            online ? "Active now · not connected" : st === "probing" ? "Checking…" : "Seen in the last 30 days",
+            online ? "Active now · not connected" : st === "probing" ? "Checking…" : "Seen in the last 90 days",
             isp,
+            // Node type from the client it last advertised (remembered in the store).
+            kp.subver ? classifyNode(kp.subver).label : "",
           ].filter(Boolean),
           tone: online ? "blue" : undefined,
         });
