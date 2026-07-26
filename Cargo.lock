@@ -625,6 +625,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "c2pa-helper"
+version = "0.1.0"
+dependencies = [
+ "c2pa",
+ "serde_json",
+]
+
+[[package]]
 name = "c2pa_cbor"
 version = "0.77.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1163,7 +1171,6 @@ name = "dd69-supervisor"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "c2pa",
  "keyring",
  "libc",
  "serde_json",

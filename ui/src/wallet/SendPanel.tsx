@@ -10,6 +10,11 @@ import {
 } from "./api";
 import { getAskMode } from "./securityPrefs";
 import { fmtDivi } from "../status";
+import { FastSendTracker } from "./FastSendTracker";
+
+// Above this, we nudge the sender that the recipient will likely wait for a
+// confirmation rather than accept instantly. Soft guidance, not a block.
+const FAST_SOFT_CAP = 1000;
 
 // Sending real, irreversible DIVI. Flow: fill in → review (explicit confirm) →
 // unlock only if the wallet requires it (encrypted + ask-on-send) → broadcast.
@@ -31,6 +36,8 @@ export function SendPanel() {
   const [bal, setBal] = useState<Balance | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [txid, setTxid] = useState("");
+  const [fast, setFast] = useState(false);
+  const [broadcastAt, setBroadcastAt] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -65,6 +72,8 @@ export function SendPanel() {
     setPass("");
     setErr(null);
     setTxid("");
+    setBroadcastAt(0);
+    // keep `fast` as the user left it, so repeat Fast Sends stay fast
   };
 
   // Form → confirm: validate the address with the node and the amount locally.
@@ -103,6 +112,7 @@ export function SendPanel() {
     try {
       const id = await sendCoins(address.trim(), amount!, passphrase);
       setTxid(id);
+      setBroadcastAt(Date.now());
       setStage("done");
     } catch (e) {
       setErr(String(e));
@@ -113,8 +123,12 @@ export function SendPanel() {
   if (stage === "done") {
     return (
       <div className="send-panel">
-        <div className="send-done">✓ Sent {fmtDivi(amount ?? 0)} DIVI</div>
-        <p className="wl-note">Your transaction is on its way. It may take a few minutes to confirm.</p>
+        <div className="send-done">{fast ? "⚡ Fast Sent" : "✓ Sent"} {fmtDivi(amount ?? 0)} DIVI</div>
+        {fast && txid ? (
+          <FastSendTracker txid={txid} broadcastAt={broadcastAt} />
+        ) : (
+          <p className="wl-note">Your transaction is on its way. It may take a few minutes to confirm.</p>
+        )}
         {txid && (
           <button type="button" className="wl-link" onClick={() => openUrl(explorerTxUrl(txid))}>
             View in Divi Love Scan
@@ -156,6 +170,27 @@ export function SendPanel() {
         </span>
         {overBalance && <span className="wl-err">More than your spendable balance — the send may be rejected.</span>}
       </label>
+
+      <label className={"fast-toggle" + (fast ? " on" : "")}>
+        <input
+          type="checkbox"
+          checked={fast}
+          onChange={(e) => setFast(e.target.checked)}
+          disabled={stage !== "form"}
+        />
+        <span className="fast-toggle-body">
+          <span className="fast-toggle-title">⚡ Fast Send</span>
+          <span className="fast-toggle-sub">
+            Broadcasts and tracks the payment live so the recipient can see it arrive within seconds. Priority fee and
+            network-wide fraud-check arrive in later phases; today it sends normally and tracks confirmation.
+          </span>
+        </span>
+      </label>
+      {fast && amount != null && amount > FAST_SOFT_CAP && (
+        <span className="wl-note">
+          Large amount: the recipient may wait for a confirmation (about a minute) before releasing goods.
+        </span>
+      )}
 
       {stage === "form" && (
         <button

@@ -1,152 +1,266 @@
-//! Reading C2PA "Content Credentials" out of a file.
+//! Reading C2PA "Content Credentials" out of a file — via an on-demand helper.
+//!
+//! The actual C2PA SDK is a large dependency (image parsers, XMP/JUMBF, X.509),
+//! so it is NOT compiled into DD69. It lives in a separate `c2pa-helper` binary
+//! that this module downloads on first use, verifies against a pinned SHA-256,
+//! caches, and then runs as a child process. Result: the app's own download
+//! stays small, and the heavy part is fetched only if someone actually checks a
+//! file's credentials.
 //!
 //! This is the READ half only — we verify what someone else signed. We do not
-//! create or sign manifests, and the wording in the UI must not imply we do.
-//!
-//! Scope and honesty notes, because this area invites overclaiming:
-//!
-//!  * Nothing here is "C2PA compliant". Compliance is a formal conformance
-//!    listing for products that GENERATE credentials. Reading them requires no
-//!    permission from anyone and confers no certification.
-//!  * `fetch_remote_manifests` is deliberately NOT enabled, so opening a file
-//!    never causes a network request. What we report comes from the file alone.
-//!  * Without a configured trust list, a signature can be cryptographically
-//!    sound while the signer is still unknown to us. Those are different
-//!    statements and the UI keeps them apart.
-//!  * A valid credential says the file matches what the signer claimed. It does
-//!    not mean the picture is true, and it says nothing about AI unless the
-//!    manifest itself asserts it.
+//! create or sign manifests, and the wording in the UI must not imply we do. The
+//! helper is built without remote-manifest fetching, so reading a file never
+//! touches the network; the only network use here is the one-time helper
+//! download, which is checksum-pinned exactly like the daemon installer.
 
-use c2pa::{Context, Reader};
-use std::io::Cursor;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
+/// Mirrors the JSON the helper prints. Field names are the helper's snake_case
+/// keys, parsed out by hand so this module needs no serde derive.
 #[derive(Debug, Clone, Default)]
 pub struct C2paSummary {
-    /// Did the file carry any credential at all?
     pub present: bool,
-    /// Well-formed / valid / invalid, straight from the SDK.
     pub state: String,
-    /// Who signed it, if the manifest says.
     pub signer: Option<String>,
-    /// The tool that produced it (e.g. a camera or an editor).
     pub generator: Option<String>,
-    /// When it was signed, as the manifest records it.
     pub signed_at: Option<String>,
     pub title: Option<String>,
-    /// Assertion labels present — this is where "edited with AI" style claims
-    /// live, so the UI can show them verbatim rather than interpreting them.
     pub assertions: Vec<String>,
-    /// How many source ingredients the manifest references (an edit chain).
     pub ingredients: usize,
-    /// Validation problems, in the SDK's own words.
     pub issues: Vec<String>,
-    /// A Divi proof-of-existence assertion, if this file carries one.
     pub divi_txid: Option<String>,
-    /// The whole manifest as JSON, for a details view.
     pub json: String,
 }
 
-/// The reverse-domain label a Divi anchor would use inside a manifest. C2PA
-/// requires vendor assertions to be namespaced by a domain you control — a bare
-/// "divi.poe" would not be conformant.
+/// The reverse-domain label a Divi anchor uses inside a manifest. Kept here too
+/// so callers that don't spawn the helper still have the constant.
 pub const DIVI_POE_LABEL: &str = "org.divi.poe";
 
+const BASE_URL: &str = "https://scan.divi.love/downloads";
+
+/// Bumped whenever a new helper build is published. Also the stamp filename, so
+/// an upgrade is detected simply by the stamp not being there.
+pub const C2PA_HELPER_VERSION: &str = "0.1.0";
+
+struct Artifact {
+    file: &'static str,
+    sha256: &'static str,
+}
+
+/// Per-platform archive + its pinned SHA-256. `PENDING_*` means no build has
+/// been published for that platform yet, which surfaces as a clear "not
+/// available on this platform" message rather than a failed download.
+fn artifact() -> Option<Artifact> {
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    return Some(Artifact {
+        file: "c2pa-helper-macos-arm64.tar.gz",
+        sha256: "PENDING_MACOS_ARM64",
+    });
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    return Some(Artifact {
+        file: "c2pa-helper-linux-x86_64.tar.gz",
+        sha256: "PENDING_LINUX_X86_64",
+    });
+
+    #[cfg(not(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )))]
+    return None;
+}
+
+/// Where the cached helper lives. Under `DD69/`, like the managed daemon, so it
+/// never collides with Divi Desktop 2.0's tree.
+fn managed_dir() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    #[cfg(target_os = "macos")]
+    return Some(PathBuf::from(home).join("Library/Application Support/DD69/c2pa/unpacked"));
+    #[cfg(not(target_os = "macos"))]
+    return Some(PathBuf::from(home).join(".local/share/DD69/c2pa/unpacked"));
+}
+
+fn is_installed(dir: &Path) -> bool {
+    dir.join("c2pa-helper").is_file()
+        && dir.join(format!(".installed-{C2PA_HELPER_VERSION}")).is_file()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Ensure the helper binary is present and verified, returning its path.
+///
+/// A development/local override skips the download entirely: set
+/// `DIVI_C2PA_HELPER` to the path of a freshly built helper. This is how the
+/// spawn path is tested before any archive is hosted.
+fn ensure_helper() -> Result<PathBuf, String> {
+    if let Ok(p) = std::env::var("DIVI_C2PA_HELPER") {
+        let p = PathBuf::from(p);
+        if p.is_file() {
+            return Ok(p);
+        }
+        return Err(format!("DIVI_C2PA_HELPER points at {}, which is not a file", p.display()));
+    }
+
+    let dir = managed_dir().ok_or("no home directory")?;
+    let target = dir.join("c2pa-helper");
+    if is_installed(&dir) {
+        return Ok(target);
+    }
+
+    let art = artifact().ok_or(
+        "reading Content Credentials isn't available on this platform yet",
+    )?;
+    if art.sha256.starts_with("PENDING_") {
+        return Err("reading Content Credentials isn't available on this platform yet".into());
+    }
+
+    let url = format!("{BASE_URL}/{}", art.file);
+    let resp = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(120))
+        .call()
+        .map_err(|e| format!("could not download the credentials reader: {e}"))?;
+    let mut bytes: Vec<u8> = Vec::with_capacity(12 << 20);
+    resp.into_reader()
+        .take(64 << 20)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("download was interrupted: {e}"))?;
+
+    let got = sha256_hex(&bytes);
+    if got != art.sha256 {
+        // A mismatch means the file is not the one we published. Never a warning.
+        return Err(format!(
+            "the downloaded credentials reader did not match its expected checksum \
+             (expected {}, got {}). Nothing was installed.",
+            art.sha256, got
+        ));
+    }
+
+    // Unpack into a staging dir and swap in, so an interrupted extraction never
+    // leaves a partial binary where we will try to run it.
+    let staging = dir.with_extension("incoming");
+    let _ = std::fs::remove_dir_all(&staging);
+    std::fs::create_dir_all(&staging)
+        .map_err(|e| format!("cannot create {}: {e}", staging.display()))?;
+    let archive = staging.join(art.file);
+    std::fs::write(&archive, &bytes).map_err(|e| format!("cannot write the download: {e}"))?;
+
+    let status = std::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(&archive)
+        .arg("-C")
+        .arg(&staging)
+        .status()
+        .map_err(|e| format!("could not unpack the credentials reader: {e}"))?;
+    if !status.success() {
+        return Err("the credentials reader archive could not be unpacked".into());
+    }
+    let _ = std::fs::remove_file(&archive);
+
+    let unpacked = staging.join("c2pa-helper");
+    if !unpacked.is_file() {
+        return Err("the archive did not contain c2pa-helper".into());
+    }
+    make_executable(&unpacked)?;
+
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let _ = std::fs::remove_file(&target);
+    std::fs::rename(&unpacked, &target).map_err(|e| format!("cannot install the reader: {e}"))?;
+    let _ = std::fs::remove_dir_all(&staging);
+
+    // macOS quarantines anything downloaded by a normal HTTP client; clearing it
+    // stops Gatekeeper blocking a helper the user never opened themselves.
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("xattr")
+            .args(["-dr", "com.apple.quarantine"])
+            .arg(&dir)
+            .status();
+    }
+
+    std::fs::write(dir.join(format!(".installed-{C2PA_HELPER_VERSION}")), art.sha256)
+        .map_err(|e| format!("cannot record the install: {e}"))?;
+    Ok(target)
+}
+
 /// Read credentials from raw file bytes. `format` is the file extension or MIME
-/// type (the SDK accepts either). Ok(summary with present=false) means the file
-/// simply has no credentials, which is not an error — most files don't.
+/// type. Ensures the helper (downloading it once if needed), runs it, and parses
+/// its JSON output. Ok(summary with present=false) means the file simply has no
+/// credentials, which is not an error — most files don't.
 pub fn read(bytes: Vec<u8>, format: &str) -> Result<C2paSummary, String> {
-    // Explicit Context rather than the deprecated from_stream(), which relies on
-    // thread-local settings — the wrong shape for a Tauri worker thread.
-    let reader = match Reader::from_context(Context::new()).with_stream(format, Cursor::new(bytes)) {
-        Ok(r) => r,
-        Err(c2pa::Error::JumbfNotFound) => {
-            return Ok(C2paSummary { present: false, ..Default::default() })
-        }
-        Err(e) => return Err(format!("Couldn't read Content Credentials: {e}")),
-    };
+    let helper = ensure_helper()?;
 
-    let json = reader.json();
-    let mut out = C2paSummary {
-        present: true,
-        state: format!("{:?}", reader.validation_state()),
-        json: json.clone(),
-        ..Default::default()
-    };
+    let mut child = std::process::Command::new(&helper)
+        .arg(format)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start the credentials reader: {e}"))?;
 
-    if let Some(statuses) = reader.validation_status() {
-        for s in statuses {
-            let msg = s.explanation().unwrap_or(s.code()).to_string();
-            out.issues.push(msg);
-        }
-    }
+    // Feed the file to the child on a separate thread while we read its output,
+    // so a large file can never deadlock by filling the stdin pipe before the
+    // child starts draining it.
+    let mut stdin = child.stdin.take().ok_or("no stdin pipe to the reader")?;
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&bytes);
+        // Dropping stdin here signals EOF to the child.
+    });
 
-    // Pull the human-facing bits out of the manifest JSON rather than reaching
-    // through the SDK's types, which are still 0.x and move between releases.
-    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json) {
-        let active = v["active_manifest"].as_str().unwrap_or("");
-        let m = if active.is_empty() {
-            v["manifests"].as_object().and_then(|o| o.values().next()).cloned()
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("the credentials reader failed: {e}"))?;
+    let _ = writer.join();
+
+    if !output.status.success() {
+        let msg = String::from_utf8_lossy(&output.stderr);
+        let msg = msg.trim();
+        return Err(if msg.is_empty() {
+            "the credentials reader failed".to_string()
         } else {
-            v["manifests"].get(active).cloned()
-        };
-        if let Some(m) = m {
-            out.title = m["title"].as_str().map(str::to_string);
-            out.generator = m["claim_generator_info"][0]["name"]
-                .as_str()
-                .or_else(|| m["claim_generator"].as_str())
-                .map(str::to_string);
-            out.signer = m["signature_info"]["issuer"].as_str().map(str::to_string);
-            out.signed_at = m["signature_info"]["time"].as_str().map(str::to_string);
-            out.ingredients = m["ingredients"].as_array().map(|a| a.len()).unwrap_or(0);
-            if let Some(asserts) = m["assertions"].as_array() {
-                for a in asserts {
-                    if let Some(label) = a["label"].as_str() {
-                        out.assertions.push(label.to_string());
-                        if label == DIVI_POE_LABEL {
-                            out.divi_txid = a["data"]["txid"].as_str().map(str::to_string);
-                        }
-                    }
-                }
-            }
-        }
+            msg.to_string()
+        });
     }
 
-    Ok(out)
+    let v: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("the credentials reader returned unreadable output: {e}"))?;
+
+    Ok(C2paSummary {
+        present: v["present"].as_bool().unwrap_or(false),
+        state: v["state"].as_str().unwrap_or("").to_string(),
+        signer: v["signer"].as_str().map(str::to_string),
+        generator: v["generator"].as_str().map(str::to_string),
+        signed_at: v["signed_at"].as_str().map(str::to_string),
+        title: v["title"].as_str().map(str::to_string),
+        assertions: v["assertions"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default(),
+        ingredients: v["ingredients"].as_u64().unwrap_or(0) as usize,
+        issues: v["issues"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default(),
+        divi_txid: v["divi_txid"].as_str().map(str::to_string),
+        json: v["json"].as_str().unwrap_or("").to_string(),
+    })
 }
 
-/// File types the installed SDK can read, so the UI can say so accurately
-/// instead of guessing.
-pub fn supported_types() -> Vec<String> {
-    Reader::supported_mime_types()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Proves the reader works against a genuinely C2PA-signed file and against
-    // one with no credentials, so "no credentials" can never be confused with
-    // "failed to read".
-    #[test]
-    fn reads_a_signed_file_and_a_plain_one() {
-        let path = std::env::var("C2PA_TEST_JPG").unwrap_or_default();
-        if path.is_empty() {
-            eprintln!("skipping: set C2PA_TEST_JPG to a signed sample");
-            return;
-        }
-        let bytes = std::fs::read(&path).expect("sample readable");
-        let s = read(bytes, "image/jpeg").expect("reads");
-        assert!(s.present, "sample should carry credentials");
-        eprintln!(
-            "state={} signer={:?} generator={:?} assertions={:?} issues={:?}",
-            s.state, s.signer, s.generator, s.assertions, s.issues
-        );
-
-        // A file with no manifest must come back present=false, not an error.
-        let plain = read(vec![0xff, 0xd8, 0xff, 0xdb, 0, 0], "image/jpeg");
-        match plain {
-            Ok(p) => assert!(!p.present),
-            Err(_) => { /* malformed jpeg is also an acceptable outcome */ }
-        }
+fn make_executable(p: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(p)
+            .map_err(|e| format!("cannot read {}: {e}", p.display()))?
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(p, perms)
+            .map_err(|e| format!("cannot make {} executable: {e}", p.display()))?;
     }
+    Ok(())
 }

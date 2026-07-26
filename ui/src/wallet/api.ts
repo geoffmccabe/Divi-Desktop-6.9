@@ -256,6 +256,17 @@ export const resumeStaking = () => invoke<StakeStart>("resume_staking");
 export const sendCoins = (address: string, amount: number, passphrase?: string) =>
   invoke<string>("send_coins", { address, amount, passphrase: passphrase ?? null });
 
+// Live status of one wallet transaction, for the Fast Send tracker. Negative
+// `confirmations` means the node sees a conflicting (double-spent) transaction.
+export interface TxStatus {
+  found: boolean;
+  confirmations: number;
+  time: number;
+  amount: number;
+  category: string;
+}
+export const txStatus = (txid: string) => invoke<TxStatus>("tx_status", { txid });
+
 // ---- DIVI price / value ----
 export interface DiviPrices {
   prices: Record<string, number>; // lowercase currency code -> price per DIVI

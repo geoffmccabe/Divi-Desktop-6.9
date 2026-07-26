@@ -970,6 +970,37 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .send-actions { display: flex; gap: 8px; margin-top: 4px; }
 .send-done { font-size: 1.1rem; font-weight: 600; color: hsl(var(--success)); }
 
+/* ---- Fast Send toggle ---- */
+.fast-toggle {
+  display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+  border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 11px 13px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.fast-toggle.on { border-color: hsl(48 100% 60% / 0.7); background: hsl(48 100% 55% / 0.08); }
+.fast-toggle input { margin-top: 2px; width: 16px; height: 16px; accent-color: hsl(48 100% 55%); cursor: pointer; }
+.fast-toggle-body { display: flex; flex-direction: column; gap: 3px; }
+.fast-toggle-title { font-size: 0.9rem; font-weight: 600; color: hsl(var(--foreground)); }
+.fast-toggle-sub { font-size: 0.74rem; color: hsl(var(--muted-foreground)); line-height: 1.35; }
+
+/* ---- Fast Send live tracker ---- */
+.fst {
+  display: flex; flex-direction: column; gap: 9px;
+  border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 13px 15px;
+}
+.fst.confirmed { border-color: hsl(var(--success) / 0.6); }
+.fst.conflict { border-color: hsl(0 75% 60% / 0.7); background: hsl(0 75% 55% / 0.07); }
+.fst-row { display: flex; align-items: center; gap: 9px; font-size: 0.88rem; }
+.fst-step { flex: 1; color: hsl(var(--foreground)); }
+.fst-time { font-variant-numeric: tabular-nums; font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
+.fst-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: hsl(var(--muted-foreground) / 0.5); }
+.fst-dot.ok { background: hsl(var(--success)); }
+.fst-dot.live { background: hsl(48 100% 55%); animation: fst-pulse 1s ease-in-out infinite; }
+.fst-dot.pending { background: hsl(var(--muted-foreground) / 0.35); }
+.fst-dot.bad { background: hsl(0 75% 58%); }
+@keyframes fst-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+.fst-conflict { font-size: 0.82rem; font-weight: 600; color: hsl(0 80% 66%); line-height: 1.35; }
+.fst-note { margin: 0; font-size: 0.74rem; color: hsl(var(--muted-foreground)); line-height: 1.35; }
+
 /* ---- Spendable fiat value (header) ---- */
 /* Fiat value: same size as the DIVI amount, white, right-justified in the row;
    the currency code is small grey to match the DIVI decimals. */

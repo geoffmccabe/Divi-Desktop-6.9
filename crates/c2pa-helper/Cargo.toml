@@ -1,0 +1,18 @@
+[package]
+name = "c2pa-helper"
+version = "0.1.0"
+edition = "2021"
+
+# A standalone reader for C2PA "Content Credentials". It exists as its own binary
+# so the heavy c2pa dependency tree (image parsers, XMP/JUMBF, X.509) is NOT
+# linked into the main DD69 app. The app downloads this helper on first use of
+# "Check File" and shrinks its own download back to what it was before C2PA.
+[[bin]]
+name = "c2pa-helper"
+path = "src/main.rs"
+
+[dependencies]
+# Same build as before the split: no OpenSSL, and no remote-manifest fetching,
+# so reading a file never touches the network.
+c2pa = { version = "0.90.0", default-features = false, features = ["rust_native_crypto"] }
+serde_json = "1"

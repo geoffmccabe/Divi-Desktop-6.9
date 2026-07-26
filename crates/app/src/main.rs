@@ -930,6 +930,29 @@ async fn resume_staking() -> StakeStartDto {
     .unwrap_or(StakeStartDto { staking: false, needs_passphrase: false, message: "internal error".into() })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TxStatusDto {
+    found: bool,
+    confirmations: i64,
+    time: i64,
+    amount: f64,
+    category: String,
+}
+
+/// Live status of one wallet transaction, polled by the Fast Send tracker.
+#[tauri::command]
+async fn tx_status(txid: String) -> TxStatusDto {
+    tauri::async_runtime::spawn_blocking(move || {
+        let s = NodeConfig::load()
+            .map(|cfg| wallet::tx_status(&cfg, &txid))
+            .unwrap_or(wallet::TxStatus { found: false, confirmations: 0, time: 0, amount: 0.0, category: String::new() });
+        TxStatusDto { found: s.found, confirmations: s.confirmations, time: s.time, amount: s.amount, category: s.category }
+    })
+    .await
+    .unwrap_or(TxStatusDto { found: false, confirmations: 0, time: 0, amount: 0.0, category: String::new() })
+}
+
 /// Send DIVI. `passphrase` is supplied only when the wallet must be unlocked
 /// just for this send (encrypted + ask-on-send). Returns the txid.
 #[tauri::command]
@@ -1131,6 +1154,7 @@ fn main() {
             forget_password,
             resume_staking,
             send_coins,
+            tx_status,
             divi_prices,
             ai_set_key,
             ai_clear_key,

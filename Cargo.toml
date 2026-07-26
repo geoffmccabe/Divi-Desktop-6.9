@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/supervisor", "crates/app"]
+members = ["crates/supervisor", "crates/app", "crates/c2pa-helper"]
 resolver = "2"
 
 [profile.release]
