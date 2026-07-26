@@ -10,9 +10,8 @@ import { HeroBanner } from "./HeroBanner";
 import { VoterGrid } from "./VoterGrid";
 import { ProposalCardMock } from "./ProposalCardMock";
 
-// The existing "Divi Love Project" Telegram group. Placeholder invite link —
-// TODO(Geoff): confirm the exact URL and swap it in.
-const TELEGRAM_URL = "https://t.me/diviloveproject";
+// Invite link for the existing "Divi Love Project" Telegram group.
+const TELEGRAM_URL = "https://t.me/+eivUE-J6EYtjMzIx";
 
 export function GovernancePreview() {
   return (
