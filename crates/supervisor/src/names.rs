@@ -807,8 +807,13 @@ pub fn reverse(cfg: &NodeConfig, address: &str) -> Result<Option<String>, String
     // Re-check the forward record rather than trusting the stored claim. Both
     // directions must still agree at the moment of asking, or an address whose
     // name moved on would keep displaying somebody else's identity.
-    match resolve(cfg, &name)? {
-        Some(points_at) if points_at == addr => Ok(Some(name)),
+    //
+    // Unlike `resolve`, a stale index here is downgraded to "no name" rather
+    // than an error. This answer only decorates an address that is already on
+    // screen, so showing nothing costs the user nothing, whereas failing loudly
+    // every few seconds during a catch-up would just be noise.
+    match resolve(cfg, &name) {
+        Ok(Some(points_at)) if points_at == addr => Ok(Some(name)),
         _ => Ok(None),
     }
 }
@@ -887,6 +892,18 @@ pub fn commit(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     // useless salt on disk, which costs nothing. The other order loses the
     // commit's fee and the name.
     let mut store = read_json(&store_path("pending"));
+
+    // ⚠ Never overwrite an existing reservation. The salt is the only thing
+    // that can unlock a commit already paid for and sitting on the chain;
+    // replacing it would silently strand that commit and its fee. The panel
+    // guards this too, but the guard belongs where the data is.
+    let existing = &store[&q.canonical];
+    if !existing.is_null() && existing["chain"].as_str() == Some(chain.as_str()) {
+        return Err(format!(
+            "You already have a reservation for {}. Register it when the wait is up, or discard it first if you want to start again.",
+            q.canonical
+        ));
+    }
     let entry = json!({
         "salt": hex_of(&salt),
         "chain": chain,
