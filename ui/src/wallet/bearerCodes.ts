@@ -40,3 +40,38 @@ export function removeBearerCode(txid: string): void {
     /* storage unavailable */
   }
 }
+
+// Bearer transactions carry no on-chain marker (they're ordinary payments), so
+// the only way to label one in history is to remember the txids WE created or
+// redeemed through the app. Sent = a code we made (funding txid, tracked above).
+// Received = a code we swept into this wallet (the sweep txid).
+const RECEIVED_KEY = "dd69.bearerReceived";
+
+function loadReceived(): string[] {
+  try {
+    const arr = JSON.parse(localStorage.getItem(RECEIVED_KEY) || "[]");
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+export function addBearerReceived(txid: string): void {
+  if (!txid) return;
+  const all = loadReceived();
+  if (all.includes(txid)) return;
+  all.unshift(txid);
+  try {
+    localStorage.setItem(RECEIVED_KEY, JSON.stringify(all.slice(0, 500)));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function isBearerReceivedTxid(txid: string): boolean {
+  return loadReceived().includes(txid);
+}
+
+export function isBearerSentTxid(txid: string): boolean {
+  return loadBearerCodes().some((r) => r.txid === txid);
+}

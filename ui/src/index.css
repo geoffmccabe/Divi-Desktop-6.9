@@ -1016,10 +1016,14 @@ h1, h2, h3 { font-family: var(--font-heading); }
 /* ---- Send ---- */
 .send-panel { display: flex; flex-direction: column; gap: 16px; max-width: 440px; }
 
-/* Four send types, two across, collapsing to one column when narrow. */
+/* Four send types as a 2x2 grid: Send + Fast Send on top, Pin Code + Bearer
+   below. Collapses to a single column on a narrow window. */
 .send-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px; align-items: start;
+}
+@media (max-width: 680px) {
+  .send-grid { grid-template-columns: 1fr; }
 }
 .send-card {
   border: 1px solid hsl(var(--border)); border-radius: 12px; padding: 16px 18px;

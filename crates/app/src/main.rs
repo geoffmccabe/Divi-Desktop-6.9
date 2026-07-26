@@ -1016,6 +1016,7 @@ struct BearerStatusDto {
     funded: bool,
     claimed: bool,
     value: f64,
+    receivable: f64,
     confirmations: i64,
 }
 
@@ -1057,6 +1058,7 @@ async fn bearer_status(code: String) -> Result<BearerStatusDto, String> {
             funded: s.funded,
             claimed: s.claimed,
             value: s.value,
+            receivable: s.receivable,
             confirmations: s.confirmations,
         })
     })

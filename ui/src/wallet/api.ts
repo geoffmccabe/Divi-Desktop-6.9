@@ -321,6 +321,7 @@ export interface BearerStatus {
   funded: boolean;
   claimed: boolean; // true once swept (claimed or reclaimed) or never funded
   value: number;
+  receivable: number; // value minus the sweep fee = what the redeemer receives
   confirmations: number;
 }
 export const bearerCreate = (amount: number, passphrase?: string) =>

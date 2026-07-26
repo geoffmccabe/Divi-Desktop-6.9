@@ -11,7 +11,7 @@ import {
 } from "./api";
 import { getAskMode } from "./securityPrefs";
 import { fmtDivi } from "../status";
-import { addBearerCode, loadBearerCodes, removeBearerCode, type BearerRecord } from "./bearerCodes";
+import { addBearerCode, addBearerReceived, loadBearerCodes, removeBearerCode, type BearerRecord } from "./bearerCodes";
 
 // Bearer transactions: create a redeemable claim code that anyone holding it can
 // sweep, or redeem a code someone gave you. v1 is REVOCABLE — the key stays in
@@ -188,7 +188,7 @@ function BearerRedeem() {
     try {
       const s = await bearerStatus(code.trim());
       if (s.claimed || !s.funded) setInfo("This code has already been claimed, or was never funded.");
-      else setInfo(`Claimable: ${fmtDivi(s.value)} DIVI (${s.confirmations} confirmation${s.confirmations === 1 ? "" : "s"}).`);
+      else setInfo(`Claimable: ${fmtDivi(s.receivable)} DIVI (${s.confirmations} confirmation${s.confirmations === 1 ? "" : "s"}).`);
     } catch (e) {
       setErr(String(e));
     }
@@ -201,6 +201,7 @@ function BearerRedeem() {
     try {
       const dest = await newReceiveAddress();
       const txid = await bearerSweep(code.trim(), dest);
+      addBearerReceived(txid); // so history can label it "BEARER · RECEIVED"
       setDoneTxid(txid);
     } catch (e) {
       setErr(String(e));

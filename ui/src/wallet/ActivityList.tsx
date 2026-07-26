@@ -3,6 +3,7 @@ import { openUrl, explorerTxUrl, type Tx } from "./api";
 import { useTransactions, type TxStatus } from "./useTransactions";
 import { confDisplay } from "./confirmations";
 import { isFastTxid } from "./fastReceiveStore";
+import { isBearerReceivedTxid, isBearerSentTxid } from "./bearerCodes";
 import { fmtDivi, relTime } from "../status";
 import { Icon } from "../Icon";
 
@@ -59,6 +60,10 @@ function Row({ t }: { t: Tx }) {
   const deadStyle = { color: "hsl(var(--muted-foreground))" };
   // Fast Send arrivals get an orange badge so they stand out in history.
   const fast = isReceive && !dead && isFastTxid(t.txid);
+  // Bearer claims/sends carry no on-chain marker, so we label ones this app
+  // created or redeemed (tracked locally by txid).
+  const bearerRecv = isReceive && !dead && !fast && isBearerReceivedTxid(t.txid);
+  const bearerSent = t.kind === "send" && isBearerSentTxid(t.txid);
 
   return (
     <li className={"activity-row" + (fast ? " fast" : "")}>
@@ -74,9 +79,13 @@ function Row({ t }: { t: Tx }) {
                 ? inMempool
                   ? "FAST SEND!"
                   : "FAST SEND · RECEIVED"
-                : inMempool
-                  ? "INCOMING TRANSACTION"
-                  : "TRANSACTION RECEIVED"}
+                : bearerRecv
+                  ? inMempool
+                    ? "BEARER · INCOMING"
+                    : "BEARER · RECEIVED"
+                  : inMempool
+                    ? "INCOMING TRANSACTION"
+                    : "TRANSACTION RECEIVED"}
           </span>
         ) : t.kind === "stake" ? (
           <span className={dead ? "act-kind" : "act-kind act-stake-earned"} style={dead ? deadStyle : undefined}>
@@ -84,7 +93,7 @@ function Row({ t }: { t: Tx }) {
           </span>
         ) : (
           <span className={"act-kind act-" + t.kind} style={dead ? deadStyle : undefined}>
-            {KIND_LABEL[t.kind] ?? "Transaction"}
+            {bearerSent ? "BEARER Sent" : KIND_LABEL[t.kind] ?? "Transaction"}
           </span>
         )}
         <span

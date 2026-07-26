@@ -46,7 +46,7 @@ export function SendPanel() {
         <SendForm fast={false} acceptHandoff />
       </section>
       <section className="send-card">
-        <h3 className="send-card-title">⚡ Fast Send</h3>
+        <h3 className="send-card-title">FAST SEND ⚡</h3>
         <SendForm fast={true} />
       </section>
       <section className="send-card">
