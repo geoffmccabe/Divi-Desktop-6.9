@@ -118,10 +118,16 @@ DIVI_NAMES_TREASURY=<a regtest address> \
   cargo run --example names_smoke -- ~/divi-poe-regtest
 ```
 
-Eleven steps, all passing: scan from scratch, quote and price, reserve, refuse a
-reveal before maturity, register, appear in My Names, flip to taken, point at an
-address and resolve it, claim a display name with both directions agreeing,
-refuse a duplicate reservation, and stay stable across a fresh read.
+Thirteen steps, all passing: scan from scratch, quote and price, reserve, refuse
+a reveal before maturity, register, appear in My Names, flip to taken, point at
+an address and resolve it, claim a display name with both directions agreeing,
+refuse a duplicate registration, stay stable across a fresh read, renew and
+extend the expiry, and transfer the name away.
+
+The last step is the important one. After transferring, it asserts that editing
+and renewing are **refused**. If either is ever silently accepted, the wallet is
+building records the registry will throw away, and that is precisely the failure
+that got past code review.
 
 **Keep this green.** Unit tests cover the rules engine and cannot catch the class
 of bug that broke this feature twice: the rules and the transaction builder are

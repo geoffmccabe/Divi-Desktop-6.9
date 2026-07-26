@@ -918,6 +918,25 @@ fn send_record(
     dvxp::broadcast_record(&rpc, &payload, payments, dvxp::MIN_FEE_DIVI, from)
 }
 
+/// Refuse early, and in plain words, when this wallet cannot sign as `addr`.
+///
+/// Without this the failure surfaces from the coin selector as "that address has
+/// no DIVI to spend", which is technically true and completely misleading when
+/// the real answer is "that is not your address".
+fn require_ours(cfg: &NodeConfig, addr: &str, what: &str) -> Result<(), String> {
+    let rpc = RpcClient::new(cfg);
+    let ours = rpc
+        .call("validateaddress", json!([addr]))
+        .ok()
+        .and_then(|r| r["ismine"].as_bool())
+        .unwrap_or(false);
+    if ours {
+        Ok(())
+    } else {
+        Err(format!("{what} has to be signed by {addr}, and this wallet does not hold that address."))
+    }
+}
+
 /// The address that owns `name`, from the local index.
 ///
 /// Every edit has to be authored by this address or the indexer ignores it, so
@@ -926,10 +945,13 @@ fn send_record(
 fn owner_of(cfg: &NodeConfig, canonical: &str) -> Result<String, String> {
     let rpc = RpcClient::new(cfg);
     let idx = load_index(&chain_name(&rpc));
-    idx.names
+    let owner = idx
+        .names
         .get(canonical)
         .map(|n| n.owner.clone())
-        .ok_or_else(|| format!("{canonical} is not registered, or the wallet has not read it from the chain yet."))
+        .ok_or_else(|| format!("{canonical} is not registered, or the wallet has not read it from the chain yet."))?;
+    require_ours(cfg, &owner, &format!("Changing {canonical}"))?;
+    Ok(owner)
 }
 
 /// Step 1 of registration: publish `Hash160(salt ‖ name)` and remember the salt.
@@ -954,6 +976,18 @@ pub fn commit(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     // useless salt on disk, which costs nothing. The other order loses the
     // commit's fee and the name.
     let mut store = read_json(&store_path("pending"));
+
+    // Already registered is a different situation from already reserved, and
+    // saying "you have a reservation" for a name somebody owns is just wrong.
+    {
+        let idx = load_index(&chain);
+        if let Some(st) = idx.names.get(&q.canonical) {
+            return Err(format!(
+                "{} is already registered, to {}. Pick a different name.",
+                q.canonical, st.owner
+            ));
+        }
+    }
 
     // ⚠ Never overwrite an existing reservation. The salt is the only thing
     // that can unlock a commit already paid for and sitting on the chain;
@@ -1242,6 +1276,7 @@ pub fn set_primary(cfg: &NodeConfig, name: &str) -> Result<String, String> {
     let target = resolve(cfg, &canonical)?.ok_or_else(|| {
         format!("{canonical} does not point at a Divi address yet, so there is nothing to display it for. Set its address first.")
     })?;
+    require_ours(cfg, &target, &format!("Displaying {canonical} for {target}"))?;
     Ok(send_record(
         cfg,
         &NameRecord::SetPrimary { name: canonical.into_bytes() },

@@ -173,5 +173,53 @@ fn run() -> Result<(), String> {
     }
     println!("   resolution stable");
 
+    step(12, "renew extends the expiry, and pays for it");
+    let before = names::my_names(&cfg)?
+        .into_iter()
+        .find(|n| n.name == q.canonical)
+        .ok_or("lost the name")?
+        .expires_height;
+    names::renew(&cfg, &name)?;
+    mine(&rpc, 1)?;
+    sync_fully(&cfg)?;
+    let after = names::my_names(&cfg)?
+        .into_iter()
+        .find(|n| n.name == q.canonical)
+        .ok_or("lost the name after renew")?
+        .expires_height;
+    if after <= before {
+        return Err(format!("renew did not extend the expiry: {before} -> {after}"));
+    }
+    println!("   expiry {before} -> {after}");
+
+    // Everything below gives the name away, so it must come last.
+    step(13, "transfer it to somebody else, then be refused any further edits");
+    let stranger = dd69_supervisor::base58::payload_to_address(
+        dd69_supervisor::base58::KIND_P2PKH,
+        &[0x5au8; 20],
+        true,
+    );
+    println!("   sending {} to {stranger}", name.to_lowercase());
+    names::transfer(&cfg, &name, &stranger)?;
+    mine(&rpc, 1)?;
+    sync_fully(&cfg)?;
+
+    if names::my_names(&cfg)?.iter().any(|n| n.name == q.canonical) {
+        return Err("the name is still listed as ours after transferring it away".into());
+    }
+    println!("   no longer in My Names");
+
+    // This is the rule the whole authorship fix exists to serve. If an edit is
+    // silently accepted here, the wallet is building records the registry will
+    // throw away, which is exactly the failure that got past code review.
+    match names::set_divi_address(&cfg, &name, &target) {
+        Ok(_) => return Err("editing a name we no longer own was allowed".into()),
+        Err(e) => println!("   edit correctly refused: {e}"),
+    }
+    match names::renew(&cfg, &name) {
+        Ok(_) => return Err("renewing a name we no longer own was allowed".into()),
+        Err(e) => println!("   renew correctly refused: {e}"),
+    }
+
     Ok(())
 }
