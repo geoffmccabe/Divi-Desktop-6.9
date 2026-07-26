@@ -59,7 +59,15 @@ export function NameList({
             <header className="hra-card-head">
               <button
                 className="hra-card-title"
-                onClick={() => setOpen(isOpen ? null : n.name)}
+                onClick={() => {
+                  // Clear the transfer box when moving between names. Leaving a
+                  // typed address behind, on a control that hands a name away
+                  // irreversibly, is not a risk worth the convenience.
+                  setSendTo("");
+                  setError("");
+                  setDone("");
+                  setOpen(isOpen ? null : n.name);
+                }}
                 aria-expanded={isOpen}
               >
                 <span className="mono hra-name">{n.name.toLowerCase()}</span>

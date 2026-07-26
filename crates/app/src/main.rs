@@ -354,6 +354,7 @@ struct HraSyncDto {
     caught_up: bool,
     names_known: u64,
     treasury_configured: bool,
+    txindex: bool,
     note: String,
 }
 
@@ -369,6 +370,7 @@ async fn hra_sync() -> Result<HraSyncDto, String> {
             caught_up: s.caught_up,
             names_known: s.names_known,
             treasury_configured: s.treasury_configured,
+            txindex: s.txindex,
             note: s.note,
         })
     })

@@ -18,6 +18,9 @@ name-registry = { path = "../name-registry" }
 ureq = "2"
 # Verifies the pinned checksum of the downloaded divid69 before it is installed.
 sha2 = "0.10"
+# Already in the tree via keyring; used directly for commit salts, which must
+# come from a real CSPRNG rather than a hash of a timestamp.
+getrandom = "0.2"
 base64 = "0.22"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 

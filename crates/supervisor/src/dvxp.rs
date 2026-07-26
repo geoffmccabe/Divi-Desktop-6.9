@@ -138,40 +138,106 @@ pub fn payloads_in_tx(tx: &Value) -> Vec<Vec<u8>> {
         .unwrap_or_default()
 }
 
-/// Choose a coin to fund a record transaction.
+/// Anything smaller than this is not worth an output: the node may refuse to
+/// relay it as dust, and a change output nobody can spend is worse than simply
+/// leaving the amount to the staker as extra fee.
+pub const DUST_DIVI: f64 = 0.001;
+
+/// Fee for a transaction of this shape, at the relay minimum per kilobyte.
+///
+/// Sizes are the standard conservative estimates: ~148 bytes per signed P2PKH
+/// input, ~34 per output, ~10 of envelope, plus the record payload and its push
+/// prefix. Over-estimating costs a fraction of a coin; under-estimating gets the
+/// transaction dropped, so this rounds up.
+pub fn size_fee(inputs: usize, outputs: usize, payload_len: usize, floor: f64) -> f64 {
+    let bytes = 10 + inputs * 148 + outputs * 34 + payload_len + 4;
+    let kb = bytes.div_ceil(1000).max(1) as f64;
+    let want = round8(MIN_FEE_DIVI * kb);
+    if want > floor {
+        want
+    } else {
+        floor
+    }
+}
+
+/// `"DVXP"` as it appears inside a raw block's hex.
+pub const MAGIC_HEX: &str = "44565850";
+
+/// Cheap pre-filter: could this raw block contain a DVXP record at all?
+///
+/// **This is what makes scanning affordable.** Divi's `getblock` returns only
+/// transaction IDs, never the outputs, so finding a record properly costs one
+/// extra RPC call per transaction in the block. The overwhelming majority of
+/// blocks contain nothing but a coinbase and a coinstake and no records at all,
+/// so we fetch the raw block once and look for the four magic bytes in its hex.
+/// No match means the block provably has no record and can be skipped for the
+/// cost of a single call.
+///
+/// A match does not mean there IS a record: the bytes can appear by chance, and
+/// the hex search can straddle a byte boundary. That is fine and deliberate.
+/// This function only ever has to avoid FALSE NEGATIVES; false positives cost
+/// one wasted block of proper parsing and nothing else.
+pub fn block_may_contain_record(raw_block_hex: &str) -> bool {
+    raw_block_hex.contains(MAGIC_HEX)
+}
+
+/// Choose coins to fund a record transaction.
 ///
 /// `minconf` is **0** deliberately. Each record spends the previous one's
 /// unconfirmed change so a batch chains into the next block instead of stalling
 /// at roughly one record per minute. Divi predates Bitcoin's mempool ancestor
 /// limit and has none, so these chains are unbounded. This was found the hard
 /// way while batch-minting collectibles.
-fn pick_funding_coin(rpc: &RpcClient, needed: f64) -> Result<Value, String> {
+///
+/// Combines coins when it has to. Name registration fees run to tens of
+/// thousands of DIVI, which a single coin very often will not cover, so a
+/// one-coin-only selector would refuse transactions the wallet can easily
+/// afford.
+fn select_coins(rpc: &RpcClient, needed: f64) -> Result<(Vec<Value>, f64), String> {
     let unspent = rpc.call("listunspent", json!([0]))?;
     let coins = unspent.as_array().ok_or("the node returned no coin list")?;
-    // Smallest coin that still covers the cost, so large coins stay whole and
-    // available for staking. Falls back to the largest if none is big enough,
-    // which then produces the honest "not enough funds" message below.
-    let best = coins
+    let mut usable: Vec<&Value> = coins
         .iter()
         .filter(|c| c["spendable"].as_bool().unwrap_or(true))
+        .filter(|c| c["amount"].as_f64().unwrap_or(0.0) > 0.0)
+        .collect();
+
+    // Largest first, so the fewest inputs are used and the transaction stays
+    // small. Fewer inputs also means fewer signatures for a locked wallet.
+    usable.sort_by(|a, b| {
+        let av = a["amount"].as_f64().unwrap_or(0.0);
+        let bv = b["amount"].as_f64().unwrap_or(0.0);
+        bv.partial_cmp(&av).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // A single coin that covers it exactly-ish is better than the biggest one:
+    // it leaves large coins whole and staking.
+    if let Some(best) = usable
+        .iter()
         .filter(|c| c["amount"].as_f64().unwrap_or(0.0) >= needed)
         .min_by(|a, b| {
             let av = a["amount"].as_f64().unwrap_or(0.0);
             let bv = b["amount"].as_f64().unwrap_or(0.0);
             av.partial_cmp(&bv).unwrap_or(std::cmp::Ordering::Equal)
-        });
-    match best {
-        Some(c) => Ok(c.clone()),
-        None => {
-            let largest = coins
-                .iter()
-                .filter_map(|c| c["amount"].as_f64())
-                .fold(0.0f64, f64::max);
-            Err(format!(
-                "Not enough DIVI in a single coin. This needs {needed} DIVI and your largest coin is {largest} DIVI. Send some DIVI to yourself to combine coins, then try again."
-            ))
+        })
+    {
+        let amount = best["amount"].as_f64().unwrap_or(0.0);
+        return Ok((vec![(*best).clone()], amount));
+    }
+
+    let mut chosen = Vec::new();
+    let mut total = 0.0f64;
+    for c in usable {
+        chosen.push(c.clone());
+        total = round8(total + c["amount"].as_f64().unwrap_or(0.0));
+        if total >= needed {
+            return Ok((chosen, total));
         }
     }
+    let available = round8(total);
+    Err(format!(
+        "Not enough spendable DIVI. This needs {needed} DIVI and {available} DIVI is available."
+    ))
 }
 
 /// Build, sign and broadcast a transaction carrying `payload` in an `OP_META`
@@ -214,16 +280,45 @@ pub fn broadcast_record(
         total_payments += round8(p.divi);
     }
 
-    let needed = round8(fee + total_payments);
-    let utxo = pick_funding_coin(rpc, needed)?;
-    let amount = utxo["amount"].as_f64().unwrap_or(0.0);
-    let change = round8(amount - needed);
+    // ⚠ The relay minimum is per KILOBYTE, not per transaction. A record that
+    // needs several inputs to cover a large registration fee is a big
+    // transaction, and paying the flat minimum would get it dropped with a
+    // confusing "absurdly low fee" error. Select coins, size the fee to the
+    // result, and re-select if the bigger fee changed what is needed. Two
+    // rounds settle it; the third is a backstop, not an expectation.
+    let mut fee = fee;
+    let mut needed = round8(fee + total_payments);
+    let (mut utxos, mut funded) = select_coins(rpc, needed)?;
+    for _ in 0..3 {
+        let sized = size_fee(utxos.len(), payments.len() + 1, payload.len(), fee);
+        if sized <= fee {
+            break;
+        }
+        fee = sized;
+        needed = round8(fee + total_payments);
+        if funded >= needed {
+            break;
+        }
+        let (u, f) = select_coins(rpc, needed)?;
+        utxos = u;
+        funded = f;
+    }
 
-    let change_addr = rpc
-        .call("getnewaddress", json!([]))?
-        .as_str()
-        .ok_or("could not get a change address")?
-        .to_string();
+    // Change below the dust threshold is left to the staker as extra fee rather
+    // than written as an output the node may refuse to relay.
+    let mut change = round8(funded - needed);
+    if change < DUST_DIVI {
+        change = 0.0;
+    }
+
+    let change_addr = if change > 0.0 {
+        rpc.call("getnewaddress", json!([]))?
+            .as_str()
+            .ok_or("could not get a change address")?
+            .to_string()
+    } else {
+        String::new()
+    };
 
     // ⚠ Divi's createrawtransaction REJECTS a duplicate output address
     // ("Invalid parameter, duplicated address"), and the outputs object is keyed
@@ -244,7 +339,12 @@ pub fn broadcast_record(
         outs
     };
 
-    let inputs = json!([{ "txid": utxo["txid"], "vout": utxo["vout"] }]);
+    let inputs = Value::Array(
+        utxos
+            .iter()
+            .map(|u| json!({ "txid": u["txid"], "vout": u["vout"] }))
+            .collect(),
+    );
     let payload_hex: String = payload.iter().map(|b| format!("{b:02x}")).collect();
 
     // Prefer the "data" convention, which lets divid wrap the payload in
@@ -331,6 +431,27 @@ mod tests {
     fn a_transaction_with_no_outputs_is_not_an_error() {
         assert!(payloads_in_tx(&json!({})).is_empty());
         assert!(payloads_in_tx(&json!({"vout": []})).is_empty());
+    }
+
+    /// The relay minimum is per kilobyte. A one-input record pays the floor; a
+    /// transaction big enough to cross a kilobyte pays more, or it gets dropped.
+    #[test]
+    fn fee_scales_with_transaction_size() {
+        let small = size_fee(1, 2, 40, MIN_FEE_DIVI);
+        assert_eq!(small, MIN_FEE_DIVI);
+        let big = size_fee(20, 2, 400, MIN_FEE_DIVI);
+        assert!(big > small, "a 20-input transaction must pay more than the flat minimum");
+        // Never below the caller's floor.
+        assert_eq!(size_fee(1, 1, 10, 5.0), 5.0);
+    }
+
+    #[test]
+    fn the_magic_prefilter_has_no_false_negatives() {
+        let payload = b"DVXP\x01\x05\x02payload";
+        let script = op_meta_script_hex(payload);
+        let fake_block = format!("00000020aabbcc{script}ffee");
+        assert!(block_may_contain_record(&fake_block));
+        assert!(!block_may_contain_record("00000020aabbccddeeff112233"));
     }
 
     #[test]

@@ -69,7 +69,9 @@ pub fn encode_check(version: u8, payload: &[u8]) -> String {
 /// decode to a different valid one.
 pub fn decode_check(s: &str) -> Option<(u8, Vec<u8>)> {
     let s = s.trim();
-    if s.is_empty() {
+    // Decoding is quadratic in the input length. No Divi address is anywhere
+    // near this long, so cap it rather than let a pasted wall of text spin.
+    if s.is_empty() || s.len() > 128 {
         return None;
     }
     let mut bytes: Vec<u8> = Vec::new();
@@ -191,6 +193,11 @@ mod tests {
         let (v, back) = decode_check(&s).unwrap();
         assert_eq!(v, 0);
         assert_eq!(back, payload);
+    }
+
+    #[test]
+    fn absurdly_long_input_is_refused_quickly() {
+        assert_eq!(decode_check(&"1".repeat(5000)), None);
     }
 
     #[test]

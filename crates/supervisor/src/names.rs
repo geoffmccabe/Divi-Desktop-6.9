@@ -59,7 +59,11 @@ const MAINNET_TREASURY: Option<&str> = None;
 
 /// Blocks to scan per sync call, so a catch-up never blocks the UI thread pool
 /// for long. The caller loops.
-const SCAN_CHUNK: u64 = 2_000;
+///
+/// Sized against the real cost: one RPC per block for the raw-block pre-filter,
+/// and only blocks that actually look like they carry a record pay for the full
+/// per-transaction fetch.
+const SCAN_CHUNK: u64 = 500;
 
 // ── Local state ───────────────────────────────────────────────────────────
 
@@ -126,6 +130,9 @@ pub struct SyncStatus {
     pub caught_up: bool,
     pub names_known: u64,
     pub treasury_configured: bool,
+    /// False when the node has no full transaction index, which makes names
+    /// unreadable. Surfaced rather than silently showing an empty registry.
+    pub txindex: bool,
     pub note: String,
 }
 
@@ -219,7 +226,12 @@ pub fn quote(cfg: &NodeConfig, input: &str) -> Result<Quote, String> {
     let rpc = RpcClient::new(cfg);
     let chain = chain_name(&rpc);
     let idx = load_index(&chain);
-    let caught_up = activation_height(&chain).is_some() && idx.scanned_height > 0;
+    // ⚠ "We have scanned some blocks" is NOT "we know this name is free". A
+    // half-read index would report a name registered last week as available,
+    // and the user would pay a registration fee for something already taken.
+    // Only a fully caught-up index may answer at all.
+    let caught_up = activation_height(&chain).is_some()
+        && tip_height(&rpc).map(|tip| idx.scanned_height >= tip && tip > 0).unwrap_or(false);
     let existing = idx.names.get(&q.canonical);
     Ok(Quote {
         registration_divi: q.registration_divi,
@@ -340,6 +352,91 @@ fn save_index(idx: &Index) -> Result<(), String> {
     write_json(&store_path("index"), &index_to_json(idx))
 }
 
+/// Does this node have `txindex=1`?
+///
+/// Without it, `getrawtransaction` cannot read a transaction that is not in the
+/// wallet, so records would be silently invisible and the panel would show an
+/// empty registry with no explanation. Detected by asking for a transaction we
+/// know exists and is not ours: the first one in a recent block.
+fn has_txindex(rpc: &RpcClient, tip: u64) -> bool {
+    let probe = |h: u64| -> Option<bool> {
+        let hash = rpc.call("getblockhash", json!([h])).ok()?.as_str()?.to_string();
+        let block = rpc.call("getblock", json!([hash, true])).ok()?;
+        let txid = block["tx"].as_array()?.first()?.as_str()?.to_string();
+        Some(rpc.call("getrawtransaction", json!([txid, 1])).is_ok())
+    };
+    probe(tip.saturating_sub(1)).or_else(|| probe(tip)).unwrap_or(false)
+}
+
+/// Every DVXP payload in a block, with the address that authored each.
+///
+/// Divi's `getblock` returns transaction IDs only, never outputs, and its
+/// `verbose` argument is a BOOLEAN: passing a verbosity level of 2, as newer
+/// Bitcoin allows, makes the node throw. So the outputs have to be fetched one
+/// transaction at a time, and [`dvxp::block_may_contain_record`] keeps that off
+/// the hot path for the blocks that carry nothing.
+fn records_in_block(
+    rpc: &RpcClient,
+    hash: &str,
+) -> Result<Vec<(NameRecord, String, Vec<(String, f64)>)>, String> {
+    let raw = rpc.call("getblock", json!([hash, false]))?;
+    let Some(raw_hex) = raw.as_str() else {
+        return Err("the node did not return the block".into());
+    };
+    if !dvxp::block_may_contain_record(raw_hex) {
+        return Ok(Vec::new());
+    }
+
+    let block = rpc.call("getblock", json!([hash, true]))?;
+    let mut out = Vec::new();
+    let Some(txids) = block["tx"].as_array() else { return Ok(out) };
+    for txid in txids.iter().filter_map(|t| t.as_str()) {
+        let Ok(tx) = rpc.call("getrawtransaction", json!([txid, 1])) else { continue };
+        let payloads = dvxp::payloads_in_tx(&tx);
+        if payloads.is_empty() {
+            continue;
+        }
+        // Resolved once per transaction, not once per record: it costs an RPC
+        // call, and every record in a transaction has the same author.
+        let Some(sender) = record_sender(rpc, &tx) else { continue };
+        let payments = paid_to(&tx);
+        for payload in payloads {
+            let Ok(Some(rec)) = record::decode_payload(&payload) else { continue };
+            out.push((rec, sender.clone(), payments.clone()));
+        }
+    }
+    Ok(out)
+}
+
+/// Every real (spendable) output of a transaction as `(address, amount)`.
+///
+/// This is what lets the index check that a registration actually paid its fee.
+/// Without it, names would be free to anyone who skipped the payment, and the
+/// whole anti-squatting model would be decorative.
+fn paid_to(tx: &Value) -> Vec<(String, f64)> {
+    tx["vout"]
+        .as_array()
+        .map(|vouts| {
+            vouts
+                .iter()
+                .filter_map(|o| {
+                    let amount = o["value"].as_f64()?;
+                    let addr = o["scriptPubKey"]["addresses"]
+                        .as_array()
+                        .and_then(|a| a.first())
+                        .and_then(|a| a.as_str())?;
+                    Some((addr.to_string(), amount))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Total paid to one address by a transaction.
+fn total_to(payments: &[(String, f64)], address: &str) -> f64 {
+    payments.iter().filter(|(a, _)| a == address).map(|(_, v)| v).sum()
+}
+
 /// The address that funded `vin[0]`, which is the record's author.
 ///
 /// Deterministic and unambiguous: Divi has no SegWit, so the txid-malleability
@@ -376,7 +473,15 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
 /// with no state change; nothing here ever destroys a name. That is the
 /// deliberate rejection of Runes' "cenotaph" design, where a malformed record
 /// burns holdings and an unrecognised field punishes anyone on older software.
-fn apply_record(idx: &mut Index, rec: &NameRecord, sender: &str, height: u64, testnet: bool) {
+fn apply_record(
+    idx: &mut Index,
+    rec: &NameRecord,
+    sender: &str,
+    height: u64,
+    testnet: bool,
+    treasury: &str,
+    payments: &[(String, f64)],
+) {
     match rec {
         NameRecord::Commit { hash160 } => {
             idx.commits.entry(hex_of(hash160)).or_insert((height, sender.to_string()));
@@ -404,6 +509,14 @@ fn apply_record(idx: &mut Index, rec: &NameRecord, sender: &str, height: u64, te
             if height.saturating_sub(commit_height) < commitmod::MIN_COMMIT_DEPTH {
                 return;
             }
+            // The fee is a rule, not a courtesy. A registration that underpays,
+            // or pays somewhere other than the treasury, is not a registration.
+            // Without this check names are free and the length-tiered pricing
+            // that keeps squatters out is decoration.
+            let Some(price) = name_registry::fees::registration_divi(name.len()) else { return };
+            if total_to(payments, treasury) + 1e-8 < price as f64 {
+                return;
+            }
             idx.commits.remove(&want); // a commit is spent once
             idx.names.insert(
                 name_s,
@@ -421,6 +534,11 @@ fn apply_record(idx: &mut Index, rec: &NameRecord, sender: &str, height: u64, te
             if st.owner != sender {
                 return;
             }
+            // Any reverse claim naming this name is now stale: the forward
+            // record still points at the old owner's address, and leaving the
+            // entry would keep displaying the name for somebody who no longer
+            // owns it.
+            idx.primary.retain(|_, claimed| claimed != &name_s);
             st.owner = base58::payload_to_address(new_owner.kind, &new_owner.hash160, testnet);
             st.listing = None;
         }
@@ -469,6 +587,10 @@ fn apply_record(idx: &mut Index, rec: &NameRecord, sender: &str, height: u64, te
         }
         NameRecord::Renew { name } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
+            let Some(price) = name_registry::fees::renewal_divi(name.len()) else { return };
+            if total_to(payments, treasury) + 1e-8 < price as f64 {
+                return; // an unpaid renewal is not a renewal
+            }
             let Some(st) = idx.names.get_mut(&name_s) else { return };
             if st.owner != sender {
                 return;
@@ -532,9 +654,46 @@ pub fn sync(cfg: &NodeConfig) -> Result<SyncStatus, String> {
             caught_up: false,
             names_known: 0,
             treasury_configured,
+            txindex: true,
             note: "Divi Names has no launch block on the main network yet, so there is nothing to read. You can still see how the panel works, and everything is testable on regtest today.".into(),
         });
     };
+
+    // ⚠ Fee validation is part of the registry's rules, not a nicety: a
+    // registration that underpays or pays the wrong place is not a valid
+    // registration. An index that cannot check that is not this registry, it is
+    // a different and more permissive one. So refuse to build it at all rather
+    // than quietly serve a registry where names were free.
+    let treasury = match treasury_address(&chain) {
+        Ok(t) => t,
+        Err(e) => {
+            return Ok(SyncStatus {
+                activated: true,
+                activation_height: activation,
+                scanned_height: 0,
+                tip,
+                caught_up: false,
+                names_known: 0,
+                treasury_configured: false,
+                txindex: true,
+                note: e,
+            })
+        }
+    };
+
+    if !has_txindex(&rpc, tip) {
+        return Ok(SyncStatus {
+            activated: true,
+            activation_height: activation,
+            scanned_height: 0,
+            tip,
+            caught_up: false,
+            names_known: 0,
+            treasury_configured,
+            txindex: false,
+            note: "This node is not keeping a full transaction index, so names cannot be read from the chain. Add txindex=1 to divi.conf and restart the node. It will re-read the blockchain once, which takes a few hours, and you can keep using the rest of the wallet meanwhile.".into(),
+        });
+    }
 
     let mut idx = load_index(&chain);
     if idx.scanned_height < activation {
@@ -545,15 +704,22 @@ pub fn sync(cfg: &NodeConfig) -> Result<SyncStatus, String> {
     // index describes a history that did not happen. We keep no undo data, so
     // the honest repair is to rebuild. Cheap while the registry is young, and
     // correct at any age. Incremental undo is the follow-up, not a shortcut.
+    //
+    // ⚠ A FAILED call is not a reorg. Treating "the node did not answer" as
+    // "the chain changed" would throw the whole index away every time the node
+    // hiccuped. Only an answer that disagrees counts.
     if !idx.scanned_hash.is_empty() {
-        let still_there = rpc
-            .call("getblockhash", json!([idx.scanned_height]))
-            .ok()
-            .and_then(|v| v["result"].as_str().map(|s| s.to_string()).or_else(|| v.as_str().map(|s| s.to_string())))
-            .map(|h| h == idx.scanned_hash)
-            .unwrap_or(false);
-        if !still_there {
-            idx = Index { chain: chain.clone(), scanned_height: activation.saturating_sub(1), ..Default::default() };
+        match rpc.call("getblockhash", json!([idx.scanned_height])) {
+            Ok(v) => {
+                if v.as_str() != Some(idx.scanned_hash.as_str()) {
+                    idx = Index {
+                        chain: chain.clone(),
+                        scanned_height: activation.saturating_sub(1),
+                        ..Default::default()
+                    };
+                }
+            }
+            Err(e) => return Err(e),
         }
     }
 
@@ -565,15 +731,8 @@ pub fn sync(cfg: &NodeConfig) -> Result<SyncStatus, String> {
             .as_str()
             .ok_or("the node did not return a block hash")?
             .to_string();
-        let block = rpc.call("getblock", json!([hash, 2]))?;
-        if let Some(txs) = block["tx"].as_array() {
-            for tx in txs {
-                for payload in dvxp::payloads_in_tx(tx) {
-                    let Ok(Some(rec)) = record::decode_payload(&payload) else { continue };
-                    let Some(sender) = record_sender(&rpc, tx) else { continue };
-                    apply_record(&mut idx, &rec, &sender, h, testnet);
-                }
-            }
+        for (rec, sender, paid) in records_in_block(&rpc, &hash)? {
+            apply_record(&mut idx, &rec, &sender, h, testnet, &treasury, &paid);
         }
         idx.scanned_height = h;
         idx.scanned_hash = hash;
@@ -591,6 +750,7 @@ pub fn sync(cfg: &NodeConfig) -> Result<SyncStatus, String> {
         caught_up,
         names_known: idx.names.len() as u64,
         treasury_configured,
+        txindex: true,
         note: if caught_up {
             String::new()
         } else {
@@ -610,6 +770,19 @@ pub fn resolve(cfg: &NodeConfig, name: &str) -> Result<Option<String>, String> {
     let chain = chain_name(&rpc);
     let canonical = charset::canonicalise(name);
     let idx = load_index(&chain);
+
+    // ⚠ A stale index is the dangerous case, not the ignorant one. If the owner
+    // repointed the name yesterday and we have not read yesterday's blocks, we
+    // would hand back the PREVIOUS address with total confidence and the money
+    // would go to the wrong person. Refuse instead. "I do not know yet" is
+    // always recoverable; a confident wrong address is not.
+    let tip = tip_height(&rpc)?;
+    if tip == 0 || idx.scanned_height < tip {
+        return Err(format!(
+            "Still reading the chain ({} of {} blocks), so this name cannot be looked up safely yet. An out-of-date answer could send money to the wrong person.",
+            idx.scanned_height, tip
+        ));
+    }
     let Some(st) = idx.names.get(&canonical) else { return Ok(None) };
     let Some(hex) = st.records.get(&record::KEY_DIVI_ADDRESS) else { return Ok(None) };
     let Some(bytes) = unhex(hex) else { return Ok(None) };
@@ -623,9 +796,21 @@ pub fn resolve(cfg: &NodeConfig, name: &str) -> Result<Option<String>, String> {
 
 /// The name an address wants shown for itself, if the two sides agree.
 pub fn reverse(cfg: &NodeConfig, address: &str) -> Result<Option<String>, String> {
-    let rpc = RpcClient::new(cfg);
-    let idx = load_index(&chain_name(&rpc));
-    Ok(idx.primary.get(address.trim()).cloned())
+    let addr = address.trim();
+    let Some(name) = ({
+        let rpc = RpcClient::new(cfg);
+        let idx = load_index(&chain_name(&rpc));
+        idx.primary.get(addr).cloned()
+    }) else {
+        return Ok(None);
+    };
+    // Re-check the forward record rather than trusting the stored claim. Both
+    // directions must still agree at the moment of asking, or an address whose
+    // name moved on would keep displaying somebody else's identity.
+    match resolve(cfg, &name)? {
+        Some(points_at) if points_at == addr => Ok(Some(name)),
+        _ => Ok(None),
+    }
 }
 
 /// Names this wallet owns.
@@ -694,7 +879,7 @@ pub fn commit(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     // commit and then discover they cannot reveal.
     treasury_address(&chain)?;
 
-    let salt = random_salt(&rpc)?;
+    let salt = random_salt()?;
     let hash = commitmod::commit_hash(&salt, q.canonical.as_bytes());
     let height = tip_height(&rpc)?;
 
@@ -717,30 +902,18 @@ pub fn commit(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     Ok(txid)
 }
 
-/// 20 bytes of randomness.
+/// 20 bytes from the operating system's cryptographic random source.
 ///
-/// Sourced from the node's own entropy (a fresh key's hash), because the
-/// supervisor has no RNG dependency and adding one for twenty bytes is not worth
-/// the supply-chain surface. Mixed with the OS clock so two wallets asking the
-/// same node in the same second still differ.
-fn random_salt(rpc: &RpcClient) -> Result<[u8; commitmod::SALT_LEN], String> {
-    use sha2::{Digest, Sha256};
-    let seed = rpc
-        .call("getnewaddress", json!([]))?
-        .as_str()
-        .ok_or("could not get randomness from the node")?
-        .to_string();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let mut h = Sha256::new();
-    h.update(seed.as_bytes());
-    h.update(nanos.to_le_bytes());
-    h.update(std::process::id().to_le_bytes());
-    let digest = h.finalize();
+/// ⚠ This must be a real CSPRNG, not a hash of the clock. The salt is the ONLY
+/// thing hiding the name during the twelve-block wait: anyone can see the commit
+/// on the chain, and if they can guess the salt they can test candidate names
+/// against the published hash and register the name first. A timestamp-derived
+/// salt has perhaps forty bits of real entropy against an attacker who knows
+/// roughly when the commit was made, which is written on the block.
+fn random_salt() -> Result<[u8; commitmod::SALT_LEN], String> {
     let mut salt = [0u8; commitmod::SALT_LEN];
-    salt.copy_from_slice(&digest[..commitmod::SALT_LEN]);
+    getrandom::getrandom(&mut salt)
+        .map_err(|_| "Could not get secure randomness from the system, so the name was not reserved. Reserving with weak randomness would let somebody guess your name and take it.".to_string())?;
     Ok(salt)
 }
 
@@ -797,6 +970,28 @@ pub fn register(cfg: &NodeConfig, input: &str) -> Result<String, String> {
             q.canonical
         ));
     }
+    // ⚠ The countdown runs off the height we recorded locally when we broadcast,
+    // so it keeps ticking even if the reservation transaction was dropped and
+    // never confirmed. Revealing then would publish the name with no commit
+    // backing it: every indexer skips it, the fee is spent, and the name is now
+    // public for somebody else to take. Check the chain, not our own note.
+    if let Some(txid) = entry["txid"].as_str().filter(|t| !t.is_empty()) {
+        let confs = rpc
+            .call("getrawtransaction", json!([txid, 1]))
+            .ok()
+            .and_then(|tx| tx["confirmations"].as_i64())
+            .unwrap_or(0);
+        if confs < commitmod::MIN_COMMIT_DEPTH as i64 {
+            return Err(format!(
+                "Your reservation for {} has only {} confirmation{} on the chain, and {} are needed. If it never confirms, discard it and reserve again.",
+                q.canonical,
+                confs,
+                if confs == 1 { "" } else { "s" },
+                commitmod::MIN_COMMIT_DEPTH
+            ));
+        }
+    }
+
     let salt_hex = entry["salt"].as_str().ok_or("the saved reservation is unreadable")?;
     let salt = unhex(salt_hex).ok_or("the saved reservation is unreadable")?;
 
@@ -824,8 +1019,19 @@ pub fn forget_pending(name: &str) -> Result<(), String> {
 
 /// Attach or replace a record on a name.
 pub fn set_record(cfg: &NodeConfig, name: &str, key: u8, value_hex: &str) -> Result<String, String> {
-    let canonical = charset::canonicalise(name);
+    // Validate rather than merely canonicalise: a name that could never be
+    // registered would produce a record every indexer skips, and the user would
+    // have paid a transaction fee to achieve nothing.
+    let canonical = name_registry::quote(name).map_err(name_registry::explain)?.canonical;
     let value = unhex(value_hex.trim()).ok_or("that value is not valid hex")?;
+    if value.is_empty() {
+        return Err("Nothing to save.".into());
+    }
+    // The Divi-address record is the one that moves money. A wrong length here
+    // would resolve to a different address than intended, or to nothing.
+    if key == record::KEY_DIVI_ADDRESS && value.len() != 21 {
+        return Err("A Divi address record must be exactly 21 bytes. Use the address field rather than entering raw data.".into());
+    }
     if value.len() > record::MAX_VALUE_LEN {
         return Err(format!("That value is too long: {} bytes, maximum {}.", value.len(), record::MAX_VALUE_LEN));
     }
@@ -918,17 +1124,31 @@ mod tests {
 
     const ALICE: &str = "alice-address";
     const BOB: &str = "bob-address";
+    const TREASURY: &str = "treasury-address";
+
+    /// Most rules do not involve money, so the default is "paid in full".
+    fn paid(name: &str) -> Vec<(String, f64)> {
+        let price = name_registry::fees::registration_divi(name.len()).unwrap_or(0);
+        vec![(TREASURY.to_string(), price as f64)]
+    }
+
+    /// Shorthand: apply a record with no payment attached.
+    fn apply(i: &mut Index, rec: &NameRecord, sender: &str, height: u64) {
+        apply_record(i, rec, sender, height, true, TREASURY, &[]);
+    }
 
     fn register_name(i: &mut Index, name: &str, owner: &str, height: u64) {
         let salt = [0x42u8; commitmod::SALT_LEN];
         let hash = commitmod::commit_hash(&salt, name.as_bytes());
-        apply_record(i, &NameRecord::Commit { hash160: hash }, owner, height, true);
+        apply(i, &NameRecord::Commit { hash160: hash }, owner, height);
         apply_record(
             i,
             &NameRecord::Register { salt: salt.to_vec(), name: name.as_bytes().to_vec() },
             owner,
             height + commitmod::MIN_COMMIT_DEPTH,
             true,
+            TREASURY,
+            &paid(name),
         );
     }
 
@@ -948,13 +1168,15 @@ mod tests {
         let mut i = idx();
         let salt = [1u8; commitmod::SALT_LEN];
         let hash = commitmod::commit_hash(&salt, b"GEOFF");
-        apply_record(&mut i, &NameRecord::Commit { hash160: hash }, ALICE, 100, true);
+        apply(&mut i, &NameRecord::Commit { hash160: hash }, ALICE, 100);
         apply_record(
             &mut i,
             &NameRecord::Register { salt: salt.to_vec(), name: b"GEOFF".to_vec() },
             ALICE,
             110, // only 10 deep
             true,
+            TREASURY,
+            &paid("GEOFF"),
         );
         assert!(i.names.is_empty());
     }
@@ -966,14 +1188,8 @@ mod tests {
         let mut i = idx();
         let salt = [2u8; commitmod::SALT_LEN];
         let hash = commitmod::commit_hash(&salt, b"GEOFF");
-        apply_record(&mut i, &NameRecord::Commit { hash160: hash }, ALICE, 100, true);
-        apply_record(
-            &mut i,
-            &NameRecord::Register { salt: salt.to_vec(), name: b"GEOFF".to_vec() },
-            BOB,
-            200,
-            true,
-        );
+        apply(&mut i, &NameRecord::Commit { hash160: hash }, ALICE, 100);
+        apply(&mut i, &NameRecord::Register { salt: salt.to_vec(), name: b"GEOFF".to_vec() }, BOB, 200);
         assert!(i.names.is_empty());
     }
 
@@ -999,7 +1215,7 @@ mod tests {
             NameRecord::ClearRecord { name: b"GEOFF".to_vec(), keys: vec![record::KEY_URL] },
             NameRecord::Renew { name: b"GEOFF".to_vec() },
         ] {
-            apply_record(&mut i, &rec, BOB, 300, true);
+            apply_record(&mut i, &rec, BOB, 300, true, TREASURY, &paid("GEOFF"));
         }
         let st = i.names.get("GEOFF").unwrap();
         assert_eq!(st.owner, ALICE);
@@ -1012,29 +1228,23 @@ mod tests {
     fn primary_needs_the_forward_record_to_agree() {
         let mut i = idx();
         register_name(&mut i, "GEOFF", ALICE, 100);
-        apply_record(&mut i, &NameRecord::SetPrimary { name: b"GEOFF".to_vec() }, ALICE, 300, true);
+        apply(&mut i, &NameRecord::SetPrimary { name: b"GEOFF".to_vec() }, ALICE, 300);
         assert!(i.primary.is_empty(), "no forward record yet, so no reverse claim");
 
         // Point the name at a real address, then claim it from that address.
         let (kind, hash) = base58::address_to_payload(&base58::payload_to_address(0, &[9; 20], true)).unwrap();
         let mut value = vec![kind];
         value.extend_from_slice(&hash);
-        apply_record(
-            &mut i,
-            &NameRecord::SetRecord {
+        apply(&mut i, &NameRecord::SetRecord {
                 name: b"GEOFF".to_vec(),
                 entries: vec![Entry { key: record::KEY_DIVI_ADDRESS, value }],
-            },
-            ALICE,
-            310,
-            true,
-        );
+            }, ALICE, 310);
         let target = base58::payload_to_address(0, &[9; 20], true);
         // A stranger still cannot claim it.
-        apply_record(&mut i, &NameRecord::SetPrimary { name: b"GEOFF".to_vec() }, BOB, 320, true);
+        apply(&mut i, &NameRecord::SetPrimary { name: b"GEOFF".to_vec() }, BOB, 320);
         assert!(i.primary.is_empty());
         // The address the name points at can.
-        apply_record(&mut i, &NameRecord::SetPrimary { name: b"GEOFF".to_vec() }, &target, 330, true);
+        apply(&mut i, &NameRecord::SetPrimary { name: b"GEOFF".to_vec() }, &target, 330);
         assert_eq!(i.primary.get(&target).map(String::as_str), Some("GEOFF"));
     }
 
@@ -1044,16 +1254,10 @@ mod tests {
     fn a_listing_cannot_be_withdrawn_inside_its_committed_window() {
         let mut i = idx();
         register_name(&mut i, "GEOFF", ALICE, 100);
-        apply_record(
-            &mut i,
-            &NameRecord::List { name: b"GEOFF".to_vec(), price: 500_00000000, min_lifetime_blocks: 100 },
-            ALICE,
-            200,
-            true,
-        );
-        apply_record(&mut i, &NameRecord::Delist { name: b"GEOFF".to_vec() }, ALICE, 250, true);
+        apply(&mut i, &NameRecord::List { name: b"GEOFF".to_vec(), price: 500_00000000, min_lifetime_blocks: 100 }, ALICE, 200);
+        apply(&mut i, &NameRecord::Delist { name: b"GEOFF".to_vec() }, ALICE, 250);
         assert!(i.names.get("GEOFF").unwrap().listing.is_some(), "delist inside the window must be ignored");
-        apply_record(&mut i, &NameRecord::Delist { name: b"GEOFF".to_vec() }, ALICE, 301, true);
+        apply(&mut i, &NameRecord::Delist { name: b"GEOFF".to_vec() }, ALICE, 301);
         assert!(i.names.get("GEOFF").unwrap().listing.is_none());
     }
 
@@ -1062,11 +1266,109 @@ mod tests {
         let mut i = idx();
         register_name(&mut i, "GEOFF", ALICE, 100);
         let first = i.names.get("GEOFF").unwrap().expires_height;
-        apply_record(&mut i, &NameRecord::Renew { name: b"GEOFF".to_vec() }, ALICE, 200, true);
+
+        // An unpaid renewal is not a renewal.
+        apply(&mut i, &NameRecord::Renew { name: b"GEOFF".to_vec() }, ALICE, 200);
+        assert_eq!(i.names.get("GEOFF").unwrap().expires_height, first);
+
+        apply_record(
+            &mut i,
+            &NameRecord::Renew { name: b"GEOFF".to_vec() },
+            ALICE,
+            200,
+            true,
+            TREASURY,
+            &paid("GEOFF"),
+        );
         assert_eq!(
             i.names.get("GEOFF").unwrap().expires_height,
             first + name_registry::fees::TERM_BLOCKS
         );
+    }
+
+    /// The fee is a rule. Without this check names are free and the whole
+    /// anti-squatting model is decoration.
+    #[test]
+    fn an_unpaid_or_misdirected_registration_is_refused() {
+        let salt = [7u8; commitmod::SALT_LEN];
+        let hash = commitmod::commit_hash(&salt, b"GEOFF");
+        let reveal = NameRecord::Register { salt: salt.to_vec(), name: b"GEOFF".to_vec() };
+        let price = name_registry::fees::registration_divi(5).unwrap() as f64;
+
+        for (label, payments) in [
+            ("nothing at all", vec![]),
+            ("underpaid", vec![(TREASURY.to_string(), price - 1.0)]),
+            ("paid to themselves", vec![(ALICE.to_string(), price)]),
+        ] {
+            let mut i = idx();
+            apply(&mut i, &NameRecord::Commit { hash160: hash }, ALICE, 100);
+            apply_record(&mut i, &reveal, ALICE, 200, true, TREASURY, &payments);
+            assert!(i.names.is_empty(), "should refuse when {label}");
+        }
+
+        // And it goes through when the fee is right.
+        let mut i = idx();
+        apply(&mut i, &NameRecord::Commit { hash160: hash }, ALICE, 100);
+        apply_record(
+            &mut i,
+            &reveal,
+            ALICE,
+            200,
+            true,
+            TREASURY,
+            &[(TREASURY.to_string(), price)],
+        );
+        assert_eq!(i.names.get("GEOFF").unwrap().owner, ALICE);
+    }
+
+    /// A commit is not consumed by a rejected reveal, so a user who underpaid
+    /// can retry with the correct fee instead of losing the reservation.
+    #[test]
+    fn a_refused_reveal_does_not_burn_the_commit() {
+        let salt = [8u8; commitmod::SALT_LEN];
+        let hash = commitmod::commit_hash(&salt, b"GEOFF");
+        let reveal = NameRecord::Register { salt: salt.to_vec(), name: b"GEOFF".to_vec() };
+        let price = name_registry::fees::registration_divi(5).unwrap() as f64;
+
+        let mut i = idx();
+        apply(&mut i, &NameRecord::Commit { hash160: hash }, ALICE, 100);
+        apply_record(&mut i, &reveal, ALICE, 200, true, TREASURY, &[]);
+        assert!(i.names.is_empty());
+        apply_record(&mut i, &reveal, ALICE, 201, true, TREASURY, &[(TREASURY.to_string(), price)]);
+        assert_eq!(i.names.get("GEOFF").unwrap().owner, ALICE, "retry must work");
+    }
+
+    /// A name that moves on must stop being displayed for its old owner.
+    #[test]
+    fn transfer_drops_a_stale_reverse_claim() {
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        let target = base58::payload_to_address(0, &[9; 20], true);
+        let (kind, h160) = base58::address_to_payload(&target).unwrap();
+        let mut value = vec![kind];
+        value.extend_from_slice(&h160);
+        apply(
+            &mut i,
+            &NameRecord::SetRecord {
+                name: b"GEOFF".to_vec(),
+                entries: vec![Entry { key: record::KEY_DIVI_ADDRESS, value }],
+            },
+            ALICE,
+            310,
+        );
+        apply(&mut i, &NameRecord::SetPrimary { name: b"GEOFF".to_vec() }, &target, 320);
+        assert_eq!(i.primary.get(&target).map(String::as_str), Some("GEOFF"));
+
+        apply(
+            &mut i,
+            &NameRecord::Transfer {
+                name: b"GEOFF".to_vec(),
+                new_owner: Address { kind: 0, hash160: [77; 20] },
+            },
+            ALICE,
+            330,
+        );
+        assert!(i.primary.is_empty(), "the old display claim must not survive a transfer");
     }
 
     /// A transfer must also kill the listing, or the new owner inherits a sale
@@ -1075,14 +1377,8 @@ mod tests {
     fn transfer_clears_a_listing() {
         let mut i = idx();
         register_name(&mut i, "GEOFF", ALICE, 100);
-        apply_record(
-            &mut i,
-            &NameRecord::List { name: b"GEOFF".to_vec(), price: 1, min_lifetime_blocks: 0 },
-            ALICE,
-            200,
-            true,
-        );
-        apply_record(
+        apply(&mut i, &NameRecord::List { name: b"GEOFF".to_vec(), price: 1, min_lifetime_blocks: 0 }, ALICE, 200);
+        apply(
             &mut i,
             &NameRecord::Transfer {
                 name: b"GEOFF".to_vec(),
@@ -1090,7 +1386,6 @@ mod tests {
             },
             ALICE,
             210,
-            true,
         );
         assert!(i.names.get("GEOFF").unwrap().listing.is_none());
     }
@@ -1098,16 +1393,10 @@ mod tests {
     #[test]
     fn records_for_an_unregistered_name_do_nothing() {
         let mut i = idx();
-        apply_record(
-            &mut i,
-            &NameRecord::SetRecord {
+        apply(&mut i, &NameRecord::SetRecord {
                 name: b"NOBODY".to_vec(),
                 entries: vec![Entry { key: record::KEY_URL, value: b"x".to_vec() }],
-            },
-            ALICE,
-            100,
-            true,
-        );
+            }, ALICE, 100);
         assert!(i.names.is_empty());
     }
 

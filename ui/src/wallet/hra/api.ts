@@ -31,6 +31,8 @@ export interface HraSync {
   caughtUp: boolean;
   namesKnown: number;
   treasuryConfigured: boolean;
+  /** False when the node has no full transaction index, so names are unreadable. */
+  txindex: boolean;
   note: string;
 }
 

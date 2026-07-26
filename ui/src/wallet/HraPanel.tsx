@@ -60,7 +60,11 @@ export function HraPanel() {
 
   useEffect(refresh, [refresh]);
 
-  const canRegister = !!sync?.activated && sync.caughtUp && sync.treasuryConfigured;
+  // Registering is only safe when the index can be trusted: activated, readable,
+  // fee destination known, and actually up to date. Anything less and the
+  // availability answer could be stale, which means paying for a taken name.
+  const canRegister =
+    !!sync?.activated && sync.txindex && sync.caughtUp && sync.treasuryConfigured;
 
   return (
     <div className="hra">
@@ -78,17 +82,22 @@ export function HraPanel() {
         </div>
       )}
 
-      {sync?.activated && !sync.caughtUp && (
-        <div className="hra-banner hra-banner-behind">
-          {sync.note || `Reading the chain: block ${sync.scannedHeight.toLocaleString()} of ${sync.tip.toLocaleString()}.`}
+      {sync?.activated && !sync.txindex && (
+        <div className="hra-banner hra-banner-halt">
+          <strong>Your node cannot read names yet.</strong> {sync.note}
         </div>
       )}
 
-      {sync?.activated && sync.caughtUp && !sync.treasuryConfigured && (
+      {sync?.activated && sync.txindex && !sync.treasuryConfigured && (
         <div className="hra-banner hra-banner-halt">
-          <strong>Registration is switched off.</strong> The address that name fees are paid to has
-          not been set in this build. Paying it to the wrong place would lose the money with no way
-          to tell, so the wallet refuses rather than guess.
+          <strong>Names are switched off.</strong> {sync.note}
+        </div>
+      )}
+
+      {sync?.activated && sync.txindex && sync.treasuryConfigured && !sync.caughtUp && (
+        <div className="hra-banner hra-banner-behind">
+          {sync.note ||
+            `Reading the chain: block ${sync.scannedHeight.toLocaleString()} of ${sync.tip.toLocaleString()}.`}
         </div>
       )}
 

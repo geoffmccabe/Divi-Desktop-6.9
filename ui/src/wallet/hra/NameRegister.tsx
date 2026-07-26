@@ -207,14 +207,14 @@ export function NameRegister({
                 <button
                   className="wl-btn wl-btn-primary"
                   disabled={!p.ready || !canRegister || busy !== ""}
-                  onClick={() => run("register", () => hraRegister(p.name))}
+                  onClick={() => run(`register:${p.name}`, () => hraRegister(p.name))}
                 >
-                  {busy === "register" ? "Registering…" : "Register"}
+                  {busy === `register:${p.name}` ? "Registering…" : "Register"}
                 </button>
                 <button
                   className="wl-btn"
                   disabled={busy !== ""}
-                  onClick={() => run("forget", () => hraForget(p.name).then(() => undefined))}
+                  onClick={() => run(`forget:${p.name}`, () => hraForget(p.name).then(() => undefined))}
                 >
                   Discard
                 </button>
