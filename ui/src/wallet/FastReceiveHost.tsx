@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { fmtDivi } from "../status";
 import { startFastReceive, useFastReceive, getRecord } from "./fastReceiveStore";
 import { RatingMeter } from "./FastReceiveCard";
-import { playArrival, playConflict } from "./tone";
+import { playArrival, playConflict, armAudio } from "./tone";
 
 // Always-on host: starts the incoming-payment watcher, and the moment a new Fast
 // Send is detected it chimes and pops a modal. Mounted once at the app root so it
@@ -13,6 +13,7 @@ export function FastReceiveHost({ onGoto }: { onGoto: (view: string) => void }) 
   const [modalTxid, setModalTxid] = useState<string | null>(null);
 
   useEffect(() => {
+    armAudio(); // let the first click/keypress unlock the chime for later arrivals
     startFastReceive();
   }, []);
 

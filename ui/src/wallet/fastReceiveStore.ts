@@ -47,13 +47,21 @@ interface State {
 let state: State = { records: [], detectSeq: 0, latestTxid: null };
 
 const byId = new Map<string, FastRec>();
-const mempoolKnown = new Set<string>();
+let mempoolKnown = new Set<string>();
 const listeners = new Set<() => void>();
 let started = false;
 let firstPoll = true;
+let lastSig = "";
 
+// Only rebuild the snapshot and wake React when something the UI cares about
+// actually changed, so an idle wallet doesn't re-render every poll forever.
 function emit() {
-  state = { records: [...byId.values()].sort((a, b) => b.firstSeen - a.firstSeen), detectSeq: state.detectSeq, latestTxid: state.latestTxid };
+  const recs = [...byId.values()].sort((a, b) => b.firstSeen - a.firstSeen);
+  const sig =
+    state.detectSeq + "|" + recs.map((r) => `${r.txid}:${r.confirmations}:${r.score.toFixed(1)}:${r.status}`).join(",");
+  if (sig === lastSig) return;
+  lastSig = sig;
+  state = { records: recs, detectSeq: state.detectSeq, latestTxid: state.latestTxid };
   for (const l of listeners) l();
 }
 
@@ -139,7 +147,6 @@ async function poll() {
     const snap = await mempoolSnapshot([...mempoolKnown]);
     if (snap) {
       for (const e of snap.entries) {
-        mempoolKnown.add(e.txid);
         if (e.decoded && e.mine && e.category === "receive" && !byId.has(e.txid)) {
           const rec: FastRec = {
             txid: e.txid,
@@ -170,6 +177,9 @@ async function poll() {
           rec.size = e.size;
         }
       }
+      // Bound the "already classified" set to what's actually in the mempool
+      // now, so it can't grow without limit over a long-running session.
+      mempoolKnown = new Set(snap.entries.map((e) => e.txid));
     }
     // Follow confirmations for every record that isn't finished.
     for (const rec of byId.values()) {
@@ -190,11 +200,17 @@ async function poll() {
   emit();
 }
 
+// Self-scheduling loop: the next poll is only queued AFTER the current one
+// finishes, so a slow node can never stack overlapping polls (which would
+// hammer it with a growing backlog of RPC calls).
 export function startFastReceive() {
   if (started) return;
   started = true;
-  poll();
-  setInterval(poll, POLL_MS);
+  const loop = async () => {
+    await poll();
+    setTimeout(loop, POLL_MS);
+  };
+  loop();
 }
 
 export function useFastReceive(): State {

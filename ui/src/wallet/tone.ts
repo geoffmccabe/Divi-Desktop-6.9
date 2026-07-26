@@ -41,3 +41,19 @@ export function playConflict() {
   beep(330, 0, 0.3, 0.16);
   beep(247, 0.18, 0.4, 0.16);
 }
+
+// WebKit blocks audio until the user has interacted with the page. Arm a
+// one-shot listener so the very first click/keypress unlocks the context; then
+// a chime that fires later (with no immediate gesture) can still play.
+let armed = false;
+export function armAudio() {
+  if (armed) return;
+  armed = true;
+  const unlock = () => {
+    audio();
+    window.removeEventListener("pointerdown", unlock);
+    window.removeEventListener("keydown", unlock);
+  };
+  window.addEventListener("pointerdown", unlock);
+  window.addEventListener("keydown", unlock);
+}
