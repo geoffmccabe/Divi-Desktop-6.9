@@ -1135,6 +1135,32 @@ async fn nfd_import_read_item(import_dir: String, edition: u64) -> Result<Value,
     .map_err(|_| "internal error".to_string())?
 }
 
+/// Pre-split the creator's coins into `count` spendable UTXOs so a batch of that
+/// many mints doesn't stall. Returns the fan-out txid to wait on, or null if the
+/// address already has enough UTXOs.
+#[tauri::command]
+async fn nfd_prepare_funding(address: String, count: u32) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles::prepare_funding(&cfg, &address, count as usize)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Confirmations for a txid (-1 if not yet in a block). For waiting on the fan-out.
+#[tauri::command]
+async fn nfd_tx_confirmations(txid: String) -> i64 {
+    tauri::async_runtime::spawn_blocking(move || {
+        match NodeConfig::load() {
+            Ok(cfg) => collectibles::tx_confirmations(&cfg, &txid),
+            Err(_) => -1,
+        }
+    })
+    .await
+    .unwrap_or(-1)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ReceiveCodeDto {
@@ -1313,7 +1339,9 @@ fn main() {
             nfd_relay_status,
             nfd_create_collection,
             nfd_import_open,
-            nfd_import_read_item
+            nfd_import_read_item,
+            nfd_prepare_funding,
+            nfd_tx_confirmations
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

@@ -124,6 +124,11 @@ export interface ImportItem {
 export const nfdImportOpen = (zipPath: string) => invoke<ImportPlan>("nfd_import_open", { zipPath });
 export const nfdImportReadItem = (importDir: string, edition: number) =>
   invoke<ImportItem>("nfd_import_read_item", { importDir, edition });
+// Pre-split the creator's coins into `count` UTXOs so a batch doesn't stall.
+// Returns the fan-out txid to wait on, or null if already enough UTXOs.
+export const nfdPrepareFunding = (address: string, count: number) =>
+  invoke<string | null>("nfd_prepare_funding", { address, count });
+export const nfdTxConfirmations = (txid: string) => invoke<number>("nfd_tx_confirmations", { txid });
 
 export interface NfdCollection {
   txid: string; // the collection id

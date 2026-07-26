@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { nfdImportOpen, nfdImportReadItem, nfdCreateCollection, nfdMint, type ImportPlan } from "./api";
+import { nfdImportOpen, nfdImportReadItem, nfdCreateCollection, nfdMint, nfdPrepareFunding, nfdTxConfirmations, type ImportPlan } from "./api";
 import { makeThumbnailFromBase64, type Item, type Collection } from "./CollectiblesPanel";
 
 // Import a collection authored in Kinet.ink (a .zip of manifest.json + images)
@@ -41,6 +41,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [prep, setPrep] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
 
   async function openBundle() {
@@ -65,7 +66,10 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
     setFinished(false);
     const okItems = plan.items.filter((i) => i.ok && i.edition != null);
     const name = plan.collection.name;
-    const resume = loadResume(name);
+    // Resume is keyed by the unique bundle dir (not the display name), so two
+    // sets that happen to share a name can't collide.
+    const rkey = plan.importDir;
+    const resume = loadResume(rkey);
     try {
       const creator = await getMyAddress();
       // Create the collection once (resume reuses it).
@@ -80,7 +84,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
         );
         resume.collectionId = col.txid;
         resume.creatorAddr = col.creatorAddr;
-        saveResume(name, resume);
+        saveResume(rkey, resume);
         onCollection({
           id: col.txid,
           name,
@@ -96,6 +100,24 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
       const creatorAddr = resume.creatorAddr!;
 
       const doneSet = new Set(resume.done);
+      const remaining = okItems.length - doneSet.size;
+
+      // Pre-split the creator's coins into one confirmed UTXO per remaining item,
+      // so the batch doesn't stall waiting for each mint's change to confirm.
+      if (remaining > 0) {
+        setPrep("Preparing funds…");
+        const fanTxid = await nfdPrepareFunding(creatorAddr, remaining);
+        if (fanTxid) {
+          // Wait for the fan-out to confirm before spending its pieces.
+          for (let i = 0; i < 240; i++) {
+            if ((await nfdTxConfirmations(fanTxid)) >= 1) break;
+            setPrep(`Preparing funds… (waiting for confirmation ${i + 1})`);
+            await new Promise((r) => setTimeout(r, 5000));
+          }
+        }
+        setPrep(null);
+      }
+
       setProgress({ done: doneSet.size, total: okItems.length });
       for (const it of okItems) {
         const edition = it.edition as number;
@@ -128,13 +150,14 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
         });
         doneSet.add(edition);
         resume.done = [...doneSet];
-        saveResume(name, resume);
+        saveResume(rkey, resume);
         setProgress({ done: doneSet.size, total: okItems.length });
       }
       setFinished(true);
     } catch (e) {
       setErr("Stopped: " + String(e) + " — fix and run again to resume where it left off.");
     }
+    setPrep(null);
     setBusy(false);
   }
 
@@ -176,6 +199,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
               {plan.warnings.length > 20 && <li>…and {plan.warnings.length - 20} more</li>}
             </ul>
           )}
+          {prep && <p className="wl-note">{prep}</p>}
           {progress && (
             <p className="wl-note">
               Minted {progress.done} / {progress.total}

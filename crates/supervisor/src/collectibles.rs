@@ -77,8 +77,10 @@ fn owner_keypair(rpc: &RpcClient, owner_addr: &str) -> Result<(StaticSecret, Pub
 }
 
 /// Largest spendable UTXO that has a plain address; it becomes the owner.
+/// minconf=0 so a batch of mints can chain on each other's unconfirmed change
+/// (Divi has no mempool ancestor limit), landing together in the next block.
 fn pick_funding_utxo(rpc: &RpcClient) -> Result<Value, String> {
-    let unspent = rpc.call("listunspent", json!([]))?;
+    let unspent = rpc.call("listunspent", json!([0]))?;
     unspent
         .as_array()
         .and_then(|a| {
@@ -323,7 +325,9 @@ fn address_to_packed(rpc: &RpcClient, addr: &str) -> Result<String, String> {
 /// Largest spendable UTXO belonging to `owner_addr` — spending it is how a
 /// transfer proves the sender is the current owner.
 fn pick_owner_utxo(rpc: &RpcClient, owner_addr: &str) -> Result<Value, String> {
-    let unspent = rpc.call("listunspent", json!([]))?;
+    // minconf=0: a batch of mints from the creator address chains on its own
+    // unconfirmed change (no Divi mempool ancestor limit) into the next block.
+    let unspent = rpc.call("listunspent", json!([0]))?;
     unspent
         .as_array()
         .and_then(|a| {
@@ -337,6 +341,29 @@ fn pick_owner_utxo(rpc: &RpcClient, owner_addr: &str) -> Result<Value, String> {
         })
         .cloned()
         .ok_or_else(|| format!("The owner address {owner_addr} has no spendable DIVI — top it up to transfer."))
+}
+
+/// Ensure `address` can fund a batch of `count` mints. Divi has no mempool
+/// ancestor limit and minconf=0 funding lets each mint spend the previous mint's
+/// unconfirmed change, so the whole batch chains into the next block from a single
+/// starting UTXO — no pre-split is needed. (Divi's createrawtransaction rejects
+/// duplicate output addresses, so a same-address fan-out isn't possible anyway.)
+/// Kept as a hook: returns None (nothing to wait on) unless there's no spendable
+/// coin at all, in which case it errors early with a clear message.
+pub fn prepare_funding(cfg: &NodeConfig, address: &str, count: usize) -> Result<Option<String>, String> {
+    let _ = count;
+    let rpc = RpcClient::new(cfg);
+    pick_owner_utxo(&rpc, address)?; // errors clearly if the creator has no coins
+    Ok(None)
+}
+
+/// Confirmation count for `txid` (-1 if unknown / not yet in a block).
+pub fn tx_confirmations(cfg: &NodeConfig, txid: &str) -> i64 {
+    let rpc = RpcClient::new(cfg);
+    rpc.call("getrawtransaction", json!([txid, 1]))
+        .ok()
+        .and_then(|tx| tx["confirmations"].as_i64())
+        .unwrap_or(-1)
 }
 
 /// A recipient shares this so a sender can transfer to them: their address plus

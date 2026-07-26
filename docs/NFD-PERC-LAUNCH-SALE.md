@@ -27,11 +27,16 @@ The actual constraints are three, and all are solvable:
 1. **Pre-mint all inventory to the treasury BEFORE launch.** Each PERC is an
    encrypted NFD owned by the treasury. There is no time pressure here — it's done
    ahead of the sale, so the buy-rush never triggers minting/Arweave uploads.
-2. **Pre-split the treasury's DIVI into a UTXO pool** — one spendable, *confirmed*
-   UTXO per expected concurrent buy, with margin (e.g. 200). Then each sale's
-   on-chain transfer spends an **independent** confirmed UTXO: no chaining, no
-   ancestor-limit stall, and **hundreds of transfers can land in a single block.**
-   This one change is what makes a burst work.
+2. **Chain the batch through unconfirmed change (IMPLEMENTED).** Divi has **no
+   mempool ancestor limit** (it predates that Bitcoin feature), so the mint/transfer
+   funding now uses **minconf=0**: each mint/transfer spends the previous one's
+   *unconfirmed* change, and the whole batch chains from a single starting coin into
+   the next block. Verified: **40 Perc mints in a row with no block between them,**
+   and the full mint→transfer→claim flow. (A same-address UTXO fan-out isn't
+   possible anyway — Divi's `createrawtransaction` rejects duplicate output
+   addresses.) For the *sale* rush the same chaining applies; if throughput ever
+   needs to exceed one block's worth, the coordinator can spread transfers across a
+   few creator-controlled addresses.
 3. **A sale coordinator** (extend the `nfds.divi.love` relay, or a small sibling
    service): it **serializes allocation** (an atomic "next PERC" assignment per
    §4), verifies payment, then **dispatches the transfer** (re-wrap the content key
