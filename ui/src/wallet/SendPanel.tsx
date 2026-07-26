@@ -11,6 +11,7 @@ import {
 import { getAskMode } from "./securityPrefs";
 import { fmtDivi } from "../status";
 import { FastSendTracker } from "./FastSendTracker";
+import { BearerPanel } from "./BearerPanel";
 
 // Above this, we nudge the sender that the recipient will likely wait for a
 // confirmation rather than accept instantly. Soft guidance, not a block.
@@ -29,6 +30,7 @@ function parseAmount(s: string): number | null {
 }
 
 export function SendPanel() {
+  const [mode, setMode] = useState<"standard" | "bearer">("standard");
   const [stage, setStage] = useState<Stage>("form");
   const [address, setAddress] = useState("");
   const [amountStr, setAmountStr] = useState("");
@@ -120,6 +122,26 @@ export function SendPanel() {
     }
   };
 
+  const modeSwitch = (
+    <div className="send-mode">
+      <button type="button" className={mode === "standard" ? "on" : ""} onClick={() => setMode("standard")}>
+        Standard
+      </button>
+      <button type="button" className={mode === "bearer" ? "on" : ""} onClick={() => setMode("bearer")}>
+        Bearer code
+      </button>
+    </div>
+  );
+
+  if (mode === "bearer") {
+    return (
+      <div className="send-panel">
+        {modeSwitch}
+        <BearerPanel />
+      </div>
+    );
+  }
+
   if (stage === "done") {
     return (
       <div className="send-panel">
@@ -143,6 +165,7 @@ export function SendPanel() {
 
   return (
     <div className="send-panel">
+      {modeSwitch}
       <label className="send-field">
         <span className="send-label">To address</span>
         <input

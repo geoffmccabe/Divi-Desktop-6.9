@@ -3,6 +3,7 @@ pub mod c2pa_read;
 pub mod chaintips;
 pub mod config;
 pub mod health;
+pub mod bearer;
 pub mod install;
 pub mod mempool;
 pub mod security;

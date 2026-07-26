@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{c2pa_read, chaintips, coins, config, config::NodeConfig, mempool, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, mempool, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -982,6 +982,71 @@ struct PayReqDto {
 /// Send an on-chain payment request to someone.
 ///
 /// This only ASKS. It cannot move the recipient's money -- paying is a separate
+// ---- Bearer transactions (redeemable claim codes) ----
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BearerCreatedDto {
+    code: String,
+    address: String,
+    txid: String,
+    vout: u32,
+    amount: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BearerStatusDto {
+    funded: bool,
+    claimed: bool,
+    value: f64,
+    confirmations: i64,
+}
+
+/// Create a redeemable bearer code funded with `amount` DIVI. Revocable: the
+/// key stays in this wallet, so the sender can reclaim an unredeemed code.
+#[tauri::command]
+async fn bearer_create(amount: f64, passphrase: Option<String>) -> Result<BearerCreatedDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        bearer::create(&cfg, amount, passphrase.as_deref()).map(|b| BearerCreatedDto {
+            code: b.code,
+            address: b.address,
+            txid: b.txid,
+            vout: b.vout,
+            amount: b.amount,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Sweep a bearer code to `dest`. Used to claim (recipient) or reclaim (sender).
+#[tauri::command]
+async fn bearer_sweep(code: String, dest: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        bearer::sweep(&cfg, &code, &dest)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Is a bearer code still claimable? Reads the UTXO set only.
+#[tauri::command]
+async fn bearer_status(code: String) -> Result<BearerStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        bearer::status(&cfg, &code).map(|s| BearerStatusDto {
+            funded: s.funded,
+            claimed: s.claimed,
+            value: s.value,
+            confirmations: s.confirmations,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// act they sign themselves.
 #[tauri::command]
 async fn payment_request_create(
@@ -1143,6 +1208,9 @@ fn main() {
             probe_peers,
             ping_nodes,
             mempool_snapshot,
+            bearer_create,
+            bearer_sweep,
+            bearer_status,
             coin_maturity,
             wallet_status,
             unlock_wallet,

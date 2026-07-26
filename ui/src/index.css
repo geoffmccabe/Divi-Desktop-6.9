@@ -1323,6 +1323,35 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .fn-ms { text-align: right; color: hsl(145 65% 58%); font-variant-numeric: tabular-nums; font-weight: 600; }
 .fn-empty { color: hsl(var(--muted-foreground)); }
 
+/* Send-type switch (Standard vs Bearer) and the Bearer create/redeem tabs. */
+.send-mode, .bearer-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.send-mode button, .bearer-tabs button {
+  flex: 1; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 0.82rem; font-weight: 600;
+  color: hsl(var(--muted-foreground)); background: hsl(var(--primary) / 0.08);
+  border: 1px solid hsl(var(--border));
+}
+.send-mode button.on, .bearer-tabs button.on {
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.2); border-color: hsl(var(--primary) / 0.6);
+}
+.bearer-form, .bearer-result { display: flex; flex-direction: column; gap: 12px; }
+.bearer-warn {
+  font-size: 0.8rem; line-height: 1.35; color: hsl(28 100% 60%);
+  background: hsl(28 100% 55% / 0.1); border: 1px solid hsl(28 100% 58% / 0.4);
+  border-radius: 8px; padding: 8px 10px; margin: 0;
+}
+.bearer-made-amt { font-size: 1rem; font-weight: 700; color: hsl(var(--foreground)); text-align: center; }
+.bearer-qr { width: 160px; height: 160px; align-self: center; background: #fff; border-radius: 8px; padding: 6px; }
+.bearer-code {
+  font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem; word-break: break-all; cursor: pointer;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.08);
+  border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 9px 11px; line-height: 1.4;
+}
+.bearer-code-input { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; resize: vertical; }
+.bearer-history { margin-top: 8px; border-top: 1px solid hsl(var(--border)); padding-top: 10px; }
+.bearer-history-title { font-size: 0.75rem; font-weight: 600; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
+.bearer-history-row { display: flex; align-items: center; gap: 12px; font-size: 0.82rem; padding: 3px 0; }
+.bearer-history-amt { flex: 1; color: hsl(var(--foreground)); }
+
 /* Node Speed + Mempool triggers sit together at the right of the topbar. */
 .netmap-tools { display: inline-flex; align-items: center; gap: 6px; }
 .netmap-mem { font-weight: 700; font-size: 0.9rem; line-height: 1; }

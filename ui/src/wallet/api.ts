@@ -190,6 +190,26 @@ export interface MempoolSnap {
 export const mempoolSnapshot = (known: string[]) =>
   invoke<MempoolSnap | null>("mempool_snapshot", { known });
 
+// ---- Bearer transactions (redeemable claim codes) ----
+export interface BearerCreated {
+  code: string; // the redeemable code (this IS the money — treat as a secret)
+  address: string;
+  txid: string;
+  vout: number;
+  amount: number;
+}
+export interface BearerStatus {
+  funded: boolean;
+  claimed: boolean; // true once swept (claimed or reclaimed) or never funded
+  value: number;
+  confirmations: number;
+}
+export const bearerCreate = (amount: number, passphrase?: string) =>
+  invoke<BearerCreated>("bearer_create", { amount, passphrase: passphrase ?? null });
+export const bearerSweep = (code: string, dest: string) =>
+  invoke<string>("bearer_sweep", { code, dest });
+export const bearerStatus = (code: string) => invoke<BearerStatus>("bearer_status", { code });
+
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
 export const lotteryWins = (addresses: string[]) => invoke<LotteryWin[]>("lottery_wins", { addresses });
