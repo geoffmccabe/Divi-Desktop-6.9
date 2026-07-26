@@ -73,6 +73,14 @@ export function Shell() {
     return () => window.removeEventListener("dd69:nodeswitch", onSwitch);
   }, []);
 
+  // The Contacts panel's Send button jumps to the Send view (SendPanel reads the
+  // stashed recipient on its own dd69:sendto listener).
+  useEffect(() => {
+    const onSendTo = () => setView("send");
+    window.addEventListener("dd69:sendto", onSendTo);
+    return () => window.removeEventListener("dd69:sendto", onSendTo);
+  }, []);
+
   const Active = VIEWS[view] ?? Overview;
   const label = NAV.find((n) => n.id === view)?.label ?? EXTRA_TITLES[view] ?? "";
 
