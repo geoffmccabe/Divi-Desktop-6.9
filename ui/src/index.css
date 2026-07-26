@@ -1399,6 +1399,21 @@ h1, h2, h3 { font-family: var(--font-heading); }
 
 /* Node Speed + Mempool triggers sit together at the right of the topbar. */
 .netmap-tools { display: inline-flex; align-items: center; gap: 6px; }
+
+/* FLAT | GLOBE segmented toggle. */
+.netmap-viewtoggle { display: inline-flex; border: 1px solid hsl(210 85% 62% / 0.5); border-radius: 6px; overflow: hidden; margin-right: 4px; }
+.netmap-viewtoggle button {
+  background: hsl(210 85% 62% / 0.10); border: none; cursor: pointer;
+  color: hsl(210 60% 74%); font-size: 0.72rem; font-weight: 600; padding: 3px 9px;
+}
+.netmap-viewtoggle button.on { background: hsl(210 85% 62% / 0.34); color: hsl(210 85% 82%); }
+
+/* The 3D globe fills the map area, behind the overlay panels (which are z>=6). */
+.netmap-globe { position: absolute; inset: 0; z-index: 1; }
+.globe-tip {
+  background: rgba(0, 0, 0, 0.8); border: 1px solid hsl(210 85% 62% / 0.6); border-radius: 6px;
+  padding: 4px 7px; font-size: 0.72rem; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums;
+}
 .netmap-mem { font-weight: 700; font-size: 0.9rem; line-height: 1; }
 
 /* Live mempool panel — same frame and top-right anchor as Node Speed; only one

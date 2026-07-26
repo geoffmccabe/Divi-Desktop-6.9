@@ -8,6 +8,7 @@ import { PrimerLove } from "./PrimerLove";
 import { usePrimer } from "./primerStore";
 import { FastestNodes, type FastCandidate } from "./FastestNodes";
 import { Mempool } from "./Mempool";
+import { GlobeMap, type GlobePoint, type GlobeArc } from "./GlobeMap";
 import { NewestNodesPanel } from "./NewestNodesPanel";
 import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
 import { classifyNode } from "./nodeTypes";
@@ -253,6 +254,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   });
   const [showFastest, setShowFastest] = useState(false);
   const [showMempool, setShowMempool] = useState(false);
+  // FLAT vs GLOBE view. When GLOBE is on, the 2D canvas loop pauses (see draw())
+  // and the WebGL globe renders the same nodes/arcs on top.
+  const [globe, setGlobe] = useState(false);
+  const globeActiveRef = useRef(false);
+  globeActiveRef.current = globe;
   const [showNewest, setShowNewest] = useState(false);
   // New-node spirals: the list the draw loop animates, refreshed off the poll (a
   // ref so drawing never triggers a re-render). highlightIp = the row the user is
@@ -651,6 +657,12 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     // and halves the render cost (or better, on 120 Hz screens).
     let lastFrame = 0;
     const draw = () => {
+      // GLOBE view is showing: skip all 2D work, just keep the loop alive so it
+      // resumes instantly when the user switches back to FLAT.
+      if (globeActiveRef.current) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
       const nowTs = performance.now();
       if (nowTs - lastFrame < 33) {
         raf = requestAnimationFrame(draw);
@@ -1318,6 +1330,34 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [snap, geos]);
 
+  // The SAME nodes/arcs the flat map shows, shaped for the globe: self + peers +
+  // the 30-day known network as points, and an arc from our node to each peer.
+  const globeData = useMemo(() => {
+    const pts: GlobePoint[] = [];
+    const arcs: GlobeArc[] = [];
+    const seen = new Set<string>();
+    const push = (ip: string, lat: number, lon: number, kind: GlobePoint["kind"], city?: string, country?: string) => {
+      if (!ip || seen.has(ip) || lat == null || lon == null) return;
+      seen.add(ip);
+      pts.push({ ip, lat, lng: lon, kind, city, country });
+    };
+    const self = selfRef.current;
+    if (self) push(self.ip, self.lat, self.lon, "self", self.city, self.country);
+    for (const p of snap?.peers ?? []) {
+      const g = geos[p.ip];
+      if (g) push(p.ip, g.lat, g.lon, "peer", g.city, g.country);
+    }
+    const full = { ...loadKnown(), ...knownRef.current };
+    for (const [ip, kp] of Object.entries(full)) push(ip, kp.lat, kp.lon, "net", kp.city, kp.country || geos[ip]?.country);
+    if (self) {
+      for (const p of snap?.peers ?? []) {
+        const g = geos[p.ip];
+        if (g) arcs.push({ startLat: self.lat, startLng: self.lon, endLat: g.lat, endLng: g.lon });
+      }
+    }
+    return { pts, arcs, center: self };
+  }, [snap, geos]);
+
   return (
     <div className="netmap">
       <div className="netmap-topbar">
@@ -1330,6 +1370,14 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
         </div>
         <div className="netmap-tools">
+          <div className="netmap-viewtoggle" role="group" aria-label="Map view">
+            <button type="button" className={globe ? "" : "on"} onClick={() => setGlobe(false)}>
+              Flat
+            </button>
+            <button type="button" className={globe ? "on" : ""} onClick={() => setGlobe(true)}>
+              Globe
+            </button>
+          </div>
           <button
             type="button"
             className={"netmap-fastest" + (showFastest ? " on" : "")}
@@ -1356,6 +1404,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       </div>
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
+        {globe && <GlobeMap points={globeData.pts} arcs={globeData.arcs} center={globeData.center} />}
         <NodesByCountry data={nodesByCountry} />
         {showFastest && (
           <FastestNodes
