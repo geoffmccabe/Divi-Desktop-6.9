@@ -1,4 +1,4 @@
-# Contacts (Address Book) — module + integration handoff
+# Contacts (Address Book) - module + integration handoff
 
 Audience: another Claude agent wiring Contacts into the Send flow (and later
 into other features). This documents what is BUILT, the public API, how the
@@ -9,14 +9,14 @@ this is entirely wallet-side (DD69 UI).
 
 BUILT and committed (wallet-side, local storage):
 
-- `ui/src/wallet/contacts.ts` — the store and all helpers.
-- `ui/src/wallet/Identicon.tsx` — self-contained blockies-style avatar.
-- `ui/src/wallet/AddressBook.tsx` — the Contacts view (list, search, cards, QR).
-- `ui/src/wallet/ContactEditor.tsx` — add/edit form (validates addresses).
-- `ui/src/wallet/ContactPicker.tsx` — compact "pick a contact" dropdown for Send.
-- `ui/src/wallet/sendTarget.ts` — one-shot recipient handoff to Send.
-- `ui/src/Shell.tsx` — listens for `dd69:sendto` and switches to the Send view.
-- `ui/src/index.css` — `.cb-*`, `.cp-*`, `.send-contact*`, `.send-to-label`.
+- `ui/src/wallet/contacts.ts` - the store and all helpers.
+- `ui/src/wallet/Identicon.tsx` - self-contained blockies-style avatar.
+- `ui/src/wallet/AddressBook.tsx` - the Contacts view (list, search, cards, QR).
+- `ui/src/wallet/ContactEditor.tsx` - add/edit form (validates addresses).
+- `ui/src/wallet/ContactPicker.tsx` - compact "pick a contact" dropdown for Send.
+- `ui/src/wallet/sendTarget.ts` - one-shot recipient handoff to Send.
+- `ui/src/Shell.tsx` - listens for `dd69:sendto` and switches to the Send view.
+- `ui/src/index.css` - `.cb-*`, `.cp-*`, `.send-contact*`, `.send-to-label`.
 
 NOT committed on `main` yet (left to you): the actual Send-panel wiring in
 `ui/src/wallet/SendPanel.tsx`. A complete, working reference version of that
@@ -41,32 +41,32 @@ other nodes). Agents and Bots are on the roadmap, not built.
 
 ## Public API (`contacts.ts`)
 
-- `loadContacts(): Contact[]` — raw list.
-- `sortedContacts(list?): Contact[]` — favorites first, then most-recently-sent,
+- `loadContacts(): Contact[]` - raw list.
+- `sortedContacts(list?): Contact[]` - favorites first, then most-recently-sent,
   then alphabetical. Use this for any user-facing list (the panel and the picker
   both do).
-- `upsertContact(partial): Contact[]` — create (no `id`) or update (with `id`);
+- `upsertContact(partial): Contact[]` - create (no `id`) or update (with `id`);
   returns the new full list.
 - `removeContact(id): Contact[]`, `toggleFavorite(id): Contact[]`.
-- `findByAddress(address): { contact, matched } | null` — who owns an address.
-- `isKnownGood(address): boolean` — true once we have recorded a successful send
+- `findByAddress(address): { contact, matched } | null` - who owns an address.
+- `isKnownGood(address): boolean` - true once we have recorded a successful send
   to that address (used to fade the first-send warning).
-- `markSent(address): void` — call this AFTER a broadcast succeeds; it bumps
+- `markSent(address): void` - call this AFTER a broadcast succeeds; it bumps
   `sentCount` / `lastSentAt` on the matching contact so it turns "known".
-- `TYPE_LABEL: Record<ContactType, string>` — display names.
+- `TYPE_LABEL: Record<ContactType, string>` - display names.
 
 ## Components
 
-- `<AddressBook />` — the whole Contacts view. Self-contained; no props. Renders
+- `<AddressBook />` - the whole Contacts view. Self-contained; no props. Renders
   the toolbar (search + Add), the card list, the editor (inline), and the QR
   overlay. Each card's Send button calls `setSendTarget(primaryAddress, name)`.
-- `<ContactPicker onPick={(address, name) => void} disabled? />` — a small
+- `<ContactPicker onPick={(address, name) => void} disabled? />` - a small
   "Contacts" dropdown button. Returns null when there are no contacts. Picks the
   contact's primary address.
-- `<Identicon address={string} size={number} />` — deterministic avatar from an
+- `<Identicon address={string} size={number} />` - deterministic avatar from an
   address. Pure SVG, no network, CSP-safe. Use it anywhere you show an address
   so a swapped address is visually obvious.
-- `<ContactEditor contact? onDone={(list?) => void} />` — used inside AddressBook;
+- `<ContactEditor contact? onDone={(list?) => void} />` - used inside AddressBook;
   you normally will not mount this directly.
 
 ## The Send handoff (already wired in Shell)
