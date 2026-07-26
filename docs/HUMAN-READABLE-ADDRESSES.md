@@ -71,17 +71,24 @@ and the flows. Two JSON files in the DD69 config directory:
 
 | file | contents |
 |---|---|
-| `names-index.json` | the scanned registry, keyed by chain |
+| `names-index-<chain>.json` | the scanned registry, one file per network |
 | `names-pending.json` | commit salts, written BEFORE the commit is broadcast |
 
 The salt write order matters. Crash after writing and before broadcasting and
 you have a useless salt on disk, which costs nothing. The other order loses the
 commit's fee and the name.
 
-**Scanning** walks blocks in 2,000-block chunks, decoding `OP_META` payloads and
-resolving each record's author from the address funding `vin[0]`. That needs
-`txindex=1`; without it a record is skipped rather than attributed to the wrong
-person. Reorg handling is deliberately blunt: if the last scanned block is no
+One file per network is deliberate: a single shared file meant switching between
+regtest and mainnet threw the other network's index away and rebuilt it, which on
+mainnet is hours of scanning to recover something already correct.
+
+**Scanning** walks blocks in 500-block chunks. Divi's `getblock` takes a BOOLEAN,
+not a verbosity level, and returns transaction IDs only, so outputs have to be
+fetched one transaction at a time. To keep that affordable, each block is first
+pulled as raw hex and searched for the four magic bytes; almost every block has
+none and costs a single call. Resolving a record's author needs `txindex=1`;
+without it a record is skipped rather than attributed to the wrong person, and
+the panel says so instead of showing an empty registry. Reorg handling is deliberately blunt: if the last scanned block is no
 longer on the chain, the index is rebuilt from the activation height. Correct at
 any age and cheap while the registry is young. Incremental undo data is the
 follow-up.
