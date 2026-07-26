@@ -89,6 +89,10 @@ export function GlobeMap({
   const [size, setSize] = useState({ w: 600, h: 400 });
   const pointsRef = useRef(points);
   pointsRef.current = points;
+  const centerRef = useRef(center);
+  centerRef.current = center;
+  // Once the user drags/zooms, we never move the camera for them again.
+  const userMovedRef = useRef(false);
 
   // Size the WebGL canvas to its container (react-globe.gl needs explicit px).
   useEffect(() => {
@@ -101,17 +105,19 @@ export function GlobeMap({
     return () => ro.disconnect();
   }, []);
 
-  // Start where it is, then after 3s glide in to frame the node cloud.
+  // Start where it is, then ONCE (3s after mount) glide in to frame the node
+  // cloud. Runs a single time and never if the user has already moved the globe,
+  // so a background data poll can never yank the camera back.
   useEffect(() => {
     const t = setTimeout(() => {
       const g = globeRef.current;
-      if (!g) return;
-      const pov = frameNodes(pointsRef.current) ??
-        (center ? { lat: center.lat, lng: center.lon, altitude: 1.2 } : null);
+      if (!g || userMovedRef.current) return;
+      const c = centerRef.current;
+      const pov = frameNodes(pointsRef.current) ?? (c ? { lat: c.lat, lng: c.lon, altitude: 1.2 } : null);
       if (pov) g.pointOfView(pov, 1600);
     }, 3000);
     return () => clearTimeout(t);
-  }, [center]);
+  }, []);
 
   // Two arcs per connection: a faint static line + a bright dot zipping toward
   // our node (so start=peer, end=self). Staggered so dots don't all line up.
@@ -130,9 +136,17 @@ export function GlobeMap({
   const onReady = () => {
     const g = globeRef.current;
     if (!g) return;
-    const c = g.controls() as unknown as { autoRotate: boolean; enableDamping: boolean };
+    const c = g.controls() as unknown as {
+      autoRotate: boolean;
+      enableDamping: boolean;
+      addEventListener: (ev: string, fn: () => void) => void;
+    };
     c.autoRotate = false;
     c.enableDamping = true;
+    // Any user interaction cancels all future auto-framing.
+    c.addEventListener("start", () => {
+      userMovedRef.current = true;
+    });
     if (center) g.pointOfView({ lat: center.lat, lng: center.lon, altitude: 2.2 }, 0);
   };
 
