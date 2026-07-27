@@ -492,6 +492,52 @@ async fn hra_resolve(name: String) -> Result<Option<String>, String> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct HraListingDto {
+    name: String,
+    seller: String,
+    price_divi: f64,
+    fee_divi: f64,
+    locked_for_blocks: u64,
+    is_mine: bool,
+}
+
+/// Every name currently for sale.
+#[tauri::command]
+async fn hra_market() -> Result<Vec<HraListingDto>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| {
+        names::market(cfg).map(|v| {
+            v.into_iter()
+                .map(|l| HraListingDto {
+                    name: l.name,
+                    seller: l.seller,
+                    price_divi: l.price_divi,
+                    fee_divi: l.fee_divi,
+                    locked_for_blocks: l.locked_for_blocks,
+                    is_mine: l.is_mine,
+                })
+                .collect()
+        })
+    })
+}
+
+#[tauri::command]
+async fn hra_list_for_sale(name: String, priceDivi: f64, minLifetimeBlocks: u64) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::list_for_sale(cfg, &name, priceDivi, minLifetimeBlocks))
+}
+
+#[tauri::command]
+async fn hra_delist(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::delist(cfg, &name))
+}
+
+/// Buy a listed name. One transaction pays the seller and claims it.
+#[tauri::command]
+async fn hra_buy(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::buy(cfg, &name))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct StakeWalletDto {
     address: String,
     size: f64,
@@ -1444,6 +1490,10 @@ fn main() {
             hra_set_primary,
             hra_renew,
             hra_resolve,
+            hra_market,
+            hra_list_for_sale,
+            hra_delist,
+            hra_buy,
             staking_wallets,
             lottery_info,
             lottery_wins,

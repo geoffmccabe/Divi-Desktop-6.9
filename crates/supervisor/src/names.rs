@@ -57,6 +57,23 @@ const MAINNET_ACTIVATION: Option<u64> = None;
 /// would have no way to tell. Override for regtest with `DIVI_NAMES_TREASURY`.
 const MAINNET_TREASURY: Option<&str> = None;
 
+/// The marketplace's cut of a sale, in percent, paid to the treasury.
+///
+/// **Zero for now, deliberately.** A fee can be introduced later by a version
+/// bump with a published activation height; it cannot be taken back out once
+/// people have priced it in. Starting at zero also keeps the first market as
+/// simple as possible to reason about.
+const MARKET_FEE_PERCENT: f64 = 0.0;
+
+/// The treasury's cut of a sale at `price_divi`.
+pub fn market_fee_divi(price_divi: f64) -> f64 {
+    if MARKET_FEE_PERCENT <= 0.0 {
+        0.0
+    } else {
+        dvxp::round8(price_divi * MARKET_FEE_PERCENT / 100.0)
+    }
+}
+
 /// Blocks to scan per sync call, so a catch-up never blocks the UI thread pool
 /// for long. The caller loops.
 ///
@@ -108,6 +125,21 @@ pub struct PendingCommit {
     pub commit_height: u64,
     pub blocks_remaining: u64,
     pub ready: bool,
+}
+
+/// A name somebody has put up for sale.
+#[derive(Debug, Clone)]
+pub struct MarketListing {
+    pub name: String,
+    pub seller: String,
+    pub price_divi: f64,
+    /// Treasury cut on top of the price, 0 while the market is free.
+    pub fee_divi: f64,
+    /// Blocks until the seller is allowed to withdraw the listing. While this
+    /// is above zero a buyer is safe from the listing being pulled mid-purchase.
+    pub locked_for_blocks: u64,
+    /// True when this wallet owns it, so the panel offers Delist not Buy.
+    pub is_mine: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -664,10 +696,40 @@ fn apply_record(
             }
             st.listing = None;
         }
-        // BUY is not applied yet: it needs the payment output checked against
-        // the listed price, which is the marketplace slice. Skipping it is safe
-        // and visible; guessing would move a name for free.
-        NameRecord::Buy { .. } => {}
+        NameRecord::Buy { name } => {
+            let Ok(name_s) = String::from_utf8(name.clone()) else { return };
+            let Some(st) = idx.names.get(&name_s) else { return };
+            let Some(listing) = st.listing.clone() else { return }; // not for sale
+            let seller = st.owner.clone();
+
+            // Buying from yourself is not a sale. Allowing it would let an owner
+            // manufacture a fake sale price to mislead anyone pricing the market.
+            if sender == seller {
+                return;
+            }
+
+            // The seller must actually be paid, in this same transaction. This
+            // is what makes the purchase atomic: the seller is not a
+            // participant, so there is nothing for them to withhold.
+            if total_to(payments, &seller) + 1e-8 < listing.price_divi {
+                return;
+            }
+
+            // The marketplace cut, if one is configured. At 0% this is free.
+            let cut = market_fee_divi(listing.price_divi);
+            if cut > 0.0 && total_to(payments, treasury) + 1e-8 < cut {
+                return;
+            }
+
+            // Ownership moves. Any reverse claim naming it is stale, and the
+            // listing is spent: a second buyer in the same block finds nothing
+            // for sale and is ignored, which is what makes first-in-block win.
+            idx.primary.retain(|_, claimed| claimed != &name_s);
+            if let Some(st) = idx.names.get_mut(&name_s) {
+                st.owner = sender.to_string();
+                st.listing = None;
+            }
+        }
     }
 }
 
@@ -894,6 +956,158 @@ pub fn my_names(cfg: &NodeConfig) -> Result<Vec<OwnedName>, String> {
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(out)
+}
+
+/// Every name currently for sale.
+pub fn market(cfg: &NodeConfig) -> Result<Vec<MarketListing>, String> {
+    let rpc = RpcClient::new(cfg);
+    let chain = chain_name(&rpc);
+    let idx = load_index(&chain);
+    let tip = tip_height(&rpc)?;
+
+    let mut out: Vec<MarketListing> = idx
+        .names
+        .iter()
+        .filter_map(|(name, st)| {
+            let l = st.listing.as_ref()?;
+            let unlock = l.listed_height + l.min_lifetime_blocks;
+            Some(MarketListing {
+                name: name.clone(),
+                seller: st.owner.clone(),
+                price_divi: l.price_divi,
+                fee_divi: market_fee_divi(l.price_divi),
+                locked_for_blocks: unlock.saturating_sub(tip),
+                is_mine: is_ours(&rpc, &st.owner),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.price_divi.partial_cmp(&b.price_divi).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(out)
+}
+
+fn is_ours(rpc: &RpcClient, addr: &str) -> bool {
+    rpc.call("validateaddress", json!([addr]))
+        .ok()
+        .and_then(|r| r["ismine"].as_bool())
+        .unwrap_or(false)
+}
+
+/// Put a name up for sale.
+///
+/// `min_lifetime_blocks` is the promise that makes buying safe: for that many
+/// blocks the listing cannot be withdrawn. Without it a seller could cancel the
+/// moment a payment appeared and keep both the name and the money, which is
+/// exactly the hole in Counterparty's dispensers.
+pub fn list_for_sale(
+    cfg: &NodeConfig,
+    name: &str,
+    price_divi: f64,
+    min_lifetime_blocks: u64,
+) -> Result<String, String> {
+    if !price_divi.is_finite() || price_divi <= 0.0 {
+        return Err("Set a price above zero.".into());
+    }
+    if price_divi > 1_000_000_000.0 {
+        return Err("That price is not plausible. Check the number.".into());
+    }
+    if min_lifetime_blocks < 60 {
+        return Err("The no-cancel window must be at least 60 blocks, about an hour. It is what lets somebody buy safely, so it cannot be trivially short.".into());
+    }
+    let canonical = charset::canonicalise(name);
+    let owner = owner_of(cfg, &canonical)?;
+    let price = (price_divi * 1e8).round() as u64;
+    Ok(send_record(
+        cfg,
+        &NameRecord::List { name: canonical.into_bytes(), price, min_lifetime_blocks },
+        &[],
+        Some(&owner),
+    )?
+    .txid)
+}
+
+/// Take a name off the market. Refused by the registry inside the no-cancel
+/// window, so this checks first and says so rather than wasting a fee.
+pub fn delist(cfg: &NodeConfig, name: &str) -> Result<String, String> {
+    let canonical = charset::canonicalise(name);
+    let owner = owner_of(cfg, &canonical)?;
+    let rpc = RpcClient::new(cfg);
+    let idx = load_index(&chain_name(&rpc));
+    let tip = tip_height(&rpc)?;
+    let Some(st) = idx.names.get(&canonical) else {
+        return Err(format!("{canonical} is not in the index yet."));
+    };
+    let Some(l) = &st.listing else {
+        return Err(format!("{canonical} is not for sale."));
+    };
+    let unlock = l.listed_height + l.min_lifetime_blocks;
+    if tip < unlock {
+        return Err(format!(
+            "You promised not to withdraw this listing for another {} blocks, roughly {} minutes. That promise is what lets somebody buy it safely.",
+            unlock - tip,
+            unlock - tip
+        ));
+    }
+    Ok(send_record(
+        cfg,
+        &NameRecord::Delist { name: canonical.into_bytes() },
+        &[],
+        Some(&owner),
+    )?
+    .txid)
+}
+
+/// Is somebody else already trying to buy this name right now?
+///
+/// ⚠ The one risk this market cannot engineer away: two buyers paying in the
+/// same block. One gets the name; the other has paid the seller and gets
+/// nothing, and an overlay cannot claw back a native coin payment. This narrows
+/// the window from a block to the moment of broadcast. It is a real reduction,
+/// not a fix, and the UI must not pretend otherwise.
+fn competing_purchase(rpc: &RpcClient, canonical: &str) -> bool {
+    let Ok(pool) = rpc.call("getrawmempool", json!([])) else { return false };
+    let Some(txids) = pool.as_array() else { return false };
+    for txid in txids.iter().filter_map(|t| t.as_str()) {
+        let Ok(tx) = rpc.call("getrawtransaction", json!([txid, 1])) else { continue };
+        for payload in dvxp::payloads_in_tx(&tx) {
+            if let Ok(Some(NameRecord::Buy { name })) = record::decode_payload(&payload) {
+                if String::from_utf8(name).ok().as_deref() == Some(canonical) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Buy a listed name: one transaction that pays the seller and claims it.
+pub fn buy(cfg: &NodeConfig, name: &str) -> Result<String, String> {
+    let canonical = charset::canonicalise(name);
+    let rpc = RpcClient::new(cfg);
+    let chain = chain_name(&rpc);
+    let idx = load_index(&chain);
+    let tip = tip_height(&rpc)?;
+    if idx.scanned_height < tip {
+        return Err("Still reading the chain, so the price and the seller cannot be trusted yet. Wait for it to catch up.".into());
+    }
+    let Some(st) = idx.names.get(&canonical) else {
+        return Err(format!("{canonical} is not registered."));
+    };
+    let Some(listing) = st.listing.clone() else {
+        return Err(format!("{canonical} is not for sale."));
+    };
+    if is_ours(&rpc, &st.owner) {
+        return Err("You already own this name.".into());
+    }
+    if competing_purchase(&rpc, &canonical) {
+        return Err("Somebody else is buying this name at this moment. If you both pay, only one of you gets it and the other loses the payment, so this was stopped. Try again shortly.".into());
+    }
+
+    let mut payments = vec![Payment { address: st.owner.clone(), divi: listing.price_divi }];
+    let cut = market_fee_divi(listing.price_divi);
+    if cut > 0.0 {
+        payments.push(Payment { address: treasury_address(&chain)?, divi: cut });
+    }
+    Ok(send_record(cfg, &NameRecord::Buy { name: canonical.into_bytes() }, &payments, None)?.txid)
 }
 
 // ── Writing records ───────────────────────────────────────────────────────
@@ -1446,6 +1660,87 @@ mod tests {
         assert!(i.names.get("GEOFF").unwrap().listing.is_some(), "delist inside the window must be ignored");
         apply(&mut i, &NameRecord::Delist { name: b"GEOFF".to_vec() }, ALICE, 301);
         assert!(i.names.get("GEOFF").unwrap().listing.is_none());
+    }
+
+    /// Buying is the only place a name changes hands for money, so every way it
+    /// could go wrong is worth a test.
+    #[test]
+    fn a_purchase_needs_the_seller_actually_paid() {
+        let list = NameRecord::List { name: b"GEOFF".to_vec(), price: 500_00000000, min_lifetime_blocks: 100 };
+        let buy = NameRecord::Buy { name: b"GEOFF".to_vec() };
+
+        // Not for sale at all.
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        apply_record(&mut i, &buy, BOB, 300, true, TREASURY, &[(ALICE.to_string(), 500.0)]);
+        assert_eq!(i.names.get("GEOFF").unwrap().owner, ALICE, "unlisted names are not for sale");
+
+        // Listed, but the buyer underpays.
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        apply(&mut i, &list, ALICE, 200);
+        apply_record(&mut i, &buy, BOB, 300, true, TREASURY, &[(ALICE.to_string(), 499.0)]);
+        assert_eq!(i.names.get("GEOFF").unwrap().owner, ALICE, "underpaying buys nothing");
+
+        // Listed, but the money went somewhere else.
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        apply(&mut i, &list, ALICE, 200);
+        apply_record(&mut i, &buy, BOB, 300, true, TREASURY, &[(BOB.to_string(), 500.0)]);
+        assert_eq!(i.names.get("GEOFF").unwrap().owner, ALICE, "paying yourself buys nothing");
+
+        // Paid in full: the name moves and the listing is spent.
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        apply(&mut i, &list, ALICE, 200);
+        apply_record(&mut i, &buy, BOB, 300, true, TREASURY, &[(ALICE.to_string(), 500.0)]);
+        let st = i.names.get("GEOFF").unwrap();
+        assert_eq!(st.owner, BOB);
+        assert!(st.listing.is_none(), "the listing must not survive the sale");
+    }
+
+    /// First buyer in block order wins. The second finds nothing for sale, which
+    /// is exactly why their payment is a real loss and the wallet checks the
+    /// mempool before broadcasting.
+    #[test]
+    fn only_the_first_buyer_in_a_block_gets_the_name() {
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        apply(&mut i, &NameRecord::List { name: b"GEOFF".to_vec(), price: 100_00000000, min_lifetime_blocks: 100 }, ALICE, 200);
+        let buy = NameRecord::Buy { name: b"GEOFF".to_vec() };
+        apply_record(&mut i, &buy, BOB, 300, true, TREASURY, &[(ALICE.to_string(), 100.0)]);
+        apply_record(&mut i, &buy, "carol", 300, true, TREASURY, &[(ALICE.to_string(), 100.0)]);
+        assert_eq!(i.names.get("GEOFF").unwrap().owner, BOB);
+    }
+
+    /// A seller must not be able to buy from themselves and invent a sale price
+    /// for anyone pricing the market off past sales.
+    #[test]
+    fn an_owner_cannot_buy_their_own_name() {
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        apply(&mut i, &NameRecord::List { name: b"GEOFF".to_vec(), price: 1_00000000, min_lifetime_blocks: 100 }, ALICE, 200);
+        apply_record(&mut i, &NameRecord::Buy { name: b"GEOFF".to_vec() }, ALICE, 300, true, TREASURY, &[(ALICE.to_string(), 1.0)]);
+        assert!(i.names.get("GEOFF").unwrap().listing.is_some(), "the wash sale must be ignored");
+    }
+
+    /// Buying must drop a display claim, exactly as a transfer does.
+    #[test]
+    fn a_sale_drops_a_stale_reverse_claim() {
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        let target = base58::payload_to_address(0, &[9; 20], true);
+        let (kind, h160) = base58::address_to_payload(&target).unwrap();
+        let mut value = vec![kind];
+        value.extend_from_slice(&h160);
+        apply(&mut i, &NameRecord::SetRecord { name: b"GEOFF".to_vec(), entries: vec![Entry { key: record::KEY_DIVI_ADDRESS, value }] }, ALICE, 310);
+        apply(&mut i, &NameRecord::SetPrimary { name: b"GEOFF".to_vec() }, &target, 320);
+        assert!(!i.primary.is_empty());
+
+        apply(&mut i, &NameRecord::List { name: b"GEOFF".to_vec(), price: 1_00000000, min_lifetime_blocks: 10 }, ALICE, 330);
+        apply_record(&mut i, &NameRecord::Buy { name: b"GEOFF".to_vec() }, BOB, 340, true, TREASURY, &[(ALICE.to_string(), 1.0)]);
+        assert_eq!(i.names.get("GEOFF").unwrap().owner, BOB);
+        assert!(i.primary.is_empty(), "the previous owner's display claim must go");
     }
 
     #[test]

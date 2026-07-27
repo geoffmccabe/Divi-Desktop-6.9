@@ -44,6 +44,17 @@ export interface PendingCommit {
   ready: boolean;
 }
 
+export interface MarketListing {
+  name: string;
+  seller: string;
+  priceDivi: number;
+  /** Treasury cut on top of the price. Zero while the market is free. */
+  feeDivi: number;
+  /** Blocks until the seller may withdraw the listing. Above zero = safe to buy. */
+  lockedForBlocks: number;
+  isMine: boolean;
+}
+
 export interface OwnedName {
   name: string;
   owner: string;
@@ -211,3 +222,8 @@ export const hraTransfer = (name: string, newOwner: string) =>
 export const hraSetPrimary = (name: string) => invoke<string>("hra_set_primary", { name });
 export const hraRenew = (name: string) => invoke<string>("hra_renew", { name });
 export const hraResolve = (name: string) => invoke<string | null>("hra_resolve", { name });
+export const hraMarket = () => invoke<MarketListing[]>("hra_market");
+export const hraListForSale = (name: string, priceDivi: number, minLifetimeBlocks: number) =>
+  invoke<string>("hra_list_for_sale", { name, priceDivi, minLifetimeBlocks });
+export const hraDelist = (name: string) => invoke<string>("hra_delist", { name });
+export const hraBuy = (name: string) => invoke<string>("hra_buy", { name });

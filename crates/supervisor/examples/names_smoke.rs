@@ -192,8 +192,43 @@ fn run() -> Result<(), String> {
     }
     println!("   expiry {before} -> {after}");
 
+    step(13, "put it on the market, and be held to the no-cancel promise");
+    names::list_for_sale(&cfg, &name, 1234.0, 60)?;
+    mine(&rpc, 1)?;
+    sync_fully(&cfg)?;
+    let listing = names::market(&cfg)?
+        .into_iter()
+        .find(|l| l.name == q.canonical)
+        .ok_or("the listing did not appear on the market")?;
+    println!(
+        "   listed at {} DIVI, mine={}, locked for {} blocks",
+        listing.price_divi, listing.is_mine, listing.locked_for_blocks
+    );
+    if listing.price_divi != 1234.0 || !listing.is_mine {
+        return Err(format!("listing looks wrong: {listing:?}"));
+    }
+    if listing.locked_for_blocks == 0 {
+        return Err("the no-cancel window should not have expired yet".into());
+    }
+    // The promise has to bind, or a buyer can be robbed mid-purchase.
+    match names::delist(&cfg, &name) {
+        Ok(_) => return Err("delisting inside the no-cancel window was allowed".into()),
+        Err(e) => println!("   delist correctly refused: {e}"),
+    }
+
+    step(14, "once the window passes, the listing can be withdrawn");
+    mine(&rpc, 60)?;
+    sync_fully(&cfg)?;
+    names::delist(&cfg, &name)?;
+    mine(&rpc, 1)?;
+    sync_fully(&cfg)?;
+    if names::market(&cfg)?.iter().any(|l| l.name == q.canonical) {
+        return Err("the name is still on the market after delisting".into());
+    }
+    println!("   removed from the market");
+
     // Everything below gives the name away, so it must come last.
-    step(13, "transfer it to somebody else, then be refused any further edits");
+    step(15, "transfer it to somebody else, then be refused any further edits");
     let stranger = dd69_supervisor::base58::payload_to_address(
         dd69_supervisor::base58::KIND_P2PKH,
         &[0x5au8; 20],

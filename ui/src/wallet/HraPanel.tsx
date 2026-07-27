@@ -3,6 +3,7 @@ import { hraMyNames, hraSync, type HraSync, type OwnedName } from "./hra/api";
 import { NameRegister } from "./hra/NameRegister";
 import { NameList } from "./hra/NameList";
 import { NameLookup } from "./hra/NameLookup";
+import { NamesMarket } from "./hra/NamesMarket";
 import "./hra.css";
 
 // Human Readable Addresses, branded Divi Names.
@@ -15,7 +16,7 @@ import "./hra.css";
 // GEOFF the person and GEOFF the token can never be two different objects
 // owned by two different people.
 
-type Tab = "mine" | "get" | "lookup";
+type Tab = "mine" | "get" | "market" | "lookup";
 
 export function HraPanel() {
   const [tab, setTab] = useState<Tab>("mine");
@@ -106,6 +107,7 @@ export function HraPanel() {
           [
             ["mine", "My Names"],
             ["get", "Register a Name"],
+            ["market", "Names Market"],
             ["lookup", "Look Up a Name"],
           ] as [Tab, string][]
         ).map(([id, label]) => (
@@ -126,6 +128,7 @@ export function HraPanel() {
           <NameList names={names} tip={sync?.tip ?? 0} loading={loading} onChanged={refresh} />
         )}
         {tab === "get" && <NameRegister canRegister={canRegister} onChanged={refresh} />}
+        {tab === "market" && <NamesMarket canTrade={canRegister} onChanged={refresh} />}
         {tab === "lookup" && <NameLookup />}
       </section>
 

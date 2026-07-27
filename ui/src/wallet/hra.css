@@ -215,3 +215,34 @@
   word-break: break-all;
   color: hsl(var(--foreground));
 }
+
+/* ---- Names Market ---- */
+.hra-market { display: flex; flex-direction: column; gap: 12px; }
+.hra-mkt-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 11px;
+}
+.hra-mkt-main { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.hra-mkt-price { font-size: 1rem; font-weight: 700; color: hsl(var(--primary)); }
+.hra-mkt-meta { display: flex; flex-direction: column; gap: 3px; font-size: 0.78rem; }
+.hra-mkt-meta .mono { word-break: break-all; }
+.hra-mkt-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--destructive) / 0.4);
+  border-radius: 9px;
+}
+.hra-sell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 9px;
+}
