@@ -31,6 +31,7 @@ export interface Health {
   model: string;
   provider: string;
   rateConfigured: boolean;
+  keyConfigured: boolean;
   sessions: number;
 }
 
@@ -76,6 +77,9 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const health = () => call<Health>("/health");
+
+export const setKey = (key: string) =>
+  call<{ keyConfigured: boolean }>("/key", { method: "POST", body: JSON.stringify({ key }) });
 
 export const createSession = (balanceDivi: number) =>
   call<{ id: string }>("/session", {

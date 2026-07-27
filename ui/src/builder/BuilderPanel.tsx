@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./builder.css";
 import {
-  builderUrl, setBuilderUrl, health, createSession, sendMessage,
+  builderUrl, setBuilderUrl, health, createSession, sendMessage, setKey,
   type Account, type BuilderFile, type Health, type TurnEvent,
 } from "./api";
 
@@ -93,10 +93,10 @@ export function BuilderPanel() {
           <b className="bd-good">Connected</b>
           <span>{probe.health?.model}</span>
         </div>
-        {!probe.health?.rateConfigured && (
+        {!probe.health?.keyConfigured && (
           <div className="bd-stat">
-            <b className="bd-warn">No DIVI rate set</b>
-            <span>billing disabled</span>
+            <b className="bd-warn">No AI key yet</b>
+            <span>add one in the gear, AI tab</span>
           </div>
         )}
         <span className="bd-spacer" />
@@ -112,7 +112,7 @@ export function BuilderPanel() {
             </div>
           </>
         )}
-        {!session && (
+        {!session && probe.health?.keyConfigured && (
           <button type="button" className="wl-btn wl-btn-primary" onClick={start}>
             Start building
           </button>
@@ -120,10 +120,14 @@ export function BuilderPanel() {
       </div>
 
       {!session ? (
-        <p className="bd-note">
-          Start a session to begin. You are charged in DIVI for what the model
-          actually uses, and the running total stays on screen.
-        </p>
+        probe.health?.keyConfigured ? (
+          <p className="bd-note">
+            Start a session to begin. You are charged in DIVI for what the model
+            actually uses, and the running total stays on screen.
+          </p>
+        ) : (
+          <KeyBox onSaved={check} />
+        )
       ) : (
         <div className="bd-split">
           <div className="bd-chat">
@@ -166,6 +170,51 @@ export function BuilderPanel() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function KeyBox({ onSaved }: { onSaved: () => void }) {
+  const [key, setKey_] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await setKey(key.trim());
+      setKey_("");
+      onSaved();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="bd-offline">
+      <h3>One thing left to do</h3>
+      <p className="bd-note">
+        Paste an Anthropic key below and press Save. You only do this once each
+        time the wallet is started. The key is kept in memory, never written to a
+        file, and never sent anywhere except Anthropic.
+      </p>
+      <div className="bd-bar" style={{ marginTop: 14, background: "transparent", border: 0, padding: 0 }}>
+        <input
+          className="wl-input"
+          type="password"
+          placeholder="sk-ant-..."
+          value={key}
+          onChange={(e) => setKey_(e.target.value)}
+          spellCheck={false}
+          autoComplete="off"
+          aria-label="Anthropic key"
+        />
+        <button type="button" className="wl-btn wl-btn-primary" disabled={busy || key.trim().length < 20} onClick={save}>
+          Save
+        </button>
+      </div>
+      {err && <p className="bd-note bd-bad" style={{ marginTop: 8 }}>{err}</p>}
     </div>
   );
 }

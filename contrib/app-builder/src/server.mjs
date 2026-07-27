@@ -34,7 +34,11 @@ export function loadConfig(env = process.env) {
     host: env.HOST ?? "127.0.0.1",
     root: env.BUILDER_ROOT ?? path.join(os.tmpdir(), "dd69-builder"),
     model: env.BUILDER_MODEL ?? "claude-sonnet-5",
-    provider: { kind: env.BUILDER_PROVIDER ?? "anthropic", apiKey: env.ANTHROPIC_API_KEY, baseUrl: env.BUILDER_BASE_URL },
+    provider: {
+      kind: env.BUILDER_PROVIDER ?? "anthropic",
+      apiKey: env.ANTHROPIC_API_KEY,
+      baseUrl: env.BUILDER_BASE_URL,
+    },
     // An admin-set number, never a live feed: DIVI price aggregators disagree by
     // roughly 4.5x, so a feed here would be indefensible.
     diviPerUsd,
@@ -76,8 +80,30 @@ export function createServer(config = loadConfig()) {
           provider: config.provider.kind,
           // Surfaced because a builder that cannot bill must not take work.
           rateConfigured: config.diviPerUsd > 0,
+          // So the panel can say exactly what is missing rather than just
+          // failing when the first message is sent.
+          keyConfigured: Boolean(config.provider.apiKey),
           sessions: SESSIONS.size,
         });
+      }
+
+      // The model credential, handed over by the wallet panel.
+      //
+      // It arrives only when a person pastes it, and is held in memory for the
+      // life of this process: never written to disk, never logged, and sent
+      // nowhere except the model provider.
+      //
+      // An earlier version obtained it from the operating system's secure store
+      // instead. That was rejected on purpose. A background service that reads
+      // secrets belonging to other applications looks exactly like something
+      // hostile, whatever it intends, and this project's own checks flag that
+      // shape. Having a person paste it is both clearer and easier to audit.
+      if (req.method === "POST" && url.pathname === "/key") {
+        const body = await readJson(req);
+        const key = String(body.key ?? "").trim();
+        if (key.length < 20) return json(res, 400, { error: "that does not look like a key" });
+        config.provider.apiKey = key;
+        return json(res, 200, { keyConfigured: true });
       }
 
       if (req.method === "POST" && url.pathname === "/session") {
