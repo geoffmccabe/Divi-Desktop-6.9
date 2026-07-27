@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import * as THREE from "three";
-import { Line2 } from "three/examples/jsm/lines/Line2.js";
-import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
-import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import earthNight from "../assets/earth-night.jpg";
 
 // The node map on a real 3D globe. Nodes are custom "Node Towers" (a slim square
@@ -46,12 +43,12 @@ const UP = new THREE.Vector3(0, 1, 0);
 // Hex-stream + helix tuning.
 const HEX = "0123456789ABCDEF";
 const HELIX_R = 0.6;
-const LINE_PX = 2; // strand line width in SCREEN pixels (constant at any zoom)
+const TUBE_R = 0.1; // helix strand tube radius (world units)
 const SPACING = 1.75; // world-units between characters (2x denser); constant per arc
 const CH_CAP = 600;
-// Below this great-circle angle (~300km on Earth), skip the helix: one straight
-// arc with characters flowing back and forth on it.
-const NEAR_ANG = 300 / 6371;
+// Below this great-circle angle (~500km on Earth), skip the helix: one simple
+// curved arc with characters flowing back and forth on it.
+const NEAR_ANG = 500 / 6371;
 const BASE_FLOW = 0.062;
 const MAX_PEER = 24;
 const MAX_MESH = 120;
@@ -152,7 +149,7 @@ function coilsFor(ang: number): number {
   const t = Math.max(0, Math.min(1, (km - 300) / 700));
   const s = t * t * (3 - 2 * t);
   const W = 50 + 150 * s; // km per coil
-  return Math.max(1, km / W);
+  return Math.max(1, 0.5 * km / W); // half the coils
 }
 
 const DEG = Math.PI / 180;
@@ -190,14 +187,6 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
   const centerRef = useRef(center);
   centerRef.current = center;
   const userMovedRef = useRef(false);
-  const sizeRef = useRef(size);
-  sizeRef.current = size;
-  // Screen-space line materials need the viewport size for their pixel width;
-  // keep them in sync on resize without rebuilding the scene.
-  const lineMatsRef = useRef<LineMaterial[]>([]);
-  useEffect(() => {
-    for (const m of lineMatsRef.current) m.resolution.set(size.w, size.h);
-  }, [size]);
   // Rebuild the scene only when the set of nodes changes, not on every 10s poll
   // (rebuilding all the helix tubes each poll would hitch).
   const sig = useMemo(() => points.map((p) => `${p.ip}:${p.kind}`).sort().join("|"), [points]);
@@ -241,7 +230,6 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
     const scene = g.scene();
     const camera = g.camera();
     const group = new THREE.Group();
-    lineMatsRef.current = []; // fresh list of strand materials for this build
     const surfaceOf = (lat: number, lng: number) => {
       const c = g.getCoords(lat, lng, 0);
       return new THREE.Vector3(c.x, c.y, c.z);
@@ -349,19 +337,8 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
         // one (both strands share the same centreline). Pixel width is constant
         // at any zoom (unlike a world-space tube, which balloons when zoomed in).
         if (helix || strand === 0) {
-          const lg = new LineGeometry();
-          lg.setPositions(Array.from(hp));
-          const lm = new LineMaterial({
-            color: (conn.mesh ? MESH_COLOR : PEER_COLOR).getHex(),
-            linewidth: LINE_PX,
-            worldUnits: false,
-            transparent: true,
-            opacity: 0.14, // 25% of the earlier 0.55
-            depthWrite: false,
-          });
-          lm.resolution.set(sizeRef.current.w, sizeRef.current.h);
-          lineMatsRef.current.push(lm);
-          group.add(new Line2(lg, lm));
+          const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(hpVec), K, TUBE_R, 4, false);
+          group.add(new THREE.Mesh(tube, new THREE.MeshBasicMaterial({ color: conn.mesh ? MESH_COLOR : PEER_COLOR, transparent: true, opacity: 0.2, depthWrite: false })));
         }
         strands.push({ hp, K, dir: strand === 0 ? 1 : -1 });
       }
