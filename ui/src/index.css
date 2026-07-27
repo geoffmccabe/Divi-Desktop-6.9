@@ -834,7 +834,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 
 /* ── Block-chain visualization (moving blocks across the map bottom) ────────── */
 .bv-wrap {
-  position: absolute; left: 0; right: 0; bottom: 10px; height: 130px;
+  position: absolute; left: 0; right: 0; bottom: 44px; height: 130px;
   pointer-events: none; overflow: hidden; z-index: 4;
 }
 .bv-panel {
@@ -1422,7 +1422,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .netmap-menu button:hover { background: hsl(210 85% 62% / 0.22); }
 /* Blockstream visibility eye (bottom-left, above the blockstream). */
 .netmap-eye {
-  position: absolute; left: 12px; bottom: 12px; z-index: 6;
+  position: absolute; left: 12px; bottom: 10px; z-index: 6;
   display: inline-flex; align-items: center; justify-content: center;
   width: 30px; height: 26px; border-radius: 6px; cursor: pointer;
   background: rgba(0, 0, 0, 0.45); border: 1px solid hsl(210 85% 62% / 0.5);

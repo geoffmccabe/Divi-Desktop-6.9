@@ -184,6 +184,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [size, setSize] = useState({ w: 600, h: 400 });
   const [ready, setReady] = useState(false);
+  const [hover, setHover] = useState<{ x: number; y: number; title: string; lines: string[] } | null>(null);
   const pointsRef = useRef(points);
   pointsRef.current = points;
   const centerRef = useRef(center);
@@ -253,6 +254,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
       (groups.get(key) ?? groups.set(key, []).get(key)!).push(p);
     }
     const tipOf = new Map<string, THREE.Vector3>();
+    const towerObjs: THREE.Object3D[] = []; // for hover raycasting
     for (const grp of groups.values()) {
       const offs = packOffsets(grp.length);
       grp.forEach((p, i) => {
@@ -263,7 +265,9 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
         const t = makeTower(COLORS[p.kind]);
         t.position.copy(d2.clone().multiplyScalar(R));
         t.quaternion.setFromUnitVectors(UP, d2);
+        t.userData.node = p; // for hover
         group.add(t);
+        towerObjs.push(t);
         tipOf.set(p.ip, d2.clone().multiplyScalar(TIP_R));
       });
     }
@@ -394,6 +398,32 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
 
     scene.add(group);
 
+    // Hover tooltips: raycast the towers on pointer move. A hit farther from the
+    // camera than the globe centre is on the back side (occluded) — ignore it.
+    const raycaster = new THREE.Raycaster();
+    const dom = g.renderer().domElement as HTMLCanvasElement;
+    const ndc = new THREE.Vector2();
+    const onMove = (e: PointerEvent) => {
+      const rect = dom.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      ndc.set((mx / rect.width) * 2 - 1, -(my / rect.height) * 2 + 1);
+      raycaster.setFromCamera(ndc, camera);
+      const camLen = camera.position.length();
+      let hit: GlobePoint | null = null;
+      for (const h of raycaster.intersectObjects(towerObjs, true)) {
+        if (h.point.distanceTo(camera.position) >= camLen) continue; // far side
+        let o: THREE.Object3D | null = h.object;
+        while (o && !o.userData.node) o = o.parent;
+        if (o) { hit = o.userData.node as GlobePoint; break; }
+      }
+      if (hit) {
+        const loc = [hit.city, hit.country].filter(Boolean).join(", ");
+        const role = hit.kind === "self" ? "Your node" : hit.kind === "peer" ? "Connected peer" : "Network node";
+        setHover({ x: mx, y: my, title: loc || hit.ip, lines: [loc ? hit.ip : "", role].filter(Boolean) });
+      } else setHover(null);
+    };
+    dom.addEventListener("pointermove", onMove);
+
     let raf = 0;
     let last = performance.now();
     const animate = () => {
@@ -439,6 +469,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
 
     return () => {
       cancelAnimationFrame(raf);
+      dom.removeEventListener("pointermove", onMove);
       scene.remove(group);
       group.traverse((o) => {
         const m = o as THREE.Mesh;
@@ -463,6 +494,17 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
         atmosphereAltitude={0.18}
         onGlobeReady={onReady}
       />
+      {hover && (
+        <div
+          className="netmap-tip"
+          style={{ left: Math.min(hover.x + 14, size.w - 200), top: Math.max(8, hover.y - 10) }}
+        >
+          <div className="netmap-tip-title">{hover.title}</div>
+          {hover.lines.map((l, i) => (
+            <div key={i} className="netmap-tip-line">{l}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
