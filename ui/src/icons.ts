@@ -31,6 +31,9 @@ export const ICONS: Record<string, string> = {
   send: svg("<path d='M22 2 11 13'/><path d='M22 2 15 22 11 13 2 9Z'/>"),
   receive: svg("<path d='M12 3v12'/><path d='M7 10l5 5 5-5'/><path d='M4 20h16'/>"),
   speed: svg("<polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'/>"), // lightning = fastest nodes
+  menu: svg("<path d='M3 6h18'/><path d='M3 12h18'/><path d='M3 18h18'/>"), // hamburger
+  eye: svg("<path d='M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z'/><circle cx='12' cy='12' r='3'/>"),
+  eyeOff: svg("<path d='M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z'/><path d='M3 3 21 21'/>"),
   history: svg("<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/>"),
   // svgrepo "woman" glyph, thicker variant (stroke 18.506 + padded viewBox).
   agent: filledIcon(WOMAN_VIEWBOX, WOMAN_PATH, 18.506),

@@ -59,7 +59,7 @@ export function NewestNodesPanel({
       style={{
         position: "absolute",
         right: 10,
-        bottom: 44,
+        top: 10,
         width: 210,
         maxHeight: 260,
         padding: "8px 10px",

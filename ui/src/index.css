@@ -1214,8 +1214,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
 
 /* ---- Nodes-by-country overlay (bottom-left of the map, above the blocks) ---- */
 .nbc {
-  position: absolute; left: 10px; bottom: 150px; z-index: 5;
-  width: 166px; max-height: 34%;
+  position: absolute; right: 10px; top: 10px; z-index: 6;
+  width: 176px; max-height: 72%;
   display: flex; flex-direction: column; gap: 5px;
   background: rgba(0, 0, 0, 0.5);
   border: 1px solid hsl(210 85% 62% / 0.7); /* blue, matches the network lines */
@@ -1223,6 +1223,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 /* Country | FULL count | Lovenode count — the two number columns sit close. */
 .nbc-head, .nbc-row { display: grid; grid-template-columns: 1fr 2.1em 1.6em; align-items: baseline; column-gap: 4px; }
+.nbc-head { padding-right: 14px; } /* room for the absolute close button */
 .nbc-head { font-size: 0.65rem; font-weight: 600; }
 .nbc-title { color: hsl(210 85% 66%); }
 .nbc-h-full { text-align: right; color: hsl(210 60% 72%); }
@@ -1399,8 +1400,38 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .bearer-history-row { display: flex; align-items: center; gap: 12px; font-size: 0.82rem; padding: 3px 0; }
 .bearer-history-amt { flex: 1; color: hsl(var(--foreground)); }
 
-/* Node Speed + Mempool triggers sit together at the right of the topbar. */
-.netmap-tools { display: inline-flex; align-items: center; gap: 6px; }
+/* Flat/Globe toggle + hamburger sit at the right of the topbar, with a gap. */
+.netmap-tools { display: inline-flex; align-items: center; gap: 16px; }
+.netmap-burger {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 26px; border-radius: 6px; cursor: pointer;
+  background: hsl(210 85% 62% / 0.14); border: 1px solid hsl(210 85% 62% / 0.5);
+  color: hsl(210 85% 72%); transition: background 0.15s, border-color 0.15s;
+}
+.netmap-burger:hover, .netmap-burger.on { background: hsl(210 85% 62% / 0.32); border-color: hsl(210 85% 62% / 0.9); }
+/* Hamburger dropdown (top-right); each item opens one overlay panel. */
+.netmap-menu {
+  position: absolute; right: 10px; top: 10px; z-index: 8;
+  display: flex; flex-direction: column; min-width: 150px; padding: 5px;
+  background: rgba(0, 0, 0, 0.72); border: 1px solid hsl(210 85% 62% / 0.7); border-radius: 8px;
+}
+.netmap-menu button {
+  background: none; border: none; text-align: left; cursor: pointer;
+  color: hsl(var(--foreground)); font-size: 0.8rem; padding: 7px 9px; border-radius: 6px;
+}
+.netmap-menu button:hover { background: hsl(210 85% 62% / 0.22); }
+/* Blockstream visibility eye (bottom-left, above the blockstream). */
+.netmap-eye {
+  position: absolute; left: 12px; bottom: 12px; z-index: 6;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 26px; border-radius: 6px; cursor: pointer;
+  background: rgba(0, 0, 0, 0.45); border: 1px solid hsl(210 85% 62% / 0.5);
+  color: hsl(210 85% 72%);
+}
+.netmap-eye:hover { background: hsl(210 85% 62% / 0.28); }
+.bv-dim { transition: opacity 0.3s ease; }
+.nbc-close { position: absolute; top: 4px; right: 6px; background: none; border: none; color: hsl(var(--muted-foreground)); font-size: 1rem; line-height: 1; cursor: pointer; padding: 0 2px; }
+.nbc-close:hover { color: hsl(var(--foreground)); }
 
 /* FLAT | GLOBE segmented toggle. */
 .netmap-viewtoggle { display: inline-flex; border: 1px solid hsl(210 85% 62% / 0.5); border-radius: 6px; overflow: hidden; margin-right: 4px; }

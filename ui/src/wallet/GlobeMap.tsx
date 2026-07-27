@@ -45,8 +45,11 @@ const HEX = "0123456789ABCDEF";
 const TURNS = 6;
 const HELIX_R = 0.6;
 const TUBE_R = 0.1; // helix tube radius (~2x the old 1px centreline)
-const SPACING = 3.5; // world-units between characters; constant per arc
-const CH_CAP = 300;
+const SPACING = 1.75; // world-units between characters (2x denser); constant per arc
+const CH_CAP = 600;
+// Below this great-circle angle (~300km on Earth), skip the helix: one straight
+// arc with characters flowing back and forth on it.
+const NEAR_ANG = 300 / 6371;
 const BASE_FLOW = 0.062;
 const MAX_PEER = 24;
 const MAX_MESH = 120;
@@ -298,6 +301,10 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
       const fr = curve.computeFrenetFrames(K, false);
       const sIdx = streams.length;
       const strands: Strand[] = [];
+      // Close nodes (< ~300km): no helix, a single straight arc; characters flow
+      // both ways on it. Far nodes: full double helix.
+      const helix = ang >= NEAR_ANG;
+      const hr = helix ? HELIX_R : 0;
       for (let strand = 0; strand < 2; strand++) {
         const phase = strand * Math.PI;
         const hpVec: THREE.Vector3[] = [];
@@ -306,13 +313,17 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
           const t = k / K;
           const c = spinePts[k], nrm = fr.normals[k], bn = fr.binormals[k];
           const th = t * TURNS * 2 * Math.PI + phase;
-          const co = Math.cos(th) * HELIX_R, si = Math.sin(th) * HELIX_R;
+          const co = Math.cos(th) * hr, si = Math.sin(th) * hr;
           const px = c.x + nrm.x * co + bn.x * si, py = c.y + nrm.y * co + bn.y * si, pz = c.z + nrm.z * co + bn.z * si;
           hp[k * 3] = px; hp[k * 3 + 1] = py; hp[k * 3 + 2] = pz;
           hpVec.push(new THREE.Vector3(px, py, pz));
         }
-        const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(hpVec), K, TUBE_R, 4, false);
-        group.add(new THREE.Mesh(tube, new THREE.MeshBasicMaterial({ color: conn.mesh ? MESH_COLOR : PEER_COLOR, transparent: true, opacity: 0.55, depthWrite: false })));
+        // Draw a tube per helix strand; for a straight arc only one (both strands
+        // share the same centreline).
+        if (helix || strand === 0) {
+          const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(hpVec), K, TUBE_R, 4, false);
+          group.add(new THREE.Mesh(tube, new THREE.MeshBasicMaterial({ color: conn.mesh ? MESH_COLOR : PEER_COLOR, transparent: true, opacity: 0.55, depthWrite: false })));
+        }
         strands.push({ hp, K, dir: strand === 0 ? 1 : -1 });
       }
       streams.push({ strands, mult: 0.7 + Math.random() * 0.6, nextDecide: now0 + Math.random() * 10000, flow: Math.random(), a: conn.a, b: conn.b, visible: true });

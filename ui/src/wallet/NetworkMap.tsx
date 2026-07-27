@@ -252,14 +252,15 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     label: "this node",
     remote: false,
   });
-  const [showFastest, setShowFastest] = useState(false);
-  const [showMempool, setShowMempool] = useState(false);
+  // One overlay panel at a time, chosen from the hamburger menu (all top-right).
+  const [panel, setPanel] = useState<null | "country" | "mempool" | "newest" | "speed">(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [blockDim, setBlockDim] = useState(false); // eye toggle dims the blockstream
   // FLAT vs GLOBE view. When GLOBE is on, the 2D canvas loop pauses (see draw())
   // and the WebGL globe renders the same nodes/arcs on top.
   const [globe, setGlobe] = useState(false);
   const globeActiveRef = useRef(false);
   globeActiveRef.current = globe;
-  const [showNewest, setShowNewest] = useState(false);
   // New-node spirals: the list the draw loop animates, refreshed off the poll (a
   // ref so drawing never triggers a re-render). highlightIp = the row the user is
   // hovering/clicking in the panel → its spiral grows 2x and spins 3x faster.
@@ -1411,73 +1412,44 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           </div>
           <button
             type="button"
-            className={"netmap-fastest" + (showFastest ? " on" : "")}
-            onClick={() => {
-              setShowFastest((v) => !v);
-              setShowMempool(false);
-            }}
-            title="Node speed"
+            className={"netmap-burger" + (menuOpen ? " on" : "")}
+            onClick={() => setMenuOpen((v) => !v)}
+            title="Menu"
           >
-            <Icon name="speed" size={15} />
-          </button>
-          <button
-            type="button"
-            className={"netmap-fastest netmap-mem" + (showMempool ? " on" : "")}
-            onClick={() => {
-              setShowMempool((v) => !v);
-              setShowFastest(false);
-            }}
-            title="Live mempool"
-          >
-            M
+            <Icon name="menu" size={16} />
           </button>
         </div>
       </div>
       <div className="netmap-canvas-wrap" ref={wrapRef}>
         <canvas ref={canvasRef} className="netmap-canvas" />
         {globe && <GlobeMap points={globeData.pts} arcs={globeData.arcs} center={globeData.center} />}
-        <NodesByCountry data={nodesByCountry} />
-        {showFastest && (
-          <FastestNodes
-            getNodes={fastCandidates}
-            origin={activeNode}
-            onClose={() => setShowFastest(false)}
-          />
+        {/* Hamburger menu (top-right): opens one overlay panel at a time. */}
+        {menuOpen && (
+          <div className="netmap-menu">
+            <button type="button" onClick={() => { setPanel("mempool"); setMenuOpen(false); }}>Mempool</button>
+            <button type="button" onClick={() => { setPanel("newest"); setMenuOpen(false); }}>Newest Nodes</button>
+            <button type="button" onClick={() => { setPanel("speed"); setMenuOpen(false); }}>Node Speed</button>
+            <button type="button" onClick={() => { setPanel("country"); setMenuOpen(false); }}>Nodes by Country</button>
+          </div>
         )}
-        {showMempool && <Mempool onClose={() => setShowMempool(false)} />}
-        {/* Newest Nodes — bottom-right trigger + panel. Aqua sparkle icon. */}
+        {panel === "country" && <NodesByCountry data={nodesByCountry} onClose={() => setPanel(null)} />}
+        {panel === "speed" && <FastestNodes getNodes={fastCandidates} origin={activeNode} onClose={() => setPanel(null)} />}
+        {panel === "mempool" && <Mempool onClose={() => setPanel(null)} />}
+        {panel === "newest" && (
+          <NewestNodesPanel onHighlight={(ip) => (highlightIpRef.current = ip)} onClose={() => setPanel(null)} />
+        )}
+        {/* Blockstream visibility toggle (eye). Closed => dim to 10%. */}
         <button
           type="button"
-          onClick={() => setShowNewest((v) => !v)}
-          title="Newest nodes"
-          style={{
-            position: "absolute",
-            right: 10,
-            bottom: 10,
-            width: 30,
-            height: 30,
-            borderRadius: 8,
-            border: "1px solid hsl(177 70% 55% / 0.5)",
-            background: showNewest ? "hsl(177 70% 55% / 0.25)" : "rgba(0,0,0,0.4)",
-            color: "hsl(177 85% 62%)",
-            cursor: "pointer",
-            zIndex: 6,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+          className="netmap-eye"
+          onClick={() => setBlockDim((v) => !v)}
+          title={blockDim ? "Show blockstream" : "Hide blockstream"}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-            <path d="M12 2l1.9 5.6L19.5 9l-4.6 3.4L16.5 18 12 14.7 7.5 18l1.6-5.6L4.5 9l5.6-1.4z" />
-          </svg>
+          <Icon name={blockDim ? "eyeOff" : "eye"} size={16} />
         </button>
-        {showNewest && (
-          <NewestNodesPanel
-            onHighlight={(ip) => (highlightIpRef.current = ip)}
-            onClose={() => setShowNewest(false)}
-          />
-        )}
-        {primer.active ? <PrimerLove /> : <BlockChainViz />}
+        <div className="bv-dim" style={{ opacity: blockDim ? 0.1 : 1 }}>
+          {primer.active ? <PrimerLove /> : <BlockChainViz />}
+        </div>
         {hover && (
           <div
             className={"netmap-tip" + (hover.tone === "blue" ? " netmap-tip-blue" : "")}
@@ -1503,7 +1475,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
 // Bottom-left overlay: node counts by country, scrollable. Styled like the
 // moving blocks below it but blue-bordered to match the network lines. It stops
 // wheel/mousedown from reaching the map so scrolling it doesn't zoom or pan.
-function NodesByCountry({ data }: { data: [string, number][] }) {
+function NodesByCountry({ data, onClose }: { data: [string, number][]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = ref.current;
@@ -1522,6 +1494,7 @@ function NodesByCountry({ data }: { data: [string, number][] }) {
         <span className="nbc-title">Nodes</span>
         <span className="nbc-h-full">FULL</span>
         <span className="nbc-h-love" title="Lovenodes">♥</span>
+        <button type="button" className="nbc-close" onClick={onClose} title="Close">×</button>
       </div>
       <div className="nbc-list">
         {data.length === 0 ? (
