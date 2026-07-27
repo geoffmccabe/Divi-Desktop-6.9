@@ -101,12 +101,13 @@ const FRAG = `
   }
 `;
 
-function makeTower(color: number): THREE.Group {
+function makeTower(color: number, scale = 1): THREE.Group {
+  const h = PYR_H * scale;
   const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.2 });
-  const cone = new THREE.ConeGeometry(PYR_CIRC, PYR_H, 4);
-  cone.translate(0, PYR_H / 2, 0);
-  const sph = new THREE.SphereGeometry(SPH_R, 16, 12);
-  sph.translate(0, PYR_H, 0);
+  const cone = new THREE.ConeGeometry(PYR_CIRC * scale, h, 4);
+  cone.translate(0, h / 2, 0);
+  const sph = new THREE.SphereGeometry(SPH_R * scale, 16, 12);
+  sph.translate(0, h, 0);
   const g = new THREE.Group();
   g.add(new THREE.Mesh(cone, mat));
   g.add(new THREE.Mesh(sph, mat));
@@ -283,13 +284,14 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
         const dir = base.clone().normalize();
         const { east, north } = tangent(dir);
         const d2 = base.clone().add(east.multiplyScalar(offs[i][0])).add(north.multiplyScalar(offs[i][1])).normalize();
-        const t = makeTower(COLORS[p.kind]);
+        const scale = p.kind === "self" ? 2 : 1; // your node is twice the size
+        const t = makeTower(COLORS[p.kind], scale);
         t.position.copy(d2.clone().multiplyScalar(R));
         t.quaternion.setFromUnitVectors(UP, d2);
         t.userData.node = p; // for hover
         group.add(t);
         towerObjs.push(t);
-        tipOf.set(p.ip, d2.clone().multiplyScalar(TIP_R));
+        tipOf.set(p.ip, d2.clone().multiplyScalar(R + PYR_H * scale)); // connect at the sphere centre
       });
     }
 
@@ -369,9 +371,10 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
       const strands: Strand[] = [];
       // Close nodes (< ~300km): no helix, a single straight arc; characters flow
       // both ways on it. Far nodes: full double helix.
-      const helix = ang >= NEAR_ANG;
-      // Network (blue) helixes are narrower (strands 50% closer) than peer ones.
-      const hr = helix ? (conn.mesh ? HELIX_R * 0.5 : HELIX_R) : 0;
+      // Double helix is for PEERS only; the blue network is always a simple arc
+      // (characters flow both ways along it).
+      const helix = !conn.mesh && ang >= NEAR_ANG;
+      const hr = helix ? HELIX_R : 0;
       for (let strand = 0; strand < 2; strand++) {
         const phase = strand * Math.PI;
         const hpVec: THREE.Vector3[] = [];
