@@ -24,10 +24,8 @@ const AQUA = "hsl(177 80% 55%)";
 
 export function NewestNodesPanel({
   onHighlight,
-  onClose,
 }: {
   onHighlight: (ip: string | null) => void;
-  onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<NewNode[]>(() => newNodes(loadKnown()));
@@ -73,14 +71,6 @@ export function NewestNodesPanel({
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ fontWeight: 700, color: AQUA, letterSpacing: "0.04em" }}>NEWEST NODES</span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", opacity: 0.7, fontSize: "0.85rem" }}
-        >
-          ✕
-        </button>
       </div>
 
       {rows.length === 0 ? (

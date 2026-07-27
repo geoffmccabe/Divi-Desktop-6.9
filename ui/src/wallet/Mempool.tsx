@@ -33,7 +33,7 @@ function fmtFee(sats: number): string {
   return sats > 0 ? `${(sats / 1e8).toFixed(sats < 1e6 ? 5 : 3)}` : "0";
 }
 
-export function Mempool({ onClose }: { onClose: () => void }) {
+export function Mempool() {
   const ref = useRef<HTMLDivElement>(null);
   const rowsRef = useRef<Map<string, Row>>(new Map());
   const tipRef = useRef<number>(0);
@@ -132,13 +132,10 @@ export function Mempool({ onClose }: { onClose: () => void }) {
   const block = blockMsgRef.current && blockMsgRef.current.until > now ? blockMsgRef.current : null;
 
   return (
-    <div className="mempool" ref={ref}>
+    <div className="mempool glass-panel" ref={ref}>
       <div className="fn-head">
         <span className="fn-title">Mempool</span>
         <span className="mp-count">{rows.length}</span>
-        <button type="button" className="fn-close" onClick={onClose} title="Close">
-          ×
-        </button>
       </div>
       <div className="fn-note">Live from this node, refreshing every {POLL_MS / 1000}s.</div>
       {block && (

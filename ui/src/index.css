@@ -1217,8 +1217,6 @@ h1, h2, h3 { font-family: var(--font-heading); }
   position: absolute; right: 10px; top: 10px; z-index: 6;
   width: 176px; max-height: 72%;
   display: flex; flex-direction: column; gap: 5px;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid hsl(210 85% 62% / 0.7); /* blue, matches the network lines */
   border-radius: 8px; padding: 7px 9px; box-sizing: border-box; font-size: 0.62rem;
 }
 /* Country | FULL count | Lovenode count — the two number columns sit close. */
@@ -1347,8 +1345,6 @@ h1, h2, h3 { font-family: var(--font-heading); }
   position: absolute; right: 10px; top: 10px; z-index: 6;
   width: 244px; max-height: 72%;
   display: flex; flex-direction: column; gap: 5px;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid hsl(210 85% 62% / 0.7); /* blue, matches the network lines */
   border-radius: 8px; padding: 7px 9px; box-sizing: border-box; font-size: 0.62rem;
 }
 .fn-head { display: flex; align-items: center; justify-content: space-between; }
@@ -1422,9 +1418,9 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .netmap-menu button:hover { background: hsl(210 85% 62% / 0.22); }
 /* Blockstream visibility eye (bottom-left, above the blockstream). */
 .netmap-eye {
-  position: absolute; left: 10px; bottom: 62px; z-index: 6; /* vertically centred on the blockstream, in its left gutter */
+  position: absolute; left: 10px; bottom: 66px; z-index: 6; /* vertically centred on the blockstream, in its left gutter */
   display: inline-flex; align-items: center; justify-content: center;
-  width: 30px; height: 26px; border-radius: 6px; cursor: pointer;
+  width: 20px; height: 17px; border-radius: 5px; cursor: pointer;
   background: rgba(0, 0, 0, 0.45); border: 1px solid hsl(210 85% 62% / 0.5);
   color: hsl(210 85% 72%);
 }
@@ -1455,8 +1451,6 @@ h1, h2, h3 { font-family: var(--font-heading); }
   position: absolute; right: 10px; top: 10px; z-index: 6;
   width: 258px; max-height: 78%;
   display: flex; flex-direction: column; gap: 5px;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid hsl(210 85% 62% / 0.7);
   border-radius: 8px; padding: 7px 9px; box-sizing: border-box; font-size: 0.62rem;
 }
 .mp-count {

@@ -1413,31 +1413,38 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <button
             type="button"
             className={"netmap-burger" + (menuOpen ? " on" : "")}
-            onClick={() => setMenuOpen((v) => !v)}
+            onClick={() => { setMenuOpen((v) => !v); setPanel(null); }}
             title="Menu"
           >
             <Icon name="menu" size={16} />
           </button>
         </div>
       </div>
-      <div className="netmap-canvas-wrap" ref={wrapRef}>
+      <div
+        className="netmap-canvas-wrap"
+        ref={wrapRef}
+        onMouseDown={() => {
+          // Clicking the map (outside any panel/menu, which stop propagation)
+          // closes an open panel and the menu.
+          setPanel(null);
+          setMenuOpen(false);
+        }}
+      >
         <canvas ref={canvasRef} className="netmap-canvas" />
         {globe && <GlobeMap points={globeData.pts} arcs={globeData.arcs} center={globeData.center} />}
         {/* Hamburger menu (top-right): opens one overlay panel at a time. */}
         {menuOpen && (
-          <div className="netmap-menu">
+          <div className="netmap-menu" onMouseDown={(e) => e.stopPropagation()}>
             <button type="button" onClick={() => { setPanel("mempool"); setMenuOpen(false); }}>Mempool</button>
             <button type="button" onClick={() => { setPanel("newest"); setMenuOpen(false); }}>Newest Nodes</button>
             <button type="button" onClick={() => { setPanel("speed"); setMenuOpen(false); }}>Node Speed</button>
             <button type="button" onClick={() => { setPanel("country"); setMenuOpen(false); }}>Nodes by Country</button>
           </div>
         )}
-        {panel === "country" && <NodesByCountry data={nodesByCountry} onClose={() => setPanel(null)} />}
-        {panel === "speed" && <FastestNodes getNodes={fastCandidates} origin={activeNode} onClose={() => setPanel(null)} />}
-        {panel === "mempool" && <Mempool onClose={() => setPanel(null)} />}
-        {panel === "newest" && (
-          <NewestNodesPanel onHighlight={(ip) => (highlightIpRef.current = ip)} onClose={() => setPanel(null)} />
-        )}
+        {panel === "country" && <NodesByCountry data={nodesByCountry} />}
+        {panel === "speed" && <FastestNodes getNodes={fastCandidates} origin={activeNode} />}
+        {panel === "mempool" && <Mempool />}
+        {panel === "newest" && <NewestNodesPanel onHighlight={(ip) => (highlightIpRef.current = ip)} />}
         {/* Blockstream visibility toggle (eye). Closed => dim to 10%. */}
         <button
           type="button"
@@ -1445,7 +1452,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           onClick={() => setBlockDim((v) => !v)}
           title={blockDim ? "Show blockstream" : "Hide blockstream"}
         >
-          <Icon name={blockDim ? "eyeOff" : "eye"} size={16} />
+          <Icon name={blockDim ? "eyeOff" : "eye"} size={10} />
         </button>
         <div className="bv-dim" style={{ opacity: blockDim ? 0.1 : 1 }}>
           {primer.active ? <PrimerLove /> : <BlockChainViz />}
@@ -1475,7 +1482,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
 // Bottom-left overlay: node counts by country, scrollable. Styled like the
 // moving blocks below it but blue-bordered to match the network lines. It stops
 // wheel/mousedown from reaching the map so scrolling it doesn't zoom or pan.
-function NodesByCountry({ data, onClose }: { data: [string, number][]; onClose: () => void }) {
+function NodesByCountry({ data }: { data: [string, number][] }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = ref.current;
@@ -1489,12 +1496,11 @@ function NodesByCountry({ data, onClose }: { data: [string, number][]; onClose: 
     };
   }, []);
   return (
-    <div className="nbc" ref={ref}>
+    <div className="nbc glass-panel" ref={ref}>
       <div className="nbc-head">
         <span className="nbc-title">Nodes</span>
         <span className="nbc-h-full">FULL</span>
         <span className="nbc-h-love" title="Lovenodes">♥</span>
-        <button type="button" className="nbc-close" onClick={onClose} title="Close">×</button>
       </div>
       <div className="nbc-list">
         {data.length === 0 ? (

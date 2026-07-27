@@ -35,11 +35,9 @@ function place(n: FastCandidate): string {
 export function FastestNodes({
   getNodes,
   origin,
-  onClose,
 }: {
   getNodes: () => FastCandidate[];
   origin: { label: string; remote: boolean };
-  onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<Ranked[] | null>(null); // null = still pinging
@@ -91,7 +89,7 @@ export function FastestNodes({
   }, [scan]);
 
   return (
-    <div className="fastnodes" ref={ref}>
+    <div className="fastnodes glass-panel" ref={ref}>
       <div className="fn-head">
         <span className="fn-title">Node Speed</span>
         <button
@@ -102,9 +100,6 @@ export function FastestNodes({
           title="Ping every known node again"
         >
           ↻
-        </button>
-        <button type="button" className="fn-close" onClick={onClose} title="Close">
-          ×
         </button>
       </div>
       {/* The pings are made by the app, on this computer — so this only says
