@@ -9,6 +9,38 @@
 const KEY = "dd69.knownPeers";
 const TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days → considered dead, removed
 
+// Every IP THIS wallet's own node has ever reported as its own. Your public IP
+// changes with VPNs / ISPs / travel, and each old IP would otherwise linger in
+// the shared network store for 90 days as a phantom node at your location. We
+// remember them all and always strip them from the network list + store, so
+// your own past IPs never masquerade as separate nodes. (Your CURRENT node still
+// shows: that comes from the node-identity path in NetworkMap, not this store.)
+const MYKEY = "dd69.myIps";
+export function loadMyIps(): Set<string> {
+  try {
+    const a = JSON.parse(localStorage.getItem(MYKEY) || "[]");
+    return new Set(Array.isArray(a) ? a : []);
+  } catch {
+    return new Set();
+  }
+}
+export function addMyIps(ips: string[]): void {
+  const s = loadMyIps();
+  let changed = false;
+  for (const ip of ips) if (ip && !s.has(ip)) { s.add(ip); changed = true; }
+  if (!changed) return;
+  try {
+    localStorage.setItem(MYKEY, JSON.stringify([...s]));
+  } catch {
+    /* storage unavailable */
+  }
+  // Purge them from the shared store right away.
+  const k = parse(localStorage.getItem(KEY));
+  let kch = false;
+  for (const ip of ips) if (k[ip]) { delete k[ip]; kch = true; }
+  if (kch) save(k);
+}
+
 export interface KnownPeer {
   lat: number;
   lon: number;
@@ -57,9 +89,10 @@ export function loadKnown(): Known {
   } catch {
     /* enumerate best-effort */
   }
-  // Drop anything not seen in 90 days.
+  // Drop anything not seen in 90 days, plus any of our own past IPs.
+  const my = loadMyIps();
   for (const ip of Object.keys(k)) {
-    if (now - (k[ip]?.lastSeen ?? 0) > TTL_MS) {
+    if (now - (k[ip]?.lastSeen ?? 0) > TTL_MS || my.has(ip)) {
       delete k[ip];
       changed = true;
     }
@@ -69,8 +102,12 @@ export function loadKnown(): Known {
 }
 
 function save(k: Known) {
+  // Never persist our own node's IPs as network nodes.
+  const my = loadMyIps();
+  const out: Known = {};
+  for (const ip of Object.keys(k)) if (!my.has(ip)) out[ip] = k[ip];
   try {
-    localStorage.setItem(KEY, JSON.stringify(k));
+    localStorage.setItem(KEY, JSON.stringify(out));
   } catch {
     /* storage unavailable */
   }

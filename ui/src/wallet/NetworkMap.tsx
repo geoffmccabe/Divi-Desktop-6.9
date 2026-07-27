@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { networkPeers, probePeers, listNodes, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
-import { loadKnown, recordKnown, type Known } from "./knownPeers";
+import { loadKnown, recordKnown, addMyIps, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
 import { BlockChainViz } from "./BlockChainViz";
 import { PrimerLove } from "./PrimerLove";
@@ -360,6 +360,27 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     instantRevealRef.current = true;
     lastProbe.current = performance.now();
 
+    // Register every IP this wallet has ever used as its own node (current +
+    // historical, across all node profiles and the legacy self-location keys),
+    // so old IPs from VPN/ISP/location changes are stripped from the network
+    // list instead of lingering as phantom nodes at your location.
+    try {
+      const selfIps: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !(key.startsWith("dd69.selfNode") || key.startsWith("dd69.selfGeo"))) continue;
+        try {
+          const j = JSON.parse(localStorage.getItem(key) || "{}");
+          if (j && typeof j.ip === "string") selfIps.push(j.ip);
+        } catch {
+          /* skip */
+        }
+      }
+      if (selfIps.length) addMyIps(selfIps);
+    } catch {
+      /* best-effort */
+    }
+
     // Self is per-node, so the "your node" marker follows the active node on a
     // switch. The broader network mesh (below) is shared and stays intact.
     selfRef.current = loadSelfGeo(nodeId);
@@ -462,6 +483,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             saveSelfGeo(nodeId, m[s.selfIp]);
             const g0 = m[s.selfIp];
             saveSelfNode(nodeId, { ip: s.selfIp, lat: g0.lat, lon: g0.lon, city: g0.city, country: g0.country });
+            addMyIps([s.selfIp]); // our current IP is ours, never a network node
           }
           const seen: {
             ip: string;
