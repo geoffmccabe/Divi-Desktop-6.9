@@ -1,3 +1,4 @@
+pub mod appbundle;
 pub mod base58;
 pub mod coins;
 pub mod c2pa_read;

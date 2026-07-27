@@ -5,6 +5,10 @@
 use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, fastsend, mempool, names, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
+// Serves community app bundles over their own url scheme. Kept in its own module
+// so this file only gains the three lines that wire it in.
+mod community;
+
 #[derive(Serialize)]
 struct BalanceDto {
     spendable: f64,
@@ -1442,6 +1446,10 @@ async fn divi_prices(currencies: Vec<String>, cmc_key: Option<String>, use_coing
 
 fn main() {
     tauri::Builder::default()
+        // Community apps load from divi-app://<id>/ so each one gets its own
+        // origin and its own content policy. See crates/app/src/community.rs for
+        // why inline frame content would not work here.
+        .register_uri_scheme_protocol(community::SCHEME, community::handle)
         .setup(|_app| {
             // First-launch bring-up: create the config, download and verify
             // divid69, and start the node — all in the background so the window
@@ -1525,7 +1533,9 @@ fn main() {
             ai_clear_key,
             ai_status,
             list_nodes,
-            set_active_node
+            set_active_node,
+            community::community_builtin_apps,
+            community::community_app_base
         ])
         .run(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9");

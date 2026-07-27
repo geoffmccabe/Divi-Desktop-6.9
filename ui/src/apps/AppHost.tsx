@@ -132,11 +132,16 @@ function PermissionPrompt({ entry, onAllow, onCancel }: {
           </>
         )}
 
-        {!entry.verified && (
+        {entry.builtin ? (
+          <p className="ca-perm-detail">
+            This one ships with the wallet. It still runs in the same sandbox and
+            through the same checks as any other app.
+          </p>
+        ) : !entry.verified ? (
           <p className="ca-perm-detail" style={{ color: "hsl(var(--destructive))" }}>
             This app is not signed and will not be run.
           </p>
-        )}
+        ) : null}
 
         <div className="ca-row">
           <button type="button" className="wl-btn" onClick={onCancel}>Cancel</button>

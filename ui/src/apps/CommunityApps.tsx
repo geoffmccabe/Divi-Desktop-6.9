@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import "./apps.css";
 import { MediaCard } from "./MediaCard";
-import { loadCatalog, priceLabel, type Catalog, type CatalogEntry } from "./catalog";
+import { loadCatalog, priceLabel, resolveMedia, type Catalog, type CatalogEntry } from "./catalog";
 import { AppHost } from "./AppHost";
 
 // The Community Apps store.
@@ -68,6 +68,7 @@ function AppCard({ entry, onOpen }: { entry: CatalogEntry; onOpen: () => void })
   const m = entry.manifest;
   const price = priceLabel(m);
   const caps = m.permissions.length;
+  const media = resolveMedia(entry);
   return (
     <div
       className="ca-card"
@@ -76,7 +77,7 @@ function AppCard({ entry, onOpen }: { entry: CatalogEntry; onOpen: () => void })
       onClick={onOpen}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
     >
-      <MediaCard showcase={m.media.showcase} thumbnail={m.media.thumbnail} alt={m.name} />
+      <MediaCard showcase={media.showcase} thumbnail={media.thumbnail} alt={m.name} />
       <div className="ca-body">
         <span className="ca-name">{m.name}</span>
         <span className="ca-author">by {m.author.name}</span>
