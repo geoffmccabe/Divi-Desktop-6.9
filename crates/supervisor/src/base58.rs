@@ -109,14 +109,21 @@ pub fn decode_check(s: &str) -> Option<(u8, Vec<u8>)> {
 /// on any network. Being strict here matters: an address from another chain that
 /// happens to checksum correctly must not be written into a record where it
 /// would name an unspendable destination.
-pub fn address_to_payload(addr: &str) -> Option<(u8, [u8; 20])> {
+/// ⚠ `testnet` must match the chain in use. Accepting an address from the OTHER
+/// network is not a leniency, it is a way to lose money: a record stores only
+/// the 20-byte hash, so a testnet address written on mainnet is later rendered
+/// with the mainnet version byte and becomes a COMPLETELY DIFFERENT address that
+/// nobody controls. The bytes survive; the destination does not.
+pub fn address_to_payload(addr: &str, testnet: bool) -> Option<(u8, [u8; 20])> {
     let (version, payload) = decode_check(addr)?;
     if payload.len() != 20 {
         return None;
     }
-    let kind = match version {
-        MAIN_P2PKH | TEST_P2PKH => KIND_P2PKH,
-        MAIN_P2SH | TEST_P2SH => KIND_P2SH,
+    let kind = match (version, testnet) {
+        (MAIN_P2PKH, false) => KIND_P2PKH,
+        (MAIN_P2SH, false) => KIND_P2SH,
+        (TEST_P2PKH, true) => KIND_P2PKH,
+        (TEST_P2SH, true) => KIND_P2SH,
         _ => return None,
     };
     let mut hash = [0u8; 20];
@@ -147,7 +154,7 @@ mod tests {
         for kind in [KIND_P2PKH, KIND_P2SH] {
             for testnet in [false, true] {
                 let addr = payload_to_address(kind, &hash, testnet);
-                let (got_kind, got_hash) = address_to_payload(&addr).expect("decodes");
+                let (got_kind, got_hash) = address_to_payload(&addr, testnet).expect("decodes");
                 assert_eq!(got_kind, kind);
                 assert_eq!(got_hash, hash);
             }
@@ -171,18 +178,18 @@ mod tests {
         // Flip one character to something else in the alphabet.
         chars[5] = if chars[5] == 'z' { 'y' } else { 'z' };
         let broken: String = chars.into_iter().collect();
-        assert_eq!(address_to_payload(&broken), None);
+        assert_eq!(address_to_payload(&broken, false), None);
     }
 
     #[test]
     fn rejects_junk_and_foreign_versions() {
-        assert_eq!(address_to_payload(""), None);
-        assert_eq!(address_to_payload("not an address"), None);
+        assert_eq!(address_to_payload("", false), None);
+        assert_eq!(address_to_payload("not an address", false), None);
         // '0', 'O', 'I' and 'l' are deliberately absent from base58.
-        assert_eq!(address_to_payload("D0OIl"), None);
+        assert_eq!(address_to_payload("D0OIl", false), None);
         // Correct checksum, but a version byte Divi never uses (Bitcoin P2PKH).
         let foreign = encode_check(0, &[7u8; 20]);
-        assert_eq!(address_to_payload(&foreign), None);
+        assert_eq!(address_to_payload(&foreign, false), None);
     }
 
     #[test]
@@ -195,6 +202,19 @@ mod tests {
         assert_eq!(back, payload);
     }
 
+    /// The money-losing case: the same 20 bytes are a different address on each
+    /// network, so an address from the wrong one must be refused outright rather
+    /// than quietly re-rendered into a destination nobody holds.
+    #[test]
+    fn an_address_from_the_other_network_is_refused() {
+        let mainnet = payload_to_address(KIND_P2PKH, &[3u8; 20], false);
+        let testnet = payload_to_address(KIND_P2PKH, &[3u8; 20], true);
+        assert!(address_to_payload(&mainnet, false).is_some());
+        assert!(address_to_payload(&testnet, true).is_some());
+        assert_eq!(address_to_payload(&testnet, false), None, "testnet address on mainnet");
+        assert_eq!(address_to_payload(&mainnet, true), None, "mainnet address on testnet");
+    }
+
     #[test]
     fn absurdly_long_input_is_refused_quickly() {
         assert_eq!(decode_check(&"1".repeat(5000)), None);
@@ -203,6 +223,6 @@ mod tests {
     #[test]
     fn wrong_payload_length_is_refused() {
         let short = encode_check(MAIN_P2PKH, &[1u8; 19]);
-        assert_eq!(address_to_payload(&short), None);
+        assert_eq!(address_to_payload(&short, false), None);
     }
 }

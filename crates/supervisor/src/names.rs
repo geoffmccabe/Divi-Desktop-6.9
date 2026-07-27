@@ -146,6 +146,12 @@ pub struct MarketListing {
 pub struct OwnedName {
     pub name: String,
     pub owner: String,
+    /// The Divi address this name points at, already decoded for display.
+    ///
+    /// Decoded here rather than in the interface: the raw record is 21 bytes and
+    /// which network it renders on decides what address it IS, and the interface
+    /// has no business guessing that.
+    pub divi_address: Option<String>,
     pub registered_height: u64,
     pub expires_height: u64,
     pub records: Vec<(u8, String)>,
@@ -498,9 +504,16 @@ fn paid_to(tx: &Value) -> Vec<(String, f64)> {
         .unwrap_or_default()
 }
 
-/// Total paid to one address by a transaction.
-fn total_to(payments: &[(String, f64)], address: &str) -> f64 {
-    payments.iter().filter(|(a, _)| a == address).map(|(_, v)| v).sum()
+/// Total paid to one address by a transaction, in whole satoshis.
+///
+/// Integer, not floating point. Comparing money as doubles with an epsilon is
+/// how a correct payment gets refused, or one a satoshi short slips through.
+fn total_to(payments: &[(String, f64)], address: &str) -> u64 {
+    payments
+        .iter()
+        .filter(|(a, _)| a == address)
+        .map(|(_, v)| dvxp::to_sats(*v))
+        .sum()
 }
 
 /// The address that funded `vin[0]`, which is the record's author.
@@ -551,6 +564,11 @@ fn apply_record(
     match rec {
         NameRecord::Commit { hash160 } => {
             idx.commits.entry(hex_of(hash160)).or_insert((height, sender.to_string()));
+            // ⚠ A commit costs only a transaction fee, so flooding them is
+            // cheap and each one would otherwise sit in every wallet's index
+            // forever. Dropping the expired ones as we go bounds the state to
+            // roughly one expiry window of traffic instead of all history.
+            idx.commits.retain(|_, (h, _)| !commitmod::is_expired(*h, height));
         }
         NameRecord::Register { salt, name } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
@@ -572,15 +590,15 @@ fn apply_record(
             if commit_sender != sender {
                 return;
             }
-            if height.saturating_sub(commit_height) < commitmod::MIN_COMMIT_DEPTH {
-                return;
+            if !commitmod::window_is_open(commit_height, height) {
+                return; // too shallow, or the commit has expired
             }
             // The fee is a rule, not a courtesy. A registration that underpays,
             // or pays somewhere other than the treasury, is not a registration.
             // Without this check names are free and the length-tiered pricing
             // that keeps squatters out is decoration.
             let Some(price) = name_registry::fees::registration_divi(name.len()) else { return };
-            if total_to(payments, treasury) + 1e-8 < price as f64 {
+            if total_to(payments, treasury) < price.saturating_mul(100_000_000) {
                 return;
             }
             idx.commits.remove(&want); // a commit is spent once
@@ -654,7 +672,7 @@ fn apply_record(
         NameRecord::Renew { name } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
             let Some(price) = name_registry::fees::renewal_divi(name.len()) else { return };
-            if total_to(payments, treasury) + 1e-8 < price as f64 {
+            if total_to(payments, treasury) < price.saturating_mul(100_000_000) {
                 return; // an unpaid renewal is not a renewal
             }
             let Some(st) = idx.names.get_mut(&name_s) else { return };
@@ -711,13 +729,13 @@ fn apply_record(
             // The seller must actually be paid, in this same transaction. This
             // is what makes the purchase atomic: the seller is not a
             // participant, so there is nothing for them to withhold.
-            if total_to(payments, &seller) + 1e-8 < listing.price_divi {
+            if total_to(payments, &seller) < dvxp::to_sats(listing.price_divi) {
                 return;
             }
 
             // The marketplace cut, if one is configured. At 0% this is free.
-            let cut = market_fee_divi(listing.price_divi);
-            if cut > 0.0 && total_to(payments, treasury) + 1e-8 < cut {
+            let cut = dvxp::to_sats(market_fee_divi(listing.price_divi));
+            if cut > 0 && total_to(payments, treasury) < cut {
                 return;
             }
 
@@ -943,6 +961,16 @@ pub fn my_names(cfg: &NodeConfig) -> Result<Vec<OwnedName>, String> {
         .map(|(name, st)| OwnedName {
             name: name.clone(),
             owner: st.owner.clone(),
+            divi_address: st
+                .records
+                .get(&record::KEY_DIVI_ADDRESS)
+                .and_then(|h| unhex(h))
+                .filter(|b| b.len() == 21)
+                .map(|b| {
+                    let mut h160 = [0u8; 20];
+                    h160.copy_from_slice(&b[1..21]);
+                    base58::payload_to_address(b[0], &h160, is_testnet_like(&chain))
+                }),
             registered_height: st.registered_height,
             expires_height: st.expires_height,
             records: {
@@ -1064,9 +1092,16 @@ pub fn delist(cfg: &NodeConfig, name: &str) -> Result<String, String> {
 /// the window from a block to the moment of broadcast. It is a real reduction,
 /// not a fix, and the UI must not pretend otherwise.
 fn competing_purchase(rpc: &RpcClient, canonical: &str) -> bool {
+    /// Anyone can fill the mempool cheaply, and this runs while a user waits on
+    /// a button. Bounded so a flooded mempool degrades the check rather than
+    /// hanging the wallet. Falling back to "no competitor seen" is the same
+    /// answer we would give if the check were absent, so the bound never makes
+    /// things worse than not checking.
+    const MAX_SCAN: usize = 400;
+
     let Ok(pool) = rpc.call("getrawmempool", json!([])) else { return false };
     let Some(txids) = pool.as_array() else { return false };
-    for txid in txids.iter().filter_map(|t| t.as_str()) {
+    for txid in txids.iter().take(MAX_SCAN).filter_map(|t| t.as_str()) {
         let Ok(tx) = rpc.call("getrawtransaction", json!([txid, 1])) else { continue };
         for payload in dvxp::payloads_in_tx(&tx) {
             if let Ok(Some(NameRecord::Buy { name })) = record::decode_payload(&payload) {
@@ -1100,6 +1135,14 @@ pub fn buy(cfg: &NodeConfig, name: &str) -> Result<String, String> {
     }
     if competing_purchase(&rpc, &canonical) {
         return Err("Somebody else is buying this name at this moment. If you both pay, only one of you gets it and the other loses the payment, so this was stopped. Try again shortly.".into());
+    }
+
+    // ⚠ Re-read the tip immediately before building the payment. Between the
+    // checks above and the broadcast, a block can arrive that sells or transfers
+    // this name, and we would then pay the PREVIOUS owner for something they no
+    // longer have. Narrow, but it is somebody's money.
+    if tip_height(&rpc)? != tip {
+        return Err("A new block arrived while this was being prepared, so the price and owner were re-checked and the purchase was stopped. Try again.".into());
     }
 
     let mut payments = vec![Payment { address: st.owner.clone(), divi: listing.price_divi }];
@@ -1444,8 +1487,11 @@ pub fn clear_record(cfg: &NodeConfig, name: &str, keys: Vec<u8>) -> Result<Strin
 /// Point a name at a Divi address. Convenience over [`set_record`], since this
 /// is the record almost everyone actually wants.
 pub fn set_divi_address(cfg: &NodeConfig, name: &str, address: &str) -> Result<String, String> {
-    let (kind, hash) = base58::address_to_payload(address.trim())
-        .ok_or("That is not a valid Divi address, so nothing was changed.")?;
+    let rpc = RpcClient::new(cfg);
+    let testnet = is_testnet_like(&chain_name(&rpc));
+    let (kind, hash) = base58::address_to_payload(address.trim(), testnet).ok_or(
+        "That is not a valid Divi address for this network, so nothing was changed. An address from a different Divi network would point somewhere nobody controls.",
+    )?;
     let mut value = Vec::with_capacity(21);
     value.push(kind);
     value.extend_from_slice(&hash);
@@ -1464,8 +1510,11 @@ pub fn set_divi_address(cfg: &NodeConfig, name: &str, address: &str) -> Result<S
 }
 
 pub fn transfer(cfg: &NodeConfig, name: &str, new_owner: &str) -> Result<String, String> {
-    let (kind, hash160) = base58::address_to_payload(new_owner.trim())
-        .ok_or("That is not a valid Divi address, so the name was not sent.")?;
+    let rpc = RpcClient::new(cfg);
+    let testnet = is_testnet_like(&chain_name(&rpc));
+    let (kind, hash160) = base58::address_to_payload(new_owner.trim(), testnet).ok_or(
+        "That is not a valid Divi address for this network, so the name was not sent. An address from a different Divi network would hand the name to somebody who does not exist.",
+    )?;
     let canonical = charset::canonicalise(name);
     let owner = owner_of(cfg, &canonical)?;
     Ok(send_record(
@@ -1633,7 +1682,7 @@ mod tests {
         assert!(i.primary.is_empty(), "no forward record yet, so no reverse claim");
 
         // Point the name at a real address, then claim it from that address.
-        let (kind, hash) = base58::address_to_payload(&base58::payload_to_address(0, &[9; 20], true)).unwrap();
+        let (kind, hash) = base58::address_to_payload(&base58::payload_to_address(0, &[9; 20], true), true).unwrap();
         let mut value = vec![kind];
         value.extend_from_slice(&hash);
         apply(&mut i, &NameRecord::SetRecord {
@@ -1730,7 +1779,7 @@ mod tests {
         let mut i = idx();
         register_name(&mut i, "GEOFF", ALICE, 100);
         let target = base58::payload_to_address(0, &[9; 20], true);
-        let (kind, h160) = base58::address_to_payload(&target).unwrap();
+        let (kind, h160) = base58::address_to_payload(&target, true).unwrap();
         let mut value = vec![kind];
         value.extend_from_slice(&h160);
         apply(&mut i, &NameRecord::SetRecord { name: b"GEOFF".to_vec(), entries: vec![Entry { key: record::KEY_DIVI_ADDRESS, value }] }, ALICE, 310);
@@ -1805,6 +1854,34 @@ mod tests {
 
     /// A commit is not consumed by a rejected reveal, so a user who underpaid
     /// can retry with the correct fee instead of losing the reservation.
+    /// Cheap commits must not accumulate forever, and an ancient one must not
+    /// still be redeemable.
+    #[test]
+    fn commits_expire_and_are_pruned() {
+        let mut i = idx();
+        let salt = [3u8; commitmod::SALT_LEN];
+        let hash = commitmod::commit_hash(&salt, b"GEOFF");
+        apply(&mut i, &NameRecord::Commit { hash160: hash }, ALICE, 100);
+        assert_eq!(i.commits.len(), 1);
+
+        // Too late to redeem it.
+        let late = 100 + commitmod::COMMIT_EXPIRY_BLOCKS + 1;
+        apply_record(
+            &mut i,
+            &NameRecord::Register { salt: salt.to_vec(), name: b"GEOFF".to_vec() },
+            ALICE,
+            late,
+            true,
+            TREASURY,
+            &paid("GEOFF"),
+        );
+        assert!(i.names.is_empty(), "an expired commit must not register anything");
+
+        // And a later commit sweeps the stale one out of state.
+        apply(&mut i, &NameRecord::Commit { hash160: [9u8; 20] }, BOB, late);
+        assert_eq!(i.commits.len(), 1, "the expired commit should have been pruned");
+    }
+
     #[test]
     fn a_refused_reveal_does_not_burn_the_commit() {
         let salt = [8u8; commitmod::SALT_LEN];
@@ -1826,7 +1903,7 @@ mod tests {
         let mut i = idx();
         register_name(&mut i, "GEOFF", ALICE, 100);
         let target = base58::payload_to_address(0, &[9; 20], true);
-        let (kind, h160) = base58::address_to_payload(&target).unwrap();
+        let (kind, h160) = base58::address_to_payload(&target, true).unwrap();
         let mut value = vec![kind];
         value.extend_from_slice(&h160);
         apply(

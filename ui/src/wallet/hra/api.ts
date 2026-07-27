@@ -58,6 +58,8 @@ export interface MarketListing {
 export interface OwnedName {
   name: string;
   owner: string;
+  /** Where this name points, decoded by the wallet for the right network. */
+  diviAddress: string | null;
   registeredHeight: number;
   expiresHeight: number;
   /** [key, hex value] pairs, sorted by key. */
@@ -195,10 +197,16 @@ export function hexToEvm(hex: string): string {
   return hex.length === 40 ? `0x${hex}` : hex;
 }
 
-/** How a record value should be shown, given its key. */
-export function displayValue(key: number, hex: string): string {
+/**
+ * How a record value should be shown, given its key.
+ *
+ * The Divi address is passed in already decoded rather than derived here: the
+ * record holds 21 raw bytes, and which network they render on decides what
+ * address they actually are. That is not a guess the interface should make.
+ */
+export function displayValue(key: number, hex: string, diviAddress?: string | null): string {
   if (key === KEY.EVM_ADDRESS) return hexToEvm(hex);
-  if (key === KEY.DIVI_ADDRESS) return "(a Divi address)";
+  if (key === KEY.DIVI_ADDRESS) return diviAddress ?? "(unreadable address record)";
   return hexToText(hex);
 }
 

@@ -92,7 +92,7 @@ export function NameRecords({ name, onChanged }: { name: OwnedName; onChanged: (
             {name.records.map(([k, hex]) => (
               <tr key={k}>
                 <th>{keyLabel(k)}</th>
-                <td className="mono hra-val">{displayValue(k, hex)}</td>
+                <td className="mono hra-val">{displayValue(k, hex, name.diviAddress)}</td>
                 <td className="hra-rowaction">
                   <button className="wl-btn" disabled={busy} onClick={() => remove(k)}>
                     Remove

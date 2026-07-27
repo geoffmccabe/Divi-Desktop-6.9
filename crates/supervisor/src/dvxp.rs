@@ -40,8 +40,18 @@ pub const MAX_PAYLOAD_BYTES: usize = 596;
 pub const MIN_FEE_DIVI: f64 = 0.0001;
 
 /// Hard ceiling so a broken price feed can never turn a small quote into a
-/// wallet-emptying fee.
+/// wallet-emptying FEE. This is a sanity bound on a number the user did not
+/// choose.
 pub const MAX_FEE_DIVI: f64 = 100_000.0;
+
+/// Ceiling on a deliberate PAYMENT, such as buying a name from its owner.
+///
+/// ⚠ Kept separate from [`MAX_FEE_DIVI`] on purpose. Sharing one constant meant
+/// a name listed above 100,000 DIVI could be advertised but never bought: the
+/// buyer's own transaction refused to pay the price the seller had asked. A fee
+/// is a number the software worked out and should be bounded tightly; a payment
+/// is a number the user typed and read back on a confirmation screen.
+pub const MAX_PAYMENT_DIVI: f64 = 1_000_000_000.0;
 
 /// A real (spendable) output the record transaction must also pay, such as a
 /// registration fee to the treasury or a payment to a seller.
@@ -53,6 +63,20 @@ pub struct Payment {
 
 pub fn round8(v: f64) -> f64 {
     (v * 1e8).round() / 1e8
+}
+
+/// An amount of DIVI as whole satoshi-equivalents.
+///
+/// ⚠ Every comparison of money must go through this. DIVI amounts arrive from
+/// the node as JSON doubles, and comparing doubles with a fudge factor is how a
+/// correct payment gets rejected, or a payment one satoshi short gets accepted.
+/// Integers have neither problem. Saturating rather than wrapping: an absurd
+/// input becomes an absurd-but-bounded integer, never a small one.
+pub fn to_sats(divi: f64) -> u64 {
+    if !divi.is_finite() || divi <= 0.0 {
+        return 0;
+    }
+    (divi * 1e8).round() as u64
 }
 
 /// Hex for a bare `OP_META <push payload>` script.
@@ -338,7 +362,7 @@ pub fn broadcast_record(
     let mut total_payments = 0.0f64;
     for p in payments {
         let addr = p.address.trim();
-        if addr.is_empty() || !p.divi.is_finite() || p.divi <= 0.0 || p.divi > MAX_FEE_DIVI {
+        if addr.is_empty() || !p.divi.is_finite() || p.divi <= 0.0 || p.divi > MAX_PAYMENT_DIVI {
             return Err("A payment in this record has an invalid address or amount.".into());
         }
         let valid = rpc

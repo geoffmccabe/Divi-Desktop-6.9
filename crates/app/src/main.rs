@@ -412,6 +412,7 @@ async fn hra_pending() -> Result<Vec<HraPendingDto>, String> {
 struct HraNameDto {
     name: String,
     owner: String,
+    divi_address: Option<String>,
     registered_height: u64,
     expires_height: u64,
     records: Vec<(u8, String)>,
@@ -427,6 +428,7 @@ async fn hra_my_names() -> Result<Vec<HraNameDto>, String> {
                 .map(|n| HraNameDto {
                     name: n.name,
                     owner: n.owner,
+                    divi_address: n.divi_address,
                     registered_height: n.registered_height,
                     expires_height: n.expires_height,
                     records: n.records,
