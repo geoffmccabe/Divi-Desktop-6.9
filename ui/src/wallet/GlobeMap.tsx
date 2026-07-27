@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import * as THREE from "three";
 import earthNight from "../assets/earth-night.jpg";
 
 // The node map on a real 3D globe. Nodes are custom "Node Towers" (a slim square
-// pyramid with a sphere on its tip); co-located towers are packed apart. Each
-// connection is a thin 1px path line with a double-helix stream of flying
-// uppercase hex characters riding it: PURPLE for peer/node links, BLUE for the
-// background network. Character spacing is constant along every arc (so a 10x
-// longer arc carries 10x more), and arc height drifts slowly over minutes.
+// pyramid with a sphere on its tip), packed apart when co-located. Each
+// connection is a DOUBLE HELIX: two thin tubes tracing the exact helical paths,
+// with uppercase hex characters (0-9A-F) flowing along them in opposite
+// directions. PURPLE = peer/node links, BLUE = background network. Characters
+// are one GPU points system (single draw call). Great-circle arcs so long runs
+// bow over the surface. Rebuilt only when the node set changes.
 
 export interface GlobePoint {
   ip: string;
@@ -27,24 +28,26 @@ export interface GlobeArc {
 
 const R = 100;
 
-// Node Tower geometry (base 60% of original; now HALF height + half sphere).
-const BASE = 1.2;
+// Node Tower geometry — ALL dimensions 50% of the original (base, height, tip
+// sphere), which also halves the packed-cluster diameter.
+const BASE = 0.6;
 const PYR_H = 3;
 const PYR_CIRC = BASE / Math.SQRT2;
 const SPH_R = 0.175;
-const TIP_R = R + PYR_H; // sphere-centre radius (all towers same height)
+const TIP_R = R + PYR_H;
 const PACK_D = 1.5 * BASE;
 
 const COLORS: Record<GlobePoint["kind"], number> = { self: 0xffd23f, peer: 0xff5ea8, net: 0x4aa3ff };
 const UP = new THREE.Vector3(0, 1, 0);
 
-// Hex-stream tuning.
+// Hex-stream + helix tuning.
 const HEX = "0123456789ABCDEF";
 const TURNS = 6;
 const HELIX_R = 0.6;
-const SPACING = 3.5; // world-units between characters (~3 blank spaces); constant per arc
-const CH_CAP = 300; // safety only; spacing is otherwise linear with arc length
-const BASE_FLOW = 0.062; // t-per-second at speed 1.0 (2x the earlier average)
+const TUBE_R = 0.1; // helix tube radius (~2x the old 1px centreline)
+const SPACING = 3.5; // world-units between characters; constant per arc
+const CH_CAP = 300;
+const BASE_FLOW = 0.062;
 const MAX_PEER = 24;
 const MAX_MESH = 120;
 const PEER_COLOR = new THREE.Color(0xb28cff);
@@ -156,23 +159,9 @@ function frameNodes(points: GlobePoint[]): { lat: number; lng: number; altitude:
   return { lat: clat, lng: clng, altitude: Math.max(0.45, Math.min(2.4, maxd / 45)) };
 }
 
-interface Stream {
-  dirs: THREE.Vector3[];
-  normals: THREE.Vector3[];
-  binormals: THREE.Vector3[];
-  M: number;
-  spine: Float32Array; // (M+1)*3, recomputed each frame at the current height
-  lineAttr: THREE.BufferAttribute;
-  peakBase: number;
-  w: number;
-  oscPhase: number;
-  mult: number;
-  nextDecide: number;
-  flow: number;
-  a: THREE.Vector3; b: THREE.Vector3;
-  visible: boolean;
-}
-interface Glyph { s: number; dir: number; phase: number; base: number; }
+interface Strand { hp: Float32Array; K: number; dir: number; }
+interface Stream { strands: Strand[]; mult: number; nextDecide: number; flow: number; a: THREE.Vector3; b: THREE.Vector3; visible: boolean; }
+interface Glyph { s: number; strand: number; base: number; }
 
 export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null }) {
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -184,6 +173,9 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
   const centerRef = useRef(center);
   centerRef.current = center;
   const userMovedRef = useRef(false);
+  // Rebuild the scene only when the set of nodes changes, not on every 10s poll
+  // (rebuilding all the helix tubes each poll would hitch).
+  const sig = useMemo(() => points.map((p) => `${p.ip}:${p.kind}`).sort().join("|"), [points]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -220,6 +212,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
   useEffect(() => {
     const g = globeRef.current;
     if (!ready || !g) return;
+    const pts0 = pointsRef.current;
     const scene = g.scene();
     const camera = g.camera();
     const group = new THREE.Group();
@@ -230,7 +223,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
 
     // Pack co-located towers apart; record each node's tip position.
     const groups = new Map<string, GlobePoint[]>();
-    for (const p of points) {
+    for (const p of pts0) {
       const key = `${p.lat.toFixed(2)},${p.lng.toFixed(2)}`;
       (groups.get(key) ?? groups.set(key, []).get(key)!).push(p);
     }
@@ -239,30 +232,29 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
       const offs = packOffsets(grp.length);
       grp.forEach((p, i) => {
         const base = surfaceOf(p.lat, p.lng);
-        const nrm = base.clone().normalize();
-        const { east, north } = tangent(nrm);
-        const dir = base.clone().add(east.multiplyScalar(offs[i][0])).add(north.multiplyScalar(offs[i][1])).normalize();
+        const dir = base.clone().normalize();
+        const { east, north } = tangent(dir);
+        const d2 = base.clone().add(east.multiplyScalar(offs[i][0])).add(north.multiplyScalar(offs[i][1])).normalize();
         const t = makeTower(COLORS[p.kind]);
-        t.position.copy(dir.clone().multiplyScalar(R));
-        t.quaternion.setFromUnitVectors(UP, dir);
+        t.position.copy(d2.clone().multiplyScalar(R));
+        t.quaternion.setFromUnitVectors(UP, d2);
         group.add(t);
-        tipOf.set(p.ip, dir.clone().multiplyScalar(TIP_R));
+        tipOf.set(p.ip, d2.clone().multiplyScalar(TIP_R));
       });
     }
 
-    // Connections.
     const conns: { a: THREE.Vector3; b: THREE.Vector3; mesh: boolean }[] = [];
-    const selfIp = points.find((p) => p.kind === "self")?.ip;
+    const selfIp = pts0.find((p) => p.kind === "self")?.ip;
     const selfTip = selfIp ? tipOf.get(selfIp) : undefined;
     if (selfTip) {
       let n = 0;
-      for (const p of points) {
+      for (const p of pts0) {
         if (p.kind !== "peer" || n >= MAX_PEER) continue;
         const t = tipOf.get(p.ip);
         if (t) { conns.push({ a: selfTip, b: t, mesh: false }); n++; }
       }
     }
-    const netTips = points.filter((p) => p.kind === "net").map((p) => tipOf.get(p.ip)!).filter(Boolean);
+    const netTips = pts0.filter((p) => p.kind === "net").map((p) => tipOf.get(p.ip)!).filter(Boolean);
     const drawn = new Set<string>();
     const meshPairs: [number, number][] = [];
     for (let a = 0; a < netTips.length; a++) {
@@ -286,8 +278,9 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
       const ang = Math.acos(dot);
       const so = Math.sin(ang);
       const M = Math.max(16, Math.round((ang / Math.PI) * 96) + 12);
-      const dirs: THREE.Vector3[] = [];
-      const basePts: THREE.Vector3[] = [];
+      const peak = R * Math.min(0.6, 0.03 + ang * 0.16) * (0.6 + Math.random() * 0.9);
+      // Great-circle centreline with a static outward bow.
+      const centerPts: THREE.Vector3[] = [];
       for (let i = 0; i <= M; i++) {
         const u = i / M;
         let d: THREE.Vector3;
@@ -296,30 +289,36 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
           const s0 = Math.sin((1 - u) * ang) / so, s1 = Math.sin(u * ang) / so;
           d = da.clone().multiplyScalar(s0).add(db.clone().multiplyScalar(s1));
         }
-        dirs.push(d);
-        basePts.push(d.clone().multiplyScalar(TIP_R));
+        centerPts.push(d.multiplyScalar(TIP_R + peak * Math.sin(Math.PI * u)));
       }
-      const fr = new THREE.CatmullRomCurve3(basePts).computeFrenetFrames(M, false);
-      const peakBase = R * Math.min(0.6, 0.03 + ang * 0.16) * (0.6 + Math.random() * 0.9);
-      const oscPeriod = 120000 + Math.random() * 60000;
+      const curve = new THREE.CatmullRomCurve3(centerPts);
       const len = ang * TIP_R;
-      const ch = Math.max(3, Math.min(CH_CAP, Math.round(len / SPACING))); // constant spacing => linear with length
-      const spine = new Float32Array((M + 1) * 3);
-      const lgeo = new THREE.BufferGeometry();
-      const lineAttr = new THREE.BufferAttribute(spine, 3);
-      lgeo.setAttribute("position", lineAttr);
-      const line = new THREE.Line(lgeo, new THREE.LineBasicMaterial({ color: conn.mesh ? MESH_COLOR : PEER_COLOR, transparent: true, opacity: 0.3, depthWrite: false }));
-      line.frustumCulled = false;
-      group.add(line);
+      const K = Math.max(96, Math.min(400, TURNS * 16 + Math.round(len)));
+      const spinePts = curve.getSpacedPoints(K);
+      const fr = curve.computeFrenetFrames(K, false);
       const sIdx = streams.length;
-      streams.push({
-        dirs, normals: fr.normals, binormals: fr.binormals, M, spine, lineAttr,
-        peakBase, w: (2 * Math.PI) / oscPeriod, oscPhase: Math.random() * 2 * Math.PI,
-        mult: 0.7 + Math.random() * 0.6, nextDecide: now0 + Math.random() * 10000, flow: Math.random(),
-        a: conn.a, b: conn.b, visible: true,
-      });
+      const strands: Strand[] = [];
+      for (let strand = 0; strand < 2; strand++) {
+        const phase = strand * Math.PI;
+        const hpVec: THREE.Vector3[] = [];
+        const hp = new Float32Array((K + 1) * 3);
+        for (let k = 0; k <= K; k++) {
+          const t = k / K;
+          const c = spinePts[k], nrm = fr.normals[k], bn = fr.binormals[k];
+          const th = t * TURNS * 2 * Math.PI + phase;
+          const co = Math.cos(th) * HELIX_R, si = Math.sin(th) * HELIX_R;
+          const px = c.x + nrm.x * co + bn.x * si, py = c.y + nrm.y * co + bn.y * si, pz = c.z + nrm.z * co + bn.z * si;
+          hp[k * 3] = px; hp[k * 3 + 1] = py; hp[k * 3 + 2] = pz;
+          hpVec.push(new THREE.Vector3(px, py, pz));
+        }
+        const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(hpVec), K, TUBE_R, 4, false);
+        group.add(new THREE.Mesh(tube, new THREE.MeshBasicMaterial({ color: conn.mesh ? MESH_COLOR : PEER_COLOR, transparent: true, opacity: 0.55, depthWrite: false })));
+        strands.push({ hp, K, dir: strand === 0 ? 1 : -1 });
+      }
+      streams.push({ strands, mult: 0.7 + Math.random() * 0.6, nextDecide: now0 + Math.random() * 10000, flow: Math.random(), a: conn.a, b: conn.b, visible: true });
+      const ch = Math.max(3, Math.min(CH_CAP, Math.round(len / SPACING)));
       for (let strand = 0; strand < 2; strand++)
-        for (let p = 0; p < ch; p++) { glyphs.push({ s: sIdx, dir: strand === 0 ? 1 : -1, phase: strand * Math.PI, base: p / ch }); isMesh.push(conn.mesh); }
+        for (let p = 0; p < ch; p++) { glyphs.push({ s: sIdx, strand, base: p / ch }); isMesh.push(conn.mesh); }
     }
 
     let posAttr: THREE.BufferAttribute | null = null;
@@ -342,9 +341,9 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
         uniforms: { atlas: { value: getAtlas() }, sizeScale: { value: 700 } },
         vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
       });
-      const p = new THREE.Points(geo, mat);
-      p.frustumCulled = false;
-      group.add(p);
+      const pp = new THREE.Points(geo, mat);
+      pp.frustumCulled = false;
+      group.add(pp);
     }
 
     scene.add(group);
@@ -367,16 +366,6 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
           st.mult = Math.max(0.5, Math.min(1.5, st.mult + d * 0.1));
         }
         st.flow += BASE_FLOW * st.mult * dt;
-        // Recompute the spine at the current (drifting) height and update the line.
-        if (st.visible) {
-          const peakNow = st.peakBase * (1 + 0.35 * Math.sin(now * st.w + st.oscPhase));
-          for (let i = 0; i <= st.M; i++) {
-            const d = st.dirs[i];
-            const rad = TIP_R + peakNow * Math.sin((Math.PI * i) / st.M);
-            st.spine[i * 3] = d.x * rad; st.spine[i * 3 + 1] = d.y * rad; st.spine[i * 3 + 2] = d.z * rad;
-          }
-          st.lineAttr.needsUpdate = true;
-        }
       }
       if (posAttr) {
         const arr = posAttr.array as Float32Array;
@@ -384,26 +373,17 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
           const gm = glyphs[i];
           const st = streams[gm.s];
           if (!st.visible) continue;
-          let tt = (gm.base + gm.dir * st.flow) % 1;
+          const strand = st.strands[gm.strand];
+          let tt = (gm.base + strand.dir * st.flow) % 1;
           if (tt < 0) tt += 1;
-          const f = tt * st.M;
-          let i0 = f | 0; if (i0 > st.M) i0 = st.M;
-          const i1 = i0 < st.M ? i0 + 1 : st.M;
-          const fr = f - i0;
-          const sp = st.spine;
-          const cx = sp[i0 * 3] + (sp[i1 * 3] - sp[i0 * 3]) * fr;
-          const cy = sp[i0 * 3 + 1] + (sp[i1 * 3 + 1] - sp[i0 * 3 + 1]) * fr;
-          const cz = sp[i0 * 3 + 2] + (sp[i1 * 3 + 2] - sp[i0 * 3 + 2]) * fr;
-          const N0 = st.normals[i0], N1 = st.normals[i1], B0 = st.binormals[i0], B1 = st.binormals[i1];
-          let nx = N0.x + (N1.x - N0.x) * fr, ny = N0.y + (N1.y - N0.y) * fr, nz = N0.z + (N1.z - N0.z) * fr;
-          const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
-          let bx = B0.x + (B1.x - B0.x) * fr, by = B0.y + (B1.y - B0.y) * fr, bz = B0.z + (B1.z - B0.z) * fr;
-          const bl = Math.hypot(bx, by, bz) || 1; bx /= bl; by /= bl; bz /= bl;
-          const ang = tt * TURNS * 6.283185 + gm.phase;
-          const co = Math.cos(ang) * HELIX_R, si = Math.sin(ang) * HELIX_R;
-          arr[i * 3] = cx + nx * co + bx * si;
-          arr[i * 3 + 1] = cy + ny * co + by * si;
-          arr[i * 3 + 2] = cz + nz * co + bz * si;
+          const f = tt * strand.K;
+          let i0 = f | 0; if (i0 > strand.K) i0 = strand.K;
+          const i1 = i0 < strand.K ? i0 + 1 : strand.K;
+          const fr2 = f - i0;
+          const hp = strand.hp;
+          arr[i * 3] = hp[i0 * 3] + (hp[i1 * 3] - hp[i0 * 3]) * fr2;
+          arr[i * 3 + 1] = hp[i0 * 3 + 1] + (hp[i1 * 3 + 1] - hp[i0 * 3 + 1]) * fr2;
+          arr[i * 3 + 2] = hp[i0 * 3 + 2] + (hp[i1 * 3 + 2] - hp[i0 * 3 + 2]) * fr2;
         }
         posAttr.needsUpdate = true;
       }
@@ -422,7 +402,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
         else if (mat) mat.dispose();
       });
     };
-  }, [points, ready]);
+  }, [sig, ready]);
 
   return (
     <div className="netmap-globe" ref={wrapRef}>
