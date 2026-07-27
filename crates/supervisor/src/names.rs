@@ -40,7 +40,7 @@ use name_registry::commit as commitmod;
 use name_registry::record::{self, Entry, NameRecord};
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Block height at which Divi Names records start being honoured on mainnet.
 ///
@@ -56,6 +56,25 @@ const MAINNET_ACTIVATION: Option<u64> = None;
 /// is unset, because a fee paid to a wrong address is lost silently and the user
 /// would have no way to tell. Override for regtest with `DIVI_NAMES_TREASURY`.
 const MAINNET_TREASURY: Option<&str> = None;
+
+/// Who holds the reserved names (brands, well-known people, Divi's own).
+///
+/// Every reserved name is seeded to this address at the activation height, so
+/// they are OWNED rather than merely unregistrable. That is the whole point:
+/// a name the rules called invalid could never be handed to the person or
+/// company it belongs to, whereas an owned one transfers with the ordinary
+/// flow. Assigning them is a manual, human decision by whoever holds this
+/// address.
+///
+/// `None` until the address is chosen. The index refuses to run without it,
+/// because an unseeded index would treat every reserved name as free and let
+/// the first passer-by register BINANCE. Override for regtest with
+/// `DIVI_NAMES_RESERVE`.
+const MAINNET_RESERVE: Option<&str> = None;
+
+/// Reserved names never expire. The holder should not have to renew several
+/// hundred names a year, paying fees to themselves, to keep squatters off them.
+const NEVER_EXPIRES: u64 = u64::MAX;
 
 /// The marketplace's cut of a sale, in percent, paid to the treasury.
 ///
@@ -183,10 +202,24 @@ fn store_path(kind: &str) -> PathBuf {
 /// One shared file would mean switching between regtest and mainnet threw the
 /// other network's index away every time and rebuilt it from scratch, which on
 /// mainnet is hours of scanning to recover something that was already correct.
-fn index_path(chain: &str) -> PathBuf {
+/// ⚠ Keyed by BOTH the network and the node.
+///
+/// Per-network, because one shared file meant switching between regtest and
+/// mainnet threw the other network's index away and rebuilt it, which on
+/// mainnet is hours of scanning to recover something already correct.
+///
+/// And per-NODE, because the network name is not unique. Two independent
+/// regtest chains are both called "regtest", and My Nodes lets somebody switch
+/// between them; one file would have each node silently overwriting the other's
+/// history with its own. The node is identified by its data directory.
+fn index_path(chain: &str, datadir: &Path) -> PathBuf {
     let safe: String = chain.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
     let safe = if safe.is_empty() { "unknown".to_string() } else { safe };
-    dd69_config_dir().join(format!("names-index-{safe}.json"))
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(datadir.as_os_str().as_encoded_bytes());
+    let node: String = h.finalize().iter().take(4).map(|b| format!("{b:02x}")).collect();
+    dd69_config_dir().join(format!("names-index-{safe}-{node}.json"))
 }
 
 fn read_json(path: &PathBuf) -> Value {
@@ -247,6 +280,22 @@ pub fn treasury_address(chain: &str) -> Result<String, String> {
     })
 }
 
+/// Where reserved names are held, or a plain refusal.
+pub fn reserve_address(chain: &str) -> Result<String, String> {
+    if let Ok(v) = std::env::var("DIVI_NAMES_RESERVE") {
+        let v = v.trim().to_string();
+        if !v.is_empty() {
+            return Ok(v);
+        }
+    }
+    if is_testnet_like(chain) {
+        return Err("No reserve address is set for this chain. Set DIVI_NAMES_RESERVE to an address that will hold the reserved names.".into());
+    }
+    MAINNET_RESERVE.map(|s| s.to_string()).ok_or_else(|| {
+        "Names are not open yet: the address that holds the reserved names has not been set in this build. Without it, brand and celebrity names would be free for anyone to take, so the wallet refuses to read the registry at all.".into()
+    })
+}
+
 fn tip_height(rpc: &RpcClient) -> Result<u64, String> {
     rpc.call("getblockcount", json!([]))?
         .as_u64()
@@ -274,7 +323,7 @@ pub fn quote(cfg: &NodeConfig, input: &str) -> Result<Quote, String> {
     let q = name_registry::quote(input).map_err(name_registry::explain)?;
     let rpc = RpcClient::new(cfg);
     let chain = chain_name(&rpc);
-    let idx = load_index(&chain);
+    let idx = load_index(cfg, &chain);
     // ⚠ "We have scanned some blocks" is NOT "we know this name is free". A
     // half-read index would report a name registered last week as available,
     // and the user would pay a registration fee for something already taken.
@@ -388,8 +437,26 @@ fn index_from_json(v: &Value) -> Index {
     idx
 }
 
-fn load_index(chain: &str) -> Index {
-    let idx = index_from_json(&read_json(&index_path(chain)));
+/// Put every reserved name into the ledger, owned by the reserve and never
+/// expiring.
+///
+/// Deterministic and identical in every implementation: same list, same owner,
+/// same height. That matters because it is the ONLY thing standing between a
+/// brand name and whoever registers first, and two indexers disagreeing about
+/// it would be two different registries.
+fn seed_reserve(idx: &mut Index, reserve: &str, height: u64) {
+    for name in name_registry::reserved::all() {
+        idx.names.entry(name.to_string()).or_insert_with(|| NameState {
+            owner: reserve.to_string(),
+            registered_height: height,
+            expires_height: NEVER_EXPIRES,
+            ..Default::default()
+        });
+    }
+}
+
+fn load_index(cfg: &NodeConfig, chain: &str) -> Index {
+    let idx = index_from_json(&read_json(&index_path(chain, &cfg.datadir)));
     // An index built against another network is not stale, it is wrong. Discard.
     if idx.chain != chain {
         return Index { chain: chain.to_string(), ..Default::default() };
@@ -397,8 +464,8 @@ fn load_index(chain: &str) -> Index {
     idx
 }
 
-fn save_index(idx: &Index) -> Result<(), String> {
-    write_json(&index_path(&idx.chain), &index_to_json(idx))
+fn save_index(cfg: &NodeConfig, idx: &Index) -> Result<(), String> {
+    write_json(&index_path(&idx.chain, &cfg.datadir), &index_to_json(idx))
 }
 
 /// Does this node have `txindex=1`?
@@ -548,6 +615,26 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// Has this name lapsed? An expired name resolves to nothing and cannot be
+/// edited, sold or transferred. Only its previous owner may renew it, and only
+/// during the grace period.
+fn is_expired(st: &NameState, height: u64) -> bool {
+    st.expires_height != NEVER_EXPIRES && height > st.expires_height
+}
+
+/// Past the grace period the name is released and anybody may take it, at a
+/// declining price. Returns the height the release began.
+fn released_at(st: &NameState) -> Option<u64> {
+    if st.expires_height == NEVER_EXPIRES {
+        return None;
+    }
+    Some(st.expires_height + name_registry::fees::GRACE_BLOCKS)
+}
+
+fn is_released(st: &NameState, height: u64) -> bool {
+    released_at(st).map(|r| height > r).unwrap_or(false)
+}
+
 /// Apply one decoded record to the index. Anything that fails a rule is SKIPPED
 /// with no state change; nothing here ever destroys a name. That is the
 /// deliberate rejection of Runes' "cenotaph" design, where a malformed record
@@ -575,9 +662,14 @@ fn apply_record(
             if charset::validate_name(name).is_err() {
                 return;
             }
-            if idx.names.contains_key(&name_s) {
-                return; // first registration wins, permanently
-            }
+            // A live name cannot be taken. A RELEASED one can, which is the
+            // Namecoin lesson applied: names lapse so the namespace does not
+            // silently fill up with abandoned registrations forever.
+            let takeover = match idx.names.get(&name_s) {
+                None => false,
+                Some(st) if is_released(st, height) => true,
+                Some(_) => return,
+            };
             let Ok(salt_arr) = <[u8; commitmod::SALT_LEN]>::try_from(salt.as_slice()) else {
                 return;
             };
@@ -597,11 +689,28 @@ fn apply_record(
             // or pays somewhere other than the treasury, is not a registration.
             // Without this check names are free and the length-tiered pricing
             // that keeps squatters out is decoration.
-            let Some(price) = name_registry::fees::registration_divi(name.len()) else { return };
+            // A just-released name costs a premium that decays to the ordinary
+            // price. That converts a land-grab at one block, which whoever
+            // automates fastest always wins, into an auction anyone can join.
+            let price = if takeover {
+                let since = idx
+                    .names
+                    .get(&name_s)
+                    .and_then(released_at)
+                    .map(|r| height.saturating_sub(r))
+                    .unwrap_or(0);
+                name_registry::fees::release_price_divi(name.len(), since)
+            } else {
+                name_registry::fees::registration_divi(name.len())
+            };
+            let Some(price) = price else { return };
             if total_to(payments, treasury) < price.saturating_mul(100_000_000) {
                 return;
             }
             idx.commits.remove(&want); // a commit is spent once
+            // A takeover starts clean: the previous holder's records and
+            // listing must not carry over to somebody else's name.
+            idx.primary.retain(|_, claimed| claimed != &name_s);
             idx.names.insert(
                 name_s,
                 NameState {
@@ -615,7 +724,7 @@ fn apply_record(
         NameRecord::Transfer { name, new_owner } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
             let Some(st) = idx.names.get_mut(&name_s) else { return };
-            if st.owner != sender {
+            if st.owner != sender || is_expired(st, height) {
                 return;
             }
             // Any reverse claim naming this name is now stale: the forward
@@ -629,7 +738,7 @@ fn apply_record(
         NameRecord::SetRecord { name, entries } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
             let Some(st) = idx.names.get_mut(&name_s) else { return };
-            if st.owner != sender {
+            if st.owner != sender || is_expired(st, height) {
                 return;
             }
             for e in entries {
@@ -639,7 +748,7 @@ fn apply_record(
         NameRecord::ClearRecord { name, keys } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
             let Some(st) = idx.names.get_mut(&name_s) else { return };
-            if st.owner != sender {
+            if st.owner != sender || is_expired(st, height) {
                 return;
             }
             for k in keys {
@@ -653,6 +762,9 @@ fn apply_record(
             // anyone could make their own address display as somebody else's
             // identity just by claiming it.
             let Some(st) = idx.names.get(&name_s) else { return };
+            if is_expired(st, height) {
+                return;
+            }
             let forward_ok = st
                 .records
                 .get(&record::KEY_DIVI_ADDRESS)
@@ -679,6 +791,16 @@ fn apply_record(
             if st.owner != sender {
                 return;
             }
+            // NOTE: deliberately no is_expired check here. Renewing AFTER
+            // lapsing is precisely what the grace period exists for; guarding
+            // this would mean a missed reminder loses the name outright.
+            //
+            // But once the name is RELEASED the grace is over and it is fair
+            // game, so a late renewal must not quietly reclaim it. A reserved
+            // name has no term to extend either.
+            if is_released(st, height) || st.expires_height == NEVER_EXPIRES {
+                return;
+            }
             // Renewal extends from whichever is later: the current expiry, or
             // now. Renewing early must not lose the unused remainder, and
             // renewing during grace must not backdate.
@@ -688,7 +810,7 @@ fn apply_record(
         NameRecord::List { name, price, min_lifetime_blocks } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
             let Some(st) = idx.names.get_mut(&name_s) else { return };
-            if st.owner != sender {
+            if st.owner != sender || is_expired(st, height) {
                 return;
             }
             st.listing = Some(Listing {
@@ -700,7 +822,7 @@ fn apply_record(
         NameRecord::Delist { name } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
             let Some(st) = idx.names.get_mut(&name_s) else { return };
-            if st.owner != sender {
+            if st.owner != sender || is_expired(st, height) {
                 return;
             }
             // A listing cannot be withdrawn inside its committed window. That
@@ -717,6 +839,9 @@ fn apply_record(
         NameRecord::Buy { name } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
             let Some(st) = idx.names.get(&name_s) else { return };
+            if is_expired(st, height) {
+                return; // an expired name is not somebody's to sell
+            }
             let Some(listing) = st.listing.clone() else { return }; // not for sale
             let seller = st.owner.clone();
 
@@ -795,6 +920,23 @@ pub fn sync(cfg: &NodeConfig) -> Result<SyncStatus, String> {
         }
     };
 
+    let reserve = match reserve_address(&chain) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(SyncStatus {
+                activated: true,
+                activation_height: activation,
+                scanned_height: 0,
+                tip,
+                caught_up: false,
+                names_known: 0,
+                treasury_configured,
+                txindex: true,
+                note: e,
+            })
+        }
+    };
+
     if !has_txindex(&rpc, &chain, tip) {
         return Ok(SyncStatus {
             activated: true,
@@ -809,10 +951,13 @@ pub fn sync(cfg: &NodeConfig) -> Result<SyncStatus, String> {
         });
     }
 
-    let mut idx = load_index(&chain);
+    let mut idx = load_index(cfg, &chain);
     if idx.scanned_height < activation {
         idx.scanned_height = activation.saturating_sub(1);
     }
+    // Idempotent: seeding only fills names that are not already there, so a
+    // reserved name later handed to somebody keeps its new owner.
+    seed_reserve(&mut idx, &reserve, activation);
 
     // Reorg check: if the block we last scanned is no longer on the chain, the
     // index describes a history that did not happen. We keep no undo data, so
@@ -831,6 +976,7 @@ pub fn sync(cfg: &NodeConfig) -> Result<SyncStatus, String> {
                         scanned_height: activation.saturating_sub(1),
                         ..Default::default()
                     };
+                    seed_reserve(&mut idx, &reserve, activation);
                 }
             }
             Err(e) => return Err(e),
@@ -853,7 +999,7 @@ pub fn sync(cfg: &NodeConfig) -> Result<SyncStatus, String> {
         h += 1;
     }
     idx.chain = chain.clone();
-    save_index(&idx)?;
+    save_index(cfg, &idx)?;
 
     let caught_up = idx.scanned_height >= tip;
     Ok(SyncStatus {
@@ -883,7 +1029,7 @@ pub fn resolve(cfg: &NodeConfig, name: &str) -> Result<Option<String>, String> {
     let rpc = RpcClient::new(cfg);
     let chain = chain_name(&rpc);
     let canonical = charset::canonicalise(name);
-    let idx = load_index(&chain);
+    let idx = load_index(cfg, &chain);
 
     // ⚠ A stale index is the dangerous case, not the ignorant one. If the owner
     // repointed the name yesterday and we have not read yesterday's blocks, we
@@ -898,6 +1044,12 @@ pub fn resolve(cfg: &NodeConfig, name: &str) -> Result<Option<String>, String> {
         ));
     }
     let Some(st) = idx.names.get(&canonical) else { return Ok(None) };
+    // ⚠ An expired name must resolve to NOTHING. Left resolving, it would keep
+    // pointing at whoever used to own it, and a payment meant for the current
+    // holder would land with the previous one.
+    if is_expired(st, tip) {
+        return Ok(None);
+    }
     let Some(hex) = st.records.get(&record::KEY_DIVI_ADDRESS) else { return Ok(None) };
     let Some(bytes) = unhex(hex) else { return Ok(None) };
     if bytes.len() != 21 {
@@ -913,7 +1065,7 @@ pub fn reverse(cfg: &NodeConfig, address: &str) -> Result<Option<String>, String
     let addr = address.trim();
     let Some(name) = ({
         let rpc = RpcClient::new(cfg);
-        let idx = load_index(&chain_name(&rpc));
+        let idx = load_index(cfg, &chain_name(&rpc));
         idx.primary.get(addr).cloned()
     }) else {
         return Ok(None);
@@ -936,7 +1088,7 @@ pub fn reverse(cfg: &NodeConfig, address: &str) -> Result<Option<String>, String
 pub fn my_names(cfg: &NodeConfig) -> Result<Vec<OwnedName>, String> {
     let rpc = RpcClient::new(cfg);
     let chain = chain_name(&rpc);
-    let idx = load_index(&chain);
+    let idx = load_index(cfg, &chain);
     let mine: Vec<String> = rpc
         .call("listunspent", json!([0]))
         .ok()
@@ -990,7 +1142,7 @@ pub fn my_names(cfg: &NodeConfig) -> Result<Vec<OwnedName>, String> {
 pub fn market(cfg: &NodeConfig) -> Result<Vec<MarketListing>, String> {
     let rpc = RpcClient::new(cfg);
     let chain = chain_name(&rpc);
-    let idx = load_index(&chain);
+    let idx = load_index(cfg, &chain);
     let tip = tip_height(&rpc)?;
 
     let mut out: Vec<MarketListing> = idx
@@ -1059,7 +1211,7 @@ pub fn delist(cfg: &NodeConfig, name: &str) -> Result<String, String> {
     let canonical = charset::canonicalise(name);
     let owner = owner_of(cfg, &canonical)?;
     let rpc = RpcClient::new(cfg);
-    let idx = load_index(&chain_name(&rpc));
+    let idx = load_index(cfg, &chain_name(&rpc));
     let tip = tip_height(&rpc)?;
     let Some(st) = idx.names.get(&canonical) else {
         return Err(format!("{canonical} is not in the index yet."));
@@ -1119,7 +1271,7 @@ pub fn buy(cfg: &NodeConfig, name: &str) -> Result<String, String> {
     let canonical = charset::canonicalise(name);
     let rpc = RpcClient::new(cfg);
     let chain = chain_name(&rpc);
-    let idx = load_index(&chain);
+    let idx = load_index(cfg, &chain);
     let tip = tip_height(&rpc)?;
     if idx.scanned_height < tip {
         return Err("Still reading the chain, so the price and the seller cannot be trusted yet. Wait for it to catch up.".into());
@@ -1172,7 +1324,65 @@ fn send_record(
 ) -> Result<dvxp::Sent, String> {
     let payload = record::encode_payload(rec).map_err(|e| format!("could not build the record: {e:?}"))?;
     let rpc = RpcClient::new(cfg);
+    if let Some(addr) = from {
+        ensure_can_author(&rpc, addr)?;
+    }
     dvxp::broadcast_record(&rpc, &payload, payments, dvxp::MIN_FEE_DIVI, from)
+}
+
+/// Small top-up so an address can still author a record.
+const AUTHOR_TOPUP_DIVI: f64 = 1.0;
+
+/// Make sure `addr` has something to spend, topping it up if not.
+///
+/// ⚠ This exists because **Divi stakes**. A record must be authored by a
+/// specific address, but between a commit and its reveal twelve blocks later
+/// the wallet's own staking can consume the coin sitting at that address, and
+/// the coinstake does not necessarily return it there. The address is then
+/// empty and the reveal is impossible: the user loses the reservation and its
+/// fee through no fault of their own.
+///
+/// This was not theoretical. On a live two-node regtest the author address
+/// received its change correctly and was drained by staking before the reveal,
+/// which is exactly what would happen to the many Divi users who stake.
+///
+/// `lockunspent` is NOT the answer: Divi's lock set is held in memory only and
+/// is cleared by any restart, so it cannot protect a coin across a wait
+/// measured in blocks. Topping up on demand is robust because it does not need
+/// anything to survive.
+fn ensure_can_author(rpc: &RpcClient, addr: &str) -> Result<(), String> {
+    let has_coin = rpc
+        .call("listunspent", json!([0]))
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .map(|coins| {
+            coins.iter().any(|c| {
+                c["address"].as_str() == Some(addr)
+                    && c["amount"].as_f64().unwrap_or(0.0) > 0.0
+                    && c["spendable"].as_bool().unwrap_or(true)
+            })
+        })
+        .unwrap_or(false);
+    if has_coin {
+        return Ok(());
+    }
+
+    // Only ever top up an address this wallet controls. Sending to a stranger
+    // because their name needed authorising would be absurd.
+    let ours = rpc
+        .call("validateaddress", json!([addr]))
+        .ok()
+        .and_then(|r| r["ismine"].as_bool())
+        .unwrap_or(false);
+    if !ours {
+        return Err(format!(
+            "{addr} has to authorise this, and this wallet does not hold that address."
+        ));
+    }
+
+    rpc.call("sendtoaddress", json!([addr, AUTHOR_TOPUP_DIVI]))
+        .map_err(|e| format!("Could not put a small amount of DIVI back into {addr}, which has to authorise this: {e}"))?;
+    Ok(())
 }
 
 /// Refuse early, and in plain words, when this wallet cannot sign as `addr`.
@@ -1201,7 +1411,7 @@ fn require_ours(cfg: &NodeConfig, addr: &str, what: &str) -> Result<(), String> 
 /// edit happening and silently not happening.
 fn owner_of(cfg: &NodeConfig, canonical: &str) -> Result<String, String> {
     let rpc = RpcClient::new(cfg);
-    let idx = load_index(&chain_name(&rpc));
+    let idx = load_index(cfg, &chain_name(&rpc));
     let owner = idx
         .names
         .get(canonical)
@@ -1237,7 +1447,7 @@ pub fn commit(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     // Already registered is a different situation from already reserved, and
     // saying "you have a reservation" for a name somebody owns is just wrong.
     {
-        let idx = load_index(&chain);
+        let idx = load_index(cfg, &chain);
         if let Some(st) = idx.names.get(&q.canonical) {
             return Err(format!(
                 "{} is already registered, to {}. Pick a different name.",
@@ -1298,7 +1508,7 @@ pub fn pending(cfg: &NodeConfig) -> Result<Vec<PendingCommit>, String> {
     let rpc = RpcClient::new(cfg);
     let chain = chain_name(&rpc);
     let tip = tip_height(&rpc)?;
-    let idx = load_index(&chain);
+    let idx = load_index(cfg, &chain);
     let mut store = read_json(&store_path("pending"));
     let mut out = Vec::new();
     let mut done: Vec<String> = Vec::new();
@@ -1790,6 +2000,144 @@ mod tests {
         apply_record(&mut i, &NameRecord::Buy { name: b"GEOFF".to_vec() }, BOB, 340, true, TREASURY, &[(ALICE.to_string(), 1.0)]);
         assert_eq!(i.names.get("GEOFF").unwrap().owner, BOB);
         assert!(i.primary.is_empty(), "the previous owner's display claim must go");
+    }
+
+    /// Reserved names are HELD, not forbidden: owned by the reserve, never
+    /// expiring, and transferable to whoever they belong to.
+    #[test]
+    fn the_reserve_holds_brand_and_people_names() {
+        let mut i = idx();
+        seed_reserve(&mut i, "reserve-address", 0);
+        for n in ["BINANCE", "SATOSHINAKAMOTO", "VITALIK", "DIVI"] {
+            let st = i.names.get(n).unwrap_or_else(|| panic!("{n} should be seeded"));
+            assert_eq!(st.owner, "reserve-address");
+            assert_eq!(st.expires_height, NEVER_EXPIRES, "{n} must never expire");
+            assert!(!is_expired(st, u64::MAX - 1), "{n}");
+            assert!(!is_released(st, u64::MAX - 1), "{n}");
+        }
+
+        // Registering one is refused for the ordinary reason: already owned.
+        let salt = [5u8; commitmod::SALT_LEN];
+        let hash = commitmod::commit_hash(&salt, b"BINANCE");
+        apply(&mut i, &NameRecord::Commit { hash160: hash }, ALICE, 100);
+        apply_record(
+            &mut i,
+            &NameRecord::Register { salt: salt.to_vec(), name: b"BINANCE".to_vec() },
+            ALICE,
+            200,
+            true,
+            TREASURY,
+            &paid("BINANCE"),
+        );
+        assert_eq!(i.names.get("BINANCE").unwrap().owner, "reserve-address");
+    }
+
+    /// Seeding must never overwrite a name the reserve has already handed on.
+    #[test]
+    fn seeding_is_idempotent_and_never_takes_a_name_back() {
+        let mut i = idx();
+        seed_reserve(&mut i, "reserve-address", 0);
+        i.names.get_mut("BINANCE").unwrap().owner = "the-real-binance".into();
+        seed_reserve(&mut i, "reserve-address", 0);
+        assert_eq!(i.names.get("BINANCE").unwrap().owner, "the-real-binance");
+    }
+
+    /// Namecoin's lesson: names lapse, so the namespace does not fill up with
+    /// abandoned registrations forever.
+    #[test]
+    fn a_name_expires_then_releases() {
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        let expires = i.names.get("GEOFF").unwrap().expires_height;
+        let st = i.names.get("GEOFF").unwrap();
+
+        assert!(!is_expired(st, expires), "still live on the last block of the term");
+        assert!(is_expired(st, expires + 1));
+        assert!(!is_released(st, expires + name_registry::fees::GRACE_BLOCKS));
+        assert!(is_released(st, expires + name_registry::fees::GRACE_BLOCKS + 1));
+    }
+
+    /// An expired name must resolve to nothing and refuse every edit, or a
+    /// payment meant for its new holder lands with the old one.
+    #[test]
+    fn an_expired_name_is_inert() {
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        let expired_at = i.names.get("GEOFF").unwrap().expires_height + 1;
+
+        for rec in [
+            NameRecord::SetRecord {
+                name: b"GEOFF".to_vec(),
+                entries: vec![Entry { key: record::KEY_URL, value: b"x".to_vec() }],
+            },
+            NameRecord::Transfer {
+                name: b"GEOFF".to_vec(),
+                new_owner: Address { kind: 0, hash160: [1; 20] },
+            },
+            NameRecord::List { name: b"GEOFF".to_vec(), price: 1, min_lifetime_blocks: 60 },
+        ] {
+            apply(&mut i, &rec, ALICE, expired_at);
+        }
+        let st = i.names.get("GEOFF").unwrap();
+        assert_eq!(st.owner, ALICE, "an expired name cannot be transferred");
+        assert!(st.records.is_empty(), "an expired name cannot be edited");
+        assert!(st.listing.is_none(), "an expired name cannot be sold");
+    }
+
+    /// The grace period is the whole point of expiry being survivable: the
+    /// owner, and only the owner, can still renew after lapsing.
+    #[test]
+    fn the_owner_can_renew_during_grace_but_not_after_release() {
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        let expires = i.names.get("GEOFF").unwrap().expires_height;
+
+        let renew = NameRecord::Renew { name: b"GEOFF".to_vec() };
+        let in_grace = expires + name_registry::fees::GRACE_BLOCKS - 1;
+        apply_record(&mut i, &renew, ALICE, in_grace, true, TREASURY, &paid("GEOFF"));
+        let after = i.names.get("GEOFF").unwrap().expires_height;
+        assert!(after > expires, "renewal during grace must work");
+
+        // Once released it is gone, even for the previous owner.
+        let released = after + name_registry::fees::GRACE_BLOCKS + 1;
+        apply_record(&mut i, &renew, ALICE, released, true, TREASURY, &paid("GEOFF"));
+        assert_eq!(i.names.get("GEOFF").unwrap().expires_height, after, "no renewal after release");
+    }
+
+    /// A released name can be taken by somebody new, at the declining price,
+    /// and arrives clean rather than carrying the old owner's records.
+    #[test]
+    fn a_released_name_can_be_taken_over_and_starts_clean() {
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        i.names.get_mut("GEOFF").unwrap().records.insert(record::KEY_URL, hex_of(b"old"));
+        let released = i.names.get("GEOFF").unwrap().expires_height
+            + name_registry::fees::GRACE_BLOCKS
+            + 1;
+
+        let salt = [6u8; commitmod::SALT_LEN];
+        let hash = commitmod::commit_hash(&salt, b"GEOFF");
+        apply(&mut i, &NameRecord::Commit { hash160: hash }, BOB, released);
+        let reveal = NameRecord::Register { salt: salt.to_vec(), name: b"GEOFF".to_vec() };
+        let at = released + commitmod::MIN_COMMIT_DEPTH;
+
+        // The ordinary price is not enough while the premium is still decaying.
+        apply_record(&mut i, &reveal, BOB, at, true, TREASURY, &paid("GEOFF"));
+        assert_eq!(i.names.get("GEOFF").unwrap().owner, ALICE, "underpaying the premium fails");
+
+        let full = name_registry::fees::release_price_divi(5, at - released).unwrap();
+        apply_record(
+            &mut i,
+            &reveal,
+            BOB,
+            at,
+            true,
+            TREASURY,
+            &[(TREASURY.to_string(), full as f64)],
+        );
+        let st = i.names.get("GEOFF").unwrap();
+        assert_eq!(st.owner, BOB);
+        assert!(st.records.is_empty(), "a takeover must not inherit the old records");
     }
 
     #[test]
