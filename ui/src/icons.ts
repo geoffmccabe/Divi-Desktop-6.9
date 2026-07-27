@@ -64,6 +64,10 @@ export const ICONS: Record<string, string> = {
   governance: svg(
     "<path d='M3 9l9-5 9 5'/><path d='M4 9h16'/><path d='M5 20V10'/><path d='M9.5 20V10'/><path d='M14.5 20V10'/><path d='M19 20V10'/><path d='M3 20h18'/>"
   ),
+  // Code brackets over a build square = writing an app.
+  appbuilder: svg(
+    "<path d='M9 8 5 12l4 4'/><path d='M15 8l4 4-4 4'/><rect x='2.5' y='3' width='19' height='18' rx='2.5'/>"
+  ),
   // Four tiles = a grid of community apps.
   communityapps: svg(
     "<rect x='3' y='3' width='7' height='7' rx='1.5'/><rect x='14' y='3' width='7' height='7' rx='1.5'/><rect x='3' y='14' width='7' height='7' rx='1.5'/><rect x='14' y='14' width='7' height='7' rx='1.5'/>"

@@ -16,6 +16,7 @@ export const NAV: NavItem[] = [
   { id: "timestamp", label: "Proof of Existence", icon: "timestamp" },
   { id: "collectibles", label: "Divi Collectibles", icon: "collectibles" },
   { id: "tokens", label: "Divi Meta Tokens", icon: "tokens" },
+  { id: "appbuilder", label: "App Builder", icon: "appbuilder" },
   { id: "governance", label: "Governance", icon: "governance" },
   // A newline in a label wraps the row onto two tight lines (see .nav-item span
   // in index.css). Used where a name is genuinely long rather than to save a
