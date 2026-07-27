@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import * as THREE from "three";
 import earthNight from "../assets/earth-night.jpg";
+import diviLogo from "../assets/divi-coin.webp";
 
 // The node map on a real 3D globe. Nodes are custom "Node Towers" (a slim square
 // pyramid with a sphere on its tip), packed apart when co-located. Each
@@ -114,6 +115,68 @@ function makeTower(color: number, scale = 1): THREE.Group {
   return g;
 }
 
+// ── Stake-winner coin ──────────────────────────────────────────────────────
+const COIN_R = SPH_R * 3; // coin diameter = 3x the usual sphere
+const COIN_THICK = COIN_R * 2 * 0.07; // thickness = 7% of the coin diameter
+const WIN_H = PYR_H * 2; // winner pyramid grows to 2x the normal size
+const COIN_EDGE = 0xdf1f37; // ~ HSB(355, 86, 88)
+
+let logoTexCache: THREE.Texture | null = null;
+function getLogoTex(): THREE.Texture {
+  if (logoTexCache) return logoTexCache;
+  logoTexCache = new THREE.TextureLoader().load(diviLogo);
+  logoTexCache.colorSpace = THREE.SRGBColorSpace;
+  return logoTexCache;
+}
+let glowTexCache: THREE.Texture | null = null;
+function getGlowTex(): THREE.Texture {
+  if (glowTexCache) return glowTexCache;
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const x = c.getContext("2d")!;
+  const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, "rgba(255,255,255,1)");
+  g.addColorStop(0.3, "rgba(255,220,140,0.85)");
+  g.addColorStop(1, "rgba(255,200,80,0)");
+  x.fillStyle = g;
+  x.fillRect(0, 0, 64, 64);
+  glowTexCache = new THREE.CanvasTexture(c);
+  return glowTexCache;
+}
+
+interface WinnerDeco { deco: THREE.Group; pivot: THREE.Group; glow: THREE.Sprite; particles: THREE.Sprite[]; }
+// A 2x gold pyramid topped by a spinning Divi coin, with a golden glow + a few
+// orbiting particles. Positioned onto the winning tower each block.
+function makeWinnerDeco(): WinnerDeco {
+  const deco = new THREE.Group();
+  const cone = new THREE.ConeGeometry(PYR_CIRC * 2, WIN_H, 4);
+  cone.translate(0, WIN_H / 2, 0);
+  deco.add(new THREE.Mesh(cone, new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xffd23f, emissiveIntensity: 0.6, roughness: 0.5, metalness: 0.3 })));
+  // Coin = flattened cylinder laid on its edge (flat faces point sideways) so it
+  // spins face-to-camera around the tower's up axis.
+  const pivot = new THREE.Group();
+  pivot.position.set(0, WIN_H, 0);
+  const coinGeo = new THREE.CylinderGeometry(COIN_R, COIN_R, COIN_THICK, 48);
+  coinGeo.rotateZ(Math.PI / 2);
+  const edge = new THREE.MeshStandardMaterial({ color: COIN_EDGE, emissive: COIN_EDGE, emissiveIntensity: 0.25, roughness: 0.4, metalness: 0.55 });
+  const face = new THREE.MeshBasicMaterial({ map: getLogoTex(), transparent: true });
+  pivot.add(new THREE.Mesh(coinGeo, [edge, face, face])); // [side, top, bottom]
+  deco.add(pivot);
+  const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: getGlowTex(), color: 0xffcc55, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+  glow.position.set(0, WIN_H, 0);
+  glow.scale.set(COIN_R * 6, COIN_R * 6, 1);
+  deco.add(glow);
+  const particles: THREE.Sprite[] = [];
+  for (let i = 0; i < 12; i++) {
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: getGlowTex(), color: 0xffd27a, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false }));
+    s.scale.set(0.14, 0.14, 1);
+    deco.add(s);
+    particles.push(s);
+  }
+  deco.visible = false;
+  return { deco, pivot, glow, particles };
+}
+
 function ring(n: number, r: number, rot = 0): [number, number][] {
   return Array.from({ length: n }, (_, i) => {
     const a = rot + (i / n) * 2 * Math.PI;
@@ -210,7 +273,7 @@ interface Strand { hp: Float32Array; K: number; dir: number; }
 interface Stream { strands: Strand[]; mult: number; nextDecide: number; flow: number; a: THREE.Vector3; b: THREE.Vector3; visible: boolean; }
 interface Glyph { s: number; strand: number; base: number; }
 
-export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null }) {
+export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null; getWinnerIp?: () => string | null }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [size, setSize] = useState({ w: 600, h: 400 });
@@ -277,6 +340,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
     }
     const tipOf = new Map<string, THREE.Vector3>();
     const towerObjs: THREE.Object3D[] = []; // for hover raycasting
+    const towerByIp = new Map<string, THREE.Group>(); // for the stake-winner coin
     for (const grp of groups.values()) {
       const offs = packOffsets(grp.length);
       grp.forEach((p, i) => {
@@ -291,6 +355,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
         t.userData.node = p; // for hover
         group.add(t);
         towerObjs.push(t);
+        towerByIp.set(p.ip, t);
         tipOf.set(p.ip, d2.clone().multiplyScalar(R + PYR_H * scale)); // connect at the sphere centre
       });
     }
@@ -456,6 +521,12 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
     };
     dom.addEventListener("pointermove", onMove);
 
+    // Stake-winner coin: a spinning Divi coin on a 2x gold pyramid, moved onto
+    // whichever tower currently holds the (placeholder) winner.
+    const { deco: winnerDeco, pivot: coinPivot, glow: winnerGlow, particles: winnerParticles } = makeWinnerDeco();
+    group.add(winnerDeco);
+    let curWinner: string | null = null;
+
     let raf = 0;
     let last = performance.now();
     const animate = () => {
@@ -463,6 +534,35 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       const cam = camera.position;
+
+      // Move / show the winner coin when the winning node changes.
+      const wip = getWinnerIp ? getWinnerIp() : null;
+      if (wip !== curWinner) {
+        if (curWinner) { const old = towerByIp.get(curWinner); if (old) old.visible = true; }
+        curWinner = wip;
+        const t = wip ? towerByIp.get(wip) : undefined;
+        if (t) {
+          winnerDeco.position.copy(t.position);
+          winnerDeco.quaternion.copy(t.quaternion);
+          t.visible = false;
+          winnerDeco.visible = true;
+        } else winnerDeco.visible = false;
+      }
+      if (winnerDeco.visible) {
+        const ts = now / 1000;
+        coinPivot.rotation.y = ts * Math.PI * 2; // 1 revolution per second
+        const pulse = 0.8 + 0.2 * Math.sin(now / 280);
+        (winnerGlow.material as THREE.SpriteMaterial).opacity = 0.55 * pulse;
+        winnerGlow.scale.set(COIN_R * 6 * pulse, COIN_R * 6 * pulse, 1);
+        for (let i = 0; i < winnerParticles.length; i++) {
+          const a = (i / winnerParticles.length) * Math.PI * 2 + ts * 0.8;
+          const r = 0.9 + 0.2 * Math.sin(ts * 1.3 + i);
+          const py = WIN_H + 0.7 * Math.sin(ts * 1.1 + i * 1.7);
+          winnerParticles[i].position.set(Math.cos(a) * r, py, Math.sin(a) * r);
+          (winnerParticles[i].material as THREE.SpriteMaterial).opacity = 0.45 + 0.4 * Math.sin(ts * 2 + i);
+        }
+      }
+
       for (const st of streams) {
         const da = (cam.x - st.a.x) * st.a.x + (cam.y - st.a.y) * st.a.y + (cam.z - st.a.z) * st.a.z;
         const db = (cam.x - st.b.x) * st.b.x + (cam.y - st.b.y) * st.b.y + (cam.z - st.b.z) * st.b.z;

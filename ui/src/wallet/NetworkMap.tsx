@@ -1431,7 +1431,14 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }}
       >
         <canvas ref={canvasRef} className="netmap-canvas" />
-        {globe && <GlobeMap points={globeData.pts} arcs={globeData.arcs} center={globeData.center} />}
+        {globe && (
+          <GlobeMap
+            points={globeData.pts}
+            arcs={globeData.arcs}
+            center={globeData.center}
+            getWinnerIp={() => (userWonRecently() ? selfRef.current?.ip ?? null : winnerRef.current)}
+          />
+        )}
         {/* Hamburger menu (top-right): opens one overlay panel at a time. */}
         {menuOpen && (
           <div className="netmap-menu" onMouseDown={(e) => e.stopPropagation()}>
