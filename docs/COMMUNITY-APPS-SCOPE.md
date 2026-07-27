@@ -1,6 +1,7 @@
-# Divi Community Apps — scope for review
+# Divi Community Apps, scope for review
 
-**Status: proposal, not approved. Nothing built yet.**
+**Status: approved 2026-Jul-26. Block A (the security policy) is shipped; see
+section 10. Blocks B, C and D not started.**
 
 Lets outside developers build small apps for Divi Desktop 6.9 by chatting with
 Claude inside the wallet, pay for the AI in DIVI, and publish the result to a new
@@ -25,7 +26,7 @@ gates are mandatory before anyone outside the team touches the builder.
 
 ---
 
-## 2. Security model — read this first
+## 2. Security model, read this first
 
 The honest engineering position: **prompt filtering is not the security boundary.**
 Anyone determined enough will eventually talk a language model into writing
@@ -43,13 +44,13 @@ and the broker only exposes a small, fixed, permission-checked API.
 
 Two facts about DD69 make this both easy and dangerous:
 
-- `crates/app/tauri.conf.json` sets `withGlobalTauri: true` — every Rust command is
+- `crates/app/tauri.conf.json` sets `withGlobalTauri: true`, every Rust command is
   reachable from JavaScript in the main window. This is exactly what must never be
   reachable from an app frame.
-- The same file sets `"csp": null` — the app currently ships with **no content
-  security policy at all**. That is fine today (we wrote all the code); it is not
-  fine the moment we host someone else's. **Adding a real CSP is a prerequisite of
-  this whole feature**, and it must be done and tested before anything else here.
+- The same file used to set `"csp": null`, meaning **no content security policy at
+  all**. That was survivable while we wrote every line of code ourselves; it would
+  not have been the moment we host someone else's. **Fixed in Block A**
+  (commit `b8cae5a`), which is why that block came before everything else.
 
 Good news: `crates/app/capabilities/default.json` already scopes permissions to
 `windows: ["main"]`. A second webview with a different label inherits nothing.
@@ -69,31 +70,31 @@ weaker than expected.
 
 Grouped into named permissions the user sees in plain English at install time:
 
-- **Read balance** — spendable / staking totals only, no address list
-- **Read addresses** — the user's own receive addresses
-- **Read history** — transaction list
-- **Read collectibles (NFDs)** — owned items, thumbnails, traits
-- **Read tokens (DMT)** — token balances and metadata
-- **Read network map** — peer/geo data we already show
-- **Request payment** — app asks for X DIVI; the wallet, not the app, shows a
+- **Read balance**, spendable / staking totals only, no address list
+- **Read addresses**, the user's own receive addresses
+- **Read history**, transaction list
+- **Read collectibles (NFDs)**, owned items, thumbnails, traits
+- **Read tokens (DMT)**, token balances and metadata
+- **Read network map**, peer/geo data we already show
+- **Request payment**, app asks for X DIVI; the wallet, not the app, shows a
   native confirm dialog and performs the send. Per-app spend cap, daily cap, and
   a full audit log. The app never sees a key and never sees the outcome except
   "paid / not paid".
-- **Store data** — a small, per-app, quota'd key-value store. Isolated per app.
-- **Network** — an explicit allowlist of hosts, declared in the manifest, brokered
+- **Store data**, a small, per-app, quota'd key-value store. Isolated per app.
+- **Network**, an explicit allowlist of hosts, declared in the manifest, brokered
   through the host so we can log and revoke it. Default is no network.
 
 ### Three soft layers on top
 
-1. **Prompt scanner** — checks what the developer types before it reaches Claude.
-2. **Code gate** — checks what Claude wrote before it can run or be published.
-3. **Publish review** — nothing appears in Community Apps until it is signed by us.
+1. **Prompt scanner**, checks what the developer types before it reaches Claude.
+2. **Code gate**, checks what Claude wrote before it can run or be published.
+3. **Publish review**, nothing appears in Community Apps until it is signed by us.
 
 Each is described in section 5.
 
 ---
 
-## 3. Piece 1 — the runtime and the Community Apps panel
+## 3. Piece 1, the runtime and the Community Apps panel
 
 ### New left-sidebar item
 
@@ -110,12 +111,12 @@ Thumbnails at **3:2 aspect ratio**, as specified. Each card supports:
 - a video under 20 MB (MP4 or WebM, muted, loops, autoplay only when visible)
 - a YouTube link
 
-**YouTube — decided: embedded player.** Geoff's call. Embedding means loading
+**YouTube, decided: embedded player.** Geoff's call. Embedding means loading
 Google's player into the same window that shows a balance, so it ships with three
 mitigations rather than as a plain embed:
 
 - privacy-enhanced `youtube-nocookie.com` embed rather than the standard one
-- click-to-load — the grid shows a still frame; nothing from Google is fetched
+- click-to-load, the grid shows a still frame; nothing from Google is fetched
   until the user actually clicks play, so browsing the store contacts nobody
 - the player lives in its own sandboxed frame, and the CSP exception is written
   narrowly for YouTube's hosts only, not opened generally
@@ -130,7 +131,7 @@ permanent, and a store needs the ability to take content down.
 
 Click a card, the app opens in the main panel. Under the hood it is a sandboxed
 frame with a locked-down policy, loading a signed bundle. The bundle is verified
-against our signing key before it renders — DD69 will refuse to run anything we
+against our signing key before it renders, DD69 will refuse to run anything we
 did not sign, which also gives us instant revocation.
 
 **Immersive mode (required).** An app must be able to take over the whole DD69
@@ -140,7 +141,7 @@ manifest field declares whether the app wants immersive by default or on demand,
 and an always-present escape control returns the user to the wallet. The chrome
 animates rather than snapping, matching how the admin drawer already behaves.
 
-This is a layout question, not an isolation one — the app is still the same
+This is a layout question, not an isolation one, the app is still the same
 sandboxed frame with the same brokered API, just sized to the window. Worth being
 explicit about, because it is the reason the app runs as a frame inside the main
 window rather than as its own separate operating-system window: a separate window
@@ -157,7 +158,7 @@ could not "take over DD69", it would just be a second window floating next to it
 
 ---
 
-## 4. Piece 2 — the Builder
+## 4. Piece 2, the Builder
 
 ### How it works from the developer's side
 
@@ -168,8 +169,8 @@ Publish, which sends it to review.
 
 ### Where the AI actually runs
 
-**Not on the user's machine.** The API key cannot live in a desktop app — the same
-reason the existing `ui/src/admin/panels/AiPanel.tsx` already warns about — and we
+**Not on the user's machine.** The API key cannot live in a desktop app, the same
+reason the existing `ui/src/admin/panels/AiPanel.tsx` already warns about, and we
 are not running an autonomous code-writing agent on a machine that holds someone's
 wallet and node.
 
@@ -177,7 +178,7 @@ wallet and node.
 Anthropic first, other models later without a rewrite. That requirement is what
 picks the architecture, and it reverses my initial recommendation:
 
-- Anthropic's **Managed Agents** would have been faster to stand up — Anthropic
+- Anthropic's **Managed Agents** would have been faster to stand up, Anthropic
   hosts the container *and* runs the agent loop, with isolation and token metering
   included. But the loop and the sandbox come as one package, and the loop is
   Anthropic-specific. Adding Grok or a self-hosted model later would mean building
@@ -186,7 +187,7 @@ picks the architecture, and it reverses my initial recommendation:
 - So: **we run the container, and the model is one call behind an adapter.** The
   agent loop (read files, write files, run the build, look at the result, iterate)
   is ours. Each model call goes through the **existing DD69 AI Gateway** at
-  `ai.divi.love`, which is already provider-pluggable by design — Claude and any
+  `ai.divi.love`, which is already provider-pluggable by design, Claude and any
   OpenAI-shaped provider, including self-hosted models, are a JSON entry plus a
   key with no code change. Adding a model to the builder's dropdown becomes the
   same one-line operation it already is for the wallet's agent.
@@ -210,14 +211,14 @@ project folder:
 - Network egress denied by default, with a small documentation allowlist
 - One session cannot see another session's files
 - Torn down at the end; nothing persists except the project we deliberately keep
-- Every model call's token counts recorded as they happen — the number billing
+- Every model call's token counts recorded as they happen, the number billing
   runs on
 
 ### What Claude is allowed to do in there
 
 Write files into one project folder. That's essentially it. No shell escapes to
 our systems, no network beyond a documentation allowlist, no ability to touch
-another project. Even a fully jailbroken prompt produces, at worst, a bad app —
+another project. Even a fully jailbroken prompt produces, at worst, a bad app , 
 which then has to get past the code gate and the review queue.
 
 ### Models and cost
@@ -226,7 +227,7 @@ Current Anthropic list prices, per million tokens:
 
 | Model | Input | Output | Use |
 |---|---|---|---|
-| Claude Opus 5 | $5 | $25 | "Hard mode" — complex apps, premium tier |
+| Claude Opus 5 | $5 | $25 | "Hard mode", complex apps, premium tier |
 | Claude Sonnet 5 | $3 (intro $2 to 2026-Aug-31) | $15 (intro $10) | Default builder model |
 | Claude Haiku 4.5 | $1 | $5 | Prompt scanner, cheap classification |
 
@@ -237,18 +238,18 @@ biggest lever on our margin.
 
 ---
 
-## 5. Piece 3 — the gates, and the admin panel
+## 5. Piece 3, the gates, and the admin panel
 
 ### Layer 1: prompt scanner (input)
 
 Every developer message is checked before it reaches the builder:
 
-- Fast rule pass — editable patterns for known jailbreak shapes ("ignore previous
+- Fast rule pass, editable patterns for known jailbreak shapes ("ignore previous
   instructions", "you are now", encoded payloads, prompts about our infrastructure,
   keys, node internals, or other users)
-- Classifier pass — a cheap Haiku call that judges intent, not keywords, and
+- Classifier pass, a cheap Haiku call that judges intent, not keywords, and
   returns allow / flag / block with a reason
-- Account state — strike count, rate limit, cooling-off after repeated blocks
+- Account state, strike count, rate limit, cooling-off after repeated blocks
 
 Every decision is logged with the prompt, verdict, reason, and cost.
 
@@ -256,12 +257,12 @@ Every decision is logged with the prompt, verdict, reason, and cost.
 
 Before a build can be previewed, and again, harder, before it can be published:
 
-- Structural scan of the generated JavaScript — no `eval`, no dynamic imports, no
+- Structural scan of the generated JavaScript, no `eval`, no dynamic imports, no
   attempts to reach the wallet bridge, no obfuscated or minified blobs, no network
   calls to hosts outside the declared manifest, no oversized bundles
-- Permission reconciliation — the code may not use any capability the manifest did
+- Permission reconciliation, the code may not use any capability the manifest did
   not declare and the user did not approve
-- Reviewer pass — a second model reads the diff adversarially and answers "is this
+- Reviewer pass, a second model reads the diff adversarially and answers "is this
   app trying to do something it did not tell the user about?"
 - Publish-only: human eyes. Curated launch, opened up later once we trust the gate.
 
@@ -269,15 +270,15 @@ Before a build can be previewed, and again, harder, before it can be published:
 
 Added to `ui/src/admin/registry.tsx`, alongside Style / Value / AI / Payouts / Chain.
 
-- **Rules** — edit the prompt-scanner patterns and thresholds live; edit the
+- **Rules**, edit the prompt-scanner patterns and thresholds live; edit the
   code-gate rules; toggle individual checks on and off
-- **Decision log** — every scan, its verdict, the prompt, the cost, sortable and
+- **Decision log**, every scan, its verdict, the prompt, the cost, sortable and
   filterable. This is how you actually learn what real attackers try.
-- **Replay** — re-run the whole historical log against your edited rules and see
+- **Replay**, re-run the whole historical log against your edited rules and see
   what changes before you save. Turns rule tuning from guesswork into measurement.
-- **Review queue** — pending publishes, with the diff, the manifest, the requested
+- **Review queue**, pending publishes, with the diff, the manifest, the requested
   permissions, and the reviewer model's opinion. Approve, reject, or ban.
-- **Kill switch** — revoke a published app or an entire developer account. Because
+- **Kill switch**, revoke a published app or an entire developer account. Because
   bundles are signed and DD69 checks the signature, revocation is immediate for
   every user, not just new installs.
 
@@ -317,8 +318,8 @@ before the first turn, not in a footnote.
 
 Two models, both routed through the same permission-gated payment flow:
 
-- **Buy to own** — one-time DIVI purchase, unlocks the app permanently
-- **Pay inside the app** — the app requests a payment, the wallet confirms it
+- **Buy to own**, one-time DIVI purchase, unlocks the app permanently
+- **Pay inside the app**, the app requests a payment, the wallet confirms it
 
 Revenue splits to the creator's address minus a platform fee, using the treasury
 and fee infrastructure already built for the NFD marketplace. Entitlements are
@@ -340,7 +341,7 @@ CSP work is done and verified.
 | **4** | DIVI credits, metering, 2x markup, caps, admin rate control | A paid build session bills correctly to the token |
 | **5** | Publish flow, signing, review queue, media upload (3:2 WebP / slideshow / video / link), revocation | An outside developer can ship an app end to end |
 | **6** | Paid apps, in-app payments, creator payouts | Money moves both directions correctly |
-| **7** | Deeper integrations: DMT, NFD, map as richer permissioned APIs | — |
+| **7** | Deeper integrations: DMT, NFD, map as richer permissioned APIs |, |
 
 ---
 
@@ -348,22 +349,22 @@ CSP work is done and verified.
 
 ### Made (2026-Jul-26)
 
-1. **Build host** — our own sandbox containers, with the model behind an adapter
+1. **Build host**, our own sandbox containers, with the model behind an adapter
    routed through the existing pluggable AI gateway. Anthropic first; other models
    are a config entry, not a rewrite. This replaced the Managed Agents
    recommendation; reasoning in section 4.
-2. **App runtime** — sandboxed frame inside the main window, with an immersive
+2. **App runtime**, sandboxed frame inside the main window, with an immersive
    mode that collapses the sidebar and header so an app can use the whole window.
-3. **YouTube** — embedded player, with nocookie, click-to-load, and a narrow CSP
+3. **YouTube**, embedded player, with nocookie, click-to-load, and a narrow CSP
    exception. Section 3.
-4. **Rejected builds** — developer pays half. Section 6.
+4. **Rejected builds**, developer pays half. Section 6.
 
 5. **Identity = sign with your Divi address.** No login, no password, no LW-SSO
    dependency. The wallet signs a challenge with an address the user controls;
    that address *is* the developer account, the credit balance, the app-ownership
    record, and the payout destination. The NFD work already proved Divi's
    `signmessage` is deterministic and safe to build on. **This takes LW-SSO off
-   the critical path entirely** — the single biggest schedule win in this plan.
+   the critical path entirely**, the single biggest schedule win in this plan.
 6. **Build containers run on Cloudflare.** Geoff's existing account
    (`de32ea1587de2e94e24fab49a21d436c`, geoff@lightningworks.io) already holds
    `containers` and `cloudchamber` write scopes, so we can provision the sandbox
@@ -378,10 +379,10 @@ CSP work is done and verified.
 
 ### Still open
 
-8. **Launch posture** — curated (we approve every app by hand at first) or open
+8. **Launch posture**, curated (we approve every app by hand at first) or open
    with automated gating from day one? Recommendation: curated, same as the NFD
    marketplace plan. Can be decided as late as Phase 5.
-9. **The DIVI/USD billing rate** — the number itself, and how often you revise it.
+9. **The DIVI/USD billing rate**, the number itself, and how often you revise it.
    Needed before Phase 4, not before.
 10. **The seed apps.** Geoff writes these when the time comes. Phase 1 therefore
     proves itself with a throwaway internal test harness instead (section 11), so
@@ -399,14 +400,14 @@ CSP work is done and verified.
   limits all need identity. LW-SSO is specced but not wired into the wallet. This
   is on the critical path for Phase 4 onward.
 - **The AI gateway is still single-shared-token.** `project_dd69_ai_gateway` notes
-  it cannot ship to all users as-is. The builder needs per-user tokens — that is
+  it cannot ship to all users as-is. The builder needs per-user tokens, that is
   the same Phase 2 gateway work, and this feature depends on it.
 - **DMT is specced, not implemented.** The token API surface can exist and be
   documented now, but it returns stub data until the DMT indexer lands.
 - **NFD lives on `feat/nfd-collectibles`, not main.** Collectible-facing APIs need
   that branch merged first.
 - **We own the container hardening.** That is the price of the plug-and-play model
-  requirement — nobody hands us the isolation for free. It needs a dedicated
+  requirement, nobody hands us the isolation for free. It needs a dedicated
   machine, a locked-down image, egress rules, and a teardown that actually tears
   down. This is the largest single unknown in Phase 2 and the one most likely to
   slip.
@@ -418,17 +419,17 @@ CSP work is done and verified.
 
 ---
 
-## 10. Action plan — the first four work blocks
+## 10. Action plan, the first four work blocks
 
 Written as work blocks rather than dates. Each ends in something Geoff can look at
 or click, and each is safe to stop after.
 
-### Block A — make the wallet safe to host other people's code
+### Block A, make the wallet safe to host other people's code
 
 *Nothing else can start before this. Needs nothing from Geoff.*
 
-1. Inventory what the current UI actually loads — every image, font, style and
-   script origin — so the policy is written from evidence, not guesswork.
+1. Inventory what the current UI actually loads, every image, font, style and
+   script origin, so the policy is written from evidence, not guesswork.
 2. Add a content security policy to `crates/app/tauri.conf.json`, starting strict
    and relaxing only where the inventory proves it is needed.
 3. Rebuild and walk the whole wallet: overview, send, receive, history, network
@@ -440,7 +441,7 @@ or click, and each is safe to stop after.
 **Done when:** the wallet behaves identically with the policy on, and Geoff has
 run his own normal session against the build without noticing a difference.
 
-### Block A — STATUS: policy shipped, awaiting Geoff's normal-use pass
+### Block A, STATUS: policy shipped, awaiting Geoff's normal-use pass
 
 Shipped in commit `b8cae5a`. The policy now in `crates/app/tauri.conf.json`:
 
@@ -459,12 +460,12 @@ base-uri 'self'; form-action 'none'; frame-ancestors 'none'
 - No web workers, no WebAssembly. `worker-src 'none'` is therefore free.
 - Images and media come from `data:` and `blob:` URIs only.
 - The only network call made by the front end itself is to `nodes.divi.love`
-  (the identity service, not yet deployed). Everything else — price, geolocation,
-  the AI gateway, the explorer — is called from Rust or opened in the real
+  (the identity service, not yet deployed). Everything else, price, geolocation,
+  the AI gateway, the explorer, is called from Rust or opened in the real
   browser, so it never touches the page's policy.
 
 **Why an inline bundle still works under `script-src 'self'`:** Tauri hashes every
-non-empty inline script at build time and injects the hash into the policy — but
+non-empty inline script at build time and injects the hash into the policy, but
 only when a policy is configured, which it was not before. Verified by computing
 the SHA-256 of the shipped script and matching it against the hash compiled into
 the binary.
@@ -472,8 +473,8 @@ the binary.
 **Why `style-src` keeps `'unsafe-inline'`:** React style attributes and the theme
 system both write inline styles, and hashes cannot cover style *attributes*. Tauri
 is told not to modify `style-src`, because adding a nonce there would make the
-browser ignore `'unsafe-inline'` and break every themed surface. Scripts — the
-part that actually matters — stay strict.
+browser ignore `'unsafe-inline'` and break every themed surface. Scripts, the
+part that actually matters, stay strict.
 
 **Verified working with the policy on:** the 3D globe, live block stream, balances,
 staking status, lottery countdown, price, peer and node counts, address list.
@@ -481,21 +482,21 @@ staking status, lottery countdown, price, peer and node counts, address list.
 **Still to confirm, by Geoff using it normally:** send, receive and the QR code,
 proof of existence, collectibles, tokens, governance, human-readable addresses,
 address book, settings, the admin drawer and skins, and the agent panel's video.
-These are expected to pass — they rely on `data:`/`blob:`, which the policy allows
-— but expected is not verified.
+These are expected to pass, they rely on `data:`/`blob:`, which the policy allows
+,  but expected is not verified.
 
 **Deliberately deferred to Block B:** `frame-src` stays `'none'` until there is
 something to frame. It gets exactly two entries later: the app sandbox, and
 YouTube's nocookie host.
 
-### Block B — the runtime and the store panel
+### Block B, the runtime and the store panel
 
 *Needs nothing from Geoff except a look at the result.*
 
 1. Write the app manifest format and the permission catalogue down as a document
    in the repo first, so the API is designed once rather than accreted.
 2. Build the broker: the only channel between an app and the wallet. Read-only
-   permissions to begin with — balance, addresses, history — with a hard deny on
+   permissions to begin with, balance, addresses, history, with a hard deny on
    everything else and a log of every call.
 3. Build the sandboxed host frame, immersive mode included: sidebar collapses,
    header collapses, escape control always visible, animated to match the existing
@@ -503,7 +504,7 @@ YouTube's nocookie host.
 4. Build the Community Apps browse panel: 3:2 cards, still image, slideshow,
    video, click-to-load YouTube. New token group so all of it is skinnable.
 5. Write a throwaway internal test harness app whose only job is to try to break
-   out — reach the Tauri bridge, call an undeclared permission, read another app's
+   out, reach the Tauri bridge, call an undeclared permission, read another app's
    storage, phone home to a host it never declared. All of it must fail, visibly.
 6. Add bundle signature verification in Rust so DD69 refuses to run anything we
    did not sign.
@@ -511,14 +512,14 @@ YouTube's nocookie host.
 **Done when:** the harness app runs full-window, every escape attempt fails, and
 the panel is reskinnable from the Style editor.
 
-### Block C — the builder
+### Block C, the builder
 
 *Needs the Cloudflare account, which we already have.*
 
 1. Stand up one sandbox container on Cloudflare and prove the basics: a session
    starts, writes files, builds, tears down, and cannot reach the network except
    where we allow it.
-2. Build the agent loop — ours, not a vendor's — with the model call behind an
+2. Build the agent loop, ours, not a vendor's, with the model call behind an
    adapter pointed at the existing `ai.divi.love` gateway. Claude first; adding
    another model must be a config entry, and we test that claim before calling the
    block done.
@@ -531,13 +532,13 @@ the panel is reskinnable from the Style editor.
 **Done when:** we can build a working community app by chatting, and we know what
 a session costs to within a sensible range.
 
-### Block D — identity, gates and money
+### Block D, identity, gates and money
 
 1. Address-signature login: challenge, signature, session. The wallet side is
    small because the signing already exists.
 2. Prompt scanner and code gate, plus the admin panel with the rules editor,
    decision log and replay.
-3. Build an adversarial test set — our own honest attempts to jailbreak it — and
+3. Build an adversarial test set, our own honest attempts to jailbreak it, and
    tune against that, not against imagination.
 4. DIVI credits: deposit, reserve, charge at 2x, half-charge on gate rejection,
    refund the difference, hard caps, admin-set rate.
@@ -563,15 +564,15 @@ correctly, and get stopped when they try something they should not.
 
 New, so no collision with the other agents:
 
-- `ui/src/apps/` — runtime, browse grid, host frame, broker, permission UI
-- `ui/src/builder/` — chat panel, preview, credit meter
-- `ui/src/admin/panels/GatesPanel.tsx` — the tuning panel
-- `crates/supervisor/src/appstore.rs` — signature verification, manifest parsing
-- `contrib/app-builder/` — the server side: sessions, scanning, metering, review
+- `ui/src/apps/`, runtime, browse grid, host frame, broker, permission UI
+- `ui/src/builder/`, chat panel, preview, credit meter
+- `ui/src/admin/panels/GatesPanel.tsx`, the tuning panel
+- `crates/supervisor/src/appstore.rs`, signature verification, manifest parsing
+- `contrib/app-builder/`, the server side: sessions, scanning, metering, review
 
 Shared seams that need care (fetch and rebase before touching):
 
-- `ui/src/nav.ts`, `ui/src/Shell.tsx` — one line each
-- `ui/src/admin/registry.tsx` — one line
-- `crates/app/src/main.rs` — command registrations
-- `crates/app/tauri.conf.json` — the CSP change, which affects everything
+- `ui/src/nav.ts`, `ui/src/Shell.tsx`, one line each
+- `ui/src/admin/registry.tsx`, one line
+- `crates/app/src/main.rs`, command registrations
+- `crates/app/tauri.conf.json`, the CSP change, which affects everything
