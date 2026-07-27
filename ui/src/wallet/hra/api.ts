@@ -66,6 +66,10 @@ export interface OwnedName {
   records: [number, string][];
   isPrimary: boolean;
   listedPriceDivi: number | null;
+  /** Held on behalf of a brand or well-known person, not chosen. */
+  fromReserve: boolean;
+  /** Never lapses. True for reserve holdings. */
+  perpetual: boolean;
 }
 
 // Record keys. These MUST match name-registry's record.rs; they are part of the

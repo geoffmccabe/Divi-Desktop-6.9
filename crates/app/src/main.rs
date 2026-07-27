@@ -418,6 +418,8 @@ struct HraNameDto {
     records: Vec<(u8, String)>,
     is_primary: bool,
     listed_price_divi: Option<f64>,
+    from_reserve: bool,
+    perpetual: bool,
 }
 
 #[tauri::command]
@@ -434,6 +436,8 @@ async fn hra_my_names() -> Result<Vec<HraNameDto>, String> {
                     records: n.records,
                     is_primary: n.is_primary,
                     listed_price_divi: n.listed_price_divi,
+                    from_reserve: n.from_reserve,
+                    perpetual: n.perpetual,
                 })
                 .collect()
         })

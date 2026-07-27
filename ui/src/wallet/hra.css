@@ -246,3 +246,19 @@
   border: 1px solid hsl(var(--border));
   border-radius: 9px;
 }
+
+/* ---- reserve holdings ---- */
+.hra-reserve { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.hra-reserve-head {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+.hra-reserve-head:hover { color: hsl(var(--foreground)); }

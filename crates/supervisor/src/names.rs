@@ -176,6 +176,13 @@ pub struct OwnedName {
     pub records: Vec<(u8, String)>,
     pub is_primary: bool,
     pub listed_price_divi: Option<f64>,
+    /// Held on behalf of a brand or a well-known person rather than chosen.
+    ///
+    /// Whoever holds the reserve owns several hundred of these. Without a way
+    /// to tell them apart, the names they actually registered would be buried.
+    pub from_reserve: bool,
+    /// Never lapses. True for reserve holdings.
+    pub perpetual: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1096,20 +1103,30 @@ pub fn my_names(cfg: &NodeConfig) -> Result<Vec<OwnedName>, String> {
         .map(|a| a.iter().filter_map(|c| c["address"].as_str().map(String::from)).collect())
         .unwrap_or_default();
 
-    let owned = |addr: &str| -> bool {
-        if mine.iter().any(|m| m == addr) {
-            return true;
+    // ⚠ Ask about each distinct ADDRESS once, not about each name.
+    //
+    // The reserve holds several hundred names under a SINGLE address. Asking
+    // per name meant hundreds of `validateaddress` calls on every refresh of a
+    // panel that polls every few seconds, which would make the wallet crawl for
+    // the one person who matters most here: whoever holds the reserve.
+    let mut verdicts: HashMap<&str, bool> = HashMap::new();
+    for st in idx.names.values() {
+        if verdicts.contains_key(st.owner.as_str()) {
+            continue;
         }
-        rpc.call("validateaddress", json!([addr]))
-            .ok()
-            .and_then(|r| r["ismine"].as_bool())
-            .unwrap_or(false)
-    };
+        let ours = mine.iter().any(|m| m == &st.owner)
+            || rpc
+                .call("validateaddress", json!([&st.owner]))
+                .ok()
+                .and_then(|r| r["ismine"].as_bool())
+                .unwrap_or(false);
+        verdicts.insert(st.owner.as_str(), ours);
+    }
 
     let mut out: Vec<OwnedName> = idx
         .names
         .iter()
-        .filter(|(_, st)| owned(&st.owner))
+        .filter(|(_, st)| verdicts.get(st.owner.as_str()).copied().unwrap_or(false))
         .map(|(name, st)| OwnedName {
             name: name.clone(),
             owner: st.owner.clone(),
@@ -1132,6 +1149,9 @@ pub fn my_names(cfg: &NodeConfig) -> Result<Vec<OwnedName>, String> {
             },
             is_primary: idx.primary.get(&st.owner) == Some(name),
             listed_price_divi: st.listing.as_ref().map(|l| l.price_divi),
+            perpetual: st.expires_height == NEVER_EXPIRES,
+            from_reserve: st.expires_height == NEVER_EXPIRES
+                && name_registry::charset::is_reserved(name.as_bytes()),
         })
         .collect();
     out.sort_by(|a, b| a.name.cmp(&b.name));

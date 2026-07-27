@@ -160,6 +160,51 @@ address the name points at to hold a little DIVI, because that address has to
 sign. Pointing a name at an empty address and then trying to display it fails,
 with a message saying exactly that.
 
+## Reserved names are HELD, not forbidden
+
+All 497 reserved entries (brands, well-known people, Divi's own) are seeded into
+the ledger at the activation height, owned by a **reserve address**, and never
+expire.
+
+This replaced an outright refusal, for a reason worth keeping in mind: **a name
+the rules call invalid can never be given to the person or company it belongs
+to.** Owned names transfer with the ordinary flow, so a claim is just a
+transfer. Seeding is idempotent, so a name already handed on is never reclaimed.
+
+`MAINNET_RESERVE` is `None` until the address is chosen, and the index **refuses
+to run without it**. An unseeded index would treat every brand name as free for
+the first passer-by, so failing loudly beats failing open.
+
+⚠ `validate_ticker` still refuses reserved names outright. DMT has no reserve
+and no seeding step, so refusing is the only protection available there.
+
+## Expiry, following Namecoin
+
+* One year term, then the name **stops resolving immediately**. That matters:
+  a lapsed name still pointing at its old owner would send somebody's payment
+  to the wrong person.
+* 90 day grace period where **only the previous owner** may renew. Renewal is
+  deliberately the one thing an expired name still permits, or a missed
+  reminder would cost somebody their name outright.
+* After grace it is **released at a declining price**, turning a land-grab at
+  one block, won by whoever automates fastest, into an auction anyone can join.
+* A takeover starts clean and never inherits the previous holder's records,
+  listing, or display claim.
+* Reserve holdings are perpetual. Whoever holds them should not have to renew
+  several hundred names a year, paying fees to themselves.
+
+## ⚠ Divi stakes, and staking eats the authoring coin
+
+Found on a live two-node regtest, not by review. Between a commit and its reveal
+twelve blocks later, the wallet's own staking consumed the coin at the address
+that had to authorise the reveal. The address received its change correctly and
+was empty by reveal time, so the reveal became impossible and the reservation
+and its fee were lost. This would hit the many Divi users who stake.
+
+`ensure_can_author` tops the address up on demand before any authored record.
+**`lockunspent` cannot fix it**: Divi's lock set is memory-only and does not
+survive a restart, so it cannot protect a coin across a wait measured in blocks.
+
 ## Rules the index enforces
 
 Everything below is covered by tests in `names.rs`. Anything failing a rule is

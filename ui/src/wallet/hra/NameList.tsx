@@ -25,6 +25,10 @@ export function NameList({
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [done, setDone] = useState("");
+  const [search, setSearch] = useState("");
+  // Collapsed by default: several hundred reserve holdings unrolled on open
+  // would make the tab unusable for the names somebody actually chose.
+  const [showReserve, setShowReserve] = useState(false);
 
   const run = async (label: string, fn: () => Promise<string>) => {
     setBusy(label);
@@ -51,13 +55,21 @@ export function NameList({
     );
   }
 
-  return (
-    <div className="hra-list">
-      {names.map((n) => {
+  // Names held on behalf of brands and well-known people are kept apart. There
+  // are several hundred of them for whoever holds the reserve, and mixed in
+  // they would bury the handful somebody actually chose.
+  const q = search.trim().toLowerCase();
+  const matches = (n: OwnedName) => !q || n.name.toLowerCase().includes(q);
+  const chosen = names.filter((n) => !n.fromReserve).filter(matches);
+  const reserved = names.filter((n) => n.fromReserve).filter(matches);
+
+  const renderCard = (n: OwnedName) => {
         const isOpen = open === n.name;
         const blocksLeft = Math.max(0, n.expiresHeight - tip);
         const daysLeft = Math.round(blocksLeft / 1440);
-        const expiringSoon = tip > 0 && daysLeft <= 30;
+        // A perpetual name has no expiry to count down, and showing one would
+        // be nonsense: its height is deliberately the largest number there is.
+        const expiringSoon = !n.perpetual && tip > 0 && daysLeft <= 30;
         return (
           <article className={"hra-card" + (isOpen ? " hra-card-open" : "")} key={n.name}>
             <header className="hra-card-head">
@@ -85,11 +97,13 @@ export function NameList({
                 )}
               </button>
               <span className={expiringSoon ? "wl-err" : "wl-note"}>
-                {tip > 0
-                  ? blocksLeft === 0
-                    ? "expired"
-                    : `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`
-                  : ""}
+                {n.perpetual
+                  ? "never expires"
+                  : tip > 0
+                    ? blocksLeft === 0
+                      ? "expired"
+                      : `${daysLeft} day${daysLeft === 1 ? "" : "s"} left`
+                    : ""}
               </span>
             </header>
 
@@ -207,7 +221,61 @@ export function NameList({
             )}
           </article>
         );
-      })}
+  };
+
+  const expiring = names.filter(
+    (n) => !n.perpetual && tip > 0 && n.expiresHeight > tip && n.expiresHeight - tip <= 30 * 1440
+  );
+
+  return (
+    <div className="hra-list">
+      {/* Names lapse, so a reminder is a requirement rather than a nicety. */}
+      {expiring.length > 0 && (
+        <div className="hra-banner hra-banner-behind">
+          <strong>
+            {expiring.length === 1
+              ? `${expiring[0].name.toLowerCase()} expires soon.`
+              : `${expiring.length} of your names expire within a month.`}
+          </strong>{" "}
+          Renew before the year is up. After that there is a 90 day grace period where only you can
+          renew, and once that passes anyone can take the name.
+        </div>
+      )}
+
+      {names.length > 8 && (
+        <label className="hra-field">
+          <span>Find a name</span>
+          <input
+            className="wl-input mono"
+            placeholder="type to filter"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            spellCheck={false}
+          />
+        </label>
+      )}
+
+      {chosen.map(renderCard)}
+      {chosen.length === 0 && q !== "" && reserved.length === 0 && (
+        <p className="wl-note">Nothing matches “{search.trim()}”.</p>
+      )}
+
+      {reserved.length > 0 && (
+        <section className="hra-reserve">
+          <button
+            className="hra-reserve-head"
+            onClick={() => setShowReserve(!showReserve)}
+            aria-expanded={showReserve}
+          >
+            {showReserve ? "▾" : "▸"} Held in reserve ({reserved.length.toLocaleString()})
+          </button>
+          <p className="wl-note hra-dim">
+            Brand and well-known-person names, held so nobody can impersonate them. They never
+            expire. Send one on when you are satisfied it is going to the right people.
+          </p>
+          {showReserve && reserved.map(renderCard)}
+        </section>
+      )}
 
       {done && <p className="wl-note">{done}</p>}
       {error && <p className="wl-err">{error}</p>}
