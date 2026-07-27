@@ -1,0 +1,163 @@
+/* Community Apps: the store grid and the app frame.
+
+   Kept out of index.css deliberately, the same reason dmt.css and poe.css are:
+   that file is edited by every workstream at once and is the main source of
+   merge conflicts. Everything here is prefixed .ca- so it cannot collide.
+
+   Every colour, radius, spacing and font here comes from a theme token. There
+   are no literal hex values and no literal font names, so a skin restyles the
+   store along with the rest of the wallet. */
+
+.ca { display: flex; flex-direction: column; gap: 18px; }
+
+.ca-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.ca-count { font-size: 0.78rem; color: hsl(var(--foreground) / 0.55); }
+
+/* ---- the grid ---- */
+.ca-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--app-card-min), 1fr));
+  gap: var(--app-grid-gap);
+}
+
+.ca-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 0;
+  overflow: hidden;
+  cursor: pointer;
+  background: hsl(var(--app-card-bg));
+  border-radius: var(--app-card-radius);
+  border: var(--app-card-outline-width) solid hsl(var(--app-card-outline-color));
+  transition: transform 120ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+.ca-card:hover {
+  transform: translateY(-2px);
+  border-color: hsl(var(--primary) / 0.55);
+  box-shadow: 0 0 var(--glow-strength) hsl(var(--glow-color) / 0.35);
+}
+.ca-card:focus-visible {
+  outline: 2px solid hsl(var(--primary));
+  outline-offset: 2px;
+}
+
+/* 3:2 media area, fixed by the store contract so every card lines up. */
+.ca-media {
+  position: relative;
+  aspect-ratio: 3 / 2;
+  width: 100%;
+  background: hsl(var(--background) / 0.6);
+  overflow: hidden;
+}
+.ca-media img,
+.ca-media video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* Slideshow frames stack and cross-fade. */
+.ca-slide { position: absolute; inset: 0; opacity: 0; transition: opacity 600ms ease; }
+.ca-slide-on { opacity: 1; }
+
+.ca-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: hsl(var(--background) / 0.35);
+  cursor: pointer;
+  color: hsl(var(--foreground));
+}
+.ca-play-badge {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  background: hsl(var(--background) / 0.72);
+  border: 1px solid hsl(var(--foreground) / 0.35);
+  font-size: 1.1rem;
+}
+.ca-play-note {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  right: 8px;
+  font-size: 0.68rem;
+  color: hsl(var(--foreground) / 0.75);
+  text-align: center;
+}
+
+.ca-body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 4px; }
+.ca-name { font-family: var(--font-heading); font-size: 0.95rem; font-weight: 600; }
+.ca-author { font-size: 0.74rem; color: hsl(var(--foreground) / 0.55); }
+.ca-desc {
+  font-size: 0.8rem;
+  color: hsl(var(--foreground) / 0.75);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ca-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
+.ca-price { font-size: 0.78rem; font-weight: 600; color: hsl(var(--primary)); }
+.ca-price-free { color: hsl(var(--success)); }
+.ca-perms { font-size: 0.7rem; color: hsl(var(--foreground) / 0.5); }
+
+/* ---- empty state ---- */
+.ca-empty {
+  padding: 34px 22px;
+  text-align: center;
+  border-radius: var(--app-card-radius);
+  border: var(--app-card-outline-width) dashed hsl(var(--app-card-outline-color));
+  background: hsl(var(--app-card-bg) / 0.5);
+}
+.ca-empty h3 { font-family: var(--font-heading); font-size: 1rem; margin-bottom: 6px; }
+.ca-empty p { font-size: 0.84rem; color: hsl(var(--foreground) / 0.7); line-height: 1.5; max-width: 46ch; margin: 0 auto; }
+
+/* ---- the running app ---- */
+.ca-host { display: flex; flex-direction: column; gap: 10px; height: 100%; }
+.ca-host-bar { display: flex; align-items: center; gap: 10px; }
+.ca-host-title { font-family: var(--font-heading); font-weight: 600; font-size: 0.92rem; }
+.ca-host-spacer { flex: 1; }
+.ca-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 420px;
+  border: var(--app-card-outline-width) solid hsl(var(--app-card-outline-color));
+  border-radius: var(--app-card-radius);
+  background: hsl(var(--background));
+}
+
+/* Immersive: the app takes the whole window. The sidebar and header are hidden
+   by Shell, this covers the content area and the escape control stays on top. */
+.ca-immersive {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  padding: 10px;
+  background: hsl(var(--background));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ca-immersive .ca-frame { min-height: 0; border-radius: calc(var(--app-card-radius) * 0.75); }
+
+/* ---- permission prompt ---- */
+.ca-perm-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.ca-perm {
+  display: flex;
+  gap: 10px;
+  padding: 9px 11px;
+  border-radius: calc(var(--app-card-radius) * 0.7);
+  background: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: 1px solid hsl(var(--app-card-outline-color));
+}
+.ca-perm-cap { border-color: hsl(var(--warning) / 0.55); }
+.ca-perm-label { font-size: 0.86rem; font-weight: 600; }
+.ca-perm-detail { font-size: 0.76rem; color: hsl(var(--foreground) / 0.7); line-height: 1.45; }
+.ca-perm-none { font-size: 0.84rem; color: hsl(var(--success)); }

@@ -12,6 +12,7 @@ import { SendPanel } from "./wallet/SendPanel";
 import { ReceivePanel } from "./wallet/ReceivePanel";
 import { ActivityList } from "./wallet/ActivityList";
 import { AddressBook } from "./wallet/AddressBook";
+import { CommunityApps } from "./apps/CommunityApps";
 import { SettingsView } from "./wallet/SettingsView";
 import { TimestampPanel } from "./wallet/TimestampPanel";
 import { CollectiblesPanel } from "./wallet/CollectiblesPanel";
@@ -33,6 +34,7 @@ const VIEWS: Record<string, ComponentType> = {
   tokens: TokensPanel,
   governance: GovernancePreview,
   hra: HraPanel,
+  communityapps: CommunityApps,
   addressbook: AddressBook,
   settings: SettingsView,
   network: NetworkMap,

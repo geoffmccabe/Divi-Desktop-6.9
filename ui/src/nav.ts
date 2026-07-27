@@ -22,6 +22,7 @@ export const NAV: NavItem[] = [
   // few pixels — "Human Readable Addresses" on one line would either squeeze
   // the whole sidebar wider or truncate.
   { id: "hra", label: "Human Readable\nAddresses", icon: "hra" },
+  { id: "communityapps", label: "Community Apps", icon: "communityapps" },
   { id: "addressbook", label: "Address Book", icon: "addressbook" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];

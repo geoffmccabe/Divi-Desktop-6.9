@@ -86,6 +86,16 @@ export const TOKENS: TokenDef[] = [
   { key: "sendFreq", label: "Send pitch", group: "Sounds", type: "range", cssVar: "--sound-send-freq", default: "880", min: 200, max: 1200, step: 10, unit: "" },
   { key: "receiveWave", label: "Receive sound", group: "Sounds", type: "select", cssVar: "--sound-receive-wave", default: "sine", options: WAVES },
   { key: "receiveFreq", label: "Receive pitch", group: "Sounds", type: "range", cssVar: "--sound-receive-freq", default: "523", min: 200, max: 1200, step: 10, unit: "" },
+
+  // Community Apps — the store grid and the frame a community app runs in.
+  // Kept as their own group so a skin can restyle the store without touching the
+  // wallet's panels, and so the store stays sellable/skinnable like everything else.
+  { key: "appCardBg", label: "App card background", group: "Community Apps", type: "color", cssVar: "--app-card-bg", default: "240 6% 14%" },
+  { key: "appCardRadius", label: "App card corners", group: "Community Apps", type: "range", cssVar: "--app-card-radius", default: "12px", min: 0, max: 28, step: 1, unit: "px" },
+  { key: "appCardOutline", label: "App card outline", group: "Community Apps", type: "range", cssVar: "--app-card-outline-width", default: "1px", min: 0, max: 6, step: 1, unit: "px" },
+  { key: "appCardOutlineColor", label: "App card outline color", group: "Community Apps", type: "color", cssVar: "--app-card-outline-color", default: "240 5% 26%" },
+  { key: "appGridGap", label: "Grid spacing", group: "Community Apps", type: "range", cssVar: "--app-grid-gap", default: "16px", min: 4, max: 40, step: 2, unit: "px" },
+  { key: "appCardMin", label: "Card width", group: "Community Apps", type: "range", cssVar: "--app-card-min", default: "240px", min: 160, max: 420, step: 10, unit: "px" },
 ];
 
-export const TOKEN_GROUPS = ["Colors", "Typography", "Panel", "Sub-panels", "Sounds"];
+export const TOKEN_GROUPS = ["Colors", "Typography", "Panel", "Sub-panels", "Sounds", "Community Apps"];
