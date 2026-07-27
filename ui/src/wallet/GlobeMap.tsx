@@ -45,7 +45,6 @@ const UP = new THREE.Vector3(0, 1, 0);
 
 // Hex-stream + helix tuning.
 const HEX = "0123456789ABCDEF";
-const TURNS = 6;
 const HELIX_R = 0.6;
 const LINE_PX = 2; // strand line width in SCREEN pixels (constant at any zoom)
 const SPACING = 1.75; // world-units between characters (2x denser); constant per arc
@@ -143,6 +142,17 @@ function tangent(nrm: THREE.Vector3): { east: THREE.Vector3; north: THREE.Vector
   const east = new THREE.Vector3().crossVectors(ref, nrm).normalize();
   const north = new THREE.Vector3().crossVectors(nrm, east).normalize();
   return { east, north };
+}
+
+// Coils scale with distance so a helix is never over-compressed or over-stretched:
+// ~50km per coil near the 300km helix threshold, easing (smoothstep) out to
+// ~200km per coil at 1000km, and a constant 200km per coil beyond.
+function coilsFor(ang: number): number {
+  const km = ang * 6371; // globe angle -> Earth km
+  const t = Math.max(0, Math.min(1, (km - 300) / 700));
+  const s = t * t * (3 - 2 * t);
+  const W = 50 + 150 * s; // km per coil
+  return Math.max(1, km / W);
 }
 
 const DEG = Math.PI / 180;
@@ -308,7 +318,8 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
       }
       const curve = new THREE.CatmullRomCurve3(centerPts);
       const len = ang * TIP_R;
-      const K = Math.max(96, Math.min(400, TURNS * 16 + Math.round(len)));
+      const turns = coilsFor(ang);
+      const K = Math.max(96, Math.min(800, Math.round(turns * 16) + Math.round(len)));
       const spinePts = curve.getSpacedPoints(K);
       const fr = curve.computeFrenetFrames(K, false);
       const sIdx = streams.length;
@@ -324,7 +335,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
         for (let k = 0; k <= K; k++) {
           const t = k / K;
           const c = spinePts[k], nrm = fr.normals[k], bn = fr.binormals[k];
-          const th = t * TURNS * 2 * Math.PI + phase;
+          const th = t * turns * 2 * Math.PI + phase;
           const co = Math.cos(th) * hr, si = Math.sin(th) * hr;
           const px = c.x + nrm.x * co + bn.x * si, py = c.y + nrm.y * co + bn.y * si, pz = c.z + nrm.z * co + bn.z * si;
           hp[k * 3] = px; hp[k * 3 + 1] = py; hp[k * 3 + 2] = pz;
