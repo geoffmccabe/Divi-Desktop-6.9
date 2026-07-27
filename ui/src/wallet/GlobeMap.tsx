@@ -54,6 +54,9 @@ const MAX_PEER = 24;
 const MAX_MESH = 120;
 const PEER_COLOR = new THREE.Color(0xb28cff);
 const MESH_COLOR = new THREE.Color(0x4aa3ff);
+// Dimmer blue for the network glyphs (additive blend => halved colour ~ 50%
+// opacity), to cut clutter.
+const MESH_GLYPH = new THREE.Color(0x4aa3ff).multiplyScalar(0.5);
 
 let atlasTex: THREE.Texture | null = null;
 function getAtlas(): THREE.Texture {
@@ -367,7 +370,8 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
       // Close nodes (< ~300km): no helix, a single straight arc; characters flow
       // both ways on it. Far nodes: full double helix.
       const helix = ang >= NEAR_ANG;
-      const hr = helix ? HELIX_R : 0;
+      // Network (blue) helixes are narrower (strands 50% closer) than peer ones.
+      const hr = helix ? (conn.mesh ? HELIX_R * 0.5 : HELIX_R) : 0;
       for (let strand = 0; strand < 2; strand++) {
         const phase = strand * Math.PI;
         const hpVec: THREE.Vector3[] = [];
@@ -386,7 +390,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
         // at any zoom (unlike a world-space tube, which balloons when zoomed in).
         if (helix || strand === 0) {
           const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(hpVec), K, TUBE_R, 4, false);
-          group.add(new THREE.Mesh(tube, new THREE.MeshBasicMaterial({ color: conn.mesh ? MESH_COLOR : PEER_COLOR, transparent: true, opacity: 0.2, depthWrite: false })));
+          group.add(new THREE.Mesh(tube, new THREE.MeshBasicMaterial({ color: conn.mesh ? MESH_COLOR : PEER_COLOR, transparent: true, opacity: conn.mesh ? 0.1 : 0.2, depthWrite: false })));
         }
         strands.push({ hp, K, dir: strand === 0 ? 1 : -1 });
       }
@@ -404,7 +408,7 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
       const gcol = new Float32Array(N * 3);
       for (let i = 0; i < N; i++) {
         gly[i] = Math.floor(Math.random() * 16);
-        const col = isMesh[i] ? MESH_COLOR : PEER_COLOR;
+        const col = isMesh[i] ? MESH_GLYPH : PEER_COLOR;
         gcol[i * 3] = col.r; gcol[i * 3 + 1] = col.g; gcol[i * 3 + 2] = col.b;
       }
       const geo = new THREE.BufferGeometry();
