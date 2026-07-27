@@ -153,6 +153,36 @@ function coilsFor(ang: number): number {
 }
 
 const DEG = Math.PI / 180;
+// Initial compass bearing (deg 0-360) from A to B, for spreading mesh links by
+// direction so they don't stack on top of each other.
+function bearingDeg(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const la1 = aLat * DEG, la2 = bLat * DEG, dlo = (bLng - aLng) * DEG;
+  const y = Math.sin(dlo) * Math.cos(la2);
+  const x = Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dlo);
+  return (Math.atan2(y, x) / DEG + 360) % 360;
+}
+function angDiffDeg(a: number, b: number): number {
+  const d = Math.abs(a - b) % 360;
+  return d > 180 ? 360 - d : d;
+}
+// Greedily pick n candidates whose bearings are spread as far apart as possible
+// (seed with the first = nearest, then keep adding the most different bearing).
+function pickSpread<T extends { bearing: number }>(cands: T[], n: number): T[] {
+  if (cands.length <= n) return cands.slice();
+  const picked: T[] = [cands[0]];
+  while (picked.length < n) {
+    let best: T | null = null, bestGap = -1;
+    for (const c of cands) {
+      if (picked.includes(c)) continue;
+      let minGap = 360;
+      for (const p of picked) minGap = Math.min(minGap, angDiffDeg(c.bearing, p.bearing));
+      if (minGap > bestGap) { bestGap = minGap; best = c; }
+    }
+    if (!best) break;
+    picked.push(best);
+  }
+  return picked;
+}
 function angDeg(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const la1 = aLat * DEG, la2 = bLat * DEG, dlo = (bLng - aLng) * DEG;
   const c = Math.sin(la1) * Math.sin(la2) + Math.cos(la1) * Math.cos(la2) * Math.cos(dlo);
@@ -271,19 +301,37 @@ export function GlobeMap({ points, center }: { points: GlobePoint[]; arcs: Globe
         if (t) { conns.push({ a: selfTip, b: t, mesh: false }); n++; }
       }
     }
-    const netTips = pts0.filter((p) => p.kind === "net").map((p) => tipOf.get(p.ip)!).filter(Boolean);
-    const drawn = new Set<string>();
-    const meshPairs: [number, number][] = [];
-    for (let a = 0; a < netTips.length; a++) {
-      const near = netTips.map((_, b) => ({ b, d: a === b ? Infinity : netTips[a].distanceTo(netTips[b]) })).sort((x, y) => x.d - y.d).slice(0, 3);
-      for (const { b } of near) {
-        const key = a < b ? `${a}-${b}` : `${b}-${a}`;
-        if (drawn.has(key)) continue;
-        drawn.add(key);
-        meshPairs.push([a, b]);
+    // Background network meshed PER CITY (not per tower), so grouped towers don't
+    // each sprout their own tangle. Each city links to a few near + a few far
+    // cities, chosen so their bearings fan out rather than stack up.
+    interface City { lat: number; lng: number; tip: THREE.Vector3; dir: THREE.Vector3; }
+    const cities: City[] = [];
+    for (const grp of groups.values()) {
+      if (!grp.some((p) => p.kind === "net")) continue;
+      const p0 = grp[0];
+      const dir = surfaceOf(p0.lat, p0.lng).normalize();
+      cities.push({ lat: p0.lat, lng: p0.lng, dir, tip: dir.clone().multiplyScalar(TIP_R) });
+    }
+    const NEAR_N = 3, FAR_N = 3, NEAR_POOL = 8;
+    const meshKeys = new Set<string>();
+    for (let i = 0; i < cities.length; i++) {
+      const ci = cities[i];
+      const cand = cities
+        .map((cj, j) => ({
+          j,
+          ang: Math.acos(Math.max(-1, Math.min(1, ci.dir.dot(cj.dir)))),
+          bearing: bearingDeg(ci.lat, ci.lng, cj.lat, cj.lng),
+        }))
+        .filter((c) => c.j !== i)
+        .sort((a, b) => a.ang - b.ang);
+      const chosen = [...pickSpread(cand.slice(0, NEAR_POOL), NEAR_N), ...pickSpread(cand.slice(NEAR_POOL), FAR_N)];
+      for (const c of chosen) {
+        const key = i < c.j ? `${i}-${c.j}` : `${c.j}-${i}`;
+        if (meshKeys.has(key)) continue;
+        meshKeys.add(key);
+        if (conns.length < MAX_MESH + MAX_PEER) conns.push({ a: ci.tip, b: cities[c.j].tip, mesh: true });
       }
     }
-    for (const [a, b] of meshPairs.slice(0, MAX_MESH)) conns.push({ a: netTips[a], b: netTips[b], mesh: true });
 
     const streams: Stream[] = [];
     const glyphs: Glyph[] = [];
