@@ -440,6 +440,54 @@ or click, and each is safe to stop after.
 **Done when:** the wallet behaves identically with the policy on, and Geoff has
 run his own normal session against the build without noticing a difference.
 
+### Block A — STATUS: policy shipped, awaiting Geoff's normal-use pass
+
+Shipped in commit `b8cae5a`. The policy now in `crates/app/tauri.conf.json`:
+
+```
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:;
+connect-src 'self' ipc: http://ipc.localhost https://nodes.divi.love;
+frame-src 'none'; worker-src 'none'; object-src 'none';
+base-uri 'self'; form-action 'none'; frame-ancestors 'none'
+```
+
+**What the inventory found:**
+
+- The whole front end builds to **one 3.6 MB inline script** in a single HTML
+  file (`vite-plugin-singlefile`). No external scripts, no CDN, no web fonts.
+- No web workers, no WebAssembly. `worker-src 'none'` is therefore free.
+- Images and media come from `data:` and `blob:` URIs only.
+- The only network call made by the front end itself is to `nodes.divi.love`
+  (the identity service, not yet deployed). Everything else — price, geolocation,
+  the AI gateway, the explorer — is called from Rust or opened in the real
+  browser, so it never touches the page's policy.
+
+**Why an inline bundle still works under `script-src 'self'`:** Tauri hashes every
+non-empty inline script at build time and injects the hash into the policy — but
+only when a policy is configured, which it was not before. Verified by computing
+the SHA-256 of the shipped script and matching it against the hash compiled into
+the binary.
+
+**Why `style-src` keeps `'unsafe-inline'`:** React style attributes and the theme
+system both write inline styles, and hashes cannot cover style *attributes*. Tauri
+is told not to modify `style-src`, because adding a nonce there would make the
+browser ignore `'unsafe-inline'` and break every themed surface. Scripts — the
+part that actually matters — stay strict.
+
+**Verified working with the policy on:** the 3D globe, live block stream, balances,
+staking status, lottery countdown, price, peer and node counts, address list.
+
+**Still to confirm, by Geoff using it normally:** send, receive and the QR code,
+proof of existence, collectibles, tokens, governance, human-readable addresses,
+address book, settings, the admin drawer and skins, and the agent panel's video.
+These are expected to pass — they rely on `data:`/`blob:`, which the policy allows
+— but expected is not verified.
+
+**Deliberately deferred to Block B:** `frame-src` stays `'none'` until there is
+something to frame. It gets exactly two entries later: the app sandbox, and
+YouTube's nocookie host.
+
 ### Block B — the runtime and the store panel
 
 *Needs nothing from Geoff except a look at the result.*
