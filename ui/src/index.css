@@ -237,6 +237,11 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .bl-amt em { font-size: 0.85rem; font-style: normal; color: hsl(var(--muted-foreground)); }
 /* Staking amount: 2pt smaller than Spendable, and half the gap before "DIVI". */
 .bl-amt-staking { font-size: 1.33rem; gap: 6px; }
+/* At-a-glance staking health dot next to the "Staking" label. */
+.stake-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.stake-dot.on { background: hsl(var(--success)); box-shadow: 0 0 5px hsl(var(--success)); }
+.stake-dot.off { background: hsl(38 95% 55%); animation: stake-nudge 1.6s ease-in-out infinite; }
+@keyframes stake-nudge { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; box-shadow: 0 0 6px hsl(38 95% 55%); } }
 .bl-sub { width: 100%; font-size: 0.8rem; color: hsl(var(--muted-foreground)); display: flex; gap: 12px; }
 
 .wl-status-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }

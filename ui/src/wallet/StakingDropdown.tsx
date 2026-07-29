@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { stakingWallets, lotteryWins, startStaking, type StakeWallet, type LotteryWin } from "./api";
 import { nodeStatus } from "../bridge";
 import { loadNames } from "./addressNames";
@@ -12,82 +12,124 @@ const MATURITY_HELP =
   "Coins you receive must “age” for about 1 hour before they can stake — this keeps staking fair. " +
   "Once mature they stake for good. See Settings → Coin Maturity for a live countdown of each deposit.";
 
+// Animated "…" so a wait reads as "working", never frozen or wrong.
+function Ellipsis() {
+  const [n, setN] = useState(1);
+  useEffect(() => {
+    const id = setInterval(() => setN((x) => (x % 3) + 1), 400);
+    return () => clearInterval(id);
+  }, []);
+  return <span>{".".repeat(n)}</span>;
+}
+
+// The button reflects the node's CONFIRMED staking state, plus honest transitional
+// states. It never claims "Staking" until the node actually reports it — the fix
+// for the old ~10s window where it said staking before the node had started.
+//   checking → we don't know yet (opening, or waiting for the node to confirm an
+//              action). Shows "Checking blockchain…" animated.
+//   idle     → confirmed NOT staking. Shows "Start Staking" (+ reason if any).
+//   needpass → starting needs the wallet password. Shows the password field.
+//   staking  → confirmed staking. Shows "Staking · Click to Stop" (green).
+type StakeState = "checking" | "idle" | "needpass" | "staking";
+
 function StartStaking() {
-  const [msg, setMsg] = useState<string | null>(null);
-  const [needPass, setNeedPass] = useState(false);
+  const [state, setState] = useState<StakeState>(() => (stakingDesired() ? "checking" : "checking"));
   const [pass, setPass] = useState("");
-  const [busy, setBusy] = useState(false);
-  // Start from the remembered intent so the button shows the RIGHT state the
-  // instant the panel opens — no "Start Staking" flashing before it flips to the
-  // staking state. The live node check then confirms/corrects it.
-  const [staking, setStaking] = useState<boolean>(() => stakingDesired());
+  const [reason, setReason] = useState<string | null>(null); // why it's not staking (idle)
+  const [err, setErr] = useState<string | null>(null); // password error
+  // While confirming an action, hold "checking" and poll fast until the node's
+  // state matches what we're waiting for (or the window elapses).
+  const confirm = useRef<{ until: number; target: "on" | "off" } | null>(null);
 
   useEffect(() => {
     let alive = true;
-    const check = async () => {
+    let timer: number;
+    const tick = async () => {
       try {
         const s = await nodeStatus();
-        if (alive) setStaking(s.phase === "staking");
+        if (alive) {
+          const isStaking = s.phase === "staking";
+          const c = confirm.current;
+          if (c && performance.now() < c.until) {
+            if (c.target === "on" && isStaking) {
+              confirm.current = null;
+              setState("staking");
+            } else if (c.target === "off" && !isStaking) {
+              confirm.current = null;
+              setReason(null);
+              setState("idle");
+            } else {
+              setState("checking"); // still waiting — keep the animated label
+            }
+          } else {
+            confirm.current = null;
+            setState((prev) => (prev === "needpass" ? prev : isStaking ? "staking" : "idle"));
+            if (!isStaking) setReason(s.headline || null);
+          }
+        }
       } catch {
-        /* leave as-is */
+        /* keep current state */
       }
+      const fast = confirm.current != null && performance.now() < confirm.current.until;
+      timer = window.setTimeout(tick, fast ? 1500 : 8000);
     };
-    check();
-    const id = setInterval(check, 8000);
+    tick();
     return () => {
       alive = false;
-      clearInterval(id);
+      clearTimeout(timer);
     };
   }, []);
 
   const go = async (passphrase?: string) => {
-    setBusy(true);
+    setErr(null);
+    setState("checking");
     try {
       const r = await startStaking(passphrase);
-      setNeedPass(r.needsPassphrase);
-      // Only surface a message when something needs the user (a password, or a
-      // reason it's NOT staking). Success is shown by the button, not a message.
-      setMsg(r.staking ? null : r.message);
+      if (r.needsPassphrase) {
+        confirm.current = null;
+        setState("needpass");
+        if (passphrase) setErr("That password didn't work. Try again.");
+        return;
+      }
+      setStakingDesired(true);
+      setPass("");
       if (r.staking) {
-        setStaking(true);
-        setStakingDesired(true); // remember: resume staking on next open
-        setPass("");
+        confirm.current = null;
+        setState("staking");
+      } else {
+        // Unlocked, but the node hasn't begun staking yet — hold "checking" and
+        // let the fast poll confirm when it actually starts (usually seconds).
+        confirm.current = { until: performance.now() + 30000, target: "on" };
+        setReason(r.message);
       }
     } catch (e) {
-      setMsg(String(e));
+      confirm.current = null;
+      setReason(String(e));
+      setState("idle");
     }
-    setBusy(false);
   };
 
-  // Stop staking = lock the wallet (it was unlocked staking-only). Update the
-  // button IMMEDIATELY, then do the RPC, so there's no lag on click.
+  // Stop = lock the wallet (it was unlocked staking-only). Hold "checking" until
+  // the node confirms it's stopped, so the button can't be flipped back by a poll.
   const stop = async () => {
-    setStaking(false);
     setStakingDesired(false);
-    setMsg(null);
+    confirm.current = { until: performance.now() + 20000, target: "off" };
+    setState("checking");
     try {
       await lockWallet();
     } catch (e) {
-      setMsg(String(e));
+      setErr(String(e));
     }
   };
 
-  return (
-    <div className="stake-start">
-      <button
-        type="button"
-        className={"wl-btn " + (staking ? "wl-btn-staking" : "wl-btn-primary")}
-        disabled={busy}
-        onClick={() => (staking ? stop() : go())}
-      >
-        {busy ? "Starting…" : staking ? "Staking · Click to Stop" : "Start Staking"}
-      </button>
-      {needPass && !staking && (
+  if (state === "needpass") {
+    return (
+      <div className="stake-start">
         <form
           className="stake-start-pass"
           onSubmit={(e) => {
             e.preventDefault();
-            go(pass);
+            if (pass) go(pass);
           }}
         >
           <input
@@ -98,13 +140,35 @@ function StartStaking() {
             onChange={(e) => setPass(e.target.value)}
             autoFocus
           />
-          <button type="submit" className="wl-btn" disabled={busy || !pass}>Unlock &amp; stake</button>
+          <button type="submit" className="wl-btn wl-btn-primary" disabled={!pass}>
+            Unlock &amp; Stake
+          </button>
         </form>
-      )}
-      {msg && !staking && (
+        {err && <p className="stake-start-msg">{err}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="stake-start">
+      <button
+        type="button"
+        className={"wl-btn " + (state === "staking" ? "wl-btn-staking" : "wl-btn-primary")}
+        disabled={state === "checking"}
+        onClick={() => (state === "staking" ? stop() : go())}
+      >
+        {state === "checking" ? (
+          <>Checking blockchain<Ellipsis /></>
+        ) : state === "staking" ? (
+          "Staking · Click to Stop"
+        ) : (
+          "Start Staking"
+        )}
+      </button>
+      {state === "idle" && reason && (
         <p className="stake-start-msg">
-          {msg}
-          {/mature/i.test(msg) && <InfoDot text={MATURITY_HELP} />}
+          {reason}
+          {/mature/i.test(reason) && <InfoDot text={MATURITY_HELP} />}
         </p>
       )}
     </div>

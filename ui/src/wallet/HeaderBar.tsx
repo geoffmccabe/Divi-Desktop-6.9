@@ -123,6 +123,13 @@ export function HeaderBar() {
       <div className="hdr-panel glass-panel hdr-staking-panel">
         <button type="button" className="hdr-staking-btn" onClick={() => toggle("staking")}>
           <span className="bl-label">
+            {/* At-a-glance staking health: green = staking; amber pulse = you have
+                coins that could be staking but aren't; nothing = no coins yet. */}
+            {bal && bal.staking > 0 ? (
+              <span className="stake-dot on" title="Staking" />
+            ) : bal && bal.spendable > 0 ? (
+              <span className="stake-dot off" title="You have coins that could be staking — open to start." />
+            ) : null}
             Staking <span className={"addr-chevron" + (openPanel === "staking" ? " up" : "")}>▾</span>
           </span>
           <span className="bl-amt bl-amt-staking">
