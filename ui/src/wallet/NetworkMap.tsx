@@ -12,7 +12,7 @@ import { GlobeMap, type GlobePoint, type GlobeArc } from "./GlobeMap";
 import { NewestNodesPanel } from "./NewestNodesPanel";
 import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
 import { classifyNode } from "./nodeTypes";
-import { pulseProgress } from "./activityPulse";
+import { pulseProgress, pulseActivity } from "./activityPulse";
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
@@ -349,6 +349,18 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   useEffect(() => {
     baselineNewNodes();
     newNodesRef.current = newNodes(loadKnown());
+  }, []);
+
+  // Press "u" (Update) to fire the gold query ripple — your node pinging the
+  // network and the answer returning. Ignored while typing in a field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if ((e.key === "u" || e.key === "U") && !e.metaKey && !e.ctrlKey && !e.altKey) pulseActivity();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
   useEffect(() => {
