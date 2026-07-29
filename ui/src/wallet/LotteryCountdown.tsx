@@ -33,19 +33,18 @@ export function LotteryCountdown({ info }: { info: LotteryInfo | null }) {
 
   const etaMs = info.nextEta * 1000;
   const remaining = Math.max(0, (etaMs - now) / 1000);
-  const when = new Date(etaMs).toLocaleString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  // Built from separate date + time parts so the locale can't wedge an "at"
+  // between them, and the AM/PM sits flush to the time. → "Mon, Aug 3 07:28AM"
+  const d = new Date(etaMs);
+  const datePart = d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+  const timePart = d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }).replace(/\s+/g, "");
+  const when = `${datePart} ${timePart}`;
 
   return (
     <div className="hdr-lottery">
       <span className="bl-label">Next Lottery</span>
       <span className="lot-count">{fmtCountdown(remaining)}</span>
-      <span className="lot-when">≈ {when}</span>
+      <span className="lot-when">{when}</span>
     </div>
   );
 }

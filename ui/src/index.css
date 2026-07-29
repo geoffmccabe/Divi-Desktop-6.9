@@ -235,6 +235,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .bl-amt { font-size: 1.5rem; font-weight: 600; color: hsl(var(--foreground)); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .bl-divi { white-space: nowrap; }
 .bl-amt em { font-size: 0.85rem; font-style: normal; color: hsl(var(--muted-foreground)); }
+/* Staking amount: 2pt smaller than Spendable, and half the gap before "DIVI". */
+.bl-amt-staking { font-size: 1.33rem; gap: 6px; }
 .bl-sub { width: 100%; font-size: 0.8rem; color: hsl(var(--muted-foreground)); display: flex; gap: 12px; }
 
 .wl-status-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
@@ -260,8 +262,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
   background: hsl(var(--background) / 0.5); color: hsl(var(--foreground)); font-size: 0.85rem; white-space: nowrap;
 }
 .wl-btn-primary { background: hsl(var(--primary)); border-color: transparent; color: #fff; }
-/* Active-staking state: green, so "Now Staking" reads as on/good, not clickable. */
-.wl-btn-staking { background: hsl(var(--success)); border-color: transparent; color: #fff; opacity: 1; cursor: default; }
+/* Active-staking state: green, so "Staking · Click to Stop" reads as on/good. */
+.wl-btn-staking { background: hsl(var(--success)); border-color: transparent; color: #fff; opacity: 1; }
 .wl-btn:disabled { opacity: 0.5; cursor: default; }
 .wl-link { border: none; background: none; color: hsl(var(--primary)); cursor: pointer; font-size: 0.85rem; }
 .wl-note { font-size: 0.85rem; color: hsl(var(--muted-foreground)); max-width: 460px; }

@@ -125,7 +125,7 @@ export function HeaderBar() {
           <span className="bl-label">
             Staking <span className={"addr-chevron" + (openPanel === "staking" ? " up" : "")}>▾</span>
           </span>
-          <span className="bl-amt">
+          <span className="bl-amt bl-amt-staking">
             {bal ? fmtDiviParts(bal.staking).whole : "—"} <em>DIVI</em>
           </span>
         </button>

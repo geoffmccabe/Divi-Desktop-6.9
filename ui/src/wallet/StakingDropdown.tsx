@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { stakingWallets, lotteryWins, startStaking, type StakeWallet, type LotteryWin } from "./api";
 import { nodeStatus } from "../bridge";
 import { loadNames } from "./addressNames";
-import { setStakingDesired } from "./stakeWin";
+import { setStakingDesired, stakingDesired } from "./stakeWin";
+import { lockWallet } from "./api";
 import { fmtDivi } from "../status";
 import { Icon } from "../Icon";
 import { InfoDot } from "../InfoDot";
@@ -16,9 +17,10 @@ function StartStaking() {
   const [needPass, setNeedPass] = useState(false);
   const [pass, setPass] = useState("");
   const [busy, setBusy] = useState(false);
-  // Live staking state, so the button reflects reality instead of only changing
-  // after a click. `staking` = the node reports it's actively staking now.
-  const [staking, setStaking] = useState<boolean | null>(null);
+  // Start from the remembered intent so the button shows the RIGHT state the
+  // instant the panel opens — no "Start Staking" flashing before it flips to the
+  // staking state. The live node check then confirms/corrects it.
+  const [staking, setStaking] = useState<boolean>(() => stakingDesired());
 
   useEffect(() => {
     let alive = true;
@@ -57,15 +59,28 @@ function StartStaking() {
     setBusy(false);
   };
 
+  // Stop staking = lock the wallet (it was unlocked staking-only). Update the
+  // button IMMEDIATELY, then do the RPC, so there's no lag on click.
+  const stop = async () => {
+    setStaking(false);
+    setStakingDesired(false);
+    setMsg(null);
+    try {
+      await lockWallet();
+    } catch (e) {
+      setMsg(String(e));
+    }
+  };
+
   return (
     <div className="stake-start">
       <button
         type="button"
-        className={"wl-btn wl-btn-primary" + (staking ? " wl-btn-staking" : "")}
-        disabled={busy || staking === true}
-        onClick={() => go()}
+        className={"wl-btn " + (staking ? "wl-btn-staking" : "wl-btn-primary")}
+        disabled={busy}
+        onClick={() => (staking ? stop() : go())}
       >
-        {busy ? "Starting…" : staking ? "Now Staking" : "Start Staking"}
+        {busy ? "Starting…" : staking ? "Staking · Click to Stop" : "Start Staking"}
       </button>
       {needPass && !staking && (
         <form
