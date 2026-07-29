@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { stakingWallets, lotteryWins, startStaking, type StakeWallet, type LotteryWin } from "./api";
+import { nodeStatus } from "../bridge";
 import { loadNames } from "./addressNames";
 import { setStakingDesired } from "./stakeWin";
 import { fmtDivi } from "../status";
@@ -15,14 +16,38 @@ function StartStaking() {
   const [needPass, setNeedPass] = useState(false);
   const [pass, setPass] = useState("");
   const [busy, setBusy] = useState(false);
+  // Live staking state, so the button reflects reality instead of only changing
+  // after a click. `staking` = the node reports it's actively staking now.
+  const [staking, setStaking] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const s = await nodeStatus();
+        if (alive) setStaking(s.phase === "staking");
+      } catch {
+        /* leave as-is */
+      }
+    };
+    check();
+    const id = setInterval(check, 8000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, []);
 
   const go = async (passphrase?: string) => {
     setBusy(true);
     try {
       const r = await startStaking(passphrase);
       setNeedPass(r.needsPassphrase);
-      setMsg(r.message);
+      // Only surface a message when something needs the user (a password, or a
+      // reason it's NOT staking). Success is shown by the button, not a message.
+      setMsg(r.staking ? null : r.message);
       if (r.staking) {
+        setStaking(true);
         setStakingDesired(true); // remember: resume staking on next open
         setPass("");
       }
@@ -34,10 +59,15 @@ function StartStaking() {
 
   return (
     <div className="stake-start">
-      <button type="button" className="wl-btn wl-btn-primary" disabled={busy} onClick={() => go()}>
-        {busy ? "Starting…" : "Start Staking"}
+      <button
+        type="button"
+        className={"wl-btn wl-btn-primary" + (staking ? " wl-btn-staking" : "")}
+        disabled={busy || staking === true}
+        onClick={() => go()}
+      >
+        {busy ? "Starting…" : staking ? "Now Staking" : "Start Staking"}
       </button>
-      {needPass && (
+      {needPass && !staking && (
         <form
           className="stake-start-pass"
           onSubmit={(e) => {
@@ -56,7 +86,7 @@ function StartStaking() {
           <button type="submit" className="wl-btn" disabled={busy || !pass}>Unlock &amp; stake</button>
         </form>
       )}
-      {msg && (
+      {msg && !staking && (
         <p className="stake-start-msg">
           {msg}
           {/mature/i.test(msg) && <InfoDot text={MATURITY_HELP} />}

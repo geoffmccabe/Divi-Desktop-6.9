@@ -413,6 +413,15 @@ pub fn balance(cfg: &NodeConfig) -> Option<Balance> {
     let rpc = RpcClient::new(cfg);
     let w = rpc.call("getwalletinfo", json!([])).ok()?;
     let f = |k: &str| w[k].as_f64().unwrap_or(0.0);
+    // The amount actually staking is NOT in getwalletinfo (it has no
+    // staking_balance field, so that read was always 0). It lives in
+    // getstakingstatus.staking_balance — the mature coins the node is staking
+    // with. Fall back to 0 if the node can't report it.
+    let staking = rpc
+        .call("getstakingstatus", json!([]))
+        .ok()
+        .and_then(|s| s["staking_balance"].as_f64())
+        .unwrap_or(0.0);
     Some(Balance {
         // Older Divi exposes spendable_balance; fall back to plain balance.
         spendable: if w.get("spendable_balance").is_some() {
@@ -420,7 +429,7 @@ pub fn balance(cfg: &NodeConfig) -> Option<Balance> {
         } else {
             f("balance")
         },
-        staking: f("staking_balance"),
+        staking,
         pending: f("unconfirmed_balance"),
         immature: f("immature_balance"),
     })

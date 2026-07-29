@@ -260,6 +260,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
   background: hsl(var(--background) / 0.5); color: hsl(var(--foreground)); font-size: 0.85rem; white-space: nowrap;
 }
 .wl-btn-primary { background: hsl(var(--primary)); border-color: transparent; color: #fff; }
+/* Active-staking state: green, so "Now Staking" reads as on/good, not clickable. */
+.wl-btn-staking { background: hsl(var(--success)); border-color: transparent; color: #fff; opacity: 1; cursor: default; }
 .wl-btn:disabled { opacity: 0.5; cursor: default; }
 .wl-link { border: none; background: none; color: hsl(var(--primary)); cursor: pointer; font-size: 0.85rem; }
 .wl-note { font-size: 0.85rem; color: hsl(var(--muted-foreground)); max-width: 460px; }
