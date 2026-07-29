@@ -3,6 +3,7 @@ import Globe, { type GlobeMethods } from "react-globe.gl";
 import * as THREE from "three";
 import earthNight from "../assets/earth-night.jpg";
 import diviLogo from "../assets/divi-coin.webp";
+import { pulseProgress } from "./activityPulse";
 
 // The node map on a real 3D globe. Nodes are custom "Node Towers" (a slim square
 // pyramid with a sphere on its tip), packed apart when co-located. Each
@@ -270,7 +271,7 @@ function frameNodes(points: GlobePoint[]): { lat: number; lng: number; altitude:
 }
 
 interface Strand { hp: Float32Array; K: number; dir: number; }
-interface Stream { strands: Strand[]; mult: number; nextDecide: number; flow: number; a: THREE.Vector3; b: THREE.Vector3; visible: boolean; }
+interface Stream { strands: Strand[]; mult: number; nextDecide: number; flow: number; a: THREE.Vector3; b: THREE.Vector3; visible: boolean; mesh: boolean; off: number; gold: number; }
 interface Glyph { s: number; strand: number; base: number; }
 
 export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null; getWinnerIp?: () => string | null }) {
@@ -462,13 +463,18 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
         }
         strands.push({ hp, K, dir: strand === 0 ? 1 : -1 });
       }
-      streams.push({ strands, mult: 0.7 + Math.random() * 0.6, nextDecide: now0 + Math.random() * 10000, flow: Math.random(), a: conn.a, b: conn.b, visible: true });
+      // mesh = a peer→network arc (stage B/C of the query ripple); !mesh = a
+      // self→peer helix (stage A/D). off = ±200ms per-connection timing jitter so
+      // the gold pulses stagger instead of moving in lockstep.
+      streams.push({ strands, mult: 0.7 + Math.random() * 0.6, nextDecide: now0 + Math.random() * 10000, flow: Math.random(), a: conn.a, b: conn.b, visible: true, mesh: conn.mesh, off: (Math.random() - 0.5) * 400, gold: 0 });
       const ch = Math.max(3, Math.min(CH_CAP, Math.round(len / SPACING)));
       for (let strand = 0; strand < 2; strand++)
         for (let p = 0; p < ch; p++) { glyphs.push({ s: sIdx, strand, base: p / ch }); isMesh.push(conn.mesh); }
     }
 
     let posAttr: THREE.BufferAttribute | null = null;
+    let gcolAttr: THREE.BufferAttribute | null = null; // retinted gold during a pulse
+    let baseColors: Float32Array | null = null; // resting colours to restore to
     if (glyphs.length) {
       const N = glyphs.length;
       const pos = new Float32Array(N * 3);
@@ -479,11 +485,13 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
         const col = isMesh[i] ? MESH_GLYPH : PEER_COLOR;
         gcol[i * 3] = col.r; gcol[i * 3 + 1] = col.g; gcol[i * 3 + 2] = col.b;
       }
+      baseColors = gcol.slice(); // remember the resting colours to restore to
       const geo = new THREE.BufferGeometry();
       posAttr = new THREE.BufferAttribute(pos, 3);
       geo.setAttribute("position", posAttr);
       geo.setAttribute("glyph", new THREE.BufferAttribute(gly, 1));
-      geo.setAttribute("gcolor", new THREE.BufferAttribute(gcol, 3));
+      gcolAttr = new THREE.BufferAttribute(gcol, 3);
+      geo.setAttribute("gcolor", gcolAttr);
       const mat = new THREE.ShaderMaterial({
         uniforms: { atlas: { value: getAtlas() }, sizeScale: { value: 700 } },
         vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
@@ -529,6 +537,7 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
 
     let raf = 0;
     let last = performance.now();
+    let goldOn = false; // was the gold ripple painting last frame (to restore once)
     const animate = () => {
       const now = performance.now();
       const dt = Math.min(0.1, (now - last) / 1000);
@@ -563,6 +572,11 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
         }
       }
 
+      // Gold query ripple: each connection lights gold as the pulse passes — the
+      // self→peer helixes on stages A/D, the peer→network arcs on B/C — each on
+      // its own ±200ms jittered clock. bump() = a smooth rise-and-fall.
+      const bump = (x: number) => (x > 0 && x < 1 ? Math.sin(Math.PI * x) : 0);
+      let anyGold = false;
       for (const st of streams) {
         const da = (cam.x - st.a.x) * st.a.x + (cam.y - st.a.y) * st.a.y + (cam.z - st.a.z) * st.a.z;
         const db = (cam.x - st.b.x) * st.b.x + (cam.y - st.b.y) * st.b.y + (cam.z - st.b.z) * st.b.z;
@@ -574,6 +588,24 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
           st.mult = Math.max(0.5, Math.min(1.5, st.mult + d * 0.1));
         }
         st.flow += BASE_FLOW * st.mult * dt;
+        const pu = pulseProgress(now + st.off);
+        st.gold = pu.active ? (st.mesh ? Math.max(bump(pu.b), bump(pu.c)) : Math.max(bump(pu.a), bump(pu.d))) : 0;
+        if (st.gold > 0.01) anyGold = true;
+      }
+      // Blend the flowing characters toward gold by their connection's gold level,
+      // then restore once the pulse is fully over.
+      if (gcolAttr && baseColors && (anyGold || goldOn)) {
+        const gc = gcolAttr.array as Float32Array;
+        const GR = 1.0, GG = 0.82, GB = 0.25; // #ffd23f
+        for (let i = 0; i < glyphs.length; i++) {
+          const g = streams[glyphs[i].s].gold;
+          const b0 = baseColors[i * 3], b1 = baseColors[i * 3 + 1], b2 = baseColors[i * 3 + 2];
+          gc[i * 3] = b0 + (GR - b0) * g;
+          gc[i * 3 + 1] = b1 + (GG - b1) * g;
+          gc[i * 3 + 2] = b2 + (GB - b2) * g;
+        }
+        gcolAttr.needsUpdate = true;
+        goldOn = anyGold; // one final restore pass when it goes false
       }
       if (posAttr) {
         const arr = posAttr.array as Float32Array;

@@ -1289,24 +1289,28 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       // ── Blockchain-activity ripple (gold) ────────────────────────────────
       // A query propagating and returning: A self→peers, B peers→network,
       // C network→peers, D peers→self. Fired by pulseActivity() on chain work.
-      const pulse = pulseProgress(now);
-      if (pulse.active && selfXY) {
+      // Active if any element could be mid-ripple, allowing for the ±200ms jitter.
+      if ((pulseProgress(now - 200).active || pulseProgress(now + 200).active) && selfXY) {
         const GOLD = (a: number) => `hsla(45, 100%, 55%, ${a})`;
-        const peerPts: [number, number][] = [];
+        // Per-element time jitter of ±200ms, STABLE per element (derived from its
+        // id, not random each frame) so pulses stagger instead of moving in
+        // lockstep, but don't jitter frame-to-frame.
+        const offMs = (id: string) => (phaseOf(id) / (Math.PI * 2) - 0.5) * 400;
+        const peers: { ip: string; pt: [number, number] }[] = [];
         for (const p of s?.peers ?? []) {
           const pg = g[p.ip];
-          if (pg) peerPts.push(P(pg.lon, pg.lat));
+          if (pg) peers.push({ ip: p.ip, pt: P(pg.lon, pg.lat) });
         }
-        const nonPeerPts = blueNodes.map(([, kp]) => P(kp.lon, kp.lat));
+        const nonPeers = blueNodes.map(([ip, kp]) => ({ ip, pt: P(kp.lon, kp.lat) as [number, number] }));
         // Each peer's nearest few non-peer nodes — reused for the out and return legs.
-        const peerLinks = peerPts.map((pp) => ({
-          pp,
-          near: nonPeerPts
-            .map((np) => ({ np, d: Math.hypot(np[0] - pp[0], np[1] - pp[1]) }))
+        const peerLinks = peers.map((pr) => ({
+          ...pr,
+          near: nonPeers
+            .map((n) => ({ n, d: Math.hypot(n.pt[0] - pr.pt[0], n.pt[1] - pr.pt[1]) }))
             .filter((x) => x.d > 1)
             .sort((a, b) => a.d - b.d)
             .slice(0, 3)
-            .map((x) => x.np),
+            .map((x) => x.n),
         }));
         // A moving gold head along an arc; `u` is 0..1 from `from` to `to`.
         const ripple = (from: [number, number], to: [number, number], u: number, intensity: number) => {
@@ -1345,15 +1349,24 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           ctx.fillStyle = GOLD(op);
           ctx.fillText("?", pt[0], pt[1] - 6);
         };
-        // A: self → peers (outbound). B: peers → non-peers (outbound).
-        if (pulse.a > 0 && pulse.a < 1) for (const pp of peerPts) ripple(selfXY, pp, pulse.a, 1);
-        if (pulse.b > 0 && pulse.b < 1) for (const l of peerLinks) for (const np of l.near) ripple(l.pp, np, pulse.b, 1);
-        // C: non-peers → peers (return). D: peers → self (return).
-        if (pulse.c > 0 && pulse.c < 1) for (const l of peerLinks) for (const np of l.near) ripple(np, l.pp, pulse.c, 1);
-        if (pulse.d > 0 && pulse.d < 1) for (const pp of peerPts) ripple(pp, selfXY, pulse.d, 1);
-        // "?" over queried nodes.
-        for (const pp of peerPts) query(pp, pulse.peerQ);
-        for (const np of nonPeerPts) query(np, pulse.nonPeerQ);
+        // Each peer runs on its own jittered clock: A self→peer, D peer→self, "?".
+        for (const pr of peers) {
+          const pu = pulseProgress(now + offMs(pr.ip));
+          if (!pu.active) continue;
+          if (pu.a > 0 && pu.a < 1) ripple(selfXY, pr.pt, pu.a, 1);
+          if (pu.d > 0 && pu.d < 1) ripple(pr.pt, selfXY, pu.d, 1);
+          query(pr.pt, pu.peerQ);
+        }
+        // Each peer→non-peer link on its own jittered clock: B out, C return.
+        for (const l of peerLinks) {
+          for (const n of l.near) {
+            const pu = pulseProgress(now + offMs(l.ip + n.ip));
+            if (pu.b > 0 && pu.b < 1) ripple(l.pt, n.pt, pu.b, 1);
+            if (pu.c > 0 && pu.c < 1) ripple(n.pt, l.pt, pu.c, 1);
+          }
+        }
+        // "?" over the non-peer nodes, each on its own clock.
+        for (const n of nonPeers) query(n.pt, pulseProgress(now + offMs(n.ip)).nonPeerQ);
       }
 
       // ── New-node spirals (TOP pass) ──────────────────────────────────────
