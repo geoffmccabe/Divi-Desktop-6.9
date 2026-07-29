@@ -3,7 +3,7 @@ import { stakingWallets, lotteryWins, startStaking, type StakeWallet, type Lotte
 import { nodeStatus } from "../bridge";
 import { loadNames } from "./addressNames";
 import { setStakingDesired, stakingDesired } from "./stakeWin";
-import { lockWallet } from "./api";
+import { lockWallet, walletStatus } from "./api";
 import { fmtDivi } from "../status";
 import { Icon } from "../Icon";
 import { InfoDot } from "../InfoDot";
@@ -53,6 +53,7 @@ function StartStaking() {
           if (c && performance.now() < c.until) {
             if (c.target === "on" && isStaking) {
               confirm.current = null;
+              setReason(null);
               setState("staking");
             } else if (c.target === "off" && !isStaking) {
               confirm.current = null;
@@ -64,7 +65,7 @@ function StartStaking() {
           } else {
             confirm.current = null;
             setState((prev) => (prev === "needpass" ? prev : isStaking ? "staking" : "idle"));
-            if (!isStaking) setReason(s.headline || null);
+            setReason(isStaking ? null : s.headline || null);
           }
         }
       } catch {
@@ -82,6 +83,7 @@ function StartStaking() {
 
   const go = async (passphrase?: string) => {
     setErr(null);
+    setReason(null);
     setState("checking");
     try {
       const r = await startStaking(passphrase);
@@ -111,7 +113,16 @@ function StartStaking() {
 
   // Stop = lock the wallet (it was unlocked staking-only). Hold "checking" until
   // the node confirms it's stopped, so the button can't be flipped back by a poll.
+  // An UNENCRYPTED wallet can't be locked — it always stakes — so say that plainly
+  // instead of pretending to stop and then snapping back to the staking state.
   const stop = async () => {
+    const ws = await walletStatus().catch(() => null);
+    if (ws && !ws.encrypted) {
+      setReason(
+        "This wallet has no password, so it stakes automatically and can't be stopped. Add a password in Settings → Password to be able to stop staking.",
+      );
+      return;
+    }
     setStakingDesired(false);
     confirm.current = { until: performance.now() + 20000, target: "off" };
     setState("checking");
@@ -165,7 +176,7 @@ function StartStaking() {
           "Start Staking"
         )}
       </button>
-      {state === "idle" && reason && (
+      {reason && state !== "checking" && (
         <p className="stake-start-msg">
           {reason}
           {/mature/i.test(reason) && <InfoDot text={MATURITY_HELP} />}
