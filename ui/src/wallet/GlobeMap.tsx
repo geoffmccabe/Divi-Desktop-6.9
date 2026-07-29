@@ -56,6 +56,7 @@ const MAX_PEER = 24;
 const MAX_MESH = 120;
 const PEER_COLOR = new THREE.Color(0xb28cff);
 const MESH_COLOR = new THREE.Color(0x4aa3ff);
+const GOLD_COLOR = new THREE.Color(0xffd23f); // the activity-ripple gold
 // Dimmer blue for the network glyphs (additive blend => halved colour ~ 50%
 // opacity), to cut clutter.
 const MESH_GLYPH = new THREE.Color(0x4aa3ff).multiplyScalar(0.5);
@@ -271,7 +272,7 @@ function frameNodes(points: GlobePoint[]): { lat: number; lng: number; altitude:
 }
 
 interface Strand { hp: Float32Array; K: number; dir: number; }
-interface Stream { strands: Strand[]; mult: number; nextDecide: number; flow: number; a: THREE.Vector3; b: THREE.Vector3; visible: boolean; mesh: boolean; off: number; gold: number; }
+interface Stream { strands: Strand[]; mult: number; nextDecide: number; flow: number; a: THREE.Vector3; b: THREE.Vector3; visible: boolean; mesh: boolean; off: number; gold: number; tubeMats: THREE.MeshBasicMaterial[]; }
 interface Glyph { s: number; strand: number; base: number; }
 
 export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null; getWinnerIp?: () => string | null }) {
@@ -435,6 +436,7 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
       const fr = curve.computeFrenetFrames(K, false);
       const sIdx = streams.length;
       const strands: Strand[] = [];
+      const tubeMats: THREE.MeshBasicMaterial[] = [];
       // Close nodes (< ~300km): no helix, a single straight arc; characters flow
       // both ways on it. Far nodes: full double helix.
       // Double helix is for PEERS only; the blue network is always a simple arc
@@ -459,14 +461,16 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
         // at any zoom (unlike a world-space tube, which balloons when zoomed in).
         if (helix || strand === 0) {
           const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(hpVec), K, TUBE_R, 4, false);
-          group.add(new THREE.Mesh(tube, new THREE.MeshBasicMaterial({ color: conn.mesh ? MESH_COLOR : PEER_COLOR, transparent: true, opacity: conn.mesh ? 0.1 : 0.2, depthWrite: false })));
+          const tmat = new THREE.MeshBasicMaterial({ color: conn.mesh ? MESH_COLOR : PEER_COLOR, transparent: true, opacity: conn.mesh ? 0.1 : 0.2, depthWrite: false });
+          tubeMats.push(tmat); // kept so the ripple can pulse the strand itself gold
+          group.add(new THREE.Mesh(tube, tmat));
         }
         strands.push({ hp, K, dir: strand === 0 ? 1 : -1 });
       }
       // mesh = a peer→network arc (stage B/C of the query ripple); !mesh = a
       // self→peer helix (stage A/D). off = ±200ms per-connection timing jitter so
       // the gold pulses stagger instead of moving in lockstep.
-      streams.push({ strands, mult: 0.7 + Math.random() * 0.6, nextDecide: now0 + Math.random() * 10000, flow: Math.random(), a: conn.a, b: conn.b, visible: true, mesh: conn.mesh, off: (Math.random() - 0.5) * 400, gold: 0 });
+      streams.push({ strands, mult: 0.7 + Math.random() * 0.6, nextDecide: now0 + Math.random() * 10000, flow: Math.random(), a: conn.a, b: conn.b, visible: true, mesh: conn.mesh, off: (Math.random() - 0.5) * 400, gold: 0, tubeMats });
       const ch = Math.max(3, Math.min(CH_CAP, Math.round(len / SPACING)));
       for (let strand = 0; strand < 2; strand++)
         for (let p = 0; p < ch; p++) { glyphs.push({ s: sIdx, strand, base: p / ch }); isMesh.push(conn.mesh); }
@@ -591,6 +595,16 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
         const pu = pulseProgress(now + st.off);
         st.gold = pu.active ? (st.mesh ? Math.max(bump(pu.b), bump(pu.c)) : Math.max(bump(pu.a), bump(pu.d))) : 0;
         if (st.gold > 0.01) anyGold = true;
+        // Pulse the STRAND itself gold too (not just the flowing characters):
+        // blend its colour toward gold and brighten its opacity by st.gold.
+        if (st.gold > 0.01 || goldOn) {
+          const base = st.mesh ? MESH_COLOR : PEER_COLOR;
+          const baseOp = st.mesh ? 0.1 : 0.2;
+          for (const m of st.tubeMats) {
+            m.color.copy(base).lerp(GOLD_COLOR, st.gold);
+            m.opacity = baseOp + (0.75 - baseOp) * st.gold;
+          }
+        }
       }
       // Blend the flowing characters toward gold by their connection's gold level,
       // then restore once the pulse is fully over.
