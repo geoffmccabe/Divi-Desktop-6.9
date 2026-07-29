@@ -4,6 +4,7 @@ import { nodeStatus } from "../bridge";
 import { loadNames } from "./addressNames";
 import { setStakingDesired, stakingDesired } from "./stakeWin";
 import { lockWallet, walletStatus } from "./api";
+import { pulseActivity } from "./activityPulse";
 import { fmtDivi } from "../status";
 import { Icon } from "../Icon";
 import { InfoDot } from "../InfoDot";
@@ -85,6 +86,7 @@ function StartStaking() {
     setErr(null);
     setReason(null);
     setState("checking");
+    pulseActivity(); // gold ripple across the map: we're talking to the chain
     try {
       const r = await startStaking(passphrase);
       if (r.needsPassphrase) {
@@ -126,6 +128,7 @@ function StartStaking() {
     setStakingDesired(false);
     confirm.current = { until: performance.now() + 20000, target: "off" };
     setState("checking");
+    pulseActivity(); // gold ripple: telling the chain we're locking
     try {
       await lockWallet();
     } catch (e) {

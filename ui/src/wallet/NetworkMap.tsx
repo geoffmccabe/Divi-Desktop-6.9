@@ -12,6 +12,7 @@ import { GlobeMap, type GlobePoint, type GlobeArc } from "./GlobeMap";
 import { NewestNodesPanel } from "./NewestNodesPanel";
 import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
 import { classifyNode } from "./nodeTypes";
+import { pulseProgress } from "./activityPulse";
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
@@ -1272,6 +1273,76 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         });
       }
       pointsRef.current = pts;
+
+      // ── Blockchain-activity ripple (gold) ────────────────────────────────
+      // A query propagating and returning: A self→peers, B peers→network,
+      // C network→peers, D peers→self. Fired by pulseActivity() on chain work.
+      const pulse = pulseProgress(now);
+      if (pulse.active && selfXY) {
+        const GOLD = (a: number) => `hsla(45, 100%, 55%, ${a})`;
+        const peerPts: [number, number][] = [];
+        for (const p of s?.peers ?? []) {
+          const pg = g[p.ip];
+          if (pg) peerPts.push(P(pg.lon, pg.lat));
+        }
+        const nonPeerPts = blueNodes.map(([, kp]) => P(kp.lon, kp.lat));
+        // Each peer's nearest few non-peer nodes — reused for the out and return legs.
+        const peerLinks = peerPts.map((pp) => ({
+          pp,
+          near: nonPeerPts
+            .map((np) => ({ np, d: Math.hypot(np[0] - pp[0], np[1] - pp[1]) }))
+            .filter((x) => x.d > 1)
+            .sort((a, b) => a.d - b.d)
+            .slice(0, 3)
+            .map((x) => x.np),
+        }));
+        // A moving gold head along an arc; `u` is 0..1 from `from` to `to`.
+        const ripple = (from: [number, number], to: [number, number], u: number, intensity: number) => {
+          if (intensity <= 0.01) return;
+          const bez = upArc(from[0], from[1], to[0], to[1], 0.5);
+          ctx.lineWidth = 1;
+          const STEP = 0.1;
+          let prev = bez(0);
+          for (let t = STEP; t <= 1.0001; t += STEP) {
+            const cur = bez(t);
+            const d = Math.abs(t - u);
+            const glow = Math.exp(-((d / 0.25) * (d / 0.25)));
+            ctx.beginPath();
+            ctx.moveTo(prev[0], prev[1]);
+            ctx.lineTo(cur[0], cur[1]);
+            ctx.strokeStyle = GOLD((0.1 + 0.72 * glow) * intensity);
+            ctx.stroke();
+            prev = cur;
+          }
+          const [hx, hy] = bez(u);
+          ctx.beginPath();
+          ctx.arc(hx, hy, 5, 0, Math.PI * 2);
+          ctx.fillStyle = GOLD(0.18 * intensity);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(hx, hy, 2.4, 0, Math.PI * 2);
+          ctx.fillStyle = GOLD(0.95 * intensity);
+          ctx.fill();
+        };
+        // A gold "?" above a node being queried.
+        const query = (pt: [number, number], op: number) => {
+          if (op <= 0.02) return;
+          ctx.font = "bold 12px 'Courier New', monospace";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          ctx.fillStyle = GOLD(op);
+          ctx.fillText("?", pt[0], pt[1] - 6);
+        };
+        // A: self → peers (outbound). B: peers → non-peers (outbound).
+        if (pulse.a > 0 && pulse.a < 1) for (const pp of peerPts) ripple(selfXY, pp, pulse.a, 1);
+        if (pulse.b > 0 && pulse.b < 1) for (const l of peerLinks) for (const np of l.near) ripple(l.pp, np, pulse.b, 1);
+        // C: non-peers → peers (return). D: peers → self (return).
+        if (pulse.c > 0 && pulse.c < 1) for (const l of peerLinks) for (const np of l.near) ripple(np, l.pp, pulse.c, 1);
+        if (pulse.d > 0 && pulse.d < 1) for (const pp of peerPts) ripple(pp, selfXY, pulse.d, 1);
+        // "?" over queried nodes.
+        for (const pp of peerPts) query(pp, pulse.peerQ);
+        for (const np of nonPeerPts) query(np, pulse.nonPeerQ);
+      }
 
       // ── New-node spirals (TOP pass) ──────────────────────────────────────
       // Drawn last so a busy/VPN location can never hide them. Spirals sharing a
