@@ -10,6 +10,7 @@ const SUB_MINT: u8 = 0x01;
 const SUB_TRANSFER: u8 = 0x02;
 const SUB_KEYANNOUNCE: u8 = 0x03;
 const SUB_COLLECTION: u8 = 0x04;
+const SUB_FORGE: u8 = 0x05;
 
 /// Mint flag bits.
 pub const FLAG_ENCRYPTED: u8 = 0x01;
@@ -40,6 +41,10 @@ pub enum NfdRecord {
     CollectionCreate { max_supply: u32, meta_ptr: String },
     /// Publish an address's derived X25519 encryption pubkey so it can receive.
     KeyAnnounce { enc_pubkey: String },
+    /// FORGE: burn two same-tier NFDs (`input_a`, `input_b`, by mint txid) in a
+    /// collection and roll an upgrade. Sender must own both. The result tier is
+    /// resolved from a future block hash (see forge.rs) and minted separately.
+    Forge { input_a: String, input_b: String, collection_id: String },
 }
 
 fn is_hex_len(s: &str, bytes: usize) -> bool {
@@ -114,6 +119,22 @@ pub fn encode_collection_create(max_supply: u32, meta_ptr: &str) -> Result<Strin
         return Err("meta_ptr must be 32 bytes hex".into());
     }
     Ok(format!("{}{:08x}{}", prefix(SUB_COLLECTION), max_supply, meta_ptr.to_lowercase()))
+}
+
+/// Encode a FORGE: the two same-tier input NFDs (by mint txid) + the collection.
+pub fn encode_forge(input_a: &str, input_b: &str, collection_id: &str) -> Result<String, String> {
+    for (n, v) in [("input_a", input_a), ("input_b", input_b), ("collection_id", collection_id)] {
+        if !is_hex_len(v, 32) {
+            return Err(format!("{n} must be 32 bytes hex"));
+        }
+    }
+    Ok(format!(
+        "{}{}{}{}",
+        prefix(SUB_FORGE),
+        input_a.to_lowercase(),
+        input_b.to_lowercase(),
+        collection_id.to_lowercase()
+    ))
 }
 
 pub fn encode_transfer(mint_txid: &str, new_owner: &str, wrapkey_ptr: &str) -> Result<String, String> {
@@ -230,6 +251,11 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
             max_supply: u32::from_str_radix(&body[0..8], 16).ok()?,
             meta_ptr: body[8..72].to_string(),
         }),
+        SUB_FORGE if body.len() == 192 => Some(NfdRecord::Forge {
+            input_a: body[0..64].to_string(),
+            input_b: body[64..128].to_string(),
+            collection_id: body[128..192].to_string(),
+        }),
         _ => None,
     }
 }
@@ -304,6 +330,13 @@ mod tests {
         let m = "ff".repeat(32);
         let script = op_meta_script(&encode_collection_create(10_000, &m).unwrap());
         assert_eq!(parse(&script), Some(NfdRecord::CollectionCreate { max_supply: 10_000, meta_ptr: m }));
+    }
+
+    #[test]
+    fn forge_roundtrips() {
+        let (a, b, c) = ("11".repeat(32), "22".repeat(32), "33".repeat(32));
+        let script = op_meta_script(&encode_forge(&a, &b, &c).unwrap());
+        assert_eq!(parse(&script), Some(NfdRecord::Forge { input_a: a, input_b: b, collection_id: c }));
     }
 
     #[test]

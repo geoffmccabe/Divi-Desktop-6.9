@@ -460,3 +460,96 @@ pub fn read_record(cfg: &NodeConfig, txid: &str) -> Result<Option<nfd_record::Nf
         .as_array()
         .and_then(|vouts| vouts.iter().find_map(|v| v["scriptPubKey"]["hex"].as_str().and_then(nfd_record::parse))))
 }
+
+// ── Forging (PERC upgrade) ──────────────────────────────────────────────────
+/// The forge fee, paid to the creator's payout address. Flat DIVI, like commissions.
+pub const FORGE_FEE: f64 = 1000.0;
+/// Blocks after the forge before its roll resolves — long enough that the forger
+/// can't have known the seed block's hash when they committed.
+pub const FORGE_DELAY: i64 = 6;
+
+pub struct ForgeCommit {
+    pub forge_txid: String,
+    pub resolve_height: i64,
+}
+pub struct ForgeOutcome {
+    pub result_tier: u32,
+    /// Which tier's artwork the result uses: itself up to 40, else T40's.
+    pub art_tier: u32,
+}
+
+/// Commit a forge: burn two SAME-TIER NFDs (by mint txid) in a collection, pay the
+/// 1000-DIVI fee to `fee_address`, and anchor a FORGE record. The result tier is
+/// derived from a FUTURE block hash (see `forge_outcome`), so it can't be gamed —
+/// the forger is already committed before that block exists.
+pub fn forge(
+    cfg: &NodeConfig,
+    owner_addr: &str,
+    collection_id: &str,
+    input_a: &str,
+    input_b: &str,
+    fee_address: &str,
+) -> Result<ForgeCommit, String> {
+    if input_a.eq_ignore_ascii_case(input_b) {
+        return Err("forge needs two different NFDs".into());
+    }
+    // Both inputs must be NFD mints in this collection. (Same-tier + ownership is
+    // enforced by the UI's local data now and by the indexer/consensus later.)
+    for id in [input_a, input_b] {
+        match read_record(cfg, id)? {
+            Some(nfd_record::NfdRecord::Mint { collection_id: Some(c), .. }) if c.eq_ignore_ascii_case(collection_id) => {}
+            _ => return Err("an input NFD is not a mint in this collection".into()),
+        }
+    }
+    let rpc = RpcClient::new(cfg);
+    let height = rpc.call("getblockcount", json!([]))?.as_i64().ok_or("no block height")?;
+    let record = nfd_record::encode_forge(input_a, input_b, collection_id)?;
+    let utxo = pick_owner_utxo(&rpc, owner_addr)?;
+    let forge_txid = anchor_record(&rpc, &utxo, &record, Some((fee_address, FORGE_FEE)))?;
+    Ok(ForgeCommit { forge_txid, resolve_height: height + FORGE_DELAY })
+}
+
+/// Resolve a committed forge once `resolve_height` exists: the guaranteed upgrade
+/// from `input_tier`, read from that block's hash. None if not mined yet (wait).
+pub fn forge_outcome(cfg: &NodeConfig, forge_txid: &str, resolve_height: i64, input_tier: u32) -> Result<Option<ForgeOutcome>, String> {
+    let rpc = RpcClient::new(cfg);
+    let tip = rpc.call("getblockcount", json!([]))?.as_i64().unwrap_or(0);
+    if tip < resolve_height {
+        return Ok(None);
+    }
+    let block_hash = rpc
+        .call("getblockhash", json!([resolve_height]))?
+        .as_str()
+        .ok_or("could not read the resolve block hash")?
+        .to_string();
+    let seed = crate::forge::forge_seed(forge_txid, &block_hash);
+    let result_tier = crate::forge::forge_result_tier(input_tier, &seed);
+    Ok(Some(ForgeOutcome { result_tier, art_tier: crate::forge::art_tier_for(result_tier) }))
+}
+
+/// Mint a PUBLIC collectible that REFERENCES existing art (no upload, no crypto) —
+/// used for a forge result, which reuses the result tier's shared Perc artwork.
+pub fn mint_public_ref(
+    cfg: &NodeConfig,
+    owner_addr: &str,
+    collection_id: &str,
+    arweave_ptr: &str,
+    content_hash: &str,
+    traits_json: &[u8],
+) -> Result<MintDraft, String> {
+    let rpc = RpcClient::new(cfg);
+    let storage = nfd_storage::for_node(&cfg.datadir);
+    let traits_ptr = storage.put_public(traits_json, "application/json")?;
+    let record = nfd_record::encode_mint(arweave_ptr, content_hash, 0, None, Some((collection_id, &traits_ptr)))?;
+    let utxo = pick_owner_utxo(&rpc, owner_addr)?;
+    let fee = crate::fees::FeeConfig::load(cfg).nfd_mint_fee();
+    let txid = anchor_record(&rpc, &utxo, &record, fee.as_ref().map(|(a, f)| (a.as_str(), *f)))?;
+    Ok(MintDraft {
+        txid,
+        owner_addr: owner_addr.to_string(),
+        content_hash: content_hash.to_string(),
+        arweave_ptr: arweave_ptr.to_string(),
+        thumb_ptr: None,
+        encrypted: false,
+    })
+}
