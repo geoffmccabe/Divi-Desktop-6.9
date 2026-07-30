@@ -97,3 +97,48 @@ export const listFiles = (id: string) => call<{ files: BuilderFile[] }>(`/sessio
 
 export const readFile = (id: string, path: string) =>
   call<{ path: string; text: string }>(`/session/${id}/file?path=${encodeURIComponent(path)}`);
+
+// ---- Admin: screening rules and the log of what they caught ----
+
+export interface ScreenRule {
+  id: string;
+  weight: number;
+  why: string;
+  pattern: string;
+}
+
+export interface ScreenEntry {
+  at: number;
+  accountId: string;
+  verdict: "allow" | "flag" | "block";
+  score: number;
+  hits: string[];
+  cooling: boolean;
+  text: string;
+}
+
+export interface Screening {
+  thresholds: { flag: number; block: number };
+  strikes: { blocksBeforeCooloff: number; cooloffMinutes: number };
+  rules: ScreenRule[];
+  recent: ScreenEntry[];
+}
+
+export interface ReplayResult {
+  total: number;
+  changed: number;
+  changes: Array<{ at: number; was: string; now: string; text: string }>;
+}
+
+export const screening = () => call<Screening>("/admin/screening");
+
+export const saveScreening = (body: {
+  thresholds?: { flag: number; block: number };
+  weights?: Record<string, number>;
+}) => call<{ thresholds: { flag: number; block: number } }>("/admin/screening", {
+  method: "POST",
+  body: JSON.stringify(body),
+});
+
+export const replayScreening = () =>
+  call<ReplayResult>("/admin/screening/replay", { method: "POST" });
