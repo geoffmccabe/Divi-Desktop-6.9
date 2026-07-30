@@ -345,6 +345,49 @@ fn fill_preimage(rpc: &RpcClient, signed_hex: &str, redeem: &str, code: &[u8]) -
     Ok(signed_hex.replacen(&old, &new, 1))
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    // Runs the real Rust create -> status -> claim against the local regtest node
+    // (see reference_divi_htlc_escrow_recipe). On-demand:
+    //   cargo test -p dd69-supervisor escrow_roundtrip -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn escrow_roundtrip() {
+        let cfg = NodeConfig {
+            datadir: PathBuf::from(format!("{}/divi-htlc-regtest", std::env::var("HOME").unwrap())),
+            rpc_host: "127.0.0.1".into(),
+            rpc_user: "htlc".into(),
+            rpc_pass: "htlctest".into(),
+            rpc_port: 51600,
+            remote: false,
+        };
+        let rpc = RpcClient::new(&cfg);
+        let recipient = rpc.call("getnewaddress", json!([])).unwrap().as_str().unwrap().to_string();
+        let code = "Zx7Kp2Rq9mLbAt";
+        let locktime = 1_900_000_000u32; // far future, so refund is not yet valid
+
+        let created = create(&cfg, &recipient, 12.0, code, locktime, None).expect("create");
+        rpc.call("setgenerate", json!([1])).unwrap();
+        println!("created ticket len {}, txid {}", created.ticket.len(), created.txid);
+
+        let st = status(&cfg, &created.ticket).expect("status");
+        println!("status funded={} amount={} recipient-ok={}", st.funded, st.amount, st.recipient == recipient);
+        assert!(st.funded && (st.amount - 12.0).abs() < 1e-6);
+
+        let claim_txid = claim(&cfg, &created.ticket, code, None).expect("claim");
+        rpc.call("setgenerate", json!([1])).unwrap();
+        let cr = rpc.call("getrawtransaction", json!([claim_txid, 1])).unwrap();
+        let conf = cr["confirmations"].as_i64().unwrap_or(0);
+        let paid = cr["vout"][0]["value"].as_f64().unwrap_or(0.0);
+        println!("CLAIM txid={} conf={} paid={}", claim_txid, conf, paid);
+        assert!(conf >= 1, "claim not confirmed");
+        assert!((paid - 12.0).abs() < 1e-3, "recipient should get ~12");
+    }
+}
+
 fn find_vout(rpc: &RpcClient, txid: &str, p2sh: &str) -> Option<u32> {
     for n in 0..4u32 {
         if let Ok(o) = rpc.call("gettxout", json!([txid, n, true])) {

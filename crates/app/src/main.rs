@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, fastsend, mempool, names, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, escrow, fastsend, mempool, names, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 // Serves community app bundles over their own url scheme. Kept in its own module
@@ -1334,6 +1334,93 @@ async fn bearer_status(code: String) -> Result<BearerStatusDto, String> {
     .map_err(|_| "internal error".to_string())?
 }
 
+// ---- Pin Code Send: on-chain escrow (HTLC) ----
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EscrowCreatedDto {
+    ticket: String,
+    txid: String,
+    vout: u32,
+    amount: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EscrowStatusDto {
+    funded: bool,
+    claimed: bool,
+    amount: f64,
+    confirmations: i64,
+    recipient: String,
+    sender: String,
+    locktime: u32,
+}
+
+/// Create an escrow: lock `amount` to `recipient`, refundable to the sender after
+/// `locktime` (unix), unlockable only by revealing `code` (a long random release
+/// code generated in the UI). Sender pays the fee.
+#[tauri::command]
+async fn escrow_create(
+    recipient: String,
+    amount: f64,
+    code: String,
+    locktime: u32,
+    passphrase: Option<String>,
+) -> Result<EscrowCreatedDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        escrow::create(&cfg, &recipient, amount, &code, locktime, passphrase.as_deref()).map(|e| EscrowCreatedDto {
+            ticket: e.ticket,
+            txid: e.txid,
+            vout: e.vout,
+            amount: e.amount,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// What a ticket holder can see without the code (committed amount, parties, refund date).
+#[tauri::command]
+async fn escrow_status(ticket: String) -> Result<EscrowStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        escrow::status(&cfg, &ticket).map(|s| EscrowStatusDto {
+            funded: s.funded,
+            claimed: s.claimed,
+            amount: s.amount,
+            confirmations: s.confirmations,
+            recipient: s.recipient,
+            sender: s.sender,
+            locktime: s.locktime,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Recipient claims by revealing the code (their wallet must own the recipient address).
+#[tauri::command]
+async fn escrow_claim(ticket: String, code: String, passphrase: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        escrow::claim(&cfg, &ticket, &code, passphrase.as_deref())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Sender reclaims after the timelock (no code needed).
+#[tauri::command]
+async fn escrow_refund(ticket: String, passphrase: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        escrow::refund(&cfg, &ticket, passphrase.as_deref())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// act they sign themselves.
 #[tauri::command]
 async fn payment_request_create(
@@ -1521,6 +1608,10 @@ fn main() {
             bearer_create,
             bearer_sweep,
             bearer_status,
+            escrow_create,
+            escrow_status,
+            escrow_claim,
+            escrow_refund,
             coin_maturity,
             wallet_status,
             unlock_wallet,

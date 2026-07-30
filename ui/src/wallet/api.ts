@@ -221,6 +221,32 @@ export const bearerSweep = (code: string, dest: string) =>
   invoke<string>("bearer_sweep", { code, dest });
 export const bearerStatus = (code: string) => invoke<BearerStatus>("bearer_status", { code });
 
+// ---- Pin Code Send: on-chain escrow (HTLC) ----
+export interface EscrowCreated {
+  ticket: string; // shareable, non-secret; lets the receiver see + later claim
+  txid: string;
+  vout: number;
+  amount: number;
+}
+export interface EscrowStatus {
+  funded: boolean;
+  claimed: boolean;
+  amount: number; // what the receiver would get (locked value minus claim fee)
+  confirmations: number;
+  recipient: string;
+  sender: string;
+  locktime: number; // unix time the sender can refund after
+}
+// `code` is the long random release code (generated in the UI); `locktime` is a
+// unix time (sender-refund-after). Sender pays the fee.
+export const escrowCreate = (recipient: string, amount: number, code: string, locktime: number, passphrase?: string) =>
+  invoke<EscrowCreated>("escrow_create", { recipient, amount, code, locktime, passphrase: passphrase ?? null });
+export const escrowStatus = (ticket: string) => invoke<EscrowStatus>("escrow_status", { ticket });
+export const escrowClaim = (ticket: string, code: string, passphrase?: string) =>
+  invoke<string>("escrow_claim", { ticket, code, passphrase: passphrase ?? null });
+export const escrowRefund = (ticket: string, passphrase?: string) =>
+  invoke<string>("escrow_refund", { ticket, passphrase: passphrase ?? null });
+
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
 export const lotteryWins = (addresses: string[]) => invoke<LotteryWin[]>("lottery_wins", { addresses });

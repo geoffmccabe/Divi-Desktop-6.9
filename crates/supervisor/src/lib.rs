@@ -5,6 +5,7 @@ pub mod c2pa_read;
 pub mod chaintips;
 pub mod config;
 pub mod dvxp;
+pub mod escrow;
 pub mod fastsend;
 pub mod health;
 pub mod bearer;
