@@ -32,7 +32,7 @@ These bolt onto the FHE base. The design principle: **hide what a business is do
 
 1. **Private state, auditable value.** Hide the contract's logic and business data (what competitors care about), but keep coin transfers **above a threshold transparent**; small transfers stay private. Privacy for *how you operate*, not for *large untraceable payments*. The threshold is an **aggregate**, not per-transaction — see 4.1.
 2. **Sanctions / blacklist screening at the protocol level.** Transfers to flagged addresses are blocked or forced transparent, enforced by the chain, not left to each app.
-3. **Threshold viewing keys held by POAS validators.** A specific contract or transaction can be decrypted **only when a quorum of validators signs off** (e.g. 26 of 38), triggered by a court order. Targeted, not mass surveillance; **no single party — or single government — can peek alone.** This is the "warrant backdoor," done cleanly and auditably.
+3. **Threshold viewing keys held by POAS validators.** A specific contract or transaction can be decrypted **only when a quorum of validators signs off** — deliberately set *higher* than the consensus/bridge quorum (e.g. **30 of 38**, vs 26/38 for moving money), because irreversibly revealing someone's private data should be harder than a normal transfer. Triggered by a court order. Targeted, not mass surveillance; **no single party — or single government — can peek alone.** This is the "warrant backdoor," done cleanly and auditably.
 4. **Proof-of-innocence (Privacy Pools model).** Users can prove their funds are **not** from a known-illicit set without revealing their identity. This is the current state-of-the-art "privacy that regulators tolerate."
 
 ### 4.1 Anti-structuring — making the transparency threshold hold
@@ -54,7 +54,7 @@ A flat *per-transaction* threshold is trivially defeated by **structuring** (spl
 
 ## 5. How the threshold-warrant path works (the load-bearing piece)
 
-- Every confidential value is encrypted so that decryption requires a **threshold of POAS validators**, not any one of them.
+- Every confidential value is encrypted so that decryption requires a **threshold of POAS validators** (a *higher* bar than consensus — e.g. 30 of 38), not any one of them.
 - A lawful request names a **specific** contract/tx (not "everything"). If the quorum agrees the request is valid, they jointly produce a decryption of only that item.
 - Because DIVA already trusts the POAS set for consensus, reusing it as the decryption committee introduces **no new trusted party**.
 - Every threshold-decrypt event is itself recorded on-chain, so disclosure is **auditable** — abuse is visible, not silent.
@@ -77,8 +77,8 @@ This mirrors the "auditable privacy" designs in the field: strong default privac
 ## 8. Open decisions (need Geoff's call)
 
 1. ~~**Transparency threshold amount**~~ — **DECIDED (2026-Jul-30):** $10k USD-equiv rolling 24h aggregate, USD-oracle priced, with an optional ~$3k "recorded-but-private" soft tier. See 4.1.
-2. **Quorum size for warrant decryption** — same 26/38 as bridge/consensus, or a different, higher bar for disclosure?
-3. **TEE fallback?** — do we also support Oasis-style TEE contracts for teams who want simpler/cheaper confidentiality, or FHE-only?
+2. ~~**Quorum size for warrant decryption**~~ — **DECIDED (2026-Jul-30):** a *higher* bar than consensus/bridge (e.g. **30 of 38** vs 26/38), because revealing private data should be harder than moving money.
+3. **TEE fallback?** — do we also support Oasis-style TEE contracts for teams who want simpler/cheaper confidentiality, or FHE-only? (Leaning FHE-only at launch: TEE relies on trusting a CPU-maker's on-chip secure enclave, which has been cracked before and undercuts a privacy chain's core pitch. Revisit later if users ask.)
 
 ## 9. Honest caveats
 
