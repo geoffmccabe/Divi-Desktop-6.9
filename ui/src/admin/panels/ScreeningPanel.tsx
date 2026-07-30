@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import "./screening.css";
 import {
   screening, saveScreening, replayScreening,
   type Screening, type ReplayResult,
@@ -110,7 +111,7 @@ export function ScreeningPanel() {
           onChange={(e) => setBlock(Number(e.target.value))} />
       </label>
       {block <= flag && (
-        <p className="wl-note" style={{ color: "hsl(var(--destructive))" }}>
+        <p className="wl-note sp-bad">
           The block level has to be above the warn level.
         </p>
       )}
@@ -118,7 +119,7 @@ export function ScreeningPanel() {
       <h3 className="ai-section-head">What it looks for</h3>
       {data.rules.map((r) => (
         <label className="admin-field" key={r.id}>
-          <span>{r.why} <em className="ai-unset">({weights[r.id] ?? r.weight})</em></span>
+          <span>{r.why} <em className="sp-weight">({weights[r.id] ?? r.weight})</em></span>
           <input
             type="range" min={0} max={120} step={5}
             value={weights[r.id] ?? r.weight}
@@ -127,7 +128,7 @@ export function ScreeningPanel() {
         </label>
       ))}
 
-      <div className="ai-key-row" style={{ marginTop: 12 }}>
+      <div className="ai-key-row sp-actions">
         <button type="button" className="wl-btn wl-btn-primary"
           disabled={busy || block <= flag} onClick={save}>
           {saved ? "Saved" : "Save"}
@@ -138,7 +139,7 @@ export function ScreeningPanel() {
       </div>
 
       {replay && (
-        <p className="wl-note" style={{ marginTop: 10 }}>
+        <p className="wl-note sp-result">
           {replay.changed === 0
             ? `Checked all ${replay.total} past requests. Nothing would have been decided differently.`
             : `${replay.changed} of ${replay.total} past requests would now be decided differently.`}
@@ -157,11 +158,11 @@ export function ScreeningPanel() {
       {data.recent.slice(0, 40).map((e, i) => (
         <div className="admin-field" key={i}>
           <span>
-            <em className={e.verdict === "block" ? "ai-unset" : "ai-set"}>{e.verdict}</em>
+            <em className={`sp-verdict sp-verdict-${e.verdict}`}>{e.verdict}</em>
             {" "}score {e.score}
             {e.hits.length > 0 && ` · ${e.hits.join(", ")}`}
           </span>
-          <p className="wl-note ai-security" style={{ margin: 0 }}>{e.text.slice(0, 220)}</p>
+          <p className="wl-note ai-security sp-flush">{e.text.slice(0, 220)}</p>
         </div>
       ))}
     </div>

@@ -110,7 +110,7 @@ function PermissionPrompt({ entry, onAllow, onCancel }: {
   const perms = sortForDisplay(m.permissions);
   return (
     <div className="ca">
-      <div className="glass-chip" style={{ padding: 18 }}>
+      <div className="ca-surface ca-prompt">
         <h3 className="ca-host-title">{m.name}</h3>
         <p className="ca-author">by {m.author.name}</p>
 
@@ -118,7 +118,7 @@ function PermissionPrompt({ entry, onAllow, onCancel }: {
           <p className="ca-perm-none">This app is not asking for anything. It cannot see your wallet at all.</p>
         ) : (
           <>
-            <p className="ca-desc" style={{ marginTop: 10 }}>This app is asking to:</p>
+            <p className="ca-desc ca-prompt-lead">This app is asking to:</p>
             <div className="ca-perm-list">
               {perms.map((p) => (
                 <div key={p.key} className={`ca-perm${p.kind === "capability" ? " ca-perm-cap" : ""}`}>
@@ -138,7 +138,7 @@ function PermissionPrompt({ entry, onAllow, onCancel }: {
             through the same checks as any other app.
           </p>
         ) : !entry.verified ? (
-          <p className="ca-perm-detail" style={{ color: "hsl(var(--destructive))" }}>
+          <p className="ca-perm-detail ca-perm-detail-warn">
             This app is not signed and will not be run.
           </p>
         ) : null}
@@ -166,18 +166,18 @@ function PaymentConfirm({ appName, amount, reason, onDone }: {
   onDone: (ok: boolean) => void;
 }) {
   return (
-    <div className="ca-immersive" style={{ zIndex: 60, background: "hsl(var(--background) / 0.86)" }}>
-      <div className="glass-chip" style={{ margin: "auto", padding: 22, maxWidth: 420 }}>
+    <div className="ca-immersive ca-veil">
+      <div className="ca-surface ca-dialog">
         <h3 className="ca-host-title">Payment request</h3>
-        <p className="ca-desc" style={{ marginTop: 8 }}>
+        <p className="ca-desc ca-note-gap">
           <strong>{appName}</strong> is asking you to pay{" "}
           <strong>{amount.toLocaleString()} DIVI</strong>
           {reason ? ` for "${reason}"` : ""}.
         </p>
-        <p className="ca-perm-detail" style={{ marginTop: 8 }}>
+        <p className="ca-perm-detail ca-note-gap">
           The app cannot take this itself. Nothing moves unless you approve it here.
         </p>
-        <div className="ca-row" style={{ marginTop: 14 }}>
+        <div className="ca-row">
           <button type="button" className="wl-btn" onClick={() => onDone(false)}>Refuse</button>
           <button type="button" className="wl-btn wl-btn-primary" onClick={() => onDone(true)}>
             Approve {amount.toLocaleString()} DIVI

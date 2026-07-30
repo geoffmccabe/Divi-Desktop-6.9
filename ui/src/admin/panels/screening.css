@@ -1,0 +1,16 @@
+/* Screening panel. Sits inside the admin drawer, so it inherits the drawer's
+   look; this file only adds what is specific to this tab. No literal colours,
+   no literal fonts. */
+
+.sp-bad { color: hsl(var(--destructive)); }
+.sp-actions { margin-top: 12px; }
+.sp-result { margin-top: 10px; }
+.sp-flush { margin: 0; }
+
+.sp-weight { color: hsl(var(--foreground) / 0.5); font-style: normal; }
+
+/* Verdicts read at a glance: refused, worth a look, or fine. */
+.sp-verdict { font-style: normal; font-weight: 600; text-transform: uppercase; font-size: 0.7rem; }
+.sp-verdict-block { color: hsl(var(--destructive)); }
+.sp-verdict-flag { color: hsl(var(--warning)); }
+.sp-verdict-allow { color: hsl(var(--success)); }

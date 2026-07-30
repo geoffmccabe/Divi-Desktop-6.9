@@ -162,8 +162,8 @@ export function BuilderPanel() {
             ) : (
               files.map((f) => (
                 <div className="bd-file" key={f.path}>
-                  <span style={{ color: "hsl(var(--foreground))" }}>{f.path}</span>
-                  <span>{f.bytes}</span>
+                  <span className="bd-file-name">{f.path}</span>
+                  <span className="bd-file-size">{f.bytes}</span>
                 </div>
               ))
             )}
@@ -199,7 +199,7 @@ function KeyBox({ onSaved }: { onSaved: () => void }) {
         time the wallet is started. The key is kept in memory, never written to a
         file, and never sent anywhere except Anthropic.
       </p>
-      <div className="bd-bar" style={{ marginTop: 14, background: "transparent", border: 0, padding: 0 }}>
+      <div className="bd-bar bd-bar-plain">
         <input
           className="wl-input"
           type="password"
@@ -214,7 +214,7 @@ function KeyBox({ onSaved }: { onSaved: () => void }) {
           Save
         </button>
       </div>
-      {err && <p className="bd-note bd-bad" style={{ marginTop: 8 }}>{err}</p>}
+      {err && <p className="bd-note bd-bad bd-note-gap">{err}</p>}
     </div>
   );
 }
@@ -241,18 +241,17 @@ function Offline({ error, onRetry }: { error?: string; onRetry: () => void }) {
   return (
     <div className="bd">
       <div className="bd-offline">
-        <h3>The builder service is not running</h3>
+        <h3>App Builder is not switched on</h3>
         <p className="bd-note">
-          App Builder needs a separate service, which is not part of the wallet
-          and is not started automatically. It lives in{" "}
-          <code>contrib/app-builder</code> in the Divi Desktop repository.
+          The part that talks to the AI runs alongside the wallet, and it is not
+          running at the moment. Nothing is broken and nothing has been lost.
         </p>
-        <p className="bd-note" style={{ marginTop: 8 }}>
-          Start it with <code>node src/server.mjs</code>, with a model key and a
-          DIVI rate set, then check again.
+        <p className="bd-note bd-note-gap">
+          It usually starts with the wallet. If it does not come back, ask for it
+          to be restarted and everything here will pick up where it left off.
         </p>
-        {error && <p className="bd-note bd-bad" style={{ marginTop: 8 }}>Last attempt: {error}</p>}
-        <div className="bd-bar" style={{ marginTop: 14, background: "transparent", border: 0, padding: 0 }}>
+        {error && <p className="bd-note bd-bad bd-note-gap">Details: {error}</p>}
+        <div className="bd-bar bd-bar-plain">
           <input
             className="wl-input"
             value={url}
