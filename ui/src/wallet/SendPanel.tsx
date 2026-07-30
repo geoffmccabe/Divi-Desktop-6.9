@@ -18,7 +18,7 @@ import { PinCodeSendPanel } from "./PinCodeSendPanel";
 import { ContactPicker } from "./ContactPicker";
 import { Identicon } from "./Identicon";
 import { findByAddress, isKnownGood, markSent } from "./contacts";
-import { hraResolve } from "./hra/api";
+import { hraResolve, hraReverse } from "./hra/api";
 import "./hra.css";
 
 // A Divi name rather than an address: 3 to 32 of the name charset, first
@@ -157,6 +157,24 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
       clearTimeout(id);
     };
   }, [address, stage]);
+
+  // The name the destination publishes for itself, looked up only once the
+  // address is settled and we are on the confirm screen. Purely a recognition
+  // aid: it never replaces the address and never blocks the send.
+  const [reverseName, setReverseName] = useState<string | null>(null);
+  useEffect(() => {
+    if (stage !== "confirm") {
+      setReverseName(null);
+      return;
+    }
+    let alive = true;
+    hraReverse(address.trim())
+      .then((n) => alive && setReverseName(n))
+      .catch(() => alive && setReverseName(null));
+    return () => {
+      alive = false;
+    };
+  }, [stage, address]);
 
   const contactHit = findByAddress(address);
   const knownGood = isKnownGood(address);
@@ -351,6 +369,14 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
             {fast ? "Fast send" : "Send"} <strong>{fmtDivi(amount ?? 0)} DIVI</strong> to
           </p>
           <p className="send-confirm-addr">{address.trim()}</p>
+          {/* If the destination publishes a name, show it UNDER the address,
+              never instead of it. A name is a recognition aid on a screen whose
+              whole job is getting the address read. */}
+          {reverseName && (
+            <p className="wl-note">
+              This address publishes itself as <strong>{reverseName.toLowerCase()}</strong>
+            </p>
+          )}
           <p className="send-warn">This can’t be undone. Check the address carefully.</p>
           <div className="send-actions">
             <button type="button" className="wl-btn" onClick={() => setStage("form")}>Back</button>

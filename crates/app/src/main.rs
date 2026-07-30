@@ -500,6 +500,17 @@ async fn hra_resolve(name: String) -> Result<Option<String>, String> {
     hra_blocking!(move |cfg: &NodeConfig| names::resolve(cfg, &name))
 }
 
+/// The name an address displays as, if both directions agree.
+///
+/// Decoration for an address already on screen, so it degrades to "no name"
+/// rather than an error when the index is behind. That asymmetry is
+/// deliberate: showing nothing costs the user nothing, whereas a wrong forward
+/// resolution moves money.
+#[tauri::command]
+async fn hra_reverse(address: String) -> Result<Option<String>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::reverse(cfg, &address))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct HraListingDto {
@@ -1591,6 +1602,7 @@ fn main() {
             hra_set_primary,
             hra_renew,
             hra_resolve,
+            hra_reverse,
             hra_market,
             hra_list_for_sale,
             hra_delist,

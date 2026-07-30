@@ -234,6 +234,8 @@ export const hraTransfer = (name: string, newOwner: string) =>
 export const hraSetPrimary = (name: string) => invoke<string>("hra_set_primary", { name });
 export const hraRenew = (name: string) => invoke<string>("hra_renew", { name });
 export const hraResolve = (name: string) => invoke<string | null>("hra_resolve", { name });
+/** The name an address displays as, if both directions agree. Decoration only. */
+export const hraReverse = (address: string) => invoke<string | null>("hra_reverse", { address });
 export const hraMarket = () => invoke<MarketListing[]>("hra_market");
 export const hraListForSale = (name: string, priceDivi: number, minLifetimeBlocks: number) =>
   invoke<string>("hra_list_for_sale", { name, priceDivi, minLifetimeBlocks });
