@@ -12,7 +12,7 @@ import { GlobeMap, type GlobePoint, type GlobeArc } from "./GlobeMap";
 import { NewestNodesPanel } from "./NewestNodesPanel";
 import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
 import { classifyNode } from "./nodeTypes";
-import { pulseProgress, pulseActivity } from "./activityPulse";
+import { pulseActivity, pulseTrigger, makeLegs, legU, holdOp, pingDone, type Leg } from "./activityPulse";
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
@@ -268,6 +268,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const newNodesRef = useRef<NewNode[]>([]);
   const highlightIpRef = useRef<string | null>(null);
   const arrivalFxRef = useRef<Map<string, number>>(new Map()); // ip → flash start ms
+  // Independent gold pings (built per pulse): each a peer + 1-2 network nodes + 4
+  // jittered legs. `lastPulseRef` detects a fresh pulse to rebuild the set.
+  const pingsRef = useRef<{ peer: [number, number]; nets: [number, number][]; legs: Leg[] }[]>([]);
+  const lastPulseRef = useRef(0);
 
   // EVERY node the map knows (live peers + 30-day known), with its country, for
   // the node-speed ping. Read fresh each time the user starts a scan.
@@ -1287,60 +1291,52 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       pointsRef.current = pts;
 
       // ── Blockchain-activity ripple (gold) ────────────────────────────────
-      // A query propagating and returning: A self→peers, B peers→network,
-      // C network→peers, D peers→self. Fired by pulseActivity() on chain work.
-      // Active if any element could be mid-ripple, allowing for the ±200ms jitter.
-      if ((pulseProgress(now - 200).active || pulseProgress(now + 200).active) && selfXY) {
-        const GOLD = (a: number) => `hsla(45, 100%, 55%, ${a})`;
-        // Per-element time jitter of ±200ms, STABLE per element (derived from its
-        // id, not random each frame) so pulses stagger instead of moving in
-        // lockstep, but don't jitter frame-to-frame.
-        const offMs = (id: string) => (phaseOf(id) / (Math.PI * 2) - 0.5) * 400;
-        const peers: { ip: string; pt: [number, number] }[] = [];
+      // Each peer gets its OWN independent ping (built once when a pulse fires):
+      // 4 legs — home→peer, peer→1-2 random network nodes, back, back home —
+      // each leg independently jittered ±0.2s. So the map shows many little
+      // round-trips at staggered times, not four synchronised group flashes.
+      const trig = pulseTrigger();
+      if (trig && trig !== lastPulseRef.current && selfXY) {
+        lastPulseRef.current = trig;
+        const netLL: [number, number][] = blueNodes.map(([, kp]) => [kp.lon, kp.lat]);
+        const pings: { peer: [number, number]; nets: [number, number][]; legs: Leg[] }[] = [];
         for (const p of s?.peers ?? []) {
           const pg = g[p.ip];
-          if (pg) peers.push({ ip: p.ip, pt: P(pg.lon, pg.lat) });
+          if (!pg) continue;
+          const nets: [number, number][] = [];
+          const count = netLL.length ? 1 + Math.floor(Math.random() * 2) : 0; // 1-2
+          for (let i = 0; i < count; i++) nets.push(netLL[Math.floor(Math.random() * netLL.length)]);
+          pings.push({ peer: [pg.lon, pg.lat], nets, legs: makeLegs(trig) });
         }
-        const nonPeers = blueNodes.map(([ip, kp]) => ({ ip, pt: P(kp.lon, kp.lat) as [number, number] }));
-        // Each peer's nearest few non-peer nodes — reused for the out and return legs.
-        const peerLinks = peers.map((pr) => ({
-          ...pr,
-          near: nonPeers
-            .map((n) => ({ n, d: Math.hypot(n.pt[0] - pr.pt[0], n.pt[1] - pr.pt[1]) }))
-            .filter((x) => x.d > 1)
-            .sort((a, b) => a.d - b.d)
-            .slice(0, 3)
-            .map((x) => x.n),
-        }));
-        // A moving gold head along an arc; `u` is 0..1 from `from` to `to`.
-        const ripple = (from: [number, number], to: [number, number], u: number, intensity: number) => {
-          if (intensity <= 0.01) return;
+        pingsRef.current = pings;
+      }
+      if (selfXY && pingsRef.current.length) {
+        const GOLD = (a: number) => `hsla(45, 100%, 55%, ${a})`;
+        const ripple = (from: [number, number], to: [number, number], u: number) => {
           const bez = upArc(from[0], from[1], to[0], to[1], 0.5);
           ctx.lineWidth = 1;
           const STEP = 0.1;
           let prev = bez(0);
           for (let t = STEP; t <= 1.0001; t += STEP) {
             const cur = bez(t);
-            const d = Math.abs(t - u);
-            const glow = Math.exp(-((d / 0.25) * (d / 0.25)));
+            const glow = Math.exp(-(((t - u) / 0.25) * ((t - u) / 0.25)));
             ctx.beginPath();
             ctx.moveTo(prev[0], prev[1]);
             ctx.lineTo(cur[0], cur[1]);
-            ctx.strokeStyle = GOLD((0.1 + 0.72 * glow) * intensity);
+            ctx.strokeStyle = GOLD(0.1 + 0.72 * glow);
             ctx.stroke();
             prev = cur;
           }
           const [hx, hy] = bez(u);
           ctx.beginPath();
           ctx.arc(hx, hy, 5, 0, Math.PI * 2);
-          ctx.fillStyle = GOLD(0.18 * intensity);
+          ctx.fillStyle = GOLD(0.18);
           ctx.fill();
           ctx.beginPath();
           ctx.arc(hx, hy, 2.4, 0, Math.PI * 2);
-          ctx.fillStyle = GOLD(0.95 * intensity);
+          ctx.fillStyle = GOLD(0.95);
           ctx.fill();
         };
-        // A gold "?" above a node being queried.
         const query = (pt: [number, number], op: number) => {
           if (op <= 0.02) return;
           ctx.font = "bold 12px 'Courier New', monospace";
@@ -1349,24 +1345,25 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           ctx.fillStyle = GOLD(op);
           ctx.fillText("?", pt[0], pt[1] - 6);
         };
-        // Each peer runs on its own jittered clock: A self→peer, D peer→self, "?".
-        for (const pr of peers) {
-          const pu = pulseProgress(now + offMs(pr.ip));
-          if (!pu.active) continue;
-          if (pu.a > 0 && pu.a < 1) ripple(selfXY, pr.pt, pu.a, 1);
-          if (pu.d > 0 && pu.d < 1) ripple(pr.pt, selfXY, pu.d, 1);
-          query(pr.pt, pu.peerQ);
+        for (const pg of pingsRef.current) {
+          if (pingDone(pg.legs, now)) continue;
+          const peerPt = P(pg.peer[0], pg.peer[1]);
+          const netPts = pg.nets.map((n) => P(n[0], n[1]));
+          const [lA, lB, lC, lD] = pg.legs;
+          let u = legU(lA, now);
+          if (u >= 0) ripple(selfXY, peerPt, u); // home → peer
+          u = legU(lB, now);
+          if (u >= 0) for (const np of netPts) ripple(peerPt, np, u); // peer → network
+          u = legU(lC, now);
+          if (u >= 0) for (const np of netPts) ripple(np, peerPt, u); // network → peer
+          u = legU(lD, now);
+          if (u >= 0) ripple(peerPt, selfXY, u); // peer → home
+          query(peerPt, holdOp(lA.t1, lD.t0, now)); // peer holds the query
+          const nq = holdOp(lB.t1, lC.t0, now);
+          for (const np of netPts) query(np, nq); // network nodes hold the query
         }
-        // Each peer→non-peer link on its own jittered clock: B out, C return.
-        for (const l of peerLinks) {
-          for (const n of l.near) {
-            const pu = pulseProgress(now + offMs(l.ip + n.ip));
-            if (pu.b > 0 && pu.b < 1) ripple(l.pt, n.pt, pu.b, 1);
-            if (pu.c > 0 && pu.c < 1) ripple(n.pt, l.pt, pu.c, 1);
-          }
-        }
-        // "?" over the non-peer nodes, each on its own clock.
-        for (const n of nonPeers) query(n.pt, pulseProgress(now + offMs(n.ip)).nonPeerQ);
+        // Drop finished pings so the loop stays cheap between pulses.
+        if (pingsRef.current.every((pg) => pingDone(pg.legs, now))) pingsRef.current = [];
       }
 
       // ── New-node spirals (TOP pass) ──────────────────────────────────────

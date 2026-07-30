@@ -33,6 +33,52 @@ const win = (t: number, lo: number, hi: number, edge = 0.05) => {
   return Math.min(1, Math.min(t - lo, hi - t) / edge);
 };
 
+// ── Independent per-ping model (flat map) ──────────────────────────────────
+// Instead of one synchronised 4-stage wave, each peer gets its OWN ping: it
+// leaves at a jittered time and runs four legs (home→peer, peer→net, net→peer,
+// peer→home), each leg independently jittered ±0.2s — so the map shows lots of
+// little round-trips at different times, not four group flashes.
+
+export function pulseTrigger(): number {
+  return start;
+}
+
+export interface Leg {
+  t0: number;
+  t1: number;
+}
+
+const jit = () => Math.random() * 400 - 200; // ±200ms
+const LEG_MS = 900;
+
+/** Four legs for one ping, starting near `base`, each leg independently jittered. */
+export function makeLegs(base: number): Leg[] {
+  let t = base + jit();
+  const legs: Leg[] = [];
+  for (let i = 0; i < 4; i++) {
+    const t1 = t + LEG_MS + jit();
+    legs.push({ t0: t, t1 });
+    t = t1;
+  }
+  return legs;
+}
+
+/** Progress 0..1 along a leg at `now`, or -1 if the leg isn't currently running. */
+export function legU(leg: Leg, now = performance.now()): number {
+  if (now < leg.t0 || now > leg.t1) return -1;
+  return (now - leg.t0) / (leg.t1 - leg.t0);
+}
+
+/** "?" opacity: on while `now` is between two times, fading at the edges. */
+export function holdOp(fromT: number, toT: number, now = performance.now(), edge = 150): number {
+  if (now <= fromT || now >= toT) return 0;
+  return Math.min(1, Math.min(now - fromT, toT - now) / edge);
+}
+
+export function pingDone(legs: Leg[], now = performance.now()): boolean {
+  return legs.length === 0 || now > legs[3].t1;
+}
+
 export function pulseProgress(now = performance.now()): Pulse {
   const el = now - start;
   if (start === 0 || el < 0 || el > TOTAL_MS) {
