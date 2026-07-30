@@ -142,6 +142,19 @@ pub fn create(
     if amount <= 0.0 {
         return Err("Amount must be greater than zero.".into());
     }
+    // The code is the ONLY thing protecting the escrow from an early claim by
+    // the receiver (who holds the key and the ticket, so they have the on-chain
+    // hash and can brute-force offline). An on-chain hash can't be rate-limited,
+    // so entropy is the whole defense: refuse anything short enough to guess.
+    // The UI generates a random 14-char base62 code (~83 bits); this is the floor.
+    if code.chars().count() < 12 {
+        return Err("The release code is too weak; it must be at least 12 characters.".into());
+    }
+    // CLTV treats values >= 500,000,000 as unix timestamps; below that it means
+    // a block height, which would misbehave as a time-based refund window.
+    if locktime < 500_000_000 {
+        return Err("Invalid refund timelock.".into());
+    }
     let rpc = RpcClient::new(cfg);
     let recipient_pkh = pkh_of(&rpc, recipient)?;
     let h = sha256_hex(code.as_bytes());
@@ -302,6 +315,15 @@ pub fn refund(cfg: &NodeConfig, ticket: &str, passphrase: Option<&str>) -> Resul
         }
         let lt_le: String = t.locktime.to_le_bytes().iter().map(|b| format!("{b:02x}")).collect();
         let raw2 = format!("{}feffffff{}{}", &raw[..84], &raw[92..raw.len() - 8], lt_le);
+        // The refund relies on a byte-level edit at fixed offsets. Rather than
+        // trust the layout, confirm the node reads back the intended non-final
+        // sequence and nLockTime before we sign; otherwise fail cleanly.
+        let d = rpc.call("decoderawtransaction", json!([raw2]))?;
+        if d["vin"][0]["sequence"].as_u64() != Some(0xffff_fffe)
+            || d["locktime"].as_u64() != Some(t.locktime as u64)
+        {
+            return Err("Could not prepare the refund transaction.".into());
+        }
         let prevtxs = json!([{"txid": t.txid, "vout": t.vout, "scriptPubKey": spk, "redeemScript": t.redeem}]);
         let signed = rpc.call("signrawtransaction", json!([raw2, prevtxs, [swif]]))?;
         if signed["complete"].as_bool() != Some(true) {
@@ -331,18 +353,34 @@ fn fill_preimage(rpc: &RpcClient, signed_hex: &str, redeem: &str, code: &[u8]) -
         .and_then(|v| v["scriptSig"]["hex"].as_str())
         .ok_or("could not read the claim signature")?
         .to_string();
-    // redeemScript is >75 bytes, so it is pushed with OP_PUSHDATA1 (0x4c)+len.
-    let push = format!("4c{:02x}", redeem.len() / 2);
+    // redeemScript must be pushed with OP_PUSHDATA1 (0x4c)+len, i.e. 76..=255 B.
+    let rl = redeem.len() / 2;
+    if !(76..=255).contains(&rl) {
+        return Err("Unexpected escrow script size.".into());
+    }
+    let push = format!("4c{rl:02x}");
     let placeholder = format!("00{push}{redeem}");
     if !ss.contains(&placeholder) {
         return Err("Could not complete the claim (unexpected signature shape).".into());
     }
+    // The code is pushed directly (single length byte), so it must be < 76 B.
+    if code.len() >= 76 {
+        return Err("Release code is too long.".into());
+    }
     let preimage_push = format!("{:02x}{}", code.len(), hex_of(code));
     let new_ss = ss.replace(&placeholder, &format!("{preimage_push}{push}{redeem}"));
-    // Fix the scriptSig length varint (both well under 253 bytes here).
+    // The scriptSig length varint is a single byte only below 253; refuse to
+    // hand-edit anything larger rather than silently corrupt the transaction.
+    if ss.len() / 2 >= 0xfd || new_ss.len() / 2 >= 0xfd {
+        return Err("Claim signature too large to complete.".into());
+    }
     let old = format!("{:02x}{ss}", ss.len() / 2);
     let new = format!("{:02x}{new_ss}", new_ss.len() / 2);
-    Ok(signed_hex.replacen(&old, &new, 1))
+    let out = signed_hex.replacen(&old, &new, 1);
+    if out == signed_hex {
+        return Err("Could not complete the claim (signature layout).".into());
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -385,6 +423,63 @@ mod tests {
         println!("CLAIM txid={} conf={} paid={}", claim_txid, conf, paid);
         assert!(conf >= 1, "claim not confirmed");
         assert!((paid - 12.0).abs() < 1e-3, "recipient should get ~12");
+    }
+
+    fn regtest() -> NodeConfig {
+        NodeConfig {
+            datadir: PathBuf::from(format!("{}/divi-htlc-regtest", std::env::var("HOME").unwrap())),
+            rpc_host: "127.0.0.1".into(),
+            rpc_user: "htlc".into(),
+            rpc_pass: "htlctest".into(),
+            rpc_port: 51600,
+            remote: false,
+        }
+    }
+
+    // The refund branch: sender reclaims after the timelock. Uses a past locktime
+    // so it is valid immediately. Proves the Rust refund path (was Python-only).
+    #[test]
+    #[ignore]
+    fn escrow_refund_roundtrip() {
+        let cfg = regtest();
+        let rpc = RpcClient::new(&cfg);
+        let recipient = rpc.call("getnewaddress", json!([])).unwrap().as_str().unwrap().to_string();
+        let created = create(&cfg, &recipient, 8.0, "RefundTestCode9", 1_600_000_000, None).expect("create");
+        rpc.call("setgenerate", json!([1])).unwrap();
+        let rtxid = refund(&cfg, &created.ticket, None).expect("refund");
+        rpc.call("setgenerate", json!([1])).unwrap();
+        let cr = rpc.call("getrawtransaction", json!([rtxid, 1])).unwrap();
+        let paid = cr["vout"][0]["value"].as_f64().unwrap_or(0.0);
+        println!("REFUND txid={} conf={} paid={}", rtxid, cr["confirmations"], paid);
+        assert!(cr["confirmations"].as_i64().unwrap_or(0) >= 1, "refund not confirmed");
+        assert!((paid - 8.0).abs() < 1e-3, "sender should get ~8 back");
+    }
+
+    // Security: a wrong code must NOT be able to claim.
+    #[test]
+    #[ignore]
+    fn escrow_wrong_code_rejected() {
+        let cfg = regtest();
+        let rpc = RpcClient::new(&cfg);
+        let recipient = rpc.call("getnewaddress", json!([])).unwrap().as_str().unwrap().to_string();
+        let created = create(&cfg, &recipient, 5.0, "RightCode12345", 1_900_000_000, None).expect("create");
+        rpc.call("setgenerate", json!([1])).unwrap();
+        let bad = claim(&cfg, &created.ticket, "WrongCode99999", None);
+        println!("wrong-code claim result: {bad:?}");
+        assert!(bad.is_err(), "a wrong code must never claim the escrow");
+        // And the funds are still locked (not spent by the failed attempt).
+        let st = status(&cfg, &created.ticket).expect("status");
+        assert!(st.funded, "escrow must remain locked after a wrong-code attempt");
+    }
+
+    // Validation: a weak (short) code must be refused at creation.
+    #[test]
+    #[ignore]
+    fn escrow_weak_code_rejected() {
+        let cfg = regtest();
+        let rpc = RpcClient::new(&cfg);
+        let recipient = rpc.call("getnewaddress", json!([])).unwrap().as_str().unwrap().to_string();
+        assert!(create(&cfg, &recipient, 1.0, "123456", 1_900_000_000, None).is_err(), "short code must be refused");
     }
 }
 
