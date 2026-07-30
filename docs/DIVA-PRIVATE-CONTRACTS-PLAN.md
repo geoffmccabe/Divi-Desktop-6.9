@@ -1,0 +1,75 @@
+# DIVA Private Smart Contracts Plan
+
+**Status:** Design / spec. Nothing built yet.
+**Scope:** Confidential smart contracts on **DIVA** (the Divi Authority chain, our forked geth side-chain secured by POAS), plus the compliance knobs that keep them defensible.
+**Date:** 2026-Jul-30
+
+---
+
+## 1. Why
+
+Businesses won't put real activity on a chain their competitors can read. Private smart contracts — where the *logic and data* are hidden but the chain still verifies them — are what make DIVA usable for real commerce. The goal is **privacy for business logic, without turning DIVA into an untraceable money launderer**, so it stays defensible to regulators.
+
+## 2. The core idea
+
+Use a privacy tech that (a) is EVM-shaped so it fits our forked-geth DIVA, and (b) has **selective disclosure built in**, so the same mechanism that hides data can reveal it under a defined, narrow policy. That points at **FHE**.
+
+## 3. The three technical options
+
+All three are EVM-compatible enough to sit on DIVA:
+
+| Tech | What it does | Fit |
+|---|---|---|
+| **FHE — Zama fhEVM** *(recommended)* | Compute on **encrypted** state. Near-normal Solidity with encrypted types. Each encrypted value carries an **access list** deciding who may decrypt it. | Best. Selective disclosure / viewing keys / threshold-decrypt are **native**, not bolted on. |
+| **TEE — Oasis Sapphire model** | Contract state sealed inside secure hardware (confidential EVM). | Simplest to adopt, production-proven. Weaker if the hardware trust assumption is ever broken. |
+| **ZK / commitments — Aztec-style** | Strongest privacy via zero-knowledge proofs and hidden state. | Own VM, not a drop-in EVM. Most work; keep as a future option. |
+
+**Decision: build on FHE (Zama fhEVM).** The per-value access control is exactly what the compliance design below needs.
+
+## 4. The "fair and balanced" compliance knobs
+
+These bolt onto the FHE base. The design principle: **hide what a business is doing; do not hide illicit money movement.**
+
+1. **Private state, auditable value.** Hide the contract's logic and business data (what competitors care about), but keep coin transfers **above a threshold transparent**; small transfers stay private. Privacy for *how you operate*, not for *large untraceable payments*.
+2. **Sanctions / blacklist screening at the protocol level.** Transfers to flagged addresses are blocked or forced transparent, enforced by the chain, not left to each app.
+3. **Threshold viewing keys held by POAS validators.** A specific contract or transaction can be decrypted **only when a quorum of validators signs off** (e.g. 26 of 38), triggered by a court order. Targeted, not mass surveillance; **no single party — or single government — can peek alone.** This is the "warrant backdoor," done cleanly and auditably.
+4. **Proof-of-innocence (Privacy Pools model).** Users can prove their funds are **not** from a known-illicit set without revealing their identity. This is the current state-of-the-art "privacy that regulators tolerate."
+
+## 5. How the threshold-warrant path works (the load-bearing piece)
+
+- Every confidential value is encrypted so that decryption requires a **threshold of POAS validators**, not any one of them.
+- A lawful request names a **specific** contract/tx (not "everything"). If the quorum agrees the request is valid, they jointly produce a decryption of only that item.
+- Because DIVA already trusts the POAS set for consensus, reusing it as the decryption committee introduces **no new trusted party**.
+- Every threshold-decrypt event is itself recorded on-chain, so disclosure is **auditable** — abuse is visible, not silent.
+
+This mirrors the "auditable privacy" designs in the field: strong default privacy, narrow and accountable disclosure.
+
+## 6. What stays out of scope (for now)
+
+- Full ZK/Aztec-style private VM (revisit later if FHE limits us).
+- Cross-chain confidential messaging (private state moving over the Base/checkpoint bridges) — later.
+
+## 7. Build order
+
+1. **Stand up fhEVM on the DIVA testnet** — get an encrypted-state contract running and verified on our own chain.
+2. **Access-control / viewing-key demo** — one party writes encrypted data, only an allowed party decrypts.
+3. **Threshold decryption via the POAS validator set** — the warrant path, on testnet.
+4. **Protocol-level transparency threshold + sanctions screening** on value transfers.
+5. **Proof-of-innocence** membership proofs.
+
+## 8. Open decisions (need Geoff's call)
+
+1. **Transparency threshold amount** — above what value must a transfer be auditable? (Business call, and a legal one for you.)
+2. **Quorum size for warrant decryption** — same 26/38 as bridge/consensus, or a different, higher bar for disclosure?
+3. **TEE fallback?** — do we also support Oasis-style TEE contracts for teams who want simpler/cheaper confidentiality, or FHE-only?
+
+## 9. Honest caveats
+
+- Whether any specific knob actually satisfies US (or other) authorities is a **legal judgment for Geoff**, not something the tech guarantees. The mechanisms here *enable* a compliant policy; they don't *decide* the policy.
+- FHE is powerful but computationally heavy; expect confidential operations to cost more gas / run slower than plain EVM. Fine for business logic, not for high-frequency micro-ops.
+
+---
+
+### One-paragraph summary
+
+DIVA gets confidential smart contracts by building on **FHE (Zama's fhEVM)** — encrypted contract state with per-value access control — so businesses can hide their logic and data from competitors. The same access-control mechanism carries the compliance design: transparent value transfers above a threshold, protocol-level sanctions screening, **proof-of-innocence** for clean funds, and a **threshold "warrant" path** where a quorum of POAS validators (no single party) can decrypt a *specific* item under a court order, with every disclosure recorded on-chain. Strong privacy for how you operate, narrow and accountable disclosure for illicit money — reusing the POAS set we already trust.
