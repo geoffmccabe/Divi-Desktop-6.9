@@ -47,6 +47,31 @@
 <script>
 (function () {
   const el = (id) => document.getElementById(id);
+
+  // If the SDK did not load, every call below would throw on its first line and
+  // the whole script would stop, leaving the placeholders showing for ever with
+  // nothing explaining why. Say so instead. This exact failure happened once,
+  // caused by the content policy refusing sdk.js over the custom scheme.
+  if (typeof divi === "undefined") {
+    for (const id of ["spendable", "staking", "height", "peers", "phase"]) {
+      el(id).textContent = "unavailable";
+      el(id).className = "value muted";
+    }
+    el("note").textContent = "This app could not load its connection to the wallet.";
+    el("note").className = "err";
+    return;
+  }
+
+  // Nothing should sit on a placeholder indefinitely. If the wallet has not
+  // answered by now, say that rather than looking like it is still working.
+  const stillWaiting = setTimeout(() => {
+    for (const id of ["spendable", "staking", "height", "peers", "phase"]) {
+      if (el(id).textContent === "\u2026") {
+        el(id).textContent = "no answer";
+        el(id).className = "value muted";
+      }
+    }
+  }, 12000);
   const num = (n) => (typeof n === "number" ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : "—");
 
   function fail(id, message) {
@@ -59,6 +84,7 @@
 
   divi.balance()
     .then((b) => {
+      clearTimeout(stillWaiting);
       if (!b) throw new Error("the wallet did not answer");
       el("spendable").innerHTML = num(b.spendable) + '<span class="unit">DIVI</span>';
       el("staking").innerHTML = num(b.staking) + '<span class="unit">DIVI</span>';
@@ -67,6 +93,7 @@
 
   divi.chain(1)
     .then((c) => {
+      clearTimeout(stillWaiting);
       const s = c && c.status;
       if (!s) throw new Error("the wallet did not answer");
       // The wallet's own rule is never to invent node state. If it says the node

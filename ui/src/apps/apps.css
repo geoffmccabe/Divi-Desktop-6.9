@@ -123,18 +123,27 @@
 .ca-host-spacer { flex: 1; }
 .ca-frame { flex: 1; width: 100%; min-height: 420px; }
 
-/* Immersive: the app takes the whole window. */
-.ca-immersive {
-  position: fixed; inset: 0; z-index: 40;
-  padding: 10px;
-  background: hsl(var(--background));
-  display: flex; flex-direction: column; gap: 8px;
-}
-.ca-immersive .ca-frame { min-height: 0; border-radius: calc(var(--app-card-radius) * 0.75); }
+/* Focus mode: the shell folds its sidebar and header away to thin tabs and the
+   app fills what is left. Nothing is fixed-position here on purpose, because
+   .main-panel has a backdrop-filter and would trap it. */
+.ca-host-focus { gap: 6px; }
+.ca-host-focus .ca-frame { min-height: 0; }
 
-/* The payment confirmation: drawn by the wallet, over everything. */
-.ca-veil { z-index: 60; background: hsl(var(--background) / 0.86); }
-.ca-dialog { margin: auto; padding: 22px; max-width: 420px; }
+/* The payment confirmation, rendered into the document body so it genuinely
+   covers the window. */
+.ca-veil {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; padding: 10px;
+  background: hsl(var(--background) / 0.86);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.ca-dialog {
+  margin: auto; padding: 22px; max-width: 420px;
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: 1px solid hsl(var(--foreground) / 0.15);
+  border-radius: var(--app-card-radius);
+}
 .ca-dialog .ca-row { margin-top: 14px; }
 
 /* ---- permission prompt ---- */

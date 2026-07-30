@@ -51,12 +51,24 @@ pub const MAX_FILE_BYTES: u64 = 20 * 1024 * 1024;
 /// `connect-src 'none'` is the honest setting today because brokered network
 /// access is not built. When it is, this gains exactly the hosts the manifest
 /// declared and the user approved, and nothing else.
+/// ⚠ `'self'` is NOT relied on here, and that is the whole point of this note.
+///
+/// An app is served from a custom scheme (`divi-app://<id>/`). Whether `'self'`
+/// matches a custom scheme is inconsistent between engines, and in WKWebView it
+/// did not: the app's own `sdk.js` was refused, the app's script died on the
+/// first line, and every value sat at its placeholder for ever with no error
+/// anywhere. It looked exactly like the wallet ignoring the app.
+///
+/// This cost real time to find because a browser-based test could not reproduce
+/// it: served over http, `'self'` behaves. So the scheme is named explicitly in
+/// every directive an app loads its own files through, and `'self'` is kept
+/// alongside only as a belt-and-braces for platforms where it does work.
 pub const APP_CSP: &str = "default-src 'none'; \
-script-src 'self' 'unsafe-inline'; \
-style-src 'self' 'unsafe-inline'; \
-img-src 'self' data: blob:; \
-media-src 'self' data: blob:; \
-font-src 'self' data:; \
+script-src 'self' 'unsafe-inline' divi-app: http://divi-app.localhost; \
+style-src 'self' 'unsafe-inline' divi-app: http://divi-app.localhost; \
+img-src 'self' data: blob: divi-app: http://divi-app.localhost; \
+media-src 'self' data: blob: divi-app: http://divi-app.localhost; \
+font-src 'self' data: divi-app: http://divi-app.localhost; \
 connect-src 'none'; \
 form-action 'none'; \
 base-uri 'none'";
@@ -270,6 +282,27 @@ mod tests {
     #[test]
     fn mime_is_case_insensitive() {
         assert_eq!(mime_for("A.PNG"), Some("image/png"));
+    }
+
+    #[test]
+    fn the_app_policy_names_the_scheme_apps_are_served_from() {
+        // Regression guard. Relying on 'self' alone silently broke every app in
+        // WKWebView: an app could not load its own script, died on its first
+        // line, and showed placeholders for ever with no error. A browser test
+        // could not catch it because 'self' behaves over http.
+        for directive in ["script-src", "style-src", "img-src", "media-src", "font-src"] {
+            let part = APP_CSP
+                .split(';')
+                .map(str::trim)
+                .find(|d| d.starts_with(directive))
+                .unwrap_or_else(|| panic!("{directive} is missing from the app policy"));
+            assert!(
+                part.contains("divi-app:"),
+                "{directive} must name the app scheme, not rely on 'self': {part}",
+            );
+        }
+        // An app still must not be able to reach the network.
+        assert!(APP_CSP.contains("connect-src 'none'"));
     }
 
     #[test]

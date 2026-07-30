@@ -346,7 +346,41 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .shell {
   position: relative; z-index: 10; height: 100%;
   display: flex; gap: 18px; padding: 26px;
+  transition: gap 220ms ease, padding 220ms ease;
 }
+
+/* ── Focus mode ───────────────────────────────────────────────────────────────
+   A community app can ask for the whole window. Rather than covering the wallet
+   with an overlay (which cannot work anyway: .main-panel has a backdrop-filter,
+   and that makes it the containing block for any fixed-position child, so an
+   overlay is trapped inside the panel), the chrome folds away and the content
+   area simply grows into the space.
+
+   The sidebar and the header stay on screen as thin tabs, a few percent of the
+   window, so nothing is ever unreachable: the wallet must never be able to trap
+   someone inside an app. */
+.shell-focus { gap: 8px; padding: 8px; }
+.shell-focus .col-left { width: 26px; }
+.shell-focus .col-left > *:not(.chrome-tab) { display: none; }
+.shell-focus .header-panel > *:not(.chrome-tab) { display: none; }
+.shell-focus .header-panel { height: 22px; padding: 0; }
+
+.chrome-tab {
+  display: none;
+  align-items: center; justify-content: center;
+  cursor: pointer; border: 0; padding: 0;
+  color: hsl(var(--foreground) / 0.75);
+  background: hsl(var(--panel-bg) / var(--panel-opacity));
+  border-radius: var(--panel-radius);
+  backdrop-filter: blur(var(--panel-blur));
+  -webkit-backdrop-filter: blur(var(--panel-blur));
+  transition: color 140ms ease, background 140ms ease;
+}
+.chrome-tab { border: 1px solid hsl(var(--border) / 0.5); }
+.chrome-tab:hover { color: hsl(var(--primary)); background: hsl(var(--primary) / 0.18); }
+.shell-focus .chrome-tab { display: flex; }
+.shell-focus .col-left > .chrome-tab { width: 26px; flex: 1; }
+.shell-focus .header-panel > .chrome-tab { width: 100%; height: 22px; }
 .col-left { width: 224px; flex-shrink: 0; display: flex; flex-direction: column; gap: 18px; min-height: 0; }
 .col-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 18px; min-height: 0; }
 .sidebar {

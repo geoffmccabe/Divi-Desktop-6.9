@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "../Icon";
 import { attachBroker, type BrokerLogEntry } from "./broker";
 import { immersiveMode } from "./manifest";
@@ -21,6 +22,18 @@ export function AppHost({ entry, onExit }: { entry: CatalogEntry; onExit: () => 
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [consented, setConsented] = useState(() => isFullyGranted(m.id, m.permissions));
   const [immersive, setImmersive] = useState(() => immersiveMode(m) === "always");
+
+  // Ask the shell to fold its chrome away. An overlay of our own cannot work
+  // here: .main-panel has a backdrop-filter, which makes it the containing block
+  // for any fixed-position child, so a "full window" layer is trapped inside the
+  // panel and looks like a small box. Folding the chrome gives the app the real
+  // window and keeps the wallet one click away.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("dd69:focusmode", { detail: immersive }));
+    return () => {
+      window.dispatchEvent(new CustomEvent("dd69:focusmode", { detail: false }));
+    };
+  }, [immersive]);
   const [pay, setPay] = useState<{ amount: number; reason: string; resolve: (ok: boolean) => void } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
@@ -59,7 +72,7 @@ export function AppHost({ entry, onExit }: { entry: CatalogEntry; onExit: () => 
   const canToggleImmersive = immersiveMode(m) === "on-demand";
 
   return (
-    <div className={immersive ? "ca-immersive" : "ca-host"}>
+    <div className={immersive ? "ca-host ca-host-focus" : "ca-host"}>
       <div className="ca-host-bar">
         <button type="button" className="wl-btn" onClick={onExit}>
           <Icon name="overview" size={14} /> Back to apps
@@ -165,8 +178,12 @@ function PaymentConfirm({ appName, amount, reason, onDone }: {
   reason: string;
   onDone: (ok: boolean) => void;
 }) {
-  return (
-    <div className="ca-immersive ca-veil">
+  // Rendered into the document body rather than in place. Inside the main panel
+  // a fixed-position layer is trapped by that panel's backdrop-filter, so a
+  // confirmation the user must be able to see clearly would appear as a small
+  // box inside the app's own area. Money decisions do not get to be subtle.
+  return createPortal(
+    <div className="ca-veil">
       <div className="ca-surface ca-dialog">
         <h3 className="ca-host-title">Payment request</h3>
         <p className="ca-desc ca-note-gap">
@@ -184,6 +201,7 @@ function PaymentConfirm({ appName, amount, reason, onDone }: {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

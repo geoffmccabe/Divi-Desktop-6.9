@@ -64,6 +64,10 @@ export const ICONS: Record<string, string> = {
   governance: svg(
     "<path d='M3 9l9-5 9 5'/><path d='M4 9h16'/><path d='M5 20V10'/><path d='M9.5 20V10'/><path d='M14.5 20V10'/><path d='M19 20V10'/><path d='M3 20h18'/>"
   ),
+  // Chevrons for the folded-away sidebar and header in focus mode. They point
+  // the way the panel will come back from.
+  chevronRight: svg("<path d='M9 5l7 7-7 7'/>"),
+  chevronDown: svg("<path d='M5 9l7 7 7-7'/>"),
   // Code brackets over a build square = writing an app.
   appbuilder: svg(
     "<path d='M9 8 5 12l4 4'/><path d='M15 8l4 4-4 4'/><rect x='2.5' y='3' width='19' height='18' rx='2.5'/>"

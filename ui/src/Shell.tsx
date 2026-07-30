@@ -60,6 +60,19 @@ export function Shell() {
 
   const [view, setView] = useState("network");
 
+  // Focus mode: an app asked for the whole window, so the sidebar and header
+  // fold away to thin tabs. Driven by an event rather than a prop so a panel
+  // several levels down can ask for it without threading state through.
+  const [focus, setFocus] = useState(false);
+  useEffect(() => {
+    const on = (e: Event) => setFocus(Boolean((e as CustomEvent<boolean>).detail));
+    window.addEventListener("dd69:focusmode", on);
+    return () => window.removeEventListener("dd69:focusmode", on);
+  }, []);
+  // Leaving the view that asked for it must always restore the wallet, so no
+  // app can leave someone stuck looking at thin strips.
+  useEffect(() => { setFocus(false); }, [view]);
+
   // Preview the PrimerLove fast-loader screen (Cmd/Ctrl+Shift+P) until the real
   // download backend drives it. Switches to the network map so it's visible.
   useEffect(() => {
@@ -93,9 +106,18 @@ export function Shell() {
   const label = (NAV.find((n) => n.id === view)?.label ?? EXTRA_TITLES[view] ?? "").replace(/\n/g, " ");
 
   return (
-    <div className="shell">
+    <div className={focus ? "shell shell-focus" : "shell"}>
       <FastReceiveHost onGoto={setView} />
       <div className="col-left">
+        <button
+          type="button"
+          className="chrome-tab"
+          title="Show the menu"
+          aria-label="Show the menu"
+          onClick={() => setFocus(false)}
+        >
+          <Icon name="chevronRight" size={14} />
+        </button>
         <Sidebar active={view} onSelect={setView} />
         <aside className="glass-panel status-panel">
           <StatusPanel onOpenNetwork={() => setView("network")} />
@@ -103,6 +125,15 @@ export function Shell() {
       </div>
       <div className="col-right">
         <header className="header-panel">
+          <button
+            type="button"
+            className="chrome-tab"
+            title="Show balances"
+            aria-label="Show balances"
+            onClick={() => setFocus(false)}
+          >
+            <Icon name="chevronDown" size={13} />
+          </button>
           <HeaderBar />
         </header>
         <section className="glass-panel main-panel">
