@@ -30,10 +30,27 @@ All three are EVM-compatible enough to sit on DIVA:
 
 These bolt onto the FHE base. The design principle: **hide what a business is doing; do not hide illicit money movement.**
 
-1. **Private state, auditable value.** Hide the contract's logic and business data (what competitors care about), but keep coin transfers **above a threshold transparent**; small transfers stay private. Privacy for *how you operate*, not for *large untraceable payments*.
+1. **Private state, auditable value.** Hide the contract's logic and business data (what competitors care about), but keep coin transfers **above a threshold transparent**; small transfers stay private. Privacy for *how you operate*, not for *large untraceable payments*. The threshold is an **aggregate**, not per-transaction — see 4.1.
 2. **Sanctions / blacklist screening at the protocol level.** Transfers to flagged addresses are blocked or forced transparent, enforced by the chain, not left to each app.
 3. **Threshold viewing keys held by POAS validators.** A specific contract or transaction can be decrypted **only when a quorum of validators signs off** (e.g. 26 of 38), triggered by a court order. Targeted, not mass surveillance; **no single party — or single government — can peek alone.** This is the "warrant backdoor," done cleanly and auditably.
 4. **Proof-of-innocence (Privacy Pools model).** Users can prove their funds are **not** from a known-illicit set without revealing their identity. This is the current state-of-the-art "privacy that regulators tolerate."
+
+### 4.1 Anti-structuring — making the transparency threshold hold
+
+A flat *per-transaction* threshold is trivially defeated by **structuring** (splitting one big transfer into many sub-threshold pieces). So the threshold is defined as a **rolling aggregate**, and the FHE base lets us enforce it without exposing amounts.
+
+**Chosen values (tunable in config, not baked into consensus):**
+
+- **Transparency threshold: $10,000 USD-equivalent, aggregated per identity over a rolling 24 hours.** Ten small sends still sum against the same 24h bucket, so splitting gains nothing. $10k is chosen to mirror the US cash CTR line — a figure regulators already accept, so we inherit its defensibility instead of inventing our own.
+- **Soft tier: ~$3,000 aggregate → "recorded but still private."** Metadata is logged (reachable only via the warrant path), not made public. Mirrors the Travel Rule tier and gives an early-warning band before full transparency.
+- **USD-oracle priced.** dUSDC, dBTC, and native DIVA are all measured on one dollar scale via an oracle, so a volatile coin price can't quietly move the line.
+- **Rolling, not calendar-day.** A fixed day boundary would just push abuse to 11:59pm; a rolling window closes that.
+
+**Why FHE is what makes this work:** the chain keeps an **encrypted running total** per account and homomorphically checks "cumulative > threshold" *without seeing the individual amounts*. Enforcing the aggregate cap therefore doesn't require exposing sub-threshold detail.
+
+**Address-hopping** (a fresh address per send so nothing accumulates) is the harder evasion. Counters: bind the counter to a **persistent identity** (KYC'd account / identity commitment) for the compliance tier so new addresses don't reset the tally; **proof-of-innocence** so spending privately requires proving clean provenance, which structuring can't produce; **pattern flags** (fan-out/fan-in, rapid splitting) surfaced to the POAS committee; and treating deliberate structuring as a **protocol violation** rather than pretending each small send is innocent.
+
+**Honest limit:** on any permissionless, pseudonymous chain, structuring can't be made *impossible* (same as cash). The goal is to make it **not free, detectable in aggregate, and rule-breaking**. Reuses the anti-structuring design work already done for vibe-trader.
 
 ## 5. How the threshold-warrant path works (the load-bearing piece)
 
@@ -59,7 +76,7 @@ This mirrors the "auditable privacy" designs in the field: strong default privac
 
 ## 8. Open decisions (need Geoff's call)
 
-1. **Transparency threshold amount** — above what value must a transfer be auditable? (Business call, and a legal one for you.)
+1. ~~**Transparency threshold amount**~~ — **DECIDED (2026-Jul-30):** $10k USD-equiv rolling 24h aggregate, USD-oracle priced, with an optional ~$3k "recorded-but-private" soft tier. See 4.1.
 2. **Quorum size for warrant decryption** — same 26/38 as bridge/consensus, or a different, higher bar for disclosure?
 3. **TEE fallback?** — do we also support Oasis-style TEE contracts for teams who want simpler/cheaper confidentiality, or FHE-only?
 
