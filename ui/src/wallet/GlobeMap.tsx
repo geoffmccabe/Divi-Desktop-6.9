@@ -3,7 +3,7 @@ import Globe, { type GlobeMethods } from "react-globe.gl";
 import * as THREE from "three";
 import earthNight from "../assets/earth-night.jpg";
 import diviLogo from "../assets/divi-coin.webp";
-import { pulseProgress } from "./activityPulse";
+import { pulseTrigger, makeLegs, legU, type Leg } from "./activityPulse";
 
 // The node map on a real 3D globe. Nodes are custom "Node Towers" (a slim square
 // pyramid with a sphere on its tip), packed apart when co-located. Each
@@ -56,7 +56,6 @@ const MAX_PEER = 24;
 const MAX_MESH = 120;
 const PEER_COLOR = new THREE.Color(0xb28cff);
 const MESH_COLOR = new THREE.Color(0x4aa3ff);
-const GOLD_COLOR = new THREE.Color(0xffd23f); // the activity-ripple gold
 // Dimmer blue for the network glyphs (additive blend => halved colour ~ 50%
 // opacity), to cut clutter.
 const MESH_GLYPH = new THREE.Color(0x4aa3ff).multiplyScalar(0.5);
@@ -272,7 +271,14 @@ function frameNodes(points: GlobePoint[]): { lat: number; lng: number; altitude:
 }
 
 interface Strand { hp: Float32Array; K: number; dir: number; }
-interface Stream { strands: Strand[]; mult: number; nextDecide: number; flow: number; a: THREE.Vector3; b: THREE.Vector3; visible: boolean; mesh: boolean; off: number; gold: number; tubeMats: THREE.MeshBasicMaterial[]; }
+interface Stream {
+  strands: Strand[]; mult: number; nextDecide: number; flow: number;
+  a: THREE.Vector3; b: THREE.Vector3; visible: boolean; mesh: boolean;
+  legs: Leg[]; // per-stream jittered ping legs (built each pulse)
+  headU: number; // current gold-head position 0..1 along the arc, or -1 = idle
+  tubeMats: THREE.MeshBasicMaterial[]; // strand materials (opacity while active)
+  tubeCols: { attr: THREE.BufferAttribute; K: number; base: THREE.Color }[]; // per-vertex gold band
+}
 interface Glyph { s: number; strand: number; base: number; }
 
 export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null; getWinnerIp?: () => string | null }) {
@@ -437,6 +443,7 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
       const sIdx = streams.length;
       const strands: Strand[] = [];
       const tubeMats: THREE.MeshBasicMaterial[] = [];
+      const tubeCols: { attr: THREE.BufferAttribute; K: number; base: THREE.Color }[] = [];
       // Close nodes (< ~300km): no helix, a single straight arc; characters flow
       // both ways on it. Far nodes: full double helix.
       // Double helix is for PEERS only; the blue network is always a simple arc
@@ -461,8 +468,18 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
         // at any zoom (unlike a world-space tube, which balloons when zoomed in).
         if (helix || strand === 0) {
           const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(hpVec), K, TUBE_R, 4, false);
-          const tmat = new THREE.MeshBasicMaterial({ color: conn.mesh ? MESH_COLOR : PEER_COLOR, transparent: true, opacity: conn.mesh ? 0.1 : 0.2, depthWrite: false });
-          tubeMats.push(tmat); // kept so the ripple can pulse the strand itself gold
+          const base = conn.mesh ? MESH_COLOR : PEER_COLOR;
+          // Per-vertex colours so a gold HEAD can travel ALONG the strand instead
+          // of the whole tube flashing at once. Material colour is white; the
+          // vertex colours carry the real hue.
+          const vcount = tube.attributes.position.count;
+          const cols = new Float32Array(vcount * 3);
+          for (let v = 0; v < vcount; v++) { cols[v * 3] = base.r; cols[v * 3 + 1] = base.g; cols[v * 3 + 2] = base.b; }
+          const cattr = new THREE.BufferAttribute(cols, 3);
+          tube.setAttribute("color", cattr);
+          const tmat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, transparent: true, opacity: conn.mesh ? 0.1 : 0.2, depthWrite: false });
+          tubeMats.push(tmat);
+          tubeCols.push({ attr: cattr, K, base });
           group.add(new THREE.Mesh(tube, tmat));
         }
         strands.push({ hp, K, dir: strand === 0 ? 1 : -1 });
@@ -470,7 +487,7 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
       // mesh = a peer→network arc (stage B/C of the query ripple); !mesh = a
       // self→peer helix (stage A/D). off = ±200ms per-connection timing jitter so
       // the gold pulses stagger instead of moving in lockstep.
-      streams.push({ strands, mult: 0.7 + Math.random() * 0.6, nextDecide: now0 + Math.random() * 10000, flow: Math.random(), a: conn.a, b: conn.b, visible: true, mesh: conn.mesh, off: (Math.random() - 0.5) * 400, gold: 0, tubeMats });
+      streams.push({ strands, mult: 0.7 + Math.random() * 0.6, nextDecide: now0 + Math.random() * 10000, flow: Math.random(), a: conn.a, b: conn.b, visible: true, mesh: conn.mesh, legs: [], headU: -1, tubeMats, tubeCols });
       const ch = Math.max(3, Math.min(CH_CAP, Math.round(len / SPACING)));
       for (let strand = 0; strand < 2; strand++)
         for (let p = 0; p < ch; p++) { glyphs.push({ s: sIdx, strand, base: p / ch }); isMesh.push(conn.mesh); }
@@ -542,6 +559,7 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
     let raf = 0;
     let last = performance.now();
     let goldOn = false; // was the gold ripple painting last frame (to restore once)
+    let lastTrig = 0; // last pulse trigger seen (to hand out fresh legs)
     const animate = () => {
       const now = performance.now();
       const dt = Math.min(0.1, (now - last) / 1000);
@@ -576,11 +594,18 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
         }
       }
 
-      // Gold query ripple: each connection lights gold as the pulse passes — the
-      // self→peer helixes on stages A/D, the peer→network arcs on B/C — each on
-      // its own ±200ms jittered clock. bump() = a smooth rise-and-fall.
-      const bump = (x: number) => (x > 0 && x < 1 ? Math.sin(Math.PI * x) : 0);
-      let anyGold = false;
+      // Gold query ripple: each connection runs its OWN jittered ping, and the
+      // gold travels as a HEAD along the arc (not the whole thing flashing). A new
+      // pulse hands every stream a fresh set of jittered legs.
+      const trig = pulseTrigger();
+      if (trig && trig !== lastTrig) {
+        lastTrig = trig;
+        for (const st of streams) st.legs = makeLegs(trig);
+      }
+      // Gold concentration at a point `pos` (0..1 along the arc) given head `u`.
+      const band = (pos: number, u: number) => (u < 0 ? 0 : Math.exp(-(((pos - u) / 0.15) * ((pos - u) / 0.15))));
+      const GR = 1.0, GG = 0.82, GB = 0.25; // #ffd23f
+      let anyActive = false;
       for (const st of streams) {
         const da = (cam.x - st.a.x) * st.a.x + (cam.y - st.a.y) * st.a.y + (cam.z - st.a.z) * st.a.z;
         const db = (cam.x - st.b.x) * st.b.x + (cam.y - st.b.y) * st.b.y + (cam.z - st.b.z) * st.b.z;
@@ -592,37 +617,45 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
           st.mult = Math.max(0.5, Math.min(1.5, st.mult + d * 0.1));
         }
         st.flow += BASE_FLOW * st.mult * dt;
-        const pu = pulseProgress(now + st.off);
-        st.gold = pu.active ? (st.mesh ? Math.max(bump(pu.b), bump(pu.c)) : Math.max(bump(pu.a), bump(pu.d))) : 0;
-        if (st.gold > 0.01) anyGold = true;
-        // Pulse the STRAND itself gold too (not just the flowing characters):
-        // blend its colour toward gold and brighten its opacity by st.gold.
-        if (st.gold > 0.01 || goldOn) {
-          const base = st.mesh ? MESH_COLOR : PEER_COLOR;
-          const baseOp = st.mesh ? 0.1 : 0.2;
-          for (const m of st.tubeMats) {
-            m.color.copy(base).lerp(GOLD_COLOR, st.gold);
-            m.opacity = baseOp + (0.75 - baseOp) * st.gold;
+
+        // Head position along a→b. Self→peer helixes travel out on leg0 / back on
+        // leg3; peer→network arcs out on leg1 / back on leg2 — so the ripple rolls
+        // outward from your node and returns, each leg independently jittered.
+        let u = -1;
+        if (st.legs.length) {
+          const outLeg = st.mesh ? st.legs[1] : st.legs[0];
+          const retLeg = st.mesh ? st.legs[2] : st.legs[3];
+          let p = legU(outLeg, now);
+          if (p >= 0) u = p;
+          else { p = legU(retLeg, now); if (p >= 0) u = 1 - p; }
+        }
+        const wasActive = st.headU >= 0;
+        st.headU = u;
+        if (u >= 0) anyActive = true;
+
+        // Paint the tube: a gold band travelling at the head; restore to base when
+        // the ping leaves (one final pass on the frame it goes idle).
+        if (u >= 0 || wasActive) {
+          for (const m of st.tubeMats) m.opacity = u >= 0 ? (st.mesh ? 0.35 : 0.5) : st.mesh ? 0.1 : 0.2;
+          for (const tc of st.tubeCols) {
+            const arr = tc.attr.array as Float32Array;
+            const n = arr.length / 3;
+            for (let vi = 0; vi < n; vi++) {
+              const pos = Math.floor(vi / 5) / tc.K; // 5 = radialSegments(4)+1
+              const gg = band(pos, u);
+              arr[vi * 3] = tc.base.r + (GR - tc.base.r) * gg;
+              arr[vi * 3 + 1] = tc.base.g + (GG - tc.base.g) * gg;
+              arr[vi * 3 + 2] = tc.base.b + (GB - tc.base.b) * gg;
+            }
+            tc.attr.needsUpdate = true;
           }
         }
       }
-      // Blend the flowing characters toward gold by their connection's gold level,
-      // then restore once the pulse is fully over.
-      if (gcolAttr && baseColors && (anyGold || goldOn)) {
-        const gc = gcolAttr.array as Float32Array;
-        const GR = 1.0, GG = 0.82, GB = 0.25; // #ffd23f
-        for (let i = 0; i < glyphs.length; i++) {
-          const g = streams[glyphs[i].s].gold;
-          const b0 = baseColors[i * 3], b1 = baseColors[i * 3 + 1], b2 = baseColors[i * 3 + 2];
-          gc[i * 3] = b0 + (GR - b0) * g;
-          gc[i * 3 + 1] = b1 + (GG - b1) * g;
-          gc[i * 3 + 2] = b2 + (GB - b2) * g;
-        }
-        gcolAttr.needsUpdate = true;
-        goldOn = anyGold; // one final restore pass when it goes false
-      }
+      // Move the flowing characters, and gild the ones riding the gold head.
       if (posAttr) {
         const arr = posAttr.array as Float32Array;
+        const gc = gcolAttr && baseColors ? (gcolAttr.array as Float32Array) : null;
+        const paint = gc !== null && (anyActive || goldOn);
         for (let i = 0; i < glyphs.length; i++) {
           const gm = glyphs[i];
           const st = streams[gm.s];
@@ -638,8 +671,16 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
           arr[i * 3] = hp[i0 * 3] + (hp[i1 * 3] - hp[i0 * 3]) * fr2;
           arr[i * 3 + 1] = hp[i0 * 3 + 1] + (hp[i1 * 3 + 1] - hp[i0 * 3 + 1]) * fr2;
           arr[i * 3 + 2] = hp[i0 * 3 + 2] + (hp[i1 * 3 + 2] - hp[i0 * 3 + 2]) * fr2;
+          if (paint && gc && baseColors) {
+            const gg = band(tt, st.headU);
+            const b0 = baseColors[i * 3], b1 = baseColors[i * 3 + 1], b2 = baseColors[i * 3 + 2];
+            gc[i * 3] = b0 + (GR - b0) * gg;
+            gc[i * 3 + 1] = b1 + (GG - b1) * gg;
+            gc[i * 3 + 2] = b2 + (GB - b2) * gg;
+          }
         }
         posAttr.needsUpdate = true;
+        if (paint && gcolAttr) { gcolAttr.needsUpdate = true; goldOn = anyActive; }
       }
       raf = requestAnimationFrame(animate);
     };
