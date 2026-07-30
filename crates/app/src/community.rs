@@ -31,11 +31,27 @@ static HARNESS_FILES: &[(&str, &[u8])] = &[
     ("thumb.svg", include_bytes!("community/harness/thumb.svg")),
 ];
 
-static BUILTINS: &[BuiltinBundle] = &[BuiltinBundle {
-    id: "io.divi.sandbox-test",
-    manifest: include_str!("community/harness/manifest.json"),
-    files: HARNESS_FILES,
-}];
+/// A small read-only app, and the first one that does something useful. It also
+/// serves as the working proof that the permission system carries real data:
+/// it asks for balance and chain only, and gets exactly that.
+static SNAPSHOT_FILES: &[(&str, &[u8])] = &[
+    ("index.html", include_bytes!("community/snapshot/index.html")),
+    ("sdk.js", include_bytes!("community/snapshot/sdk.js")),
+    ("thumb.svg", include_bytes!("community/snapshot/thumb.svg")),
+];
+
+static BUILTINS: &[BuiltinBundle] = &[
+    BuiltinBundle {
+        id: "io.divi.snapshot",
+        manifest: include_str!("community/snapshot/manifest.json"),
+        files: SNAPSHOT_FILES,
+    },
+    BuiltinBundle {
+        id: "io.divi.sandbox-test",
+        manifest: include_str!("community/harness/manifest.json"),
+        files: HARNESS_FILES,
+    },
+];
 
 pub fn builtin(id: &str) -> Option<&'static BuiltinBundle> {
     BUILTINS.iter().find(|b| b.id == id)
@@ -175,6 +191,37 @@ fn percent_decode(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_builtin_declares_what_it_actually_needs() {
+        // A built-in that asks for a permission it does not use, or uses one it
+        // did not ask for, would be the wallet's own app setting a bad example
+        // and would be refused by the same checks a third party gets.
+        for b in BUILTINS {
+            let v: serde_json::Value = serde_json::from_str(b.manifest).expect("manifest parses");
+            let perms: Vec<String> = v["permissions"].as_array().unwrap()
+                .iter().map(|p| p.as_str().unwrap().to_string()).collect();
+            let source: String = b.files.iter()
+                .filter(|(n, _)| n.ends_with(".html") || n.ends_with(".js"))
+                .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
+                .collect();
+            for p in &perms {
+                let short = p.split('.').next().unwrap();
+                assert!(
+                    source.contains(p) || source.contains(&format!("divi.{short}")),
+                    "{} asks for {p} but never uses it", b.id,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn builtin_ids_are_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for b in BUILTINS {
+            assert!(seen.insert(b.id), "two built-ins share the id {}", b.id);
+        }
+    }
 
     #[test]
     fn harness_manifest_is_valid_json_and_matches_its_id() {

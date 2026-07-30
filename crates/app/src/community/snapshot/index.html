@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Wallet Snapshot</title>
+<style>
+  /* A community app is a separate document with its own origin, so it cannot
+     read the wallet's theme variables. Colours here are chosen to sit
+     comfortably against the wallet's dark panels. Letting apps follow the
+     user's skin would mean passing the palette in through the broker, which is
+     worth doing later but is a feature, not a fix. */
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: #16121f; color: #ece9f4;
+  }
+  h1 { font-size: 16px; margin: 0 0 2px; }
+  .sub { margin: 0 0 18px; color: #9d95b8; font-size: 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .card { background: #221b33; border: 1px solid #332a4a; border-radius: 12px; padding: 14px 16px; }
+  .label { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: #9d95b8; }
+  .value { font-size: 22px; font-weight: 600; margin-top: 4px; overflow-wrap: anywhere; }
+  .unit { font-size: 12px; color: #9d95b8; font-weight: 400; margin-left: 4px; }
+  .wide { grid-column: 1 / -1; }
+  .muted { color: #9d95b8; font-size: 12px; }
+  .err { color: #ff8f8f; }
+  footer { margin-top: 18px; font-size: 11px; color: #6f6789; }
+</style>
+</head>
+<body>
+<h1>Wallet Snapshot</h1>
+<p class="sub">Read-only. This app can see these numbers and nothing else.</p>
+
+<div class="grid">
+  <div class="card"><div class="label">Spendable</div><div class="value" id="spendable">…</div></div>
+  <div class="card"><div class="label">Staking</div><div class="value" id="staking">…</div></div>
+  <div class="card"><div class="label">Block height</div><div class="value" id="height">…</div></div>
+  <div class="card"><div class="label">Connected peers</div><div class="value" id="peers">…</div></div>
+  <div class="card wide"><div class="label">Node</div><div class="value" id="phase">…</div></div>
+</div>
+
+<footer id="note"></footer>
+
+<script src="sdk.js"></script>
+<script>
+(function () {
+  const el = (id) => document.getElementById(id);
+  const num = (n) => (typeof n === "number" ? n.toLocaleString(undefined, { maximumFractionDigits: 4 }) : "—");
+
+  function fail(id, message) {
+    const node = el(id);
+    node.textContent = "unavailable";
+    node.className = "value muted";
+    el("note").textContent = message;
+    el("note").className = "err";
+  }
+
+  divi.balance()
+    .then((b) => {
+      if (!b) throw new Error("the wallet did not answer");
+      el("spendable").innerHTML = num(b.spendable) + '<span class="unit">DIVI</span>';
+      el("staking").innerHTML = num(b.staking) + '<span class="unit">DIVI</span>';
+    })
+    .catch((e) => { fail("spendable", "Balance: " + e.message); fail("staking", "Balance: " + e.message); });
+
+  divi.chain(1)
+    .then((c) => {
+      const s = c && c.status;
+      if (!s) throw new Error("the wallet did not answer");
+      // The wallet's own rule is never to invent node state. If it says the node
+      // is unreachable, say so rather than showing a confident zero.
+      el("height").textContent = s.reachable ? num(s.blocks) : "unavailable";
+      el("peers").textContent = s.reachable ? num(s.peers) : "unavailable";
+      el("phase").textContent = s.reachable ? s.phase : "not reachable right now";
+      if (!s.reachable) {
+        el("note").textContent = "The wallet could not reach the Divi node, so these are not current.";
+        el("note").className = "muted";
+      }
+    })
+    .catch((e) => { fail("height", "Chain: " + e.message); fail("peers", ""); fail("phase", ""); });
+})();
+</script>
+</body>
+</html>

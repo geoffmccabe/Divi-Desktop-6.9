@@ -52,7 +52,8 @@
    card glow control so the store can be calmer than the panels if wanted. */
 .ca-card:hover {
   transform: translateY(-2px);
-  border-color: hsl(var(--primary) / 0.55);
+  /* Own width, so the highlight shows even when outlines are turned off. */
+  border: 1px solid hsl(var(--primary) / 0.55);
   box-shadow: 0 0 calc(var(--glow-strength) * var(--app-card-glow))
               hsl(var(--glow-color) / calc(0.45 * var(--app-card-glow)));
 }
@@ -140,9 +141,17 @@
 .ca-prompt { padding: 18px; }
 .ca-prompt-lead { margin-top: 10px; }
 .ca-perm-list { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
-.ca-perm { display: flex; gap: 10px; padding: 9px 11px; border-radius: calc(var(--app-card-radius) * 0.7); }
+.ca-perm {
+  display: flex; gap: 10px; padding: 9px 11px;
+  border-radius: calc(var(--app-card-radius) * 0.7);
+  /* Always drawn, never inherited: see note above. */
+  border: 1px solid hsl(var(--foreground) / 0.15);
+}
 /* Capabilities can act on the user's behalf, so they read differently. */
-.ca-perm-cap { border-color: hsl(var(--warning) / 0.55); }
+.ca-perm-cap {
+  border-color: hsl(var(--warning) / 0.6);
+  background: hsl(var(--warning) / 0.07);
+}
 .ca-perm-label { font-size: 0.86rem; font-weight: 600; }
 .ca-perm-detail { font-size: 0.76rem; line-height: 1.45; color: hsl(var(--foreground) / 0.7); }
 .ca-perm-detail-warn { color: hsl(var(--destructive)); }
