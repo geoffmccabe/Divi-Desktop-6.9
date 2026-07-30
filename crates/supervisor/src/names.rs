@@ -337,6 +337,19 @@ pub fn quote(cfg: &NodeConfig, input: &str) -> Result<Quote, String> {
     // Only a fully caught-up index may answer at all.
     let caught_up = activation_height(&chain).is_some()
         && tip_height(&rpc).map(|tip| idx.scanned_height >= tip && tip > 0).unwrap_or(false);
+    // A lookalike of a reserved name is refused by the registry, so it must not
+    // be offered as available. Reported here as well as enforced there, or the
+    // user pays a reservation fee to learn it.
+    if name_registry::charset::is_reserved(q.canonical.as_bytes()) {
+        return Ok(Quote {
+            registration_divi: q.registration_divi,
+            renewal_divi: q.renewal_divi,
+            can_be_ticker: q.can_be_ticker,
+            available: Some(false),
+            owner: idx.names.get(&q.canonical).map(|n| n.owner.clone()),
+            canonical: q.canonical,
+        });
+    }
     let existing = idx.names.get(&q.canonical);
     Ok(Quote {
         registration_divi: q.registration_divi,
@@ -667,6 +680,20 @@ fn apply_record(
         NameRecord::Register { salt, name } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
             if charset::validate_name(name).is_err() {
+                return;
+            }
+            // ⚠ Refuse anything that NORMALISES onto a reserved name.
+            //
+            // The exact reserved strings are already unobtainable because the
+            // reserve owns them. Lookalikes are not: `B1NANCE` is a different
+            // string, so nothing held it. That hole opened the moment reserved
+            // names moved from "refused" to "owned", and it is invisible to the
+            // unit tests, which check `is_reserved` directly rather than through
+            // the registration path.
+            //
+            // Nobody may have these, not even the reserve: `B1NANCE` is not a
+            // name anyone wants, it is a spoof of one.
+            if name_registry::charset::is_reserved(name) {
                 return;
             }
             // A live name cannot be taken. A RELEASED one can, which is the
@@ -1464,6 +1491,15 @@ pub fn commit(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     // commit's fee and the name.
     let mut store = read_json(&store_path("pending"));
 
+    // Refuse before spending a reservation fee on something the registry will
+    // never honour. Covers lookalikes as well as the exact names.
+    if name_registry::charset::is_reserved(q.canonical.as_bytes()) {
+        return Err(format!(
+            "{} is reserved, or is a lookalike of a reserved name. Well-known brands and people are held so nobody can impersonate them.",
+            q.canonical
+        ));
+    }
+
     // Already registered is a different situation from already reserved, and
     // saying "you have a reservation" for a name somebody owns is just wrong.
     {
@@ -2050,6 +2086,40 @@ mod tests {
             &paid("BINANCE"),
         );
         assert_eq!(i.names.get("BINANCE").unwrap().owner, "reserve-address");
+    }
+
+    /// ⚠ The regression this exists to prevent.
+    ///
+    /// When reserved names moved from "refused" to "owned by the reserve", the
+    /// seeding inserted only the EXACT strings. `B1NANCE` is a different
+    /// string, so nothing held it and it was registrable. Every unit test still
+    /// passed, because they checked `is_reserved` directly rather than through
+    /// the registration path. Only an end-to-end check caught it.
+    #[test]
+    fn a_lookalike_of_a_reserved_name_cannot_be_registered() {
+        for spoof in ["B1NANCE", "M!CROSOFT", "C0INBASE", "SAT0SHINAKAM0T0", "V1TAL1K", "D1VI"] {
+            let mut i = idx();
+            seed_reserve(&mut i, "reserve-address", 0);
+            let salt = [9u8; commitmod::SALT_LEN];
+            let hash = commitmod::commit_hash(&salt, spoof.as_bytes());
+            apply(&mut i, &NameRecord::Commit { hash160: hash }, ALICE, 100);
+            apply_record(
+                &mut i,
+                &NameRecord::Register { salt: salt.to_vec(), name: spoof.as_bytes().to_vec() },
+                ALICE,
+                200,
+                true,
+                TREASURY,
+                &paid(spoof),
+            );
+            assert!(!i.names.contains_key(spoof), "{spoof} must not be registrable");
+        }
+
+        // And the counterweight: an ordinary name still registers normally.
+        let mut i = idx();
+        seed_reserve(&mut i, "reserve-address", 0);
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        assert_eq!(i.names.get("GEOFF").unwrap().owner, ALICE);
     }
 
     /// Seeding must never overwrite a name the reserve has already handed on.
