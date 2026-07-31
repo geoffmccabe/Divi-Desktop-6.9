@@ -24,7 +24,9 @@ All three are EVM-compatible enough to sit on DIVA:
 | **TEE — Oasis Sapphire model** | Contract state sealed inside secure hardware (confidential EVM). | Simplest to adopt, production-proven. Weaker if the hardware trust assumption is ever broken. |
 | **ZK / commitments — Aztec-style** | Strongest privacy via zero-knowledge proofs and hidden state. | Own VM, not a drop-in EVM. Most work; keep as a future option. |
 
-**Decision: build on FHE (Zama fhEVM).** The per-value access control is exactly what the compliance design below needs.
+**Decision: offer both FHE and TEE, with FHE as the flagship.** FHE (Zama fhEVM) is the default and the one we lead with, because its per-value access control is exactly what the compliance design below needs, and its "trust the math" story matches a privacy chain's core pitch. **TEE (Oasis Sapphire model) is also supported** as a cheaper, faster option for teams that don't need FHE's strength — clearly labeled as the **lighter-trust** choice (it trusts a CPU-maker's on-chip secure enclave, which has been cracked before). Developers pick per contract. ZK stays a future option.
+
+**Both tiers obey the same compliance rules.** The transparency threshold (4.1), sanctions screening, and the warrant path (§5) apply to TEE contracts too — for TEE this is enforced through the enclave's key management (state is releasable to the same POAS threshold committee), so choosing TEE buys speed and lower cost, **not** an escape from the disclosure rules.
 
 ## 4. The "fair and balanced" compliance knobs
 
@@ -73,12 +75,13 @@ This mirrors the "auditable privacy" designs in the field: strong default privac
 3. **Threshold decryption via the POAS validator set** — the warrant path, on testnet.
 4. **Protocol-level transparency threshold + sanctions screening** on value transfers.
 5. **Proof-of-innocence** membership proofs.
+6. **TEE (Oasis Sapphire model) as the lighter-trust option** — wired to the same compliance rules and POAS warrant committee. Lands after the FHE path is proven, since FHE carries the flagship story.
 
 ## 8. Open decisions (need Geoff's call)
 
 1. ~~**Transparency threshold amount**~~ — **DECIDED (2026-Jul-30):** $10k USD-equiv rolling 24h aggregate, USD-oracle priced, with an optional ~$3k "recorded-but-private" soft tier. See 4.1.
 2. ~~**Quorum size for warrant decryption**~~ — **DECIDED (2026-Jul-30):** a *higher* bar than consensus/bridge (e.g. **30 of 38** vs 26/38), because revealing private data should be harder than moving money.
-3. **TEE fallback?** — do we also support Oasis-style TEE contracts for teams who want simpler/cheaper confidentiality, or FHE-only? (Leaning FHE-only at launch: TEE relies on trusting a CPU-maker's on-chip secure enclave, which has been cracked before and undercuts a privacy chain's core pitch. Revisit later if users ask.)
+3. ~~**TEE fallback?**~~ — **DECIDED (2026-Jul-31):** support **both**. FHE is the flagship/default; TEE (Oasis Sapphire model) is offered as the cheaper, faster, clearly-labeled *lighter-trust* option. Both obey the same compliance rules (threshold, sanctions, warrant path) — TEE via enclave key management to the same POAS committee, so it's not a disclosure loophole.
 
 ## 9. Honest caveats
 
