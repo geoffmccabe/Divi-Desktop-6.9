@@ -6,6 +6,7 @@ pub mod collectibles_import;
 pub mod config;
 pub mod crypto_nfd;
 pub mod forge;
+pub mod reveal;
 pub mod fastsend;
 pub mod fees;
 pub mod health;
