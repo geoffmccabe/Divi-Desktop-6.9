@@ -72,6 +72,9 @@ const MAINNET_TREASURY: Option<&str> = None;
 /// `DIVI_NAMES_RESERVE`.
 const MAINNET_RESERVE: Option<&str> = None;
 
+/// Longest no-cancel window a listing may promise. About 30 days.
+const MAX_LISTING_LOCK_BLOCKS: u64 = 43_200;
+
 /// Reserved names never expire. The holder should not have to renew several
 /// hundred names a year, paying fees to themselves, to keep squatters off them.
 const NEVER_EXPIRES: u64 = u64::MAX;
@@ -351,12 +354,35 @@ pub fn quote(cfg: &NodeConfig, input: &str) -> Result<Quote, String> {
         });
     }
     let existing = idx.names.get(&q.canonical);
+    // ⚠ A RELEASED name is available. It is still in the index, so a plain
+    // "does a record exist" test calls it taken and no one can ever claim a
+    // lapsed name through the wallet, which quietly defeats the entire
+    // declining-price release.
+    let tip = tip_height(&rpc).unwrap_or(0);
+    let claimable = match existing {
+        None => true,
+        Some(st) => is_released(st, tip),
+    };
+    // And it costs the release price, not the ordinary one, while the premium
+    // is still decaying. Quoting the base price would have the user underpay
+    // and lose the fee.
+    let price = match existing {
+        Some(st) if is_released(st, tip) => released_at(st)
+            .and_then(|r| {
+                name_registry::fees::release_price_divi(
+                    q.canonical.len(),
+                    tip.saturating_sub(r),
+                )
+            })
+            .unwrap_or(q.registration_divi),
+        _ => q.registration_divi,
+    };
     Ok(Quote {
-        registration_divi: q.registration_divi,
+        registration_divi: price,
         renewal_divi: q.renewal_divi,
         can_be_ticker: q.can_be_ticker,
-        available: if caught_up { Some(existing.is_none()) } else { None },
-        owner: existing.map(|n| n.owner.clone()),
+        available: if caught_up { Some(claimable) } else { None },
+        owner: existing.filter(|st| !is_released(st, tip)).map(|n| n.owner.clone()),
         canonical: q.canonical,
     })
 }
@@ -559,7 +585,14 @@ fn records_in_block(
         // call, and every record in a transaction has the same author.
         let Some(sender) = record_sender(rpc, &tx) else { continue };
         let payments = paid_to(&tx);
-        for payload in payloads {
+        // ⚠ Only the FIRST record in a transaction counts.
+        //
+        // Every record in a transaction sees that transaction's payments, so
+        // honouring several would let ONE registration fee pay for TWO names.
+        // Relay policy allows a single data output per transaction, but relay
+        // policy is not consensus: whoever produces a block can include a
+        // transaction that breaks it. The rule has to live here.
+        for payload in payloads.into_iter().take(1) {
             let Ok(Some(rec)) = record::decode_payload(&payload) else { continue };
             out.push((rec, sender.clone(), payments.clone()));
         }
@@ -648,7 +681,7 @@ fn released_at(st: &NameState) -> Option<u64> {
     if st.expires_height == NEVER_EXPIRES {
         return None;
     }
-    Some(st.expires_height + name_registry::fees::GRACE_BLOCKS)
+    Some(st.expires_height.saturating_add(name_registry::fees::GRACE_BLOCKS))
 }
 
 fn is_released(st: &NameState, height: u64) -> bool {
@@ -750,7 +783,7 @@ fn apply_record(
                 NameState {
                     owner: sender.to_string(),
                     registered_height: height,
-                    expires_height: height + name_registry::fees::TERM_BLOCKS,
+                    expires_height: height.saturating_add(name_registry::fees::TERM_BLOCKS),
                     ..Default::default()
                 },
             );
@@ -839,12 +872,25 @@ fn apply_record(
             // now. Renewing early must not lose the unused remainder, and
             // renewing during grace must not backdate.
             let base = st.expires_height.max(height);
-            st.expires_height = base + name_registry::fees::TERM_BLOCKS;
+            st.expires_height = base.saturating_add(name_registry::fees::TERM_BLOCKS);
         }
         NameRecord::List { name, price, min_lifetime_blocks } => {
             let Ok(name_s) = String::from_utf8(name.clone()) else { return };
             let Some(st) = idx.names.get_mut(&name_s) else { return };
             if st.owner != sender || is_expired(st, height) {
+                return;
+            }
+            // ⚠ A no-cancel window is a promise the SELLER makes, and an
+            // absurd one is not a promise but a trap. u64::MAX would also
+            // overflow every `listed_height + window` in the code. Refusing it
+            // here keeps nonsense out of state entirely rather than relying on
+            // every later arithmetic site to survive it.
+            //
+            // Capped at 30 days: long enough for any real sale, and short
+            // enough that the window always ends well inside the name's own
+            // term. A window that outlives the name it locks would be
+            // meaningless.
+            if *min_lifetime_blocks > MAX_LISTING_LOCK_BLOCKS {
                 return;
             }
             st.listing = Some(Listing {
@@ -864,7 +910,7 @@ fn apply_record(
             // stops the Counterparty dispenser attack, where a seller cancels
             // and keeps both the payment and the asset.
             if let Some(l) = &st.listing {
-                if height < l.listed_height + l.min_lifetime_blocks {
+                if height < l.listed_height.saturating_add(l.min_lifetime_blocks) {
                     return;
                 }
             }
@@ -1197,7 +1243,7 @@ pub fn market(cfg: &NodeConfig) -> Result<Vec<MarketListing>, String> {
         .iter()
         .filter_map(|(name, st)| {
             let l = st.listing.as_ref()?;
-            let unlock = l.listed_height + l.min_lifetime_blocks;
+            let unlock = l.listed_height.saturating_add(l.min_lifetime_blocks);
             Some(MarketListing {
                 name: name.clone(),
                 seller: st.owner.clone(),
@@ -1240,6 +1286,11 @@ pub fn list_for_sale(
     if min_lifetime_blocks < 60 {
         return Err("The no-cancel window must be at least 60 blocks, about an hour. It is what lets somebody buy safely, so it cannot be trivially short.".into());
     }
+    // Refuse here too, or the wallet reports a listing sent and the registry
+    // silently ignores it.
+    if min_lifetime_blocks > MAX_LISTING_LOCK_BLOCKS {
+        return Err("The no-cancel window cannot be longer than about 30 days. A promise that outlives the name it locks is not a promise.".into());
+    }
     let canonical = charset::canonicalise(name);
     let owner = owner_of(cfg, &canonical)?;
     let price = (price_divi * 1e8).round() as u64;
@@ -1266,7 +1317,7 @@ pub fn delist(cfg: &NodeConfig, name: &str) -> Result<String, String> {
     let Some(l) = &st.listing else {
         return Err(format!("{canonical} is not for sale."));
     };
-    let unlock = l.listed_height + l.min_lifetime_blocks;
+    let unlock = l.listed_height.saturating_add(l.min_lifetime_blocks);
     if tip < unlock {
         return Err(format!(
             "You promised not to withdraw this listing for another {} blocks, roughly {} minutes. That promise is what lets somebody buy it safely.",
@@ -2086,6 +2137,43 @@ mod tests {
             &paid("BINANCE"),
         );
         assert_eq!(i.names.get("BINANCE").unwrap().owner, "reserve-address");
+    }
+
+    /// A listing window is attacker-controlled and arrives straight off the
+    /// chain. u64::MAX would overflow every `listed_height + window` in the
+    /// code, and an absurd window is a trap rather than a promise anyway.
+    #[test]
+    fn an_absurd_no_cancel_window_is_refused_and_never_overflows() {
+        let mut i = idx();
+        register_name(&mut i, "GEOFF", ALICE, 100);
+        apply(
+            &mut i,
+            &NameRecord::List {
+                name: b"GEOFF".to_vec(),
+                price: 1_00000000,
+                min_lifetime_blocks: u64::MAX,
+            },
+            ALICE,
+            200,
+        );
+        assert!(i.names.get("GEOFF").unwrap().listing.is_none(), "absurd window must be refused");
+
+        // The largest window that IS accepted works, and ends inside the term.
+        apply(
+            &mut i,
+            &NameRecord::List {
+                name: b"GEOFF".to_vec(),
+                price: 1_00000000,
+                min_lifetime_blocks: MAX_LISTING_LOCK_BLOCKS,
+            },
+            ALICE,
+            200,
+        );
+        assert!(i.names.get("GEOFF").unwrap().listing.is_some());
+        let unlock = 200 + MAX_LISTING_LOCK_BLOCKS;
+        assert!(unlock < i.names.get("GEOFF").unwrap().expires_height, "window must end inside the term");
+        apply(&mut i, &NameRecord::Delist { name: b"GEOFF".to_vec() }, ALICE, unlock + 1);
+        assert!(i.names.get("GEOFF").unwrap().listing.is_none());
     }
 
     /// ⚠ The regression this exists to prevent.
