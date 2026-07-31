@@ -351,6 +351,14 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
     use crate::rpc::RpcClient;
     use std::time::Duration;
 
+    // Test rig: when pointed at an external node (e.g. a regtest node via
+    // DIVI_DATADIR), skip all node install/start so the app never touches the
+    // mainnet datadir. Set DD69_SKIP_BRINGUP=1.
+    if std::env::var("DD69_SKIP_BRINGUP").is_ok() {
+        progress("bringup skipped (DD69_SKIP_BRINGUP)");
+        return Ok(0);
+    }
+
     // If a remote node is already selected and reachable, respect that choice.
     if let Ok(cfg) = NodeConfig::load() {
         if cfg.remote {
