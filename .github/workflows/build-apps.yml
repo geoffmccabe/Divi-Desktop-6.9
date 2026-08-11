@@ -1,0 +1,104 @@
+name: Build apps (all platforms)
+
+# The unattended, one-trigger build pipeline. Run it from the Actions tab
+# ("Run workflow") or with:  gh workflow run build-apps.yml
+#
+# GitHub gives us a real machine for each OS, so every version is built
+# NATIVELY — no cross-compilation. That is deliberately the whole point: cross
+# compiling this old C++ core for Windows on Linux fought the toolchain at every
+# step; a real Windows runner with a matched toolchain does not.
+#
+# Each job produces the installer for one platform and uploads it as an
+# artifact you can download from the run. macOS is a single Universal build that
+# runs on both Apple Silicon and Intel.
+#
+# NOTE: this builds the desktop APP. The node program (divid69) it downloads at
+# first run is built and published separately; see build-daemons.yml (phase 2).
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            label: macOS (Universal)
+            args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - os: ubuntu-22.04
+            label: Linux (x86_64)
+            args: ""
+            rust-targets: ""
+          - os: windows-latest
+            label: Windows (x86_64)
+            args: ""
+            rust-targets: ""
+
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          if [ -n "${{ matrix.rust-targets }}" ]; then
+            rustup target add ${{ matrix.rust-targets }}
+          fi
+        shell: bash
+
+      # Linux needs the webview + build libraries the desktop shell links against.
+      - name: Linux system deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev patchelf
+
+      # --ignore-scripts: install scripts are the exact supply-chain vector that
+      # bit this project once. The frontend needs none of them.
+      - name: Build the frontend
+        working-directory: ui
+        run: |
+          npm ci --ignore-scripts
+          npm run build
+        shell: bash
+
+      # Strip developer paths out of the release binary (privacy) on the two
+      # platforms where the compiler would otherwise embed them.
+      - name: Set path-remap flags
+        if: matrix.os != 'windows-latest'
+        run: echo "RUSTFLAGS=--remap-path-prefix=$HOME=/build" >> "$GITHUB_ENV"
+        shell: bash
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: crates/app
+          args: ${{ matrix.args }}
+
+      - name: Collect installers
+        run: |
+          mkdir -p out
+          find target -type f \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \
+            -o -name '*.msi' -o -name '*-setup.exe' \) -exec cp {} out/ \; || true
+        shell: bash
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: divi-desktop-${{ matrix.os }}
+          path: out/*
+          if-no-files-found: warn
