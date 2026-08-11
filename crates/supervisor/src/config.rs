@@ -47,6 +47,21 @@ fn nodes_path() -> PathBuf {
     dd69_config_dir().join("nodes.json")
 }
 
+/// DD69's OWN blockchain data folder — deliberately separate from the standard
+/// Divi folder (see [`default_datadir`]) that Divi Desktop 2.0 uses, so the two
+/// installs can never share a datadir, fight for the lock, or corrupt each
+/// other's block database. A fresh DD69 syncs here; a DD69 next to a 2.0 install
+/// copies 2.0's chain into here.
+pub fn dd69_datadir() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home().join("Library/Application Support/DD69/data")
+    } else if cfg!(target_os = "windows") {
+        PathBuf::from(std::env::var("APPDATA").unwrap_or_default()).join("DD69/data")
+    } else {
+        home().join(".local/share/DD69/data")
+    }
+}
+
 fn desktop_profile() -> NodeProfile {
     NodeProfile {
         id: "desktop".into(),
@@ -179,13 +194,13 @@ impl NodeConfig {
                 });
             }
             // Local node (e.g. Desktop): its own datadir if set, else DIVI_DATADIR,
-            // else the standard Divi folder for this platform.
+            // else DD69's OWN folder (never the shared Divi/2.0 folder).
             let dir = p
                 .datadir
                 .clone()
                 .map(PathBuf::from)
                 .or_else(|| std::env::var("DIVI_DATADIR").ok().map(PathBuf::from))
-                .unwrap_or_else(default_datadir);
+                .unwrap_or_else(dd69_datadir);
             return Self::load_from(dir);
         }
 
