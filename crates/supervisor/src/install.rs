@@ -75,9 +75,20 @@ fn artifact() -> Option<Artifact> {
         sha256: "04d3fe12ea4008224ecceab37376c5575cef74ab7e243add99ce8e63461651c2",
     });
 
+    // Windows x86_64: packaged the same way (.tar.gz, which Windows 10+ extracts
+    // with its built-in tar). The checksum is PENDING until the divid69.exe build
+    // is published; ensure_divid69 fails cleanly with a clear message until the
+    // real hash is pinned here.
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    return Some(Artifact {
+        file: "divid69-windows-x86_64.tar.gz",
+        sha256: "PENDING_WINDOWS_BUILD",
+    });
+
     #[cfg(not(any(
         all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "x86_64")
     )))]
     return None;
 }
@@ -85,16 +96,37 @@ fn artifact() -> Option<Artifact> {
 /// Where our managed daemon lives. Deliberately under `DD69/`, not the old
 /// `Divi Desktop/` tree, so ours and Divi Desktop 2.0's copies never collide.
 pub fn managed_dir() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    #[cfg(target_os = "macos")]
-    return Some(PathBuf::from(home).join("Library/Application Support/DD69/divid/unpacked"));
-    #[cfg(not(target_os = "macos"))]
-    return Some(PathBuf::from(home).join(".local/share/DD69/divid/unpacked"));
+    // Windows keeps app data under %APPDATA% (HOME is usually unset there),
+    // matching the %APPDATA%\DD69 layout used in config.rs. macOS and Linux
+    // key off HOME as before.
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var("APPDATA").ok()?;
+        return Some(PathBuf::from(appdata).join("DD69").join("divid").join("unpacked"));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let home = std::env::var("HOME").ok()?;
+        #[cfg(target_os = "macos")]
+        return Some(PathBuf::from(home).join("Library/Application Support/DD69/divid/unpacked"));
+        #[cfg(not(target_os = "macos"))]
+        return Some(PathBuf::from(home).join(".local/share/DD69/divid/unpacked"));
+    }
+}
+
+/// The daemon and CLI file names for this platform. Windows executables need
+/// the `.exe` suffix; Unix builds have none.
+fn managed_names() -> [&'static str; 2] {
+    if cfg!(windows) {
+        ["divid69.exe", "divi69-cli.exe"]
+    } else {
+        ["divid69", "divi69-cli"]
+    }
 }
 
 /// Full path to the managed daemon, whether or not it is installed yet.
 pub fn managed_divid() -> Option<PathBuf> {
-    Some(managed_dir()?.join("divid69"))
+    Some(managed_dir()?.join(managed_names()[0]))
 }
 
 /// True when the managed daemon is present at the version we expect. The stamp
@@ -102,7 +134,7 @@ pub fn managed_divid() -> Option<PathBuf> {
 /// download can never look complete.
 pub fn is_installed() -> bool {
     let Some(dir) = managed_dir() else { return false };
-    dir.join("divid69").is_file() && dir.join(format!(".installed-{DIVID69_VERSION}")).is_file()
+    dir.join(managed_names()[0]).is_file() && dir.join(format!(".installed-{DIVID69_VERSION}")).is_file()
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -125,7 +157,7 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
     }
     let art = artifact()
         .ok_or("no divid69 build is published for this platform yet")?;
-    if art.sha256 == "PENDING_LINUX_BUILD" {
+    if art.sha256.starts_with("PENDING_") {
         return Err("no divid69 build is published for this platform yet".into());
     }
 
@@ -174,18 +206,19 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
     }
     let _ = std::fs::remove_file(&archive);
 
-    let unpacked = staging.join("divid69");
+    let [daemon_name, cli_name] = managed_names();
+    let unpacked = staging.join(daemon_name);
     if !unpacked.is_file() {
         return Err("the archive did not contain divid69".into());
     }
     make_executable(&unpacked)?;
-    if let Ok(cli) = std::fs::metadata(staging.join("divi69-cli")) {
+    if let Ok(cli) = std::fs::metadata(staging.join(cli_name)) {
         let _ = cli; // present in our archives; ignore if a future one omits it
-        make_executable(&staging.join("divi69-cli"))?;
+        make_executable(&staging.join(cli_name))?;
     }
 
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    for name in ["divid69", "divi69-cli"] {
+    for name in managed_names() {
         let from = staging.join(name);
         if from.is_file() {
             let to = dir.join(name);
@@ -223,7 +256,7 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
 /// An existing `divi.conf` is never touched. Someone who already runs a node
 /// has their own settings and we have no business rewriting them.
 pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
-    let datadir = crate::config::default_datadir();
+    let datadir = crate::config::dd69_datadir();
     let conf = datadir.join("divi.conf");
     if conf.is_file() {
         // One-time repair for confs written by 69.0.1: the rpcallowip line it
@@ -308,14 +341,17 @@ fn free_bytes(_path: &Path) -> Option<u64> {
     None // no Windows build yet; the guard simply doesn't gate there
 }
 
-/// 32 bytes of kernel randomness as hex. `/dev/urandom` is used directly rather
-/// than pulling in an RNG crate for one call.
+/// Public wrapper so the setup flow can run the same free-space check.
+pub fn free_bytes_public(path: &Path) -> Option<u64> {
+    free_bytes(path)
+}
+
+/// 32 bytes of randomness from the OS CSPRNG, as hex. Uses `getrandom` (already
+/// a dependency), so it works on Windows too — `/dev/urandom` does not exist
+/// there, which previously made first-run node setup fail on Windows.
 fn random_hex_32() -> Result<String, String> {
     let mut buf = [0u8; 32];
-    let mut f = std::fs::File::open("/dev/urandom")
-        .map_err(|e| format!("no source of randomness: {e}"))?;
-    f.read_exact(&mut buf)
-        .map_err(|e| format!("could not read randomness: {e}"))?;
+    getrandom::getrandom(&mut buf).map_err(|e| format!("no source of randomness: {e}"))?;
     Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
 }
 

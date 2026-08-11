@@ -14,14 +14,29 @@ pub fn daemon_pid(datadir: &Path) -> Option<i32> {
 }
 
 fn pid_alive(pid: i32) -> bool {
-    // Signal 0 = existence check only. Unix; Windows comes with the Tauri phase.
-    std::process::Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    #[cfg(windows)]
+    {
+        // No `kill` on Windows; ask the task list whether the pid still exists.
+        // `/NH /FO CSV` yields one quoted row per match, e.g. "divid69.exe","1234",...
+        match std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .output()
+        {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")),
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // Signal 0 = existence check only.
+        std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
 /// Find a daemon to run, in order of preference:
@@ -44,19 +59,34 @@ pub fn find_divid(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
     if let Some(ours) = crate::install::managed_divid() {
         candidates.push(ours);
     }
-    if let Ok(out) = std::process::Command::new("which").arg("divid").output() {
-        let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // Look on PATH: `where` on Windows, `which` on Unix. On Windows we look for
+    // our own divid69.exe; on Unix a stock `divid` from an older install.
+    let (finder, needle) = if cfg!(windows) {
+        ("where", "divid69.exe")
+    } else {
+        ("which", "divid")
+    };
+    if let Ok(out) = std::process::Command::new(finder).arg(needle).output() {
+        // `where` can return several lines; take the first.
+        let p = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if !p.is_empty() {
             candidates.push(PathBuf::from(p));
         }
     }
+    // Divi Desktop 2.0 unpacks its managed daemon under the user's home on macOS;
+    // the exact layout has varied, so try both known shapes.
+    #[cfg(target_os = "macos")]
     if let Ok(home) = std::env::var("HOME") {
-        // Divi Desktop 2.0 unpacks its managed daemon here at launch; the
-        // exact layout has varied, so try both known shapes.
         let base = PathBuf::from(home).join("Library/Application Support/Divi Desktop/divid/unpacked");
         candidates.push(base.join("divid"));
         candidates.push(base.join("divi_osx/divid"));
     }
+    #[cfg(unix)]
     candidates.push(PathBuf::from("/usr/local/bin/divid"));
     candidates
         .into_iter()
@@ -104,6 +134,14 @@ fn spawn_once(
         .arg(format!("-datadir={}/", datadir.display()));
     for a in extra_args {
         cmd.arg(a);
+    }
+    // On Windows, spawning a console subprocess would flash a black console
+    // window; CREATE_NO_WINDOW suppresses it. No effect (and not compiled) on Unix.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
     if cmd.stdout(spawn_log).stderr(spawn_log_err).spawn().is_err() {
         return Spawn::Failed(format!("could not launch {}", divid.display()));
