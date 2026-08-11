@@ -29,7 +29,7 @@ jobs:
           - os: macos-latest
             label: macOS (Universal)
             args: "--target universal-apple-darwin"
-            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+            rust-targets: "aarch64-apple-darwin x86_64-apple-darwin"
           - os: ubuntu-22.04
             label: Linux (x86_64)
             args: ""
