@@ -247,6 +247,58 @@ export const escrowClaim = (ticket: string, code: string, passphrase?: string) =
 export const escrowRefund = (ticket: string, passphrase?: string) =>
   invoke<string>("escrow_refund", { ticket, passphrase: passphrase ?? null });
 
+// ---- Treasury balances + native multisig ----
+export interface AddrBalance {
+  available: boolean; // false while the address index is still building
+  balance: number;
+  message: string;
+}
+// Balance of ANY address (treasury wallets, a multisig), read from our node's
+// address index.
+export const addressBalance = (address: string) =>
+  invoke<AddrBalance>("address_balance", { address });
+
+export interface MultisigWallet {
+  label: string;
+  address: string;
+  m: number; // signatures required
+  n: number; // total co-signers
+  participants: string[];
+  balance: number;
+  balanceAvailable: boolean;
+  createdAt: number;
+}
+export const multisigList = () => invoke<MultisigWallet[]>("multisig_list");
+export const multisigCreate = (m: number, keys: string[], label: string) =>
+  invoke<MultisigWallet>("multisig_create", { m, keys, label });
+export const multisigForget = (address: string) => invoke<void>("multisig_forget", { address });
+
+export interface PendingSpend {
+  blob: string; // the shareable pending-spend, passed between co-signers
+  from: string;
+  to: string;
+  amount: number;
+  fee: number;
+  required: number;
+}
+export const multisigPropose = (fromAddress: string, to: string, amount: number) =>
+  invoke<PendingSpend>("multisig_propose", { fromAddress, to, amount });
+
+export interface SignResult {
+  blob: string;
+  complete: boolean;
+  added: boolean; // did this wallet actually add a signature?
+  signed: number;
+  required: number;
+  from: string;
+  to: string;
+  amount: number;
+  fee: number;
+}
+export const multisigSign = (blob: string, passphrase?: string) =>
+  invoke<SignResult>("multisig_sign", { blob, passphrase: passphrase ?? null });
+export const multisigBroadcast = (blob: string) => invoke<string>("multisig_broadcast", { blob });
+
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
 export const lotteryWins = (addresses: string[]) => invoke<LotteryWin[]>("lottery_wins", { addresses });

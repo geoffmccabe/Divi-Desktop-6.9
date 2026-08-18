@@ -20,6 +20,8 @@ import { CollectiblesPanel } from "./wallet/CollectiblesPanel";
 import { TokensPanel } from "./wallet/TokensPanel";
 import { HraPanel } from "./wallet/HraPanel";
 import { GovernancePreview } from "./wallet/governance/GovernancePreview";
+import { MultisigPanel } from "./wallet/multisig/MultisigPanel";
+import "./sidebar-compact.css";
 import { AgentPanel } from "./wallet/AgentPanel";
 import { NetworkMap } from "./wallet/NetworkMap";
 import { FastReceiveHost } from "./wallet/FastReceiveHost";
@@ -34,6 +36,7 @@ const VIEWS: Record<string, ComponentType> = {
   collectibles: CollectiblesPanel,
   tokens: TokensPanel,
   governance: GovernancePreview,
+  multisig: MultisigPanel,
   hra: HraPanel,
   appbuilder: BuilderPanel,
   communityapps: CommunityApps,

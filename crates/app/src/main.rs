@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, escrow, fastsend, mempool, names, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 // Serves community app bundles over their own url scheme. Kept in its own module
@@ -1432,6 +1432,176 @@ async fn escrow_refund(ticket: String, passphrase: Option<String>) -> Result<Str
     .map_err(|_| "internal error".to_string())?
 }
 
+// ---- MultiSig (native P2SH N-of-M) + treasury balances ----
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AddrBalanceDto {
+    available: bool,
+    balance: f64,
+    message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigWalletDto {
+    label: String,
+    address: String,
+    m: u32,
+    n: u32,
+    participants: Vec<String>,
+    balance: f64,
+    balance_available: bool,
+    created_at: i64,
+}
+
+impl From<multisig::WalletView> for MultisigWalletDto {
+    fn from(w: multisig::WalletView) -> Self {
+        MultisigWalletDto {
+            label: w.label,
+            address: w.address,
+            m: w.m,
+            n: w.n,
+            participants: w.participants,
+            balance: w.balance,
+            balance_available: w.balance_available,
+            created_at: w.created_at,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingSpendDto {
+    blob: String,
+    from: String,
+    to: String,
+    amount: f64,
+    fee: f64,
+    required: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SignResultDto {
+    blob: String,
+    complete: bool,
+    added: bool,
+    signed: u32,
+    required: u32,
+    from: String,
+    to: String,
+    amount: f64,
+    fee: f64,
+}
+
+/// Confirmed balance of any address (treasury wallets, or a multisig), via the
+/// node's address index. `available=false` (with a reason) rather than an error
+/// when the index is still building, so the UI can show "unavailable" calmly.
+#[tauri::command]
+async fn address_balance(address: String) -> Result<AddrBalanceDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        Ok(match multisig::address_balance(&cfg, &address) {
+            Ok(balance) => AddrBalanceDto { available: true, balance, message: String::new() },
+            Err(msg) => AddrBalanceDto { available: false, balance: 0.0, message: msg },
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Every multisig wallet this app knows, each with a freshly read balance.
+#[tauri::command]
+async fn multisig_list() -> Result<Vec<MultisigWalletDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        Ok(multisig::list_wallets(&cfg).into_iter().map(Into::into).collect())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Create an m-of-n P2SH multisig address from a set of co-signer keys
+/// (hex pubkeys or addresses the node knows). Derives + stores it; imports
+/// nothing and needs no unlock.
+#[tauri::command]
+async fn multisig_create(m: u32, keys: Vec<String>, label: String) -> Result<MultisigWalletDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::create_wallet(&cfg, m, keys, &label).map(|w| MultisigWalletDto {
+            label: w.label,
+            address: w.address,
+            m: w.m,
+            n: w.n,
+            participants: w.participants,
+            balance: 0.0,
+            balance_available: false,
+            created_at: w.created_at,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Remove a multisig wallet from this app's list (local only; moves no coins).
+#[tauri::command]
+async fn multisig_forget(address: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || multisig::forget_wallet(&address))
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+/// Propose a spend from a multisig wallet. Returns a shareable blob the
+/// co-signers add their signatures to. Signs nothing.
+#[tauri::command]
+async fn multisig_propose(fromAddress: String, to: String, amount: f64) -> Result<PendingSpendDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::propose_spend(&cfg, &fromAddress, &to, amount).map(|p| PendingSpendDto {
+            blob: p.blob,
+            from: p.from,
+            to: p.to,
+            amount: p.amount,
+            fee: p.fee,
+            required: p.required,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Add this wallet's signature to a pending spend and hand back the updated blob.
+#[tauri::command]
+async fn multisig_sign(blob: String, passphrase: Option<String>) -> Result<SignResultDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::sign_spend(&cfg, &blob, passphrase.as_deref()).map(|s| SignResultDto {
+            blob: s.blob,
+            complete: s.complete,
+            added: s.added,
+            signed: s.signed,
+            required: s.required,
+            from: s.from,
+            to: s.to,
+            amount: s.amount,
+            fee: s.fee,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Broadcast a fully-signed multisig spend. Returns the txid.
+#[tauri::command]
+async fn multisig_broadcast(blob: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::broadcast_spend(&cfg, &blob)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// act they sign themselves.
 #[tauri::command]
 async fn payment_request_create(
@@ -1624,6 +1794,13 @@ fn main() {
             escrow_status,
             escrow_claim,
             escrow_refund,
+            address_balance,
+            multisig_list,
+            multisig_create,
+            multisig_forget,
+            multisig_propose,
+            multisig_sign,
+            multisig_broadcast,
             coin_maturity,
             wallet_status,
             unlock_wallet,

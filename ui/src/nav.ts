@@ -19,6 +19,7 @@ export const NAV: NavItem[] = [
   { id: "appbuilder", label: "App Builder", icon: "appbuilder" },
   { id: "communityapps", label: "Community Apps", icon: "communityapps" },
   { id: "governance", label: "Governance", icon: "governance" },
+  { id: "multisig", label: "MultiSig", icon: "multisig" },
   // A newline in a label wraps the row onto two tight lines (see .nav-item span
   // in index.css). Used where a name is genuinely long rather than to save a
   // few pixels — "Human Readable Addresses" on one line would either squeeze

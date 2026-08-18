@@ -1,0 +1,323 @@
+/* MultiSig panel + the shared treasury strip. Reuses the app theme tokens
+   (--primary, --accent, --foreground, --subpanel-*, --border) so it matches
+   every other DD69 panel; no new palette. */
+
+.ms {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.ms-intro {
+  max-width: 62ch;
+}
+.ms-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  word-break: break-all;
+}
+.ms-dim {
+  color: hsl(var(--muted-foreground));
+}
+.ms-unit {
+  font-size: 0.7em;
+  color: hsl(var(--muted-foreground));
+  font-weight: 500;
+}
+
+/* ── Treasury strip (also used at the top of Governance) ─────────────────── */
+.ms-treasury-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+}
+.ms-treasury-card {
+  border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 0 22px hsl(var(--primary) / 0.08);
+}
+.ms-treasury-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ms-treasury-label {
+  font-weight: 700;
+  color: hsl(var(--foreground));
+  letter-spacing: 0.01em;
+}
+.ms-treasury-tag {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: hsl(var(--primary) / 0.18);
+  color: hsl(var(--primary));
+  white-space: nowrap;
+}
+.ms-treasury-amount {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+  line-height: 1.1;
+}
+.ms-treasury-dim {
+  font-size: 1rem;
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+.ms-treasury-unit {
+  font-size: 0.7rem;
+  color: hsl(var(--muted-foreground));
+  font-weight: 500;
+}
+.ms-treasury-note {
+  font-size: 0.75rem;
+  color: hsl(var(--muted-foreground));
+}
+.ms-treasury-addr {
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: hsl(var(--background) / 0.4);
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.72rem;
+}
+.ms-treasury-addr:hover {
+  border-color: hsl(var(--primary) / 0.6);
+}
+.ms-treasury-copy {
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: hsl(var(--primary));
+  flex-shrink: 0;
+}
+
+/* ── Sections ────────────────────────────────────────────────────────────── */
+.ms-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ms-head {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+}
+
+/* ── Wallet list ─────────────────────────────────────────────────────────── */
+.ms-wallet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.ms-wallet {
+  border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ms-wallet-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ms-wallet-name {
+  font-weight: 700;
+  color: hsl(var(--foreground));
+}
+.ms-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: hsl(var(--accent) / 0.2);
+  color: hsl(var(--accent));
+  white-space: nowrap;
+}
+.ms-wallet-bal {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+}
+.ms-wallet-addr {
+  font-size: 0.7rem;
+  color: hsl(var(--muted-foreground));
+}
+.ms-wallet-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────── */
+.ms-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 560px;
+}
+.ms-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ms-field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ms-field-label {
+  font-size: 0.78rem;
+  color: hsl(var(--muted-foreground));
+}
+.ms-input {
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: hsl(var(--foreground));
+  font-size: 0.85rem;
+}
+.ms-input:focus {
+  outline: none;
+  border-color: hsl(var(--primary) / 0.7);
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.18);
+}
+.ms-textarea {
+  resize: vertical;
+  min-height: 64px;
+}
+.ms-num {
+  width: 120px;
+}
+.ms-hint {
+  font-size: 0.72rem;
+  color: hsl(var(--muted-foreground));
+}
+.ms-err {
+  font-size: 0.8rem;
+  color: hsl(var(--accent));
+  background: hsl(var(--accent) / 0.1);
+  border: 1px solid hsl(var(--accent) / 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.ms-btn-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Small secondary button (copy / forget / mini actions). */
+.ms-mini-btn {
+  font-size: 0.72rem;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.4);
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+.ms-mini-btn:hover {
+  border-color: hsl(var(--primary) / 0.6);
+}
+.ms-danger {
+  color: hsl(var(--accent));
+}
+
+/* ── Created / broadcast confirmation ────────────────────────────────────── */
+.ms-created {
+  border: 1px solid hsl(var(--primary) / 0.4);
+  background: hsl(var(--primary) / 0.08);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ms-created-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: hsl(var(--primary));
+}
+.ms-created-addr {
+  font-size: 0.78rem;
+  color: hsl(var(--foreground));
+}
+
+/* ── Pending-spend blob box ──────────────────────────────────────────────── */
+.ms-pending {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ms-copybox {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ms-copybox-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.74rem;
+  color: hsl(var(--muted-foreground));
+}
+.ms-blob {
+  background-color: hsl(var(--background) / 0.5);
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: hsl(var(--muted-foreground));
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  resize: vertical;
+  word-break: break-all;
+}
+
+/* ── Signature tally ─────────────────────────────────────────────────────── */
+.ms-tally {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ms-tally-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.2);
+  overflow: hidden;
+}
+.ms-tally-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)));
+  transition: width 0.35s ease;
+}
+.ms-tally-text {
+  font-size: 0.76rem;
+  color: hsl(var(--muted-foreground));
+}

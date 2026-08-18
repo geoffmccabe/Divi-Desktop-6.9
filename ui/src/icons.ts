@@ -64,6 +64,12 @@ export const ICONS: Record<string, string> = {
   governance: svg(
     "<path d='M3 9l9-5 9 5'/><path d='M4 9h16'/><path d='M5 20V10'/><path d='M9.5 20V10'/><path d='M14.5 20V10'/><path d='M19 20V10'/><path d='M3 20h18'/>"
   ),
+  // A simple checkmark, for success confirmations.
+  check: svg("<path d='M20 6 9 17l-5-5'/>"),
+  // Two overlapping keys = a shared wallet that needs more than one signer.
+  multisig: svg(
+    "<circle cx='7.5' cy='8' r='3.2'/><path d='M9.7 10.3 17 17.6'/><path d='M14.5 15.1l2 2'/><path d='M17 17.6l1.6-1.6 1.8 1.8-1.6 1.6'/><circle cx='16.5' cy='7.5' r='3.2'/><path d='M14.3 9.7 7 17'/><path d='M9.5 15.1l-2 2'/><path d='M7 17l-1.6-1.6-1.8 1.8 1.6 1.6'/>"
+  ),
   // Chevrons for the folded-away sidebar and header in focus mode. They point
   // the way the panel will come back from.
   chevronRight: svg("<path d='M9 5l7 7-7 7'/>"),

@@ -259,21 +259,33 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
     let datadir = crate::config::dd69_datadir();
     let conf = datadir.join("divi.conf");
     if conf.is_file() {
-        // One-time repair for confs written by 69.0.1: the rpcallowip line it
-        // included made the RPC port listen on every interface instead of
-        // loopback only. Strip exactly that line — and only from confs we
-        // wrote; anyone else's conf is never touched. Takes effect on the
-        // node's next restart.
+        // One-time repairs to confs WE wrote (never anyone else's node):
+        //   1. 69.0.1 included an rpcallowip line that made the RPC port listen
+        //      on every interface instead of loopback only — strip it.
+        //   2. Turn on addressindex if it isn't already, so the node can report
+        //      balances/UTXOs for addresses the user doesn't own (the
+        //      Foundation/Charity treasury display, multisig wallets, and the
+        //      governance stake snapshot). Enabling it on an already-synced node
+        //      makes divid ask for a one-time -reindex; start_with_recovery
+        //      detects that and runs it automatically. Takes effect on the
+        //      node's next restart.
         if let Ok(text) = std::fs::read_to_string(&conf) {
+            let ours = text.contains("Written by DD69");
             let has_allowip = text
                 .lines()
                 .any(|l| l.trim_start().starts_with("rpcallowip="));
-            if text.contains("Written by DD69") && has_allowip {
-                let fixed: String = text
+            let has_addressindex = text
+                .lines()
+                .any(|l| l.trim_start().starts_with("addressindex="));
+            if ours && (has_allowip || !has_addressindex) {
+                let mut fixed: String = text
                     .lines()
                     .filter(|l| !l.trim_start().starts_with("rpcallowip="))
                     .map(|l| format!("{l}\n"))
                     .collect();
+                if !has_addressindex {
+                    fixed.push_str("addressindex=1\n");
+                }
                 let _ = std::fs::write(&conf, fixed);
                 restrict_to_owner(&conf);
             }
@@ -306,7 +318,11 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
          server=1\n\
          listen=1\n\
          rpcthreads=16\n\
-         maxconnections=32\n"
+         maxconnections=32\n\
+         # addressindex lets the node report balances/UTXOs for ANY address, not\n\
+         # just the wallet's own: the treasury + multisig displays and the\n\
+         # governance stake snapshot all rely on it.\n\
+         addressindex=1\n"
     );
     // A brand-new node has an empty peer database and would otherwise depend on
     // the DNS seeder to find its first peers. That seeder has proven unreliable,

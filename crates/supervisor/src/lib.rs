@@ -11,6 +11,7 @@ pub mod health;
 pub mod bearer;
 pub mod install;
 pub mod mempool;
+pub mod multisig;
 pub mod security;
 pub mod process;
 pub mod names;

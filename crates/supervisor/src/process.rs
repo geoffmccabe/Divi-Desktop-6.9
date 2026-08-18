@@ -99,6 +99,9 @@ enum Spawn {
     Running(i32),
     /// The block database is damaged — repairable by rebuilding it.
     Corruption(String),
+    /// A config change (e.g. turning on addressindex) needs the index rebuilt
+    /// from the local block files via a one-time full -reindex.
+    ReindexRequired(String),
     /// Any other refusal to start (config, ports, permissions...).
     Failed(String),
 }
@@ -108,6 +111,14 @@ const CORRUPTION_MARKERS: [&str; 4] = [
     "Error loading block database",
     "Failed to find best block",
     "Error opening block database",
+];
+
+/// divid prints one of these when an index option (addressindex/txindex) was
+/// turned on after the chain was already synced without it. The fix is a full
+/// -reindex, which rebuilds from block files already on disk (no re-download).
+const REINDEX_REQUIRED_MARKERS: [&str; 2] = [
+    "to change -addressindex",
+    "rebuild the database using -reindex",
 ];
 
 /// One launch attempt with a given set of extra flags. Waits until the node's
@@ -160,6 +171,9 @@ fn spawn_once(
             let said = std::fs::read_to_string(&spawn_log_path).unwrap_or_default();
             if let Some(line) = said.lines().find(|l| l.contains("Error:")) {
                 let msg = line.trim().to_string();
+                if REINDEX_REQUIRED_MARKERS.iter().any(|m| msg.contains(m)) {
+                    return Spawn::ReindexRequired(msg);
+                }
                 if CORRUPTION_MARKERS.iter().any(|m| msg.contains(m)) {
                     return Spawn::Corruption(msg);
                 }
@@ -228,6 +242,22 @@ pub fn start_with_recovery(
                 last_corruption = msg;
                 // fall through to the next, more aggressive repair rung
                 continue;
+            }
+            Spawn::ReindexRequired(_) => {
+                // An index option was just enabled (addressindex). Rebuild the
+                // index from the on-disk block files once; this is a longer
+                // first start, not a re-download, and only happens the one time.
+                return match spawn_once(divid, datadir, rpc, *timeout, &["-reindex"]) {
+                    Spawn::Running(pid) => Ok(StartReport {
+                        pid,
+                        repaired_with: Some("building the address index".to_string()),
+                    }),
+                    Spawn::Corruption(msg)
+                    | Spawn::Failed(msg)
+                    | Spawn::ReindexRequired(msg) => {
+                        Err(format!("could not build the address index: {msg}"))
+                    }
+                };
             }
             Spawn::Failed(msg) => return Err(msg),
         }
