@@ -30,3 +30,24 @@ export function stakingDesired(): boolean {
     return false;
   }
 }
+
+// Whether the user just clicked "Start Staking" and we're waiting for the node
+// to actually begin. Drives the header's "SETTING UP STAKING…" label so it stops
+// saying "click to start" the moment it's clicked. Pub/sub so the Start button
+// (inside the dropdown) and the header agree without threading props through.
+let setupPending = false;
+const setupSubs = new Set<() => void>();
+export function stakingSetupPending(): boolean {
+  return setupPending;
+}
+export function setStakingSetupPending(v: boolean) {
+  if (setupPending === v) return;
+  setupPending = v;
+  for (const fn of setupSubs) fn();
+}
+export function onStakingSetupChange(fn: () => void): () => void {
+  setupSubs.add(fn);
+  return () => {
+    setupSubs.delete(fn);
+  };
+}

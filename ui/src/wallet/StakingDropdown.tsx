@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { stakingWallets, lotteryWins, startStaking, type StakeWallet, type LotteryWin } from "./api";
 import { nodeStatus } from "../bridge";
 import { loadNames } from "./addressNames";
-import { setStakingDesired, stakingDesired } from "./stakeWin";
+import { setStakingDesired, stakingDesired, setStakingSetupPending } from "./stakeWin";
 import { lockWallet, walletStatus } from "./api";
 import { pulseActivity } from "./activityPulse";
 import { fmtDivi } from "../status";
@@ -33,7 +33,7 @@ function Ellipsis() {
 //   staking  → confirmed staking. Shows "Staking · Click to Stop" (green).
 type StakeState = "checking" | "idle" | "needpass" | "staking";
 
-function StartStaking() {
+function StartStaking({ onStarted }: { onStarted?: () => void }) {
   const [state, setState] = useState<StakeState>(() => (stakingDesired() ? "checking" : "checking"));
   const [pass, setPass] = useState("");
   const [reason, setReason] = useState<string | null>(null); // why it's not staking (idle)
@@ -41,6 +41,9 @@ function StartStaking() {
   // While confirming an action, hold "checking" and poll fast until the node's
   // state matches what we're waiting for (or the window elapses).
   const confirm = useRef<{ until: number; target: "on" | "off" } | null>(null);
+  // Keep the latest onStarted without re-running the polling effect.
+  const onStartedRef = useRef(onStarted);
+  onStartedRef.current = onStarted;
 
   useEffect(() => {
     let alive = true;
@@ -56,14 +59,18 @@ function StartStaking() {
               confirm.current = null;
               setReason(null);
               setState("staking");
+              setStakingSetupPending(false); // setup done — header can go green
+              onStartedRef.current?.(); // close the dropdown now that we're staking
             } else if (c.target === "off" && !isStaking) {
               confirm.current = null;
               setReason(null);
               setState("idle");
+              setStakingSetupPending(false);
             } else {
               setState("checking"); // still waiting — keep the animated label
             }
           } else {
+            if (c) setStakingSetupPending(false); // a pending confirm just expired
             confirm.current = null;
             setState((prev) => (prev === "needpass" ? prev : isStaking ? "staking" : "idle"));
             setReason(isStaking ? null : s.headline || null);
@@ -79,6 +86,7 @@ function StartStaking() {
     return () => {
       alive = false;
       clearTimeout(timer);
+      setStakingSetupPending(false); // never leave the header stuck on "setting up"
     };
   }, []);
 
@@ -86,11 +94,13 @@ function StartStaking() {
     setErr(null);
     setReason(null);
     setState("checking");
+    setStakingSetupPending(true); // header: "SETTING UP STAKING…" the instant it's clicked
     pulseActivity(); // gold ripple across the map: we're talking to the chain
     try {
       const r = await startStaking(passphrase);
       if (r.needsPassphrase) {
         confirm.current = null;
+        setStakingSetupPending(false); // waiting on the user's password, not the node
         setState("needpass");
         if (passphrase) setErr("That password didn't work. Try again.");
         return;
@@ -100,6 +110,8 @@ function StartStaking() {
       if (r.staking) {
         confirm.current = null;
         setState("staking");
+        setStakingSetupPending(false);
+        onStartedRef.current?.(); // close the dropdown now that we're staking
       } else {
         // Unlocked, but the node hasn't begun staking yet — hold "checking" and
         // let the fast poll confirm when it actually starts (usually seconds).
@@ -108,6 +120,7 @@ function StartStaking() {
       }
     } catch (e) {
       confirm.current = null;
+      setStakingSetupPending(false);
       setReason(String(e));
       setState("idle");
     }
@@ -126,6 +139,7 @@ function StartStaking() {
       return;
     }
     setStakingDesired(false);
+    setStakingSetupPending(false);
     confirm.current = { until: performance.now() + 20000, target: "off" };
     setState("checking");
     pulseActivity(); // gold ripple: telling the chain we're locking
@@ -238,7 +252,7 @@ function StakeRow({ w, win, name }: { w: StakeWallet; win?: LotteryWin; name?: s
   );
 }
 
-export function StakingDropdown({ open }: { open: boolean }) {
+export function StakingDropdown({ open, onStakingStarted }: { open: boolean; onStakingStarted?: () => void }) {
   const [render, setRender] = useState(open);
   const [wallets, setWallets] = useState<StakeWallet[] | null>(null);
   const [wins, setWins] = useState<Record<string, LotteryWin>>({});
@@ -289,7 +303,7 @@ export function StakingDropdown({ open }: { open: boolean }) {
       }}
     >
       <div className="stake-dropdown-inner">
-        <StartStaking />
+        <StartStaking onStarted={onStakingStarted} />
         {wallets === null ? (
           <p className="wl-empty">Loading staking wallets…</p>
         ) : list.length === 0 ? (

@@ -245,6 +245,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 @keyframes stake-alert { 0%, 100% { opacity: 0.4; box-shadow: 0 0 3px hsl(0 90% 55%); } 50% { opacity: 1; box-shadow: 0 0 9px 2px hsl(0 90% 55%); } }
 .stake-alert-text { color: hsl(0 90% 62%); font-weight: 700; letter-spacing: 0.03em; }
 .stake-cta { font-size: 0.62rem; letter-spacing: 0.05em; color: hsl(0 80% 68%); opacity: 0.9; }
+.stake-cta-setup { color: hsl(45 92% 60%); opacity: 1; } /* setup underway: calm gold, not red alert */
 .bl-sub { width: 100%; font-size: 0.8rem; color: hsl(var(--muted-foreground)); display: flex; gap: 12px; }
 
 .wl-status-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
@@ -818,7 +819,10 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .chip-label { font-size: 0.72rem; color: hsl(var(--muted-foreground)); display: inline-flex; align-items: center; gap: 4px; }
 .chip-num { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); white-space: nowrap; }
 /* Block-height chip: never let its number be clipped by a transient narrow layout. */
-.wl-chip-row > .glass-chip.blk-chip { min-width: max-content; }
+.wl-chip-row > .glass-chip.blk-chip { min-width: max-content; overflow: visible; }
+/* Guard the block-height number against edge-clipping (first/last char): let it
+   size to its content and never crop, even with the "+?" sync suffix. */
+.wl-status-chips .glass-chip.blk-chip .chip-num { overflow: visible; white-space: nowrap; padding: 0 4px; }
 .chip-num.blk-stale { color: hsl(var(--muted-foreground)); }
 .chip-label-peers { color: hsl(var(--primary)); }
 .chip-label-nodes { color: hsl(210 85% 62%); } /* blue, matches Full Network */
