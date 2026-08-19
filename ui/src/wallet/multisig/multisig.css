@@ -299,6 +299,21 @@
   word-break: break-all;
 }
 
+/* ── "Get my public key" helper ──────────────────────────────────────────── */
+.ms-mykey {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: 10px;
+}
+.ms-mykey-out {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* ── Signature tally ─────────────────────────────────────────────────────── */
 .ms-tally {
   display: flex;

@@ -268,6 +268,14 @@ export interface MultisigWallet {
   balanceAvailable: boolean;
   createdAt: number;
 }
+export interface MyKey {
+  address: string;
+  pubkey: string;
+}
+// A fresh address + its public key, to hand to co-signers when creating a
+// shared wallet (this wallet keeps the private key so the address can sign).
+export const multisigMyPubkey = () => invoke<MyKey>("multisig_my_pubkey");
+
 export const multisigList = () => invoke<MultisigWallet[]>("multisig_list");
 export const multisigCreate = (m: number, keys: string[], label: string) =>
   invoke<MultisigWallet>("multisig_create", { m, keys, label });

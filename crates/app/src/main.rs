@@ -1602,6 +1602,28 @@ async fn multisig_broadcast(blob: String) -> Result<String, String> {
     .map_err(|_| "internal error".to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MyKeyDto {
+    address: String,
+    pubkey: String,
+}
+
+/// A fresh address + its public key, to hand to co-signers when creating a
+/// shared wallet (the wallet keeps the private key so this address can sign).
+#[tauri::command]
+async fn multisig_my_pubkey() -> Result<MyKeyDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::new_shareable_pubkey(&cfg).map(|k| MyKeyDto {
+            address: k.address,
+            pubkey: k.pubkey,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// act they sign themselves.
 #[tauri::command]
 async fn payment_request_create(
@@ -1801,6 +1823,7 @@ fn main() {
             multisig_propose,
             multisig_sign,
             multisig_broadcast,
+            multisig_my_pubkey,
             coin_maturity,
             wallet_status,
             unlock_wallet,

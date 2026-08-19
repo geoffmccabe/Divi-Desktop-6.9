@@ -16,12 +16,14 @@ import {
   multisigPropose,
   multisigSign,
   multisigBroadcast,
+  multisigMyPubkey,
   walletStatus,
   explorerTxUrl,
   openUrl,
   type MultisigWallet,
   type PendingSpend,
   type SignResult,
+  type MyKey,
 } from "../api";
 
 function fmt(n: number): string {
@@ -127,6 +129,19 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
     }
   };
 
+  const [myKey, setMyKey] = useState<MyKey | null>(null);
+  const [keyBusy, setKeyBusy] = useState(false);
+  const getMyKey = async () => {
+    setKeyBusy(true);
+    try {
+      setMyKey(await multisigMyPubkey());
+    } catch {
+      /* ignore */
+    } finally {
+      setKeyBusy(false);
+    }
+  };
+
   return (
     <div className="ms-form">
       {made && (
@@ -141,6 +156,17 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
           </p>
         </div>
       )}
+      <div className="ms-mykey">
+        <button type="button" className="ms-mini-btn" disabled={keyBusy} onClick={getMyKey}>
+          {keyBusy ? "…" : "Get my public key to share"}
+        </button>
+        {myKey && (
+          <div className="ms-mykey-out">
+            <span className="ms-hint">Send this public key to whoever is building the shared wallet:</span>
+            <CopyBox label="My public key" value={myKey.pubkey} />
+          </div>
+        )}
+      </div>
       <label className="ms-field">
         <span className="ms-field-label">Name</span>
         <input
@@ -151,16 +177,19 @@ function CreateForm({ onCreated }: { onCreated: () => void }) {
         />
       </label>
       <label className="ms-field">
-        <span className="ms-field-label">Co-signers (one public key or address per line)</span>
+        <span className="ms-field-label">Co-signers (one public key per line)</span>
         <textarea
           className="ms-input ms-textarea"
           rows={4}
           spellCheck={false}
-          placeholder={"02a1b2… (public key)\nDabc… (an address the node knows)"}
+          placeholder={"02a1b2…  (each co-signer's public key)\n03c4d5…"}
           value={keysText}
           onChange={(e) => setKeysText(e.target.value)}
         />
-        <span className="ms-hint">{keys.length} co-signer(s) detected</span>
+        <span className="ms-hint">
+          {keys.length} co-signer(s) detected. Others send you their public key with the button
+          above; one of your own addresses also works.
+        </span>
       </label>
       <label className="ms-field ms-field-inline">
         <span className="ms-field-label">Signatures required to spend</span>

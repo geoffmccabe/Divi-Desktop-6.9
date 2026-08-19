@@ -225,6 +225,13 @@ pub fn create_wallet(
         .ok_or("node did not return a redeem script")?
         .to_string();
 
+    // Import the multisig into the wallet so it can later sign spends with any
+    // of these keys it holds. Deriving the address alone is not enough: in this
+    // build, wallet-based signrawtransaction only contributes a signature for a
+    // P2SH multisig the wallet actually knows. Same address as createmultisig.
+    rpc.call("addmultisigaddress", json!([m, keys]))
+        .map_err(|e| format!("could not import the multisig into the wallet: {e}"))?;
+
     let mut store = read_store();
     if store.iter().any(|w| w.address == address) {
         return Err("That exact multisig wallet already exists here.".into());
@@ -551,4 +558,157 @@ fn decode_blob(blob: &str) -> Result<Blob, String> {
         fee: v.get("fee").and_then(|x| x.as_f64()).unwrap_or(0.0),
         required: v.get("required").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
     })
+}
+
+/// The public key the node knows for one of the user's OWN addresses, so it can
+/// be shared with co-signers to build a multisig. Only works for an address in
+/// this wallet (the node has no one else's pubkey).
+pub fn my_pubkey(cfg: &NodeConfig, address: &str) -> Result<String, String> {
+    let rpc = RpcClient::new(cfg);
+    validate(&rpc, address)?;
+    let v = rpc.call("validateaddress", json!([address]))?;
+    if v.get("ismine").and_then(|b| b.as_bool()) != Some(true) {
+        return Err("That address is not in this wallet, so its public key isn't known here.".into());
+    }
+    v.get("pubkey")
+        .and_then(|p| p.as_str())
+        .map(str::to_string)
+        .ok_or_else(|| "The node did not return a public key for that address.".to_string())
+}
+
+pub struct MyKey {
+    pub address: String,
+    pub pubkey: String,
+}
+
+/// A fresh address in this wallet plus its public key, for the user to hand to
+/// the other co-signers when setting up a shared wallet. The wallet keeps the
+/// matching private key, so this same address can later sign the group's spends.
+pub fn new_shareable_pubkey(cfg: &NodeConfig) -> Result<MyKey, String> {
+    let rpc = RpcClient::new(cfg);
+    let address = rpc
+        .call("getnewaddress", json!([]))
+        .map_err(|e| format!("could not get an address: {e}"))?
+        .as_str()
+        .ok_or("node did not return an address")?
+        .to_string();
+    let pubkey = my_pubkey(cfg, &address)?;
+    Ok(MyKey { address, pubkey })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    // Live round-trip against a local regtest node with addressindex on.
+    // Bring one up (see the MultiSig completion notes) then run:
+    //   cargo test -p dd69-supervisor multisig_ -- --ignored --nocapture --test-threads=1
+    fn regtest() -> NodeConfig {
+        NodeConfig {
+            datadir: PathBuf::from("/tmp"), // unused for a remote (host/port) client
+            rpc_host: "127.0.0.1".into(),
+            rpc_user: "ms".into(),
+            rpc_pass: "mspass".into(),
+            rpc_port: 51841,
+            remote: true,
+        }
+    }
+
+    fn new_addr(rpc: &RpcClient) -> String {
+        rpc.call("getnewaddress", json!([])).unwrap().as_str().unwrap().to_string()
+    }
+    fn pubkey_of(rpc: &RpcClient, addr: &str) -> String {
+        rpc.call("validateaddress", json!([addr])).unwrap()["pubkey"].as_str().unwrap().to_string()
+    }
+    fn mine(rpc: &RpcClient, n: u32) {
+        rpc.call("setgenerate", json!([n])).unwrap();
+    }
+
+    // The whole path through the actual module functions: create → fund →
+    // propose → sign (wallet holds all keys) → broadcast, and confirm the
+    // recipient is paid and change returns to the multisig.
+    #[test]
+    #[ignore]
+    fn multisig_roundtrip() {
+        let cfg = regtest();
+        let rpc = RpcClient::new(&cfg);
+
+        let (a, b, c) = (new_addr(&rpc), new_addr(&rpc), new_addr(&rpc));
+        let keys = vec![pubkey_of(&rpc, &a), pubkey_of(&rpc, &b), pubkey_of(&rpc, &c)];
+        let w = create_wallet(&cfg, 2, keys, "rt-multisig-test").expect("create_wallet");
+        println!("multisig address = {} ({}-of-{})", w.address, w.m, w.n);
+        assert!(!w.address.is_empty() && !w.redeem_script.is_empty());
+
+        // Fund it and confirm the balance reads back via the address index.
+        rpc.call("sendtoaddress", json!([w.address, 100.0])).expect("fund");
+        mine(&rpc, 3);
+        let bal = address_balance(&cfg, &w.address).expect("balance");
+        println!("multisig balance after funding = {bal}");
+        assert!((bal - 100.0).abs() < 1e-6, "expected ~100, got {bal}");
+
+        // Propose, sign (all 3 keys are in this wallet, so one call completes it), broadcast.
+        let dest = new_addr(&rpc);
+        let p = propose_spend(&cfg, &w.address, &dest, 40.0).expect("propose");
+        assert!(p.blob.starts_with("DVMS1-"));
+        let s = sign_spend(&cfg, &p.blob, None).expect("sign");
+        println!("signed {}/{} complete={}", s.signed, s.required, s.complete);
+        assert!(s.complete, "wallet holding all keys should complete the signature set");
+        let txid = broadcast_spend(&cfg, &s.blob).expect("broadcast");
+        println!("broadcast txid = {txid}");
+        assert_eq!(txid.len(), 64);
+        mine(&rpc, 3);
+
+        let paid = address_balance(&cfg, &dest).expect("dest balance");
+        let change = address_balance(&cfg, &w.address).expect("change balance");
+        println!("recipient got {paid}; multisig change left = {change}");
+        assert!((paid - 40.0).abs() < 1e-6, "recipient should have ~40, got {paid}");
+        assert!(change > 59.0 && change < 60.0, "change should be ~60 minus fee, got {change}");
+
+        forget_wallet(&w.address).ok(); // don't leave the test wallet in the store
+    }
+
+    // The multi-party premise: two DIFFERENT keys signing one spend in turn.
+    // Simulated on one node by signing with explicit private keys (as separate
+    // signers would), proving the iterative signrawtransaction merge my design
+    // depends on actually works for a 2-of-3.
+    #[test]
+    #[ignore]
+    fn multisig_iterative_two_signers() {
+        let cfg = regtest();
+        let rpc = RpcClient::new(&cfg);
+
+        let (a, b, c) = (new_addr(&rpc), new_addr(&rpc), new_addr(&rpc));
+        let keys = vec![pubkey_of(&rpc, &a), pubkey_of(&rpc, &b), pubkey_of(&rpc, &c)];
+        let res = rpc.call("createmultisig", json!([2, keys])).unwrap();
+        let address = res["address"].as_str().unwrap().to_string();
+        let redeem = res["redeemScript"].as_str().unwrap().to_string();
+        let wif_a = rpc.call("dumpprivkey", json!([a])).unwrap().as_str().unwrap().to_string();
+        let wif_b = rpc.call("dumpprivkey", json!([b])).unwrap().as_str().unwrap().to_string();
+
+        rpc.call("sendtoaddress", json!([address, 50.0])).unwrap();
+        mine(&rpc, 3);
+        let utxos = rpc.call("getaddressutxos", json!([{ "addresses": [address] }])).unwrap();
+        let u = &utxos.as_array().unwrap()[0];
+        let dest = new_addr(&rpc);
+        let raw = rpc
+            .call("createrawtransaction", json!([[{"txid": u["txid"], "vout": u["outputIndex"]}], {dest.clone(): 40.0}]))
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string();
+        let prevtxs = json!([{ "txid": u["txid"], "vout": u["outputIndex"], "scriptPubKey": u["script"], "redeemScript": redeem }]);
+
+        // Signer A only → not enough signatures yet.
+        let s1 = rpc.call("signrawtransaction", json!([raw, prevtxs, [wif_a]])).unwrap();
+        assert_eq!(s1["complete"].as_bool(), Some(false), "one of two sigs must be incomplete");
+        // Signer B adds theirs on top of A's partially-signed tx → complete.
+        let s2 = rpc.call("signrawtransaction", json!([s1["hex"], prevtxs, [wif_b]])).unwrap();
+        assert_eq!(s2["complete"].as_bool(), Some(true), "second signer should complete it");
+        let txid = rpc.call("sendrawtransaction", json!([s2["hex"]])).unwrap().as_str().unwrap().to_string();
+        mine(&rpc, 3);
+        let conf = rpc.call("getrawtransaction", json!([txid, 1])).unwrap();
+        assert!(conf["confirmations"].as_i64().unwrap_or(0) >= 1, "iterative-signed spend must confirm");
+        println!("iterative 2-of-3 spend confirmed: {txid}");
+    }
 }
