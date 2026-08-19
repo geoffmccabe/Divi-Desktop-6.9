@@ -221,6 +221,16 @@ pub fn start_with_recovery(
     normal_timeout: Duration,
     repair_timeout: Duration,
 ) -> Result<StartReport, String> {
+    // Repair our own node's conf before every launch. The first-run setup path
+    // writes it only once, so an already-set-up node would never gain a newly
+    // required option (e.g. addressindex, which the treasury/multisig displays
+    // and the governance snapshot depend on). ensure_local_node_conf only edits
+    // a DD69-written conf and is idempotent; when it adds addressindex the node
+    // asks for a one-time -reindex, which the ladder below then performs.
+    if datadir == crate::config::dd69_datadir().as_path() {
+        let _ = crate::install::ensure_local_node_conf();
+    }
+
     // (flag, human label, timeout). None flag = ordinary start.
     let ladder: [(Option<&str>, &str, Duration); 3] = [
         (None, "", normal_timeout),
