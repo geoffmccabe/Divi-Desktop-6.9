@@ -266,6 +266,7 @@ export interface MultisigWallet {
   participants: string[];
   balance: number;
   balanceAvailable: boolean;
+  definition: string; // shareable "DVMW1-…" wallet definition (also the backup)
   createdAt: number;
 }
 export interface MyKey {
@@ -279,7 +280,28 @@ export const multisigMyPubkey = () => invoke<MyKey>("multisig_my_pubkey");
 export const multisigList = () => invoke<MultisigWallet[]>("multisig_list");
 export const multisigCreate = (m: number, keys: string[], label: string) =>
   invoke<MultisigWallet>("multisig_create", { m, keys, label });
+// Add a wallet someone else built, from its definition blob.
+export const multisigImport = (definition: string) =>
+  invoke<MultisigWallet>("multisig_import", { definition });
 export const multisigForget = (address: string) => invoke<void>("multisig_forget", { address });
+
+// What a pending spend REALLY does, decoded from the transaction itself
+// (never trusting the blob's own labels).
+export interface SpendOutput {
+  address: string;
+  amount: number;
+  isChange: boolean; // paid back to the shared wallet
+}
+export interface SpendPreview {
+  from: string;
+  outputs: SpendOutput[];
+  totalOut: number;
+  fee: number;
+  signed: number;
+  required: number;
+  complete: boolean;
+}
+export const multisigInspect = (blob: string) => invoke<SpendPreview>("multisig_inspect", { blob });
 
 export interface PendingSpend {
   blob: string; // the shareable pending-spend, passed between co-signers

@@ -1451,6 +1451,7 @@ struct MultisigWalletDto {
     participants: Vec<String>,
     balance: f64,
     balance_available: bool,
+    definition: String,
     created_at: i64,
 }
 
@@ -1464,9 +1465,30 @@ impl From<multisig::WalletView> for MultisigWalletDto {
             participants: w.participants,
             balance: w.balance,
             balance_available: w.balance_available,
+            definition: w.definition,
             created_at: w.created_at,
         }
     }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpendOutputDto {
+    address: String,
+    amount: f64,
+    is_change: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpendPreviewDto {
+    from: String,
+    outputs: Vec<SpendOutputDto>,
+    total_out: f64,
+    fee: f64,
+    signed: u32,
+    required: u32,
+    complete: bool,
 }
 
 #[derive(Serialize)]
@@ -1529,6 +1551,7 @@ async fn multisig_create(m: u32, keys: Vec<String>, label: String) -> Result<Mul
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
         multisig::create_wallet(&cfg, m, keys, &label).map(|w| MultisigWalletDto {
+            definition: multisig::definition_blob(&w),
             label: w.label,
             address: w.address,
             m: w.m,
@@ -1537,6 +1560,52 @@ async fn multisig_create(m: u32, keys: Vec<String>, label: String) -> Result<Mul
             balance: 0.0,
             balance_available: false,
             created_at: w.created_at,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Add a shared wallet someone else built, from its definition blob. Imports it
+/// so this wallet can co-sign; derives the same address as everyone else.
+#[tauri::command]
+async fn multisig_import(definition: String) -> Result<MultisigWalletDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::import_wallet(&cfg, &definition).map(|w| MultisigWalletDto {
+            definition: multisig::definition_blob(&w),
+            label: w.label,
+            address: w.address,
+            m: w.m,
+            n: w.n,
+            participants: w.participants,
+            balance: 0.0,
+            balance_available: false,
+            created_at: w.created_at,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Decode the REAL transaction a pending spend will make, so the signer can
+/// verify the recipient and amount before approving.
+#[tauri::command]
+async fn multisig_inspect(blob: String) -> Result<SpendPreviewDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::inspect_spend(&cfg, &blob).map(|p| SpendPreviewDto {
+            from: p.from,
+            outputs: p
+                .outputs
+                .into_iter()
+                .map(|o| SpendOutputDto { address: o.address, amount: o.amount, is_change: o.is_change })
+                .collect(),
+            total_out: p.total_out,
+            fee: p.fee,
+            signed: p.signed,
+            required: p.required,
+            complete: p.complete,
         })
     })
     .await
@@ -1819,6 +1888,8 @@ fn main() {
             address_balance,
             multisig_list,
             multisig_create,
+            multisig_import,
+            multisig_inspect,
             multisig_forget,
             multisig_propose,
             multisig_sign,

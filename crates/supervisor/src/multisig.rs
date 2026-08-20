@@ -20,7 +20,7 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 const DUST_DIVI: f64 = 0.0001;
-const FEE_CAP_DIVI: f64 = 5.0; // absolute ceiling; abort before broadcasting past it
+const FEE_CAP_DIVI: f64 = 1.0; // absolute ceiling; abort before broadcasting past it
 const RELAY_SATS_PER_BYTE: f64 = 10.0; // matches the node relay fee (0.0001/kB)
 
 fn round8(v: f64) -> f64 {
@@ -163,6 +163,7 @@ pub struct WalletView {
     pub participants: Vec<String>,
     pub balance: f64,
     pub balance_available: bool,
+    pub definition: String,
     pub created_at: i64,
 }
 
@@ -175,6 +176,7 @@ pub fn list_wallets(cfg: &NodeConfig) -> Vec<WalletView> {
                 Ok(b) => (b, true),
                 Err(_) => (0.0, false),
             };
+            let definition = definition_blob(&w);
             WalletView {
                 label: w.label,
                 address: w.address,
@@ -183,6 +185,7 @@ pub fn list_wallets(cfg: &NodeConfig) -> Vec<WalletView> {
                 participants: w.participants,
                 balance,
                 balance_available: available,
+                definition,
                 created_at: w.created_at,
             }
         })
@@ -199,6 +202,19 @@ pub fn create_wallet(
     keys: Vec<String>,
     label: &str,
 ) -> Result<StoredWallet, String> {
+    add_wallet(cfg, m, keys, label, false)
+}
+
+/// The shared body of create + import. `allow_existing` makes re-adding an
+/// already-known wallet a no-op that returns it (used by import), instead of an
+/// error (used by create).
+fn add_wallet(
+    cfg: &NodeConfig,
+    m: u32,
+    keys: Vec<String>,
+    label: &str,
+    allow_existing: bool,
+) -> Result<StoredWallet, String> {
     let n = keys.len() as u32;
     if n < 1 || n > 16 {
         return Err("A multisig wallet needs between 1 and 16 co-signers.".into());
@@ -211,6 +227,9 @@ pub fn create_wallet(
         return Err("One of the co-signer keys is empty.".into());
     }
     let rpc = RpcClient::new(cfg);
+    // NOTE: Divi does NOT sort the keys (no BIP67), so the key ORDER decides the
+    // address. Every co-signer must build the wallet from the same keys in the
+    // same order — which is exactly what sharing the definition blob guarantees.
     let res = rpc
         .call("createmultisig", json!([m, keys]))
         .map_err(|e| format!("could not build the multisig address: {e}"))?;
@@ -233,7 +252,10 @@ pub fn create_wallet(
         .map_err(|e| format!("could not import the multisig into the wallet: {e}"))?;
 
     let mut store = read_store();
-    if store.iter().any(|w| w.address == address) {
+    if let Some(existing) = store.iter().find(|w| w.address == address).cloned() {
+        if allow_existing {
+            return Ok(existing);
+        }
         return Err("That exact multisig wallet already exists here.".into());
     }
     let w = StoredWallet {
@@ -252,6 +274,56 @@ pub fn create_wallet(
     store.push(w.clone());
     write_store(&store)?;
     Ok(w)
+}
+
+/// The full, shareable definition of a shared wallet: its threshold and the
+/// co-signer public keys IN ORDER. Anyone who imports this gets the identical
+/// address (order matters — see the note in add_wallet), so it is both the way
+/// to add a wallet someone else built and the thing to back up.
+pub fn definition_blob(w: &StoredWallet) -> String {
+    let payload = json!({ "v": 1, "m": w.m, "keys": w.participants, "label": w.label });
+    format!(
+        "DVMW1-{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(payload.to_string().as_bytes())
+    )
+}
+
+struct Definition {
+    m: u32,
+    keys: Vec<String>,
+    label: String,
+}
+
+fn decode_definition(blob: &str) -> Result<Definition, String> {
+    let body = blob
+        .trim()
+        .strip_prefix("DVMW1-")
+        .ok_or("That is not a shared-wallet definition.")?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(body.as_bytes())
+        .map_err(|_| "That wallet definition is malformed.".to_string())?;
+    let v: Value = serde_json::from_slice(&bytes).map_err(|_| "That wallet definition is malformed.".to_string())?;
+    if v.get("v").and_then(|x| x.as_i64()) != Some(1) {
+        return Err("That wallet definition is an unsupported version.".into());
+    }
+    Ok(Definition {
+        m: v.get("m").and_then(|x| x.as_u64()).ok_or("malformed definition")? as u32,
+        keys: v
+            .get("keys")
+            .and_then(|k| k.as_array())
+            .ok_or("malformed definition")?
+            .iter()
+            .filter_map(|k| k.as_str().map(str::to_string))
+            .collect(),
+        label: v.get("label").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+    })
+}
+
+/// Add a shared wallet someone else built, from its definition blob. Imports it
+/// so this wallet can co-sign, and derives the same address as everyone else.
+pub fn import_wallet(cfg: &NodeConfig, definition: &str) -> Result<StoredWallet, String> {
+    let d = decode_definition(definition)?;
+    add_wallet(cfg, d.m, d.keys, &d.label, true)
 }
 
 /// Remove a wallet from this app's list. Local only — it never moves coins and
@@ -362,7 +434,7 @@ pub fn propose_spend(cfg: &NodeConfig, from: &str, to: &str, amount: f64) -> Res
         })
         .collect();
 
-    let blob = encode_blob(&raw_hex, &prevtxs, from, to, amount, fee, w.m);
+    let blob = encode_blob(&raw_hex, &prevtxs, from, to, amount, fee, w.m, &w.participants);
     Ok(PendingSpend {
         blob,
         from: from.to_string(),
@@ -393,6 +465,14 @@ pub fn sign_spend(cfg: &NodeConfig, blob: &str, passphrase: Option<&str>) -> Res
     let rpc = RpcClient::new(cfg);
     let before = count_sigs(&rpc, &b.raw);
 
+    // Import the multisig into the wallet from the definition carried in the
+    // blob, so a co-signer who never "created" this wallet locally can still
+    // sign a spend they were sent. Idempotent; best-effort (older blobs may not
+    // carry the keys, in which case the wallet must already know the multisig).
+    if !b.keys.is_empty() {
+        let _ = rpc.call("addmultisigaddress", json!([b.required, b.keys]));
+    }
+
     if let Some(p) = passphrase {
         rpc.call("walletpassphrase", json!([p, 120, false]))
             .map_err(|e| format!("Unlock failed: {e}"))?;
@@ -409,7 +489,7 @@ pub fn sign_spend(cfg: &NodeConfig, blob: &str, passphrase: Option<&str>) -> Res
         let complete = signed.get("complete").and_then(|c| c.as_bool()).unwrap_or(false);
         let after = count_sigs(&rpc, &hex);
         let prevtxs = b.prevtxs.as_array().cloned().unwrap_or_default();
-        let new_blob = encode_blob(&hex, &prevtxs, &b.from, &b.to, b.amount, b.fee, b.required);
+        let new_blob = encode_blob(&hex, &prevtxs, &b.from, &b.to, b.amount, b.fee, b.required, &b.keys);
         Ok(SignResult {
             blob: new_blob,
             complete,
@@ -472,6 +552,66 @@ pub fn broadcast_spend(cfg: &NodeConfig, blob: &str) -> Result<String, String> {
         .ok_or_else(|| "the node did not confirm the broadcast".to_string())
 }
 
+pub struct SpendOutput {
+    pub address: String,
+    pub amount: f64,
+    pub is_change: bool, // paid back to the multisig itself
+}
+
+pub struct SpendPreview {
+    pub from: String,
+    pub outputs: Vec<SpendOutput>,
+    pub total_out: f64,
+    pub fee: f64,
+    pub signed: u32,
+    pub required: u32,
+    pub complete: bool,
+}
+
+/// Decode the ACTUAL transaction a pending spend will make, so a signer can
+/// verify the real recipient(s) and amount(s) before approving — never trusting
+/// the blob's own labels. Outputs come straight from the raw tx; the fee is the
+/// inputs minus the outputs. Change back to the multisig is flagged as such.
+pub fn inspect_spend(cfg: &NodeConfig, blob: &str) -> Result<SpendPreview, String> {
+    let b = decode_blob(blob)?;
+    let rpc = RpcClient::new(cfg);
+    let dec = rpc
+        .call("decoderawtransaction", json!([b.raw]))
+        .map_err(|e| format!("could not read the spend: {e}"))?;
+    let mut outputs = Vec::new();
+    let mut total_out = 0.0;
+    if let Some(vouts) = dec["vout"].as_array() {
+        for v in vouts {
+            let amount = v["value"].as_f64().unwrap_or(0.0);
+            total_out = round8(total_out + amount);
+            let address = v["scriptPubKey"]["addresses"]
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(|x| x.as_str())
+                .unwrap_or("(unrecognized script)")
+                .to_string();
+            let is_change = address == b.from;
+            outputs.push(SpendOutput { address, amount, is_change });
+        }
+    }
+    let in_sum: f64 = b
+        .prevtxs
+        .as_array()
+        .map(|a| a.iter().map(|p| sat_to_divi(read_sat(&p["amountSat"]).unwrap_or(0))).sum())
+        .unwrap_or(0.0);
+    let fee = round8(in_sum - total_out);
+    let signed = count_sigs(&rpc, &b.raw);
+    Ok(SpendPreview {
+        from: b.from,
+        outputs,
+        total_out,
+        fee,
+        signed,
+        required: b.required,
+        complete: signed >= b.required,
+    })
+}
+
 fn classify_broadcast(err: &str) -> String {
     if err.contains("already in block chain")
         || err.contains("txn-already-known")
@@ -510,7 +650,17 @@ fn count_sigs(rpc: &RpcClient, hex: &str) -> u32 {
 
 // ── Blob encoding (the shareable pending-spend) ──────────────────────────────
 
-fn encode_blob(raw: &str, prevtxs: &[Value], from: &str, to: &str, amount: f64, fee: f64, required: u32) -> String {
+#[allow(clippy::too_many_arguments)]
+fn encode_blob(
+    raw: &str,
+    prevtxs: &[Value],
+    from: &str,
+    to: &str,
+    amount: f64,
+    fee: f64,
+    required: u32,
+    keys: &[String],
+) -> String {
     let payload = json!({
         "v": 1,
         "raw": raw,
@@ -520,6 +670,7 @@ fn encode_blob(raw: &str, prevtxs: &[Value], from: &str, to: &str, amount: f64, 
         "amount": amount,
         "fee": fee,
         "required": required,
+        "keys": keys, // the wallet definition, so any co-signer can import + sign
     });
     format!(
         "DVMS1-{}",
@@ -535,6 +686,7 @@ struct Blob {
     amount: f64,
     fee: f64,
     required: u32,
+    keys: Vec<String>,
 }
 
 fn decode_blob(blob: &str) -> Result<Blob, String> {
@@ -557,6 +709,11 @@ fn decode_blob(blob: &str) -> Result<Blob, String> {
         amount: v.get("amount").and_then(|x| x.as_f64()).unwrap_or(0.0),
         fee: v.get("fee").and_then(|x| x.as_f64()).unwrap_or(0.0),
         required: v.get("required").and_then(|x| x.as_u64()).unwrap_or(0) as u32,
+        keys: v
+            .get("keys")
+            .and_then(|k| k.as_array())
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default(),
     })
 }
 
@@ -710,5 +867,41 @@ mod tests {
         let conf = rpc.call("getrawtransaction", json!([txid, 1])).unwrap();
         assert!(conf["confirmations"].as_i64().unwrap_or(0) >= 1, "iterative-signed spend must confirm");
         println!("iterative 2-of-3 spend confirmed: {txid}");
+    }
+
+    // The security functions: inspect_spend must report the REAL outputs from
+    // the transaction (recipient + amount + change), and a shared definition
+    // must re-derive the identical address on import.
+    #[test]
+    #[ignore]
+    fn multisig_inspect_and_definition() {
+        let cfg = regtest();
+        let rpc = RpcClient::new(&cfg);
+        let (a, b, c) = (new_addr(&rpc), new_addr(&rpc), new_addr(&rpc));
+        let keys = vec![pubkey_of(&rpc, &a), pubkey_of(&rpc, &b), pubkey_of(&rpc, &c)];
+        let w = create_wallet(&cfg, 2, keys, "rt-inspect").expect("create");
+        rpc.call("sendtoaddress", json!([w.address, 100.0])).expect("fund");
+        mine(&rpc, 3);
+        let dest = new_addr(&rpc);
+        let p = propose_spend(&cfg, &w.address, &dest, 40.0).expect("propose");
+
+        let prev = inspect_spend(&cfg, &p.blob).expect("inspect");
+        let pay = prev.outputs.iter().find(|o| !o.is_change).expect("a payment output");
+        assert_eq!(pay.address, dest, "recipient must match the real tx output");
+        assert!((pay.amount - 40.0).abs() < 1e-6, "amount must be 40, got {}", pay.amount);
+        let change = prev.outputs.iter().find(|o| o.is_change).expect("a change output");
+        assert_eq!(change.address, w.address, "change must return to the multisig");
+        assert_eq!(prev.required, 2);
+        assert_eq!(prev.signed, 0, "unsigned before anyone signs");
+        assert!(prev.fee > 0.0 && prev.fee < 0.01, "fee should be tiny, got {}", prev.fee);
+        println!("inspect OK: pays {} to {}, change {}, fee {}", pay.amount, dest, change.amount, prev.fee);
+
+        // A shared definition re-derives the SAME address on import.
+        let def = definition_blob(&w);
+        forget_wallet(&w.address).ok();
+        let re = import_wallet(&cfg, &def).expect("import");
+        assert_eq!(re.address, w.address, "import must reproduce the identical address");
+        println!("import OK: same address {}", re.address);
+        forget_wallet(&w.address).ok();
     }
 }

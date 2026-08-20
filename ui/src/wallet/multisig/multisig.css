@@ -299,6 +299,68 @@
   word-break: break-all;
 }
 
+.ms-self-start {
+  align-self: flex-start;
+}
+.ms-ok {
+  font-size: 0.8rem;
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.1);
+  border: 1px solid hsl(var(--primary) / 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+/* ── Verified spend review (what you're actually approving) ──────────────── */
+.ms-review {
+  border: 1px solid hsl(var(--primary) / 0.4);
+  background: hsl(var(--primary) / 0.06);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.ms-review-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+}
+.ms-review-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.85rem;
+  color: hsl(var(--foreground));
+}
+.ms-review-k {
+  color: hsl(var(--muted-foreground));
+  flex-shrink: 0;
+}
+.ms-review-pay {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: hsl(var(--accent) / 0.12);
+}
+.ms-warn {
+  color: hsl(var(--accent));
+}
+
+/* ── Confirm boxes (forget, send) ────────────────────────────────────────── */
+.ms-confirm {
+  border: 1px solid hsl(var(--accent) / 0.5);
+  background: hsl(var(--accent) / 0.1);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 0.85rem;
+  color: hsl(var(--foreground));
+}
+
 /* ── "Get my public key" helper ──────────────────────────────────────────── */
 .ms-mykey {
   display: flex;
