@@ -1483,6 +1483,9 @@ struct SpendOutputDto {
 #[serde(rename_all = "camelCase")]
 struct SpendPreviewDto {
     from: String,
+    mixed_sources: bool,
+    source_ok: bool,
+    total_in: f64,
     outputs: Vec<SpendOutputDto>,
     total_out: f64,
     fee: f64,
@@ -1596,6 +1599,9 @@ async fn multisig_inspect(blob: String) -> Result<SpendPreviewDto, String> {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
         multisig::inspect_spend(&cfg, &blob).map(|p| SpendPreviewDto {
             from: p.from,
+            mixed_sources: p.mixed_sources,
+            source_ok: p.source_ok,
+            total_in: p.total_in,
             outputs: p
                 .outputs
                 .into_iter()

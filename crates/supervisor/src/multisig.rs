@@ -216,8 +216,10 @@ fn add_wallet(
     allow_existing: bool,
 ) -> Result<StoredWallet, String> {
     let n = keys.len() as u32;
-    if n < 1 || n > 16 {
-        return Err("A multisig wallet needs between 1 and 16 co-signers.".into());
+    // Cap at 15, not 16: an m-of-16 redeemScript of compressed keys exceeds the
+    // 520-byte P2SH standardness limit and the wallet would be unspendable.
+    if n < 1 || n > 15 {
+        return Err("A multisig wallet needs between 1 and 15 co-signers.".into());
     }
     if m == 0 || m > n {
         return Err("Signatures required must be between 1 and the number of co-signers.".into());
@@ -225,6 +227,18 @@ fn add_wallet(
     let keys: Vec<String> = keys.into_iter().map(|k| k.trim().to_string()).collect();
     if keys.iter().any(|k| k.is_empty()) {
         return Err("One of the co-signer keys is empty.".into());
+    }
+    // Reject uncompressed public keys (65 bytes, "04…"): they bloat the
+    // redeemScript past the 520-byte P2SH limit at far fewer signers and would
+    // make the wallet unspendable. Ask for the compressed key instead.
+    if keys
+        .iter()
+        .any(|k| k.len() == 130 && k.starts_with("04"))
+    {
+        return Err(
+            "An uncompressed public key was supplied. Ask that co-signer for their compressed key (starts with 02 or 03)."
+                .into(),
+        );
     }
     let rpc = RpcClient::new(cfg);
     // NOTE: Divi does NOT sort the keys (no BIP67), so the key ORDER decides the
@@ -463,6 +477,16 @@ pub struct SignResult {
 pub fn sign_spend(cfg: &NodeConfig, blob: &str, passphrase: Option<&str>) -> Result<SignResult, String> {
     let b = decode_blob(blob)?;
     let rpc = RpcClient::new(cfg);
+
+    // SAFETY GATE: only ever sign a clean single-wallet spend whose inputs are
+    // exactly the multisig this blob declares. This runs BEFORE unlocking, so a
+    // malicious blob can never get the wallet to sign the victim's personal or
+    // other-wallet coins.
+    let dec = rpc
+        .call("decoderawtransaction", json!([b.raw]))
+        .map_err(|e| format!("could not read the spend: {e}"))?;
+    verified_source(&rpc, &dec, b.required, &b.keys)?;
+
     let before = count_sigs(&rpc, &b.raw);
 
     // Import the multisig into the wallet from the definition carried in the
@@ -502,15 +526,18 @@ pub fn sign_spend(cfg: &NodeConfig, blob: &str, passphrase: Option<&str>) -> Res
             fee: b.fee,
         })
     })();
-    if let Some(p) = passphrase {
-        let _ = rpc.call("walletpassphrase", json!([p, 0, true]));
+    // Re-lock the wallet explicitly rather than relying on a passphrase call to
+    // fail-safe, so it never stays unlocked after signing.
+    if passphrase.is_some() {
+        let _ = rpc.call("walletlock", json!([]));
     }
     result
 }
 
 /// Broadcast a fully-signed spend. Refuses anything short of the required
-/// signatures, and recomputes the REAL fee from the inputs and outputs to abort
-/// before sending anything with an out-of-range fee.
+/// signatures, re-verifies the inputs all belong to the one declared wallet,
+/// and recomputes the REAL fee from the chain to abort before sending anything
+/// with an out-of-range fee.
 pub fn broadcast_spend(cfg: &NodeConfig, blob: &str) -> Result<String, String> {
     let b = decode_blob(blob)?;
     let rpc = RpcClient::new(cfg);
@@ -523,8 +550,11 @@ pub fn broadcast_spend(cfg: &NodeConfig, blob: &str) -> Result<String, String> {
         ));
     }
 
-    // Real fee = sum(input values) - sum(output values). Input values were
-    // carried in prevtxs at proposal time; outputs are read back from the tx.
+    // Real fee = sum(REAL input values from the chain) - sum(output values).
+    // Input values are read from the chain, never the blob's self-reported
+    // amountSat, so a lying blob cannot hide a fund-burning fee past this check.
+    // verified_source also re-checks the inputs all belong to the one declared
+    // wallet before we ever broadcast.
     let dec = rpc
         .call("decoderawtransaction", json!([b.raw]))
         .map_err(|e| format!("decode: {e}"))?;
@@ -532,11 +562,7 @@ pub fn broadcast_spend(cfg: &NodeConfig, blob: &str) -> Result<String, String> {
         .as_array()
         .map(|a| a.iter().map(|v| v["value"].as_f64().unwrap_or(0.0)).sum())
         .unwrap_or(0.0);
-    let in_sum: f64 = b
-        .prevtxs
-        .as_array()
-        .map(|a| a.iter().map(|p| sat_to_divi(read_sat(&p["amountSat"]).unwrap_or(0))).sum())
-        .unwrap_or(0.0);
+    let (_src, in_sum) = verified_source(&rpc, &dec, b.required, &b.keys)?;
     let real_fee = round8(in_sum - out_sum);
     if !(0.0..=FEE_CAP_DIVI).contains(&real_fee) {
         return Err(format!(
@@ -560,6 +586,9 @@ pub struct SpendOutput {
 
 pub struct SpendPreview {
     pub from: String,
+    pub mixed_sources: bool, // inputs come from more than one address (suspicious)
+    pub source_ok: bool,     // inputs really belong to the wallet this blob declares
+    pub total_in: f64,
     pub outputs: Vec<SpendOutput>,
     pub total_out: f64,
     pub fee: f64,
@@ -568,16 +597,113 @@ pub struct SpendPreview {
     pub complete: bool,
 }
 
+/// Sum the REAL value of a transaction's inputs by reading each spent output
+/// from the chain — never the blob's self-reported `amountSat`, which a
+/// malicious proposer controls. Also collects the distinct source address(es).
+/// Errors if any input is already spent or unknown (a stale or bogus spend).
+fn chain_inputs(rpc: &RpcClient, decoded_tx: &Value) -> Result<(f64, Vec<String>), String> {
+    let vins = decoded_tx["vin"].as_array().ok_or("transaction has no inputs")?;
+    let mut total = 0.0;
+    let mut sources: Vec<String> = Vec::new();
+    for vin in vins {
+        let txid = vin["txid"].as_str().ok_or("malformed input")?;
+        let vout = vin["vout"].as_u64().ok_or("malformed input")?;
+        let o = rpc.call("gettxout", json!([txid, vout, true]))?;
+        if o.is_null() {
+            return Err(
+                "This spend uses coins that are already spent or unknown — it is stale or invalid."
+                    .into(),
+            );
+        }
+        total = round8(total + o["value"].as_f64().unwrap_or(0.0));
+        if let Some(addr) = o["scriptPubKey"]["addresses"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|x| x.as_str())
+        {
+            if !sources.iter().any(|s| s == addr) {
+                sources.push(addr.to_string());
+            }
+        }
+    }
+    Ok((total, sources))
+}
+
+/// Refuse anything but a clean single-wallet spend: every input must come from
+/// ONE address, and that address must be exactly the multisig derived from the
+/// blob's own definition (keys + threshold). This is the core anti-theft guard:
+/// it stops a malicious blob from smuggling in the victim's personal single-sig
+/// UTXOs (one signature would spend them) or a different multisig's coins, and
+/// it stops "change" from being redirected to an attacker. Returns the verified
+/// source address.
+fn verified_source(
+    rpc: &RpcClient,
+    decoded: &Value,
+    required: u32,
+    keys: &[String],
+) -> Result<(String, f64), String> {
+    let (total_in, sources) = chain_inputs(rpc, decoded)?;
+    if sources.is_empty() {
+        return Err("This spend has no recognizable inputs.".into());
+    }
+    if sources.len() > 1 {
+        return Err(
+            "This spend draws coins from more than one address — refusing for safety. A shared-wallet \
+             spend must spend only that wallet's own coins."
+                .into(),
+        );
+    }
+    let src = sources.into_iter().next().unwrap();
+    if keys.is_empty() {
+        // Old blob without the definition: fall back to requiring the wallet be
+        // one this app already knows.
+        if !read_store().iter().any(|w| w.address == src) {
+            return Err("This spend is for a wallet this app doesn't know — add it first.".into());
+        }
+        return Ok((src, total_in));
+    }
+    let res = rpc
+        .call("createmultisig", json!([required, keys]))
+        .map_err(|e| format!("could not verify the wallet: {e}"))?;
+    let derived = res.get("address").and_then(|a| a.as_str()).unwrap_or_default();
+    if derived != src {
+        return Err(
+            "These coins do not belong to the shared wallet named in this spend — refusing to sign.".into(),
+        );
+    }
+    Ok((src, total_in))
+}
+
 /// Decode the ACTUAL transaction a pending spend will make, so a signer can
-/// verify the real recipient(s) and amount(s) before approving — never trusting
-/// the blob's own labels. Outputs come straight from the raw tx; the fee is the
-/// inputs minus the outputs. Change back to the multisig is flagged as such.
+/// verify the real source, recipient(s), amount(s) and fee before approving —
+/// never trusting the blob's own labels. Outputs come from the raw tx; input
+/// values and the source come from the CHAIN; the fee is the difference. Change
+/// back to the (real) source is flagged as such.
 pub fn inspect_spend(cfg: &NodeConfig, blob: &str) -> Result<SpendPreview, String> {
     let b = decode_blob(blob)?;
     let rpc = RpcClient::new(cfg);
     let dec = rpc
         .call("decoderawtransaction", json!([b.raw]))
         .map_err(|e| format!("could not read the spend: {e}"))?;
+    let (total_in, sources) = chain_inputs(&rpc, &dec)?;
+    let from = sources.first().cloned().unwrap_or_default();
+    let mixed_sources = sources.len() > 1;
+
+    // Do the inputs really belong to the wallet this blob claims? (Same check
+    // sign/broadcast hard-enforce; here it's just surfaced as a warning so the
+    // signer still sees the whole picture.)
+    let source_ok = if from.is_empty() || mixed_sources {
+        false
+    } else if b.keys.is_empty() {
+        read_store().iter().any(|w| w.address == from)
+    } else {
+        rpc.call("createmultisig", json!([b.required, b.keys]))
+            .ok()
+            .and_then(|r| r.get("address").and_then(|a| a.as_str()).map(str::to_string))
+            .map(|d| d == from)
+            .unwrap_or(false)
+    };
+
     let mut outputs = Vec::new();
     let mut total_out = 0.0;
     if let Some(vouts) = dec["vout"].as_array() {
@@ -590,19 +716,18 @@ pub fn inspect_spend(cfg: &NodeConfig, blob: &str) -> Result<SpendPreview, Strin
                 .and_then(|x| x.as_str())
                 .unwrap_or("(unrecognized script)")
                 .to_string();
-            let is_change = address == b.from;
+            // Change = paid back to the real source address, not a claimed label.
+            let is_change = !from.is_empty() && address == from;
             outputs.push(SpendOutput { address, amount, is_change });
         }
     }
-    let in_sum: f64 = b
-        .prevtxs
-        .as_array()
-        .map(|a| a.iter().map(|p| sat_to_divi(read_sat(&p["amountSat"]).unwrap_or(0))).sum())
-        .unwrap_or(0.0);
-    let fee = round8(in_sum - total_out);
+    let fee = round8(total_in - total_out);
     let signed = count_sigs(&rpc, &b.raw);
     Ok(SpendPreview {
-        from: b.from,
+        from,
+        mixed_sources,
+        source_ok,
+        total_in,
         outputs,
         total_out,
         fee,
@@ -902,6 +1027,88 @@ mod tests {
         let re = import_wallet(&cfg, &def).expect("import");
         assert_eq!(re.address, w.address, "import must reproduce the identical address");
         println!("import OK: same address {}", re.address);
+        forget_wallet(&w.address).ok();
+    }
+
+    // Security: a malicious blob that lies about input values (amountSat) must
+    // NOT change the fee the signer sees — it is read from the chain.
+    #[test]
+    #[ignore]
+    fn multisig_fee_uses_chain_not_blob() {
+        let cfg = regtest();
+        let rpc = RpcClient::new(&cfg);
+        let (a, b, c) = (new_addr(&rpc), new_addr(&rpc), new_addr(&rpc));
+        let keys = vec![pubkey_of(&rpc, &a), pubkey_of(&rpc, &b), pubkey_of(&rpc, &c)];
+        let w = create_wallet(&cfg, 2, keys, "rt-fee").expect("create");
+        rpc.call("sendtoaddress", json!([w.address, 100.0])).expect("fund");
+        mine(&rpc, 3);
+        let dest = new_addr(&rpc);
+        let p = propose_spend(&cfg, &w.address, &dest, 40.0).expect("propose");
+        let honest = inspect_spend(&cfg, &p.blob).expect("inspect honest");
+
+        // Tamper: inflate every self-reported amountSat to a huge bogus value.
+        let body = p.blob.strip_prefix("DVMS1-").unwrap();
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(body).unwrap();
+        let mut v: Value = serde_json::from_slice(&bytes).unwrap();
+        if let Some(arr) = v["prevtxs"].as_array_mut() {
+            for pt in arr {
+                pt["amountSat"] = json!(999_999_999_999i64);
+            }
+        }
+        let tampered = format!(
+            "DVMS1-{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string().as_bytes())
+        );
+        let after = inspect_spend(&cfg, &tampered).expect("inspect tampered");
+
+        assert!(
+            (after.fee - honest.fee).abs() < 1e-8,
+            "fee must come from the chain, not the blob (honest {}, tampered {})",
+            honest.fee,
+            after.fee
+        );
+        assert!(after.fee < 0.01, "real fee stays tiny despite tampering, got {}", after.fee);
+        assert!((after.total_in - 100.0).abs() < 1e-6, "total_in from chain ~100, got {}", after.total_in);
+        forget_wallet(&w.address).ok();
+        println!("fee-from-chain OK: honest {} tampered-blob {} (unchanged)", honest.fee, after.fee);
+    }
+
+    // Security: a blob whose coins don't belong to the wallet it names must be
+    // refused (the anti-theft guard against smuggled personal/other-wallet UTXOs).
+    #[test]
+    #[ignore]
+    fn multisig_rejects_mismatched_coins() {
+        let cfg = regtest();
+        let rpc = RpcClient::new(&cfg);
+        let (a, b, c) = (new_addr(&rpc), new_addr(&rpc), new_addr(&rpc));
+        let keys = vec![pubkey_of(&rpc, &a), pubkey_of(&rpc, &b), pubkey_of(&rpc, &c)];
+        let w = create_wallet(&cfg, 2, keys, "rt-guard").expect("create");
+        rpc.call("sendtoaddress", json!([w.address, 50.0])).expect("fund");
+        mine(&rpc, 3);
+        let dest = new_addr(&rpc);
+        let p = propose_spend(&cfg, &w.address, &dest, 20.0).expect("propose");
+
+        // The honest spend verifies and is signable.
+        let honest = inspect_spend(&cfg, &p.blob).expect("inspect");
+        assert!(honest.source_ok, "a legit single-wallet spend must verify");
+
+        // Tamper: claim a DIFFERENT wallet's keys while the inputs are still w's.
+        let (d, e, f) = (new_addr(&rpc), new_addr(&rpc), new_addr(&rpc));
+        let other = vec![pubkey_of(&rpc, &d), pubkey_of(&rpc, &e), pubkey_of(&rpc, &f)];
+        let body = p.blob.strip_prefix("DVMS1-").unwrap();
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(body).unwrap();
+        let mut v: Value = serde_json::from_slice(&bytes).unwrap();
+        v["keys"] = json!(other);
+        let tampered = format!(
+            "DVMS1-{}",
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string().as_bytes())
+        );
+
+        let insp = inspect_spend(&cfg, &tampered).expect("inspect tampered");
+        assert!(!insp.source_ok, "mismatched keys must fail source verification");
+        let signed = sign_spend(&cfg, &tampered, None);
+        assert!(signed.is_err(), "sign must refuse coins that don't match the declared wallet");
+        println!("guard OK: sign refused mismatched spend -> {}", signed.err().unwrap());
         forget_wallet(&w.address).ok();
     }
 }

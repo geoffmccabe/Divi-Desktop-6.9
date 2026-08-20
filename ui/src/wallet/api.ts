@@ -294,6 +294,9 @@ export interface SpendOutput {
 }
 export interface SpendPreview {
   from: string;
+  mixedSources: boolean; // inputs from more than one address (suspicious)
+  sourceOk: boolean; // inputs really belong to the wallet the spend declares
+  totalIn: number;
   outputs: SpendOutput[];
   totalOut: number;
   fee: number;

@@ -67,14 +67,26 @@ function CopyBox({ label, value, rows = 3 }: { label: string; value: string; row
 function SpendReview({ preview }: { preview: SpendPreview }) {
   const recipients = preview.outputs.filter((o) => !o.isChange);
   const change = preview.outputs.find((o) => o.isChange);
+  const bigFee = preview.totalIn > 0 && preview.fee > preview.totalIn * 0.02;
   return (
     <div className="ms-review">
       <div className="ms-review-head">
         <Icon name="eye" size={15} /> What this spend does
       </div>
+      {!preview.sourceOk && (
+        <div className="ms-review-row ms-warn">
+          {preview.mixedSources
+            ? "⚠ This spend draws coins from more than one address. It will be refused — a shared-wallet spend must spend only that wallet's own coins."
+            : "⚠ These coins do not match the shared wallet this spend claims. Signing will be refused."}
+        </div>
+      )}
       <div className="ms-review-row">
         <span className="ms-review-k">From shared wallet</span>
         <span className="ms-mono">{short(preview.from)}</span>
+      </div>
+      <div className="ms-review-row">
+        <span className="ms-review-k">Total leaving wallet</span>
+        <span>{fmt(preview.totalIn)} DIVI</span>
       </div>
       {recipients.map((o, i) => (
         <div className="ms-review-row ms-review-pay" key={i}>
@@ -93,9 +105,11 @@ function SpendReview({ preview }: { preview: SpendPreview }) {
           <span>{fmt(change.amount)} DIVI</span>
         </div>
       )}
-      <div className="ms-review-row">
+      <div className={"ms-review-row" + (bigFee ? " ms-warn" : "")}>
         <span className="ms-review-k">Network fee</span>
-        <span>{fmt(preview.fee)} DIVI</span>
+        <span>
+          {fmt(preview.fee)} DIVI{bigFee ? " ⚠ unusually high" : ""}
+        </span>
       </div>
       <div className="ms-review-row">
         <span className="ms-review-k">Signatures</span>
@@ -581,13 +595,18 @@ function SignForm() {
         </div>
       ) : (
         <div className="ms-btn-row">
-          <button type="button" className="wl-btn" disabled={busy || !preview} onClick={sign}>
+          <button
+            type="button"
+            className="wl-btn"
+            disabled={busy || !preview || !(preview?.sourceOk ?? false)}
+            onClick={sign}
+          >
             {busy ? "Working…" : "Add my signature"}
           </button>
           <button
             type="button"
             className="wl-btn wl-btn-primary"
-            disabled={busy || !complete}
+            disabled={busy || !complete || !(preview?.sourceOk ?? false)}
             onClick={() => setConfirming(true)}
           >
             Send
