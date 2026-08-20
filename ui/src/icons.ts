@@ -86,6 +86,10 @@ export const ICONS: Record<string, string> = {
   external: svg("<path d='M15 3h6v6'/><path d='M10 14 21 3'/><path d='M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/>"),
   refresh: svg("<path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/>"),
   globe: svg("<circle cx='12' cy='12' r='9'/><path d='M3 12h18'/><path d='M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18'/>"),
+  // Two candlesticks = making a two-sided market (bids and asks).
+  marketmaker: svg(
+    "<path d='M6 3v4'/><path d='M6 14v7'/><rect x='3.5' y='7' width='5' height='7' rx='1'/><path d='M17 3v6'/><path d='M17 16v5'/><rect x='14.5' y='9' width='5' height='7' rx='1'/>"
+  ),
 };
 
 // Set the default icon vars on :root. A skin later overrides any --icon-<name>.

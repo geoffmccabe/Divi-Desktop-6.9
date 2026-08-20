@@ -1,0 +1,43 @@
+/* Styling unique to the Market Maker preview panel. Kept separate so the shared
+   governance/multisig styles it borrows stay untouched. Colors use currentColor so
+   the panel stays theme- and skin-aware like the rest of the wallet. */
+
+.mm-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+
+.mm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mm-list li {
+  position: relative;
+  padding-left: 20px;
+}
+
+.mm-list li::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 0.62em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+}
