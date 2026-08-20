@@ -1,0 +1,26 @@
+/* Scroll arrows for the admin tab row. Once there are more tabs than fit the
+   narrow drawer, the row scrolls horizontally and these page it left/right. */
+
+.admin-tabs-nav { display: flex; align-items: center; gap: 2px; flex: 1 1 auto; min-width: 0; }
+
+/* Let the tab row shrink and scroll instead of overflowing the drawer. */
+.admin-tabs-nav .admin-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  scrollbar-width: none;           /* Firefox */
+  flex-wrap: nowrap;
+}
+.admin-tabs-nav .admin-tabs::-webkit-scrollbar { display: none; }
+.admin-tabs-nav .admin-tab { flex: 0 0 auto; }  /* don't let tabs squish */
+
+.admin-tabs-arrow {
+  flex: 0 0 auto;
+  width: 22px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 6px; padding: 0; cursor: pointer;
+  background: transparent; color: hsl(var(--muted-foreground));
+  font-size: 1.05rem; line-height: 1;
+}
+.admin-tabs-arrow:hover { background: hsl(var(--primary) / 0.15); color: hsl(var(--foreground)); }

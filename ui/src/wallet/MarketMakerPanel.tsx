@@ -7,13 +7,22 @@
 import "./governance/governance.css";
 import "./multisig/multisig.css";
 import "./marketmaker.css";
+import { useEffect, useState } from "react";
 import { Icon } from "../Icon";
 import { openUrl } from "./api";
+import { fetchExchanges, type Exchange } from "./exchanges";
 
 // The existing "Divi Love Project" community group.
 const TELEGRAM_URL = "https://t.me/+eivUE-J6EYtjMzIx";
 
 export function MarketMakerPanel() {
+  // Live from the shared exchange catalog. Purely informational in this preview;
+  // if it can't load we simply don't show the section.
+  const [exchanges, setExchanges] = useState<Exchange[] | null>(null);
+  useEffect(() => {
+    fetchExchanges().then(setExchanges).catch(() => setExchanges(null));
+  }, []);
+
   return (
     <div className="gov">
       <section className="ts-section">
@@ -33,6 +42,19 @@ export function MarketMakerPanel() {
           trades, and you can stop any time.
         </p>
       </section>
+
+      {exchanges && exchanges.length > 0 && (
+        <section className="ts-section">
+          <h3 className="ts-head">Where you'll make markets</h3>
+          <ul className="mm-list">
+            {exchanges.map((x) => (
+              <li key={x.id} className="wl-note gov-wide">
+                <strong>{x.name}</strong> — {x.pairs.length ? x.pairs.join(", ") : "markets coming"}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="ts-section">
         <h3 className="ts-head">What you'll be able to do</h3>
