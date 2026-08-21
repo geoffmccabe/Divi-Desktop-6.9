@@ -306,6 +306,17 @@ export interface SpendPreview {
 }
 export const multisigInspect = (blob: string) => invoke<SpendPreview>("multisig_inspect", { blob });
 
+// A shared wallet's deposits + spends, newest first (the treasury audit trail).
+export interface MsActivity {
+  txid: string;
+  amount: number; // + deposit, - spend
+  height: number;
+  time: number; // unix seconds, 0 if unknown
+  confirmations: number;
+}
+export const multisigActivity = (address: string, limit = 25) =>
+  invoke<MsActivity[]>("multisig_activity", { address, limit });
+
 export interface PendingSpend {
   blob: string; // the shareable pending-spend, passed between co-signers
   from: string;

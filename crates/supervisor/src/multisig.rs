@@ -153,6 +153,78 @@ fn read_sat(v: &Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))
 }
 
+pub struct Activity {
+    pub txid: String,
+    pub amount: f64, // net to the wallet: positive = deposit, negative = spend
+    pub height: i64,
+    pub time: i64, // block time, unix seconds
+    pub confirmations: i64,
+}
+
+/// Recent deposits and spends for an address, newest first — the audit trail for
+/// a shared treasury. Built from the address index (getaddressdeltas), netted per
+/// transaction. Intended for the user's own (modest) shared wallets; the limit
+/// bounds how many transactions come back.
+pub fn wallet_activity(cfg: &NodeConfig, address: &str, limit: usize) -> Result<Vec<Activity>, String> {
+    use std::collections::HashMap;
+    let rpc = RpcClient::new(cfg);
+    validate(&rpc, address)?;
+    let tip = rpc.call("getblockcount", json!([]))?.as_i64().unwrap_or(0);
+    let deltas = rpc
+        .call("getaddressdeltas", json!([{ "addresses": [address], "start": 1, "end": tip.max(1) }]))
+        .map_err(|e| index_hint(&e))?;
+
+    // Net every delta by transaction, remembering the block height.
+    let mut sums: HashMap<String, (i64, i64)> = HashMap::new();
+    let mut order: Vec<String> = Vec::new();
+    if let Some(arr) = deltas.as_array() {
+        for d in arr {
+            let txid = match d["txid"].as_str() {
+                Some(t) if !t.is_empty() => t.to_string(),
+                _ => continue,
+            };
+            let sat = read_sat(&d["satoshis"]).unwrap_or(0);
+            let h = d["height"].as_i64().unwrap_or(0);
+            let e = sums.entry(txid.clone()).or_insert_with(|| {
+                order.push(txid.clone());
+                (0, h)
+            });
+            e.0 += sat;
+            e.1 = h.max(e.1);
+        }
+    }
+
+    let mut items: Vec<(String, i64, i64)> =
+        order.into_iter().map(|t| { let (s, h) = sums[&t]; (t, s, h) }).collect();
+    items.sort_by(|a, b| b.2.cmp(&a.2)); // newest (highest block) first
+    items.truncate(limit);
+
+    // Look up block times only for the transactions we return.
+    let mut times: HashMap<i64, i64> = HashMap::new();
+    for (_, _, h) in &items {
+        if *h > 0 && !times.contains_key(h) {
+            if let Ok(hash) = rpc.call("getblockhash", json!([h])) {
+                if let Some(hs) = hash.as_str() {
+                    if let Ok(blk) = rpc.call("getblock", json!([hs])) {
+                        times.insert(*h, blk["time"].as_i64().unwrap_or(0));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(items
+        .into_iter()
+        .map(|(txid, sat, h)| Activity {
+            txid,
+            amount: sat_to_divi(sat),
+            height: h,
+            time: *times.get(&h).unwrap_or(&0),
+            confirmations: if h > 0 { (tip - h + 1).max(0) } else { 0 },
+        })
+        .collect())
+}
+
 // ── Wallet lifecycle ─────────────────────────────────────────────────────────
 
 pub struct WalletView {
@@ -1109,6 +1181,36 @@ mod tests {
         let signed = sign_spend(&cfg, &tampered, None);
         assert!(signed.is_err(), "sign must refuse coins that don't match the declared wallet");
         println!("guard OK: sign refused mismatched spend -> {}", signed.err().unwrap());
+        forget_wallet(&w.address).ok();
+    }
+
+    // The treasury audit trail: a deposit and a spend must both appear, with the
+    // right signs, newest first.
+    #[test]
+    #[ignore]
+    fn multisig_activity_trail() {
+        let cfg = regtest();
+        let rpc = RpcClient::new(&cfg);
+        let (a, b, c) = (new_addr(&rpc), new_addr(&rpc), new_addr(&rpc));
+        let keys = vec![pubkey_of(&rpc, &a), pubkey_of(&rpc, &b), pubkey_of(&rpc, &c)];
+        let w = create_wallet(&cfg, 2, keys, "rt-activity").expect("create");
+
+        rpc.call("sendtoaddress", json!([w.address, 30.0])).expect("deposit");
+        mine(&rpc, 3);
+        let dest = new_addr(&rpc);
+        let p = propose_spend(&cfg, &w.address, &dest, 10.0).expect("propose");
+        let s = sign_spend(&cfg, &p.blob, None).expect("sign");
+        assert!(s.complete);
+        broadcast_spend(&cfg, &s.blob).expect("broadcast");
+        mine(&rpc, 3);
+
+        let act = wallet_activity(&cfg, &w.address, 25).expect("activity");
+        assert!(act.len() >= 2, "expected a deposit and a spend, got {}", act.len());
+        assert!(act.iter().any(|e| (e.amount - 30.0).abs() < 1e-6), "a +30 deposit");
+        let spend = act.iter().find(|e| e.amount < 0.0).expect("a negative spend entry");
+        assert!(spend.amount < 0.0 && spend.amount > -11.0, "spend net ~ -10, got {}", spend.amount);
+        assert!(act[0].height >= act[act.len() - 1].height, "newest first");
+        println!("activity OK: {} entries; deposit +30, spend {}", act.len(), spend.amount);
         forget_wallet(&w.address).ok();
     }
 }

@@ -1626,6 +1626,37 @@ async fn multisig_forget(address: String) -> Result<(), String> {
         .map_err(|_| "internal error".to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityDto {
+    txid: String,
+    amount: f64,
+    height: i64,
+    time: i64,
+    confirmations: i64,
+}
+
+/// Recent deposits and spends for a shared wallet (the treasury audit trail).
+#[tauri::command]
+async fn multisig_activity(address: String, limit: Option<usize>) -> Result<Vec<ActivityDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::wallet_activity(&cfg, &address, limit.unwrap_or(25)).map(|list| {
+            list.into_iter()
+                .map(|a| ActivityDto {
+                    txid: a.txid,
+                    amount: a.amount,
+                    height: a.height,
+                    time: a.time,
+                    confirmations: a.confirmations,
+                })
+                .collect()
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// Propose a spend from a multisig wallet. Returns a shareable blob the
 /// co-signers add their signatures to. Signs nothing.
 #[tauri::command]
@@ -1896,6 +1927,7 @@ fn main() {
             multisig_create,
             multisig_import,
             multisig_inspect,
+            multisig_activity,
             multisig_forget,
             multisig_propose,
             multisig_sign,

@@ -361,6 +361,89 @@
   color: hsl(var(--foreground));
 }
 
+/* ── Deposit (fund) view ─────────────────────────────────────────────────── */
+.ms-deposit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+}
+.ms-qr {
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px;
+  line-height: 0;
+}
+.ms-qr svg {
+  width: 148px;
+  height: 148px;
+  display: block;
+}
+.ms-deposit-addr {
+  font-size: 0.72rem;
+  color: hsl(var(--muted-foreground));
+  text-align: center;
+}
+
+/* ── Activity trail ──────────────────────────────────────────────────────── */
+.ms-activity {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ms-act-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.ms-act-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  font-size: 0.78rem;
+}
+.ms-act-row:nth-child(odd) {
+  background: hsl(var(--muted-foreground) / 0.06);
+}
+.ms-act-date {
+  color: hsl(var(--muted-foreground));
+}
+.ms-act-amt {
+  font-family: ui-monospace, monospace;
+  font-weight: 600;
+  text-align: right;
+}
+.ms-act-in {
+  color: hsl(140 60% 55%);
+}
+.ms-act-out {
+  color: hsl(var(--accent));
+}
+.ms-act-conf {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.72rem;
+}
+.ms-act-link {
+  background: none;
+  border: none;
+  color: hsl(var(--primary));
+  cursor: pointer;
+  font-size: 0.72rem;
+  padding: 0;
+}
+
 /* ── "Get my public key" helper ──────────────────────────────────────────── */
 .ms-mykey {
   display: flex;
