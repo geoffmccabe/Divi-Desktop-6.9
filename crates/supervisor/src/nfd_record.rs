@@ -11,6 +11,8 @@ const SUB_TRANSFER: u8 = 0x02;
 const SUB_KEYANNOUNCE: u8 = 0x03;
 const SUB_COLLECTION: u8 = 0x04;
 const SUB_FORGE: u8 = 0x05;
+const SUB_BRIDGE_OUT: u8 = 0x07;
+const SUB_BRIDGE_IN: u8 = 0x08;
 
 /// Mint flag bits.
 pub const FLAG_ENCRYPTED: u8 = 0x01;
@@ -45,6 +47,32 @@ pub enum NfdRecord {
     /// collection and roll an upgrade. Sender must own both. The result tier is
     /// resolved from a future block hash (see forge.rs) and minted separately.
     Forge { input_a: String, input_b: String, collection_id: String },
+    /// BRIDGE-OUT: lock an NFD to the bridge for the Divi->Diva leg. Assigns
+    /// ownership of `nfd_id` (its mint txid) to BRIDGE_DIVI, and carries the
+    /// destination DIVA EVM address (`diva_dest`, 20 bytes), the round-trip
+    /// `nonce`, and `maturity_confs` (the Diva token stays frozen until the lock
+    /// is this many Divi confs deep -- the fast self-transfer knob). For encrypted
+    /// NFDs `wrapkey_ptr` is the content key rewrapped to the federation.
+    /// See docs/NFD-BRIDGE-INTERFACE.md.
+    BridgeOut {
+        nfd_id: String,
+        diva_dest: String,
+        nonce: u64,
+        maturity_confs: u32,
+        flags: u8,
+        wrapkey_ptr: Option<String>,
+    },
+    /// BRIDGE-IN: the federation releases a locked NFD for the Diva->Divi leg.
+    /// Transfers the NFD from BRIDGE_DIVI to `new_owner` (21-byte packed addr),
+    /// referencing the authorizing DIVA burn (`diva_burn_ref`) and the matching
+    /// `nonce`. For encrypted NFDs `wrapkey_ptr` is the CK rewrapped to new_owner.
+    BridgeIn {
+        new_owner: String,
+        diva_burn_ref: String,
+        nonce: u64,
+        flags: u8,
+        wrapkey_ptr: Option<String>,
+    },
 }
 
 fn is_hex_len(s: &str, bytes: usize) -> bool {
@@ -135,6 +163,79 @@ pub fn encode_forge(input_a: &str, input_b: &str, collection_id: &str) -> Result
         input_b.to_lowercase(),
         collection_id.to_lowercase()
     ))
+}
+
+/// Encode a BRIDGE-OUT (lock). Layout: nfd_id(32) diva_dest(20) nonce(u64,8)
+/// maturity_confs(u32,4) flags(1) [wrapkey_ptr(32) if ENCRYPTED]. The ENCRYPTED
+/// flag is derived from whether a wrapkey is supplied, so flags and data agree.
+pub fn encode_bridge_out(
+    nfd_id: &str,
+    diva_dest: &str,
+    nonce: u64,
+    maturity_confs: u32,
+    wrapkey_ptr: Option<&str>,
+) -> Result<String, String> {
+    if !is_hex_len(nfd_id, 32) {
+        return Err("nfd_id must be 32 bytes hex".into());
+    }
+    if !is_hex_len(diva_dest, 20) {
+        return Err("diva_dest must be a 20-byte EVM address hex".into());
+    }
+    let mut flags = 0u8;
+    if let Some(wk) = wrapkey_ptr {
+        if !is_hex_len(wk, 32) {
+            return Err("wrapkey_ptr must be 32 bytes hex".into());
+        }
+        flags |= FLAG_ENCRYPTED;
+    }
+    let mut out = format!(
+        "{}{}{}{:016x}{:08x}{:02x}",
+        prefix(SUB_BRIDGE_OUT),
+        nfd_id.to_lowercase(),
+        diva_dest.to_lowercase(),
+        nonce,
+        maturity_confs,
+        flags
+    );
+    if let Some(wk) = wrapkey_ptr {
+        out.push_str(&wk.to_lowercase());
+    }
+    Ok(out)
+}
+
+/// Encode a BRIDGE-IN (release). Layout: new_owner(21) diva_burn_ref(32)
+/// nonce(u64,8) flags(1) [wrapkey_ptr(32) if ENCRYPTED].
+pub fn encode_bridge_in(
+    new_owner: &str,
+    diva_burn_ref: &str,
+    nonce: u64,
+    wrapkey_ptr: Option<&str>,
+) -> Result<String, String> {
+    if !is_hex_len(new_owner, 21) {
+        return Err("new_owner must be a 21-byte packed address (kind + hash160, hex)".into());
+    }
+    if !is_hex_len(diva_burn_ref, 32) {
+        return Err("diva_burn_ref must be 32 bytes hex".into());
+    }
+    let mut flags = 0u8;
+    if let Some(wk) = wrapkey_ptr {
+        if !is_hex_len(wk, 32) {
+            return Err("wrapkey_ptr must be 32 bytes hex".into());
+        }
+        flags |= FLAG_ENCRYPTED;
+    }
+    let mut out = format!(
+        "{}{}{}{:016x}{:02x}",
+        prefix(SUB_BRIDGE_IN),
+        new_owner.to_lowercase(),
+        diva_burn_ref.to_lowercase(),
+        nonce,
+        flags
+    );
+    if let Some(wk) = wrapkey_ptr {
+        out.push_str(&wk.to_lowercase());
+    }
+    Ok(out)
 }
 
 pub fn encode_transfer(mint_txid: &str, new_owner: &str, wrapkey_ptr: &str) -> Result<String, String> {
@@ -256,6 +357,43 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
             input_b: body[64..128].to_string(),
             collection_id: body[128..192].to_string(),
         }),
+        // BRIDGE-OUT: nfd_id(64) diva_dest(40) nonce(16) maturity(8) flags(2)
+        // [wrapkey(64)]. base 130 hex; +64 when ENCRYPTED. EXACT length.
+        SUB_BRIDGE_OUT if body.len() >= 130 => {
+            let flags = u8::from_str_radix(&body[128..130], 16).ok()?;
+            let enc = flags & FLAG_ENCRYPTED != 0;
+            let expected = 130 + if enc { 64 } else { 0 };
+            if body.len() != expected {
+                return None;
+            }
+            let wrapkey_ptr = if enc { Some(body[130..194].to_string()) } else { None };
+            Some(NfdRecord::BridgeOut {
+                nfd_id: body[0..64].to_string(),
+                diva_dest: body[64..104].to_string(),
+                nonce: u64::from_str_radix(&body[104..120], 16).ok()?,
+                maturity_confs: u32::from_str_radix(&body[120..128], 16).ok()?,
+                flags,
+                wrapkey_ptr,
+            })
+        }
+        // BRIDGE-IN: new_owner(42) diva_burn_ref(64) nonce(16) flags(2)
+        // [wrapkey(64)]. base 124 hex; +64 when ENCRYPTED. EXACT length.
+        SUB_BRIDGE_IN if body.len() >= 124 => {
+            let flags = u8::from_str_radix(&body[122..124], 16).ok()?;
+            let enc = flags & FLAG_ENCRYPTED != 0;
+            let expected = 124 + if enc { 64 } else { 0 };
+            if body.len() != expected {
+                return None;
+            }
+            let wrapkey_ptr = if enc { Some(body[124..188].to_string()) } else { None };
+            Some(NfdRecord::BridgeIn {
+                new_owner: body[0..42].to_string(),
+                diva_burn_ref: body[42..106].to_string(),
+                nonce: u64::from_str_radix(&body[106..122], 16).ok()?,
+                flags,
+                wrapkey_ptr,
+            })
+        }
         _ => None,
     }
 }
@@ -337,6 +475,80 @@ mod tests {
         let (a, b, c) = ("11".repeat(32), "22".repeat(32), "33".repeat(32));
         let script = op_meta_script(&encode_forge(&a, &b, &c).unwrap());
         assert_eq!(parse(&script), Some(NfdRecord::Forge { input_a: a, input_b: b, collection_id: c }));
+    }
+
+    #[test]
+    fn bridge_out_roundtrips_public_and_encrypted() {
+        let nfd = "11".repeat(32);
+        let dest = "22".repeat(20); // 20-byte EVM address
+        // public (no wrapkey)
+        let script = op_meta_script(&encode_bridge_out(&nfd, &dest, 0, 10, None).unwrap());
+        assert_eq!(
+            parse(&script),
+            Some(NfdRecord::BridgeOut {
+                nfd_id: nfd.clone(),
+                diva_dest: dest.clone(),
+                nonce: 0,
+                maturity_confs: 10,
+                flags: 0,
+                wrapkey_ptr: None,
+            })
+        );
+        // encrypted (wrapkey present -> ENCRYPTED flag derived), non-zero nonce/maturity
+        let wk = "33".repeat(32);
+        let script = op_meta_script(&encode_bridge_out(&nfd, &dest, 7, 20, Some(&wk)).unwrap());
+        assert_eq!(
+            parse(&script),
+            Some(NfdRecord::BridgeOut {
+                nfd_id: nfd,
+                diva_dest: dest,
+                nonce: 7,
+                maturity_confs: 20,
+                flags: FLAG_ENCRYPTED,
+                wrapkey_ptr: Some(wk),
+            })
+        );
+    }
+
+    #[test]
+    fn bridge_in_roundtrips_public_and_encrypted() {
+        let owner = "44".repeat(21); // 21-byte packed address
+        let burn = "55".repeat(32);
+        let script = op_meta_script(&encode_bridge_in(&owner, &burn, 3, None).unwrap());
+        assert_eq!(
+            parse(&script),
+            Some(NfdRecord::BridgeIn {
+                new_owner: owner.clone(),
+                diva_burn_ref: burn.clone(),
+                nonce: 3,
+                flags: 0,
+                wrapkey_ptr: None,
+            })
+        );
+        let wk = "66".repeat(32);
+        let script = op_meta_script(&encode_bridge_in(&owner, &burn, 3, Some(&wk)).unwrap());
+        assert_eq!(
+            parse(&script),
+            Some(NfdRecord::BridgeIn {
+                new_owner: owner,
+                diva_burn_ref: burn,
+                nonce: 3,
+                flags: FLAG_ENCRYPTED,
+                wrapkey_ptr: Some(wk),
+            })
+        );
+    }
+
+    #[test]
+    fn bridge_records_reject_bad_lengths() {
+        // wrong-length diva_dest / trailing byte must be rejected
+        assert!(encode_bridge_out(&"11".repeat(32), &"22".repeat(19), 0, 10, None).is_err());
+        let ok = encode_bridge_out(&"11".repeat(32), &"22".repeat(20), 0, 10, None).unwrap();
+        assert!(parse(&op_meta_script(&format!("{ok}00"))).is_none()); // trailing byte
+        // ENCRYPTED flag set but no wrapkey following -> reject
+        let mut broken = ok.clone();
+        broken.replace_range(broken.len() - 2.., "01"); // flip flags to ENCRYPTED, drop wrapkey
+        assert!(parse(&op_meta_script(&broken)).is_none());
     }
 
     #[test]

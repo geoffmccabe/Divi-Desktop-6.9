@@ -96,7 +96,7 @@ fn pick_funding_utxo(rpc: &RpcClient) -> Result<Value, String> {
         .ok_or_else(|| "You need a small amount of DIVI to mint.".to_string())
 }
 
-fn anchor_record(
+pub(crate) fn anchor_record(
     rpc: &RpcClient,
     utxo: &Value,
     record_hex: &str,
@@ -308,7 +308,7 @@ fn pubkey_from_hex(h: &str) -> Result<PublicKey, String> {
 /// Validate a recipient address and return its PACKED 21-byte form as hex
 /// (kind byte + 20-byte hash160) — the shared address encoding used across the
 /// overlay protocols. v1 accepts standard P2PKH recipients only.
-fn address_to_packed(rpc: &RpcClient, addr: &str) -> Result<String, String> {
+pub(crate) fn address_to_packed(rpc: &RpcClient, addr: &str) -> Result<String, String> {
     let v = rpc.call("validateaddress", json!([addr]))?;
     if !v["isvalid"].as_bool().unwrap_or(false) {
         return Err("recipient address is not valid".into());
@@ -324,7 +324,7 @@ fn address_to_packed(rpc: &RpcClient, addr: &str) -> Result<String, String> {
 
 /// Largest spendable UTXO belonging to `owner_addr` — spending it is how a
 /// transfer proves the sender is the current owner.
-fn pick_owner_utxo(rpc: &RpcClient, owner_addr: &str) -> Result<Value, String> {
+pub(crate) fn pick_owner_utxo(rpc: &RpcClient, owner_addr: &str) -> Result<Value, String> {
     // minconf=0: a batch of mints from the creator address chains on its own
     // unconfirmed change (no Divi mempool ancestor limit) into the next block.
     let unspent = rpc.call("listunspent", json!([0]))?;

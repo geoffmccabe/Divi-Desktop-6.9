@@ -1,6 +1,7 @@
 pub mod coins;
 pub mod c2pa_read;
 pub mod chaintips;
+pub mod bridge;
 pub mod collectibles;
 pub mod collectibles_import;
 pub mod config;
