@@ -8,13 +8,15 @@
 //
 // Commands:
 //   scan     <txid>                                  -> the BRIDGE-OUT/IN record on that tx, or null
+//   meta     <nfd_mint_txid>                          -> {content_ptr, thumb_ptr, collection_id, traits_ptr}
+//                                                       (the MetaCommit for mintFromLock; absent fields = 32 zero bytes)
 //   maturity <lock_txid> <maturity_confs>            -> {confs, required, matured}
 //   lock     <owner_addr> <nfd_txid> <diva_dest20> <nonce> <maturity_confs>  (test helper; the wallet
 //                                                     normally issues locks) -> {txid, nonce}
 //   release  <bridge_addr> <new_owner> <burn_ref32> <nonce>                  -> {txid}
 //
 // All hex args are lowercase hex without 0x. diva_dest is 20 bytes; burn_ref 32.
-use dd69_supervisor::{bridge, config::NodeConfig, nfd_record::NfdRecord};
+use dd69_supervisor::{bridge, collectibles, config::NodeConfig, nfd_record::NfdRecord};
 use serde_json::{json, Value};
 
 fn record_json(r: &NfdRecord) -> Value {
@@ -57,6 +59,19 @@ fn main() {
         "scan" => match bridge::read_bridge_record(&cfg, &a(1)) {
             Ok(Some(r)) => record_json(&r),
             Ok(None) => Value::Null,
+            Err(e) => die(&e),
+        },
+        "meta" => match collectibles::read_record(&cfg, &a(1)) {
+            Ok(Some(NfdRecord::Mint { arweave_ptr, thumb_ptr, collection_id, traits_ptr, .. })) => {
+                let z = || "00".repeat(32);
+                json!({
+                    "content_ptr": arweave_ptr,
+                    "thumb_ptr": thumb_ptr.unwrap_or_else(z),
+                    "collection_id": collection_id.unwrap_or_else(z),
+                    "traits_ptr": traits_ptr.unwrap_or_else(z),
+                })
+            }
+            Ok(_) => die("no NFD mint record on that tx"),
             Err(e) => die(&e),
         },
         "maturity" => {
