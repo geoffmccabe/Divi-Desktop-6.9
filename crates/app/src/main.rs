@@ -1208,6 +1208,67 @@ async fn mm_test_connection(
     .map_err(|_| "internal error".to_string())?
 }
 
+/// Start the live market maker with a laddered config.
+#[tauri::command]
+async fn mm_start(
+    slug: String,
+    connector: String,
+    rest_url: String,
+    symbol: String,
+    levels: Vec<f64>,
+    order_usdt: f64,
+    refresh_secs: u64,
+    max_side_usdt: f64,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        marketmaker::start(marketmaker::MmConfig {
+            slug, connector, rest_url, symbol, levels, order_usdt, refresh_secs, max_side_usdt,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Stop the live market maker (cancels all resting orders).
+#[tauri::command]
+async fn mm_stop() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(marketmaker::stop)
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MmStatusDto {
+    running: bool,
+    message: String,
+    mid: f64,
+    open_orders: usize,
+    base_free: f64,
+    base_held: f64,
+    quote_free: f64,
+    quote_held: f64,
+    cycles: u64,
+}
+
+/// Current engine status (polled by the UI).
+#[tauri::command]
+async fn mm_status() -> MmStatusDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let s = marketmaker::status();
+        MmStatusDto {
+            running: s.running, message: s.message, mid: s.mid, open_orders: s.open_orders,
+            base_free: s.base_free, base_held: s.base_held, quote_free: s.quote_free,
+            quote_held: s.quote_held, cycles: s.cycles,
+        }
+    })
+    .await
+    .unwrap_or(MmStatusDto {
+        running: false, message: String::new(), mid: 0.0, open_orders: 0,
+        base_free: 0.0, base_held: 0.0, quote_free: 0.0, quote_held: 0.0, cycles: 0,
+    })
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -1982,6 +2043,9 @@ fn main() {
             mm_has_credentials,
             mm_clear_credentials,
             mm_test_connection,
+            mm_start,
+            mm_stop,
+            mm_status,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,
