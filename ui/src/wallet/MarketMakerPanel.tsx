@@ -11,6 +11,7 @@ import { useEffect, useState } from "react";
 import { Icon } from "../Icon";
 import { openUrl } from "./api";
 import { fetchExchanges, type Exchange } from "./exchanges";
+import { ExchangeConnect } from "./mm/ExchangeConnect";
 
 // The existing "Divi Love Project" community group.
 const TELEGRAM_URL = "https://t.me/+eivUE-J6EYtjMzIx";
@@ -121,6 +122,8 @@ export function MarketMakerPanel() {
           not a promise of profit.
         </p>
       </section>
+
+      {exchanges && exchanges.length > 0 && <ExchangeConnect exchanges={exchanges} />}
 
       <section className="ts-section">
         <h3 className="ts-head">Want in early?</h3>

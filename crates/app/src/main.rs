@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, escrow, fastsend, marketmaker, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 // Serves community app bundles over their own url scheme. Kept in its own module
@@ -1148,6 +1148,66 @@ async fn ai_status() -> AiStatusDto {
     .unwrap_or(AiStatusDto { claude: false, grok: false, gateway: String::new() })
 }
 
+// ── Market Maker: trade-only exchange API keys (OS keychain), plus a read-only
+// connection check. The secret never crosses back to the UI — only balances do ──
+
+/// Save trade-only API keys for one exchange (by catalog slug) into the keychain.
+#[tauri::command]
+async fn mm_save_credentials(
+    slug: String,
+    api_key: String,
+    api_secret: String,
+    passphrase: Option<String>,
+) -> Result<(), String> {
+    let pass = passphrase.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || marketmaker::save(&slug, &api_key, &api_secret, &pass))
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+/// Whether keys are stored for this exchange (used to show connected state).
+#[tauri::command]
+async fn mm_has_credentials(slug: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || marketmaker::has(&slug))
+        .await
+        .map_err(|_| "internal error".to_string())
+}
+
+/// Remove the stored keys for one exchange.
+#[tauri::command]
+async fn mm_clear_credentials(slug: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketmaker::clear(&slug))
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MmBalanceDto {
+    asset: String,
+    free: f64,
+    locked: f64,
+}
+
+/// Verify the stored keys by reading account balances (read-only — never trades).
+/// `connector` and `rest_url` come from the exchange catalog the UI already has.
+#[tauri::command]
+async fn mm_test_connection(
+    slug: String,
+    connector: String,
+    rest_url: String,
+) -> Result<Vec<MmBalanceDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        marketmaker::test_connection(&slug, &connector, &rest_url).map(|rows| {
+            rows.into_iter()
+                .map(|b| MmBalanceDto { asset: b.asset, free: b.free, locked: b.locked })
+                .collect::<Vec<MmBalanceDto>>()
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -1918,6 +1978,10 @@ fn main() {
             ai_set_key,
             ai_clear_key,
             ai_status,
+            mm_save_credentials,
+            mm_has_credentials,
+            mm_clear_credentials,
+            mm_test_connection,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,

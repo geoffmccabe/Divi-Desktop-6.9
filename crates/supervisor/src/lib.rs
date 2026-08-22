@@ -10,6 +10,7 @@ pub mod fastsend;
 pub mod health;
 pub mod bearer;
 pub mod install;
+pub mod marketmaker;
 pub mod mempool;
 pub mod multisig;
 pub mod security;

@@ -1,0 +1,18 @@
+/* Connect-an-exchange rows in the Market Maker panel. Theme HSL vars keep it in
+   step with the rest of the wallet. */
+
+.xc-list { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+
+.xc-row { padding: 10px 12px; border-radius: 10px; background: hsl(var(--primary) / 0.06); }
+.xc-row-head { display: flex; align-items: center; gap: 10px; }
+.xc-name { font-weight: 600; color: hsl(var(--foreground)); }
+.xc-pairs { font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
+.xc-on { margin-left: auto; font-size: 0.74rem; color: hsl(140 60% 55%); }
+.xc-off { margin-left: auto; font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
+/* When connected/off already pushed to the right, the button follows it. */
+.xc-row-head .wl-btn { flex: 0 0 auto; }
+
+.xc-form { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.xc-actions { display: flex; align-items: center; gap: 12px; margin-top: 2px; }
+.xc-msg { color: hsl(var(--foreground)); }
+.xc-bal { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
