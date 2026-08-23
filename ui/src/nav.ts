@@ -16,11 +16,11 @@ export const NAV: NavItem[] = [
   { id: "timestamp", label: "Proof of Existence", icon: "timestamp" },
   { id: "collectibles", label: "Divi Collectibles", icon: "collectibles" },
   { id: "tokens", label: "Divi Meta Tokens", icon: "tokens" },
-  { id: "marketmaker", label: "Market Maker", icon: "marketmaker" },
   { id: "appbuilder", label: "App Builder", icon: "appbuilder" },
   { id: "communityapps", label: "Community Apps", icon: "communityapps" },
   { id: "governance", label: "Governance", icon: "governance" },
   { id: "multisig", label: "MultiSig", icon: "multisig" },
+  { id: "marketmaker", label: "Market Maker", icon: "marketmaker" },
   // A newline in a label wraps the row onto two tight lines (see .nav-item span
   // in index.css). Used where a name is genuinely long rather than to save a
   // few pixels — "Human Readable Addresses" on one line would either squeeze
