@@ -43,15 +43,26 @@ const SCANNER = new Scanner();
 /**
  * Where a request may come from.
  *
- * Two jobs, one list. A browser will not let the wallet read a reply from
+ * Two jobs, one rule. A browser will not let the wallet read a reply from
  * another origin unless that origin is named back, so without this the panel
- * simply says "load failed". And naming them is also what stops a random web
- * page you happen to have open from quietly driving this service: an unknown
- * origin is refused outright rather than served.
+ * simply says "load failed". And refusing unknown origins is what stops a
+ * random web page you happen to have open from quietly driving this service:
+ * a browser will send a request to your own machine even though it cannot read
+ * the answer, which is enough to create projects, spend on the model, or switch
+ * screening off.
  *
- * Tauri serves the wallet from these. A tool with no origin at all (curl, a
- * test) is allowed, because that is a person on this machine, which is the same
- * trust level as the service itself.
+ * The rule is by SHAPE rather than an exact list, deliberately. A desktop
+ * webview names its own origin (`tauri://localhost` on one platform,
+ * `http://tauri.localhost` on another) and that naming is not ours to control;
+ * an exact list that guessed wrong would lock the wallet out of its own service
+ * with a message that looks like a network fault. So:
+ *
+ *   - No origin at all  -> allowed. That is a tool on this machine (curl, a
+ *     test), which is the same trust level as the service itself.
+ *   - A non-web scheme  -> allowed. Only a desktop webview speaks `tauri:`.
+ *   - http or https     -> REFUSED, unless it was configured explicitly. Every
+ *     web page in the world is one of these, including one served from
+ *     localhost, which is the exact shape of the attack.
  */
 export const WALLET_ORIGINS = [
   "tauri://localhost",
@@ -65,6 +76,20 @@ export function allowedOrigins(env = process.env) {
     .map((s) => s.trim())
     .filter(Boolean);
   return [...WALLET_ORIGINS, ...extra];
+}
+
+/** True when a request carrying this origin may be served. */
+export function originAllowed(origin, allowed = WALLET_ORIGINS) {
+  if (!origin) return true;
+  if (allowed.includes(origin)) return true;
+  let scheme;
+  try {
+    scheme = new URL(origin).protocol;
+  } catch {
+    return false; // unparseable is not a shape we serve
+  }
+  // Anything a browser can navigate to is refused unless configured.
+  return scheme !== "http:" && scheme !== "https:";
 }
 
 /**
@@ -205,7 +230,10 @@ export function createServer(config = loadConfig()) {
       // all of which it could otherwise do, because a browser will happily send
       // a request to this machine even though it cannot read the reply.
       const origin = req.headers.origin;
-      if (origin && !origins.includes(origin)) {
+      if (!originAllowed(origin, origins)) {
+        // Logged, because a refused origin otherwise looks exactly like a
+        // network fault to whoever is trying to connect.
+        console.log(`refused a request from ${origin}`);
         return json(res, 403, { error: "requests from this origin are not accepted" });
       }
       if (origin) {
@@ -414,6 +442,7 @@ export function createServer(config = loadConfig()) {
           message,
           model: body.model ?? config.model,
           onEvent: (e) => events.push(e),
+          onStep: () => project.save(),
         });
 
         // Saved after every message, not at the end of anything: an interrupted

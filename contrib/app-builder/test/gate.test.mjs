@@ -102,13 +102,30 @@ test("using a permission it never asked for is refused", () => {
 test("declaring what it actually uses passes", () => {
   const r = checkApp(app(
     [
-      { path: "index.html", text: "<h1>x</h1>" },
+      { path: "index.html", text: "<script src=sdk.js></script>" },
+      // The SDK has to be present for any of this to work at runtime, so an app
+      // that talks to the wallet must carry it.
+      { path: "sdk.js", text: "// the wallet sdk" },
       { path: "app.js", text: "divi.balance().then(b => console.log(b.spendable))" },
     ],
     manifest(["balance.read"]),
   ));
-  assert.equal(r.ok, true);
+  assert.equal(r.ok, true, JSON.stringify(r.findings));
   assert.deepEqual(r.methods, ["balance.read"]);
+});
+
+test("using the wallet without including its SDK is caught", () => {
+  // Every call would be undefined at runtime. Better to say so here than let
+  // somebody find out after publishing.
+  const r = checkApp(app(
+    [
+      { path: "index.html", text: "<h1>x</h1>" },
+      { path: "app.js", text: "divi.balance()" },
+    ],
+    manifest(["balance.read"]),
+  ));
+  assert.equal(r.ok, false);
+  assert.ok(r.findings.some((f) => f.id === "missing-sdk"));
 });
 
 test("asking for more than it uses is a warning, not a block", () => {

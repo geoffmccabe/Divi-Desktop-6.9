@@ -88,6 +88,42 @@ number that matters will come from your first proper build.
 **every new account**. It must be deleted before anyone else can reach the
 service, or each new arrival gets $20.
 
+### Audited afterwards, and seven more things fixed
+
+Auditing my own morning's work found seven, one of which I had introduced an
+hour earlier:
+
+1. **The origin check could have locked the wallet out of its own service.** It
+   matched an exact list of names a desktop webview *might* use, and that naming
+   is not ours to control. Now it works by shape: a request with no origin, or
+   from any non-web scheme, is served; anything a browser can navigate to —
+   including a page served from localhost, which is the actual attack — is
+   refused and logged. It can no longer be the cause of a mysterious "load
+   failed", and it blocks strictly more than it did.
+2. **The API-key prompt hid every saved app behind it.** You were told your work
+   was safe on disk and then shown a password box instead of it. It is a banner
+   now; only sending is held back.
+3. **A build interrupted halfway lost its conversation but kept its files**, so
+   the model came back with the app written and no memory of writing it. The
+   project is saved after every step now, not at the end of a turn.
+4. **"4 messages" counted the model's own turns and tool results.** One request
+   showed as four. It counts what you said.
+5. **An app using the wallet without including the SDK** passed the check and
+   would have been broken at runtime. Caught now.
+6. **I deleted a constant while editing** and the treasury address stopped
+   resolving. The tests caught it immediately, which is the entire argument for
+   having them.
+7. Two smaller ones: the project list was fetched twice on opening, and the
+   points-spent figure carried over from the previous project — a number about
+   money showing the wrong thing.
+
+Two tests were added that check for drift rather than behaviour: every
+capability described to the model must exist on `window.divi`, and must name a
+permission the wallet will actually honour. Both would otherwise fail silently
+by producing apps that cannot work.
+
+127 tests pass.
+
 ---
 
 ## Part 2 — To build your first app

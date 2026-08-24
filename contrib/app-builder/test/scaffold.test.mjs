@@ -115,3 +115,33 @@ test("every build request carries the styling rules and the capability list", ()
   assert.match(SYSTEM_PROMPT, /await divi\.balance\(\)/);
   assert.match(SYSTEM_PROMPT, /NEVER rewrite or edit this/);
 });
+
+test("every capability we advertise actually exists on window.divi", async () => {
+  // A capability described to the model but missing from the SDK means the
+  // model writes code that is undefined at runtime, and the developer pays for
+  // an app that cannot work.
+  const sdk = await readSdk();
+  const missing = [];
+  for (const c of CAPABILITIES) {
+    for (const m of c.call.matchAll(/divi\.([a-zA-Z.]+)\s*\(/g)) {
+      const leaf = m[1].split(".").pop();
+      if (!new RegExp(`\\b${leaf}\\s*:`).test(sdk)) missing.push(m[1]);
+    }
+  }
+  assert.deepEqual(missing, [], `described to the model but not in the SDK: ${missing}`);
+});
+
+test("a capability is only advertised if the wallet will honour it", async () => {
+  // The broker refuses anything not in the permission table, so a capability
+  // naming a permission that is not there would fail on every call.
+  const perms = await fs.readFile(
+    path.join(SDK_PATH, "..", "..", "..", "..", "ui", "src", "apps", "permissions.ts"),
+    "utf8",
+  );
+  for (const c of CAPABILITIES) {
+    assert.ok(
+      new RegExp(`key:\\s*"${c.permission.replace(".", "\\.")}"`).test(perms),
+      `${c.permission} is advertised but is not a permission the wallet has`,
+    );
+  }
+});

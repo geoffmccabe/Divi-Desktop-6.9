@@ -155,3 +155,7 @@
 /* ---- the code check ---- */
 .bd-check { margin-top: 16px; padding-top: 12px; border-top: 1px solid hsl(var(--foreground) / 0.1); }
 .bd-finding { margin: 6px 0 0; font-size: 0.76rem; line-height: 1.45; color: hsl(var(--foreground) / 0.7); }
+
+/* The key prompt is a banner, not a gate: somebody's saved apps must never sit
+   behind a password box, having just been told their work is safe. */
+.bd-keybox { flex: 0 0 auto; }

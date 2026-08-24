@@ -59,16 +59,21 @@ export function BuilderPanel() {
 
   useEffect(probeService, [probeService]);
 
+  // Work out who we are once. Doing this inside the refresh made the refresh
+  // change identity the moment it ran, so the list was fetched twice on open.
+  useEffect(() => {
+    void pointsAccount().then(setAccount);
+  }, []);
+
   const refreshProjects = useCallback(async () => {
-    const who = account || (await pointsAccount());
-    if (!account) setAccount(who);
-    const r = await listProjects(who);
+    if (!account) return;
+    const r = await listProjects(account);
     setProjects(r.projects);
   }, [account]);
 
   useEffect(() => {
-    if (probe.state === "up") void refreshProjects().catch(() => setProjects([]));
-  }, [probe.state, refreshProjects]);
+    if (probe.state === "up" && account) void refreshProjects().catch(() => setProjects([]));
+  }, [probe.state, account, refreshProjects]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
@@ -80,6 +85,9 @@ export function BuilderPanel() {
     setOpen(p);
     setFiles([]);
     setCheck(null);
+    // Spend is per open project. Left over, it would show the last project's
+    // total against this one, which is a number about money being wrong.
+    setSpend(null);
     setLines([{ kind: "ai", text: "Ready. Describe the app you want and I will build it." }]);
     void refreshProjects();
   };
@@ -89,6 +97,7 @@ export function BuilderPanel() {
     setOpen(detail);
     setFiles(detail.files);
     setCheck(null);
+    setSpend(null);
     // Replay what was said last time, so opening a project shows the build
     // rather than an empty box above a half-finished app.
     setLines(
@@ -102,12 +111,17 @@ export function BuilderPanel() {
     setOpen(null);
     setViewing(null);
     setCheck(null);
+    setSpend(null);
     void refreshProjects();
   };
 
   const send = async () => {
     const message = draft.trim();
     if (!message || !open || busy) return;
+    if (!probe.health?.keyConfigured) {
+      setLines((l) => [...l, { kind: "err", text: "Add an Anthropic key above before building." }]);
+      return;
+    }
     setDraft("");
     setLines((l) => [...l, { kind: "you", text: message }]);
     setBusy(true);
@@ -137,9 +151,12 @@ export function BuilderPanel() {
     return <div className="bd"><p className="bd-note">Looking for the builder service…</p></div>;
   }
   if (probe.state === "down") return <Offline error={probe.error} onRetry={probeService} />;
-  if (!probe.health?.keyConfigured) {
-    return <div className="bd"><KeyBox onSaved={probeService} /></div>;
-  }
+
+  // The AI key is needed to BUILD, not to look. Blocking the whole panel on it
+  // hid every saved app behind a password box, which flatly contradicts telling
+  // someone their work is safe on disk. It is a banner now, and only sending is
+  // held back.
+  const needsKey = !probe.health?.keyConfigured;
 
   return (
     <div className="bd">
@@ -172,6 +189,8 @@ export function BuilderPanel() {
         )}
       </div>
 
+      {needsKey && <KeyBox onSaved={probeService} />}
+
       {!open ? (
         <ProjectList projects={projects} onStart={start} onOpen={resume} onDelete={async (id) => {
           await deleteProject(id);
@@ -196,7 +215,13 @@ export function BuilderPanel() {
                 placeholder="Describe the app, or the change you want next…"
                 disabled={busy}
               />
-              <button type="button" className="wl-btn wl-btn-primary" disabled={busy || !draft.trim()} onClick={send}>
+              <button
+                type="button"
+                className="wl-btn wl-btn-primary"
+                disabled={busy || needsKey || !draft.trim()}
+                title={needsKey ? "Add an Anthropic key above before building" : undefined}
+                onClick={send}
+              >
                 Send
               </button>
             </div>
@@ -341,12 +366,12 @@ function KeyBox({ onSaved }: { onSaved: () => void }) {
     }
   };
   return (
-    <div className="bd-offline">
-      <h3>One thing left to do</h3>
+    <div className="bd-offline bd-keybox">
+      <h3>Add an Anthropic key to build</h3>
       <p className="bd-note">
-        Paste an Anthropic key below and press Save. You do this once each time
-        the builder service is started. The key is kept in memory, never written
-        to a file, and never sent anywhere except Anthropic.
+        Once each time the builder service is started. The key is kept in memory,
+        never written to a file, and never sent anywhere except Anthropic. Your
+        saved apps are listed below either way.
       </p>
       <div className="bd-bar bd-bar-plain">
         <input

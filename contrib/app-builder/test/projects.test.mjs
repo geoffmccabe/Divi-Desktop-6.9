@@ -102,3 +102,17 @@ test("a project can only hold what the wallet would agree to serve", async () =>
   await assert.rejects(() => p.workspace.write("../escape.html", "x"), /climb out/);
   await assert.rejects(() => p.workspace.write("run.sh", "x"), /not allowed/);
 });
+
+test("the message count is what YOU said, not what the model said back", async () => {
+  // The raw history also holds the model's turns and the tool results it feeds
+  // itself, so one request showed on the card as four messages.
+  const projects = await new Projects({ root: await tempRoot() }).load();
+  const p = await projects.create({ account: "alice", name: "Counting" });
+  p.meta.history.push(
+    { role: "user", content: "make a page" },
+    { role: "assistant", content: [{ type: "tool_use", name: "write_file" }] },
+    { role: "user", content: [{ type: "tool_result", content: "Wrote index.html" }] },
+    { role: "assistant", content: [{ type: "text", text: "Done." }] },
+  );
+  assert.equal(p.summary().messages, 1);
+});

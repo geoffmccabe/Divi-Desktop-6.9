@@ -192,6 +192,14 @@ export function checkApp(app, { rules = CODE_RULES, sdkText = null } = {}) {
     for (const m of methodsUsed(text)) allMethods.add(m);
   }
 
+  // An app that talks to the wallet needs the SDK to talk through. Without it
+  // every call is undefined at runtime and the app is simply broken, which is
+  // worth saying here rather than letting somebody find out after publishing.
+  if (allMethods.size > 0 && !files.some((f) => f.path === SDK_FILE)) {
+    add(SEVERITY.FAIL, "missing-sdk",
+      "uses the wallet but does not include sdk.js, so none of it can work", "app");
+  }
+
   // Using something the app never declared is a hard stop: the wallet would
   // refuse it at runtime anyway, so shipping it is a broken app at best and a
   // dishonest permission screen at worst.

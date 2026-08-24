@@ -81,6 +81,17 @@ export class Project {
     await fs.rename(tmp, final);
   }
 
+  /**
+   * How many times the PERSON has said something.
+   *
+   * Not the length of the history: that also counts the model's own turns and
+   * the tool results it feeds itself, so one request showed as four messages.
+   * A count of your own messages is the only one that means anything to you.
+   */
+  get messageCount() {
+    return this.meta.history.filter((h) => h.role === "user" && typeof h.content === "string").length;
+  }
+
   /** What the panel needs to list it, without reading every file. */
   summary() {
     return {
@@ -89,7 +100,7 @@ export class Project {
       account: this.meta.account,
       createdAt: this.meta.createdAt,
       updatedAt: this.meta.updatedAt,
-      messages: this.meta.history.length,
+      messages: this.messageCount,
       pointsSpent: this.meta.pointsSpent ?? 0,
     };
   }

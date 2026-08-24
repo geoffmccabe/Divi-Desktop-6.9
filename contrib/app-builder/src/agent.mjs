@@ -141,6 +141,8 @@ export async function runTool(workspace, call) {
  * @param {string} o.model
  * @param {number} [o.maxSteps] safety net against a loop that never settles
  * @param {(e:object)=>void} [o.onEvent] progress for the UI
+ * @param {() => Promise<void>} [o.onStep] called after every change to history,
+ *        so a build interrupted halfway is still saved
  */
 export async function runTurn({
   provider,
@@ -151,6 +153,7 @@ export async function runTurn({
   model,
   maxSteps = 12,
   onEvent = () => {},
+  onStep = async () => {},
   effort,
 }) {
   // A model with no price is refused BEFORE anything is spent. Letting it
@@ -164,6 +167,9 @@ export async function runTurn({
   }
 
   history.push({ role: "user", content: message });
+  // Saved before the first model call, so a request that is paid for is never
+  // lost because the answer never came back.
+  await onStep();
 
   let steps = 0;
   const spent = [];
@@ -224,6 +230,7 @@ export async function runTurn({
     // Echo the assistant turn back verbatim, including tool_use blocks: dropping
     // them breaks the pairing the API requires on the next request.
     history.push({ role: "assistant", content: reply.raw?.content ?? reply.text });
+    await onStep();
 
     if (!reply.toolCalls.length) {
       return { stopped: "done", steps, spent, text: reply.text };
@@ -241,6 +248,10 @@ export async function runTurn({
       });
     }
     history.push({ role: "user", content: results });
+    // The files are already on disk by now. Saving here keeps the conversation
+    // in step with them: a build interrupted mid-turn would otherwise come back
+    // with the files written and no memory of writing them.
+    await onStep();
   }
 
   onEvent({ type: "step_limit", steps });
