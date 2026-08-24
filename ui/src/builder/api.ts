@@ -32,7 +32,8 @@ export interface Health {
   provider: string;
   rateConfigured: boolean;
   keyConfigured: boolean;
-  nodeReachable: boolean;
+  /** The node's settings were found. It may still be busy or stopped. */
+  nodeConfigured: boolean;
   /** A sentence saying why points cannot be bought, or null when they can. */
   buying: string | null;
   sessions: number;

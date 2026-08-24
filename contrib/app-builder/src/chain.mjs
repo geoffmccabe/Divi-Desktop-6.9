@@ -17,12 +17,33 @@ export class ChainError extends Error {}
 /** Confirmations before points appear. One block is thin for money. */
 export const MIN_CONFIRMATIONS = 2;
 
-/** Where DD69 keeps divi.conf, matching crates/supervisor/src/config.rs. */
-export function defaultDatadir() {
+/**
+ * Where to look for divi.conf, in order.
+ *
+ * DD69 runs its OWN node in its OWN folder, deliberately kept apart from a
+ * Divi Desktop 2.0 install so the two cannot fight over the same chain data.
+ * So its folder is tried first and the shared one only as a fallback, matching
+ * `dd69_datadir()` then `default_datadir()` in
+ * crates/supervisor/src/config.rs. Getting this the wrong way round means
+ * reading the credentials of a node that is not the one running.
+ */
+export function datadirCandidates() {
   const home = os.homedir();
-  if (process.platform === "darwin") return path.join(home, "Library/Application Support/DIVI");
-  if (process.platform === "win32") return path.join(process.env.APPDATA ?? "", "DIVI");
-  return path.join(home, ".divi");
+  if (process.platform === "darwin") {
+    return [
+      path.join(home, "Library/Application Support/DD69/data"),
+      path.join(home, "Library/Application Support/DIVI"),
+    ];
+  }
+  if (process.platform === "win32") {
+    const appdata = process.env.APPDATA ?? "";
+    return [path.join(appdata, "DD69/data"), path.join(appdata, "DIVI")];
+  }
+  return [path.join(home, ".local/share/DD69/data"), path.join(home, ".divi")];
+}
+
+export function defaultDatadir() {
+  return datadirCandidates()[0];
 }
 
 export function parseConf(text) {
@@ -42,21 +63,28 @@ export function parseConf(text) {
  * Returns null when they are not there, so callers can say so plainly rather
  * than failing with something cryptic.
  */
-export async function readRpcConfig(datadir = defaultDatadir()) {
-  let text;
-  try {
-    text = await fs.readFile(path.join(datadir, "divi.conf"), "utf8");
-  } catch {
-    return null;
+export async function readRpcConfig(datadir) {
+  const dirs = datadir ? [datadir] : datadirCandidates();
+  for (const dir of dirs) {
+    let text;
+    try {
+      text = await fs.readFile(path.join(dir, "divi.conf"), "utf8");
+    } catch {
+      continue;
+    }
+    const conf = parseConf(text);
+    // A conf without credentials belongs to a node we cannot talk to, so keep
+    // looking rather than giving up on the whole thing.
+    if (!conf.rpcuser || !conf.rpcpassword) continue;
+    return {
+      datadir: dir,
+      user: conf.rpcuser,
+      pass: conf.rpcpassword,
+      port: Number(conf.rpcport || 51473),
+      host: "127.0.0.1",
+    };
   }
-  const conf = parseConf(text);
-  if (!conf.rpcuser || !conf.rpcpassword) return null;
-  return {
-    user: conf.rpcuser,
-    pass: conf.rpcpassword,
-    port: Number(conf.rpcport || 51473),
-    host: "127.0.0.1",
-  };
+  return null;
 }
 
 export function nodeClient(rpc, fetchImpl = fetch) {

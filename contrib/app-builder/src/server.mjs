@@ -166,7 +166,11 @@ export function createServer(config = loadConfig()) {
           // So the panel can say exactly what is missing rather than just
           // failing when the first message is sent.
           keyConfigured: Boolean(config.provider.apiKey),
-          nodeReachable: Boolean(node),
+          // Whether the node's settings were FOUND, which is not the same as
+          // the node answering: it may be reindexing or stopped. A payment
+          // check that cannot reach it leaves the order open and says so, so
+          // claiming more than this here would be a lie with consequences.
+          nodeConfigured: Boolean(node),
           buying: orders.unavailable() ?? null,
           sessions: SESSIONS.size,
         });

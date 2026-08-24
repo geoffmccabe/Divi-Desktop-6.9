@@ -290,3 +290,14 @@ test("a request from an unknown web page is refused outright", async () => {
 
   server.close();
 });
+
+test("the node's own folder is looked at before the shared one", async () => {
+  // DD69 runs its own node in its own folder. Reading the shared Divi Desktop
+  // 2.0 folder first would mean using the credentials of a node that is not the
+  // one actually running, and every payment check would fail for no visible
+  // reason.
+  const { datadirCandidates } = await import("../src/chain.mjs");
+  const [first, second] = datadirCandidates();
+  assert.match(first, /DD69/);
+  assert.ok(!/DD69/.test(second), "the fallback must be the shared folder");
+});

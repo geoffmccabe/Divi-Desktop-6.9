@@ -47,11 +47,18 @@ export class Orders {
     this.spentTxids = new Set();
   }
 
-  /** Why buying is not possible right now, or null if it is. */
+  /**
+   * Why buying is not possible right now, or null if it is.
+   *
+   * This says whether we are SET UP to sell, not whether the node is answering
+   * this second. A node that is reindexing or stopped shows up when a payment
+   * is checked: the order stays open with a message, and the points appear when
+   * it can be confirmed. Nothing is lost, and nothing is credited on a guess.
+   */
   unavailable() {
     if (!this.treasuryAddress) return "no address has been set to receive payments";
     if (!(this.diviPerUsd > 0)) return "the DIVI rate has not been set";
-    if (!this.node) return "the Divi node cannot be reached to confirm payments";
+    if (!this.node) return "the Divi node's settings could not be found, so payments cannot be confirmed";
     return null;
   }
 
