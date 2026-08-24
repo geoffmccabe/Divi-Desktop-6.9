@@ -14,23 +14,26 @@
 //   * Container isolation. The workspace is path-safe but shares the host.
 
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { Workspace } from "./workspace.mjs";
+import { Projects, defaultRoot } from "./projects.mjs";
 import { SessionMeter } from "./meter.mjs";
 import { makeProvider } from "./provider.mjs";
 import { runTurn } from "./agent.mjs";
 import { Scanner, VERDICT } from "./scanner.mjs";
 import { checkApp, summarise } from "./gate.mjs";
+import { readSdk } from "./scaffold.mjs";
 import { Accounts } from "./accounts.mjs";
 import { Orders } from "./orders.mjs";
 import { priceCatalogue, POINTS_PER_USD, MARKUP } from "./points.mjs";
 import { readRpcConfig, nodeClient, proxyClient, defaultDatadir } from "./chain.mjs";
 import { DiviPrice } from "./price.mjs";
 
-const SESSIONS = new Map();
+// A meter per open project, so the per-session ceilings mean something across
+// several messages. Rebuilt from the ledger on restart, because the balance it
+// works from lives there rather than here.
+const METERS = new Map();
 
 // One scanner for the process, so the log and the strike counts are shared
 // across sessions. Someone who gets blocked, opens a new session and tries again
@@ -72,7 +75,9 @@ export function allowedOrigins(env = process.env) {
 export const DEFAULT_TREASURY = "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt";
 
 export function loadConfig(env = process.env) {
-  const root = env.BUILDER_ROOT ?? path.join(os.tmpdir(), "dd69-builder");
+  // Never the temp directory: the operating system clears it, and somebody who
+  // spent points building an app would simply lose it.
+  const root = env.BUILDER_ROOT ?? defaultRoot();
   return {
     origins: allowedOrigins(env),
     port: Number(env.PORT ?? 8788),
@@ -108,6 +113,14 @@ export function loadConfig(env = process.env) {
     chainProxySecret: env.DIVI_CHAIN_PROXY_SECRET ?? null,
     /** The points ledger. Append-only, and the only place a balance exists. */
     ledgerFile: env.BUILDER_LEDGER ?? path.join(root, "points-ledger.jsonl"),
+    /**
+     * Points handed to an account the first time it is seen, once ever.
+     *
+     * Off unless set. It exists so a tester can try the thing without buying
+     * first; it is recorded in the ledger like any other movement, so free
+     * points are never invisible when the books are read.
+     */
+    welcomePoints: Number(env.BUILDER_WELCOME_POINTS ?? 0),
     datadir: env.DIVI_DATADIR ?? defaultDatadir(),
   };
 }
@@ -139,9 +152,31 @@ export function createServer(config = loadConfig()) {
   // Set up in the background; every request waits for it. Doing this lazily
   // keeps createServer synchronous for callers and tests.
   const price = new DiviPrice({ apiKey: config.cmcApiKey });
+  const projects = new Projects({ root: config.root });
+
+  /** Hand a new account its opening credit, once and only once. */
+  const welcome = async (account) => {
+    if (!(config.welcomePoints > 0)) return;
+    const seen = accounts.history(account, 1).length > 0;
+    if (seen) return;
+    await accounts.credit(account, config.welcomePoints, {
+      reason: "opening credit",
+      note: "granted once, the first time this account was seen",
+    }, "adjust");
+  };
+
+  const meterFor = (project) => {
+    let m = METERS.get(project.id);
+    if (!m) {
+      m = new SessionMeter({ accounts, account: project.account });
+      METERS.set(project.id, m);
+    }
+    return m;
+  };
 
   const ready = (async () => {
     await accounts.load();
+    await projects.load();
     // Prefer the node that actually holds the purchase address; fall back to
     // the wallet's own node, which can answer because it indexes addresses too.
     let node = null;
@@ -157,7 +192,7 @@ export function createServer(config = loadConfig()) {
       price,
       node,
     });
-    return { orders, node };
+    return { orders, node, projects };
   })();
 
   const origins = config.origins ?? WALLET_ORIGINS;
@@ -205,7 +240,7 @@ export function createServer(config = loadConfig()) {
           // claiming more than this here would be a lie with consequences.
           nodeConfigured: Boolean(node),
           buying: orders.unavailable() ?? null,
-          sessions: SESSIONS.size,
+          projects: projects.byId.size,
         });
       }
 
@@ -292,7 +327,9 @@ export function createServer(config = loadConfig()) {
         return json(res, 200, { keyConfigured: true });
       }
 
-      if (req.method === "POST" && url.pathname === "/session") {
+      // ---- Projects: create, list, continue, rename, delete ----
+
+      if (req.method === "POST" && url.pathname === "/project") {
         if (!price.configured) {
           return json(res, 503, {
             error: "DIVI cannot be priced without a CoinMarketCap key, so nothing can be billed",
@@ -303,24 +340,51 @@ export function createServer(config = loadConfig()) {
         // the balance from this request, which meant anyone could declare
         // themselves rich. It now comes from the ledger and nowhere else.
         const account = String(body.account ?? "local").trim() || "local";
-        const id = randomUUID();
-        const workspace = new Workspace(path.join(config.root, id));
-        await workspace.init();
-        SESSIONS.set(id, {
-          id,
-          workspace,
-          account,
-          meter: new SessionMeter({ accounts, account }),
-          history: [],
-          createdAt: Date.now(),
+        await welcome(account);
+        const project = await projects.create({ account, name: body.name });
+        return json(res, 201, {
+          ...project.summary(),
+          balancePoints: accounts.balance(account),
         });
-        return json(res, 201, { id, account, balancePoints: accounts.balance(account) });
       }
 
-      const session = parts[0] === "session" && parts[1] ? SESSIONS.get(parts[1]) : null;
-      if (parts[0] === "session" && !session) return json(res, 404, { error: "no such session" });
+      if (req.method === "GET" && url.pathname === "/projects") {
+        const account = url.searchParams.get("account") ?? "";
+        await welcome(account);
+        return json(res, 200, {
+          projects: projects.list(account),
+          balancePoints: accounts.balance(account),
+        });
+      }
 
-      if (req.method === "POST" && parts[2] === "message") {
+      const project =
+        parts[0] === "project" && parts[1] ? projects.byId.get(parts[1]) ?? null : null;
+      if (parts[0] === "project" && parts[1] && !project) {
+        return json(res, 404, { error: "no such project" });
+      }
+
+      if (project && req.method === "GET" && parts.length === 2) {
+        return json(res, 200, {
+          ...project.summary(),
+          files: await project.workspace.list(),
+          // The conversation comes back too, so opening a project shows what
+          // was said rather than an empty box above a half-built app.
+          history: project.history,
+          balancePoints: accounts.balance(project.account),
+        });
+      }
+
+      if (project && req.method === "POST" && parts[2] === "rename") {
+        const body = await readJson(req);
+        return json(res, 200, await projects.rename(project.id, body.name));
+      }
+
+      if (project && req.method === "DELETE" && parts.length === 2) {
+        METERS.delete(project.id);
+        return json(res, 200, await projects.remove(project.id));
+      }
+
+      if (project && req.method === "POST" && parts[2] === "message") {
         const body = await readJson(req);
         const message = String(body.message ?? "").slice(0, 8000);
         if (!message.trim()) return json(res, 400, { error: "a message is required" });
@@ -328,46 +392,52 @@ export function createServer(config = loadConfig()) {
         // Screened BEFORE the model is called, so a blocked request costs
         // nothing. This is not the security boundary (the tools are), but there
         // is no reason to pay for an obvious attempt.
-        const screen = SCANNER.scan(message, { accountId: session.account });
+        const screen = SCANNER.scan(message, { accountId: project.account });
         if (screen.verdict === VERDICT.BLOCK) {
           return json(res, 200, {
             stopped: "refused",
             reason: screen.message,
             steps: 0,
             events: [{ type: "error", message: screen.message }],
-            files: await session.workspace.list(),
-            account: session.meter.summary(),
+            files: await project.workspace.list(),
+            account: meterFor(project).summary(),
           });
         }
 
+        const meter = meterFor(project);
         const events = [];
         const result = await runTurn({
           provider: makeProvider(config.provider),
-          workspace: session.workspace,
-          meter: session.meter,
-          history: session.history,
+          workspace: project.workspace,
+          meter,
+          history: project.history,
           message,
           model: body.model ?? config.model,
           onEvent: (e) => events.push(e),
         });
 
+        // Saved after every message, not at the end of anything: an interrupted
+        // build keeps the work and the conversation it came from.
+        project.meta.pointsSpent = (project.meta.pointsSpent ?? 0) + meterSpent(result);
+        await project.save();
+
         return json(res, 200, {
           ...result,
           events,
-          files: await session.workspace.list(),
-          account: session.meter.summary(),
+          files: await project.workspace.list(),
+          account: meter.summary(),
         });
       }
 
       // Run the code checks over whatever has been written so far. Safe to call
       // as often as you like: it reads files and spends nothing.
-      if (req.method === "GET" && parts[2] === "check") {
-        const list = await session.workspace.list();
+      if (project && req.method === "GET" && parts[2] === "check") {
+        const list = await project.workspace.list();
         const files = [];
         for (const f of list) {
           // Only source is worth reading into memory for this.
           if (/\.(html|js|css|json|svg|md|txt)$/i.test(f.path)) {
-            files.push({ path: f.path, text: (await session.workspace.read(f.path)).text });
+            files.push({ path: f.path, text: (await project.workspace.read(f.path)).text });
           } else {
             files.push({ path: f.path });
           }
@@ -378,8 +448,17 @@ export function createServer(config = loadConfig()) {
         } catch {
           manifest = null;
         }
-        const result = checkApp({ files, manifest });
+        const result = checkApp({ files, manifest }, { sdkText: await readSdk() });
         return json(res, 200, { ...result, summary: summarise(result) });
+      }
+
+      if (project && req.method === "GET" && parts[2] === "files") {
+        return json(res, 200, { files: await project.workspace.list() });
+      }
+
+      if (project && req.method === "GET" && parts[2] === "file") {
+        const wanted = url.searchParams.get("path") ?? "";
+        return json(res, 200, await project.workspace.read(wanted));
       }
 
       // Admin: the screening log, and what a rule change would have done to it.
@@ -415,18 +494,24 @@ export function createServer(config = loadConfig()) {
         return json(res, 200, SCANNER.replay());
       }
 
+      // Admin: put points into an account by hand, for a test or a refund.
+      // Recorded like any other movement, so it is never invisible in the books.
+      if (req.method === "POST" && url.pathname === "/admin/grant") {
+        const body = await readJson(req);
+        const points = Math.floor(Number(body.points));
+        if (!(points > 0)) return json(res, 400, { error: "points must be a positive whole number" });
+        const { balance } = await accounts.credit(
+          String(body.account ?? "").trim(),
+          points,
+          { reason: String(body.reason ?? "granted by hand").slice(0, 200) },
+          "adjust",
+        );
+        return json(res, 200, { balancePoints: balance });
+      }
+
       // Admin: the whole points ledger, for reconciling against a provider bill.
       if (req.method === "GET" && url.pathname === "/admin/ledger") {
         return json(res, 200, { lines: accounts.all().slice(-500).reverse() });
-      }
-
-      if (req.method === "GET" && parts[2] === "files") {
-        return json(res, 200, { files: await session.workspace.list() });
-      }
-
-      if (req.method === "GET" && parts[2] === "file") {
-        const wanted = url.searchParams.get("path") ?? "";
-        return json(res, 200, await session.workspace.read(wanted));
       }
 
       json(res, 404, { error: "not found" });
@@ -455,4 +540,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
     console.log(`points are paid to ${config.treasuryAddress}`);
   });
+}
+
+/** Points a finished turn actually took, for the project's running total. */
+function meterSpent(result) {
+  return (result?.spent ?? []).reduce((n, s) => n + (Number(s?.points) || 0), 0);
 }

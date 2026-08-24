@@ -30,37 +30,40 @@ test("health reports what is configured", async () => {
   server.close();
 });
 
-test("without a CoinMarketCap key the builder refuses to open a session", async () => {
+test("without a CoinMarketCap key the builder refuses to start a project", async () => {
   // A builder that cannot price DIVI cannot bill, and a builder that cannot
   // bill must not take work: the alternative is spending real money with no way
   // to charge for it. It never falls back to another price source.
   const { server, base } = await listen(loadConfig({ ...baseEnv, CMC_API_KEY: "" }));
-  const res = await fetch(`${base}/session`, { method: "POST" });
+  const res = await fetch(`${base}/project`, { method: "POST" });
   assert.equal(res.status, 503);
   const body = await res.json();
   assert.match(body.error, /CoinMarketCap/);
   server.close();
 });
 
-test("creates a session and starts with no files", async () => {
+test("a new project starts with the files an app cannot work without", async () => {
   const { server, base } = await listen(loadConfig(baseEnv));
   const created = await (
-    await fetch(`${base}/session`, {
+    await fetch(`${base}/project`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ account: "tester" }),
+      body: JSON.stringify({ account: "tester", name: "First app" }),
     })
   ).json();
   assert.ok(created.id);
 
-  const files = await (await fetch(`${base}/session/${created.id}/files`)).json();
-  assert.deepEqual(files.files, []);
+  const files = await (await fetch(`${base}/project/${created.id}/files`)).json();
+  const names = files.files.map((f) => f.path).sort();
+  // Starting empty is what produced a first build that referenced an SDK file
+  // which did not exist and had no manifest at all.
+  assert.deepEqual(names, ["app.js", "index.html", "manifest.json", "sdk.js", "style.css", "thumb.svg"]);
   server.close();
 });
 
-test("an unknown session is a 404, not an empty success", async () => {
+test("an unknown project is a 404, not an empty success", async () => {
   const { server, base } = await listen(loadConfig(baseEnv));
-  const res = await fetch(`${base}/session/does-not-exist/files`);
+  const res = await fetch(`${base}/project/does-not-exist/files`);
   assert.equal(res.status, 404);
   server.close();
 });
@@ -68,13 +71,13 @@ test("an unknown session is a 404, not an empty success", async () => {
 test("an empty message is refused before any model call", async () => {
   const { server, base } = await listen(loadConfig(baseEnv));
   const created = await (
-    await fetch(`${base}/session`, {
+    await fetch(`${base}/project`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ account: "tester" }),
+      body: JSON.stringify({ account: "tester", name: "First app" }),
     })
   ).json();
-  const res = await fetch(`${base}/session/${created.id}/message`, {
+  const res = await fetch(`${base}/project/${created.id}/message`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ message: "   " }),

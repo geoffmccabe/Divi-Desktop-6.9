@@ -1,19 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./builder.css";
 import {
-  builderUrl, setBuilderUrl, health, createSession, sendMessage, setKey,
-  type Account, type BuilderFile, type Health, type TurnEvent,
+  builderUrl, setBuilderUrl, health, setKey,
+  createProject, listProjects, openProject, deleteProject,
+  sendMessage, readFile, checkProject,
+  type Account, type BuilderFile, type CheckFinding, type Health,
+  type ProjectSummary, type TurnEvent,
 } from "./api";
 import { PointsChip, BuyPointsButton, pointsAccount } from "../points/BuyPoints";
+import { setCmcKey } from "../points/api";
+import { getValueSettings } from "../wallet/value";
 
 // App Builder: describe an app, a model writes it, and points pay for the work.
 //
 // Points are bought with DIVI up front (see ui/src/points/). The balance lives
 // on the service, not here, so nothing in this panel can add to it.
 //
-// The service that does the work is a separate process and is not running for
-// most people, so the honest default state of this panel is "not connected",
-// with instructions, rather than a spinner or a fake chat.
+// Work is organised into PROJECTS, saved on disk as they go. An earlier version
+// kept a build in memory in a temp folder, so closing the wallet threw away
+// something somebody had paid to make. Everything here assumes you will come
+// back to a build later, because you will.
 
 type Line =
   | { kind: "you"; text: string }
@@ -26,124 +32,157 @@ export function BuilderPanel() {
   const [probe, setProbe] = useState<{ state: "checking" | "up" | "down"; health?: Health; error?: string }>({
     state: "checking",
   });
-  const [session, setSession] = useState<string | null>(null);
-  const [account, setAccount] = useState<Account | null>(null);
+  const [account, setAccount] = useState<string>("");
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
+  const [open, setOpen] = useState<ProjectSummary | null>(null);
+  const [spend, setSpend] = useState<Account | null>(null);
   const [files, setFiles] = useState<BuilderFile[]>([]);
   const [lines, setLines] = useState<Line[]>([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
+  const [viewing, setViewing] = useState<{ path: string; text: string } | null>(null);
+  const [check, setCheck] = useState<{ summary: string; findings: CheckFinding[] } | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
 
-  const check = useCallback(() => {
+  const probeService = useCallback(() => {
     setProbe({ state: "checking" });
-    health()
+    // Hand over the CoinMarketCap key the wallet already holds. Without a DIVI
+    // price nothing can be billed, so the service refuses to start a project —
+    // and there is deliberately no second price source to fall back to.
+    const cmc = getValueSettings().cmcKey?.trim();
+    const ready = cmc ? setCmcKey(cmc).catch(() => {}) : Promise.resolve();
+    ready
+      .then(health)
       .then((h) => setProbe({ state: "up", health: h }))
       .catch((e) => setProbe({ state: "down", error: e?.message ?? "no answer" }));
   }, []);
 
-  useEffect(check, [check]);
+  useEffect(probeService, [probeService]);
+
+  const refreshProjects = useCallback(async () => {
+    const who = account || (await pointsAccount());
+    if (!account) setAccount(who);
+    const r = await listProjects(who);
+    setProjects(r.projects);
+  }, [account]);
+
+  useEffect(() => {
+    if (probe.state === "up") void refreshProjects().catch(() => setProjects([]));
+  }, [probe.state, refreshProjects]);
 
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [lines]);
 
-  const start = async () => {
-    try {
-      const { id } = await createSession(await pointsAccount());
-      setSession(id);
-      setLines([{ kind: "ai", text: "Ready. Describe the app you want and I will build it." }]);
-    } catch (e) {
-      setLines([{ kind: "err", text: (e as Error).message }]);
-    }
+  const start = async (name: string) => {
+    const who = account || (await pointsAccount());
+    const p = await createProject(who, name);
+    setOpen(p);
+    setFiles([]);
+    setCheck(null);
+    setLines([{ kind: "ai", text: "Ready. Describe the app you want and I will build it." }]);
+    void refreshProjects();
+  };
+
+  const resume = async (summary: ProjectSummary) => {
+    const detail = await openProject(summary.id);
+    setOpen(detail);
+    setFiles(detail.files);
+    setCheck(null);
+    // Replay what was said last time, so opening a project shows the build
+    // rather than an empty box above a half-finished app.
+    setLines(
+      detail.history.length
+        ? detail.history.flatMap(replayEntry)
+        : [{ kind: "ai" as const, text: "Nothing said yet. Describe the app you want." }],
+    );
+  };
+
+  const leave = () => {
+    setOpen(null);
+    setViewing(null);
+    setCheck(null);
+    void refreshProjects();
   };
 
   const send = async () => {
     const message = draft.trim();
-    if (!message || !session || busy) return;
+    if (!message || !open || busy) return;
     setDraft("");
     setLines((l) => [...l, { kind: "you", text: message }]);
     setBusy(true);
+    setCheck(null);
     try {
-      const r = await sendMessage(session, message);
+      const r = await sendMessage(open.id, message);
       const added: Line[] = [];
       for (const e of r.events) added.push(...renderEvent(e));
       if (r.stopped === "step_limit") {
-        added.push({ kind: "err", text: "Stopped after too many steps without finishing." });
+        added.push({ kind: "err", text: "Stopped after too many steps without finishing. Ask for a smaller change." });
+      }
+      if (r.stopped === "refused") {
+        added.push({ kind: "err", text: r.reason ?? "That request was not accepted." });
       }
       setLines((l) => [...l, ...added]);
       setFiles(r.files);
-      setAccount(r.account);
+      setSpend(r.account);
     } catch (e) {
       setLines((l) => [...l, { kind: "err", text: (e as Error).message }]);
     } finally {
       setBusy(false);
+      void refreshProjects();
     }
   };
 
   if (probe.state === "checking") {
     return <div className="bd"><p className="bd-note">Looking for the builder service…</p></div>;
   }
-
-  if (probe.state === "down") {
-    return <Offline error={probe.error} onRetry={check} />;
+  if (probe.state === "down") return <Offline error={probe.error} onRetry={probeService} />;
+  if (!probe.health?.keyConfigured) {
+    return <div className="bd"><KeyBox onSaved={probeService} /></div>;
   }
 
   return (
     <div className="bd">
       <div className="bd-bar">
-        <div className="bd-stat">
-          <b className="bd-good">Connected</b>
-          <span>{probe.health?.model}</span>
-        </div>
-        {!probe.health?.keyConfigured && (
-          <div className="bd-stat">
-            <b className="bd-warn">No AI key yet</b>
-            <span>add one in the gear, AI tab</span>
-          </div>
-        )}
-        <span className="bd-spacer" />
-        {account ? (
+        {open ? (
           <>
-            <div className="bd-stat">
-              <b>{account.spentPoints.toLocaleString()} points</b>
-              <span>spent, {account.turns} turns</span>
-            </div>
-            <PointsChip />
+            <button type="button" className="wl-btn" onClick={leave}>← All apps</button>
+            <div className="bd-stat"><b>{open.name}</b><span>{files.length} files</span></div>
           </>
         ) : (
-          <PointsChip />
+          <div className="bd-stat"><b className="bd-good">Connected</b><span>{probe.health?.model}</span></div>
         )}
-        {!session && probe.health?.keyConfigured && (
-          <button type="button" className="wl-btn wl-btn-primary" onClick={start}>
-            Start building
+        <span className="bd-spacer" />
+        {spend && open && (
+          <div className="bd-stat">
+            <b>{spend.spentPoints.toLocaleString()} points</b>
+            <span>this session</span>
+          </div>
+        )}
+        <PointsChip />
+        {open && (
+          <button
+            type="button"
+            className="wl-btn"
+            disabled={busy || files.length === 0}
+            onClick={() => void checkProject(open.id).then(setCheck).catch(() => setCheck(null))}
+          >
+            Check
           </button>
         )}
       </div>
 
-      {!session ? (
-        probe.health?.keyConfigured ? (
-          <div className="bd-note">
-            <p>
-              Start a session to begin. Points pay for what the model actually
-              uses, and the running total stays on screen. Nothing is charged
-              until a step runs, and a step that your balance cannot cover is
-              refused before it starts rather than after.
-            </p>
-            <p className="bd-buyrow">
-              <BuyPointsButton label="Buy points with DIVI" />
-            </p>
-          </div>
-        ) : (
-          <KeyBox onSaved={check} />
-        )
+      {!open ? (
+        <ProjectList projects={projects} onStart={start} onOpen={resume} onDelete={async (id) => {
+          await deleteProject(id);
+          void refreshProjects();
+        }} />
       ) : (
         <div className="bd-split">
           <div className="bd-chat">
             <div className="bd-log" ref={logRef}>
               {lines.map((l, i) => (
-                <div key={i} className={`bd-msg bd-msg-${l.kind === "you" ? "you" : l.kind === "ai" ? "ai" : l.kind === "err" ? "err" : l.kind === "cost" ? "cost" : "tool"}`}>
-                  {l.text}
-                </div>
+                <div key={i} className={`bd-msg bd-msg-${l.kind}`}>{l.text}</div>
               ))}
               {busy && <div className="bd-msg bd-msg-tool">Working…</div>}
             </div>
@@ -169,15 +208,117 @@ export function BuilderPanel() {
               <p className="bd-empty">Nothing written yet.</p>
             ) : (
               files.map((f) => (
-                <div className="bd-file" key={f.path}>
+                <button
+                  type="button"
+                  className="bd-file"
+                  key={f.path}
+                  onClick={() => void readFile(open.id, f.path).then(setViewing).catch(() => {})}
+                >
                   <span className="bd-file-name">{f.path}</span>
                   <span className="bd-file-size">{f.bytes}</span>
-                </div>
+                </button>
               ))
+            )}
+            {check && (
+              <div className="bd-check">
+                <h4>Check</h4>
+                <p className={check.findings.some((f) => f.severity === "fail") ? "bd-bad" : "bd-note"}>
+                  {check.summary}
+                </p>
+                {check.findings.map((f, i) => (
+                  <p key={i} className="bd-finding">
+                    <b>{f.severity === "fail" ? "Must fix" : "Worth a look"}:</b> {f.why} <i>({f.where})</i>
+                  </p>
+                ))}
+              </div>
             )}
           </div>
         </div>
       )}
+
+      {viewing && <FileView file={viewing} onClose={() => setViewing(null)} />}
+    </div>
+  );
+}
+
+function ProjectList({ projects, onStart, onOpen, onDelete }: {
+  projects: ProjectSummary[] | null;
+  onStart: (name: string) => Promise<void>;
+  onOpen: (p: ProjectSummary) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  const begin = async () => {
+    setErr(null);
+    try {
+      await onStart(name.trim());
+      setName("");
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
+  return (
+    <div className="bd-projects">
+      <div className="bd-newrow">
+        <input
+          className="wl-input"
+          value={name}
+          placeholder="Name your app, e.g. Staking Dashboard"
+          onChange={(e) => setName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") void begin(); }}
+        />
+        <button type="button" className="wl-btn wl-btn-primary" onClick={() => void begin()}>
+          New app
+        </button>
+      </div>
+      {err && <p className="bd-note bd-bad">{err}</p>}
+
+      {projects === null ? (
+        <p className="bd-note">Loading your apps…</p>
+      ) : projects.length === 0 ? (
+        <div className="bd-note bd-firstrun">
+          <p>
+            Nothing built yet. Name an app above and describe what it should do —
+            the model writes the files, you pay in points for what it uses, and
+            the work is saved as it goes so you can come back to it.
+          </p>
+          <p className="bd-buyrow"><BuyPointsButton label="Buy points with DIVI" /></p>
+        </div>
+      ) : (
+        projects.map((p) => (
+          <div className="bd-project" key={p.id}>
+            <button type="button" className="bd-project-main" onClick={() => void onOpen(p)}>
+              <span className="bd-project-name">{p.name}</span>
+              <span className="bd-project-meta">
+                {p.messages} message{p.messages === 1 ? "" : "s"} · {p.pointsSpent.toLocaleString()} points · {when(p.updatedAt)}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="wl-btn bd-project-del"
+              title="Delete this app"
+              onClick={() => void onDelete(p.id)}
+            >
+              Delete
+            </button>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+function FileView({ file, onClose }: { file: { path: string; text: string }; onClose: () => void }) {
+  return (
+    <div className="bd-viewer">
+      <div className="bd-viewer-head">
+        <b>{file.path}</b>
+        <button type="button" className="wl-btn" onClick={onClose}>Close</button>
+      </div>
+      <pre className="bd-viewer-body">{file.text}</pre>
     </div>
   );
 }
@@ -203,9 +344,9 @@ function KeyBox({ onSaved }: { onSaved: () => void }) {
     <div className="bd-offline">
       <h3>One thing left to do</h3>
       <p className="bd-note">
-        Paste an Anthropic key below and press Save. You only do this once each
-        time the wallet is started. The key is kept in memory, never written to a
-        file, and never sent anywhere except Anthropic.
+        Paste an Anthropic key below and press Save. You do this once each time
+        the builder service is started. The key is kept in memory, never written
+        to a file, and never sent anywhere except Anthropic.
       </p>
       <div className="bd-bar bd-bar-plain">
         <input
@@ -227,6 +368,24 @@ function KeyBox({ onSaved }: { onSaved: () => void }) {
   );
 }
 
+/** Turn a saved conversation entry back into chat lines. */
+function replayEntry(entry: { role: string; content: unknown }): Line[] {
+  if (typeof entry.content === "string") {
+    return [{ kind: entry.role === "user" ? "you" : "ai", text: entry.content }];
+  }
+  const blocks = Array.isArray(entry.content) ? entry.content : [];
+  const out: Line[] = [];
+  for (const b of blocks as Array<Record<string, unknown>>) {
+    if (b.type === "text" && typeof b.text === "string") out.push({ kind: "ai", text: b.text });
+    else if (b.type === "tool_use") {
+      const p = (b.input as { path?: string })?.path;
+      out.push({ kind: "tool", text: `${String(b.name)}${p ? ` ${p}` : ""}` });
+    }
+    // Tool results are the model's own working, not worth replaying at people.
+  }
+  return out;
+}
+
 function renderEvent(e: TurnEvent): Line[] {
   switch (e.type) {
     case "message":
@@ -237,11 +396,22 @@ function renderEvent(e: TurnEvent): Line[] {
       return [{ kind: "cost", text: `step ${e.step}: ${e.points.toLocaleString()} points` }];
     case "billing_stopped":
       return [{ kind: "err", text: `Stopped: ${e.reason}` }];
+    case "step_limit":
+      return [];
     case "error":
       return [{ kind: "err", text: e.message }];
     default:
       return [];
   }
+}
+
+function when(at: number): string {
+  const mins = Math.round((Date.now() - at) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  return new Date(at).toLocaleDateString();
 }
 
 function Offline({ error, onRetry }: { error?: string; onRetry: () => void }) {
@@ -252,11 +422,8 @@ function Offline({ error, onRetry }: { error?: string; onRetry: () => void }) {
         <h3>App Builder is not switched on</h3>
         <p className="bd-note">
           The part that talks to the AI runs alongside the wallet, and it is not
-          running at the moment. Nothing is broken and nothing has been lost.
-        </p>
-        <p className="bd-note bd-note-gap">
-          It usually starts with the wallet. If it does not come back, ask for it
-          to be restarted and everything here will pick up where it left off.
+          running at the moment. Nothing is broken and nothing has been lost —
+          your saved apps are on disk and will be here when it comes back.
         </p>
         {error && <p className="bd-note bd-bad bd-note-gap">Details: {error}</p>}
         <div className="bd-bar bd-bar-plain">

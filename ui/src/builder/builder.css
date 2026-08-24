@@ -21,7 +21,9 @@
   -webkit-backdrop-filter: blur(var(--panel-blur));
 }
 
-.bd { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; }
+/* position:relative so the file viewer, which covers the panel, is bounded by
+   it rather than escaping to the window. */
+.bd { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; position: relative; }
 
 .bd-note { font-size: 0.82rem; line-height: 1.5; color: hsl(var(--foreground) / 0.7); }
 .bd-note-gap { margin-top: 8px; }
@@ -100,3 +102,56 @@
 .bd-file-name { color: hsl(var(--foreground)); }
 .bd-file-size { color: hsl(var(--foreground) / 0.5); }
 .bd-empty { font-size: 0.78rem; color: hsl(var(--foreground) / 0.5); }
+
+/* ---- saved projects ---- */
+
+.bd-projects { display: grid; gap: 10px; }
+.bd-newrow { display: flex; gap: 10px; }
+.bd-newrow .wl-input { flex: 1; }
+.bd-firstrun { max-width: 60ch; }
+
+.bd-project {
+  display: flex; align-items: stretch; gap: 8px;
+}
+.bd-project-main {
+  flex: 1; display: grid; gap: 3px; text-align: left; cursor: pointer;
+  padding: 11px 13px;
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: 1px solid hsl(var(--foreground) / 0.12);
+  border-radius: var(--app-card-radius);
+  color: inherit; font: inherit;
+}
+.bd-project-main:hover { border-color: hsl(var(--primary) / 0.55); }
+.bd-project-name { font-weight: 600; }
+.bd-project-meta { font-size: 0.76rem; color: hsl(var(--foreground) / 0.55); }
+.bd-project-del { align-self: center; font-size: 0.76rem; padding: 5px 10px; }
+
+/* ---- clickable file rows and the viewer ---- */
+
+.bd-file {
+  display: flex; justify-content: space-between; gap: 10px; width: 100%;
+  text-align: left; cursor: pointer; background: transparent;
+  border: 0; border-radius: 6px; padding: 5px 7px; color: inherit; font: inherit;
+}
+.bd-file:hover { background: hsl(var(--foreground) / 0.07); }
+
+.bd-viewer {
+  position: absolute; inset: 12px; z-index: 5;
+  display: flex; flex-direction: column;
+  background-color: hsl(var(--card));
+  border: 1px solid hsl(var(--foreground) / 0.15);
+  border-radius: var(--app-card-radius);
+}
+.bd-viewer-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; border-bottom: 1px solid hsl(var(--foreground) / 0.1);
+}
+.bd-viewer-body {
+  flex: 1; margin: 0; padding: 14px; overflow: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.78rem; line-height: 1.5; white-space: pre;
+}
+
+/* ---- the code check ---- */
+.bd-check { margin-top: 16px; padding-top: 12px; border-top: 1px solid hsl(var(--foreground) / 0.1); }
+.bd-finding { margin: 6px 0 0; font-size: 0.76rem; line-height: 1.45; color: hsl(var(--foreground) / 0.7); }

@@ -166,3 +166,86 @@ test("a broken rule is ignored rather than breaking the check", () => {
   );
   assert.equal(r.ok, true);
 });
+
+test("the wallet's own SDK is not read as if it were the app's code", async () => {
+  // It NAMES every wallet method, because it defines them. Scanning it made
+  // every app look like it used everything, so nothing could ever be published.
+  const { readSdk } = await import("../src/scaffold.mjs");
+  const sdk = await readSdk();
+  const r = checkApp(
+    {
+      files: [
+        { path: "index.html", text: "<script src=sdk.js></script>" },
+        { path: "sdk.js", text: sdk },
+      ],
+      manifest: { permissions: [] },
+    },
+    { sdkText: sdk },
+  );
+  assert.deepEqual(r.methods, [], "an app that calls nothing uses nothing");
+  assert.ok(!r.findings.some((f) => f.id === "undeclared-permission"));
+});
+
+test("a modified SDK is a hard stop, not a file scanned more carefully", async () => {
+  // This is where a hostile app would put code to intercept what the wallet
+  // sends back, so it cannot be waved through.
+  const { readSdk } = await import("../src/scaffold.mjs");
+  const sdk = await readSdk();
+  const r = checkApp(
+    {
+      files: [
+        { path: "index.html", text: "<script src=sdk.js></script>" },
+        { path: "sdk.js", text: sdk + "\n// quietly added\n" },
+      ],
+      manifest: { permissions: [] },
+    },
+    { sdkText: sdk },
+  );
+  assert.equal(r.ok, false);
+  assert.ok(r.findings.some((f) => f.id === "modified-sdk" && f.severity === "fail"));
+});
+
+test("what the app itself calls is still counted", async () => {
+  const { readSdk } = await import("../src/scaffold.mjs");
+  const sdk = await readSdk();
+  const r = checkApp(
+    {
+      files: [
+        { path: "index.html", text: "<script src=sdk.js></script><script src=app.js></script>" },
+        { path: "sdk.js", text: sdk },
+        { path: "app.js", text: "divi.balance().then(b => console.log(b));" },
+      ],
+      manifest: { permissions: [] },
+    },
+    { sdkText: sdk },
+  );
+  assert.deepEqual(r.methods, ["balance.read"]);
+  assert.ok(r.findings.some((f) => f.id === "undeclared-permission"));
+});
+
+test("an example in a comment is not a call", async () => {
+  // The starter file explains what is available with example lines. Reading
+  // those as calls made every new app look like it used four permissions it had
+  // not declared, so nothing could be published.
+  const app = `// await divi.balance() needs "balance.read"
+// await divi.notify("hi") needs "notify"
+async function main() {}`;
+  assert.deepEqual(methodsUsed(app), []);
+});
+
+test("stripping comments does not swallow code after a url", () => {
+  // A naive stripper cuts at the // inside "https://", taking real code with it
+  // and hiding whatever came after from the checks.
+  const src = `const u = "https://example.com/x"; divi.balance();`;
+  assert.deepEqual(methodsUsed(src), ["balance.read"]);
+});
+
+test("the security rules still read the whole file, comments and all", () => {
+  // Usage detection may ignore comments; the safety rules must not start
+  // trusting a stripper to decide what is worth looking at.
+  const r = checkApp({
+    files: [{ path: "app.js", text: `/* explanation */ eval("1+1");` }],
+    manifest: { permissions: [] },
+  });
+  assert.ok(r.findings.some((f) => f.id === "eval" && f.severity === "fail"));
+});

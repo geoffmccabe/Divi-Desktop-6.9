@@ -17,7 +17,17 @@
 // Anything found here at publish time goes to a human. That is deliberate: the
 // point is to make review cheap and focused, not to replace it.
 
+import { createHash } from "node:crypto";
+
 export const SEVERITY = { FAIL: "fail", WARN: "warn" };
+
+/** The SDK file every app carries, and is not allowed to change. */
+export const SDK_FILE = "sdk.js";
+
+export function fingerprint(text) {
+  // Line endings differ between machines and mean nothing here.
+  return createHash("sha256").update(String(text ?? "").replace(/\r\n/g, "\n"), "utf8").digest("hex");
+}
 
 /**
  * Patterns applied to script content.
@@ -75,12 +85,33 @@ function ext(p) {
 }
 
 /**
+ * Remove comments, roughly, for the purpose of asking what the code CALLS.
+ *
+ * Used only by the usage pass, never by the security rules. Getting this
+ * slightly wrong here costs at worst a missed "you declared something you do
+ * not use" warning; getting it wrong on the security rules could hide a real
+ * finding, so those still read the whole file.
+ *
+ * It exists because a helpful comment listing example calls made every new app
+ * look like it used four permissions it had not declared, and nothing could be
+ * published. Documentation is not a call.
+ */
+export function stripComments(source) {
+  return String(source ?? "")
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:'"`\\])\/\/[^\n]*/gm, "$1")
+    .replace(/<!--[\s\S]*?-->/g, " ");
+}
+
+/**
  * Which wallet methods does this source actually call?
  *
  * Matches both the direct form and the helpers the SDK exposes, so an app using
- * `divi.balance()` is recognised as using `balance.read`.
+ * `divi.balance()` is recognised as using `balance.read`. Comments are removed
+ * first: an example in a comment is not a call.
  */
-export function methodsUsed(source) {
+export function methodsUsed(raw) {
+  const source = stripComments(raw);
   const found = new Set();
   for (const m of Object.keys(METHOD_PERMISSION)) {
     if (new RegExp(`["'\`]${m.replace(".", "\\.")}["'\`]`).test(source)) found.add(m);
@@ -107,10 +138,16 @@ export function methodsUsed(source) {
  * @param {{files: Array<{path: string, text?: string}>, manifest?: any}} app
  * @returns {{ok: boolean, findings: Array, methods: string[]}}
  */
-export function checkApp(app, { rules = CODE_RULES } = {}) {
+/**
+ * @param {{files: Array<{path: string, text?: string}>, manifest?: any}} app
+ * @param {{rules?: Array, sdkText?: string}} [opts] `sdkText` is the canonical
+ *        SDK, so a modified copy can be told apart from the real one.
+ */
+export function checkApp(app, { rules = CODE_RULES, sdkText = null } = {}) {
   const findings = [];
   const files = app?.files ?? [];
   const manifest = app?.manifest;
+  const sdkPrint = sdkText == null ? null : fingerprint(sdkText);
 
   const add = (severity, id, why, where) => findings.push({ severity, id, why, where });
 
@@ -126,6 +163,23 @@ export function checkApp(app, { rules = CODE_RULES } = {}) {
   for (const f of files) {
     if (!SCRIPTY.has(ext(f.path))) continue;
     const text = f.text ?? "";
+
+    // The SDK is not the app's code and must not be read as if it were. It
+    // NAMES every wallet method, because it defines them, so scanning it made
+    // every app look like it used everything and nothing could be published.
+    //
+    // It is skipped only when it is byte-for-byte the file we ship. A changed
+    // SDK is the opposite of harmless — it is where a hostile app would put
+    // code to intercept what the wallet sends back — so that is a hard stop
+    // rather than a file scanned a bit more carefully.
+    if (f.path === SDK_FILE && sdkPrint) {
+      if (fingerprint(text) !== sdkPrint) {
+        add(SEVERITY.FAIL, "modified-sdk",
+          "changes the wallet's own SDK, which apps may not do", f.path);
+      }
+      continue;
+    }
+
     for (const rule of rules) {
       let hit = false;
       try {

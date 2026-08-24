@@ -19,6 +19,15 @@ use tauri::UriSchemeContext;
 
 pub const SCHEME: &str = "divi-app";
 
+/// The one and only copy of the app SDK.
+///
+/// Every built-in serves this, and the App Builder puts this same file into
+/// every new project, so an app developed in the builder and an app shipped
+/// with the wallet are talking to the wallet through identical code. There used
+/// to be a copy per app, which is exactly how two versions of a protocol shim
+/// quietly stop agreeing with each other.
+pub static SDK_JS: &[u8] = include_bytes!("../../../contrib/app-builder/assets/sdk.js");
+
 /// Apps compiled into the wallet. Trusted because they shipped with it.
 ///
 /// The escape-test harness is here rather than as an installed bundle on purpose:
@@ -27,7 +36,7 @@ pub const SCHEME: &str = "divi-app";
 /// exists.
 static HARNESS_FILES: &[(&str, &[u8])] = &[
     ("index.html", include_bytes!("community/harness/index.html")),
-    ("sdk.js", include_bytes!("community/harness/sdk.js")),
+    ("sdk.js", SDK_JS),
     ("thumb.svg", include_bytes!("community/harness/thumb.svg")),
 ];
 
@@ -36,7 +45,7 @@ static HARNESS_FILES: &[(&str, &[u8])] = &[
 /// it asks for balance and chain only, and gets exactly that.
 static SNAPSHOT_FILES: &[(&str, &[u8])] = &[
     ("index.html", include_bytes!("community/snapshot/index.html")),
-    ("sdk.js", include_bytes!("community/snapshot/sdk.js")),
+    ("sdk.js", SDK_JS),
     ("thumb.svg", include_bytes!("community/snapshot/thumb.svg")),
 ];
 
