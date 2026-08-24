@@ -32,6 +32,9 @@ export interface Health {
   provider: string;
   rateConfigured: boolean;
   keyConfigured: boolean;
+  nodeReachable: boolean;
+  /** A sentence saying why points cannot be bought, or null when they can. */
+  buying: string | null;
   sessions: number;
 }
 
@@ -41,17 +44,19 @@ export interface BuilderFile {
 }
 
 export interface Account {
-  balanceDivi: number;
-  spentDivi: number;
-  reservedDivi: number;
+  balancePoints: number;
+  spentPoints: number;
+  reservedPoints: number;
   turns: number;
   costUsd: number;
+  /** Only present if a step somehow outran its hold; see meter.mjs. */
+  unbilledPoints?: number;
 }
 
 export type TurnEvent =
   | { type: "message"; text: string }
   | { type: "tool"; name: string; path?: string }
-  | { type: "usage"; step: number; divi: number; usd: number; balanceDivi: number }
+  | { type: "usage"; step: number; points: number; usd: number; balancePoints: number }
   | { type: "billing_stopped"; reason: string }
   | { type: "step_limit"; steps: number }
   | { type: "error"; message: string };
@@ -81,10 +86,13 @@ export const health = () => call<Health>("/health");
 export const setKey = (key: string) =>
   call<{ keyConfigured: boolean }>("/key", { method: "POST", body: JSON.stringify({ key }) });
 
-export const createSession = (balanceDivi: number) =>
-  call<{ id: string }>("/session", {
+// The account is a name, not a balance. An earlier version sent the balance
+// from here, which meant anyone could declare themselves rich; the service now
+// keeps it and this only says who is asking.
+export const createSession = (account: string) =>
+  call<{ id: string; account: string; balancePoints: number }>("/session", {
     method: "POST",
-    body: JSON.stringify({ balanceDivi }),
+    body: JSON.stringify({ account }),
   });
 
 export const sendMessage = (id: string, message: string, model?: string) =>

@@ -13,7 +13,10 @@
 // code gate and review.
 
 import { WorkspaceError } from "./workspace.mjs";
-import { BillingError } from "./meter.mjs";
+import {
+  BillingError, isPricedModel, worstCasePoints, messagesSize,
+  MAX_OUTPUT_TOKENS,
+} from "./meter.mjs";
 
 export const SYSTEM_PROMPT = `You build small self-contained apps that run inside the Divi Desktop wallet.
 
@@ -124,7 +127,6 @@ export async function runTool(workspace, call) {
  * @param {string} o.model
  * @param {number} [o.maxSteps] safety net against a loop that never settles
  * @param {(e:object)=>void} [o.onEvent] progress for the UI
- * @param {number} [o.estimateDivi] credit to hold per step
  */
 export async function runTurn({
   provider,
@@ -135,9 +137,18 @@ export async function runTurn({
   model,
   maxSteps = 12,
   onEvent = () => {},
-  estimateDivi = 25,
   effort,
 }) {
+  // A model with no price is refused BEFORE anything is spent. Letting it
+  // through would mean the API call happens, billing then fails, and the tokens
+  // come out of our pocket with nothing charged. That exact hole was found in an
+  // audit of the earlier version, so it is closed here at the entrance.
+  if (!isPricedModel(model)) {
+    const reason = `"${model}" is not a model this builder can bill for`;
+    onEvent({ type: "error", message: reason });
+    return { stopped: "error", reason, steps: 0, spent: [] };
+  }
+
   history.push({ role: "user", content: message });
 
   let steps = 0;
@@ -146,10 +157,19 @@ export async function runTurn({
   while (steps < maxSteps) {
     steps++;
 
-    // Money first: a step that cannot be paid for never runs.
+    // Money first: work out the most this step could possibly cost, hold that,
+    // and refuse to start if the balance will not cover it. The same ceiling is
+    // then sent as the model's output limit, so it is a real bound and not a
+    // guess we hope holds.
     let hold;
+    let ceiling;
     try {
-      ({ hold } = meter.reserve(estimateDivi));
+      ceiling = worstCasePoints({
+        model,
+        inputTokens: messagesSize(history) + messagesSize(SYSTEM_PROMPT) + messagesSize(TOOLS),
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+      });
+      ({ hold } = meter.reserve(ceiling));
     } catch (e) {
       if (e instanceof BillingError) {
         onEvent({ type: "billing_stopped", reason: e.message });
@@ -165,6 +185,7 @@ export async function runTurn({
         system: SYSTEM_PROMPT,
         messages: history,
         tools: TOOLS,
+        maxTokens: MAX_OUTPUT_TOKENS,
         effort,
       });
     } catch (e) {
@@ -174,14 +195,14 @@ export async function runTurn({
       return { stopped: "error", reason: e?.message, steps, spent };
     }
 
-    const settled = meter.settle({ hold, model, usage: reply.usage });
+    const settled = await meter.settle({ hold, model, usage: reply.usage });
     spent.push(settled);
     onEvent({
       type: "usage",
       step: steps,
-      divi: settled.divi,
+      points: settled.points,
       usd: settled.usd,
-      balanceDivi: meter.summary().balanceDivi,
+      balancePoints: meter.summary().balancePoints,
     });
 
     if (reply.text) onEvent({ type: "message", text: reply.text });

@@ -1,17 +1,16 @@
 // The builder service.
 //
 // Small on purpose: create a session, send it messages, read back the files the
-// model wrote, and preview the result. Everything risky is in the modules this
-// file wires together, not here.
+// model wrote, buy the points that pay for it all.
 //
 // Zero dependencies. Node's own http server and fetch are enough, and every
 // package not added is one that cannot go bad later.
 //
 // NOT YET WIRED, and deliberately so:
-//   * Identity. Sessions are keyed by an opaque id; binding them to a Divi
-//     address signature is the next piece.
-//   * Identity is still an opaque id, so screening strikes cannot yet be tied
-//     to a real person across restarts.
+//   * Proving who an account belongs to. An account name is taken at its word,
+//     which is fine while this listens on the loopback address only. Signing a
+//     challenge with a Divi address is the next piece, and until it lands this
+//     must not be exposed to a network.
 //   * Container isolation. The workspace is path-safe but shares the host.
 
 import http from "node:http";
@@ -25,6 +24,10 @@ import { makeProvider } from "./provider.mjs";
 import { runTurn } from "./agent.mjs";
 import { Scanner, VERDICT } from "./scanner.mjs";
 import { checkApp, summarise } from "./gate.mjs";
+import { Accounts } from "./accounts.mjs";
+import { Orders } from "./orders.mjs";
+import { priceCatalogue, POINTS_PER_USD, MARKUP } from "./points.mjs";
+import { readRpcConfig, nodeClient, defaultDatadir } from "./chain.mjs";
 
 const SESSIONS = new Map();
 
@@ -33,13 +36,42 @@ const SESSIONS = new Map();
 // should still be the same person as far as this is concerned.
 const SCANNER = new Scanner();
 
+/**
+ * Where a request may come from.
+ *
+ * Two jobs, one list. A browser will not let the wallet read a reply from
+ * another origin unless that origin is named back, so without this the panel
+ * simply says "load failed". And naming them is also what stops a random web
+ * page you happen to have open from quietly driving this service: an unknown
+ * origin is refused outright rather than served.
+ *
+ * Tauri serves the wallet from these. A tool with no origin at all (curl, a
+ * test) is allowed, because that is a person on this machine, which is the same
+ * trust level as the service itself.
+ */
+export const WALLET_ORIGINS = [
+  "tauri://localhost",
+  "http://tauri.localhost",
+  "https://tauri.localhost",
+];
+
+export function allowedOrigins(env = process.env) {
+  const extra = String(env.BUILDER_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return [...WALLET_ORIGINS, ...extra];
+}
+
 export function loadConfig(env = process.env) {
-  const diviPerUsd = Number(env.DIVI_PER_USD ?? 0);
+  const root = env.BUILDER_ROOT ?? path.join(os.tmpdir(), "dd69-builder");
   return {
+    origins: allowedOrigins(env),
     port: Number(env.PORT ?? 8788),
-    // Bound to loopback until the gates exist. Changing this is a deliberate act.
+    // Bound to loopback until accounts can be proved. Changing this is a
+    // deliberate act with real consequences.
     host: env.HOST ?? "127.0.0.1",
-    root: env.BUILDER_ROOT ?? path.join(os.tmpdir(), "dd69-builder"),
+    root,
     model: env.BUILDER_MODEL ?? "claude-sonnet-5",
     provider: {
       kind: env.BUILDER_PROVIDER ?? "anthropic",
@@ -48,8 +80,12 @@ export function loadConfig(env = process.env) {
     },
     // An admin-set number, never a live feed: DIVI price aggregators disagree by
     // roughly 4.5x, so a feed here would be indefensible.
-    diviPerUsd,
-    startingBalanceDivi: Number(env.BUILDER_TEST_BALANCE ?? 0),
+    diviPerUsd: Number(env.DIVI_PER_USD ?? 0),
+    /** Where buyers send their DIVI. Points are only ever credited from here. */
+    treasuryAddress: env.DIVI_TREASURY_ADDRESS ?? null,
+    /** The points ledger. Append-only, and the only place a balance exists. */
+    ledgerFile: env.BUILDER_LEDGER ?? path.join(root, "points-ledger.jsonl"),
+    datadir: env.DIVI_DATADIR ?? defaultDatadir(),
   };
 }
 
@@ -75,8 +111,48 @@ async function readJson(req, limitBytes = 256 * 1024) {
 }
 
 export function createServer(config = loadConfig()) {
-  return http.createServer(async (req, res) => {
+  const accounts = new Accounts({ file: config.ledgerFile });
+
+  // Set up in the background; every request waits for it. Doing this lazily
+  // keeps createServer synchronous for callers and tests.
+  const ready = (async () => {
+    await accounts.load();
+    const rpc = await readRpcConfig(config.datadir);
+    const node = rpc ? nodeClient(rpc) : null;
+    const orders = new Orders({
+      accounts,
+      treasuryAddress: config.treasuryAddress,
+      diviPerUsd: config.diviPerUsd,
+      node,
+    });
+    return { orders, node };
+  })();
+
+  const origins = config.origins ?? WALLET_ORIGINS;
+
+  const server = http.createServer(async (req, res) => {
     try {
+      // A request carrying an origin we do not know is refused before it can do
+      // anything. This is what keeps a web page you have open in a browser from
+      // creating sessions, spending on the model, or turning off screening —
+      // all of which it could otherwise do, because a browser will happily send
+      // a request to this machine even though it cannot read the reply.
+      const origin = req.headers.origin;
+      if (origin && !origins.includes(origin)) {
+        return json(res, 403, { error: "requests from this origin are not accepted" });
+      }
+      if (origin) {
+        res.setHeader("access-control-allow-origin", origin);
+        res.setHeader("vary", "origin");
+        res.setHeader("access-control-allow-headers", "content-type");
+        res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+      }
+      if (req.method === "OPTIONS") {
+        res.writeHead(origin ? 204 : 403);
+        return res.end();
+      }
+
+      const { orders, node } = await ready;
       const url = new URL(req.url, `http://${req.headers.host ?? "localhost"}`);
       const parts = url.pathname.split("/").filter(Boolean);
 
@@ -90,8 +166,49 @@ export function createServer(config = loadConfig()) {
           // So the panel can say exactly what is missing rather than just
           // failing when the first message is sent.
           keyConfigured: Boolean(config.provider.apiKey),
+          nodeReachable: Boolean(node),
+          buying: orders.unavailable() ?? null,
           sessions: SESSIONS.size,
         });
+      }
+
+      // ---- Points: what a bundle costs, what an account holds, buying ----
+
+      if (req.method === "GET" && url.pathname === "/points/catalogue") {
+        const why = orders.unavailable();
+        return json(res, 200, {
+          available: !why,
+          why,
+          pointsPerUsd: POINTS_PER_USD,
+          markup: MARKUP,
+          diviPerUsd: config.diviPerUsd,
+          treasuryAddress: config.treasuryAddress,
+          tiers: config.diviPerUsd > 0 ? priceCatalogue(config.diviPerUsd) : [],
+        });
+      }
+
+      if (req.method === "GET" && url.pathname === "/points/account") {
+        const account = url.searchParams.get("account") ?? "";
+        return json(res, 200, {
+          account,
+          balancePoints: accounts.balance(account),
+          history: accounts.history(account, 50),
+        });
+      }
+
+      if (req.method === "POST" && url.pathname === "/points/order") {
+        const body = await readJson(req);
+        return json(res, 201, orders.create({ account: body.account, tierId: body.tierId }));
+      }
+
+      if (parts[0] === "points" && parts[1] === "order" && parts[2]) {
+        if (req.method === "GET" && parts.length === 3) {
+          return json(res, 200, orders.publicView(orders.get(parts[2])));
+        }
+        if (req.method === "POST" && parts[3] === "claim") {
+          const body = await readJson(req);
+          return json(res, 200, await orders.claim(parts[2], body.txid));
+        }
       }
 
       // The model credential, handed over by the wallet panel.
@@ -118,23 +235,22 @@ export function createServer(config = loadConfig()) {
           return json(res, 503, { error: "the DIVI rate has not been set, so nothing can be billed" });
         }
         const body = await readJson(req);
+        // The account is a name; the BALANCE is ours. An earlier version took
+        // the balance from this request, which meant anyone could declare
+        // themselves rich. It now comes from the ledger and nowhere else.
+        const account = String(body.account ?? "local").trim() || "local";
         const id = randomUUID();
         const workspace = new Workspace(path.join(config.root, id));
         await workspace.init();
         SESSIONS.set(id, {
           id,
           workspace,
-          meter: new SessionMeter({
-            balanceDivi: Number(body.balanceDivi ?? config.startingBalanceDivi),
-            diviPerUsd: config.diviPerUsd,
-          }),
+          account,
+          meter: new SessionMeter({ accounts, account }),
           history: [],
-          // Screening strikes follow the person, not the session, so opening a
-          // fresh session is not a way to reset a cool-off.
-          accountId: String(body.accountId ?? "local"),
           createdAt: Date.now(),
         });
-        return json(res, 201, { id });
+        return json(res, 201, { id, account, balancePoints: accounts.balance(account) });
       }
 
       const session = parts[0] === "session" && parts[1] ? SESSIONS.get(parts[1]) : null;
@@ -148,7 +264,7 @@ export function createServer(config = loadConfig()) {
         // Screened BEFORE the model is called, so a blocked request costs
         // nothing. This is not the security boundary (the tools are), but there
         // is no reason to pay for an obvious attempt.
-        const screen = SCANNER.scan(message, { accountId: session.accountId });
+        const screen = SCANNER.scan(message, { accountId: session.account });
         if (screen.verdict === VERDICT.BLOCK) {
           return json(res, 200, {
             stopped: "refused",
@@ -235,6 +351,11 @@ export function createServer(config = loadConfig()) {
         return json(res, 200, SCANNER.replay());
       }
 
+      // Admin: the whole points ledger, for reconciling against a provider bill.
+      if (req.method === "GET" && url.pathname === "/admin/ledger") {
+        return json(res, 200, { lines: accounts.all().slice(-500).reverse() });
+      }
+
       if (req.method === "GET" && parts[2] === "files") {
         return json(res, 200, { files: await session.workspace.list() });
       }
@@ -249,6 +370,14 @@ export function createServer(config = loadConfig()) {
       json(res, 400, { error: e?.message ?? "request failed" });
     }
   });
+
+  server.on("listening", () => {
+    const timer = setInterval(() => ready.then(({ orders }) => orders.sweep()).catch(() => {}), 10 * 60_000);
+    timer.unref?.();
+    server.once("close", () => clearInterval(timer));
+  });
+
+  return server;
 }
 
 // Only starts when run directly, so tests can import the server without one
@@ -259,6 +388,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.log(`builder on http://${config.host}:${config.port}`);
     if (!(config.diviPerUsd > 0)) {
       console.log("DIVI_PER_USD is not set, so sessions will be refused until it is.");
+    }
+    if (!config.treasuryAddress) {
+      console.log("DIVI_TREASURY_ADDRESS is not set, so points cannot be bought until it is.");
     }
   });
 }

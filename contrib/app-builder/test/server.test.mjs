@@ -45,7 +45,7 @@ test("creates a session and starts with no files", async () => {
     await fetch(`${base}/session`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ balanceDivi: 500 }),
+      body: JSON.stringify({ account: "tester" }),
     })
   ).json();
   assert.ok(created.id);
@@ -68,7 +68,7 @@ test("an empty message is refused before any model call", async () => {
     await fetch(`${base}/session`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ balanceDivi: 500 }),
+      body: JSON.stringify({ account: "tester" }),
     })
   ).json();
   const res = await fetch(`${base}/session/${created.id}/message`, {

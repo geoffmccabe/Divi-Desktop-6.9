@@ -64,6 +64,8 @@ export const ICONS: Record<string, string> = {
   governance: svg(
     "<path d='M3 9l9-5 9 5'/><path d='M4 9h16'/><path d='M5 20V10'/><path d='M9.5 20V10'/><path d='M14.5 20V10'/><path d='M19 20V10'/><path d='M3 20h18'/>"
   ),
+  // A plain cross, for dismissing a dialog.
+  close: svg("<path d='M18 6 6 18M6 6l12 12'/>"),
   // A simple checkmark, for success confirmations.
   check: svg("<path d='M20 6 9 17l-5-5'/>"),
   // Two overlapping keys = a shared wallet that needs more than one signer.

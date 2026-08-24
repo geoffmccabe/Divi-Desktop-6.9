@@ -4,8 +4,12 @@ import {
   builderUrl, setBuilderUrl, health, createSession, sendMessage, setKey,
   type Account, type BuilderFile, type Health, type TurnEvent,
 } from "./api";
+import { PointsChip, BuyPointsButton, pointsAccount } from "../points/BuyPoints";
 
-// App Builder: describe an app, a model writes it, you pay for the tokens in DIVI.
+// App Builder: describe an app, a model writes it, and points pay for the work.
+//
+// Points are bought with DIVI up front (see ui/src/points/). The balance lives
+// on the service, not here, so nothing in this panel can add to it.
 //
 // The service that does the work is a separate process and is not running for
 // most people, so the honest default state of this panel is "not connected",
@@ -17,8 +21,6 @@ type Line =
   | { kind: "tool"; text: string }
   | { kind: "cost"; text: string }
   | { kind: "err"; text: string };
-
-const STARTING_BALANCE = 500;
 
 export function BuilderPanel() {
   const [probe, setProbe] = useState<{ state: "checking" | "up" | "down"; health?: Health; error?: string }>({
@@ -47,7 +49,7 @@ export function BuilderPanel() {
 
   const start = async () => {
     try {
-      const { id } = await createSession(STARTING_BALANCE);
+      const { id } = await createSession(await pointsAccount());
       setSession(id);
       setLines([{ kind: "ai", text: "Ready. Describe the app you want and I will build it." }]);
     } catch (e) {
@@ -100,17 +102,16 @@ export function BuilderPanel() {
           </div>
         )}
         <span className="bd-spacer" />
-        {account && (
+        {account ? (
           <>
             <div className="bd-stat">
-              <b>{account.balanceDivi.toLocaleString()} DIVI</b>
-              <span>credit left</span>
-            </div>
-            <div className="bd-stat">
-              <b>{account.spentDivi.toFixed(2)} DIVI</b>
+              <b>{account.spentPoints.toLocaleString()} points</b>
               <span>spent, {account.turns} turns</span>
             </div>
+            <PointsChip />
           </>
+        ) : (
+          <PointsChip />
         )}
         {!session && probe.health?.keyConfigured && (
           <button type="button" className="wl-btn wl-btn-primary" onClick={start}>
@@ -121,10 +122,17 @@ export function BuilderPanel() {
 
       {!session ? (
         probe.health?.keyConfigured ? (
-          <p className="bd-note">
-            Start a session to begin. You are charged in DIVI for what the model
-            actually uses, and the running total stays on screen.
-          </p>
+          <div className="bd-note">
+            <p>
+              Start a session to begin. Points pay for what the model actually
+              uses, and the running total stays on screen. Nothing is charged
+              until a step runs, and a step that your balance cannot cover is
+              refused before it starts rather than after.
+            </p>
+            <p className="bd-buyrow">
+              <BuyPointsButton label="Buy points with DIVI" />
+            </p>
+          </div>
         ) : (
           <KeyBox onSaved={check} />
         )
@@ -226,7 +234,7 @@ function renderEvent(e: TurnEvent): Line[] {
     case "tool":
       return [{ kind: "tool", text: `${e.name}${e.path ? ` ${e.path}` : ""}` }];
     case "usage":
-      return [{ kind: "cost", text: `step ${e.step}: ${e.divi.toFixed(2)} DIVI` }];
+      return [{ kind: "cost", text: `step ${e.step}: ${e.points.toLocaleString()} points` }];
     case "billing_stopped":
       return [{ kind: "err", text: `Stopped: ${e.reason}` }];
     case "error":

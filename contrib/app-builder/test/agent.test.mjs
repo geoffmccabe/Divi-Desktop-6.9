@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { Workspace } from "../src/workspace.mjs";
 import { SessionMeter } from "../src/meter.mjs";
+import { Accounts } from "../src/accounts.mjs";
 import { runTurn, runTool, TOOLS } from "../src/agent.mjs";
 
 // A provider that replays a fixed script. No network, no spend, no flakiness:
@@ -32,12 +33,14 @@ function fakeProvider(script) {
   };
 }
 
-async function harness({ balanceDivi = 10_000 } = {}) {
+async function harness({ balancePoints = 100_000 } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dd69-agent-"));
   const workspace = new Workspace(path.join(dir, "project"));
   await workspace.init();
-  const meter = new SessionMeter({ balanceDivi, diviPerUsd: 100 });
-  return { workspace, meter, history: [] };
+  const accounts = new Accounts();
+  if (balancePoints > 0) await accounts.credit("tester", balancePoints, { reason: "test" });
+  const meter = new SessionMeter({ accounts, account: "tester" });
+  return { workspace, meter, accounts, history: [] };
 }
 
 test("writes the file the model asks for, then stops", async () => {
@@ -92,7 +95,7 @@ test("an invented tool name is refused without touching the workspace", async ()
 
 test("the loop stops when credit runs out, rather than spending on", async () => {
   // Enough for the first step only.
-  const { workspace, meter, history } = await harness({ balanceDivi: 30 });
+  const { workspace, meter, history } = await harness({ balancePoints: 30 });
   const provider = fakeProvider([
     { toolCalls: [{ id: "t1", name: "list_files", input: {} }], usage: { input_tokens: 1e6, output_tokens: 1e6 } },
     { toolCalls: [{ id: "t2", name: "list_files", input: {} }] },
@@ -113,18 +116,18 @@ test("the loop stops when credit runs out, rather than spending on", async () =>
 });
 
 test("a failed model call charges nothing and releases the hold", async () => {
-  const { workspace, meter, history } = await harness({ balanceDivi: 500 });
+  const { workspace, meter, history } = await harness({ balancePoints: 500 });
   const provider = fakeProvider([{ throw: "upstream exploded" }]);
 
-  const before = meter.summary().balanceDivi;
+  const before = meter.summary().balancePoints;
   const r = await runTurn({
     provider, workspace, meter, history,
     message: "go", model: "claude-sonnet-5",
   });
 
   assert.equal(r.stopped, "error");
-  assert.equal(meter.summary().balanceDivi, before, "balance must be untouched");
-  assert.equal(meter.summary().reservedDivi, 0, "the hold must be released");
+  assert.equal(meter.summary().balancePoints, before, "balance must be untouched");
+  assert.equal(meter.summary().reservedPoints, 0, "the hold must be released");
 });
 
 test("a model that never settles is cut off by the step limit", async () => {
@@ -151,4 +154,28 @@ test("the model is offered file tools and nothing that reaches the system", () =
   for (const forbidden of ["shell", "exec", "bash", "fetch", "http", "network"]) {
     assert.ok(!serialised.includes(forbidden), `tools must not expose ${forbidden}`);
   }
+});
+
+test("a model with no price is refused before the call, not billed after", async () => {
+  // The audit's free-build hole: the API call happened, billing then threw, and
+  // the tokens came out of our pocket. Nothing may reach the provider now.
+  const { workspace, meter, history } = await harness();
+  const provider = fakeProvider([{ text: "should never run" }]);
+
+  const r = await runTurn({
+    provider, workspace, meter, history,
+    message: "go", model: "claude-opus-4-1-20250805",
+  });
+
+  assert.equal(r.stopped, "error");
+  assert.equal(provider.calls.length, 0, "the model must never have been called");
+  assert.equal(meter.summary().spentPoints, 0);
+});
+
+test("the output ceiling is actually sent to the model", async () => {
+  // The hold is only a real bound if the model is told the same limit.
+  const { workspace, meter, history } = await harness();
+  const provider = fakeProvider([{ text: "ok" }]);
+  await runTurn({ provider, workspace, meter, history, message: "go", model: "claude-sonnet-5" });
+  assert.equal(provider.calls[0].maxTokens, 8000);
 });

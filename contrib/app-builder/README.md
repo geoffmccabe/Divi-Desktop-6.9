@@ -20,12 +20,16 @@ the postcss incident, the cost of writing a little more code is worth paying.
 ## Running it
 
 ```
-DIVI_PER_USD=1000 ANTHROPIC_API_KEY=sk-ant-... node src/server.mjs
+DIVI_PER_USD=1000 DIVI_TREASURY_ADDRESS=D... ANTHROPIC_API_KEY=sk-ant-... node src/server.mjs
 ```
 
 | Variable | Meaning |
 |---|---|
 | `DIVI_PER_USD` | **Required.** How many DIVI to one dollar. Admin-set, never a live feed. Without it, sessions are refused. |
+| `DIVI_TREASURY_ADDRESS` | **Required to sell points.** The address buyers pay into. Points are only ever credited from payments to this address. |
+| `BUILDER_LEDGER` | The append-only points ledger. Defaults to a file under `BUILDER_ROOT`. This is where balances live. |
+| `DIVI_DATADIR` | Where `divi.conf` is, so payments can be checked with the node. Defaults to the platform location the wallet uses. |
+| `BUILDER_ALLOWED_ORIGINS` | Extra origins allowed to call this, comma separated. The wallet's own origins are always allowed. |
 | `ANTHROPIC_API_KEY` | Key for the default provider. |
 | `BUILDER_MODEL` | Default `claude-sonnet-5`. `claude-opus-5` for harder work. |
 | `BUILDER_PROVIDER` | `anthropic` or `openai`. |
@@ -33,7 +37,14 @@ DIVI_PER_USD=1000 ANTHROPIC_API_KEY=sk-ant-... node src/server.mjs
 | `BUILDER_ROOT` | Where session projects live. |
 | `PORT`, `HOST` | Default `8788` on `127.0.0.1`. |
 
-Tests: `node --test "test/*.test.mjs"`
+Tests: `node --test test/`
+
+### The door is not open
+
+Every request carrying an origin we do not know is refused. A browser will send
+a request to this machine even though it cannot read the reply, so without that
+check any web page you happened to have open could create sessions, spend on the
+model, or switch screening off.
 
 ## Why the DIVI rate is not a live feed
 
@@ -59,12 +70,21 @@ that preserves tool calls.
 
 ## How the money works
 
-1. **Reserve** credit before a step runs. An agent loop is exactly the thing that
-   can run away, so "check the balance afterwards" is not good enough.
-2. **Settle** against the token counts the API actually reports. Never an
+Developers buy **points** with DIVI up front, and steps are charged in points.
+Full detail in `docs/POINTS-AND-BUYING.md`; the short version:
+
+1. **The balance is ours.** It lives in an append-only ledger here and nowhere
+   else. An earlier version took it from the request, which meant anyone could
+   declare themselves rich.
+2. **Work out the worst case first.** Before a step runs we price the most it
+   could possibly cost, hold that, and refuse to start if the balance will not
+   cover it. The same ceiling is sent to the model as a hard output limit, so it
+   is a real bound rather than a guess.
+3. **Refuse an unpriced model before the call**, not after. Calling first and
+   failing to bill afterwards means we pay and the developer does not.
+4. **Settle** against the token counts the API actually reports. Never an
    estimate: drift in our favour is indistinguishable from overcharging.
-3. **Refund** the unused part of the hold.
-4. Ceilings per step and per session, on top of the balance.
+5. Ceilings per step and per session, on top of the balance.
 
 Developers pay twice our cost. A build the code gate rejects is charged at half.
 

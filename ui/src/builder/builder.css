@@ -25,6 +25,10 @@
 
 .bd-note { font-size: 0.82rem; line-height: 1.5; color: hsl(var(--foreground) / 0.7); }
 .bd-note-gap { margin-top: 8px; }
+.bd-note p { margin: 0 0 10px; }
+/* The buy button sits under the explanation rather than in the header, so
+   somebody reading why points are needed can act on it right there. */
+.bd-buyrow { margin: 14px 0 0; }
 
 /* ---- not connected / needs a key ---- */
 .bd-offline { padding: 26px 22px; border: 1px dashed hsl(var(--foreground) / 0.2); }
