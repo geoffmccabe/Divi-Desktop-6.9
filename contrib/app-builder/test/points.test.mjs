@@ -9,7 +9,8 @@ import {
 } from "../src/points.mjs";
 import { Accounts, AccountError } from "../src/accounts.mjs";
 import { Orders, OrderError, STATE } from "../src/orders.mjs";
-import { amountPaidTo, verifyPayment, parseConf, ChainError } from "../src/chain.mjs";
+import { amountPaidTo, verifyPayment, findPayment, toSatoshis, parseConf, ChainError } from "../src/chain.mjs";
+import { DiviPrice, readSlugQuote, PriceError } from "../src/price.mjs";
 
 // ---------------------------------------------------------------- pricing
 
@@ -113,115 +114,189 @@ test("every movement records what it was for", async () => {
 
 const TREASURY = "DTreasuryAddressForTests1111111111";
 
-/** A node that says whatever the test needs it to say. */
-function fakeNode(tx) {
-  return { async call() { if (!tx) throw new ChainError("not found"); return tx; } };
+/** A fixed DIVI price, so tests never touch the network. */
+function fixedPrice(usdPerDivi = 0.002) {
+  const p = new DiviPrice({ apiKey: "test-key" });
+  p.usd = usdPerDivi;
+  p.at = Date.now();
+  return p;
 }
 
-function paymentTx(amount, confirmations, address = TREASURY) {
-  return { confirmations, details: [{ category: "receive", address, amount }] };
+/** A chain that has recorded exactly these payments to the address. */
+function fakeChain(payments = [], tip = 1000) {
+  return {
+    async call(method) {
+      if (method === "getblockcount") return tip;
+      if (method === "getaddressdeltas") return payments;
+      throw new ChainError(`unexpected call ${method}`);
+    },
+  };
 }
+
+const paid = (divi, height) => ({ txid: "f".repeat(64), satoshis: toSatoshis(divi), height });
 
 test("buying is refused, clearly, when it cannot be done safely", async () => {
   const accounts = new Accounts();
-  const noAddress = new Orders({ accounts, treasuryAddress: null, diviPerUsd: 500, node: fakeNode() });
+  const noAddress = new Orders({ accounts, treasuryAddress: null, price: fixedPrice(), node: fakeChain() });
   assert.match(noAddress.unavailable(), /address/);
-  const noRate = new Orders({ accounts, treasuryAddress: TREASURY, diviPerUsd: 0, node: fakeNode() });
-  assert.match(noRate.unavailable(), /rate/);
-  // No node means no way to confirm a payment, so no selling. Failing closed
-  // here costs a buyer a wait; failing open would let anyone mint points.
-  const noNode = new Orders({ accounts, treasuryAddress: TREASURY, diviPerUsd: 500, node: null });
-  assert.match(noNode.unavailable(), /node/);
-  assert.throws(() => noNode.create({ account: "a", tierId: "starter" }), OrderError);
+
+  // No CoinMarketCap key means no price, and no price means no selling. It
+  // never falls back to another source: the obvious one reads about 4.5x low.
+  const noKey = new Orders({
+    accounts, treasuryAddress: TREASURY, price: new DiviPrice(), node: fakeChain(),
+  });
+  assert.match(noKey.unavailable(), /CoinMarketCap/);
+
+  const noNode = new Orders({ accounts, treasuryAddress: TREASURY, price: fixedPrice(), node: null });
+  assert.match(noNode.unavailable(), /chain/);
+  await assert.rejects(() => noNode.create({ account: "a", tierId: "starter" }), OrderError);
 });
 
 test("an order fixes the price before payment, and marks itself uniquely", async () => {
   const accounts = new Accounts();
-  const orders = new Orders({ accounts, treasuryAddress: TREASURY, diviPerUsd: 500, node: fakeNode() });
-  const one = orders.create({ account: "alice", tierId: "builder" });
-  const two = orders.create({ account: "bob", tierId: "builder" });
+  const orders = new Orders({ accounts, treasuryAddress: TREASURY, price: fixedPrice(0.002), node: fakeChain() });
+  const one = await orders.create({ account: "alice", tierId: "builder" });
+  const two = await orders.create({ account: "bob", tierId: "builder" });
 
   assert.equal(one.points, 10_000);
+  // $8 at $0.002 a DIVI = 4000 DIVI.
   assert.equal(one.listDivi, 4000);
   // A tiny unique marker makes the payment self-identifying, so one buyer
   // cannot claim another's payment without having to prove who they are.
   assert.ok(one.amountDivi > one.listDivi);
   assert.ok(one.amountDivi - one.listDivi < 0.0001);
   assert.notEqual(one.amountDivi, two.amountDivi);
+  // The rate used is recorded, so a past order can always be explained.
+  assert.equal(one.diviPerUsd, 500);
 });
 
-test("points appear only once the node agrees the payment is settled", async () => {
+test("a payment is found by address and exact amount, not by what the buyer says", async () => {
   const accounts = new Accounts();
-  const o = new Orders({ accounts, treasuryAddress: TREASURY, diviPerUsd: 500, node: fakeNode() });
-  const order = o.create({ account: "alice", tierId: "builder" });
+  const orders = new Orders({ accounts, treasuryAddress: TREASURY, price: fixedPrice(), node: fakeChain() });
+  const order = await orders.create({ account: "alice", tierId: "starter" });
 
-  // Paid the right amount, but only one block deep.
-  o.node = fakeNode(paymentTx(order.amountDivi, 1));
-  const pending = await o.claim(order.id, "a".repeat(64));
+  orders.node = fakeChain([paid(order.amountDivi, 995)], 1000);
+  // No transaction id supplied at all: the amount identifies the order.
+  const done = await orders.claim(order.id);
+  assert.equal(done.state, STATE.PAID);
+  assert.equal(accounts.balance("alice"), 1000);
+});
+
+test("points appear only once the payment is settled", async () => {
+  const accounts = new Accounts();
+  const orders = new Orders({ accounts, treasuryAddress: TREASURY, price: fixedPrice(), node: fakeChain() });
+  const order = await orders.create({ account: "alice", tierId: "builder" });
+
+  // In a block, but only one deep.
+  orders.node = fakeChain([paid(order.amountDivi, 1000)], 1000);
+  const pending = await orders.claim(order.id);
   assert.equal(pending.state, STATE.AWAITING_CONFIRMATIONS);
   assert.equal(accounts.balance("alice"), 0, "nothing is credited on one confirmation");
 
-  // Once it settles, the same claim goes through.
-  o.node = fakeNode(paymentTx(order.amountDivi, 2));
-  const done = await o.claim(order.id, "a".repeat(64));
+  orders.node = fakeChain([paid(order.amountDivi, 1000)], 1001);
+  const done = await orders.claim(order.id);
   assert.equal(done.state, STATE.PAID);
   assert.equal(accounts.balance("alice"), 10_000);
 });
 
-test("a settled payment credits exactly what was bought", async () => {
+test("a payment that is not there yet credits nothing and says nothing happened", async () => {
   const accounts = new Accounts();
-  const o = new Orders({ accounts, treasuryAddress: TREASURY, diviPerUsd: 500, node: fakeNode() });
-  const order = o.create({ account: "alice", tierId: "starter" });
-  o.node = fakeNode(paymentTx(order.amountDivi, 6));
-  const done = await o.claim(order.id, "b".repeat(64));
-  assert.equal(done.state, STATE.PAID);
-  assert.equal(accounts.balance("alice"), 1000);
-  assert.equal(done.balanceAfter, 1000);
+  const orders = new Orders({ accounts, treasuryAddress: TREASURY, price: fixedPrice(), node: fakeChain() });
+  const order = await orders.create({ account: "alice", tierId: "starter" });
+  const still = await orders.claim(order.id, "a".repeat(64));
+  assert.equal(still.state, STATE.AWAITING_PAYMENT);
+  assert.equal(accounts.balance("alice"), 0);
+});
+
+test("paying the wrong amount buys nothing", async () => {
+  const accounts = new Accounts();
+  const orders = new Orders({ accounts, treasuryAddress: TREASURY, price: fixedPrice(), node: fakeChain() });
+  const order = await orders.create({ account: "alice", tierId: "builder" });
+  // Right address, wrong amount: it is not this order's payment.
+  orders.node = fakeChain([paid(order.amountDivi - 1, 990)], 1000);
+  const still = await orders.claim(order.id);
+  assert.equal(still.state, STATE.AWAITING_PAYMENT);
+  assert.equal(accounts.balance("alice"), 0);
 });
 
 test("one payment cannot buy two bundles", async () => {
   const accounts = new Accounts();
-  const o = new Orders({ accounts, treasuryAddress: TREASURY, diviPerUsd: 500, node: fakeNode() });
-  const first = o.create({ account: "alice", tierId: "starter" });
-  const second = o.create({ account: "alice", tierId: "starter" });
-  const txid = "c".repeat(64);
+  const orders = new Orders({ accounts, treasuryAddress: TREASURY, price: fixedPrice(), node: fakeChain() });
+  const first = await orders.create({ account: "alice", tierId: "starter" });
+  const second = await orders.create({ account: "alice", tierId: "starter" });
 
-  o.node = fakeNode(paymentTx(Math.max(first.amountDivi, second.amountDivi), 6));
-  await o.claim(first.id, txid);
-  await assert.rejects(() => o.claim(second.id, txid), /already been used/);
+  // Both orders see the same single payment, which matches the first exactly.
+  orders.node = fakeChain([paid(first.amountDivi, 990)], 1000);
+  await orders.claim(first.id);
+  // The second cannot match on amount, so it simply stays unpaid.
+  const still = await orders.claim(second.id);
+  assert.equal(still.state, STATE.AWAITING_PAYMENT);
   assert.equal(accounts.balance("alice"), 1000, "credited once, not twice");
 });
 
 test("claiming the same order twice does not credit twice", async () => {
   const accounts = new Accounts();
-  const o = new Orders({ accounts, treasuryAddress: TREASURY, diviPerUsd: 500, node: fakeNode() });
-  const order = o.create({ account: "alice", tierId: "starter" });
-  o.node = fakeNode(paymentTx(order.amountDivi, 6));
-  const txid = "d".repeat(64);
-  await o.claim(order.id, txid);
-  await o.claim(order.id, txid);
+  const orders = new Orders({ accounts, treasuryAddress: TREASURY, price: fixedPrice(), node: fakeChain() });
+  const order = await orders.create({ account: "alice", tierId: "starter" });
+  orders.node = fakeChain([paid(order.amountDivi, 990)], 1000);
+  await orders.claim(order.id);
+  await orders.claim(order.id);
   assert.equal(accounts.balance("alice"), 1000);
-});
-
-test("underpaying buys nothing", async () => {
-  const accounts = new Accounts();
-  const o = new Orders({ accounts, treasuryAddress: TREASURY, diviPerUsd: 500, node: fakeNode() });
-  const order = o.create({ account: "alice", tierId: "builder" });
-  o.node = fakeNode(paymentTx(order.amountDivi - 1, 6));
-  await assert.rejects(() => o.claim(order.id, "e".repeat(64)), /needs/);
-  assert.equal(accounts.balance("alice"), 0);
 });
 
 test("an expired order cannot be paid late at the old price", async () => {
   const accounts = new Accounts();
   let now = 1_000_000;
-  const o = new Orders({
-    accounts, treasuryAddress: TREASURY, diviPerUsd: 500,
-    node: fakeNode(paymentTx(999999, 6)), now: () => now,
+  const orders = new Orders({
+    accounts, treasuryAddress: TREASURY, price: fixedPrice(), node: fakeChain(), now: () => now,
   });
-  const order = o.create({ account: "alice", tierId: "starter" });
+  const order = await orders.create({ account: "alice", tierId: "starter" });
   now += 3 * 60 * 60 * 1000;
-  await assert.rejects(() => o.claim(order.id, "f".repeat(64)), /expired/);
+  orders.node = fakeChain([paid(order.amountDivi, 990)], 1000);
+  await assert.rejects(() => orders.claim(order.id), /expired/);
+});
+
+// ---------------------------------------------------------------- the price
+
+test("DIVI is priced from CoinMarketCap, read positionally not by name", () => {
+  // The reply is keyed by numeric coin id, so data["DIVI"] finds nothing. This
+  // has silently returned no price before.
+  assert.equal(readSlugQuote({ data: { 3441: { quote: { USD: { price: 0.00133 } } } } }), 0.00133);
+  assert.equal(readSlugQuote({ data: { DIVI: {} } }), 0);
+  assert.equal(readSlugQuote({ data: {} }), 0);
+  // More than one coin back means the query was not pinned to our slug.
+  assert.equal(readSlugQuote({ data: { 1: { quote: { USD: { price: 1 } } }, 2: {} } }), 0);
+});
+
+test("no CoinMarketCap key means no price at all, never another source", async () => {
+  const p = new DiviPrice();
+  assert.equal(p.configured, false);
+  await assert.rejects(() => p.usdPerDivi(), PriceError);
+});
+
+test("a CoinMarketCap failure keeps the last good price rather than inventing one", async () => {
+  let calls = 0;
+  let clock = 0;
+  const p = new DiviPrice({
+    apiKey: "k",
+    now: () => clock,
+    fetchImpl: async () => {
+      calls++;
+      if (calls === 1) {
+        return { ok: true, json: async () => ({ data: { 3441: { quote: { USD: { price: 0.002 } } } } }) };
+      }
+      return { ok: false, status: 503, json: async () => ({}) };
+    },
+  });
+  assert.equal(await p.usdPerDivi(), 0.002);
+  clock += 60 * 60 * 1000; // stale
+  assert.equal(await p.usdPerDivi(), 0.002, "the last good quote is kept");
+  assert.match(p.status().error, /503/);
+});
+
+test("the rate is how many DIVI to a dollar", async () => {
+  const p = fixedPrice(0.002);
+  assert.equal(await p.diviPerUsd(), 500);
 });
 
 // ---------------------------------------------------------------- the chain
@@ -243,18 +318,41 @@ test("money paid to somebody else does not count", () => {
 });
 
 test("a made-up transaction id is refused before the node is even asked", async () => {
+  const never = { async call() { throw new ChainError("should not be reached"); } };
   await assert.rejects(
-    () => verifyPayment(fakeNode(paymentTx(100, 9)), { txid: "not-a-txid", address: TREASURY, amount: 1 }),
+    () => verifyPayment(never, { txid: "not-a-txid", address: TREASURY, amount: 1 }),
     ChainError,
   );
 });
 
 test("a conflicting transaction is refused rather than waited on", async () => {
-  const node = fakeNode(paymentTx(100, -1));
+  const node = {
+    async call() {
+      return { confirmations: -1, details: [{ category: "receive", address: TREASURY, amount: 100 }] };
+    },
+  };
   await assert.rejects(
     () => verifyPayment(node, { txid: "a".repeat(64), address: TREASURY, amount: 1 }),
     /conflicts/,
   );
+});
+
+test("only money coming IN counts as a payment", async () => {
+  // An address spending again shows as a negative delta. Counting those would
+  // let one payment look like several.
+  const chain = {
+    async call(method) {
+      if (method === "getblockcount") return 1000;
+      return [
+        { txid: "a".repeat(64), satoshis: toSatoshis(5), height: 990 },
+        { txid: "b".repeat(64), satoshis: -toSatoshis(5), height: 995 },
+      ];
+    },
+  };
+  const found = await findPayment(chain, { address: TREASURY, amountDivi: 5 });
+  assert.equal(found.found, true);
+  assert.equal(found.txid, "a".repeat(64));
+  assert.equal(found.confirmations, 11);
 });
 
 test("the node's own config is read the same way the wallet reads it", () => {

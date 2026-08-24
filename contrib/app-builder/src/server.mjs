@@ -27,7 +27,8 @@ import { checkApp, summarise } from "./gate.mjs";
 import { Accounts } from "./accounts.mjs";
 import { Orders } from "./orders.mjs";
 import { priceCatalogue, POINTS_PER_USD, MARKUP } from "./points.mjs";
-import { readRpcConfig, nodeClient, defaultDatadir } from "./chain.mjs";
+import { readRpcConfig, nodeClient, proxyClient, defaultDatadir } from "./chain.mjs";
+import { DiviPrice } from "./price.mjs";
 
 const SESSIONS = new Map();
 
@@ -63,6 +64,13 @@ export function allowedOrigins(env = process.env) {
   return [...WALLET_ORIGINS, ...extra];
 }
 
+/**
+ * The address points are paid into: a child address of the London node,
+ * labelled `dd69-points` there, so incoming purchases can be tracked on that
+ * one address alone.
+ */
+export const DEFAULT_TREASURY = "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt";
+
 export function loadConfig(env = process.env) {
   const root = env.BUILDER_ROOT ?? path.join(os.tmpdir(), "dd69-builder");
   return {
@@ -78,11 +86,26 @@ export function loadConfig(env = process.env) {
       apiKey: env.ANTHROPIC_API_KEY,
       baseUrl: env.BUILDER_BASE_URL,
     },
-    // An admin-set number, never a live feed: DIVI price aggregators disagree by
-    // roughly 4.5x, so a feed here would be indefensible.
-    diviPerUsd: Number(env.DIVI_PER_USD ?? 0),
-    /** Where buyers send their DIVI. Points are only ever credited from here. */
-    treasuryAddress: env.DIVI_TREASURY_ADDRESS ?? null,
+    /**
+     * The DIVI price comes from CoinMarketCap and nowhere else. Standing order,
+     * and there is a number behind it: CoinGecko prices DIVI off a thinly
+     * traded wrapped token and reads about 4.5x lower, which would sell four
+     * times the build time for the same money. See price.mjs.
+     */
+    cmcApiKey: env.CMC_API_KEY ?? null,
+    /**
+     * Where buyers send their DIVI: a child address of the node we run in
+     * London, so every payment for points is visible on that one address.
+     */
+    treasuryAddress: env.DIVI_TREASURY_ADDRESS ?? DEFAULT_TREASURY,
+    /**
+     * The chain lookup used to confirm payments. Left unset, the wallet's own
+     * node answers, which works because it indexes addresses. Pointed at the
+     * London node's read-only proxy, that node answers instead — which is the
+     * better arrangement, since it is the one that actually holds the address.
+     */
+    chainProxyUrl: env.DIVI_CHAIN_PROXY_URL ?? null,
+    chainProxySecret: env.DIVI_CHAIN_PROXY_SECRET ?? null,
     /** The points ledger. Append-only, and the only place a balance exists. */
     ledgerFile: env.BUILDER_LEDGER ?? path.join(root, "points-ledger.jsonl"),
     datadir: env.DIVI_DATADIR ?? defaultDatadir(),
@@ -115,14 +138,23 @@ export function createServer(config = loadConfig()) {
 
   // Set up in the background; every request waits for it. Doing this lazily
   // keeps createServer synchronous for callers and tests.
+  const price = new DiviPrice({ apiKey: config.cmcApiKey });
+
   const ready = (async () => {
     await accounts.load();
-    const rpc = await readRpcConfig(config.datadir);
-    const node = rpc ? nodeClient(rpc) : null;
+    // Prefer the node that actually holds the purchase address; fall back to
+    // the wallet's own node, which can answer because it indexes addresses too.
+    let node = null;
+    if (config.chainProxyUrl) {
+      node = proxyClient({ url: config.chainProxyUrl, secret: config.chainProxySecret });
+    } else {
+      const rpc = await readRpcConfig(config.datadir);
+      node = rpc ? nodeClient(rpc) : null;
+    }
     const orders = new Orders({
       accounts,
       treasuryAddress: config.treasuryAddress,
-      diviPerUsd: config.diviPerUsd,
+      price,
       node,
     });
     return { orders, node };
@@ -162,7 +194,8 @@ export function createServer(config = loadConfig()) {
           model: config.model,
           provider: config.provider.kind,
           // Surfaced because a builder that cannot bill must not take work.
-          rateConfigured: config.diviPerUsd > 0,
+          rateConfigured: price.configured,
+          price: price.status(),
           // So the panel can say exactly what is missing rather than just
           // failing when the first message is sent.
           keyConfigured: Boolean(config.provider.apiKey),
@@ -179,15 +212,29 @@ export function createServer(config = loadConfig()) {
       // ---- Points: what a bundle costs, what an account holds, buying ----
 
       if (req.method === "GET" && url.pathname === "/points/catalogue") {
-        const why = orders.unavailable();
+        let why = orders.unavailable();
+        let tiers = [];
+        let diviPerUsd = null;
+        if (!why) {
+          try {
+            diviPerUsd = await price.diviPerUsd();
+            tiers = priceCatalogue(diviPerUsd);
+          } catch (e) {
+            // No price means no selling. It never falls back to another source:
+            // the alternative reads about 4.5x low and would give away four
+            // times the build time for the same money.
+            why = `DIVI cannot be priced right now: ${e.message}`;
+          }
+        }
         return json(res, 200, {
           available: !why,
           why,
           pointsPerUsd: POINTS_PER_USD,
           markup: MARKUP,
-          diviPerUsd: config.diviPerUsd,
+          diviPerUsd,
+          priceSource: "coinmarketcap",
           treasuryAddress: config.treasuryAddress,
-          tiers: config.diviPerUsd > 0 ? priceCatalogue(config.diviPerUsd) : [],
+          tiers,
         });
       }
 
@@ -202,7 +249,7 @@ export function createServer(config = loadConfig()) {
 
       if (req.method === "POST" && url.pathname === "/points/order") {
         const body = await readJson(req);
-        return json(res, 201, orders.create({ account: body.account, tierId: body.tierId }));
+        return json(res, 201, await orders.create({ account: body.account, tierId: body.tierId }));
       }
 
       if (parts[0] === "points" && parts[1] === "order" && parts[2]) {
@@ -226,6 +273,17 @@ export function createServer(config = loadConfig()) {
       // secrets belonging to other applications looks exactly like something
       // hostile, whatever it intends, and this project's own checks flag that
       // shape. Having a person paste it is both clearer and easier to audit.
+      // The CoinMarketCap key, handed over by the wallet's Value panel the same
+      // way the model key is: in memory only, never written down, and used for
+      // nothing but pricing DIVI.
+      if (req.method === "POST" && url.pathname === "/cmc-key") {
+        const body = await readJson(req);
+        const key = String(body.key ?? "").trim();
+        if (key.length < 16) return json(res, 400, { error: "that does not look like a key" });
+        price.setKey(key);
+        return json(res, 200, price.status());
+      }
+
       if (req.method === "POST" && url.pathname === "/key") {
         const body = await readJson(req);
         const key = String(body.key ?? "").trim();
@@ -235,8 +293,10 @@ export function createServer(config = loadConfig()) {
       }
 
       if (req.method === "POST" && url.pathname === "/session") {
-        if (!(config.diviPerUsd > 0)) {
-          return json(res, 503, { error: "the DIVI rate has not been set, so nothing can be billed" });
+        if (!price.configured) {
+          return json(res, 503, {
+            error: "DIVI cannot be priced without a CoinMarketCap key, so nothing can be billed",
+          });
         }
         const body = await readJson(req);
         // The account is a name; the BALANCE is ours. An earlier version took
@@ -390,11 +450,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const config = loadConfig();
   createServer(config).listen(config.port, config.host, () => {
     console.log(`builder on http://${config.host}:${config.port}`);
-    if (!(config.diviPerUsd > 0)) {
-      console.log("DIVI_PER_USD is not set, so sessions will be refused until it is.");
+    if (!config.cmcApiKey) {
+      console.log("CMC_API_KEY is not set, so DIVI cannot be priced and nothing can be sold or billed.");
     }
-    if (!config.treasuryAddress) {
-      console.log("DIVI_TREASURY_ADDRESS is not set, so points cannot be bought until it is.");
-    }
+    console.log(`points are paid to ${config.treasuryAddress}`);
   });
 }

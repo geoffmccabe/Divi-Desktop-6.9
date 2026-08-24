@@ -17,7 +17,7 @@
 import { randomUUID, randomInt } from "node:crypto";
 
 import { findTier, priceTier, round8 } from "./points.mjs";
-import { verifyPayment } from "./chain.mjs";
+import { findPayment } from "./chain.mjs";
 
 export class OrderError extends Error {}
 
@@ -33,13 +33,16 @@ export const STATE = {
 
 export class Orders {
   /**
-   * @param {{accounts: object, treasuryAddress: string|null, diviPerUsd: number,
+   * @param {{accounts: object, treasuryAddress: string|null, price: object,
    *          node: object|null, now?: () => number}} cfg
+   * `price` is a DiviPrice: the rate comes from CoinMarketCap at the moment an
+   * order is made, so a bundle is priced at what DIVI is worth then and that
+   * figure is frozen into the order.
    */
   constructor(cfg) {
     this.accounts = cfg.accounts;
     this.treasuryAddress = cfg.treasuryAddress ?? null;
-    this.diviPerUsd = cfg.diviPerUsd;
+    this.price = cfg.price ?? null;
     this.node = cfg.node ?? null;
     this.now = cfg.now ?? (() => Date.now());
     this.orders = new Map();
@@ -57,19 +60,29 @@ export class Orders {
    */
   unavailable() {
     if (!this.treasuryAddress) return "no address has been set to receive payments";
-    if (!(this.diviPerUsd > 0)) return "the DIVI rate has not been set";
-    if (!this.node) return "the Divi node's settings could not be found, so payments cannot be confirmed";
+    if (!this.price?.configured) {
+      return "DIVI cannot be priced: no CoinMarketCap key is set";
+    }
+    if (!this.node) return "the chain cannot be reached to confirm payments";
     return null;
   }
 
-  create({ account, tierId }) {
+  async create({ account, tierId }) {
     const why = this.unavailable();
     if (why) throw new OrderError(why);
 
     const tier = findTier(tierId);
     if (!tier) throw new OrderError("that bundle does not exist");
 
-    const priced = priceTier(tier, this.diviPerUsd);
+    // Priced from CoinMarketCap here and frozen into the order, so the figure
+    // the buyer agrees to cannot move while they are paying it.
+    let diviPerUsd;
+    try {
+      diviPerUsd = await this.price.diviPerUsd();
+    } catch (e) {
+      throw new OrderError(`DIVI cannot be priced right now: ${e.message}`);
+    }
+    const priced = priceTier(tier, diviPerUsd);
     // Up to 9999 satoshi of DIVI, so the exact amount is this order's fingerprint.
     const marker = randomInt(1, 10_000) / 1e8;
     const amountDivi = round8(priced.divi + marker);
@@ -85,6 +98,7 @@ export class Orders {
       discountPercent: priced.discountPercent,
       address: this.treasuryAddress,
       state: STATE.AWAITING_PAYMENT,
+      diviPerUsd,
       createdAt: this.now(),
       expiresAt: this.now() + ORDER_TTL_MS,
       txid: null,
@@ -111,30 +125,36 @@ export class Orders {
    * Safe to call repeatedly: an order already paid returns its result rather
    * than crediting twice.
    */
-  async claim(id, txid) {
+  async claim(id, txidHint = null) {
     const order = this.get(id);
     if (order.state === STATE.PAID) return this.publicView(order);
     if (order.state === STATE.EXPIRED) {
       throw new OrderError("this purchase expired before it was paid; start a new one");
     }
-    if (!this.node) throw new OrderError("the Divi node cannot be reached to confirm payments");
+    if (!this.node) throw new OrderError("the chain cannot be reached to confirm payments");
 
-    const tx = String(txid ?? "").trim().toLowerCase();
-    // Claimed by another order already: refuse before touching any balance.
+    // Looked up by ADDRESS and exact amount, not by whatever the buyer says.
+    const found = await findPayment(this.node, {
+      address: order.address,
+      amountDivi: order.amountDivi,
+      txidHint,
+    });
+
+    if (!found.found) {
+      order.state = STATE.AWAITING_PAYMENT;
+      return this.publicView(order);
+    }
+
+    const tx = String(found.txid).toLowerCase();
+    // Already settled a different order: refuse before touching any balance.
     if (this.spentTxids.has(tx) && order.txid !== tx) {
       throw new OrderError("that payment has already been used for another purchase");
     }
 
-    const result = await verifyPayment(this.node, {
-      txid: tx,
-      address: order.address,
-      amount: order.amountDivi,
-    });
-
     order.txid = tx;
-    order.confirmations = result.confirmations;
+    order.confirmations = found.confirmations;
 
-    if (!result.confirmed) {
+    if (!found.confirmed) {
       order.state = STATE.AWAITING_CONFIRMATIONS;
       return this.publicView(order);
     }
@@ -147,8 +167,9 @@ export class Orders {
         reason: "points purchase",
         tier: order.tierId,
         txid: tx,
-        paidDivi: result.paid,
-        confirmations: result.confirmations,
+        paidDivi: found.paid,
+        diviPerUsd: order.diviPerUsd,
+        confirmations: found.confirmations,
       });
       order.state = STATE.PAID;
       order.paidAt = this.now();
@@ -179,6 +200,7 @@ export class Orders {
       amountDivi: o.amountDivi,
       listDivi: o.listDivi,
       discountPercent: o.discountPercent,
+      diviPerUsd: o.diviPerUsd,
       address: o.address,
       state: o.state,
       expiresAt: o.expiresAt,

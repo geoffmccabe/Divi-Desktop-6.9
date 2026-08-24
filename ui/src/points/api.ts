@@ -26,7 +26,10 @@ export interface Catalogue {
   why: string | null;
   pointsPerUsd: number;
   markup: number;
-  diviPerUsd: number;
+  /** How many DIVI to a dollar, from CoinMarketCap. Null when it has no price. */
+  diviPerUsd: number | null;
+  /** Always "coinmarketcap". Standing order; see contrib/app-builder/src/price.mjs. */
+  priceSource: string;
   treasuryAddress: string | null;
   tiers: Tier[];
 }
@@ -80,6 +83,17 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const catalogue = () => call<Catalogue>("/points/catalogue");
+
+/**
+ * Hand the service the CoinMarketCap key the wallet already holds, so DIVI can
+ * be priced without anyone configuring the same key twice.
+ *
+ * CoinMarketCap is the only source, by standing order: the obvious alternative
+ * prices DIVI off a thinly traded wrapped token and reads about 4.5x lower,
+ * which would sell four times the build time for the same money.
+ */
+export const setCmcKey = (key: string) =>
+  call<{ configured: boolean }>("/cmc-key", { method: "POST", body: JSON.stringify({ key }) });
 
 export const accountState = (account: string) =>
   call<AccountState>(`/points/account?account=${encodeURIComponent(account)}`);

@@ -20,13 +20,14 @@ the postcss incident, the cost of writing a little more code is worth paying.
 ## Running it
 
 ```
-DIVI_PER_USD=1000 DIVI_TREASURY_ADDRESS=D... ANTHROPIC_API_KEY=sk-ant-... node src/server.mjs
+CMC_API_KEY=... ANTHROPIC_API_KEY=sk-ant-... node src/server.mjs
 ```
 
 | Variable | Meaning |
 |---|---|
-| `DIVI_PER_USD` | **Required.** How many DIVI to one dollar. Admin-set, never a live feed. Without it, sessions are refused. |
-| `DIVI_TREASURY_ADDRESS` | **Required to sell points.** The address buyers pay into. Points are only ever credited from payments to this address. |
+| `CMC_API_KEY` | **Required.** CoinMarketCap key, the only DIVI price source. Without it there is no price, so nothing sells and nothing bills. The wallet also hands over the key it already holds. |
+| `DIVI_TREASURY_ADDRESS` | The address buyers pay into. Defaults to the London node's `dd69-points` child address. |
+| `DIVI_CHAIN_PROXY_URL` / `DIVI_CHAIN_PROXY_SECRET` | Confirm payments through the London node's read-only proxy instead of the wallet's own node. |
 | `BUILDER_LEDGER` | The append-only points ledger. Defaults to a file under `BUILDER_ROOT`. This is where balances live. |
 | `DIVI_DATADIR` | Where `divi.conf` is, so payments can be checked with the node. Defaults to the platform location the wallet uses. |
 | `BUILDER_ALLOWED_ORIGINS` | Extra origins allowed to call this, comma separated. The wallet's own origins are always allowed. |
@@ -46,12 +47,21 @@ a request to this machine even though it cannot read the reply, so without that
 check any web page you happened to have open could create sessions, spend on the
 model, or switch screening off.
 
-## Why the DIVI rate is not a live feed
+## Why the price is CoinMarketCap and nothing else
 
-Price aggregators disagree by roughly 4.5x on DIVI because they track different
-illiquid venues. Billing off a feed would mean a developer's cost changing several
-fold based on which thin market moved. An admin sets the number, it is visible
-before anyone spends, and changes are deliberate.
+Standing order across the app, and there is a number behind it. CoinGecko prices
+DIVI off a wrapped ERC-20 on Uniswap with a few dollars a day of volume, and it
+reads about 4.5x LOWER than the CoinMarketCap quote the Divi community uses.
+Selling points off that would hand someone four times the build time they paid
+for, on every purchase.
+
+So: query CoinMarketCap by slug (a symbol query returns a different, cheaper
+coin), read the reply positionally (it is keyed by numeric coin id, so
+`data["DIVI"]` finds nothing), and if there is no key or the call fails, there is
+NO price and everything that needs one refuses. No fallback source, ever.
+
+An order freezes the rate it was priced at, so a purchase cannot move underneath
+the person paying it, and a past order can always be explained.
 
 ## Why this does not go through ai.divi.love
 

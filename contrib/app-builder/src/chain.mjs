@@ -1,12 +1,22 @@
 // Checking that a DIVI payment really happened.
 //
-// The point of this file is that we do NOT take the buyer's word for it. The
-// wallet tells us a transaction id; we go and look at the chain ourselves
-// through the Divi node, and credit points only if the node agrees.
+// The point of this file is that we do NOT take the buyer's word for it. We ask
+// the chain what has been paid to the purchase address, and credit points only
+// if the answer is there.
 //
-// If the node cannot be reached, nothing is credited and the order stays open.
+// It works by looking up the ADDRESS, not a transaction the buyer hands us.
+// That is the stronger way round: each order owes a unique amount, so finding
+// that exact amount paid to our address identifies the order on its own. A
+// buyer cannot point us at somebody else's payment, and cannot invent one.
+// (A transaction id may still be supplied, but only as a hint that makes the
+// check happen sooner.)
+//
+// This needs `addressindex=1`, which both the wallet's own node and the node
+// holding the purchase address already run.
+//
+// If the chain cannot be reached, nothing is credited and the order stays open.
 // Failing closed here costs a buyer a short wait. Failing open would let anyone
-// mint points by inventing a transaction id.
+// mint points from thin air.
 
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -103,6 +113,93 @@ export function nodeClient(rpc, fetchImpl = fetch) {
       if (!res.ok) throw new ChainError(`the node returned ${res.status}`);
       return body?.result;
     },
+  };
+}
+
+/**
+ * The node that holds the purchase address, reached through its read-only
+ * proxy rather than its RPC port.
+ *
+ * That proxy exists precisely for this: it allows a short list of chain
+ * queries and does not carry a single wallet, key, signing or node-control
+ * method, so a leaked address for it yields public chain data and nothing more.
+ * The node's own RPC port stays bound to its loopback and is never exposed.
+ */
+export function proxyClient({ url, secret, fetchImpl = fetch }) {
+  if (!url) throw new ChainError("no chain proxy url was configured");
+  return {
+    async call(method, params = []) {
+      const res = await fetchImpl(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(secret ? { "X-Scan-Secret": secret } : {}),
+        },
+        body: JSON.stringify({ method, params }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const body = await res.json().catch(() => null);
+      if (body?.error) throw new ChainError(String(body.error.message ?? body.error));
+      if (!res.ok) throw new ChainError(`the chain proxy returned ${res.status}`);
+      return body?.result;
+    },
+  };
+}
+
+/** DIVI carries 8 decimals on chain, counted in satoshi. */
+export function toSatoshis(divi) {
+  return Math.round((Number(divi) || 0) * 1e8);
+}
+
+/**
+ * Every payment the chain has recorded to one address.
+ *
+ * Returns only money coming IN; the negative deltas are that address spending
+ * again, which is none of our business here.
+ */
+export async function paymentsTo(node, address) {
+  const deltas = await node.call("getaddressdeltas", [{ addresses: [address] }]);
+  if (!Array.isArray(deltas)) return [];
+  return deltas
+    .filter((d) => Number(d?.satoshis) > 0)
+    .map((d) => ({
+      txid: String(d.txid ?? ""),
+      satoshis: Number(d.satoshis),
+      height: Number(d.height ?? 0),
+    }));
+}
+
+/**
+ * Find the payment that settles an order.
+ *
+ * Matches the EXACT amount owed, because that amount is unique to the order and
+ * is what makes a payment identify itself. A transaction id, if the buyer gave
+ * us one, is accepted as an alternative match so an overpayment can still be
+ * recognised rather than silently ignored.
+ */
+export async function findPayment(node, { address, amountDivi, txidHint = null, minConfirmations = MIN_CONFIRMATIONS }) {
+  const want = toSatoshis(amountDivi);
+  const [payments, tip] = await Promise.all([
+    paymentsTo(node, address),
+    node.call("getblockcount"),
+  ]);
+
+  const hint = String(txidHint ?? "").trim().toLowerCase();
+  const match =
+    payments.find((p) => p.satoshis === want) ??
+    (hint ? payments.find((p) => p.txid.toLowerCase() === hint && p.satoshis >= want) : undefined);
+
+  if (!match) return { found: false, confirmed: false, needs: minConfirmations };
+
+  // A height of zero means it is not in a block yet.
+  const confirmations = match.height > 0 ? Number(tip) - match.height + 1 : 0;
+  return {
+    found: true,
+    txid: match.txid,
+    paid: match.satoshis / 1e8,
+    confirmations,
+    confirmed: confirmations >= minConfirmations,
+    needs: minConfirmations,
   };
 }
 

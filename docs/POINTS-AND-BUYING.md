@@ -1,8 +1,8 @@
 # Points, and buying them with DIVI
 
-**Status:** built 2026-Aug-24. Service side and wallet side both landed; the
-treasury address and the DIVI rate are the two numbers Geoff must set before
-anyone can buy.
+**Status:** built 2026-Aug-24. Service side and wallet side both landed. The
+purchase address is set. The one thing still needed is a CoinMarketCap key in
+the wallet's Value panel, without which DIVI has no price and nothing sells.
 
 ---
 
@@ -80,14 +80,46 @@ A model with no configured price is refused **before** the call. The earlier
 version made the call and then failed to bill, which meant we paid and the
 developer did not.
 
-## The two numbers Geoff must set
+## Where the money goes
 
-| Setting | What it is |
-|---|---|
-| `DIVI_TREASURY_ADDRESS` | The address buyers pay into. Points are only ever credited from payments to this address. |
-| `DIVI_PER_USD` | How many DIVI to a dollar. **Admin-set, never a live feed:** price aggregators disagree by roughly 4.5x on DIVI because they track different illiquid venues, so billing off a feed would be indefensible. |
+Points are paid to **`D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt`**, a child address of
+the node we run in London, labelled `dd69-points` on that node. Every purchase
+lands on that one address, so income from points can be read off it directly.
 
-Until both are set the panel says so plainly and refuses to sell.
+Payments are confirmed by asking the chain what has been paid to that address —
+never by trusting a transaction id from the buyer. Because each order owes a
+unique amount, finding that exact amount identifies the order on its own.
+
+This needs `addressindex`, which both the wallet's own node and the London node
+already run. By default the wallet's node answers. Pointing
+`DIVI_CHAIN_PROXY_URL` at the London node's read-only proxy makes that node
+answer instead, which is the better arrangement since it is the one holding the
+address; that proxy allows a short list of chain queries and carries no wallet,
+key or signing method at all.
+
+## Where the price comes from
+
+**CoinMarketCap, and only CoinMarketCap.** Standing order across the whole app.
+
+The reason is a number, not a preference: CoinGecko prices DIVI off a wrapped
+ERC-20 on Uniswap with a few dollars a day of volume, and it reads about **4.5x
+lower** than the CoinMarketCap quote. Selling points off that figure would hand
+someone four times the build time they paid for.
+
+Two traps that have each broken a DIVI price before, both handled here:
+
+1. Query by **slug**, never by symbol. Several coins list under the DIVI ticker
+   and a symbol query returns a different, cheaper one.
+2. The reply is keyed by **numeric coin id**, so reading `data["DIVI"]` finds
+   nothing.
+
+No key, or a failed call, means **no price**, and everything that needs one
+refuses to act. There is no fallback source, deliberately. A brief outage keeps
+serving the last good quote with its age attached, so nothing pretends to be
+fresher than it is.
+
+The wallet hands its existing Value-panel key to the service, so the same key is
+never configured twice. CoinGecko is now off by default in the wallet as well.
 
 ## Still open
 

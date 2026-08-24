@@ -18,29 +18,32 @@ function listen(config) {
 const baseEnv = {
   BUILDER_ROOT: path.join(os.tmpdir(), `dd69-srv-${Date.now()}`),
   ANTHROPIC_API_KEY: "test-key-not-used",
+  // Only ever checked for presence in these tests; nothing here calls out.
+  CMC_API_KEY: "cmc-key-not-used",
 };
 
 test("health reports what is configured", async () => {
-  const { server, base } = await listen(loadConfig({ ...baseEnv, DIVI_PER_USD: "100" }));
+  const { server, base } = await listen(loadConfig(baseEnv));
   const r = await (await fetch(`${base}/health`)).json();
   assert.equal(r.ok, true);
   assert.equal(r.rateConfigured, true);
   server.close();
 });
 
-test("without a DIVI rate the builder refuses to open a session", async () => {
-  // A builder that cannot bill must not take work: the alternative is spending
-  // real money with no way to charge for it.
-  const { server, base } = await listen(loadConfig({ ...baseEnv, DIVI_PER_USD: "0" }));
+test("without a CoinMarketCap key the builder refuses to open a session", async () => {
+  // A builder that cannot price DIVI cannot bill, and a builder that cannot
+  // bill must not take work: the alternative is spending real money with no way
+  // to charge for it. It never falls back to another price source.
+  const { server, base } = await listen(loadConfig({ ...baseEnv, CMC_API_KEY: "" }));
   const res = await fetch(`${base}/session`, { method: "POST" });
   assert.equal(res.status, 503);
   const body = await res.json();
-  assert.match(body.error, /rate has not been set/);
+  assert.match(body.error, /CoinMarketCap/);
   server.close();
 });
 
 test("creates a session and starts with no files", async () => {
-  const { server, base } = await listen(loadConfig({ ...baseEnv, DIVI_PER_USD: "100" }));
+  const { server, base } = await listen(loadConfig(baseEnv));
   const created = await (
     await fetch(`${base}/session`, {
       method: "POST",
@@ -56,14 +59,14 @@ test("creates a session and starts with no files", async () => {
 });
 
 test("an unknown session is a 404, not an empty success", async () => {
-  const { server, base } = await listen(loadConfig({ ...baseEnv, DIVI_PER_USD: "100" }));
+  const { server, base } = await listen(loadConfig(baseEnv));
   const res = await fetch(`${base}/session/does-not-exist/files`);
   assert.equal(res.status, 404);
   server.close();
 });
 
 test("an empty message is refused before any model call", async () => {
-  const { server, base } = await listen(loadConfig({ ...baseEnv, DIVI_PER_USD: "100" }));
+  const { server, base } = await listen(loadConfig(baseEnv));
   const created = await (
     await fetch(`${base}/session`, {
       method: "POST",

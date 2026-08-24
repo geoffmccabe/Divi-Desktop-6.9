@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { walletAddresses } from "../wallet/api";
 import { PurchaseWithDivi, type PurchaseOption, type PurchaseProgress } from "./PurchaseWithDivi";
-import { accountState, catalogue, claimOrder, startOrder, type Catalogue, type Tier } from "./api";
+import { accountState, catalogue, claimOrder, setCmcKey, startOrder, type Catalogue, type Tier } from "./api";
+import { getValueSettings } from "../wallet/value";
 import "./points.css";
 
 // Points: the balance chip, and the two ways to buy more.
@@ -58,7 +59,13 @@ export function BuyPointsFlow({ onClose, onBought }: { onClose: () => void; onBo
   const [orderId, setOrderId] = useState<string | null>(null);
 
   useEffect(() => {
-    catalogue()
+    // The wallet already holds a CoinMarketCap key in the Value panel, so hand
+    // it over rather than making the same key be configured twice. Points
+    // cannot be priced without it, and there is deliberately no other source.
+    const key = getValueSettings().cmcKey?.trim();
+    const ready = key ? setCmcKey(key).catch(() => {}) : Promise.resolve();
+    ready
+      .then(catalogue)
       .then(setCat)
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
