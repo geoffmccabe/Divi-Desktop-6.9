@@ -1269,6 +1269,18 @@ async fn mm_status() -> MmStatusDto {
     })
 }
 
+/// Try to (re)start the local node. Re-runs the idempotent first-run bring-up,
+/// which ensures the config + divid69 and starts the node with crash recovery.
+/// Used by the startup modal's "Try to start the node" button.
+#[tauri::command]
+async fn restart_node() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        dd69_supervisor::install::first_run_bringup(|_| {}).map(|_| ())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -2046,6 +2058,7 @@ fn main() {
             mm_start,
             mm_stop,
             mm_status,
+            restart_node,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,

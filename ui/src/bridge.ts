@@ -18,3 +18,8 @@ export async function nodeStatus(): Promise<NodeStatus> {
     peers: null,
   };
 }
+
+// Try to (re)start the local node — re-runs the idempotent bring-up.
+export async function restartNode(): Promise<void> {
+  if (inApp()) await invoke<void>("restart_node");
+}

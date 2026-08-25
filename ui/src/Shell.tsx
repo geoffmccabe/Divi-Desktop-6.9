@@ -26,6 +26,7 @@ import "./sidebar-compact.css";
 import { AgentPanel } from "./wallet/AgentPanel";
 import { NetworkMap } from "./wallet/NetworkMap";
 import { FastReceiveHost } from "./wallet/FastReceiveHost";
+import { BootModal } from "./BootModal";
 
 const VIEWS: Record<string, ComponentType> = {
   overview: Overview,
@@ -112,6 +113,7 @@ export function Shell() {
 
   return (
     <div className={focus ? "shell shell-focus" : "shell"}>
+      <BootModal />
       <FastReceiveHost onGoto={setView} />
       <div className="col-left">
         <button
