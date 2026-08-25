@@ -27,6 +27,9 @@ export function MarketMakerPanel() {
 
   return (
     <div className="gov mm-panel">
+      {exchanges && exchanges.length > 0 && <ExchangeConnect exchanges={exchanges} />}
+      {exchanges && exchanges.length > 0 && <MarketMakerControl exchanges={exchanges} />}
+
       <section className="ts-section">
         <span className="mm-badge">Coming soon</span>
         <p className="wl-note gov-wide">
@@ -123,9 +126,6 @@ export function MarketMakerPanel() {
           not a promise of profit.
         </p>
       </section>
-
-      {exchanges && exchanges.length > 0 && <ExchangeConnect exchanges={exchanges} />}
-      {exchanges && exchanges.length > 0 && <MarketMakerControl exchanges={exchanges} />}
 
       <section className="ts-section">
         <h3 className="ts-head">Want in early?</h3>

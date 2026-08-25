@@ -9,7 +9,7 @@ export function Sidebar({ active, onSelect }: { active: string; onSelect: (id: s
       <div className="sidebar-brand">
         <img className="brand-logo" src={logo} alt="" />
         <h1>Divi Desktop</h1>
-        <span className="ver">v69.0.5</span>
+        <span className="ver">v69.0.6</span>
       </div>
       <ul className="nav">
         {NAV.map((n) => (

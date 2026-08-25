@@ -1,11 +1,12 @@
 // Connect-an-exchange setup, per exchange from the catalog. The user pastes a
 // trade-only API key; it goes straight to the OS keychain via the Rust backend
 // (never stored in the UI), then we verify it with a read-only balance check.
-// Live market-making itself arrives in a later slice — this is just the secure
-// hookup. Uses the wallet's existing form classes so it matches the app.
+// Collapsible: open by default when nothing is connected yet, collapsed once an
+// exchange is registered (so the Run panel is what you see day-to-day).
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Exchange } from "../exchanges";
+import { Icon } from "../../Icon";
 import {
   mmHasCredentials,
   mmSaveCredentials,
@@ -16,24 +17,55 @@ import {
 import "./exchange-connect.css";
 
 export function ExchangeConnect({ exchanges }: { exchanges: Exchange[] }) {
+  const [connected, setConnected] = useState<Record<string, boolean>>({});
+  // null = not decided yet; first check sets the default (collapsed if any connected).
+  const [collapsed, setCollapsed] = useState<boolean | null>(null);
+
+  const check = useCallback(() => {
+    Promise.all(
+      exchanges.map((x) =>
+        mmHasCredentials(x.slug).then((v) => [x.slug, v] as const).catch(() => [x.slug, false] as const),
+      ),
+    ).then((pairs) => {
+      const m = Object.fromEntries(pairs);
+      setConnected(m);
+      setCollapsed((prev) => (prev === null ? Object.values(m).some(Boolean) : prev));
+    });
+  }, [exchanges]);
+
+  useEffect(() => { check(); }, [check]);
+
+  const connectedNames = exchanges.filter((x) => connected[x.slug]).map((x) => x.name);
+  const isCollapsed = collapsed === true;
+
   return (
     <section className="ts-section">
-      <h3 className="ts-head">Connect an exchange (setup)</h3>
-      <p className="wl-note gov-wide">
-        Get set up early. Add a <strong>trade-only</strong> API key for an exchange you already use — it
-        stays encrypted on this device and can place orders but never withdraw your funds. Live
-        market-making turns on in a later update.
-      </p>
-      <ul className="xc-list">
-        {exchanges.map((x) => (
-          <ExchangeRow key={x.id} ex={x} />
-        ))}
-      </ul>
+      <button type="button" className="mm-collapse-head" onClick={() => setCollapsed((c) => c !== true)}>
+        <h3 className="ts-head mm-collapse-title">Connect an exchange</h3>
+        <span className="mm-collapse-meta">
+          {connectedNames.length > 0 ? `${connectedNames.join(", ")} connected` : "none connected"}
+        </span>
+        <Icon name={isCollapsed ? "chevronRight" : "chevronDown"} size={16} />
+      </button>
+
+      {!isCollapsed && (
+        <div className="mm-collapse-body">
+          <p className="wl-note gov-wide">
+            Add a <strong>trade-only</strong> API key for an exchange you already use — it stays
+            encrypted on this device and can place orders but never withdraw your funds.
+          </p>
+          <ul className="xc-list">
+            {exchanges.map((x) => (
+              <ExchangeRow key={x.id} ex={x} onChange={check} />
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   );
 }
 
-function ExchangeRow({ ex }: { ex: Exchange }) {
+function ExchangeRow({ ex, onChange }: { ex: Exchange; onChange: () => void }) {
   const [connected, setConnected] = useState<boolean | null>(null);
   const [open, setOpen] = useState(false);
   const [key, setKey] = useState("");
@@ -60,6 +92,7 @@ function ExchangeRow({ ex }: { ex: Exchange }) {
       setKey("");
       setSecret("");
       setPass("");
+      onChange();
     } catch (e) {
       setMsg(String(e));
       mmHasCredentials(ex.slug).then(setConnected).catch(() => {});
@@ -75,6 +108,7 @@ function ExchangeRow({ ex }: { ex: Exchange }) {
       setConnected(false);
       setBalances(null);
       setMsg(null);
+      onChange();
     } catch (e) {
       setMsg(String(e));
     } finally {
