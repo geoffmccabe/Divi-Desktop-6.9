@@ -26,7 +26,7 @@ export function MarketMakerPanel() {
   }, []);
 
   return (
-    <div className="gov">
+    <div className="gov mm-panel">
       <section className="ts-section">
         <span className="mm-badge">Coming soon</span>
         <p className="wl-note gov-wide">

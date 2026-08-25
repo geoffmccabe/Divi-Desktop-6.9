@@ -2,6 +2,11 @@
    governance/multisig styles it borrows stay untouched. Colors use currentColor so
    the panel stays theme- and skin-aware like the rest of the wallet. */
 
+/* The Market Maker panel is a full-width control surface, not the narrow reading
+   column the Governance preview uses — drop the .gov 720px cap so cards fill the
+   panel out to the right edge. */
+.gov.mm-panel { max-width: none; }
+
 .mm-badge {
   display: inline-block;
   padding: 4px 12px;
