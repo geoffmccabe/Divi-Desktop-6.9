@@ -210,7 +210,7 @@
 .send-name-label { font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
 /* Never truncated: reading the address is the entire safeguard. */
 .send-name-addr {
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-size: 0.86rem;
   word-break: break-all;
   color: hsl(var(--foreground));

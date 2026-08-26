@@ -240,7 +240,7 @@ export function BlockChainViz() {
                         fontSize: "0.7rem",
                         fontWeight: 600,
                         color: "hsl(var(--success))",
-                        fontFamily: "ui-monospace, monospace",
+                        fontFamily: "var(--font-mono)",
                       }}
                     >
                       +{b.stakeAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} $DIVI

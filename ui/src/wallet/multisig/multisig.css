@@ -11,7 +11,7 @@
   max-width: 62ch;
 }
 .ms-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   word-break: break-all;
 }
 .ms-dim {
@@ -293,7 +293,7 @@
   border-radius: 8px;
   padding: 8px 10px;
   color: hsl(var(--muted-foreground));
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.68rem;
   resize: vertical;
   word-break: break-all;
@@ -421,7 +421,7 @@
   color: hsl(var(--muted-foreground));
 }
 .ms-act-amt {
-  font-family: ui-monospace, monospace;
+  font-family: var(--font-mono);
   font-weight: 600;
   text-align: right;
 }

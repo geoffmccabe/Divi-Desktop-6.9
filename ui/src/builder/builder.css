@@ -34,7 +34,7 @@
 
 /* ---- not connected / needs a key ---- */
 .bd-offline { padding: 26px 22px; border: 1px dashed hsl(var(--foreground) / 0.2); }
-.bd-offline h3 { font-family: var(--font-heading); font-size: 1rem; margin-bottom: 8px; }
+.bd-offline h3 { font-family: var(--font-subheading); font-size: 1rem; margin-bottom: 8px; }
 .bd-offline code {
   display: inline-block; padding: 2px 6px; border-radius: 5px; font-size: 0.8rem;
   background: hsl(var(--background) / 0.5);
@@ -95,7 +95,7 @@
 /* ---- file list ---- */
 .bd-files { padding: 10px; overflow-y: auto; min-height: 0; }
 .bd-files h4 {
-  font-family: var(--font-heading); font-size: 0.8rem; margin-bottom: 8px;
+  font-family: var(--font-subheading); font-size: 0.8rem; margin-bottom: 8px;
   color: hsl(var(--foreground) / 0.75);
 }
 .bd-file { display: flex; justify-content: space-between; gap: 8px; font-size: 0.78rem; padding: 4px 2px; }

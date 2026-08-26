@@ -4,6 +4,14 @@ import * as THREE from "three";
 import earthNight from "../assets/earth-night.jpg";
 import diviLogo from "../assets/divi-coin.webp";
 import { pulseTrigger, makeLegs, legU, type Leg } from "./activityPulse";
+import { useTheme } from "../theme/ThemeProvider";
+
+// "H S% L%" (this app's HSL-triplet token format) -> a CSS hsl() string that
+// THREE.Color / material `color` params accept directly.
+function cssHsl(raw: string): string {
+  const parts = raw.trim().split(/\s+/);
+  return `hsl(${parts[0] ?? "0"}, ${parts[1] ?? "0%"}, ${parts[2] ?? "0%"})`;
+}
 
 // The node map on a real 3D globe. Nodes are custom "Node Towers" (a slim square
 // pyramid with a sphere on its tip), packed apart when co-located. Each
@@ -39,7 +47,6 @@ const SPH_R = 0.175;
 const TIP_R = R + PYR_H;
 const PACK_D = 1.5 * BASE;
 
-const COLORS: Record<GlobePoint["kind"], number> = { self: 0xffd23f, peer: 0xff5ea8, net: 0x4aa3ff };
 const UP = new THREE.Vector3(0, 1, 0);
 
 // Hex-stream + helix tuning.
@@ -54,11 +61,6 @@ const NEAR_ANG = 500 / 6371;
 const BASE_FLOW = 0.062;
 const MAX_PEER = 24;
 const MAX_MESH = 120;
-const PEER_COLOR = new THREE.Color(0xb28cff);
-const MESH_COLOR = new THREE.Color(0x4aa3ff);
-// Dimmer blue for the network glyphs (additive blend => halved colour ~ 50%
-// opacity), to cut clutter.
-const MESH_GLYPH = new THREE.Color(0x4aa3ff).multiplyScalar(0.5);
 
 let atlasTex: THREE.Texture | null = null;
 function getAtlas(): THREE.Texture {
@@ -103,7 +105,7 @@ const FRAG = `
   }
 `;
 
-function makeTower(color: number, scale = 1): THREE.Group {
+function makeTower(color: THREE.ColorRepresentation, scale = 1): THREE.Group {
   const h = PYR_H * scale;
   const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.2 });
   const cone = new THREE.ConeGeometry(PYR_CIRC * scale, h, 4);
@@ -120,7 +122,6 @@ function makeTower(color: number, scale = 1): THREE.Group {
 const COIN_R = SPH_R * 3; // coin diameter = 3x the usual sphere
 const COIN_THICK = COIN_R * 2 * 0.07; // thickness = 7% of the coin diameter
 const WIN_H = PYR_H * 2; // winner pyramid grows to 2x the normal size
-const COIN_EDGE = 0xdf1f37; // ~ HSB(355, 86, 88)
 
 let logoTexCache: THREE.Texture | null = null;
 function getLogoTex(): THREE.Texture {
@@ -148,18 +149,18 @@ function getGlowTex(): THREE.Texture {
 interface WinnerDeco { deco: THREE.Group; pivot: THREE.Group; glow: THREE.Sprite; particles: THREE.Sprite[]; }
 // A 2x gold pyramid topped by a spinning Divi coin, with a golden glow + a few
 // orbiting particles. Positioned onto the winning tower each block.
-function makeWinnerDeco(): WinnerDeco {
+function makeWinnerDeco(selfColor: THREE.ColorRepresentation, edgeColor: THREE.ColorRepresentation): WinnerDeco {
   const deco = new THREE.Group();
   const cone = new THREE.ConeGeometry(PYR_CIRC * 2, WIN_H, 4);
   cone.translate(0, WIN_H / 2, 0);
-  deco.add(new THREE.Mesh(cone, new THREE.MeshStandardMaterial({ color: 0xffd23f, emissive: 0xffd23f, emissiveIntensity: 0.6, roughness: 0.5, metalness: 0.3 })));
+  deco.add(new THREE.Mesh(cone, new THREE.MeshStandardMaterial({ color: selfColor, emissive: selfColor, emissiveIntensity: 0.6, roughness: 0.5, metalness: 0.3 })));
   // Coin = flattened cylinder laid on its edge (flat faces point sideways) so it
   // spins face-to-camera around the tower's up axis.
   const pivot = new THREE.Group();
   pivot.position.set(0, WIN_H, 0);
   const coinGeo = new THREE.CylinderGeometry(COIN_R, COIN_R, COIN_THICK, 48);
   coinGeo.rotateZ(Math.PI / 2);
-  const edge = new THREE.MeshStandardMaterial({ color: COIN_EDGE, emissive: COIN_EDGE, emissiveIntensity: 0.25, roughness: 0.4, metalness: 0.55 });
+  const edge = new THREE.MeshStandardMaterial({ color: edgeColor, emissive: edgeColor, emissiveIntensity: 0.25, roughness: 0.4, metalness: 0.55 });
   const face = new THREE.MeshBasicMaterial({ map: getLogoTex(), transparent: true });
   pivot.add(new THREE.Mesh(coinGeo, [edge, face, face])); // [side, top, bottom]
   deco.add(pivot);
@@ -296,6 +297,22 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
   // (rebuilding all the helix tubes each poll would hitch).
   const sig = useMemo(() => points.map((p) => `${p.ip}:${p.kind}`).sort().join("|"), [points]);
 
+  // Map palette — shared with the flat network map (see NetworkMap.tsx's
+  // hslVar()) so both always match the active skin. Read as raw strings so
+  // they're stable dependency-array values; the scene effect below rebuilds
+  // whenever one of these changes (colors only — no geometry-affecting data),
+  // which does mean actively dragging a map color slider can visibly rebuild
+  // the scene while the globe is on screen, since colors are baked into the
+  // tube/glyph geometry at construction time rather than kept live-updatable.
+  const { theme } = useTheme();
+  const mapSelf = theme.mapSelf ?? "45 93% 47%";
+  const mapPeerLink = theme.mapPeerLink ?? "280 80% 60%";
+  const mapNetworkLink = theme.mapNetworkLink ?? "207 90% 54%";
+  const mapActivityPulse = theme.mapActivityPulse ?? "45 100% 55%";
+  const mapStakeAccent = theme.mapStakeAccent ?? "353 76% 50%";
+  const mapBackground = theme.mapBackground ?? "216 33% 6%";
+  const mapAtmosphere = theme.mapAtmosphere ?? "211 100% 68%";
+
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -335,6 +352,24 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
     const scene = g.scene();
     const camera = g.camera();
     const group = new THREE.Group();
+
+    // Colors from the active skin. self/peer/net towers and the peer/mesh
+    // connection tubes reuse the same "peer" and "network" roles as their
+    // matching links, so a skin creator gets one cohesive dial per role
+    // instead of node and line colors drifting apart.
+    const selfCss = cssHsl(mapSelf);
+    const peerCss = cssHsl(mapPeerLink);
+    const netCss = cssHsl(mapNetworkLink);
+    const COLORS: Record<GlobePoint["kind"], string> = { self: selfCss, peer: peerCss, net: netCss };
+    const PEER_COLOR = new THREE.Color(peerCss);
+    const MESH_COLOR = new THREE.Color(netCss);
+    // Dimmer blue for the network glyphs (additive blend => halved colour ~ 50%
+    // opacity), to cut clutter.
+    const MESH_GLYPH = new THREE.Color(netCss).multiplyScalar(0.5);
+    // Traveling gold-band color for the query ripple, as 0-1 float components
+    // (computed once here, not per-frame, since `animate` runs every tick).
+    const activityColor = new THREE.Color(cssHsl(mapActivityPulse));
+    const GR = activityColor.r, GG = activityColor.g, GB = activityColor.b;
     const surfaceOf = (lat: number, lng: number) => {
       const c = g.getCoords(lat, lng, 0);
       return new THREE.Vector3(c.x, c.y, c.z);
@@ -552,7 +587,7 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
 
     // Stake-winner coin: a spinning Divi coin on a 2x gold pyramid, moved onto
     // whichever tower currently holds the (placeholder) winner.
-    const { deco: winnerDeco, pivot: coinPivot, glow: winnerGlow, particles: winnerParticles } = makeWinnerDeco();
+    const { deco: winnerDeco, pivot: coinPivot, glow: winnerGlow, particles: winnerParticles } = makeWinnerDeco(selfCss, cssHsl(mapStakeAccent));
     group.add(winnerDeco);
     let curWinner: string | null = null;
 
@@ -604,7 +639,7 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
       }
       // Gold concentration at a point `pos` (0..1 along the arc) given head `u`.
       const band = (pos: number, u: number) => (u < 0 ? 0 : Math.exp(-(((pos - u) / 0.15) * ((pos - u) / 0.15))));
-      const GR = 1.0, GG = 0.82, GB = 0.25; // #ffd23f
+      // GR/GG/GB come from the activity-pulse skin color, computed once above.
       let anyActive = false;
       for (const st of streams) {
         const da = (cam.x - st.a.x) * st.a.x + (cam.y - st.a.y) * st.a.y + (cam.z - st.a.z) * st.a.z;
@@ -698,7 +733,7 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
         else if (mat) mat.dispose();
       });
     };
-  }, [sig, ready]);
+  }, [sig, ready, mapSelf, mapPeerLink, mapNetworkLink, mapActivityPulse, mapStakeAccent]);
 
   return (
     <div className="netmap-globe" ref={wrapRef}>
@@ -706,10 +741,10 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
         ref={globeRef}
         width={size.w}
         height={size.h}
-        backgroundColor="#0a0e14"
+        backgroundColor={cssHsl(mapBackground)}
         globeImageUrl={earthNight}
         showAtmosphere
-        atmosphereColor="#5aa9ff"
+        atmosphereColor={cssHsl(mapAtmosphere)}
         atmosphereAltitude={0.18}
         onGlobeReady={onReady}
       />

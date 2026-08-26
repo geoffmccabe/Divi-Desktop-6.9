@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 import { TOKENS, TOKEN_GROUPS, type TokenDef } from "../../theme/tokens";
 import { useTheme } from "../../theme/ThemeProvider";
 import { hexToHslTriplet, hslTripletToHex } from "../../theme/color";
 import { playSound, type SoundEvent } from "../../sound";
 import { Icon } from "../../Icon";
+import { iconFileToTokenValue, textureFileToTokenValue } from "../../theme/upload";
 
 function Control({ token }: { token: TokenDef }) {
   const { theme, setToken } = useTheme();
@@ -59,6 +60,10 @@ function Control({ token }: { token: TokenDef }) {
     );
   }
 
+  if (token.type === "icon" || token.type === "image") {
+    return <UploadControl token={token} value={value} onSet={(v) => setToken(token.key, v)} />;
+  }
+
   // range
   const num = parseFloat(value) || 0;
   const shown = token.displayPercent ? `${Math.round(num * 100)}%` : `${num}${token.unit ?? ""}`;
@@ -77,6 +82,65 @@ function Control({ token }: { token: TokenDef }) {
         onChange={(e) => setToken(token.key, `${e.target.value}${token.unit ?? ""}`)}
       />
     </label>
+  );
+}
+
+// Shared control for the two upload token types. "icon" shows a masked
+// preview (so it previews the same auto-tinted way it'll actually render);
+// "image" shows a plain rectangular preview of the texture/photo.
+function UploadControl({
+  token,
+  value,
+  onSet,
+}: {
+  token: TokenDef;
+  value: string;
+  onSet: (v: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [err, setErr] = useState("");
+  const isIcon = token.type === "icon";
+  const isSet = value !== token.default;
+
+  const onPick = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setErr("");
+    try {
+      const v = isIcon ? await iconFileToTokenValue(file) : await textureFileToTokenValue(file);
+      onSet(v);
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "Couldn't read that file");
+    }
+  };
+
+  return (
+    <div className="style-row style-upload-row">
+      <span>{token.label}</span>
+      <span className="style-upload">
+        <span
+          className={isIcon ? "style-upload-preview style-upload-preview-icon" : "style-upload-preview"}
+          style={
+            isIcon
+              ? { WebkitMaskImage: value, maskImage: value }
+              : value !== "none"
+              ? { backgroundImage: value, backgroundSize: "cover", backgroundPosition: "center" }
+              : undefined
+          }
+        />
+        <input ref={inputRef} type="file" accept={token.accept} hidden onChange={onPick} />
+        <button type="button" className="style-btn" onClick={() => inputRef.current?.click()}>
+          Upload
+        </button>
+        {isSet && (
+          <button type="button" className="style-del" aria-label="Reset" onClick={() => onSet(token.default)}>
+            ✕
+          </button>
+        )}
+      </span>
+      {err && <p className="style-note style-upload-err">{err}</p>}
+    </div>
   );
 }
 
@@ -107,6 +171,15 @@ export function StylePanel() {
       {TOKEN_GROUPS.map((group) => (
         <section key={group} className="style-group">
           <h3>{group}</h3>
+          {group === "Icons" && (
+            <p className="style-note">
+              Upload a simple single-color SVG shape per icon — only its outline matters, since it
+              recolors automatically to match the rest of the skin, just like the built-in set.
+            </p>
+          )}
+          {group === "Maps" && (
+            <p className="style-note">One shared palette for both the 3D globe and the flat network map.</p>
+          )}
           {TOKENS.filter((t) => t.group === group).map((t) => (
             <Control key={t.key} token={t} />
           ))}
