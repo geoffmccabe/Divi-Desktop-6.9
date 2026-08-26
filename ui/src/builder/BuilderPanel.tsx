@@ -3,9 +3,9 @@ import "./builder.css";
 import {
   builderUrl, setBuilderUrl, health, setKey,
   createProject, listProjects, openProject, deleteProject,
-  sendMessage, readFile, checkProject,
+  sendMessage, readFile, checkProject, serviceStatus, restartService,
   type Account, type BuilderFile, type CheckFinding, type Health,
-  type ProjectSummary, type TurnEvent,
+  type ProjectSummary, type ServiceStatus, type TurnEvent,
 } from "./api";
 import { PointsChip, BuyPointsButton, pointsAccount } from "../points/BuyPoints";
 import { setCmcKey } from "../points/api";
@@ -440,30 +440,91 @@ function when(at: number): string {
 }
 
 function Offline({ error, onRetry }: { error?: string; onRetry: () => void }) {
-  const [url, setUrl] = useState(builderUrl());
+  const [svc, setSvc] = useState<ServiceStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Ask the wallet what happened to the service it is supposed to have started.
+  // Without this the panel could only say "not switched on", which tells you
+  // nothing and leaves you with nothing to do about it.
+  useEffect(() => {
+    serviceStatus().then(setSvc).catch(() => setSvc(null));
+  }, []);
+
+  const tryAgain = async () => {
+    setBusy(true);
+    try {
+      setSvc(await restartService());
+      // Give it a moment to bind its port before looking for it.
+      setTimeout(onRetry, 1200);
+    } catch {
+      /* the status line already says what it can */
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="bd">
       <div className="bd-offline">
-        <h3>App Builder is not switched on</h3>
-        <p className="bd-note">
-          The part that talks to the AI runs alongside the wallet, and it is not
-          running at the moment. Nothing is broken and nothing has been lost —
-          your saved apps are on disk and will be here when it comes back.
-        </p>
-        {error && <p className="bd-note bd-bad bd-note-gap">Details: {error}</p>}
+        <h3>App Builder is starting up</h3>
+        {svc?.running ? (
+          <p className="bd-note">
+            The service is running but has not answered yet. Give it a second and
+            press Try again. Nothing is lost either way — your saved apps are on
+            disk.
+          </p>
+        ) : svc?.trouble ? (
+          <>
+            <p className="bd-note bd-bad">{svc.trouble}</p>
+            {/nodejs|Node is not installed/i.test(svc.trouble) && (
+              <p className="bd-note bd-note-gap">
+                Node is a free tool the builder runs on. Installing it from
+                nodejs.org and reopening the wallet is all that is needed.
+              </p>
+            )}
+          </>
+        ) : (
+          <p className="bd-note">
+            The wallet starts this for you when it opens. It is not answering
+            yet. Nothing is broken and nothing is lost — your saved apps are on
+            disk and will be here when it comes back.
+          </p>
+        )}
+
         <div className="bd-bar bd-bar-plain">
-          <input
-            className="wl-input"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            spellCheck={false}
-            aria-label="Builder service address"
-          />
-          <button type="button" className="wl-btn" onClick={() => { setBuilderUrl(url); onRetry(); }}>
-            Check again
+          <button type="button" className="wl-btn wl-btn-primary" disabled={busy} onClick={() => void tryAgain()}>
+            {busy ? "Starting…" : "Try again"}
           </button>
         </div>
+
+        {(error || svc) && (
+          <details className="bd-details">
+            <summary>Technical detail</summary>
+            {error && <p className="bd-note bd-note-gap">{error}</p>}
+            {svc && <p className="bd-note">Its output is written to {svc.log}</p>}
+            <UrlBox onRetry={onRetry} />
+          </details>
+        )}
       </div>
+    </div>
+  );
+}
+
+/** Only for the rare case of pointing the wallet at a service somewhere else. */
+function UrlBox({ onRetry }: { onRetry: () => void }) {
+  const [url, setUrl] = useState(builderUrl());
+  return (
+    <div className="bd-bar bd-bar-plain">
+      <input
+        className="wl-input"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        spellCheck={false}
+        aria-label="Builder service address"
+      />
+      <button type="button" className="wl-btn" onClick={() => { setBuilderUrl(url); onRetry(); }}>
+        Use this address
+      </button>
     </div>
   );
 }

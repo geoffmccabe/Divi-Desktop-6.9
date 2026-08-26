@@ -9,6 +9,10 @@ use serde::Serialize;
 // so this file only gains the three lines that wire it in.
 mod community;
 
+// Starts the small Node process the App Builder needs, so nobody has to open a
+// terminal to use a feature in a desktop wallet.
+mod builder_service;
+
 #[derive(Serialize)]
 struct BalanceDto {
     spendable: f64,
@@ -1857,15 +1861,18 @@ fn main() {
             // divid69, and start the node — all in the background so the window
             // opens immediately and the UI shows sync progress via node_status.
             // Idempotent, so on later launches this is a near-instant no-op.
-            tauri::async_runtime::spawn_blocking(|| {
-                let _ = dd69_supervisor::install::first_run_bringup(|stage| {
-                    println!("[bringup] {stage}");
-                });
-            });
+            tauri::async_runtime::spawn_blocking(dd69_supervisor::setup::begin);
+            // The App Builder's service, started beside the wallet. In the
+            // background because finding Node can involve asking a login shell,
+            // and the window must not wait on that.
+            tauri::async_runtime::spawn_blocking(builder_service::start);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             node_status,
+            setup_status,
+            setup_answer_dd2,
+            setup_retry,
             recent_blocks,
             c2pa_inspect,
             payment_request_create,
@@ -1953,8 +1960,18 @@ fn main() {
             list_nodes,
             set_active_node,
             community::community_builtin_apps,
-            community::community_app_base
+            community::community_app_base,
+            builder_service::builder_service_status,
+            builder_service::builder_service_restart
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Divi Desktop 6.9");
+        .build(tauri::generate_context!())
+        .expect("error while running Divi Desktop 6.9")
+        .run(|_app, event| {
+            // Stop the App Builder service with the wallet. Leaving a service
+            // running after its window has closed is how somebody ends up with
+            // three of them and no idea why the port is busy.
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                builder_service::stop();
+            }
+        });
 }

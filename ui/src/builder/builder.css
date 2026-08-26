@@ -159,3 +159,9 @@
 /* The key prompt is a banner, not a gate: somebody's saved apps must never sit
    behind a password box, having just been told their work is safe. */
 .bd-keybox { flex: 0 0 auto; }
+
+/* Technical detail is folded away: the person reading this wants to know what
+   to do, not what the port number was. */
+.bd-details { margin-top: 14px; font-size: 0.8rem; color: hsl(var(--foreground) / 0.55); }
+.bd-details summary { cursor: pointer; }
+.bd-details .bd-bar { margin-top: 10px; }

@@ -7,6 +7,23 @@
 // The address is configurable because the service will move: it runs locally
 // today and will be hosted once container isolation and the gates exist.
 
+import { invoke } from "../tauri";
+
+export interface ServiceStatus {
+  /** The wallet started it and it has not exited. */
+  running: boolean;
+  /** A sentence explaining why not, when it is not running. */
+  trouble: string | null;
+  /** Where its output goes, so a problem can be looked at. */
+  log: string;
+}
+
+/** What the wallet knows about the service it starts for you. */
+export const serviceStatus = () => invoke<ServiceStatus>("builder_service_status");
+
+/** Try starting it again, after installing Node or after a crash. */
+export const restartService = () => invoke<ServiceStatus>("builder_service_restart");
+
 const KEY = "dd69.builderUrl";
 const DEFAULT_URL = "http://127.0.0.1:8788";
 
