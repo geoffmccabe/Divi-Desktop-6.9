@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, escrow, fastsend, marketmaker, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{applog, bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, escrow, fastsend, marketmaker, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 // Serves community app bundles over their own url scheme. Kept in its own module
@@ -1283,9 +1283,17 @@ async fn restart_node() -> Result<(), String> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct AppLogDto {
+    ts_ms: u64,
+    msg: String,
+    count: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct NodeLogsDto {
-    debug_tail: String,
-    spawn_tail: String,
+    node_log: String,
+    app_log: Vec<AppLogDto>,
 }
 
 /// Read the tail of a possibly-huge log file without loading it all into memory.
@@ -1309,20 +1317,51 @@ fn tail_file(path: &std::path::Path, max_bytes: u64) -> String {
     buf
 }
 
-/// The node's connecting/staking logs for the admin Logs panel — the tail of the
-/// node's own debug.log plus DD69's spawn log. Read-only file reads, so it never
-/// hangs on a busy node.
+/// Collapse runs of identical lines (ignoring each line's leading timestamp) into
+/// one line + a "[^^ xN]" marker, so repeated spam doesn't bloat the log view.
+fn collapse_lines(text: &str) -> String {
+    fn body(line: &str) -> &str {
+        // Node lines look like "2026-08-26 12:19:47 <message>"; compare the part
+        // after the 19-char timestamp so identical events collapse across times.
+        let b = line.as_bytes();
+        if b.len() > 20 && b[4] == b'-' && b[10] == b' ' {
+            &line[20..]
+        } else {
+            line
+        }
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut iter = text.lines().peekable();
+    while let Some(line) = iter.next() {
+        let mut count = 1u32;
+        while iter.peek().map(|n| body(n) == body(line)).unwrap_or(false) {
+            iter.next();
+            count += 1;
+        }
+        out.push_str(line);
+        out.push('\n');
+        if count > 1 {
+            out.push_str(&format!("[^^ x{count}]\n"));
+        }
+    }
+    out
+}
+
+/// The node's own log (collapsed) plus the app's event log, for Settings → Logs.
+/// Read-only, so it never hangs on a busy node.
 #[tauri::command]
 async fn node_logs() -> NodeLogsDto {
     tauri::async_runtime::spawn_blocking(|| {
         let dir = config::dd69_datadir();
-        NodeLogsDto {
-            debug_tail: tail_file(&dir.join("debug.log"), 60_000),
-            spawn_tail: tail_file(&dir.join("dd69-spawn.log"), 20_000),
-        }
+        let raw = tail_file(&dir.join("debug.log"), 60_000);
+        let app_log = applog::entries()
+            .into_iter()
+            .map(|e| AppLogDto { ts_ms: e.ts_ms, msg: e.msg, count: e.count })
+            .collect();
+        NodeLogsDto { node_log: collapse_lines(&raw), app_log }
     })
     .await
-    .unwrap_or(NodeLogsDto { debug_tail: String::new(), spawn_tail: String::new() })
+    .unwrap_or(NodeLogsDto { node_log: String::new(), app_log: Vec::new() })
 }
 
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
@@ -2004,9 +2043,15 @@ fn main() {
             // opens immediately and the UI shows sync progress via node_status.
             // Idempotent, so on later launches this is a near-instant no-op.
             tauri::async_runtime::spawn_blocking(|| {
-                let _ = dd69_supervisor::install::first_run_bringup(|stage| {
+                applog::log("startup: app opened — bringing up the node");
+                let r = dd69_supervisor::install::first_run_bringup(|stage| {
                     println!("[bringup] {stage}");
+                    applog::log(format!("startup: {stage}"));
                 });
+                match &r {
+                    Ok(_) => applog::log("startup: node bring-up finished"),
+                    Err(e) => applog::log(format!("startup: node bring-up stopped — {e}")),
+                }
             });
             Ok(())
         })

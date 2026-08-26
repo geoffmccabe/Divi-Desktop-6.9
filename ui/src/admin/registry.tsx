@@ -7,7 +7,6 @@ import { PayoutPanel } from "./panels/PayoutPanel";
 import { AiPanel } from "./panels/AiPanel";
 import { ScreeningPanel } from "./panels/ScreeningPanel";
 import { MarketsPanel } from "./panels/MarketsPanel";
-import { LogsPanel } from "./panels/LogsPanel";
 import { ChainHealthPanel } from "../wallet/ChainHealthPanel";
 
 export interface AdminPanel {
@@ -29,5 +28,4 @@ export const ADMIN_PANELS: AdminPanel[] = [
   // not somewhere an ordinary user can trigger it repeatedly.
   { id: "chain", title: "Chain", render: () => <ChainHealthPanel /> },
   { id: "markets", title: "Markets", render: () => <MarketsPanel /> },
-  { id: "logs", title: "Logs", render: () => <LogsPanel /> },
 ];

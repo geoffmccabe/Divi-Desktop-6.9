@@ -24,10 +24,11 @@ export async function restartNode(): Promise<void> {
   if (inApp()) await invoke<void>("restart_node");
 }
 
-export type NodeLogs = { debugTail: string; spawnTail: string };
+export type AppLogEntry = { tsMs: number; msg: string; count: number };
+export type NodeLogs = { nodeLog: string; appLog: AppLogEntry[] };
 
-// The node's connecting/staking logs (tails of debug.log + spawn log).
+// The node's own log (collapsed) + the app's activity log, for Settings → Logs.
 export async function nodeLogs(): Promise<NodeLogs> {
   if (inApp()) return invoke<NodeLogs>("node_logs");
-  return { debugTail: "Not running inside the desktop app.", spawnTail: "" };
+  return { nodeLog: "Not running inside the desktop app.", appLog: [] };
 }
