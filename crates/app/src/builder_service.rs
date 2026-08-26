@@ -14,6 +14,22 @@
 //!   which is right for a machine that has the repo and wrong for a shipped
 //!   build. The candidate list below says exactly where it looked, so when it
 //!   cannot find them the panel can say so instead of showing a mystery.
+//!
+//! ## Whose key
+//!
+//! The Anthropic key belongs to the OPERATOR, set once in Admin → AI, and no
+//! user ever sees or supplies one — they pay in points instead. That is the
+//! whole commercial arrangement: we hold the account, they pay for what they
+//! use at a markup.
+//!
+//! An earlier version asked the person at the keyboard for a key in the App
+//! Builder panel itself. That was backwards twice over: it made every user do
+//! an operator's job, and anyone who complied would have paid Anthropic
+//! directly AND been charged points for the same work.
+//!
+//! So the key goes straight from the OS keychain, where the admin panel put it,
+//! into this child process's environment. It is never returned to the interface
+//! and never written to a file.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -121,6 +137,22 @@ pub fn start() {
         .current_dir(&dir)
         .env("BUILDER_WELCOME_POINTS", WELCOME_POINTS)
         .stdin(Stdio::null());
+
+    // The operator's key, from Admin → AI. Handed to the child process and
+    // nowhere else: not to the interface, not to a file.
+    match dd69_supervisor::security::ai_get("claude") {
+        Some(key) if !key.trim().is_empty() => {
+            cmd.env("ANTHROPIC_API_KEY", key.trim());
+        }
+        _ => {
+            *TROUBLE.lock().unwrap() = Some(
+                "No Anthropic key is set. Add one in the gear menu, AI tab, and the App Builder will work for everyone using this wallet."
+                    .into(),
+            );
+            // Still started: everything except building works, and the panel
+            // can then say exactly what is missing rather than nothing at all.
+        }
+    }
     if let (Some(out), Some(err)) = (out, err) {
         cmd.stdout(out).stderr(err);
     }
@@ -135,7 +167,9 @@ pub fn start() {
     match cmd.spawn() {
         Ok(c) => {
             *child = Some(c);
-            *TROUBLE.lock().unwrap() = None;
+            // A missing key is recorded above and must survive a successful
+            // start, because the service runs fine without one — it just
+            // cannot build anything.
         }
         Err(e) => {
             *TROUBLE.lock().unwrap() = Some(format!("The App Builder service would not start: {e}"));
@@ -155,6 +189,8 @@ pub fn stop() {
 pub struct BuilderServiceStatus {
     /// We started it and it has not exited.
     pub running: bool,
+    /// An operator key is configured, so building is possible.
+    pub key_set: bool,
     /// A sentence for the panel when it is not running, otherwise null.
     pub trouble: Option<String>,
     /// Where its output goes, so a problem can actually be looked at.
@@ -168,9 +204,14 @@ pub fn builder_service_status() -> BuilderServiceStatus {
         Some(c) => matches!(c.try_wait(), Ok(None)),
         None => false,
     };
+    let key_set = dd69_supervisor::security::ai_get("claude")
+        .is_some_and(|k| !k.trim().is_empty());
     BuilderServiceStatus {
         running,
-        trouble: if running { None } else { TROUBLE.lock().unwrap().clone() },
+        key_set,
+        // A missing key is worth saying even when the service is up, because it
+        // is the one thing stopping anything being built.
+        trouble: if running && key_set { None } else { TROUBLE.lock().unwrap().clone() },
         log: dd69_supervisor::config::dd69_datadir()
             .join("app-builder.log")
             .display()

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { aiStatus, aiSetKey, aiClearKey, type AiStatus } from "../../wallet/api";
+import { restartService } from "../../builder/api";
 
 // Admin → AI. Wires the LLMs that power each node's agent.
 //
@@ -25,11 +26,20 @@ function KeyRow({ label, provider, hint, set, onChanged }: KeyRowProps) {
   const [val, setVal] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // The App Builder's service reads the Claude key from the keychain when it
+  // starts, so a key saved after it started would not be seen until the wallet
+  // was reopened. Restarting it here means saving a key just works.
+  const refreshBuilder = async () => {
+    if (provider !== "claude") return;
+    await restartService().catch(() => {});
+  };
+
   const save = async () => {
     setBusy(true);
     try {
       await aiSetKey(provider, val.trim());
       setVal("");
+      await refreshBuilder();
       onChanged();
     } finally {
       setBusy(false);
@@ -39,6 +49,7 @@ function KeyRow({ label, provider, hint, set, onChanged }: KeyRowProps) {
     setBusy(true);
     try {
       await aiClearKey(provider);
+      await refreshBuilder();
       onChanged();
     } finally {
       setBusy(false);
@@ -116,6 +127,12 @@ export function AiPanel() {
         set={!!status?.claude}
         onChanged={refresh}
       />
+      <p className="wl-note ai-security">
+        This key also powers the <strong>App Builder</strong>. It is yours, set
+        once, here: the people building apps never see it and are never asked for
+        one — they pay in points for what they use. Saving a key here starts the
+        builder using it straight away.
+      </p>
       <KeyRow
         label="xAI (Grok)"
         provider="grok"

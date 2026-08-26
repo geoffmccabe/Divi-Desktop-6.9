@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./builder.css";
 import {
-  builderUrl, setBuilderUrl, health, setKey,
+  builderUrl, setBuilderUrl, health,
   createProject, listProjects, openProject, deleteProject,
   sendMessage, readFile, checkProject, serviceStatus, restartService,
   type Account, type BuilderFile, type CheckFinding, type Health,
@@ -119,7 +119,10 @@ export function BuilderPanel() {
     const message = draft.trim();
     if (!message || !open || busy) return;
     if (!probe.health?.keyConfigured) {
-      setLines((l) => [...l, { kind: "err", text: "Add an Anthropic key above before building." }]);
+      setLines((l) => [
+        ...l,
+        { kind: "err", text: "The App Builder is not set up on this wallet yet, so nothing can be built." },
+      ]);
       return;
     }
     setDraft("");
@@ -152,10 +155,12 @@ export function BuilderPanel() {
   }
   if (probe.state === "down") return <Offline error={probe.error} onRetry={probeService} />;
 
-  // The AI key is needed to BUILD, not to look. Blocking the whole panel on it
-  // hid every saved app behind a password box, which flatly contradicts telling
-  // someone their work is safe on disk. It is a banner now, and only sending is
-  // held back.
+  // The Anthropic key belongs to whoever runs this wallet, set once in the gear
+  // menu under AI. A user never sees it and never supplies one — they pay in
+  // points instead, which is the whole arrangement. An earlier version asked the
+  // person at the keyboard for a key here, which made every user do an
+  // operator's job and would have had anyone who complied paying Anthropic
+  // directly AND being charged points for the same work.
   const needsKey = !probe.health?.keyConfigured;
 
   return (
@@ -189,7 +194,7 @@ export function BuilderPanel() {
         )}
       </div>
 
-      {needsKey && <KeyBox onSaved={probeService} />}
+      {needsKey && <NotSetUp />}
 
       {!open ? (
         <ProjectList projects={projects} onStart={start} onOpen={resume} onDelete={async (id) => {
@@ -219,7 +224,7 @@ export function BuilderPanel() {
                 type="button"
                 className="wl-btn wl-btn-primary"
                 disabled={busy || needsKey || !draft.trim()}
-                title={needsKey ? "Add an Anthropic key above before building" : undefined}
+                title={needsKey ? "The App Builder is not set up on this wallet yet" : undefined}
                 onClick={send}
               >
                 Send
@@ -348,47 +353,22 @@ function FileView({ file, onClose }: { file: { path: string; text: string }; onC
   );
 }
 
-function KeyBox({ onSaved }: { onSaved: () => void }) {
-  const [key, setKey_] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await setKey(key.trim());
-      setKey_("");
-      onSaved();
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+/**
+ * Shown when no model key is configured on this wallet.
+ *
+ * Deliberately NOT a place to enter one. This is the operator's job, done once
+ * in the gear menu, and putting a key box in front of a user would invite them
+ * to pay Anthropic themselves on top of the points they are already spending.
+ */
+function NotSetUp() {
   return (
     <div className="bd-offline bd-keybox">
-      <h3>Add an Anthropic key to build</h3>
+      <h3>The App Builder is not switched on yet</h3>
       <p className="bd-note">
-        Once each time the builder service is started. The key is kept in memory,
-        never written to a file, and never sent anywhere except Anthropic. Your
-        saved apps are listed below either way.
+        Whoever runs this wallet needs to add an AI key once, in the gear menu
+        under AI. Until then nothing can be built. Everything else here works,
+        and any apps you have already made are listed below.
       </p>
-      <div className="bd-bar bd-bar-plain">
-        <input
-          className="wl-input"
-          type="password"
-          placeholder="sk-ant-..."
-          value={key}
-          onChange={(e) => setKey_(e.target.value)}
-          spellCheck={false}
-          autoComplete="off"
-          aria-label="Anthropic key"
-        />
-        <button type="button" className="wl-btn wl-btn-primary" disabled={busy || key.trim().length < 20} onClick={save}>
-          Save
-        </button>
-      </div>
-      {err && <p className="bd-note bd-bad bd-note-gap">{err}</p>}
     </div>
   );
 }
