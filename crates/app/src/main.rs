@@ -1281,6 +1281,50 @@ async fn restart_node() -> Result<(), String> {
     .map_err(|_| "internal error".to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeLogsDto {
+    debug_tail: String,
+    spawn_tail: String,
+}
+
+/// Read the tail of a possibly-huge log file without loading it all into memory.
+fn tail_file(path: &std::path::Path, max_bytes: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => return format!("(couldn't open {}: {e})", path.display()),
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(max_bytes);
+    let _ = f.seek(SeekFrom::Start(start));
+    let mut buf = String::new();
+    let _ = f.take(max_bytes).read_to_string(&mut buf);
+    // Drop the partial first line when we seeked into the middle.
+    if start > 0 {
+        if let Some(i) = buf.find('\n') {
+            buf = buf[i + 1..].to_string();
+        }
+    }
+    buf
+}
+
+/// The node's connecting/staking logs for the admin Logs panel — the tail of the
+/// node's own debug.log plus DD69's spawn log. Read-only file reads, so it never
+/// hangs on a busy node.
+#[tauri::command]
+async fn node_logs() -> NodeLogsDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let dir = config::dd69_datadir();
+        NodeLogsDto {
+            debug_tail: tail_file(&dir.join("debug.log"), 60_000),
+            spawn_tail: tail_file(&dir.join("dd69-spawn.log"), 20_000),
+        }
+    })
+    .await
+    .unwrap_or(NodeLogsDto { debug_tail: String::new(), spawn_tail: String::new() })
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -2059,6 +2103,7 @@ fn main() {
             mm_stop,
             mm_status,
             restart_node,
+            node_logs,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,

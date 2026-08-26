@@ -23,3 +23,11 @@ export async function nodeStatus(): Promise<NodeStatus> {
 export async function restartNode(): Promise<void> {
   if (inApp()) await invoke<void>("restart_node");
 }
+
+export type NodeLogs = { debugTail: string; spawnTail: string };
+
+// The node's connecting/staking logs (tails of debug.log + spawn log).
+export async function nodeLogs(): Promise<NodeLogs> {
+  if (inApp()) return invoke<NodeLogs>("node_logs");
+  return { debugTail: "Not running inside the desktop app.", spawnTail: "" };
+}

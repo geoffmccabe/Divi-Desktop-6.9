@@ -1,0 +1,23 @@
+/* Admin → Logs panel. Monospace, scrollable log boxes. Theme HSL vars. */
+
+.logs-actions { display: flex; align-items: center; gap: 14px; margin: 8px 0 4px; }
+.logs-auto { display: flex; align-items: center; gap: 5px; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+
+.logs-h { margin: 12px 0 4px; font-size: 0.82rem; color: hsl(var(--muted-foreground)); font-weight: 600; }
+
+.logs-box {
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: hsl(var(--primary) / 0.06);
+  border: 1px solid hsl(var(--border) / 0.5);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: hsl(var(--foreground));
+  user-select: text;
+}
