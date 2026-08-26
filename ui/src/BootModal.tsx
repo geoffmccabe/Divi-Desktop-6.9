@@ -50,6 +50,7 @@ export function BootModal() {
 
   useEffect(() => {
     let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
       let s: NodeStatus | null = null;
       try {
@@ -68,18 +69,22 @@ export function BootModal() {
           streak.current += 1;
         }
       }
-      // Once healthy, require a longer sustained outage before interrupting; during
-      // the very first boot, show sooner so there's immediate feedback.
-      const threshold = everReady.current ? 4 : 2;
       const ready = s ? READY.has(s.phase) : false;
-      const show = !ready && !dismissed.current && streak.current >= threshold;
+      const show = !ready && !dismissed.current && streak.current >= 2;
       if (show && !wasVisible.current) setShownSince(Date.now());
       wasVisible.current = show;
       setVisible(show);
     };
-    poll();
-    const id = setInterval(poll, 2000);
-    return () => { alive = false; clearInterval(id); };
+    // Poll quickly during the initial boot for responsiveness, then back right
+    // off once the node has been healthy — frequent polling piles up RPC
+    // connections and can wedge the node. Recursive timeout, not setInterval.
+    const loop = async () => {
+      await poll();
+      if (!alive) return;
+      timer = setTimeout(loop, everReady.current ? 15000 : 3000);
+    };
+    loop();
+    return () => { alive = false; clearTimeout(timer); };
   }, []);
 
   useEffect(() => {
