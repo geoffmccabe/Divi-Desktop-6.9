@@ -43,6 +43,7 @@ export function BuilderPanel() {
   const [viewing, setViewing] = useState<{ path: string; text: string } | null>(null);
   const [check, setCheck] = useState<{ summary: string; findings: CheckFinding[] } | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
+  const draftRef = useRef<HTMLTextAreaElement | null>(null);
 
   const probeService = useCallback(() => {
     setProbe({ state: "checking" });
@@ -79,6 +80,12 @@ export function BuilderPanel() {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [lines]);
 
+  // Put the cursor in the box the moment a project opens. Somebody who has just
+  // opened a build should be able to start typing, not go looking for where.
+  useEffect(() => {
+    if (open && !busy) draftRef.current?.focus();
+  }, [open, busy]);
+
   const start = async (name: string) => {
     const who = account || (await pointsAccount());
     const p = await createProject(who, name);
@@ -88,7 +95,12 @@ export function BuilderPanel() {
     // Spend is per open project. Left over, it would show the last project's
     // total against this one, which is a number about money being wrong.
     setSpend(null);
-    setLines([{ kind: "ai", text: "Ready. Describe the app you want and I will build it." }]);
+    setLines([
+      {
+        kind: "ai",
+        text: "Ready. Type what you want the app to do in the box at the bottom, and press Send.",
+      },
+    ]);
     void refreshProjects();
   };
 
@@ -103,7 +115,12 @@ export function BuilderPanel() {
     setLines(
       detail.history.length
         ? detail.history.flatMap(replayEntry)
-        : [{ kind: "ai" as const, text: "Nothing said yet. Describe the app you want." }],
+        : [
+            {
+              kind: "ai" as const,
+              text: "Nothing said yet. Type what you want the app to do in the box at the bottom.",
+            },
+          ],
     );
   };
 
@@ -210,26 +227,58 @@ export function BuilderPanel() {
               ))}
               {busy && <div className="bd-msg bd-msg-tool">Working…</div>}
             </div>
-            <div className="bd-compose">
-              <textarea
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); }
-                }}
-                placeholder="Describe the app, or the change you want next…"
-                disabled={busy}
-              />
-              <button
-                type="button"
-                className="wl-btn wl-btn-primary"
-                disabled={busy || needsKey || !draft.trim()}
-                title={needsKey ? "The App Builder is not set up on this wallet yet" : undefined}
-                onClick={send}
-              >
-                Send
-              </button>
-            </div>
+            {needsKey ? (
+              <div className="bd-blocked">
+                <p className="bd-note bd-bad">
+                  Nothing can be built until this wallet has an AI key. Your
+                  points are safe and your apps are saved — this is a one-time
+                  setup, and it is not something you buy.
+                </p>
+                <button
+                  type="button"
+                  className="wl-btn wl-btn-primary"
+                  onClick={() =>
+                    window.dispatchEvent(new CustomEvent("dd69:openadmin", { detail: "ai" }))
+                  }
+                >
+                  Open AI settings
+                </button>
+              </div>
+            ) : (
+              <div className="bd-compose">
+                <label className="bd-compose-label" htmlFor="bd-draft">
+                  What should it do?
+                </label>
+                <div className="bd-compose-row">
+                  <textarea
+                    id="bd-draft"
+                    ref={draftRef}
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      // Enter sends, Shift+Enter makes a new line. That is what
+                      // people expect from a chat box, and the old Cmd+Enter was
+                      // a secret.
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void send();
+                      }
+                    }}
+                    placeholder="e.g. A dice game where I bet DIVI against the house"
+                    disabled={busy}
+                  />
+                  <button
+                    type="button"
+                    className="wl-btn wl-btn-primary"
+                    disabled={busy || !draft.trim()}
+                    onClick={send}
+                  >
+                    Send
+                  </button>
+                </div>
+                <p className="bd-compose-hint">Enter to send · Shift+Enter for a new line</p>
+              </div>
+            )}
           </div>
 
           <div className="bd-files">

@@ -3,8 +3,19 @@ import { ADMIN_PANELS } from "./registry";
 
 // A right-side frosted drawer that hosts the registered admin panels. With one
 // panel it just shows it; with several it shows a tab row — no code change.
-export function AdminOverlay({ onClose }: { onClose: () => void }) {
-  const [activeId, setActiveId] = useState(ADMIN_PANELS[0].id);
+export function AdminOverlay({
+  onClose,
+  initialPanel,
+}: {
+  onClose: () => void;
+  /** Open straight to this panel, when something sent the person here for it. */
+  initialPanel?: string;
+}) {
+  const [activeId, setActiveId] = useState(
+    initialPanel && ADMIN_PANELS.some((p) => p.id === initialPanel)
+      ? initialPanel
+      : ADMIN_PANELS[0].id,
+  );
   const active = ADMIN_PANELS.find((p) => p.id === activeId) ?? ADMIN_PANELS[0];
   const dim = active.dim !== false;
 

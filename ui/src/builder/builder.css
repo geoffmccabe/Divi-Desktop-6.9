@@ -80,15 +80,25 @@
 .bd-msg-cost { font-size: 0.72rem; padding-left: 4px; color: hsl(var(--foreground) / 0.5); }
 
 .bd-compose {
-  display: flex; gap: 8px; padding: 10px;
-  border-top: 1px solid hsl(var(--subpanel-outline-color));
+  display: grid; gap: 6px; padding: 10px;
+  border-top: 1px solid hsl(var(--foreground) / 0.12);
 }
+.bd-compose-row { display: flex; gap: 8px; }
+/* Labelled, because an unlabelled box below a wall of chat is not obviously
+   the place to type — somebody tried to type into the transcript instead. */
+.bd-compose-label {
+  font-size: 0.75rem; font-weight: 600;
+  color: hsl(var(--foreground) / 0.6);
+}
+.bd-compose-hint { margin: 0; font-size: 0.7rem; color: hsl(var(--foreground) / 0.4); }
 .bd-compose textarea {
   flex: 1; resize: none; min-height: 54px; padding: 8px 10px;
   font: inherit; font-size: 0.85rem;
   color: hsl(var(--foreground));
   background: hsl(var(--background) / 0.5);
-  border: 1px solid hsl(var(--subpanel-outline-color));
+  /* An explicit edge: the sub-panel outline is often set to zero width, which
+     left this looking like part of the background rather than an input. */
+  border: 1px solid hsl(var(--foreground) / 0.22);
   border-radius: calc(var(--app-card-radius) * 0.6);
 }
 
@@ -165,3 +175,21 @@
 .bd-details { margin-top: 14px; font-size: 0.8rem; color: hsl(var(--foreground) / 0.55); }
 .bd-details summary { cursor: pointer; }
 .bd-details .bd-bar { margin-top: 10px; }
+
+/* When building is blocked, the compose box is REPLACED by the reason and a way
+   to fix it. A greyed-out Send button with a tooltip nobody hovers is not an
+   explanation — somebody sat there with 20,000 points wondering why it would
+   not click. */
+.bd-blocked {
+  display: grid; gap: 10px; justify-items: start;
+  padding: 12px;
+  border-top: 1px solid hsl(var(--foreground) / 0.12);
+}
+.bd-blocked .bd-note { margin: 0; }
+
+/* A visible focus ring, so it is obvious where typing will go. */
+.bd-compose textarea:focus {
+  outline: none;
+  border-color: hsl(var(--primary) / 0.7);
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.2);
+}
