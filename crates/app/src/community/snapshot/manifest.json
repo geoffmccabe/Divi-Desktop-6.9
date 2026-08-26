@@ -3,11 +3,24 @@
   "id": "io.divi.snapshot",
   "name": "Wallet Snapshot",
   "version": "1.0.0",
-  "author": { "name": "Divi Desktop", "address": "DNx1cSCMXg73Efg1NFFYuoRvRg5ThmNfHF" },
+  "author": {
+    "name": "Divi Desktop",
+    "address": "DNx1cSCMXg73Efg1NFFYuoRvRg5ThmNfHF"
+  },
   "description": "Your balance and the state of the chain, at a glance.",
-  "permissions": ["balance.read", "chain.read"],
+  "permissions": [
+    "balance.read",
+    "chain.read",
+    "price.read"
+  ],
   "network": [],
-  "display": { "immersive": "on-demand" },
-  "media": { "thumbnail": "thumb.svg" },
-  "price": { "model": "free" }
+  "display": {
+    "immersive": "on-demand"
+  },
+  "media": {
+    "thumbnail": "thumb.svg"
+  },
+  "price": {
+    "model": "free"
+  }
 }

@@ -19,6 +19,11 @@ export type PermissionKey =
   | "tokens.read"
   | "network.read"
   | "chain.read"
+  | "price.read"
+  | "names.read"
+  | "lookup.read"
+  | "mempool.read"
+  | "poe.verify"
   | "storage"
   | "payment.request"
   | "network"
@@ -84,6 +89,40 @@ export const PERMISSIONS: PermissionDef[] = [
     key: "chain.read",
     label: "See recent blocks and chain status",
     detail: "Block height, recent blocks and whether the wallet is in sync.",
+    kind: "read",
+  },
+  {
+    key: "price.read",
+    label: "See what DIVI is worth",
+    detail:
+      "The DIVI price in the currencies this wallet is set up for. Nothing about you.",
+    kind: "read",
+  },
+  {
+    key: "names.read",
+    label: "Look up Divi Names",
+    detail:
+      "Turn a name into an address and back, and see which names are for sale. Public information.",
+    kind: "read",
+  },
+  {
+    key: "lookup.read",
+    label: "Look up public addresses and payments",
+    detail:
+      "Check an address is valid, see any public address's balance, make a QR code, and follow a payment until it confirms.",
+    kind: "read",
+  },
+  {
+    key: "mempool.read",
+    label: "See payments waiting to confirm",
+    detail: "The network's queue of unconfirmed transactions. Public information.",
+    kind: "read",
+  },
+  {
+    key: "poe.verify",
+    label: "Check a Proof of Existence",
+    detail:
+      "Confirm that a file's fingerprint was put on the chain, and when. Reading only; it cannot stamp anything.",
     kind: "read",
   },
   {

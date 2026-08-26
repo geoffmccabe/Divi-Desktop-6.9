@@ -49,6 +49,36 @@ export const CAPABILITIES = [
     note: "The same peer information the wallet already shows publicly.",
   },
   {
+    call: "await divi.price()",
+    permission: "price.read",
+    returns: "{ prices: { usd: 0.0013, ... }, source, available }",
+    note: "The currencies this wallet is set up for. `available: false` means there is no price right now — show that rather than a zero.",
+  },
+  {
+    call: "await divi.names.resolve(name) / .reverse(address) / .market() / .quote(name)",
+    permission: "names.read",
+    returns: "an address, a name, the names for sale, or what a name would cost",
+    note: "Divi Names. resolve turns \"geoff.divi\" into an address; reverse does the opposite. Both return null when there is no match, which is normal.",
+  },
+  {
+    call: "await divi.lookup.validate(a) / .balance(a) / .qr(a) / .payment(txid)",
+    permission: "lookup.read",
+    returns: "true or false, a public balance, a QR image, or { confirmations }",
+    note: "Works on ANY public address, not just the user's. Use validate before showing an address anywhere. payment() is how you watch for a payment you asked for to confirm.",
+  },
+  {
+    call: "await divi.mempool()",
+    permission: "mempool.read",
+    returns: "{ tip, waiting }",
+    note: "How many transactions are queued network-wide, and the current block height.",
+  },
+  {
+    call: "await divi.verifyProof(txid, hash)",
+    permission: "poe.verify",
+    returns: "the proof, if that fingerprint really was put on the chain",
+    note: "Checking only. An app cannot stamp anything: that spends money, so only the wallet does it.",
+  },
+  {
     call: "await divi.storage.get(key) / .set(key, value) / .remove(key) / .keys() / .clear()",
     permission: "storage",
     returns: "the stored value, or a confirmation",

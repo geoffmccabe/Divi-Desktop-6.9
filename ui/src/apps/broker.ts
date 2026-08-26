@@ -20,6 +20,9 @@
 import {
   walletBalance, walletAddresses, listTransactions, recentBlocks,
   networkPeers, stakingWallets, lotteryInfo, nodeStatusSafe,
+  validateAddress, addressBalance, addressQr, mempoolSnapshot, poeVerify,
+  hraResolve, hraReverse, hraMarket, hraQuote,
+  diviPriceSafe, paymentProgress,
 } from "./hostApi";
 import { permission, type PermissionKey } from "./permissions";
 import type { AppManifest } from "./manifest";
@@ -52,6 +55,11 @@ const RATE_LIMITS: Record<string, number> = {
   "tokens.read": 30,
   "network.read": 20,
   "chain.read": 60,
+  "price.read": 30,
+  "names.read": 30,
+  "lookup.read": 40,
+  "mempool.read": 20,
+  "poe.verify": 20,
   storage: 120,
   "payment.request": 6,
   "clipboard.write": 20,
@@ -118,6 +126,88 @@ const HANDLERS: Record<PermissionKey, Handler> = {
     const count = clampInt(p.blocks, 1, 20, 5);
     return { status: await nodeStatusSafe(), blocks: await recentBlocks(count) };
   },
+  // ---- Things an app would otherwise have to build for itself ----
+  //
+  // Each of these is one call the developer does not have to write, and one
+  // fewer place for an app to get a public fact wrong. They are grouped as
+  // operations under one permission rather than a permission each, because an
+  // app may only ask for eight and a long permission list makes people refuse
+  // the whole thing.
+
+  "price.read": async () => diviPriceSafe(),
+
+  "names.read": async (params) => {
+    const p = (params ?? {}) as { op?: string; name?: unknown; address?: unknown };
+    switch (p.op) {
+      case "resolve": {
+        const name = text(p.name, 96);
+        if (!name) throw new BrokerDenied("a name is required");
+        return { address: await hraResolve(name) };
+      }
+      case "reverse": {
+        const address = text(p.address, 96);
+        if (!address) throw new BrokerDenied("an address is required");
+        return { name: await hraReverse(address) };
+      }
+      case "market":
+        return { listings: await hraMarket() };
+      case "quote": {
+        const name = text(p.name, 96);
+        if (!name) throw new BrokerDenied("a name is required");
+        return await hraQuote(name);
+      }
+      default:
+        throw new BrokerDenied("names op must be resolve, reverse, market or quote");
+    }
+  },
+
+  "lookup.read": async (params) => {
+    const p = (params ?? {}) as { op?: string; address?: unknown; txid?: unknown };
+    switch (p.op) {
+      case "validate": {
+        const address = text(p.address, 96);
+        if (!address) throw new BrokerDenied("an address is required");
+        return { valid: await validateAddress(address) };
+      }
+      case "balance": {
+        const address = text(p.address, 96);
+        if (!address) throw new BrokerDenied("an address is required");
+        if (!(await validateAddress(address))) throw new BrokerDenied("that is not a Divi address");
+        return await addressBalance(address);
+      }
+      case "qr": {
+        const address = text(p.address, 96);
+        if (!address) throw new BrokerDenied("an address is required");
+        if (!(await validateAddress(address))) throw new BrokerDenied("that is not a Divi address");
+        return { image: await addressQr(address) };
+      }
+      case "payment": {
+        const txid = text(p.txid, 64);
+        if (!/^[0-9a-fA-F]{64}$/.test(txid)) throw new BrokerDenied("that is not a transaction id");
+        return await paymentProgress(txid);
+      }
+      default:
+        throw new BrokerDenied("lookup op must be validate, balance, qr or payment");
+    }
+  },
+
+  "mempool.read": async () => {
+    const snap = await mempoolSnapshot([]);
+    if (!snap) return null;
+    // Narrowed: an app gets the size of the queue and the tip, not a decoded
+    // list of everything strangers are doing right now.
+    return { tip: snap.tip, waiting: snap.entries.length };
+  },
+
+  "poe.verify": async (params) => {
+    const p = (params ?? {}) as { txid?: unknown; hash?: unknown };
+    const txid = text(p.txid, 64);
+    const hash = text(p.hash, 128);
+    if (!/^[0-9a-fA-F]{64}$/.test(txid)) throw new BrokerDenied("that is not a transaction id");
+    if (!/^[0-9a-fA-F]{16,128}$/.test(hash)) throw new BrokerDenied("that is not a fingerprint");
+    return await poeVerify(txid, hash);
+  },
+
   storage: async (params, ctx) => {
     const p = (params ?? {}) as { op?: string; key?: string; value?: unknown };
     return appStorage(ctx.manifest.id).handle(p);
@@ -154,6 +244,11 @@ const HANDLERS: Record<PermissionKey, Handler> = {
 };
 
 export class BrokerDenied extends Error {}
+
+/** A trimmed, length-capped string, or "" if it was not one. */
+function text(v: unknown, max: number): string {
+  return typeof v === "string" ? v.trim().slice(0, max) : "";
+}
 
 function clampInt(v: unknown, min: number, max: number, dflt: number): number {
   if (typeof v !== "number" || !Number.isFinite(v)) return dflt;

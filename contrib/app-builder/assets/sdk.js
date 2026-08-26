@@ -56,6 +56,23 @@
       keys: () => request("storage", { op: "keys" }).then((r) => r.keys),
       clear: () => request("storage", { op: "clear" }),
     },
+    // ---- Public facts the wallet already knows, so an app never has to ----
+    price: () => request("price.read"),
+    names: {
+      resolve: (name) => request("names.read", { op: "resolve", name }).then((r) => r.address),
+      reverse: (address) => request("names.read", { op: "reverse", address }).then((r) => r.name),
+      market: () => request("names.read", { op: "market" }).then((r) => r.listings),
+      quote: (name) => request("names.read", { op: "quote", name }),
+    },
+    lookup: {
+      validate: (address) => request("lookup.read", { op: "validate", address }).then((r) => r.valid),
+      balance: (address) => request("lookup.read", { op: "balance", address }),
+      qr: (address) => request("lookup.read", { op: "qr", address }).then((r) => r.image),
+      payment: (txid) => request("lookup.read", { op: "payment", txid }),
+    },
+    mempool: () => request("mempool.read"),
+    verifyProof: (txid, hash) => request("poe.verify", { txid, hash }),
+
     requestPayment: (amount, reason) =>
       request("payment.request", { amount, reason }).then((r) => r.paid),
     copy: (text) => request("clipboard.write", { text }),

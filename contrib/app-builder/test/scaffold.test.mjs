@@ -90,14 +90,16 @@ test("the styling brief forbids the one thing that breaks skins", () => {
   assert.match(brief, /hsl\(var\(--foreground\)\)/);
 });
 
-test("the model is only told about capabilities that actually work", () => {
+test("the model is only told about capabilities that actually work", async () => {
   const brief = capabilityBrief();
-  // Everything offered must be a permission the broker will honour.
-  const known = new Set([
-    "balance.read", "addresses.read", "history.read", "staking.read", "collectibles.read",
-    "tokens.read", "network.read", "chain.read", "storage", "payment.request", "network",
-    "clipboard.write", "notify",
-  ]);
+  // Read the wallet's OWN permission table rather than a list typed out here:
+  // a list typed out here is the drift this test exists to catch.
+  const perms = await fs.readFile(
+    path.join(SDK_PATH, "..", "..", "..", "..", "ui", "src", "apps", "permissions.ts"),
+    "utf8",
+  );
+  const known = new Set([...perms.matchAll(/key:\s*"([a-z.]+)"/g)].map((m) => m[1]));
+  assert.ok(known.size > 10, "the permission table should have been read");
   for (const c of CAPABILITIES) {
     assert.ok(known.has(c.permission), `${c.permission} is not a permission the wallet has`);
   }

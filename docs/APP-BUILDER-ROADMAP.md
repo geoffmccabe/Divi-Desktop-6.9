@@ -197,13 +197,41 @@ build should say what it cost before stopping.
 The point of this list: a developer should never write code for something the
 wallet already knows. Every item is a "nugget" — one call, no plumbing.
 
-### Available today (10)
+### Available today (15) — five of these landed 2026-Aug-26
 
-`divi.balance()` · `divi.addresses()` · `divi.history()` · `divi.staking()` ·
-`divi.chain()` · `divi.network()` · `divi.storage` · `divi.requestPayment()` ·
-`divi.copy()` · `divi.notify()`
+**About the person**, with their permission:
+`divi.balance()` · `divi.addresses()` · `divi.history()` · `divi.staking()`
 
-### Already built in the wallet, needs only to be exposed — the cheap wins
+**Public facts the wallet already knows**, so an app never writes this itself:
+`divi.price()` — DIVI in the wallet's own currencies, from the wallet's own
+source. An app is never handed the key and never picks the source, so it cannot
+quietly price DIVI off somewhere four times cheaper.
+`divi.names.resolve() / .reverse() / .market() / .quote()` — Divi Names.
+`divi.lookup.validate() / .balance() / .qr() / .payment()` — any public address,
+and following a payment until it confirms.
+`divi.chain()` · `divi.network()` · `divi.mempool()` · `divi.verifyProof()`
+
+**Doing things:** `divi.storage` · `divi.requestPayment()` · `divi.copy()` ·
+`divi.notify()`
+
+Thirteen calls were added under **five** permissions rather than thirteen, on
+purpose: an app may ask for at most eight, and a long permission list makes
+people refuse the whole thing.
+
+Two were deliberately narrowed on the way through:
+- **Following a payment** reports the confirmation count and nothing else. The
+  wallet's own version also gives the amount and whether it was sent or
+  received, which would let an app probe transaction ids to learn which ones
+  belong to this person.
+- **The mempool** gives the size of the queue and the height, not a decoded list
+  of everything strangers are doing right now.
+
+And one was dropped rather than shipped: **the node map**. The call behind it
+returns this machine's own node list, which can hold private hostnames and
+credentials for a personal node. Exposing peers is fine and already done;
+exposing that list is not. It needs its own narrowed version first.
+
+### Still only exposed to the wallet, not to apps
 
 | Call | What it gives | Already exists as |
 |---|---|---|
@@ -224,8 +252,13 @@ wallet already knows. Every item is a "nugget" — one call, no plumbing.
 | `divi.payreq.create()` | make a payment request others can pay | `payment_request_create` |
 | `divi.payreq.inbox()` | requests sent to you | `payment_requests_inbox` |
 
-Sixteen capabilities for roughly a line of plumbing each. This is the highest
-value-per-hour work in the whole project.
+Most of that list is now done, in one afternoon. What remains here is the part
+that needs a confirmation step or a narrowing pass first, below.
+
+The built-in Wallet Snapshot now shows what your balance is worth, which is not
+decoration: it is the only way to prove the new plumbing works inside the real
+wallet. A browser test cannot reproduce that environment, and the last time I
+assumed it could, every app silently failed to load its own code.
 
 ### Built, but needs a confirmation step before an app can touch it
 
