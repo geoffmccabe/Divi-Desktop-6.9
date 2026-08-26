@@ -17,10 +17,18 @@
 //!
 //! ## Whose key
 //!
-//! The Anthropic key belongs to the OPERATOR, set once in Admin → AI, and no
-//! user ever sees or supplies one — they pay in points instead. That is the
-//! whole commercial arrangement: we hold the account, they pay for what they
-//! use at a markup.
+//! The model account belongs to the OPERATOR, and no user ever sees or supplies
+//! a key — they pay in points instead. That is the whole commercial
+//! arrangement: we hold the account, they pay for what they use at a markup.
+//!
+//! There are two ways to satisfy that, and the FIRST is preferred:
+//!
+//! 1. **The AI Gateway.** The key stays on the server; this passes a gateway
+//!    token instead. That token is scoped to one service, can be revoked on its
+//!    own, and losing it hands nobody an Anthropic account. It is also the only
+//!    arrangement that works once other people are using this, because a
+//!    desktop app cannot keep a shared secret.
+//! 2. **A direct key**, from Admin → AI, for a machine with no gateway.
 //!
 //! An earlier version asked the person at the keyboard for a key in the App
 //! Builder panel itself. That was backwards twice over: it made every user do
@@ -34,6 +42,30 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+
+/// How this wallet reaches a model, in order of preference.
+enum ModelAccess {
+    /// The key stays on a server we run; this holds only a revocable token.
+    Gateway { url: String, token: String },
+    /// A key on this machine. Fine for one operator, wrong for many users.
+    DirectKey(String),
+    None,
+}
+
+fn model_access() -> ModelAccess {
+    let get = |name: &str| {
+        dd69_supervisor::security::ai_get(name)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    if let (Some(url), Some(token)) = (get("gateway"), get("gateway_token")) {
+        return ModelAccess::Gateway { url, token };
+    }
+    match get("claude") {
+        Some(key) => ModelAccess::DirectKey(key),
+        None => ModelAccess::None,
+    }
+}
 
 /// The running service, if we started one. Held so it can be stopped again.
 static CHILD: Mutex<Option<Child>> = Mutex::new(None);
@@ -138,15 +170,21 @@ pub fn start() {
         .env("BUILDER_WELCOME_POINTS", WELCOME_POINTS)
         .stdin(Stdio::null());
 
-    // The operator's key, from Admin → AI. Handed to the child process and
-    // nowhere else: not to the interface, not to a file.
-    match dd69_supervisor::security::ai_get("claude") {
-        Some(key) if !key.trim().is_empty() => {
-            cmd.env("ANTHROPIC_API_KEY", key.trim());
+    // How this wallet reaches a model. Configured in Admin → AI, handed to the
+    // child process and nowhere else: not to the interface, not to a file.
+    match model_access() {
+        ModelAccess::Gateway { url, token } => {
+            cmd.env("BUILDER_PROVIDER", "gateway")
+                .env("BUILDER_BASE_URL", url)
+                .env("BUILDER_GATEWAY_TOKEN", token);
         }
-        _ => {
+        ModelAccess::DirectKey(key) => {
+            cmd.env("BUILDER_PROVIDER", "anthropic")
+                .env("ANTHROPIC_API_KEY", key);
+        }
+        ModelAccess::None => {
             *TROUBLE.lock().unwrap() = Some(
-                "No Anthropic key is set. Add one in the gear menu, AI tab, and the App Builder will work for everyone using this wallet."
+                "This wallet has no way to reach an AI yet. Add a Gateway, or an Anthropic key, in the gear menu under AI."
                     .into(),
             );
             // Still started: everything except building works, and the panel
@@ -204,8 +242,7 @@ pub fn builder_service_status() -> BuilderServiceStatus {
         Some(c) => matches!(c.try_wait(), Ok(None)),
         None => false,
     };
-    let key_set = dd69_supervisor::security::ai_get("claude")
-        .is_some_and(|k| !k.trim().is_empty());
+    let key_set = !matches!(model_access(), ModelAccess::None);
     BuilderServiceStatus {
         running,
         key_set,

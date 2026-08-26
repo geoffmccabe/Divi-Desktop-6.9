@@ -4,14 +4,18 @@
 // So nothing above this file knows which provider is in use: the agent loop sees
 // one normalised shape, and adding a provider is a new adapter here.
 //
-// WHY NOT ROUTE THROUGH ai.divi.love:
-// The existing gateway is a text proxy. Its chat endpoint takes messages and
-// returns a string, which is exactly right for the wallet's chat agent but
-// cannot carry tool calls, and an agent that writes files is nothing but tool
-// calls. Extending the gateway to pass the full message shape through is a
-// reasonable future move; until then the builder holds its own credentials.
-// That is safe for the same reason the gateway exists: the builder is a server,
-// not a desktop app, so a key here is not extractable by users.
+// ROUTING THROUGH ai.divi.love:
+// The gateway's /v1/chat takes messages and returns a string — right for the
+// wallet's chat agent, useless here, because an agent that writes files is
+// nothing but tool calls and a string cannot carry one. So the gateway gained
+// /v1/messages, which forwards an Anthropic Messages request unchanged and
+// returns it unchanged (see ../gateway/messages-passthrough.py).
+//
+// That is the arrangement that actually makes sense: the KEY STAYS ON THE
+// SERVER. The alternative is asking every user for an Anthropic key of their
+// own, which is both absurd and the opposite of the deal — we hold the account,
+// they pay in points. A desktop app cannot keep a shared secret, so the gateway
+// is the only honest way one key serves everybody.
 //
 // Zero dependencies: Node's built-in fetch only.
 
@@ -189,6 +193,53 @@ async function safeText(res) {
 }
 
 /**
+ * The DD69 AI Gateway.
+ *
+ * Speaks the Anthropic Messages shape end to end, so the reply needs no
+ * translation and tool calls survive. What the caller holds is a gateway token,
+ * not a model key: it can be revoked on its own, it is scoped to this service,
+ * and losing it does not hand anybody an Anthropic account.
+ */
+export function gatewayAdapter({ baseUrl, token, fetchImpl = fetch }) {
+  if (!baseUrl) throw new ProviderError("the gateway needs a url");
+  if (!token) throw new ProviderError("the gateway needs a token");
+  const url = `${baseUrl.replace(/\/$/, "")}/v1/messages`;
+
+  return {
+    id: "gateway",
+    async send({ model, system, messages, tools, maxTokens = 16000, effort }) {
+      const res = await fetchImpl(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          messages,
+          ...(system ? { system } : {}),
+          ...(tools?.length ? { tools } : {}),
+          ...(effort ? { output_config: { effort } } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const detail = await safeText(res);
+        // A gateway that has not been taught /v1/messages yet says so in a way
+        // nobody would otherwise recognise, so name it.
+        if (res.status === 404) {
+          throw new ProviderError(
+            "this gateway does not have the /v1/messages endpoint yet, so it cannot carry tool calls",
+          );
+        }
+        throw new ProviderError(`gateway call failed (${res.status}): ${detail}`);
+      }
+      return normaliseAnthropic(await res.json());
+    },
+  };
+}
+
+/**
  * Build the adapter named by configuration.
  *
  * Adding a provider is an entry here plus a key. Nothing above this line changes,
@@ -200,6 +251,8 @@ export function makeProvider(config) {
       return anthropicAdapter(config);
     case "openai":
       return openAiAdapter(config);
+    case "gateway":
+      return gatewayAdapter(config);
     default:
       throw new ProviderError(`unknown provider "${config?.kind}"`);
   }

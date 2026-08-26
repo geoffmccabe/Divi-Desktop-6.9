@@ -115,6 +115,9 @@ export function loadConfig(env = process.env) {
       kind: env.BUILDER_PROVIDER ?? "anthropic",
       apiKey: env.ANTHROPIC_API_KEY,
       baseUrl: env.BUILDER_BASE_URL,
+      // Only the gateway uses this: it is a token for one service, not a model
+      // key, so it can be revoked on its own and is worth far less if lost.
+      token: env.BUILDER_GATEWAY_TOKEN,
     },
     /**
      * The DIVI price comes from CoinMarketCap and nowhere else. Standing order,
@@ -261,7 +264,7 @@ export function createServer(config = loadConfig()) {
           price: price.status(),
           // So the panel can say exactly what is missing rather than just
           // failing when the first message is sent.
-          keyConfigured: Boolean(config.provider.apiKey),
+          keyConfigured: Boolean(config.provider.apiKey || config.provider.token),
           // Whether the node's settings were FOUND, which is not the same as
           // the node answering: it may be reindexing or stopped. A payment
           // check that cannot reach it leaves the order open and says so, so

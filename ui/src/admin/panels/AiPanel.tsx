@@ -30,7 +30,7 @@ function KeyRow({ label, provider, hint, set, onChanged }: KeyRowProps) {
   // starts, so a key saved after it started would not be seen until the wallet
   // was reopened. Restarting it here means saving a key just works.
   const refreshBuilder = async () => {
-    if (provider !== "claude") return;
+    if (provider !== "claude" && provider !== "gateway_token") return;
     await restartService().catch(() => {});
   };
 
@@ -95,12 +95,14 @@ export function AiPanel() {
         setStatus(s);
         setGateway(s.gateway);
       })
-      .catch(() => setStatus({ claude: false, grok: false, gateway: "" }));
+      .catch(() => setStatus({ claude: false, grok: false, gatewayToken: false, gateway: "" }));
   };
   useEffect(refresh, []);
 
   const saveGateway = async () => {
     await aiSetKey("gateway", gateway.trim());
+    // The builder service reads this when it starts, so it needs to be told.
+    await restartService().catch(() => {});
     setSavedGateway(true);
     setTimeout(() => setSavedGateway(false), 1500);
     refresh();
@@ -143,10 +145,24 @@ export function AiPanel() {
 
       <h3 className="ai-section-head">DD69 AI Gateway (for all users + subscriptions)</h3>
       <p className="wl-note ai-security">
+        <strong>Prefer this for the App Builder.</strong> The key stays on your
+        server and this wallet holds only a token, which is scoped to that one
+        service and can be revoked on its own. That is also the only arrangement
+        that works once other people are building apps, because a desktop app
+        cannot keep a secret everybody shares.
+      </p>
+      <p className="wl-note ai-security">
         To let every DD69 user access the LLMs under a subscription, point them at a server you
         control. That server holds the real keys, checks each user's subscription, meters usage, and
         bills (DIVI / card / PayPal). This is the only safe way to share one key across users.
       </p>
+      <KeyRow
+        label="Gateway token"
+        provider="gateway_token"
+        hint="the token your gateway expects"
+        set={!!status?.gatewayToken}
+        onChanged={refresh}
+      />
       <label className="admin-field">
         <span>Gateway URL {savedGateway && <em className="ai-set">✓ saved</em>}</span>
         <div className="ai-key-row">

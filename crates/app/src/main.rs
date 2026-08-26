@@ -1132,10 +1132,13 @@ async fn ai_clear_key(provider: String) -> Result<(), String> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AiStatusDto {
     /// Whether each key is present — the values themselves are never returned.
     claude: bool,
     grok: bool,
+    /// A token for the gateway, which is not a model key.
+    gateway_token: bool,
     /// The gateway URL is not a secret, so it's safe to show.
     gateway: String,
 }
@@ -1146,10 +1149,16 @@ async fn ai_status() -> AiStatusDto {
     tauri::async_runtime::spawn_blocking(|| AiStatusDto {
         claude: security::ai_get("claude").is_some(),
         grok: security::ai_get("grok").is_some(),
+        gateway_token: security::ai_get("gateway_token").is_some(),
         gateway: security::ai_get("gateway").unwrap_or_default(),
     })
     .await
-    .unwrap_or(AiStatusDto { claude: false, grok: false, gateway: String::new() })
+    .unwrap_or(AiStatusDto {
+        claude: false,
+        grok: false,
+        gateway_token: false,
+        gateway: String::new(),
+    })
 }
 
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node

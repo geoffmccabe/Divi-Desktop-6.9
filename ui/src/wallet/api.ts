@@ -441,6 +441,8 @@ export const explorerTxUrl = (txid: string) => `https://scan.divi.love/tx/${txid
 export interface AiStatus {
   claude: boolean;
   grok: boolean;
+  /** A token for the gateway. Not a model key: revocable on its own. */
+  gatewayToken: boolean;
   gateway: string;
 }
 export const aiStatus = () => invoke<AiStatus>("ai_status");
