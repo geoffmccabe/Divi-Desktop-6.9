@@ -1,34 +1,37 @@
-/* Settings → Logs: two side-by-side log streams, each with a header and Copy. */
+/* Settings → Logs: a single merged, time-ordered stream styled like a 1980s CRT
+   terminal — fluorescent green for the node, amber for the app, on near-black. */
 
 .logs-view-head { display: flex; align-items: center; gap: 14px; }
 .logs-view-head .set-title { margin: 0; }
 .logs-auto { display: flex; align-items: center; gap: 5px; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
 
-.logs-cols { display: flex; gap: 12px; margin-top: 10px; }
-.logs-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
-.logs-col-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
-.logs-col-label { font-weight: 600; font-size: 0.85rem; color: hsl(var(--foreground)); }
-.logs-copy { padding: 2px 12px; font-size: 0.78rem; }
+.logs-key-node { color: #33ff66; font-weight: 600; }
+.logs-key-app { color: #ffb000; font-weight: 600; }
 
-.logs-box {
-  margin: 0;
-  height: 340px;
+.logs-copybar { display: flex; gap: 8px; margin: 8px 0; }
+
+.logs-crt {
+  height: 400px;
   overflow: auto;
-  padding: 10px 12px;
+  background: #060a06;              /* near-black, faint green tint */
+  border: 1px solid #1b2a1b;
   border-radius: 8px;
-  background: hsl(var(--primary) / 0.06);
-  border: 1px solid hsl(var(--border) / 0.5);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.7rem;
-  line-height: 1.45;
+  padding: 10px 12px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, "Courier New", monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.logs-line {
   white-space: pre-wrap;
   word-break: break-word;
-  color: hsl(var(--foreground));
-  user-select: text;
+  text-shadow: 0 0 2px currentColor; /* soft phosphor glow in the line's own color */
 }
+.logs-node { color: #33ff66; }        /* fluorescent green — the node */
+.logs-app  { color: #ffb000; }        /* amber — the app */
 
-/* Stack on narrow windows so neither column gets unreadably thin. */
-@media (max-width: 820px) {
-  .logs-cols { flex-direction: column; }
-  .logs-box { height: 240px; }
-}
+.logs-ts  { opacity: 0.55; }
+.logs-tag { opacity: 0.85; }
+.logs-rep { opacity: 0.7; font-style: italic; }
+
+.logs-empty { color: #3a5a3a; }
