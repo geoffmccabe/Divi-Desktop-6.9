@@ -166,3 +166,12 @@
 .ca-perm-detail-warn { color: hsl(var(--destructive)); }
 .ca-perm-none { font-size: 0.84rem; color: hsl(var(--success)); }
 .ca-note-gap { margin-top: 8px; }
+
+/* An app reporting its own failure. Worth being loud about: the alternative is
+   somebody watching a blank rectangle and guessing. */
+.ca-crash {
+  font-size: 0.76rem;
+  color: hsl(var(--destructive));
+  max-width: 46ch;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

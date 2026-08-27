@@ -41,6 +41,52 @@
     });
   }
 
+  /**
+   * Wear the wallet's look, automatically.
+   *
+   * A sandboxed frame does not inherit CSS custom properties from the page
+   * around it, so every --colour and --font the wallet defines is simply absent
+   * in here. Without this, an app styled exactly as instructed comes out with
+   * no colours at all. Asking the host for them and setting them locally is
+   * what makes "use the wallet's variables" true rather than merely good advice.
+   *
+   * Needs no permission: it is public styling information, and an app should
+   * not have to ask to look right.
+   */
+  function wearTheWalletsLook() {
+    request("theme.read")
+      .then((r) => {
+        const root = document.documentElement;
+        for (const [name, value] of Object.entries(r.vars || {})) {
+          root.style.setProperty(name, value);
+        }
+        root.setAttribute("data-divi-themed", "true");
+      })
+      .catch(() => {
+        // Styling is not worth breaking an app over. The stylesheet's own
+        // fallbacks take over and it still runs.
+      });
+  }
+
+  /**
+   * Tell the wallet when this app breaks.
+   *
+   * Nobody outside a sandboxed frame can see an error inside it, so without
+   * this an app that crashes on its first line looks identical to one that is
+   * simply slow — which is exactly the state somebody sat looking at while
+   * wondering why their game would not start.
+   */
+  function reportCrashes() {
+    window.addEventListener("error", (e) => {
+      const where = e.filename ? `${e.filename.split("/").pop()}:${e.lineno}` : "";
+      request("app.error", { message: String(e.message || "script error"), where }).catch(() => {});
+    });
+    window.addEventListener("unhandledrejection", (e) => {
+      const why = e.reason && e.reason.message ? e.reason.message : String(e.reason);
+      request("app.error", { message: why, where: "a promise" }).catch(() => {});
+    });
+  }
+
   window.divi = {
     request,
     balance: () => request("balance.read"),
@@ -77,5 +123,10 @@
       request("payment.request", { amount, reason }).then((r) => r.paid),
     copy: (text) => request("clipboard.write", { text }),
     notify: (text) => request("notify", { text }),
+    /** The wallet's colours and fonts, already applied for you. */
+    theme: () => request("theme.read").then((r) => r.vars),
   };
+
+  wearTheWalletsLook();
+  reportCrashes();
 })();

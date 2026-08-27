@@ -125,6 +125,29 @@ const STARTER_THUMB = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 
 `;
 
 /**
+ * Bring an existing project's SDK up to date.
+ *
+ * The SDK is OURS, not the app's — apps may not edit it, and the code check
+ * fails one that has been changed. So replacing it is safe, and necessary:
+ * a project built last week carries last week's SDK, and would silently miss
+ * anything added since. That is not hypothetical — projects made before the
+ * SDK learned to apply the wallet's colours came out looking like nothing.
+ *
+ * Returns true if it actually changed.
+ */
+export async function refreshSdk(workspace) {
+  const canonical = await readSdk();
+  try {
+    const current = await workspace.read("sdk.js");
+    if (current.text === canonical) return false;
+  } catch {
+    // Not there at all, which is worse. Write it.
+  }
+  await workspace.write("sdk.js", canonical);
+  return true;
+}
+
+/**
  * Write the starting files into a fresh project.
  * Never overwrites: scaffolding an existing project must not destroy work.
  */

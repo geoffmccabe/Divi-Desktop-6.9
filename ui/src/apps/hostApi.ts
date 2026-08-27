@@ -30,6 +30,30 @@ export type { Balance, AddrInfo, Tx, Peer, PeerSnapshot, Block } from "../wallet
 import { nodeStatus } from "../bridge";
 import { diviPrices, txStatus } from "../wallet/api";
 import { getValueSettings } from "../wallet/value";
+import { TOKENS } from "../theme/tokens";
+
+/**
+ * The wallet's current look, as plain values an app can apply to itself.
+ *
+ * This exists because of a mistake worth naming. Apps are told to style
+ * themselves with the wallet's CSS variables so they follow whatever skin the
+ * person is using — but a sandboxed frame does NOT inherit custom properties
+ * from the page around it. So every one of those variables was undefined inside
+ * the app, and an app doing exactly as instructed came out looking like nothing
+ * at all. The advice was right; the variables simply were not there.
+ *
+ * Read from what is actually applied to the wallet right now rather than from
+ * the saved settings, so a skin being edited live is reflected as it changes.
+ */
+export function currentTheme(): Record<string, string> {
+  const style = getComputedStyle(document.documentElement);
+  const out: Record<string, string> = {};
+  for (const t of TOKENS) {
+    const v = style.getPropertyValue(t.cssVar).trim();
+    if (v) out[t.cssVar] = v;
+  }
+  return out;
+}
 
 /**
  * The DIVI price, in the currencies this wallet is set up for.

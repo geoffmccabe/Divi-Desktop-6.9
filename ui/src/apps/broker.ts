@@ -22,7 +22,7 @@ import {
   networkPeers, stakingWallets, lotteryInfo, nodeStatusSafe,
   validateAddress, addressBalance, addressQr, mempoolSnapshot, poeVerify,
   hraResolve, hraReverse, hraMarket, hraQuote,
-  diviPriceSafe, paymentProgress,
+  diviPriceSafe, paymentProgress, currentTheme,
 } from "./hostApi";
 import { permission, type PermissionKey } from "./permissions";
 import type { AppManifest } from "./manifest";
@@ -265,6 +265,8 @@ export function attachBroker(opts: {
   granted: PermissionKey[];
   ctx: Omit<HostContext, "manifest">;
   onLog?: (entry: BrokerLogEntry) => void;
+  /** The app crashed and said so. Sandboxed frames cannot be watched from here. */
+  onAppError?: (message: string, where: string) => void;
 }): () => void {
   const { frame, manifest, granted, onLog } = opts;
   const ctx: HostContext = { manifest, ...opts.ctx };
@@ -303,6 +305,28 @@ export function attachBroker(opts: {
     };
 
     const method = String(data.method ?? "");
+
+    // Two things need no permission, and both are deliberate.
+    //
+    // The wallet's own look is public styling information with nothing private
+    // in it, and requiring a permission for it would mean an app either asks
+    // for one more thing than it needs or silently fails to match the skin.
+    //
+    // An app reporting its own crash is the app talking about itself. Making
+    // that permissioned would mean the apps most likely to be broken are the
+    // ones least able to say so.
+    if (method === "theme.read") {
+      log(method, "ok");
+      return reply({ ok: true, result: { vars: currentTheme() } });
+    }
+    if (method === "app.error") {
+      const p = (data.params ?? {}) as { message?: unknown; where?: unknown };
+      const text = typeof p.message === "string" ? p.message.slice(0, 300) : "something went wrong";
+      const where = typeof p.where === "string" ? p.where.slice(0, 120) : "";
+      log(method, "error", where ? `${text} (${where})` : text);
+      opts.onAppError?.(text, where);
+      return reply({ ok: true, result: { noted: true } });
+    }
 
     // Check 2: is it a real method?
     const def = permission(method);

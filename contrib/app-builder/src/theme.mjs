@@ -82,16 +82,22 @@ export const THEME_VARS = [
  */
 export function stylingBrief() {
   const list = THEME_VARS.map(([v, why]) => `  ${v} — ${why}`).join("\n");
-  return `STYLING — you do not need to design anything.
+  return `STYLING — you do not need to design anything, and you must not try.
 
-The app inherits the wallet's look. Every colour, font and shape arrives as a
-CSS variable and follows whatever skin the person is using, including skins that
-do not exist yet.
+sdk.js asks the wallet for its current colours and fonts and applies them before
+your code runs, so every variable below is genuinely available to your CSS and
+follows whatever skin the person is using — including skins that do not exist
+yet. You do not need to fetch, define or default any of them.
+
+MATCHING THE WALLET IS THE REQUIREMENT, not a suggestion. An app that invents
+its own palette looks broken sitting inside the wallet, however nice those
+colours might be on their own.
 
 ONE RULE, and it matters more than anything else you do with CSS:
-  Use the variables. Never write a hex colour, an rgb() or a named colour, and
-  never name a font directly. A hex colour looks right today and wrong on every
-  other skin, and the person cannot fix it.
+  Use the variables. Never write a hex colour, an rgb(), an hsl() with numbers
+  in it, or a named colour, and never name a font directly. A fixed colour looks
+  right on today's skin and wrong on every other one, and the person cannot fix
+  it. If you catch yourself typing a # followed by six characters, stop.
 
 Colours are HSL triplets, so they are used like this:
   color: hsl(var(--foreground));

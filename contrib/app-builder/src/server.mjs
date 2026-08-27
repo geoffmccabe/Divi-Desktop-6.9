@@ -23,7 +23,7 @@ import { makeProvider } from "./provider.mjs";
 import { runTurn } from "./agent.mjs";
 import { Scanner, VERDICT } from "./scanner.mjs";
 import { checkApp, summarise } from "./gate.mjs";
-import { readSdk } from "./scaffold.mjs";
+import { readSdk, refreshSdk } from "./scaffold.mjs";
 import { Accounts } from "./accounts.mjs";
 import { Orders } from "./orders.mjs";
 import { priceCatalogue, POINTS_PER_USD, MARKUP } from "./points.mjs";
@@ -394,6 +394,9 @@ export function createServer(config = loadConfig()) {
       }
 
       if (project && req.method === "GET" && parts.length === 2) {
+        // Opening a project is the moment to hand it the current SDK. One built
+        // before the SDK learned something new would silently lack it.
+        await refreshSdk(project.workspace).catch(() => {});
         return json(res, 200, {
           ...project.summary(),
           files: await project.workspace.list(),

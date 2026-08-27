@@ -111,6 +111,20 @@ export const NOT_YET = [
   ["fetch() to the internet", "brokered network access is not switched on; every app is offline"],
 ];
 
+/** Available to every app, with nothing to declare and nothing to ask for. */
+export const ALWAYS_AVAILABLE = [
+  {
+    call: "await divi.theme()",
+    returns: "the wallet's colours and fonts",
+    note: "Already applied for you before your code runs; you only need this if you want to read a value in JavaScript.",
+  },
+  {
+    call: "(automatic)",
+    returns: "crashes are reported to the wallet",
+    note: "If your app throws, the wallet shows it. Nobody can see inside a sandboxed frame otherwise, so a broken app would look identical to a slow one.",
+  },
+];
+
 export function capabilityBrief() {
   const rows = CAPABILITIES.map(
     (c) => `  ${c.call}\n      needs: ${c.permission}\n      gives: ${c.returns}\n      ${c.note}`,
@@ -126,6 +140,9 @@ person must have agreed to it when they opened the app. Ask for the fewest you
 need: a long permission list makes people refuse the whole app.
 
 ${rows}
+
+NEEDS NO PERMISSION, and is there whether you ask or not:
+${ALWAYS_AVAILABLE.map((c) => `  ${c.call}\n      ${c.returns}\n      ${c.note}`).join("\n\n")}
 
 NOT AVAILABLE. Do not call these, do not write code around them, and if the
 developer asks for one, say plainly that it is not connected yet:

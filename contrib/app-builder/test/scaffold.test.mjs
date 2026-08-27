@@ -147,3 +147,45 @@ test("a capability is only advertised if the wallet will honour it", async () =>
     );
   }
 });
+
+test("the SDK applies the wallet's look, because a frame does not inherit it", async () => {
+  // The mistake this guards against: apps were told to style themselves with
+  // the wallet's CSS variables, but a sandboxed frame does not inherit custom
+  // properties, so every one of them was undefined and an app following the
+  // instructions exactly came out with no colours at all.
+  const sdk = await readSdk();
+  assert.match(sdk, /theme\.read/);
+  assert.match(sdk, /setProperty/);
+  // And it must not be permissioned: an app should not have to ask to look right.
+  assert.ok(!/permission/i.test(sdk.split("wearTheWalletsLook")[1]?.slice(0, 400) ?? ""));
+});
+
+test("the SDK reports a crash, because nothing outside the frame can see one", async () => {
+  const sdk = await readSdk();
+  assert.match(sdk, /app\.error/);
+  assert.match(sdk, /unhandledrejection/);
+});
+
+test("the styling brief no longer promises variables that were not there", () => {
+  const brief = stylingBrief();
+  assert.match(brief, /sdk\.js asks the wallet/);
+  assert.match(brief, /MATCHING THE WALLET IS THE REQUIREMENT/);
+});
+
+test("an older project is given the current SDK when it is opened", async () => {
+  // A project built before the SDK learned to apply the wallet's colours would
+  // otherwise keep the old one for ever and quietly look wrong.
+  const { refreshSdk } = await import("../src/scaffold.mjs");
+  const w = await ws();
+  await w.write("sdk.js", "// last week's sdk\n");
+  assert.equal(await refreshSdk(w), true, "an out-of-date SDK is replaced");
+  assert.equal((await w.read("sdk.js")).text, await readSdk());
+  assert.equal(await refreshSdk(w), false, "and left alone once it matches");
+});
+
+test("a project with no SDK at all is given one", async () => {
+  const { refreshSdk } = await import("../src/scaffold.mjs");
+  const w = await ws();
+  assert.equal(await refreshSdk(w), true);
+  assert.match((await w.read("sdk.js")).text, /window\.divi/);
+});
