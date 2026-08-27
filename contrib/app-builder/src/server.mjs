@@ -361,11 +361,10 @@ export function createServer(config = loadConfig()) {
       // ---- Projects: create, list, continue, rename, delete ----
 
       if (req.method === "POST" && url.pathname === "/project") {
-        if (!price.configured) {
-          return json(res, 503, {
-            error: "DIVI cannot be priced without a CoinMarketCap key, so nothing can be billed",
-          });
-        }
+        // Deliberately NOT gated on the DIVI price. Points are already a fixed
+        // amount of money, so spending them needs no exchange rate at all — the
+        // price is only needed to sell points for DIVI. Gating building on it
+        // meant somebody holding 20,000 points could not use them.
         const body = await readJson(req);
         // The account is a name; the BALANCE is ours. An earlier version took
         // the balance from this request, which meant anyone could declare
@@ -565,6 +564,22 @@ export function createServer(config = loadConfig()) {
 // binding a port.
 if (import.meta.url === `file://${process.argv[1]}`) {
   const config = loadConfig();
+  // Stop when whatever started us goes away. The wallet stops this politely on
+  // exit, but a wallet that is killed rather than closed never gets the chance,
+  // and an orphan left holding the port makes the next one look broken.
+  const parent = Number(process.env.BUILDER_PARENT_PID ?? 0);
+  if (parent > 0) {
+    const watch = setInterval(() => {
+      try {
+        process.kill(parent, 0);
+      } catch {
+        console.log("the wallet that started this has gone; stopping");
+        process.exit(0);
+      }
+    }, 5000);
+    watch.unref?.();
+  }
+
   createServer(config).listen(config.port, config.host, () => {
     console.log(`builder on http://${config.host}:${config.port}`);
     if (!config.cmcApiKey) {

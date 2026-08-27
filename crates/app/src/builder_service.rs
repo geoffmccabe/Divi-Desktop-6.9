@@ -168,6 +168,9 @@ pub fn start() {
     cmd.arg("src/server.mjs")
         .current_dir(&dir)
         .env("BUILDER_WELCOME_POINTS", WELCOME_POINTS)
+        // So it can stop itself if this wallet is killed rather than closed.
+        // An orphan holding the port makes the next wallet look broken.
+        .env("BUILDER_PARENT_PID", std::process::id().to_string())
         .stdin(Stdio::null());
 
     // How this wallet reaches a model. Configured in Admin → AI, handed to the

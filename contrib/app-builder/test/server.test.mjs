@@ -30,15 +30,25 @@ test("health reports what is configured", async () => {
   server.close();
 });
 
-test("without a CoinMarketCap key the builder refuses to start a project", async () => {
-  // A builder that cannot price DIVI cannot bill, and a builder that cannot
-  // bill must not take work: the alternative is spending real money with no way
-  // to charge for it. It never falls back to another price source.
+test("points can be spent with no DIVI price at all", async () => {
+  // Points are already a fixed amount of money, so spending them needs no
+  // exchange rate. The price is only needed to SELL points for DIVI. Requiring
+  // it to build meant somebody holding 20,000 points could not use them.
   const { server, base } = await listen(loadConfig({ ...baseEnv, CMC_API_KEY: "" }));
-  const res = await fetch(`${base}/project`, { method: "POST" });
-  assert.equal(res.status, 503);
-  const body = await res.json();
-  assert.match(body.error, /CoinMarketCap/);
+  const res = await fetch(`${base}/project`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ account: "tester", name: "No price needed" }),
+  });
+  assert.equal(res.status, 201);
+  server.close();
+});
+
+test("but points cannot be SOLD without a price, and it says so", async () => {
+  const { server, base } = await listen(loadConfig({ ...baseEnv, CMC_API_KEY: "" }));
+  const cat = await (await fetch(`${base}/points/catalogue`)).json();
+  assert.equal(cat.available, false);
+  assert.match(cat.why, /CoinMarketCap/);
   server.close();
 });
 
