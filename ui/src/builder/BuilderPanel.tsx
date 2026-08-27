@@ -214,7 +214,7 @@ export function BuilderPanel() {
         {open ? (
           <>
             <button type="button" className="wl-btn" onClick={leave}>← All apps</button>
-            <div className="bd-stat"><b>{open.name}</b><span>{files.length} files</span></div>
+            <div className="bd-stat bd-appname"><b>{open.name}</b></div>
           </>
         ) : (
           <div className="bd-stat"><b className="bd-good">Connected</b><span>{probe.health?.model}</span></div>
@@ -280,7 +280,7 @@ export function BuilderPanel() {
             ) : (
               <div className="bd-compose">
                 <label className="bd-compose-label" htmlFor="bd-draft">
-                  What should it do?
+                  Enter build prompt below:
                 </label>
                 <div className="bd-compose-row">
                   <textarea
@@ -297,7 +297,7 @@ export function BuilderPanel() {
                         void send();
                       }
                     }}
-                    placeholder="e.g. A dice game where I bet DIVI against the house"
+                    placeholder="e.g. A dashboard showing my staking rewards and what they are worth"
                     disabled={busy}
                   />
                   <button
@@ -309,7 +309,6 @@ export function BuilderPanel() {
                     Send
                   </button>
                 </div>
-                <p className="bd-compose-hint">Enter to send · Shift+Enter for a new line</p>
               </div>
             )}
           </div>

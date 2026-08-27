@@ -64,7 +64,7 @@
 
 .bd-chat { display: flex; flex-direction: column; min-height: 0; }
 .bd-log {
-  flex: 1; overflow-y: auto; padding: 12px; min-height: 200px;
+  flex: 1; overflow-y: auto; padding: 12px; min-height: 0;
   display: flex; flex-direction: column; gap: 9px;
 }
 
@@ -80,6 +80,9 @@
 .bd-msg-cost { font-size: 0.72rem; padding-left: 4px; color: hsl(var(--foreground) / 0.5); }
 
 .bd-compose {
+  /* Never shrinks and never scrolls away: this is the one control the whole
+     panel exists for. */
+  flex: 0 0 auto;
   display: grid; gap: 6px; padding: 10px;
   border-top: 1px solid hsl(var(--foreground) / 0.12);
 }
@@ -90,7 +93,6 @@
   font-size: 0.75rem; font-weight: 600;
   color: hsl(var(--foreground) / 0.6);
 }
-.bd-compose-hint { margin: 0; font-size: 0.7rem; color: hsl(var(--foreground) / 0.4); }
 .bd-compose textarea {
   flex: 1; resize: none; min-height: 54px; padding: 8px 10px;
   font: inherit; font-size: 0.85rem;
@@ -232,3 +234,17 @@
   .bd-pulse { animation: none; opacity: 0.8; }
   .bd-file-changed { animation: none; }
 }
+
+/* ---- the panel owns its own scrolling ----
+
+   .main-panel scrolls its content, and .view-body cannot shrink below its
+   content, so a tall conversation pushed the prompt box off the bottom of the
+   screen. Scoped by view so no other panel's behaviour changes. */
+.view-body[data-view="appbuilder"] {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The project's name, which is the thing worth reading up there. */
+.bd-appname b { font-size: 1.06rem; }
