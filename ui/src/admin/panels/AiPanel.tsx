@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { aiStatus, aiSetKey, aiClearKey, type AiStatus } from "../../wallet/api";
-import { restartService } from "../../builder/api";
+import { restartService, setGatewayUrl } from "../../builder/api";
 
 // Admin → AI. Wires the LLMs that power each node's agent.
 //
@@ -100,7 +100,8 @@ export function AiPanel() {
   useEffect(refresh, []);
 
   const saveGateway = async () => {
-    await aiSetKey("gateway", gateway.trim());
+    // A URL, so it goes to a plain settings file rather than the keychain.
+    await setGatewayUrl(gateway.trim());
     // The builder service reads this when it starts, so it needs to be told.
     await restartService().catch(() => {});
     setSavedGateway(true);

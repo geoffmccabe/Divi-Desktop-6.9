@@ -1150,7 +1150,9 @@ async fn ai_status() -> AiStatusDto {
         claude: security::ai_get("claude").is_some(),
         grok: security::ai_get("grok").is_some(),
         gateway_token: security::ai_get("gateway_token").is_some(),
-        gateway: security::ai_get("gateway").unwrap_or_default(),
+        // From a plain file, not the keychain: a URL is not a secret, and
+        // keeping it there cost a permission prompt for no protection.
+        gateway: builder_service::read_gateway_url().unwrap_or_default(),
     })
     .await
     .unwrap_or(AiStatusDto {
@@ -1971,7 +1973,9 @@ fn main() {
             community::community_builtin_apps,
             community::community_app_base,
             builder_service::builder_service_status,
-            builder_service::builder_service_restart
+            builder_service::builder_service_restart,
+            builder_service::set_gateway_url,
+            builder_service::gateway_url
         ])
         .build(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9")

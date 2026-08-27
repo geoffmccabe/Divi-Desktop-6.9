@@ -52,19 +52,63 @@ enum ModelAccess {
     None,
 }
 
+/// Where the gateway's address is kept.
+///
+/// A URL is not a secret. Keeping it in the keychain bought no protection and
+/// cost a permission prompt every time the app was rebuilt — two prompts, for
+/// one secret.
+pub fn gateway_url_path() -> PathBuf {
+    dd69_supervisor::config::dd69_datadir().join("ai-gateway.txt")
+}
+
+pub fn read_gateway_url() -> Option<String> {
+    std::fs::read_to_string(gateway_url_path())
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+pub fn write_gateway_url(url: &str) -> Result<(), String> {
+    let path = gateway_url_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let url = url.trim();
+    if url.is_empty() {
+        let _ = std::fs::remove_file(&path);
+        return Ok(());
+    }
+    std::fs::write(&path, url).map_err(|e| e.to_string())
+}
+
 fn model_access() -> ModelAccess {
-    let get = |name: &str| {
+    let secret = |name: &str| {
         dd69_supervisor::security::ai_get(name)
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
     };
-    if let (Some(url), Some(token)) = (get("gateway"), get("gateway_token")) {
-        return ModelAccess::Gateway { url, token };
+    // The URL first, from a plain file, so a wallet with no gateway configured
+    // never touches the keychain at all and is never asked about it.
+    if let Some(url) = read_gateway_url() {
+        if let Some(token) = secret("gateway_token") {
+            return ModelAccess::Gateway { url, token };
+        }
     }
-    match get("claude") {
+    match secret("claude") {
         Some(key) => ModelAccess::DirectKey(key),
         None => ModelAccess::None,
     }
+}
+
+/// Set the gateway address. Not a secret, so this is a plain command.
+#[tauri::command]
+pub fn set_gateway_url(url: String) -> Result<(), String> {
+    write_gateway_url(&url)
+}
+
+#[tauri::command]
+pub fn gateway_url() -> String {
+    read_gateway_url().unwrap_or_default()
 }
 
 /// The running service, if we started one. Held so it can be stopped again.

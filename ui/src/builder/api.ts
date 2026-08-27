@@ -24,6 +24,16 @@ export const serviceStatus = () => invoke<ServiceStatus>("builder_service_status
 /** Try starting it again, after installing Node or after a crash. */
 export const restartService = () => invoke<ServiceStatus>("builder_service_restart");
 
+/**
+ * The AI gateway's address.
+ *
+ * Deliberately kept in an ordinary settings file. An address is public
+ * information, so protecting it gained nothing and cost the user a macOS
+ * permission dialog on every rebuild.
+ */
+export const setGatewayUrl = (url: string) => invoke<void>("set_gateway_url", { url });
+export const gatewayUrl = () => invoke<string>("gateway_url");
+
 const KEY = "dd69.builderUrl";
 const DEFAULT_URL = "http://127.0.0.1:8788";
 
