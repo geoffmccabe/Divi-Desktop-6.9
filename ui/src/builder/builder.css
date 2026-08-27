@@ -193,3 +193,42 @@
   border-color: hsl(var(--primary) / 0.7);
   box-shadow: 0 0 0 2px hsl(var(--primary) / 0.2);
 }
+
+/* ---- signs of life while the model works ----
+
+   A build runs for minutes with nothing coming back until it finishes. The
+   files ARE changing on disk the whole time, so showing that is the difference
+   between "this is working" and "this has hung", which is otherwise
+   indistinguishable. */
+
+.bd-working { display: flex; align-items: center; gap: 8px; }
+.bd-pulse {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: hsl(var(--primary));
+  animation: bd-breathe 1.4s ease-in-out infinite;
+}
+@keyframes bd-breathe {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}
+
+/* A file that just changed lights up briefly, so a glance catches which one
+   moved rather than having to watch every row. */
+.bd-file-changed {
+  background: hsl(var(--primary) / 0.16);
+  animation: bd-flash 0.7s ease-out;
+}
+.bd-file-changed .bd-file-size { color: hsl(var(--primary)); font-weight: 600; }
+@keyframes bd-flash {
+  0%   { background: hsl(var(--primary) / 0.42); }
+  100% { background: hsl(var(--primary) / 0.16); }
+}
+
+.bd-file-size { font-variant-numeric: tabular-nums; color: hsl(var(--foreground) / 0.5); }
+
+/* Somebody who has asked for less movement gets the information without the
+   animation, rather than losing the information. */
+@media (prefers-reduced-motion: reduce) {
+  .bd-pulse { animation: none; opacity: 0.8; }
+  .bd-file-changed { animation: none; }
+}

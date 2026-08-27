@@ -3,7 +3,7 @@ import "./builder.css";
 import {
   builderUrl, setBuilderUrl, health,
   createProject, listProjects, openProject, deleteProject,
-  sendMessage, readFile, checkProject, serviceStatus, restartService,
+  sendMessage, readFile, checkProject, listFiles, serviceStatus, restartService,
   type Account, type BuilderFile, type CheckFinding, type Health,
   type ProjectSummary, type ServiceStatus, type TurnEvent,
 } from "./api";
@@ -79,6 +79,34 @@ export function BuilderPanel() {
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight });
   }, [lines]);
+
+  // Watch the files change while the model works.
+  //
+  // The model writes to disk as it goes, so the information was always there —
+  // the panel simply was not looking until the whole turn finished. Several
+  // minutes of a static "Working…" with no way to tell alive from stalled is
+  // not something anybody should have to sit through.
+  useEffect(() => {
+    if (!busy || !open) return;
+    const tick = () => {
+      listFiles(open.id)
+        .then((r) => setFiles(r.files))
+        .catch(() => {});
+    };
+    const t = setInterval(tick, 900);
+    return () => clearInterval(t);
+  }, [busy, open]);
+
+  // How long the current step has been going. Not a progress bar, because we
+  // genuinely do not know how long it will take, and a bar that lies is worse
+  // than a clock that does not.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (!busy) return setElapsed(0);
+    const started = Date.now();
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [busy]);
 
   // Put the cursor in the box the moment a project opens. Somebody who has just
   // opened a build should be able to start typing, not go looking for where.
@@ -225,7 +253,12 @@ export function BuilderPanel() {
               {lines.map((l, i) => (
                 <div key={i} className={`bd-msg bd-msg-${l.kind}`}>{l.text}</div>
               ))}
-              {busy && <div className="bd-msg bd-msg-tool">Working…</div>}
+              {busy && (
+                <div className="bd-msg bd-msg-tool bd-working">
+                  <span className="bd-pulse" aria-hidden="true" />
+                  Working… {formatElapsed(elapsed)}
+                </div>
+              )}
             </div>
             {needsKey ? (
               <div className="bd-blocked">
@@ -287,15 +320,11 @@ export function BuilderPanel() {
               <p className="bd-empty">Nothing written yet.</p>
             ) : (
               files.map((f) => (
-                <button
-                  type="button"
-                  className="bd-file"
+                <FileRow
                   key={f.path}
-                  onClick={() => void readFile(open.id, f.path).then(setViewing).catch(() => {})}
-                >
-                  <span className="bd-file-name">{f.path}</span>
-                  <span className="bd-file-size">{f.bytes}</span>
-                </button>
+                  file={f}
+                  onOpen={() => void readFile(open.id, f.path).then(setViewing).catch(() => {})}
+                />
               ))
             )}
             {check && (
@@ -388,6 +417,71 @@ function ProjectList({ projects, onStart, onOpen, onDelete }: {
       )}
     </div>
   );
+}
+
+/**
+ * One file in the list, with its size counting to whatever it just became.
+ *
+ * The count is not decoration. A file quietly changing from one number to
+ * another says nothing; a number visibly moving says the thing is alive, which
+ * during a silent multi-minute build is the only signal there is.
+ */
+function FileRow({ file, onOpen }: { file: BuilderFile; onOpen: () => void }) {
+  const [shown, setShown] = useState(file.bytes);
+  const [changed, setChanged] = useState(false);
+  const from = useRef(file.bytes);
+
+  useEffect(() => {
+    const start = from.current;
+    const end = file.bytes;
+    if (start === end) return;
+    from.current = end;
+
+    setChanged(true);
+    const stopFlash = setTimeout(() => setChanged(false), 700);
+
+    // Somebody who has asked not to have things move gets the new number
+    // straight away rather than a flicker.
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      setShown(end);
+      return () => clearTimeout(stopFlash);
+    }
+
+    const DURATION = 450;
+    const began = performance.now();
+    let frame = 0;
+    const step = () => {
+      const through = Math.min(1, (performance.now() - began) / DURATION);
+      // Ease out, so it arrives rather than stopping dead.
+      const eased = 1 - (1 - through) ** 3;
+      setShown(Math.round(start + (end - start) * eased));
+      if (through < 1) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+    return () => {
+      clearTimeout(stopFlash);
+      cancelAnimationFrame(frame);
+    };
+  }, [file.bytes]);
+
+  return (
+    <button type="button" className={`bd-file${changed ? " bd-file-changed" : ""}`} onClick={onOpen}>
+      <span className="bd-file-name">{file.path}</span>
+      <span className="bd-file-size">{formatSize(shown)}</span>
+    </button>
+  );
+}
+
+/** Bytes are meaningless to read. Scale to whatever unit says the most. */
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
 }
 
 function FileView({ file, onClose }: { file: { path: string; text: string }; onClose: () => void }) {
