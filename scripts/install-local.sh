@@ -43,6 +43,11 @@ fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$PLIST" 2>/dev/null \
   || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleName Divi Desktop $VERSION" "$PLIST" 2>/dev/null || true
+# CFBundleDisplayName is the one macOS actually shows in a security dialog, and
+# it is a separate field from CFBundleName. Missing it meant every keychain
+# prompt kept naming a version from weeks ago even after the others were fixed.
+/usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName Divi Desktop $VERSION" "$PLIST" 2>/dev/null \
+  || /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string Divi Desktop $VERSION" "$PLIST"
 
 pkill -f "divi-desktop-69" 2>/dev/null || true
 pkill -f "app-builder/src/server.mjs" 2>/dev/null || true
@@ -51,6 +56,11 @@ sleep 2
 cp "$BIN" "$BIN.previous" 2>/dev/null || true
 cp target/release/divi-desktop-69 "$BIN"
 codesign --force --deep -s - "$APP" 2>/dev/null || true
+
+# macOS caches the app's display name, so without this the OLD name keeps
+# appearing in dialogs however many times the plist is corrected.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
+  -f "$APP" >/dev/null 2>&1 || true
 
 open "$APP"
 echo "installed and launched $VERSION"

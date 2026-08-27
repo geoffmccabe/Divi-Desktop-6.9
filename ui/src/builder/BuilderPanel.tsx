@@ -8,6 +8,9 @@ import {
   type ProjectSummary, type ServiceStatus, type TurnEvent,
 } from "./api";
 import { PointsChip, BuyPointsButton, pointsAccount } from "../points/BuyPoints";
+import { AppHost } from "../apps/AppHost";
+import { previewEntry } from "../apps/catalog";
+import type { CatalogEntry } from "../apps/catalog";
 import { setCmcKey } from "../points/api";
 import { getValueSettings } from "../wallet/value";
 
@@ -42,6 +45,10 @@ export function BuilderPanel() {
   const [busy, setBusy] = useState(false);
   const [viewing, setViewing] = useState<{ path: string; text: string } | null>(null);
   const [check, setCheck] = useState<{ summary: string; findings: CheckFinding[] } | null>(null);
+  // The app itself, running. Not a picture of it and not a browser tab: the
+  // same frame, sandbox and permission prompt a published app gets.
+  const [running, setRunning] = useState<CatalogEntry | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement | null>(null);
   const draftRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -133,6 +140,7 @@ export function BuilderPanel() {
   };
 
   const resume = async (summary: ProjectSummary) => {
+    setRunning(null);
     const detail = await openProject(summary.id);
     setOpen(detail);
     setFiles(detail.files);
@@ -153,11 +161,27 @@ export function BuilderPanel() {
   };
 
   const leave = () => {
+    setRunning(null);
     setOpen(null);
     setViewing(null);
     setCheck(null);
     setSpend(null);
     void refreshProjects();
+  };
+
+  const play = async () => {
+    if (!open) return;
+    setRunError(null);
+    try {
+      const manifest = await readFile(open.id, "manifest.json");
+      setRunning(await previewEntry(open.id, manifest.text));
+    } catch (e) {
+      setRunError(
+        (e as Error).message.includes("does not exist")
+          ? "There is no manifest yet, so there is nothing to run. Ask for the app to be built first."
+          : (e as Error).message,
+      );
+    }
   };
 
   const send = async () => {
@@ -308,6 +332,15 @@ export function BuilderPanel() {
                   >
                     Send
                   </button>
+                  <button
+                    type="button"
+                    className="wl-btn bd-play"
+                    disabled={busy || files.length === 0}
+                    title="Run this app the way a user would see it"
+                    onClick={() => void play()}
+                  >
+                    ▶ Play
+                  </button>
                 </div>
               </div>
             )}
@@ -343,7 +376,13 @@ export function BuilderPanel() {
         </div>
       )}
 
+      {runError && <p className="bd-note bd-bad">{runError}</p>}
       {viewing && <FileView file={viewing} onClose={() => setViewing(null)} />}
+      {running && (
+        <div className="bd-stage">
+          <AppHost entry={running} onExit={() => setRunning(null)} />
+        </div>
+      )}
     </div>
   );
 }

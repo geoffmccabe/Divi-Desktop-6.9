@@ -52,6 +52,22 @@ enum ModelAccess {
     None,
 }
 
+/// Where the builder keeps its projects.
+///
+/// Must match `defaultRoot()` in contrib/app-builder/src/projects.mjs. If these
+/// two ever disagree, previewing silently stops finding anything, so there is a
+/// test on each side pinning the shape.
+pub fn projects_root() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if cfg!(target_os = "macos") {
+        PathBuf::from(home).join("Library/Application Support/DD69/app-builder")
+    } else if cfg!(target_os = "windows") {
+        PathBuf::from(std::env::var("APPDATA").unwrap_or(home)).join("DD69/app-builder")
+    } else {
+        PathBuf::from(home).join(".local/share/DD69/app-builder")
+    }
+}
+
 /// Where the gateway's address is kept.
 ///
 /// A URL is not a secret. Keeping it in the keychain bought no protection and

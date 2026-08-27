@@ -116,3 +116,21 @@ test("the message count is what YOU said, not what the model said back", async (
   );
   assert.equal(p.summary().messages, 1);
 });
+
+test("the wallet and the builder agree where projects live", async () => {
+  // The wallet serves a preview straight from this folder. If the two sides
+  // ever disagree about where it is, previewing silently finds nothing — and
+  // "nothing happens" is the hardest kind of failure to trace.
+  const rust = await fs.readFile(
+    path.join(import.meta.dirname, "..", "..", "..", "crates", "app", "src", "builder_service.rs"),
+    "utf8",
+  );
+  const here = defaultRoot();
+  if (process.platform === "darwin") {
+    assert.match(rust, /Library\/Application Support\/DD69\/app-builder/);
+    assert.ok(here.endsWith("Library/Application Support/DD69/app-builder"), here);
+  }
+  // And whatever the platform, both must end in the same folder name.
+  assert.ok(here.endsWith("DD69/app-builder"), here);
+  assert.match(rust, /DD69\/app-builder/);
+});

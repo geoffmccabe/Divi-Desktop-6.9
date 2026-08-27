@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 
-use dd69_supervisor::appbundle::{BuiltinBundle, BundleError, APP_CSP};
+use dd69_supervisor::appbundle::{BuiltinBundle, BundleError, FolderBundle, APP_CSP};
 use tauri::http::{Request, Response};
 use tauri::UriSchemeContext;
 
@@ -62,6 +62,33 @@ static BUILTINS: &[BuiltinBundle] = &[
     },
 ];
 
+/// Ids beginning with this serve a project being built, from disk.
+const PREVIEW: &str = "preview.";
+
+/// The folder a project being previewed lives in, if the id names a real one.
+///
+/// Two rules, both load-bearing. The id after the prefix must look like a
+/// project id and nothing else, so it cannot be turned into a path fragment.
+/// And the result must sit inside the builder's own projects folder, so even a
+/// well-formed id cannot point somewhere else on the disk.
+fn preview_dir(app_id: &str) -> Option<std::path::PathBuf> {
+    let id = app_id.strip_prefix(PREVIEW)?;
+    if id.is_empty()
+        || id.len() > 64
+        || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return None;
+    }
+    let root = crate::builder_service::projects_root().join("projects");
+    let dir = root.join(id).join("files");
+    let base = root.canonicalize().ok()?;
+    let real = dir.canonicalize().ok()?;
+    if !real.starts_with(&base) {
+        return None;
+    }
+    Some(real)
+}
+
 pub fn builtin(id: &str) -> Option<&'static BuiltinBundle> {
     BUILTINS.iter().find(|b| b.id == id)
 }
@@ -83,6 +110,21 @@ pub fn community_builtin_apps() -> Vec<String> {
 pub fn community_app_base(app_id: String) -> Result<String, String> {
     if builtin(&app_id).is_none() {
         return Err("unknown app".into());
+    }
+    Ok(base_url(&app_id))
+}
+
+/// Where to point a frame to run a project that is still being built.
+///
+/// The preview runs in the SAME sandbox, through the same broker, behind the
+/// same permission prompt as a published app. That is the point of previewing
+/// here rather than in a browser: what is on screen is what a user would get,
+/// not an approximation of it.
+#[tauri::command]
+pub fn community_preview_base(project_id: String) -> Result<String, String> {
+    let app_id = format!("{PREVIEW}{project_id}");
+    if preview_dir(&app_id).is_none() {
+        return Err("that project has no files to run yet".into());
     }
     Ok(base_url(&app_id))
 }
@@ -146,11 +188,17 @@ pub fn handle<R: tauri::Runtime>(
     // rules see the real components rather than an encoded spelling of them.
     let decoded = percent_decode(&path);
 
-    let Some(bundle) = builtin(&app_id) else {
+    // A project being built is served from its folder; everything else must be
+    // an app compiled into the wallet.
+    let served = if let Some(dir) = preview_dir(&app_id) {
+        FolderBundle { dir }.serve(&decoded)
+    } else if let Some(bundle) = builtin(&app_id) {
+        bundle.serve(&decoded)
+    } else {
         return error_response(404, "unknown app");
     };
 
-    match bundle.serve(&decoded) {
+    match served {
         Ok(served) => Response::builder()
             .status(200)
             .header("Content-Type", served.mime)
@@ -259,6 +307,31 @@ mod tests {
         assert_eq!(decoded, "../secret.html");
         let b = builtin("io.divi.sandbox-test").unwrap();
         assert!(matches!(b.serve(&decoded), Err(BundleError::BadPath)));
+    }
+
+    #[test]
+    fn a_preview_id_cannot_be_turned_into_a_path() {
+        // The id arrives in a url and becomes part of a folder path, so this is
+        // the one place a preview could be talked into reading elsewhere on the
+        // disk. Anything that is not a plain project id is refused before a
+        // path is built at all.
+        for bad in [
+            "preview.../../../etc",
+            "preview../..",
+            "preview.a/b",
+            "preview.a\\b",
+            "preview.",
+            "preview.a b",
+            "preview.a%2e%2e",
+            "preview.'; rm -rf /",
+        ] {
+            assert!(preview_dir(bad).is_none(), "{bad} was not refused");
+        }
+        // And an id of a plausible shape is still refused when no such project
+        // exists, rather than serving whatever happens to be there.
+        assert!(preview_dir("preview.0000aaaa-1111-2222-3333-444455556666").is_none());
+        // Something that is not a preview at all is not one.
+        assert!(preview_dir("io.divi.snapshot").is_none());
     }
 
     #[test]

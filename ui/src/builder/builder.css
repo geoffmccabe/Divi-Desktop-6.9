@@ -248,3 +248,13 @@
 
 /* The project's name, which is the thing worth reading up there. */
 .bd-appname b { font-size: 1.06rem; }
+
+/* ---- running the app ----
+
+   The app takes over the panel completely, because a game squeezed into a
+   corner beside a chat log tells you nothing about how it actually feels. It is
+   the real runtime underneath — same sandbox, same permission prompt — so this
+   is what a user would see, not a mock-up of it. */
+.bd-stage { position: absolute; inset: 0; z-index: 6; display: flex; }
+.bd-stage > * { flex: 1; min-width: 0; }
+.bd-play { white-space: nowrap; }

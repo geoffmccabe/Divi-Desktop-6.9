@@ -1972,6 +1972,7 @@ fn main() {
             set_active_node,
             community::community_builtin_apps,
             community::community_app_base,
+            community::community_preview_base,
             builder_service::builder_service_status,
             builder_service::builder_service_restart,
             builder_service::set_gateway_url,

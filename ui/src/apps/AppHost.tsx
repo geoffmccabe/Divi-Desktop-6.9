@@ -145,7 +145,13 @@ function PermissionPrompt({ entry, onAllow, onCancel }: {
           </>
         )}
 
-        {entry.builtin ? (
+        {entry.preview ? (
+          <p className="ca-perm-detail">
+            This is your own app, running as it is right now. It goes through the
+            same sandbox and the same checks a published app does, so what you
+            see here is what someone else would get.
+          </p>
+        ) : entry.builtin ? (
           <p className="ca-perm-detail">
             This one ships with the wallet. It still runs in the same sandbox and
             through the same checks as any other app.
