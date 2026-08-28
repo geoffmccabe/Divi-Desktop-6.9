@@ -9,3 +9,8 @@ gen/
 
 # local-only (scanner infra, never commit — public repo)
 scripts/run-scanner.sh
+
+# Python leaves these behind when a script is imported (e.g. testing the
+# version bumper). They are build noise and clutter another agent's git status.
+__pycache__/
+*.pyc
