@@ -24,6 +24,7 @@ import { MultisigPanel } from "./wallet/multisig/MultisigPanel";
 import "./sidebar-compact.css";
 import { AgentPanel } from "./wallet/AgentPanel";
 import { NetworkMap } from "./wallet/NetworkMap";
+import { PriceChart } from "./wallet/PriceChart";
 import { FastReceiveHost } from "./wallet/FastReceiveHost";
 
 const VIEWS: Record<string, ComponentType> = {
@@ -46,7 +47,7 @@ const VIEWS: Record<string, ComponentType> = {
 };
 
 // Views reachable without a sidebar entry (e.g. the Peers globe icon).
-const EXTRA_TITLES: Record<string, string> = { network: "Network Map" };
+const EXTRA_TITLES: Record<string, string> = { network: "Network Map", charts: "Charts" };
 
 // Four independent panels: nav (top-left), node status (bottom-left, chopped
 // off the sidebar), balances (top-right header), and the main content.
@@ -140,19 +141,31 @@ export function Shell() {
           <HeaderBar />
         </header>
         <section className="glass-panel main-panel">
-          {view !== "network" && (
+          {view !== "network" && view !== "charts" && (
             <div className="view-title-row">
               <h2 className="view-title">{label}</h2>
               {view === "overview" && (
-                <button type="button" className="node-map-btn" onClick={() => setView("network")}>
-                  <span>Node Map</span>
-                  <Icon name="globe" size={16} />
-                </button>
+                <div className="title-actions">
+                  <button type="button" className="node-map-btn" onClick={() => setView("charts")}>
+                    <span>Charts</span>
+                    <span aria-hidden>📈</span>
+                  </button>
+                  <button type="button" className="node-map-btn" onClick={() => setView("network")}>
+                    <span>Node Map</span>
+                    <Icon name="globe" size={16} />
+                  </button>
+                </div>
               )}
             </div>
           )}
           <div className="view-body" data-view={view}>
-            {view === "network" ? <NetworkMap onReturn={() => setView("overview")} /> : <Active />}
+            {view === "network" ? (
+              <NetworkMap onReturn={() => setView("overview")} />
+            ) : view === "charts" ? (
+              <PriceChart onReturn={() => setView("overview")} />
+            ) : (
+              <Active />
+            )}
           </div>
         </section>
       </div>

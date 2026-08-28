@@ -3,6 +3,7 @@ pub mod base58;
 pub mod coins;
 pub mod c2pa_read;
 pub mod chaintips;
+pub mod chart;
 pub mod config;
 pub mod dvxp;
 pub mod escrow;

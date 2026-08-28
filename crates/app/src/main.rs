@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, chart, coins, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 // Serves community app bundles over their own url scheme. Kept in its own module
@@ -861,6 +861,34 @@ async fn recent_blocks(count: i64) -> Vec<BlockDto> {
         wallet::recent_blocks(&cfg, count.clamp(1, 20))
             .into_iter()
             .map(|b| BlockDto { height: b.height, time: b.time, txids: b.txids, stake_winner: b.stake_winner, stake_amount: b.stake_amount })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PricePointDto {
+    day: String,
+    close: f64,
+    market_cap: f64,
+    volume: f64,
+}
+
+/// Daily DIVI price history (oldest first) for the in-app price chart, read from
+/// the Supabase series backfilled from CoinMarketCap.
+#[tauri::command]
+async fn price_history() -> Vec<PricePointDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        chart::price_history()
+            .into_iter()
+            .map(|p| PricePointDto {
+                day: p.day,
+                close: p.close.unwrap_or(0.0),
+                market_cap: p.market_cap.unwrap_or(0.0),
+                volume: p.volume.unwrap_or(0.0),
+            })
             .collect()
     })
     .await
@@ -1868,11 +1896,9 @@ fn main() {
         // why inline frame content would not work here.
         .register_uri_scheme_protocol(community::SCHEME, community::handle)
         .setup(|_app| {
-            // First-launch bring-up: create the config, download and verify
-            // divid69, and start the node — all in the background so the window
-            // opens immediately and the UI shows sync progress via node_status.
-            // Idempotent, so on later launches this is a near-instant no-op.
-            tauri::async_runtime::spawn_blocking(dd69_supervisor::setup::begin);
+            // NOTE: first-launch node bring-up (dd69_supervisor::setup::begin) is
+            // temporarily backed out to unbreak main — its `setup` module was
+            // referenced here but never committed. The setup owner will re-land it.
             // The App Builder's service, started beside the wallet. In the
             // background because finding Node can involve asking a login shell,
             // and the window must not wait on that.
@@ -1881,10 +1907,8 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             node_status,
-            setup_status,
-            setup_answer_dd2,
-            setup_retry,
             recent_blocks,
+            price_history,
             c2pa_inspect,
             payment_request_create,
             payment_requests_inbox,

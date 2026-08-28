@@ -1412,6 +1412,40 @@ code, .mono { font-family: var(--font-mono); }
   transition: background 0.15s, border-color 0.15s;
 }
 .node-map-btn:hover { background: hsl(var(--primary) / 0.28); border-color: hsl(var(--primary) / 0.7); }
+/* Charts + Node Map buttons sit together at the right of the Overview title row. */
+.title-actions { display: flex; align-items: center; gap: 10px; }
+
+/* ---- Divi price chart (Charts view) ---- */
+.pricechart { display: flex; flex-direction: column; height: 100%; }
+.pc-head { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.pc-back {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 6px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.14);
+  border: 1px solid hsl(var(--primary) / 0.45);
+}
+.pc-back:hover { background: hsl(var(--primary) / 0.28); }
+.pc-title { margin: 0; font-size: 1.4rem; }
+.pc-summary { display: inline-flex; align-items: baseline; gap: 10px; margin-left: auto; }
+.pc-price { font-size: 1.5rem; font-weight: 700; color: hsl(var(--foreground)); }
+.pc-change { font-size: 0.95rem; font-weight: 600; }
+.pc-change.up { color: #2bd94f; }
+.pc-change.down { color: #ff5252; }
+.pc-ranges { display: flex; gap: 6px; margin-bottom: 12px; }
+.pc-range {
+  cursor: pointer; padding: 5px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
+  color: hsl(var(--muted-foreground)); background: transparent; border: 1px solid hsl(var(--border));
+}
+.pc-range:hover { color: hsl(var(--foreground)); }
+.pc-range.on { color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.2); border-color: hsl(var(--primary) / 0.6); }
+.pc-chartwrap { position: relative; flex: 1; min-height: 340px; }
+.pc-svg { width: 100%; height: 340px; display: block; }
+.pc-empty { display: flex; align-items: center; justify-content: center; height: 340px; color: hsl(var(--muted-foreground)); }
+.pc-hi, .pc-lo, .pc-d0, .pc-d1 { position: absolute; font-size: 0.72rem; color: hsl(var(--muted-foreground)); pointer-events: none; }
+.pc-hi { top: 2px; left: 4px; }
+.pc-lo { bottom: 24px; left: 4px; }
+.pc-d0 { bottom: 4px; left: 4px; }
+.pc-d1 { bottom: 4px; right: 4px; }
 
 /* ---- My Nodes (Settings): switch which node the wallet reads ---- */
 .mynodes { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
