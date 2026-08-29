@@ -172,14 +172,27 @@ export function BuilderPanel() {
   const play = async () => {
     if (!open) return;
     setRunError(null);
+    // Checked here rather than letting the frame load nothing: a blank
+    // rectangle with no explanation is the worst possible answer to "run it".
+    const missing = ["index.html", "manifest.json"].filter(
+      (need) => !files.some((f) => f.path === need),
+    );
+    if (missing.length) {
+      setRunError(
+        `This app has no ${missing.join(" and no ")} yet, so there is nothing to run. ` +
+          "Ask for it to be built first.",
+      );
+      return;
+    }
     try {
       const manifest = await readFile(open.id, "manifest.json");
       setRunning(await previewEntry(open.id, manifest.text));
     } catch (e) {
+      const why = (e as Error).message;
       setRunError(
-        (e as Error).message.includes("does not exist")
-          ? "There is no manifest yet, so there is nothing to run. Ask for the app to be built first."
-          : (e as Error).message,
+        /JSON|Unexpected token/i.test(why)
+          ? `The app's manifest is not valid, so it cannot run: ${why}`
+          : why,
       );
     }
   };
@@ -380,7 +393,7 @@ export function BuilderPanel() {
       {viewing && <FileView file={viewing} onClose={() => setViewing(null)} />}
       {running && (
         <div className="bd-stage">
-          <AppHost entry={running} onExit={() => setRunning(null)} />
+          <AppHost entry={running} onExit={() => setRunning(null)} exitLabel="Back to building" />
         </div>
       )}
     </div>

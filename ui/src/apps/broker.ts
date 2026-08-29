@@ -60,6 +60,11 @@ const RATE_LIMITS: Record<string, number> = {
   "lookup.read": 40,
   "mempool.read": 20,
   "poe.verify": 20,
+  // These need no permission, but they still need a ceiling. An app calling
+  // app.error in a loop would otherwise redraw the wallet as fast as it can
+  // send messages.
+  "theme.read": 10,
+  "app.error": 12,
   storage: 120,
   "payment.request": 6,
   "clipboard.write": 20,
@@ -315,6 +320,13 @@ export function attachBroker(opts: {
     // An app reporting its own crash is the app talking about itself. Making
     // that permissioned would mean the apps most likely to be broken are the
     // ones least able to say so.
+    if (method === "theme.read" || method === "app.error") {
+      // Free of permission is not free of limits.
+      if (!withinRate(method)) {
+        log(method, "denied", "rate limit");
+        return reply({ ok: false, error: "too many requests, slow down" });
+      }
+    }
     if (method === "theme.read") {
       log(method, "ok");
       return reply({ ok: true, result: { vars: currentTheme() } });

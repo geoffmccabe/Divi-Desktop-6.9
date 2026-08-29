@@ -19,6 +19,7 @@ APP="/Applications/DD69.app"
 BIN="$APP/Contents/MacOS/divi-desktop-69"
 PLIST="$APP/Contents/Info.plist"
 
+WAS=$(python3 -c "import json;print(json.load(open('crates/app/tauri.conf.json'))['version'])")
 case "${1:-patch}" in
   none) : ;;
   *)    python3 scripts/bump-version.py "${1:-patch}" ;;
@@ -27,8 +28,34 @@ esac
 VERSION=$(python3 -c "import json;print(json.load(open('crates/app/tauri.conf.json'))['version'])")
 echo "building $VERSION"
 
-( cd ui && npm run build >/dev/null 2>&1 )
-cargo build --release 2>&1 | grep -E "^error|warning: unused" || true
+# The version has to be bumped BEFORE the interface is built, because the build
+# bakes it in. So a build that then fails would burn a version number on
+# something nobody ever ran. Put it back.
+undo_bump() {
+  if [ "$WAS" != "$VERSION" ]; then
+    python3 scripts/bump-version.py "$WAS" >/dev/null
+    echo "version put back to $WAS, since nothing shipped"
+  fi
+}
+
+# A failed build MUST stop this. Piping cargo into grep threw its exit status
+# away, so a compile error installed the PREVIOUS binary and announced success —
+# which is precisely the "you were testing an hour-old build" trap this script
+# exists to close, rebuilt inside the script meant to prevent it.
+LOG=$(mktemp)
+if ! ( cd ui && npm run build ) > "$LOG" 2>&1; then
+  echo "the interface did not build, so nothing was installed:"
+  tail -25 "$LOG"
+  undo_bump
+  exit 1
+fi
+if ! cargo build --release > "$LOG" 2>&1; then
+  echo "the wallet did not build, so nothing was installed:"
+  grep -E "^error" -A4 "$LOG" | head -30
+  undo_bump
+  exit 1
+fi
+rm -f "$LOG"
 
 if [ ! -d "$APP" ]; then
   echo "$APP is not there. Build the bundle once with cargo tauri build."
@@ -55,6 +82,13 @@ sleep 2
 
 cp "$BIN" "$BIN.previous" 2>/dev/null || true
 cp target/release/divi-desktop-69 "$BIN"
+
+# Belt and braces: the whole point of this script is that what he launches is
+# what was just built.
+if ! cmp -s target/release/divi-desktop-69 "$BIN"; then
+  echo "the binary did not copy across; not launching a build you cannot trust"
+  exit 1
+fi
 codesign --force --deep -s - "$APP" 2>/dev/null || true
 
 # macOS caches the app's display name, so without this the OLD name keeps

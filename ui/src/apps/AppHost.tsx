@@ -17,7 +17,16 @@ import type { CatalogEntry } from "./catalog";
 // Payment confirmation is drawn HERE, by the wallet, outside the frame. The app
 // can ask; it cannot render the dialog, style it, or click it.
 
-export function AppHost({ entry, onExit }: { entry: CatalogEntry; onExit: () => void }) {
+export function AppHost({
+  entry,
+  onExit,
+  exitLabel = "Back to apps",
+}: {
+  entry: CatalogEntry;
+  onExit: () => void;
+  /** What leaving means here. "Back to apps" is wrong when previewing a build. */
+  exitLabel?: string;
+}) {
   const m = entry.manifest;
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [consented, setConsented] = useState(() => isFullyGranted(m.id, m.permissions));
@@ -80,7 +89,7 @@ export function AppHost({ entry, onExit }: { entry: CatalogEntry; onExit: () => 
     <div className={immersive ? "ca-host ca-host-focus" : "ca-host"}>
       <div className="ca-host-bar">
         <button type="button" className="wl-btn" onClick={onExit}>
-          <Icon name="overview" size={14} /> Back to apps
+          <Icon name="overview" size={14} /> {exitLabel}
         </button>
         <span className="ca-host-title">{m.name}</span>
         <span className="ca-host-spacer" />
