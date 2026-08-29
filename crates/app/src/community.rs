@@ -72,6 +72,12 @@ const PREVIEW: &str = "preview.";
 /// And the result must sit inside the builder's own projects folder, so even a
 /// well-formed id cannot point somewhere else on the disk.
 fn preview_dir(app_id: &str) -> Option<std::path::PathBuf> {
+    preview_dir_in(&crate::builder_service::projects_root().join("projects"), app_id)
+}
+
+/// The same, against a given root, so the rules can be tested without touching
+/// anybody's real projects.
+fn preview_dir_in(root: &std::path::Path, app_id: &str) -> Option<std::path::PathBuf> {
     let id = app_id.strip_prefix(PREVIEW)?;
     if id.is_empty()
         || id.len() > 64
@@ -79,7 +85,6 @@ fn preview_dir(app_id: &str) -> Option<std::path::PathBuf> {
     {
         return None;
     }
-    let root = crate::builder_service::projects_root().join("projects");
     let dir = root.join(id).join("files");
     let base = root.canonicalize().ok()?;
     let real = dir.canonicalize().ok()?;
@@ -309,6 +314,33 @@ mod tests {
         assert!(matches!(b.serve(&decoded), Err(BundleError::BadPath)));
     }
 
+    fn fake_project(name: &str) -> (std::path::PathBuf, String) {
+        let root = std::env::temp_dir().join(format!("dd69-prevroot-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let id = "23bf39da-1f26-4ad5-b6e3-c2aff97f5cbe".to_string();
+        let files = root.join(&id).join("files");
+        std::fs::create_dir_all(&files).unwrap();
+        std::fs::write(files.join("index.html"), b"<h1>a build in progress</h1>").unwrap();
+        (root, id)
+    }
+
+    #[test]
+    fn a_preview_finds_a_real_project_and_serves_it() {
+        // The path I never actually proved end to end: a project on disk being
+        // found, and its half-finished page coming back.
+        let (root, id) = fake_project("finds");
+        let dir = preview_dir_in(&root, &format!("preview.{id}")).expect("the project is found");
+        let served = FolderBundle { dir }.serve("").expect("index.html is served");
+        assert_eq!(served.bytes, b"<h1>a build in progress</h1>");
+        assert_eq!(served.mime, "text/html; charset=utf-8");
+    }
+
+    #[test]
+    fn a_preview_of_a_project_that_is_not_there_finds_nothing() {
+        let (root, _) = fake_project("absent");
+        assert!(preview_dir_in(&root, "preview.0000aaaa-1111-2222-3333-444455556666").is_none());
+    }
+
     #[test]
     fn a_preview_id_cannot_be_turned_into_a_path() {
         // The id arrives in a url and becomes part of a folder path, so this is
@@ -327,9 +359,12 @@ mod tests {
         ] {
             assert!(preview_dir(bad).is_none(), "{bad} was not refused");
         }
-        // And an id of a plausible shape is still refused when no such project
-        // exists, rather than serving whatever happens to be there.
-        assert!(preview_dir("preview.0000aaaa-1111-2222-3333-444455556666").is_none());
+        // Against a root that really exists, so a refusal is the id rules doing
+        // their job rather than the folder simply not being there.
+        let (root, _) = fake_project("escape");
+        for bad in ["preview.../../../etc", "preview.a/b", "preview.a b", "preview."] {
+            assert!(preview_dir_in(&root, bad).is_none(), "{bad} was not refused");
+        }
         // Something that is not a preview at all is not one.
         assert!(preview_dir("io.divi.snapshot").is_none());
     }

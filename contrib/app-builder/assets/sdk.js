@@ -77,13 +77,21 @@
    * wondering why their game would not start.
    */
   function reportCrashes() {
+    // The same failure inside an animation loop happens sixty times a second.
+    // Reporting each one would drown the wallet and tell nobody anything the
+    // first one did not.
+    const alreadySaid = new Set();
+    const say = (message, where) => {
+      const key = message + "@" + where;
+      if (alreadySaid.has(key) || alreadySaid.size > 20) return;
+      alreadySaid.add(key);
+      request("app.error", { message: String(message), where }).catch(() => {});
+    };
     window.addEventListener("error", (e) => {
-      const where = e.filename ? `${e.filename.split("/").pop()}:${e.lineno}` : "";
-      request("app.error", { message: String(e.message || "script error"), where }).catch(() => {});
+      say(e.message || "script error", e.filename ? `${e.filename.split("/").pop()}:${e.lineno}` : "");
     });
     window.addEventListener("unhandledrejection", (e) => {
-      const why = e.reason && e.reason.message ? e.reason.message : String(e.reason);
-      request("app.error", { message: why, where: "a promise" }).catch(() => {});
+      say(e.reason && e.reason.message ? e.reason.message : String(e.reason), "a promise");
     });
   }
 
