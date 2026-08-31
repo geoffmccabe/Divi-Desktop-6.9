@@ -13,11 +13,20 @@
 
 use std::borrow::Cow;
 
-use dd69_supervisor::appbundle::{BuiltinBundle, BundleError, APP_CSP};
+use dd69_supervisor::appbundle::{BuiltinBundle, BundleError, FolderBundle, APP_CSP};
 use tauri::http::{Request, Response};
 use tauri::UriSchemeContext;
 
 pub const SCHEME: &str = "divi-app";
+
+/// The one and only copy of the app SDK.
+///
+/// Every built-in serves this, and the App Builder puts this same file into
+/// every new project, so an app developed in the builder and an app shipped
+/// with the wallet are talking to the wallet through identical code. There used
+/// to be a copy per app, which is exactly how two versions of a protocol shim
+/// quietly stop agreeing with each other.
+pub static SDK_JS: &[u8] = include_bytes!("../../../contrib/app-builder/assets/sdk.js");
 
 /// Apps compiled into the wallet. Trusted because they shipped with it.
 ///
@@ -27,7 +36,7 @@ pub const SCHEME: &str = "divi-app";
 /// exists.
 static HARNESS_FILES: &[(&str, &[u8])] = &[
     ("index.html", include_bytes!("community/harness/index.html")),
-    ("sdk.js", include_bytes!("community/harness/sdk.js")),
+    ("sdk.js", SDK_JS),
     ("thumb.svg", include_bytes!("community/harness/thumb.svg")),
 ];
 
@@ -36,7 +45,7 @@ static HARNESS_FILES: &[(&str, &[u8])] = &[
 /// it asks for balance and chain only, and gets exactly that.
 static SNAPSHOT_FILES: &[(&str, &[u8])] = &[
     ("index.html", include_bytes!("community/snapshot/index.html")),
-    ("sdk.js", include_bytes!("community/snapshot/sdk.js")),
+    ("sdk.js", SDK_JS),
     ("thumb.svg", include_bytes!("community/snapshot/thumb.svg")),
 ];
 
@@ -52,6 +61,38 @@ static BUILTINS: &[BuiltinBundle] = &[
         files: HARNESS_FILES,
     },
 ];
+
+/// Ids beginning with this serve a project being built, from disk.
+const PREVIEW: &str = "preview.";
+
+/// The folder a project being previewed lives in, if the id names a real one.
+///
+/// Two rules, both load-bearing. The id after the prefix must look like a
+/// project id and nothing else, so it cannot be turned into a path fragment.
+/// And the result must sit inside the builder's own projects folder, so even a
+/// well-formed id cannot point somewhere else on the disk.
+fn preview_dir(app_id: &str) -> Option<std::path::PathBuf> {
+    preview_dir_in(&crate::builder_service::projects_root().join("projects"), app_id)
+}
+
+/// The same, against a given root, so the rules can be tested without touching
+/// anybody's real projects.
+fn preview_dir_in(root: &std::path::Path, app_id: &str) -> Option<std::path::PathBuf> {
+    let id = app_id.strip_prefix(PREVIEW)?;
+    if id.is_empty()
+        || id.len() > 64
+        || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return None;
+    }
+    let dir = root.join(id).join("files");
+    let base = root.canonicalize().ok()?;
+    let real = dir.canonicalize().ok()?;
+    if !real.starts_with(&base) {
+        return None;
+    }
+    Some(real)
+}
 
 pub fn builtin(id: &str) -> Option<&'static BuiltinBundle> {
     BUILTINS.iter().find(|b| b.id == id)
@@ -74,6 +115,21 @@ pub fn community_builtin_apps() -> Vec<String> {
 pub fn community_app_base(app_id: String) -> Result<String, String> {
     if builtin(&app_id).is_none() {
         return Err("unknown app".into());
+    }
+    Ok(base_url(&app_id))
+}
+
+/// Where to point a frame to run a project that is still being built.
+///
+/// The preview runs in the SAME sandbox, through the same broker, behind the
+/// same permission prompt as a published app. That is the point of previewing
+/// here rather than in a browser: what is on screen is what a user would get,
+/// not an approximation of it.
+#[tauri::command]
+pub fn community_preview_base(project_id: String) -> Result<String, String> {
+    let app_id = format!("{PREVIEW}{project_id}");
+    if preview_dir(&app_id).is_none() {
+        return Err("that project has no files to run yet".into());
     }
     Ok(base_url(&app_id))
 }
@@ -137,11 +193,17 @@ pub fn handle<R: tauri::Runtime>(
     // rules see the real components rather than an encoded spelling of them.
     let decoded = percent_decode(&path);
 
-    let Some(bundle) = builtin(&app_id) else {
+    // A project being built is served from its folder; everything else must be
+    // an app compiled into the wallet.
+    let served = if let Some(dir) = preview_dir(&app_id) {
+        FolderBundle { dir }.serve(&decoded)
+    } else if let Some(bundle) = builtin(&app_id) {
+        bundle.serve(&decoded)
+    } else {
         return error_response(404, "unknown app");
     };
 
-    match bundle.serve(&decoded) {
+    match served {
         Ok(served) => Response::builder()
             .status(200)
             .header("Content-Type", served.mime)
@@ -250,6 +312,61 @@ mod tests {
         assert_eq!(decoded, "../secret.html");
         let b = builtin("io.divi.sandbox-test").unwrap();
         assert!(matches!(b.serve(&decoded), Err(BundleError::BadPath)));
+    }
+
+    fn fake_project(name: &str) -> (std::path::PathBuf, String) {
+        let root = std::env::temp_dir().join(format!("dd69-prevroot-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let id = "23bf39da-1f26-4ad5-b6e3-c2aff97f5cbe".to_string();
+        let files = root.join(&id).join("files");
+        std::fs::create_dir_all(&files).unwrap();
+        std::fs::write(files.join("index.html"), b"<h1>a build in progress</h1>").unwrap();
+        (root, id)
+    }
+
+    #[test]
+    fn a_preview_finds_a_real_project_and_serves_it() {
+        // The path I never actually proved end to end: a project on disk being
+        // found, and its half-finished page coming back.
+        let (root, id) = fake_project("finds");
+        let dir = preview_dir_in(&root, &format!("preview.{id}")).expect("the project is found");
+        let served = FolderBundle { dir }.serve("").expect("index.html is served");
+        assert_eq!(served.bytes, b"<h1>a build in progress</h1>");
+        assert_eq!(served.mime, "text/html; charset=utf-8");
+    }
+
+    #[test]
+    fn a_preview_of_a_project_that_is_not_there_finds_nothing() {
+        let (root, _) = fake_project("absent");
+        assert!(preview_dir_in(&root, "preview.0000aaaa-1111-2222-3333-444455556666").is_none());
+    }
+
+    #[test]
+    fn a_preview_id_cannot_be_turned_into_a_path() {
+        // The id arrives in a url and becomes part of a folder path, so this is
+        // the one place a preview could be talked into reading elsewhere on the
+        // disk. Anything that is not a plain project id is refused before a
+        // path is built at all.
+        for bad in [
+            "preview.../../../etc",
+            "preview../..",
+            "preview.a/b",
+            "preview.a\\b",
+            "preview.",
+            "preview.a b",
+            "preview.a%2e%2e",
+            "preview.'; rm -rf /",
+        ] {
+            assert!(preview_dir(bad).is_none(), "{bad} was not refused");
+        }
+        // Against a root that really exists, so a refusal is the id rules doing
+        // their job rather than the folder simply not being there.
+        let (root, _) = fake_project("escape");
+        for bad in ["preview.../../../etc", "preview.a/b", "preview.a b", "preview."] {
+            assert!(preview_dir_in(&root, bad).is_none(), "{bad} was not refused");
+        }
+        // Something that is not a preview at all is not one.
+        assert!(preview_dir("io.divi.snapshot").is_none());
     }
 
     #[test]

@@ -1,20 +1,25 @@
 // What a build session costs us, and what the developer is charged for it.
 //
-// The rule Geoff set: developers pay twice what the tokens cost us, in DIVI, and
-// a build the code gate rejects is charged at half.
+// Charging is in POINTS, bought with DIVI up front (see points.mjs and
+// orders.mjs). That is deliberate: the developer's balance is a number we hold,
+// not a number they tell us, and a model price change moves the number of points
+// a turn costs rather than quietly revaluing everyone's balance.
 //
-// Three things this file is careful about, because each is a way to lose money
-// or lose trust:
+// Four things this file is careful about, because each is a way to lose money:
 //
 //   1. It bills from the token counts the API actually reports, never from an
 //      estimate. Estimates drift, and drift in our favour is indistinguishable
 //      from overcharging.
-//   2. Credit is RESERVED before a turn and settled after. A runaway agent loop
-//      can spend real money in minutes, so "check the balance afterwards" is not
-//      good enough.
-//   3. The DIVI price is a number an admin sets, never a live feed. Aggregators
-//      disagree by roughly 4.5x on DIVI because they track different illiquid
-//      venues, so billing off a feed would be indefensible.
+//   2. It works out the WORST the next step could cost before making the call,
+//      and refuses to start if the balance cannot cover that. A hold based on a
+//      guess is not a control: a runaway step can outrun a guess by a hundred
+//      times, and that is exactly what an audit of the earlier version found.
+//   3. The ceiling it works out is also passed to the model as a hard output
+//      limit, so the worst case is a real limit rather than a hope.
+//   4. Points come out of the shared ledger, which refuses to go negative and
+//      records every movement.
+
+import { pointsForCostUsd, POINTS_PER_USD, MARKUP } from "./points.mjs";
 
 /** Anthropic list prices, US dollars per million tokens. */
 export const PRICES = {
@@ -32,10 +37,19 @@ export const PRICES = {
 /** Cache reads are about a tenth of input; writes carry a premium. */
 export const CACHE_MULTIPLIER = { read: 0.1, write: 1.25 };
 
-export const MARKUP = 2;
+/** Ceiling on one step's output. Also what makes the worst case a real bound. */
+export const MAX_OUTPUT_TOKENS = 8000;
+
 export const REJECTED_BUILD_SHARE = 0.5;
 
+export { POINTS_PER_USD, MARKUP };
+
 export class BillingError extends Error {}
+
+/** Models a session may use. Anything else is refused BEFORE the call is made. */
+export function isPricedModel(model) {
+  return Object.prototype.hasOwnProperty.call(PRICES, model);
+}
 
 export function ratesFor(model, onDate = new Date()) {
   const p = PRICES[model];
@@ -57,7 +71,7 @@ export function costUsd(model, usage, onDate = new Date()) {
   const cacheRead = num(usage?.cache_read_input_tokens);
   const cacheWrite = num(usage?.cache_creation_input_tokens);
 
-  const perToken = (millions, rate) => (millions / 1_000_000) * rate;
+  const perToken = (tokens, rate) => (tokens / 1_000_000) * rate;
   return (
     perToken(inTok, r.input) +
     perToken(outTok, r.output) +
@@ -70,38 +84,69 @@ function num(v) {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
 }
 
-/**
- * What the developer pays, in DIVI.
- * @param {number} usd our cost
- * @param {number} diviPerUsd admin-set rate: how many DIVI to one dollar
- * @param {{rejected?: boolean}} opts
- */
-export function chargeDivi(usd, diviPerUsd, opts = {}) {
-  if (!(diviPerUsd > 0)) throw new BillingError("the DIVI rate has not been set");
-  const share = opts.rejected ? REJECTED_BUILD_SHARE : 1;
-  return usd * MARKUP * share * diviPerUsd;
+/** Points charged for one response. Half price when the code gate rejected it. */
+export function pointsFor(model, usage, { rejected = false, onDate = new Date() } = {}) {
+  const usd = costUsd(model, usage, onDate);
+  return { usd, points: pointsForCostUsd(usd * (rejected ? REJECTED_BUILD_SHARE : 1)) };
 }
 
 /**
- * A session's running account.
+ * A rough token count for text we are about to send.
  *
- * Reserve before a turn, settle after. If the turn dies mid-flight the
- * reservation is released, so a crash cannot silently consume a balance.
+ * Deliberately pessimistic: about three characters per token rather than the
+ * usual four. An estimate that runs low would let a step start that the balance
+ * cannot actually cover, so it errs the safe way.
+ */
+export function estimateTokens(text) {
+  return Math.ceil(String(text ?? "").length / 3);
+}
+
+export function messagesSize(messages) {
+  let chars = 0;
+  const walk = (v) => {
+    if (typeof v === "string") chars += v.length;
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") Object.values(v).forEach(walk);
+  };
+  walk(messages);
+  return estimateTokens("x".repeat(chars));
+}
+
+/**
+ * The most one step could possibly cost, in points, before it is made.
+ * This is the number that gets held, and the output limit that gets sent.
+ */
+export function worstCasePoints({ model, inputTokens, maxOutputTokens = MAX_OUTPUT_TOKENS, onDate = new Date() }) {
+  const r = ratesFor(model, onDate);
+  const usd = (inputTokens / 1_000_000) * r.input + (maxOutputTokens / 1_000_000) * r.output;
+  return pointsForCostUsd(usd);
+}
+
+/**
+ * A session's running account, backed by the shared points ledger.
+ *
+ * The balance is read from the ledger every time. Nothing here can invent
+ * credit, and nothing outside can declare it.
  */
 export class SessionMeter {
   /**
-   * @param {{balanceDivi: number, diviPerUsd: number,
-   *          maxTurnDivi?: number, maxSessionDivi?: number}} cfg
+   * @param {{accounts: object, account: string,
+   *          maxTurnPoints?: number, maxSessionPoints?: number}} cfg
    */
   constructor(cfg) {
-    if (!(cfg.balanceDivi >= 0)) throw new BillingError("balance is required");
-    this.balance = cfg.balanceDivi;
-    this.diviPerUsd = cfg.diviPerUsd;
-    this.maxTurnDivi = cfg.maxTurnDivi ?? 400;
-    this.maxSessionDivi = cfg.maxSessionDivi ?? 4000;
+    if (!cfg?.accounts) throw new BillingError("a points ledger is required");
+    this.accounts = cfg.accounts;
+    this.account = cfg.account;
+    this.maxTurnPoints = cfg.maxTurnPoints ?? 4_000;
+    this.maxSessionPoints = cfg.maxSessionPoints ?? 40_000;
     this.spent = 0;
     this.reserved = 0;
+    this.shortfall = 0;
     this.turns = [];
+  }
+
+  get balance() {
+    return this.accounts.balance(this.account);
   }
 
   get available() {
@@ -109,54 +154,71 @@ export class SessionMeter {
   }
 
   /**
-   * Hold credit for a turn that is about to run. Throws rather than letting a
-   * turn start that the developer cannot pay for.
+   * Hold points for a step that is about to run. Throws rather than letting a
+   * step start that the developer cannot pay for.
    */
-  reserve(estimateDivi) {
-    const hold = Math.max(1, Number(estimateDivi) || 0);
-    if (hold > this.maxTurnDivi) {
-      throw new BillingError(`a single turn may not exceed ${this.maxTurnDivi} DIVI`);
+  reserve(points) {
+    const hold = Math.max(1, Math.ceil(Number(points) || 0));
+    if (hold > this.maxTurnPoints) {
+      throw new BillingError(
+        `a single step could cost up to ${hold.toLocaleString()} points, above the ${this.maxTurnPoints.toLocaleString()} limit. Try a shorter request.`,
+      );
     }
-    if (this.spent + hold > this.maxSessionDivi) {
-      throw new BillingError(`this session has reached its ${this.maxSessionDivi} DIVI limit`);
+    if (this.spent + hold > this.maxSessionPoints) {
+      throw new BillingError(`this session has reached its ${this.maxSessionPoints.toLocaleString()} point limit`);
     }
     if (hold > this.available) {
       throw new BillingError(
-        `not enough credit: this turn needs about ${hold.toFixed(2)} DIVI and ${this.available.toFixed(2)} is available`,
+        `not enough points: this step could need ${hold.toLocaleString()} and ${this.available.toLocaleString()} are available`,
       );
     }
     this.reserved += hold;
     return { hold };
   }
 
-  /** Release a reservation without charging (the turn failed before spending). */
   release(hold) {
     this.reserved = Math.max(0, this.reserved - (Number(hold) || 0));
   }
 
   /**
-   * Settle a completed turn against what it actually used.
-   * @returns {{usd:number, divi:number, refunded:number}}
+   * Settle a completed step against what it actually used, taking the points
+   * out of the ledger.
    */
-  settle({ hold, model, usage, rejected = false, onDate = new Date() }) {
-    const usd = costUsd(model, usage, onDate);
-    const divi = chargeDivi(usd, this.diviPerUsd, { rejected });
-
+  async settle({ hold, model, usage, rejected = false, onDate = new Date() }) {
+    const { usd, points } = pointsFor(model, usage, { rejected, onDate });
     this.release(hold);
-    this.balance -= divi;
-    this.spent += divi;
-    this.turns.push({ model, usd, divi, rejected, at: onDate.toISOString() });
 
-    return { usd, divi, refunded: Math.max(0, (Number(hold) || 0) - divi) };
+    // The hold was computed as a ceiling, so this should not bite. If it ever
+    // does, the shortfall is recorded rather than throwing away the record of
+    // work we already paid for.
+    const affordable = Math.max(0, this.balance);
+    const charge = Math.min(points, affordable);
+    const short = points - charge;
+    if (short > 0) this.shortfall += short;
+
+    if (charge > 0) {
+      await this.accounts.debit(this.account, charge, {
+        reason: "app builder",
+        model,
+        usd,
+        rejected,
+        ...(short > 0 ? { unbilled: short } : {}),
+      });
+    }
+
+    this.spent += charge;
+    this.turns.push({ model, usd, points: charge, rejected, at: onDate.toISOString() });
+    return { usd, points: charge, unbilled: short };
   }
 
   summary() {
     return {
-      balanceDivi: round(this.balance),
-      spentDivi: round(this.spent),
-      reservedDivi: round(this.reserved),
+      balancePoints: this.balance,
+      spentPoints: this.spent,
+      reservedPoints: this.reserved,
       turns: this.turns.length,
       costUsd: round(this.turns.reduce((n, t) => n + t.usd, 0), 6),
+      ...(this.shortfall ? { unbilledPoints: this.shortfall } : {}),
     };
   }
 }

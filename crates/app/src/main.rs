@@ -9,6 +9,10 @@ use serde::Serialize;
 // so this file only gains the three lines that wire it in.
 mod community;
 
+// Starts the small Node process the App Builder needs, so nobody has to open a
+// terminal to use a feature in a desktop wallet.
+mod builder_service;
+
 #[derive(Serialize)]
 struct BalanceDto {
     spendable: f64,
@@ -1128,10 +1132,13 @@ async fn ai_clear_key(provider: String) -> Result<(), String> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AiStatusDto {
     /// Whether each key is present — the values themselves are never returned.
     claude: bool,
     grok: bool,
+    /// A token for the gateway, which is not a model key.
+    gateway_token: bool,
     /// The gateway URL is not a secret, so it's safe to show.
     gateway: String,
 }
@@ -1142,10 +1149,18 @@ async fn ai_status() -> AiStatusDto {
     tauri::async_runtime::spawn_blocking(|| AiStatusDto {
         claude: security::ai_get("claude").is_some(),
         grok: security::ai_get("grok").is_some(),
-        gateway: security::ai_get("gateway").unwrap_or_default(),
+        gateway_token: security::ai_get("gateway_token").is_some(),
+        // From a plain file, not the keychain: a URL is not a secret, and
+        // keeping it there cost a permission prompt for no protection.
+        gateway: builder_service::read_gateway_url().unwrap_or_default(),
     })
     .await
-    .unwrap_or(AiStatusDto { claude: false, grok: false, gateway: String::new() })
+    .unwrap_or(AiStatusDto {
+        claude: false,
+        grok: false,
+        gateway_token: false,
+        gateway: String::new(),
+    })
 }
 
 // ── Market Maker: trade-only exchange API keys (OS keychain), plus a read-only
@@ -1842,6 +1857,37 @@ async fn multisig_forget(address: String) -> Result<(), String> {
         .map_err(|_| "internal error".to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityDto {
+    txid: String,
+    amount: f64,
+    height: i64,
+    time: i64,
+    confirmations: i64,
+}
+
+/// Recent deposits and spends for a shared wallet (the treasury audit trail).
+#[tauri::command]
+async fn multisig_activity(address: String, limit: Option<usize>) -> Result<Vec<ActivityDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::wallet_activity(&cfg, &address, limit.unwrap_or(25)).map(|list| {
+            list.into_iter()
+                .map(|a| ActivityDto {
+                    txid: a.txid,
+                    amount: a.amount,
+                    height: a.height,
+                    time: a.time,
+                    confirmations: a.confirmations,
+                })
+                .collect()
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// Propose a spend from a multisig wallet. Returns a shareable blob the
 /// co-signers add their signatures to. Signs nothing.
 #[tauri::command]
@@ -2053,6 +2099,10 @@ fn main() {
                     Err(e) => applog::log(format!("startup: node bring-up stopped — {e}")),
                 }
             });
+            // The App Builder's service, started beside the wallet. In the
+            // background because finding Node can involve asking a login shell,
+            // and the window must not wait on that.
+            tauri::async_runtime::spawn_blocking(builder_service::start);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -2118,6 +2168,7 @@ fn main() {
             multisig_create,
             multisig_import,
             multisig_inspect,
+            multisig_activity,
             multisig_forget,
             multisig_propose,
             multisig_sign,
@@ -2152,8 +2203,21 @@ fn main() {
             list_nodes,
             set_active_node,
             community::community_builtin_apps,
-            community::community_app_base
+            community::community_app_base,
+            community::community_preview_base,
+            builder_service::builder_service_status,
+            builder_service::builder_service_restart,
+            builder_service::set_gateway_url,
+            builder_service::gateway_url
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Divi Desktop 6.9");
+        .build(tauri::generate_context!())
+        .expect("error while running Divi Desktop 6.9")
+        .run(|_app, event| {
+            // Stop the App Builder service with the wallet. Leaving a service
+            // running after its window has closed is how somebody ends up with
+            // three of them and no idea why the port is busy.
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                builder_service::stop();
+            }
+        });
 }

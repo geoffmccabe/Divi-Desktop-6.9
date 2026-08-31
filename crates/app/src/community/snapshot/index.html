@@ -38,6 +38,7 @@
   <div class="card"><div class="label">Staking</div><div class="value" id="staking">…</div></div>
   <div class="card"><div class="label">Block height</div><div class="value" id="height">…</div></div>
   <div class="card"><div class="label">Connected peers</div><div class="value" id="peers">…</div></div>
+  <div class="card"><div class="label">Worth</div><div class="value" id="worth">…</div></div>
   <div class="card wide"><div class="label">Node</div><div class="value" id="phase">…</div></div>
 </div>
 
@@ -88,7 +89,23 @@
       if (!b) throw new Error("the wallet did not answer");
       el("spendable").innerHTML = num(b.spendable) + '<span class="unit">DIVI</span>';
       el("staking").innerHTML = num(b.staking) + '<span class="unit">DIVI</span>';
+      return b;
     })
+    // What that is worth, using the wallet's own price rather than any the app
+    // fetched for itself. An app is never handed the key and never picks the
+    // source, so it cannot quietly price DIVI off somewhere cheaper.
+    .then((b) => divi.price().then((p) => {
+      if (!p.available) {
+        el("worth").textContent = "no price set";
+        return;
+      }
+      const code = Object.keys(p.prices)[0];
+      const rate = p.prices[code];
+      const total = (b.spendable + b.staking) * rate;
+      el("worth").innerHTML =
+        total.toLocaleString(undefined, { maximumFractionDigits: 2 }) +
+        '<span class="unit">' + code.toUpperCase() + '</span>';
+    }))
     .catch((e) => { fail("spendable", "Balance: " + e.message); fail("staking", "Balance: " + e.message); });
 
   divi.chain(1)

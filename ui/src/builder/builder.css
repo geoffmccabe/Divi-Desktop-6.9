@@ -21,14 +21,20 @@
   -webkit-backdrop-filter: blur(var(--panel-blur));
 }
 
-.bd { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; }
+/* position:relative so the file viewer, which covers the panel, is bounded by
+   it rather than escaping to the window. */
+.bd { display: flex; flex-direction: column; gap: 14px; height: 100%; min-height: 0; position: relative; }
 
 .bd-note { font-size: 0.82rem; line-height: 1.5; color: hsl(var(--foreground) / 0.7); }
 .bd-note-gap { margin-top: 8px; }
+.bd-note p { margin: 0 0 10px; }
+/* The buy button sits under the explanation rather than in the header, so
+   somebody reading why points are needed can act on it right there. */
+.bd-buyrow { margin: 14px 0 0; }
 
 /* ---- not connected / needs a key ---- */
 .bd-offline { padding: 26px 22px; border: 1px dashed hsl(var(--foreground) / 0.2); }
-.bd-offline h3 { font-family: var(--font-heading); font-size: 1rem; margin-bottom: 8px; }
+.bd-offline h3 { font-family: var(--font-subheading); font-size: 1rem; margin-bottom: 8px; }
 .bd-offline code {
   display: inline-block; padding: 2px 6px; border-radius: 5px; font-size: 0.8rem;
   background: hsl(var(--background) / 0.5);
@@ -58,7 +64,7 @@
 
 .bd-chat { display: flex; flex-direction: column; min-height: 0; }
 .bd-log {
-  flex: 1; overflow-y: auto; padding: 12px; min-height: 200px;
+  flex: 1; overflow-y: auto; padding: 12px; min-height: 0;
   display: flex; flex-direction: column; gap: 9px;
 }
 
@@ -74,25 +80,199 @@
 .bd-msg-cost { font-size: 0.72rem; padding-left: 4px; color: hsl(var(--foreground) / 0.5); }
 
 .bd-compose {
-  display: flex; gap: 8px; padding: 10px;
-  border-top: 1px solid hsl(var(--subpanel-outline-color));
+  /* Never shrinks and never scrolls away: this is the one control the whole
+     panel exists for. */
+  flex: 0 0 auto;
+  display: grid; gap: 6px; padding: 10px;
+  border-top: 1px solid hsl(var(--foreground) / 0.12);
+}
+.bd-compose-row { display: flex; gap: 8px; }
+/* Labelled, because an unlabelled box below a wall of chat is not obviously
+   the place to type — somebody tried to type into the transcript instead. */
+.bd-compose-label {
+  font-size: 0.75rem; font-weight: 600;
+  color: hsl(var(--foreground) / 0.6);
 }
 .bd-compose textarea {
   flex: 1; resize: none; min-height: 54px; padding: 8px 10px;
   font: inherit; font-size: 0.85rem;
   color: hsl(var(--foreground));
   background: hsl(var(--background) / 0.5);
-  border: 1px solid hsl(var(--subpanel-outline-color));
+  /* An explicit edge: the sub-panel outline is often set to zero width, which
+     left this looking like part of the background rather than an input. */
+  border: 1px solid hsl(var(--foreground) / 0.22);
   border-radius: calc(var(--app-card-radius) * 0.6);
 }
 
 /* ---- file list ---- */
 .bd-files { padding: 10px; overflow-y: auto; min-height: 0; }
 .bd-files h4 {
-  font-family: var(--font-heading); font-size: 0.8rem; margin-bottom: 8px;
+  font-family: var(--font-subheading); font-size: 0.8rem; margin-bottom: 8px;
   color: hsl(var(--foreground) / 0.75);
 }
 .bd-file { display: flex; justify-content: space-between; gap: 8px; font-size: 0.78rem; padding: 4px 2px; }
 .bd-file-name { color: hsl(var(--foreground)); }
 .bd-file-size { color: hsl(var(--foreground) / 0.5); }
 .bd-empty { font-size: 0.78rem; color: hsl(var(--foreground) / 0.5); }
+
+/* ---- saved projects ---- */
+
+.bd-projects { display: grid; gap: 10px; }
+.bd-newrow { display: flex; gap: 10px; }
+.bd-newrow .wl-input { flex: 1; }
+.bd-firstrun { max-width: 60ch; }
+
+.bd-project {
+  display: flex; align-items: stretch; gap: 8px;
+}
+.bd-project-main {
+  flex: 1; display: grid; gap: 3px; text-align: left; cursor: pointer;
+  padding: 11px 13px;
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: 1px solid hsl(var(--foreground) / 0.12);
+  border-radius: var(--app-card-radius);
+  color: inherit; font: inherit;
+}
+.bd-project-main:hover { border-color: hsl(var(--primary) / 0.55); }
+.bd-project-name { font-weight: 600; }
+.bd-project-meta { font-size: 0.76rem; color: hsl(var(--foreground) / 0.55); }
+.bd-project-del { align-self: center; font-size: 0.76rem; padding: 5px 10px; }
+
+/* ---- clickable file rows and the viewer ---- */
+
+.bd-file {
+  display: flex; justify-content: space-between; gap: 10px; width: 100%;
+  text-align: left; cursor: pointer; background: transparent;
+  border: 0; border-radius: 6px; padding: 5px 7px; color: inherit; font: inherit;
+}
+.bd-file:hover { background: hsl(var(--foreground) / 0.07); }
+
+.bd-viewer {
+  position: absolute; inset: 12px; z-index: 5;
+  display: flex; flex-direction: column;
+  background-color: hsl(var(--card));
+  border: 1px solid hsl(var(--foreground) / 0.15);
+  border-radius: var(--app-card-radius);
+}
+.bd-viewer-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; border-bottom: 1px solid hsl(var(--foreground) / 0.1);
+}
+.bd-viewer-body {
+  flex: 1; margin: 0; padding: 14px; overflow: auto;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.78rem; line-height: 1.5; white-space: pre;
+}
+
+/* ---- the code check ---- */
+.bd-check { margin-top: 16px; padding-top: 12px; border-top: 1px solid hsl(var(--foreground) / 0.1); }
+.bd-finding { margin: 6px 0 0; font-size: 0.76rem; line-height: 1.45; color: hsl(var(--foreground) / 0.7); }
+
+/* The key prompt is a banner, not a gate: somebody's saved apps must never sit
+   behind a password box, having just been told their work is safe. */
+.bd-keybox { flex: 0 0 auto; }
+
+/* Technical detail is folded away: the person reading this wants to know what
+   to do, not what the port number was. */
+.bd-details { margin-top: 14px; font-size: 0.8rem; color: hsl(var(--foreground) / 0.55); }
+.bd-details summary { cursor: pointer; }
+.bd-details .bd-bar { margin-top: 10px; }
+
+/* When building is blocked, the compose box is REPLACED by the reason and a way
+   to fix it. A greyed-out Send button with a tooltip nobody hovers is not an
+   explanation — somebody sat there with 20,000 points wondering why it would
+   not click. */
+.bd-blocked {
+  display: grid; gap: 10px; justify-items: start;
+  padding: 12px;
+  border-top: 1px solid hsl(var(--foreground) / 0.12);
+}
+.bd-blocked .bd-note { margin: 0; }
+
+/* A visible focus ring, so it is obvious where typing will go. */
+.bd-compose textarea:focus {
+  outline: none;
+  border-color: hsl(var(--primary) / 0.7);
+  box-shadow: 0 0 0 2px hsl(var(--primary) / 0.2);
+}
+
+/* ---- signs of life while the model works ----
+
+   A build runs for minutes with nothing coming back until it finishes. The
+   files ARE changing on disk the whole time, so showing that is the difference
+   between "this is working" and "this has hung", which is otherwise
+   indistinguishable. */
+
+.bd-working { display: flex; align-items: center; gap: 8px; }
+.bd-pulse {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: hsl(var(--primary));
+  animation: bd-breathe 1.4s ease-in-out infinite;
+}
+@keyframes bd-breathe {
+  0%, 100% { opacity: 0.25; transform: scale(0.8); }
+  50%      { opacity: 1;    transform: scale(1.15); }
+}
+
+/* A file that just changed lights up briefly, so a glance catches which one
+   moved rather than having to watch every row. */
+.bd-file-changed {
+  background: hsl(var(--primary) / 0.16);
+  animation: bd-flash 0.7s ease-out;
+}
+.bd-file-changed .bd-file-size { color: hsl(var(--primary)); font-weight: 600; }
+@keyframes bd-flash {
+  0%   { background: hsl(var(--primary) / 0.42); }
+  100% { background: hsl(var(--primary) / 0.16); }
+}
+
+.bd-file-size { font-variant-numeric: tabular-nums; color: hsl(var(--foreground) / 0.5); }
+
+/* Somebody who has asked for less movement gets the information without the
+   animation, rather than losing the information. */
+@media (prefers-reduced-motion: reduce) {
+  .bd-pulse { animation: none; opacity: 0.8; }
+  .bd-file-changed { animation: none; }
+}
+
+/* ---- the panel owns its own scrolling ----
+
+   .main-panel scrolls its content, and .view-body cannot shrink below its
+   content, so a tall conversation pushed the prompt box off the bottom of the
+   screen. Scoped by view so no other panel's behaviour changes. */
+.view-body[data-view="appbuilder"] {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The project's name, which is the thing worth reading up there. */
+.bd-appname b { font-size: 1.06rem; }
+
+/* ---- running the app ----
+
+   The app takes over the panel completely, because a game squeezed into a
+   corner beside a chat log tells you nothing about how it actually feels. It is
+   the real runtime underneath — same sandbox, same permission prompt — so this
+   is what a user would see, not a mock-up of it. */
+/* The app fills the whole App Builder panel and nothing is drawn around it.
+   Wrapping a running app in a second panel inside the first made it smaller and
+   put a frame around a frame, which is exactly the wrong thing to show somebody
+   asking "what will this look like to a user?" */
+.bd-stage {
+  position: absolute; inset: 0; z-index: 6;
+  display: flex; padding: 10px;
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
+  border-radius: var(--app-card-radius);
+  backdrop-filter: blur(var(--panel-blur));
+  -webkit-backdrop-filter: blur(var(--panel-blur));
+}
+.bd-stage > * { flex: 1; min-width: 0; }
+/* Flat inside: the surface above is the surface, so the frame adds nothing. */
+.bd-stage .ca-frame {
+  border: 0; background: transparent; border-radius: 0; min-height: 0;
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+.bd-stage .ca-host { gap: 8px; }
+.bd-play { white-space: nowrap; }

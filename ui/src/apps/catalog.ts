@@ -22,6 +22,8 @@ export interface CatalogEntry {
   builtin: boolean;
   /** Safe to run: built in, or signature checked. */
   verified: boolean;
+  /** Your own work in progress, run from the builder rather than installed. */
+  preview?: boolean;
 }
 
 export interface Catalog {
@@ -86,6 +88,29 @@ export function resolveMedia(entry: CatalogEntry) {
           : s.type === "video"
             ? { ...s, video: at(s.video) }
             : s,
+  };
+}
+
+/**
+ * Run a project that is still being built, in the real runtime.
+ *
+ * The same sandbox, the same broker, the same permission prompt as a published
+ * app — which is the entire reason to preview here rather than in a browser:
+ * what is on screen is what a user would get, not an approximation.
+ *
+ * The app id is deliberately changed to a preview one. A preview must not
+ * inherit the permissions somebody already granted the published version, and
+ * its test data must not land in the published version's store.
+ */
+export async function previewEntry(projectId: string, manifestJson: string): Promise<CatalogEntry> {
+  const parsed = parseManifest(JSON.parse(manifestJson));
+  const base = await invoke<string>("community_preview_base", { projectId });
+  return {
+    manifest: { ...parsed, id: `preview.${projectId}` },
+    base,
+    builtin: false,
+    verified: true,
+    preview: true,
   };
 }
 

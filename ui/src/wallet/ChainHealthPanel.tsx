@@ -117,7 +117,7 @@ export function ChainHealthPanel() {
                     borderBottom: "1px solid hsl(var(--border) / 0.35)",
                   }}
                 >
-                  <span style={{ fontFamily: "ui-monospace, monospace", opacity: 0.85 }}>
+                  <span style={{ fontFamily: "var(--font-mono)", opacity: 0.85 }}>
                     #{f.height.toLocaleString()}
                   </span>
                   <span style={{ color: followed ? "rgb(255, 140, 125)" : "hsl(var(--muted-foreground))" }}>

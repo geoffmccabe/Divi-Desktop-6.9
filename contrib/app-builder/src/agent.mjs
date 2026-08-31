@@ -13,25 +13,42 @@
 // code gate and review.
 
 import { WorkspaceError } from "./workspace.mjs";
-import { BillingError } from "./meter.mjs";
+import { stylingBrief } from "./theme.mjs";
+import { capabilityBrief } from "./capabilities.mjs";
+import {
+  BillingError, isPricedModel, worstCasePoints, messagesSize,
+  MAX_OUTPUT_TOKENS,
+} from "./meter.mjs";
 
 export const SYSTEM_PROMPT = `You build small self-contained apps that run inside the Divi Desktop wallet.
 
 An app is plain HTML, CSS and JavaScript in one folder. It runs in a sandbox with
-no access to the user's keys, no network unless it declares one, and no framework
-build step. Keep it simple and readable.
+no access to the user's keys and no network unless it declares one. There is no
+build step and no framework: what you write is what runs.
 
-Talking to the wallet:
-- Load sdk.js, then call the promise-returning helpers on window.divi.
-- Only the permissions listed in manifest.json will work. Anything else is
-  refused by the wallet, so do not call it.
+WHAT IS ALREADY IN THE FOLDER, before you touch anything:
+- sdk.js         how the app talks to the wallet. NEVER rewrite or edit this
+                 file. Load it with <script src="sdk.js"></script> and use the
+                 window.divi helpers it provides.
+- manifest.json  what the app is, and what it is allowed to do. KEEP THIS IN
+                 STEP with the code: anything you call must be listed in
+                 permissions, or the wallet refuses it at runtime and the app
+                 cannot be published.
+- index.html, app.js, style.css, thumb.svg  a page that already works. Change
+                 these rather than starting again.
+
+HOW TO WORK:
+- Small steps. Say briefly what you are doing, use the tools, then stop. Do not
+  invent features nobody asked for.
+- Every wallet call is a promise and can be refused. Handle that and show the
+  person something useful, never a blank screen.
 - Never ask the user for a private key, seed phrase or password. The wallet will
-  never give you one and asking is itself a red flag.
+  never give you one, and asking is itself a red flag.
 
-Always keep manifest.json valid and in step with the code you write.
+${capabilityBrief()}
 
-Work in small steps. Say briefly what you are doing, use the tools, and stop when
-the task is done rather than inventing extra features.`;
+${stylingBrief()}
+`;
 
 export const TOOLS = [
   {
@@ -124,7 +141,8 @@ export async function runTool(workspace, call) {
  * @param {string} o.model
  * @param {number} [o.maxSteps] safety net against a loop that never settles
  * @param {(e:object)=>void} [o.onEvent] progress for the UI
- * @param {number} [o.estimateDivi] credit to hold per step
+ * @param {() => Promise<void>} [o.onStep] called after every change to history,
+ *        so a build interrupted halfway is still saved
  */
 export async function runTurn({
   provider,
@@ -135,10 +153,23 @@ export async function runTurn({
   model,
   maxSteps = 12,
   onEvent = () => {},
-  estimateDivi = 25,
+  onStep = async () => {},
   effort,
 }) {
+  // A model with no price is refused BEFORE anything is spent. Letting it
+  // through would mean the API call happens, billing then fails, and the tokens
+  // come out of our pocket with nothing charged. That exact hole was found in an
+  // audit of the earlier version, so it is closed here at the entrance.
+  if (!isPricedModel(model)) {
+    const reason = `"${model}" is not a model this builder can bill for`;
+    onEvent({ type: "error", message: reason });
+    return { stopped: "error", reason, steps: 0, spent: [] };
+  }
+
   history.push({ role: "user", content: message });
+  // Saved before the first model call, so a request that is paid for is never
+  // lost because the answer never came back.
+  await onStep();
 
   let steps = 0;
   const spent = [];
@@ -146,10 +177,19 @@ export async function runTurn({
   while (steps < maxSteps) {
     steps++;
 
-    // Money first: a step that cannot be paid for never runs.
+    // Money first: work out the most this step could possibly cost, hold that,
+    // and refuse to start if the balance will not cover it. The same ceiling is
+    // then sent as the model's output limit, so it is a real bound and not a
+    // guess we hope holds.
     let hold;
+    let ceiling;
     try {
-      ({ hold } = meter.reserve(estimateDivi));
+      ceiling = worstCasePoints({
+        model,
+        inputTokens: messagesSize(history) + messagesSize(SYSTEM_PROMPT) + messagesSize(TOOLS),
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+      });
+      ({ hold } = meter.reserve(ceiling));
     } catch (e) {
       if (e instanceof BillingError) {
         onEvent({ type: "billing_stopped", reason: e.message });
@@ -165,6 +205,7 @@ export async function runTurn({
         system: SYSTEM_PROMPT,
         messages: history,
         tools: TOOLS,
+        maxTokens: MAX_OUTPUT_TOKENS,
         effort,
       });
     } catch (e) {
@@ -174,14 +215,14 @@ export async function runTurn({
       return { stopped: "error", reason: e?.message, steps, spent };
     }
 
-    const settled = meter.settle({ hold, model, usage: reply.usage });
+    const settled = await meter.settle({ hold, model, usage: reply.usage });
     spent.push(settled);
     onEvent({
       type: "usage",
       step: steps,
-      divi: settled.divi,
+      points: settled.points,
       usd: settled.usd,
-      balanceDivi: meter.summary().balanceDivi,
+      balancePoints: meter.summary().balancePoints,
     });
 
     if (reply.text) onEvent({ type: "message", text: reply.text });
@@ -189,6 +230,7 @@ export async function runTurn({
     // Echo the assistant turn back verbatim, including tool_use blocks: dropping
     // them breaks the pairing the API requires on the next request.
     history.push({ role: "assistant", content: reply.raw?.content ?? reply.text });
+    await onStep();
 
     if (!reply.toolCalls.length) {
       return { stopped: "done", steps, spent, text: reply.text };
@@ -206,6 +248,10 @@ export async function runTurn({
       });
     }
     history.push({ role: "user", content: results });
+    // The files are already on disk by now. Saving here keeps the conversation
+    // in step with them: a build interrupted mid-turn would otherwise come back
+    // with the files written and no memory of writing them.
+    await onStep();
   }
 
   onEvent({ type: "step_limit", steps });

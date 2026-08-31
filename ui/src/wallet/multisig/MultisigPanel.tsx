@@ -25,14 +25,17 @@ import {
   multisigSign,
   multisigBroadcast,
   multisigInspect,
+  multisigActivity,
   multisigMyPubkey,
   walletStatus,
+  addressQr,
   explorerTxUrl,
   openUrl,
   type MultisigWallet,
   type PendingSpend,
   type SignResult,
   type SpendPreview,
+  type MsActivity,
   type MyKey,
 } from "../api";
 
@@ -41,6 +44,14 @@ function fmt(n: number): string {
 }
 function short(addr: string): string {
   return addr.length > 20 ? `${addr.slice(0, 10)}…${addr.slice(-8)}` : addr;
+}
+function fmtDate(unix: number): string {
+  if (!unix) return "pending";
+  return new Date(unix * 1000).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function CopyBox({ label, value, rows = 3 }: { label: string; value: string; rows?: number }) {
@@ -153,6 +164,37 @@ function MyPubkey() {
 function WalletRow({ w, onForget }: { w: MultisigWallet; onForget: (a: string) => void }) {
   const [showBackup, setShowBackup] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [showActivity, setShowActivity] = useState(false);
+  const [activity, setActivity] = useState<MsActivity[] | null>(null);
+  const [actErr, setActErr] = useState<string | null>(null);
+  const [showDeposit, setShowDeposit] = useState(false);
+  const [qr, setQr] = useState<string | null>(null);
+
+  const toggleActivity = async () => {
+    const open = !showActivity;
+    setShowActivity(open);
+    if (open && activity === null) {
+      setActErr(null);
+      try {
+        setActivity(await multisigActivity(w.address, 25));
+      } catch (e) {
+        setActErr(String(e));
+        setActivity([]);
+      }
+    }
+  };
+  const toggleDeposit = async () => {
+    const open = !showDeposit;
+    setShowDeposit(open);
+    if (open && qr === null) {
+      try {
+        setQr(await addressQr(w.address));
+      } catch {
+        setQr("");
+      }
+    }
+  };
+
   return (
     <li className="ms-wallet">
       <div className="ms-wallet-top">
@@ -175,6 +217,12 @@ function WalletRow({ w, onForget }: { w: MultisigWallet; onForget: (a: string) =
         <button type="button" className="ms-mini-btn" onClick={() => navigator.clipboard?.writeText(w.address)}>
           Copy address
         </button>
+        <button type="button" className="ms-mini-btn" onClick={toggleDeposit}>
+          {showDeposit ? "Hide deposit" : "Deposit"}
+        </button>
+        <button type="button" className="ms-mini-btn" onClick={toggleActivity}>
+          {showActivity ? "Hide activity" : "Activity"}
+        </button>
         <button type="button" className="ms-mini-btn" onClick={() => setShowBackup((v) => !v)}>
           {showBackup ? "Hide backup" : "Back up / share"}
         </button>
@@ -182,6 +230,45 @@ function WalletRow({ w, onForget }: { w: MultisigWallet; onForget: (a: string) =
           Forget
         </button>
       </div>
+      {showDeposit && (
+        <div className="ms-deposit">
+          <p className="ms-hint">Send DIVI to this address to fund the shared wallet:</p>
+          {qr ? (
+            <div className="ms-qr" dangerouslySetInnerHTML={{ __html: qr }} />
+          ) : qr === "" ? null : (
+            <span className="ms-dim">…</span>
+          )}
+          <div className="ms-mono ms-deposit-addr">{w.address}</div>
+        </div>
+      )}
+      {showActivity && (
+        <div className="ms-activity">
+          {actErr && <div className="ms-err">{actErr}</div>}
+          {activity === null ? (
+            <span className="ms-dim">Loading…</span>
+          ) : activity.length === 0 ? (
+            <span className="ms-dim">No transactions yet.</span>
+          ) : (
+            <ul className="ms-act-list">
+              {activity.map((a) => (
+                <li className="ms-act-row" key={a.txid}>
+                  <span className="ms-act-date">{fmtDate(a.time)}</span>
+                  <span className={"ms-act-amt " + (a.amount >= 0 ? "ms-act-in" : "ms-act-out")}>
+                    {a.amount >= 0 ? "+" : ""}
+                    {fmt(a.amount)} DIVI
+                  </span>
+                  <span className="ms-act-conf">
+                    {a.confirmations > 0 ? `${a.confirmations} conf` : "pending"}
+                  </span>
+                  <button type="button" className="ms-act-link" onClick={() => openUrl(explorerTxUrl(a.txid))}>
+                    view
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {showBackup && (
         <div className="ms-pending">
           <span className="ms-hint">

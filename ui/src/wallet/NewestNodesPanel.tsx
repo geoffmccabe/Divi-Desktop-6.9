@@ -105,7 +105,7 @@ export function NewestNodesPanel({
               />
               <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 <div style={{ fontWeight: 600 }}>{place(n)}</div>
-                <div style={{ opacity: 0.6, fontFamily: "ui-monospace, monospace", fontSize: "0.66rem" }}>
+                <div style={{ opacity: 0.6, fontFamily: "var(--font-mono)", fontSize: "0.66rem" }}>
                   {shortIp(n.ip)}
                 </div>
               </span>

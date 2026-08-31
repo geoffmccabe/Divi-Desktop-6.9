@@ -153,7 +153,7 @@ export function Shell() {
               )}
             </div>
           )}
-          <div className="view-body">
+          <div className="view-body" data-view={view}>
             {view === "network" ? <NetworkMap onReturn={() => setView("overview")} /> : <Active />}
           </div>
         </section>

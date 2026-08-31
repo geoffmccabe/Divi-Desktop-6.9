@@ -7,6 +7,33 @@
 // The address is configurable because the service will move: it runs locally
 // today and will be hosted once container isolation and the gates exist.
 
+import { invoke } from "../tauri";
+
+export interface ServiceStatus {
+  /** The wallet started it and it has not exited. */
+  running: boolean;
+  /** A sentence explaining why not, when it is not running. */
+  trouble: string | null;
+  /** Where its output goes, so a problem can be looked at. */
+  log: string;
+}
+
+/** What the wallet knows about the service it starts for you. */
+export const serviceStatus = () => invoke<ServiceStatus>("builder_service_status");
+
+/** Try starting it again, after installing Node or after a crash. */
+export const restartService = () => invoke<ServiceStatus>("builder_service_restart");
+
+/**
+ * The AI gateway's address.
+ *
+ * Deliberately kept in an ordinary settings file. An address is public
+ * information, so protecting it gained nothing and cost the user a macOS
+ * permission dialog on every rebuild.
+ */
+export const setGatewayUrl = (url: string) => invoke<void>("set_gateway_url", { url });
+export const gatewayUrl = () => invoke<string>("gateway_url");
+
 const KEY = "dd69.builderUrl";
 const DEFAULT_URL = "http://127.0.0.1:8788";
 
@@ -32,7 +59,11 @@ export interface Health {
   provider: string;
   rateConfigured: boolean;
   keyConfigured: boolean;
-  sessions: number;
+  /** The node's settings were found. It may still be busy or stopped. */
+  nodeConfigured: boolean;
+  /** A sentence saying why points cannot be bought, or null when they can. */
+  buying: string | null;
+  projects: number;
 }
 
 export interface BuilderFile {
@@ -41,23 +72,26 @@ export interface BuilderFile {
 }
 
 export interface Account {
-  balanceDivi: number;
-  spentDivi: number;
-  reservedDivi: number;
+  balancePoints: number;
+  spentPoints: number;
+  reservedPoints: number;
   turns: number;
   costUsd: number;
+  /** Only present if a step somehow outran its hold; see meter.mjs. */
+  unbilledPoints?: number;
 }
 
 export type TurnEvent =
   | { type: "message"; text: string }
   | { type: "tool"; name: string; path?: string }
-  | { type: "usage"; step: number; divi: number; usd: number; balanceDivi: number }
+  | { type: "usage"; step: number; points: number; usd: number; balancePoints: number }
   | { type: "billing_stopped"; reason: string }
   | { type: "step_limit"; steps: number }
   | { type: "error"; message: string };
 
 export interface TurnResult {
-  stopped: "done" | "billing" | "error" | "step_limit";
+  /** "refused" means the screener stopped it before any model was called. */
+  stopped: "done" | "billing" | "error" | "step_limit" | "refused";
   reason?: string;
   steps: number;
   events: TurnEvent[];
@@ -81,22 +115,72 @@ export const health = () => call<Health>("/health");
 export const setKey = (key: string) =>
   call<{ keyConfigured: boolean }>("/key", { method: "POST", body: JSON.stringify({ key }) });
 
-export const createSession = (balanceDivi: number) =>
-  call<{ id: string }>("/session", {
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  account: string;
+  createdAt: number;
+  updatedAt: number;
+  messages: number;
+  pointsSpent: number;
+}
+
+/** What the model and the person have said so far, as it was saved. */
+export interface HistoryEntry {
+  role: "user" | "assistant";
+  content: unknown;
+}
+
+export interface ProjectDetail extends ProjectSummary {
+  files: BuilderFile[];
+  history: HistoryEntry[];
+  balancePoints: number;
+}
+
+// The account is a name, not a balance. An earlier version sent the balance
+// from here, which meant anyone could declare themselves rich; the service now
+// keeps it and this only says who is asking.
+export const createProject = (account: string, name?: string) =>
+  call<ProjectSummary & { balancePoints: number }>("/project", {
     method: "POST",
-    body: JSON.stringify({ balanceDivi }),
+    body: JSON.stringify({ account, name }),
   });
 
+export const listProjects = (account: string) =>
+  call<{ projects: ProjectSummary[]; balancePoints: number }>(
+    `/projects?account=${encodeURIComponent(account)}`,
+  );
+
+export const openProject = (id: string) => call<ProjectDetail>(`/project/${id}`);
+
+export const renameProject = (id: string, name: string) =>
+  call<ProjectSummary>(`/project/${id}/rename`, { method: "POST", body: JSON.stringify({ name }) });
+
+export const deleteProject = (id: string) =>
+  call<{ removed: string }>(`/project/${id}`, { method: "DELETE" });
+
 export const sendMessage = (id: string, message: string, model?: string) =>
-  call<TurnResult>(`/session/${id}/message`, {
+  call<TurnResult>(`/project/${id}/message`, {
     method: "POST",
     body: JSON.stringify({ message, model }),
   });
 
-export const listFiles = (id: string) => call<{ files: BuilderFile[] }>(`/session/${id}/files`);
+export const listFiles = (id: string) => call<{ files: BuilderFile[] }>(`/project/${id}/files`);
 
 export const readFile = (id: string, path: string) =>
-  call<{ path: string; text: string }>(`/session/${id}/file?path=${encodeURIComponent(path)}`);
+  call<{ path: string; text: string }>(`/project/${id}/file?path=${encodeURIComponent(path)}`);
+
+export interface CheckFinding {
+  severity: "fail" | "warn";
+  id: string;
+  why: string;
+  where: string;
+}
+
+export const checkProject = (id: string) =>
+  call<{ ok: boolean; findings: CheckFinding[]; methods: string[]; summary: string }>(
+    `/project/${id}/check`,
+  );
 
 // ---- Admin: screening rules and the log of what they caught ----
 

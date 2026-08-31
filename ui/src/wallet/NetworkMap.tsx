@@ -79,7 +79,6 @@ function hslVar(name: string): (a: number) => string {
   const [h, s, l] = m ? [m[1], m[2], m[3]] : ["0", "0", "100"];
   return (a: number) => `hsla(${h}, ${s}%, ${l}%, ${a})`;
 }
-const GREEN = (a: number) => `hsla(145, 80%, 50%, ${a})`;
 
 // Per-arc "flex" animation + colour blend, chosen randomly and kept per peer so
 // each connection arc bends and shifts colour independently.
@@ -139,6 +138,7 @@ function drawSpiral(
   diameter: number,
   now: number,
   highlighted: boolean,
+  baseHue: number,
 ) {
   const dia = highlighted ? diameter * 2 : diameter;
   const outer = dia / 2;
@@ -147,8 +147,8 @@ function drawSpiral(
   // 9 rev/min base (3x the earlier 3 rev/min), 3x faster again when highlighted.
   const revMs = highlighted ? 20000 / 9 : 20000 / 3;
   const spin = ((now % revMs) / revMs) * Math.PI * 2;
-  // hue pulses ±18° around aqua (177) once per second
-  const hue = 177 + 18 * Math.sin((now / 1000) * Math.PI * 2);
+  // hue pulses ±18° around the theme's "new node" hue once per second
+  const hue = baseHue + 18 * Math.sin((now / 1000) * Math.PI * 2);
   const maxT = TURNS * Math.PI * 2;
   const STEPS = 72;
   ctx.save();
@@ -716,12 +716,12 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      const outbound = hslVar("--primary");
-      const inbound = hslVar("--info"); // blue — clearly distinct from purple outbound
+      const outbound = hslVar("--map-peer-link");
+      const inbound = hslVar("--map-network-link"); // clearly distinct from peer-link by default
       // Peer arcs vary their colour between their base and HSB(268,67,100); each
       // arc (and its dot) picks a random point in that range.
-      const primaryHsl = parseHslNums("--primary");
-      const infoHsl = parseHslNums("--info");
+      const primaryHsl = parseHslNums("--map-peer-link");
+      const infoHsl = parseHslNums("--map-network-link");
       const ARC_TARGET: [number, number, number] = [268, 100, 66.5]; // HSB 268,67,100 in HSL
       const mixArcCol = (base: [number, number, number], t: number) => {
         const h = base[0] + (ARC_TARGET[0] - base[0]) * t;
@@ -729,13 +729,15 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         const l = base[2] + (ARC_TARGET[2] - base[2]) * t;
         return (a: number) => `hsla(${h}, ${s}%, ${l}%, ${a})`;
       };
-      const selfCol = hslVar("--warning");
+      const selfCol = hslVar("--map-self");
+      const GREEN = hslVar("--map-discovery-pulse");
+      const newNodeHue = parseHslNums("--map-new-node")[0];
       const s = snapRef.current;
       const g = geosRef.current;
       const now = performance.now();
       const netOnly = networkOnlyRef.current;
-      const BLUE = (a: number) => `hsla(210, 85%, 62%, ${a})`;
-      const GREY = (a: number) => `hsla(215, 14%, 58%, ${a})`; // remembered but not verified-live now
+      const BLUE = hslVar("--map-network-link");
+      const GREY = hslVar("--map-offline");
       const USER_IS_WINNER = userWonRecently(); // deck out our node right after a win
 
       // The node's true location comes from its own public IP; cache it so it's
@@ -1311,7 +1313,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         pingsRef.current = pings;
       }
       if (selfXY && pingsRef.current.length) {
-        const GOLD = (a: number) => `hsla(45, 100%, 55%, ${a})`;
+        const GOLD = hslVar("--map-activity-pulse");
         const ripple = (from: [number, number], to: [number, number], u: number) => {
           const bez = upArc(from[0], from[1], to[0], to[1], 0.5);
           ctx.lineWidth = 1;
@@ -1387,7 +1389,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             // recompute the diameter live so it shrinks over the day boundary
             const dia = spiralDiameter(n.firstSeen);
             if (dia <= 0) return;
-            drawSpiral(ctx, cx, cy, dia, now, highlightIpRef.current === n.ip);
+            drawSpiral(ctx, cx, cy, dia, now, highlightIpRef.current === n.ip, newNodeHue);
             // one-time arrival flash: an expanding aqua ring, ~800ms
             const t0 = arrivalFxRef.current.get(n.ip);
             if (t0 != null) {
@@ -1398,7 +1400,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
                 ctx.save();
                 ctx.beginPath();
                 ctx.arc(cx, cy, 6 + p * 26, 0, Math.PI * 2);
-                ctx.strokeStyle = `hsla(177, 85%, 60%, ${0.7 * (1 - p)})`;
+                ctx.strokeStyle = `hsla(${newNodeHue}, 85%, 60%, ${0.7 * (1 - p)})`;
                 ctx.lineWidth = 2;
                 ctx.stroke();
                 ctx.restore();

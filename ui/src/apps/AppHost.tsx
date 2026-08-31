@@ -17,7 +17,16 @@ import type { CatalogEntry } from "./catalog";
 // Payment confirmation is drawn HERE, by the wallet, outside the frame. The app
 // can ask; it cannot render the dialog, style it, or click it.
 
-export function AppHost({ entry, onExit }: { entry: CatalogEntry; onExit: () => void }) {
+export function AppHost({
+  entry,
+  onExit,
+  exitLabel = "Back to apps",
+}: {
+  entry: CatalogEntry;
+  onExit: () => void;
+  /** What leaving means here. "Back to apps" is wrong when previewing a build. */
+  exitLabel?: string;
+}) {
   const m = entry.manifest;
   const frameRef = useRef<HTMLIFrameElement | null>(null);
   const [consented, setConsented] = useState(() => isFullyGranted(m.id, m.permissions));
@@ -36,6 +45,10 @@ export function AppHost({ entry, onExit }: { entry: CatalogEntry; onExit: () => 
   }, [immersive]);
   const [pay, setPay] = useState<{ amount: number; reason: string; resolve: (ok: boolean) => void } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // An app's own crash report. Nothing outside a sandboxed frame can see an
+  // error inside it, so without the app telling us, a broken app and a slow one
+  // look exactly the same.
+  const [crash, setCrash] = useState<{ message: string; where: string } | null>(null);
 
   const confirmPayment = useCallback(
     (amount: number, reason: string) =>
@@ -57,6 +70,7 @@ export function AppHost({ entry, onExit }: { entry: CatalogEntry; onExit: () => 
       manifest: m,
       granted: grantedFor(m.id),
       ctx: { confirmPayment, notify },
+      onAppError: (message, where) => setCrash({ message, where }),
       onLog: (e: BrokerLogEntry) => {
         // Kept quiet in normal use; the admin gates panel will surface these.
         if (e.outcome !== "ok") console.warn("[community app]", e.appId, e.method, e.reason);
@@ -75,11 +89,17 @@ export function AppHost({ entry, onExit }: { entry: CatalogEntry; onExit: () => 
     <div className={immersive ? "ca-host ca-host-focus" : "ca-host"}>
       <div className="ca-host-bar">
         <button type="button" className="wl-btn" onClick={onExit}>
-          <Icon name="overview" size={14} /> Back to apps
+          <Icon name="overview" size={14} /> {exitLabel}
         </button>
         <span className="ca-host-title">{m.name}</span>
         <span className="ca-host-spacer" />
         {toast && <span className="ca-count">{toast}</span>}
+        {crash && (
+          <span className="ca-crash" title={crash.where}>
+            This app hit an error: {crash.message}
+            {crash.where ? ` (${crash.where})` : ""}
+          </span>
+        )}
         {canToggleImmersive && (
           <button type="button" className="wl-btn" onClick={() => setImmersive((v) => !v)}>
             {immersive ? "Exit full window" : "Full window"}
@@ -145,7 +165,13 @@ function PermissionPrompt({ entry, onAllow, onCancel }: {
           </>
         )}
 
-        {entry.builtin ? (
+        {entry.preview ? (
+          <p className="ca-perm-detail">
+            This is your own app, running as it is right now. It goes through the
+            same sandbox and the same checks a published app does, so what you
+            see here is what someone else would get.
+          </p>
+        ) : entry.builtin ? (
           <p className="ca-perm-detail">
             This one ships with the wallet. It still runs in the same sandbox and
             through the same checks as any other app.

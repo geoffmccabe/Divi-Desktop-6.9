@@ -164,6 +164,47 @@ impl BuiltinBundle {
     }
 }
 
+/// A folder being previewed while it is still being built.
+///
+/// No signature, deliberately: this is somebody's own half-finished work, not
+/// something arriving from a stranger, and demanding a signature on a file the
+/// model rewrote ten seconds ago would make previewing impossible.
+///
+/// What it does NOT relax is anything that matters. It runs in the same sandbox,
+/// through the same broker, behind the same permission prompt as a published
+/// app, and the path rules here are identical — so a preview cannot read a file
+/// outside its own folder, and cannot serve a type that would not be served
+/// after publishing. What you see previewing is what a user gets.
+pub struct FolderBundle {
+    pub dir: PathBuf,
+}
+
+impl FolderBundle {
+    pub fn serve(&self, requested: &str) -> Result<Served, BundleError> {
+        let rel = safe_relative(requested)?;
+        let key = rel.to_string_lossy().replace('\\', "/");
+        let mime = mime_for(&key).ok_or(BundleError::UnsupportedType)?;
+
+        let base = self
+            .dir
+            .canonicalize()
+            .map_err(|_| BundleError::NotFound)?;
+        let real = base.join(&rel).canonicalize().map_err(|_| BundleError::NotFound)?;
+        // Resolved, so a symbolic link pointing out of the folder is caught
+        // rather than followed.
+        if !real.starts_with(&base) {
+            return Err(BundleError::BadPath);
+        }
+
+        let meta = std::fs::metadata(&real).map_err(|e| BundleError::Io(e.to_string()))?;
+        if meta.len() > MAX_FILE_BYTES {
+            return Err(BundleError::TooLarge);
+        }
+        let bytes = std::fs::read(&real).map_err(|e| BundleError::Io(e.to_string()))?;
+        Ok(Served { bytes, mime })
+    }
+}
+
 /// A third-party bundle on disk, with a detached signature over every file.
 ///
 /// The signature covers a manifest of `path -> sha256`, so a file cannot be
@@ -328,5 +369,57 @@ mod tests {
         // A different key must fail.
         let other = SigningKey::from_bytes(&[9u8; 32]);
         assert!(verify_signature(msg, &sig.to_bytes(), other.verifying_key().as_bytes()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+
+    /// A folder of this test's own. Tests run in parallel, so sharing one and
+    /// clearing it on entry meant they deleted each other's files.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("dd69-preview-{}-{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_preview_serves_the_work_in_progress() {
+        let dir = scratch("serves");
+        std::fs::write(dir.join("index.html"), b"<h1>half built</h1>").unwrap();
+        let b = FolderBundle { dir: dir.clone() };
+        assert_eq!(b.serve("").unwrap().bytes, b"<h1>half built</h1>");
+        assert_eq!(b.serve("index.html").unwrap().mime, "text/html; charset=utf-8");
+    }
+
+    #[test]
+    fn a_preview_cannot_read_outside_its_own_folder() {
+        // The whole point: no signature is required, so the path rules are the
+        // only thing standing between a preview and the rest of the disk.
+        let dir = scratch("escape");
+        std::fs::write(dir.join("index.html"), b"x").unwrap();
+        let b = FolderBundle { dir };
+        assert!(matches!(b.serve("../secret.html"), Err(BundleError::BadPath)));
+        assert!(matches!(b.serve("../../etc/passwd"), Err(BundleError::BadPath)));
+    }
+
+    #[test]
+    fn a_preview_serves_no_type_a_published_app_could_not() {
+        let dir = scratch("types");
+        std::fs::write(dir.join("wallet.dat"), b"private").unwrap();
+        std::fs::write(dir.join("run.sh"), b"#!/bin/sh").unwrap();
+        let b = FolderBundle { dir };
+        assert!(matches!(b.serve("wallet.dat"), Err(BundleError::UnsupportedType)));
+        assert!(matches!(b.serve("run.sh"), Err(BundleError::UnsupportedType)));
+    }
+
+    #[test]
+    fn a_missing_file_is_not_found_rather_than_an_error() {
+        let dir = scratch("missing");
+        std::fs::write(dir.join("index.html"), b"x").unwrap();
+        let b = FolderBundle { dir };
+        assert!(matches!(b.serve("nope.html"), Err(BundleError::NotFound)));
     }
 }

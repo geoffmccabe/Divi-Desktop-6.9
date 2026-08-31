@@ -20,12 +20,17 @@ the postcss incident, the cost of writing a little more code is worth paying.
 ## Running it
 
 ```
-DIVI_PER_USD=1000 ANTHROPIC_API_KEY=sk-ant-... node src/server.mjs
+CMC_API_KEY=... ANTHROPIC_API_KEY=sk-ant-... node src/server.mjs
 ```
 
 | Variable | Meaning |
 |---|---|
-| `DIVI_PER_USD` | **Required.** How many DIVI to one dollar. Admin-set, never a live feed. Without it, sessions are refused. |
+| `CMC_API_KEY` | **Required.** CoinMarketCap key, the only DIVI price source. Without it there is no price, so nothing sells and nothing bills. The wallet also hands over the key it already holds. |
+| `DIVI_TREASURY_ADDRESS` | The address buyers pay into. Defaults to the London node's `dd69-points` child address. |
+| `DIVI_CHAIN_PROXY_URL` / `DIVI_CHAIN_PROXY_SECRET` | Confirm payments through the London node's read-only proxy instead of the wallet's own node. |
+| `BUILDER_LEDGER` | The append-only points ledger. Defaults to a file under `BUILDER_ROOT`. This is where balances live. |
+| `DIVI_DATADIR` | Where `divi.conf` is, so payments can be checked with the node. Defaults to the platform location the wallet uses. |
+| `BUILDER_ALLOWED_ORIGINS` | Extra origins allowed to call this, comma separated. The wallet's own origins are always allowed. |
 | `ANTHROPIC_API_KEY` | Key for the default provider. |
 | `BUILDER_MODEL` | Default `claude-sonnet-5`. `claude-opus-5` for harder work. |
 | `BUILDER_PROVIDER` | `anthropic` or `openai`. |
@@ -33,14 +38,30 @@ DIVI_PER_USD=1000 ANTHROPIC_API_KEY=sk-ant-... node src/server.mjs
 | `BUILDER_ROOT` | Where session projects live. |
 | `PORT`, `HOST` | Default `8788` on `127.0.0.1`. |
 
-Tests: `node --test "test/*.test.mjs"`
+Tests: `node --test test/`
 
-## Why the DIVI rate is not a live feed
+### The door is not open
 
-Price aggregators disagree by roughly 4.5x on DIVI because they track different
-illiquid venues. Billing off a feed would mean a developer's cost changing several
-fold based on which thin market moved. An admin sets the number, it is visible
-before anyone spends, and changes are deliberate.
+Every request carrying an origin we do not know is refused. A browser will send
+a request to this machine even though it cannot read the reply, so without that
+check any web page you happened to have open could create sessions, spend on the
+model, or switch screening off.
+
+## Why the price is CoinMarketCap and nothing else
+
+Standing order across the app, and there is a number behind it. CoinGecko prices
+DIVI off a wrapped ERC-20 on Uniswap with a few dollars a day of volume, and it
+reads about 4.5x LOWER than the CoinMarketCap quote the Divi community uses.
+Selling points off that would hand someone four times the build time they paid
+for, on every purchase.
+
+So: query CoinMarketCap by slug (a symbol query returns a different, cheaper
+coin), read the reply positionally (it is keyed by numeric coin id, so
+`data["DIVI"]` finds nothing), and if there is no key or the call fails, there is
+NO price and everything that needs one refuses. No fallback source, ever.
+
+An order freezes the rate it was priced at, so a purchase cannot move underneath
+the person paying it, and a past order can always be explained.
 
 ## Why this does not go through ai.divi.love
 
@@ -59,12 +80,21 @@ that preserves tool calls.
 
 ## How the money works
 
-1. **Reserve** credit before a step runs. An agent loop is exactly the thing that
-   can run away, so "check the balance afterwards" is not good enough.
-2. **Settle** against the token counts the API actually reports. Never an
+Developers buy **points** with DIVI up front, and steps are charged in points.
+Full detail in `docs/POINTS-AND-BUYING.md`; the short version:
+
+1. **The balance is ours.** It lives in an append-only ledger here and nowhere
+   else. An earlier version took it from the request, which meant anyone could
+   declare themselves rich.
+2. **Work out the worst case first.** Before a step runs we price the most it
+   could possibly cost, hold that, and refuse to start if the balance will not
+   cover it. The same ceiling is sent to the model as a hard output limit, so it
+   is a real bound rather than a guess.
+3. **Refuse an unpriced model before the call**, not after. Calling first and
+   failing to bill afterwards means we pay and the developer does not.
+4. **Settle** against the token counts the API actually reports. Never an
    estimate: drift in our favour is indistinguishable from overcharging.
-3. **Refund** the unused part of the hold.
-4. Ceilings per step and per session, on top of the balance.
+5. Ceilings per step and per session, on top of the balance.
 
 Developers pay twice our cost. A build the code gate rejects is charged at half.
 

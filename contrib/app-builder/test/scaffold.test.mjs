@@ -1,0 +1,191 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { Workspace } from "../src/workspace.mjs";
+import { scaffold, starterManifest, slug, readSdk, SDK_PATH } from "../src/scaffold.mjs";
+import { THEME_VARS, stylingBrief } from "../src/theme.mjs";
+import { CAPABILITIES, capabilityBrief } from "../src/capabilities.mjs";
+import { SYSTEM_PROMPT } from "../src/agent.mjs";
+
+async function ws() {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "dd69-scaffold-"));
+  const w = new Workspace(dir);
+  await w.init();
+  return w;
+}
+
+test("a new project can run and be published from the very first moment", async () => {
+  const w = await ws();
+  await scaffold(w, { name: "Balance Card", account: "DCrZS49xZKUZ778gobc2izpE4tmeuiJGZH" });
+  const names = (await w.list()).map((f) => f.path).sort();
+  assert.deepEqual(names, ["app.js", "index.html", "manifest.json", "sdk.js", "style.css", "thumb.svg"]);
+
+  // The page loads the SDK, and the SDK is actually there. That combination
+  // failing is exactly what the first real build produced.
+  const html = (await w.read("index.html")).text;
+  assert.match(html, /src="sdk\.js"/);
+  assert.ok((await w.read("sdk.js")).text.includes("window.divi"));
+});
+
+test("the starter manifest is valid, and uses the developer's own address", () => {
+  const m = starterManifest({ name: "My Balance Card", account: "DCrZS49xZKUZ778gobc2izpE4tmeuiJGZH" });
+  assert.equal(m.schema, 1);
+  assert.equal(m.id, "app.my-balance-card");
+  // Money for an app goes to its author, so the address is the one they are
+  // signed in with rather than something they must remember to change.
+  assert.equal(m.author.address, "DCrZS49xZKUZ778gobc2izpE4tmeuiJGZH");
+  assert.deepEqual(m.permissions, [], "a new app asks for nothing until it needs something");
+  assert.equal(m.price.model, "free");
+});
+
+test("without a real address the manifest says so rather than inventing one", () => {
+  const m = starterManifest({ name: "x", account: "local" });
+  assert.match(m.author.address, /ReplaceThis/i);
+});
+
+test("odd names still make a usable app id", () => {
+  assert.equal(slug("  Geoff's  Wallet Widget!! "), "geoff-s-wallet-widget");
+  assert.equal(slug(""), "untitled");
+  assert.equal(slug("!!!"), "untitled");
+});
+
+test("scaffolding never overwrites work already done", async () => {
+  const w = await ws();
+  await w.write("index.html", "<h1>mine</h1>");
+  const written = await scaffold(w, { name: "Kept", account: "local" });
+  assert.ok(!written.includes("index.html"));
+  assert.equal((await w.read("index.html")).text, "<h1>mine</h1>");
+});
+
+test("the SDK given to new projects is the same one the wallet ships", async () => {
+  // There used to be a copy per app, which is how two versions of a protocol
+  // shim quietly stop agreeing. The Rust side compiles in this exact file.
+  const community = path.join(SDK_PATH, "..", "..", "..", "..", "crates", "app", "src", "community.rs");
+  const rust = await fs.readFile(community, "utf8");
+  assert.match(rust, /include_bytes!\("\.\.\/\.\.\/\.\.\/contrib\/app-builder\/assets\/sdk\.js"\)/);
+  assert.match(await readSdk(), /divi\.app\.v1/);
+});
+
+test("every wallet theme variable is described to the model", async () => {
+  // If a variable is added to the wallet and not described here, apps built
+  // from now on simply will not use it, and they drift out of the skin system
+  // one release at a time.
+  const tokens = await fs.readFile(
+    path.join(SDK_PATH, "..", "..", "..", "..", "ui", "src", "theme", "tokens.ts"),
+    "utf8",
+  );
+  const declared = new Set(THEME_VARS.map(([v]) => v));
+  const inWallet = [...tokens.matchAll(/cssVar:\s*"(--[a-z0-9-]+)"/g)].map((m) => m[1]);
+  assert.ok(inWallet.length > 10, "the token file should have been read");
+  const missing = inWallet.filter((v) => !declared.has(v));
+  assert.deepEqual(missing, [], `these wallet theme variables are not described to the model: ${missing}`);
+});
+
+test("the styling brief forbids the one thing that breaks skins", () => {
+  const brief = stylingBrief();
+  assert.match(brief, /Never write a hex colour/i);
+  assert.match(brief, /hsl\(var\(--foreground\)\)/);
+});
+
+test("the model is only told about capabilities that actually work", async () => {
+  const brief = capabilityBrief();
+  // Read the wallet's OWN permission table rather than a list typed out here:
+  // a list typed out here is the drift this test exists to catch.
+  const perms = await fs.readFile(
+    path.join(SDK_PATH, "..", "..", "..", "..", "ui", "src", "apps", "permissions.ts"),
+    "utf8",
+  );
+  const known = new Set([...perms.matchAll(/key:\s*"([a-z.]+)"/g)].map((m) => m[1]));
+  assert.ok(known.size > 10, "the permission table should have been read");
+  for (const c of CAPABILITIES) {
+    assert.ok(known.has(c.permission), `${c.permission} is not a permission the wallet has`);
+  }
+  // And the things that do not work are named as not working, so the model does
+  // not write code around them.
+  assert.match(brief, /NOT AVAILABLE/);
+  assert.match(brief, /Divi Meta Token/);
+  assert.match(brief, /no internet access|no fetch|There is no internet/i);
+});
+
+test("every build request carries the styling rules and the capability list", () => {
+  // Geoff's requirement: a developer should not have to think about styling or
+  // go looking for what the wallet can do.
+  assert.match(SYSTEM_PROMPT, /Never write a hex colour/i);
+  assert.match(SYSTEM_PROMPT, /await divi\.balance\(\)/);
+  assert.match(SYSTEM_PROMPT, /NEVER rewrite or edit this/);
+});
+
+test("every capability we advertise actually exists on window.divi", async () => {
+  // A capability described to the model but missing from the SDK means the
+  // model writes code that is undefined at runtime, and the developer pays for
+  // an app that cannot work.
+  const sdk = await readSdk();
+  const missing = [];
+  for (const c of CAPABILITIES) {
+    for (const m of c.call.matchAll(/divi\.([a-zA-Z.]+)\s*\(/g)) {
+      const leaf = m[1].split(".").pop();
+      if (!new RegExp(`\\b${leaf}\\s*:`).test(sdk)) missing.push(m[1]);
+    }
+  }
+  assert.deepEqual(missing, [], `described to the model but not in the SDK: ${missing}`);
+});
+
+test("a capability is only advertised if the wallet will honour it", async () => {
+  // The broker refuses anything not in the permission table, so a capability
+  // naming a permission that is not there would fail on every call.
+  const perms = await fs.readFile(
+    path.join(SDK_PATH, "..", "..", "..", "..", "ui", "src", "apps", "permissions.ts"),
+    "utf8",
+  );
+  for (const c of CAPABILITIES) {
+    assert.ok(
+      new RegExp(`key:\\s*"${c.permission.replace(".", "\\.")}"`).test(perms),
+      `${c.permission} is advertised but is not a permission the wallet has`,
+    );
+  }
+});
+
+test("the SDK applies the wallet's look, because a frame does not inherit it", async () => {
+  // The mistake this guards against: apps were told to style themselves with
+  // the wallet's CSS variables, but a sandboxed frame does not inherit custom
+  // properties, so every one of them was undefined and an app following the
+  // instructions exactly came out with no colours at all.
+  const sdk = await readSdk();
+  assert.match(sdk, /theme\.read/);
+  assert.match(sdk, /setProperty/);
+  // And it must not be permissioned: an app should not have to ask to look right.
+  assert.ok(!/permission/i.test(sdk.split("wearTheWalletsLook")[1]?.slice(0, 400) ?? ""));
+});
+
+test("the SDK reports a crash, because nothing outside the frame can see one", async () => {
+  const sdk = await readSdk();
+  assert.match(sdk, /app\.error/);
+  assert.match(sdk, /unhandledrejection/);
+});
+
+test("the styling brief no longer promises variables that were not there", () => {
+  const brief = stylingBrief();
+  assert.match(brief, /sdk\.js asks the wallet/);
+  assert.match(brief, /MATCHING THE WALLET IS THE REQUIREMENT/);
+});
+
+test("an older project is given the current SDK when it is opened", async () => {
+  // A project built before the SDK learned to apply the wallet's colours would
+  // otherwise keep the old one for ever and quietly look wrong.
+  const { refreshSdk } = await import("../src/scaffold.mjs");
+  const w = await ws();
+  await w.write("sdk.js", "// last week's sdk\n");
+  assert.equal(await refreshSdk(w), true, "an out-of-date SDK is replaced");
+  assert.equal((await w.read("sdk.js")).text, await readSdk());
+  assert.equal(await refreshSdk(w), false, "and left alone once it matches");
+});
+
+test("a project with no SDK at all is given one", async () => {
+  const { refreshSdk } = await import("../src/scaffold.mjs");
+  const w = await ws();
+  assert.equal(await refreshSdk(w), true);
+  assert.match((await w.read("sdk.js")).text, /window\.divi/);
+});

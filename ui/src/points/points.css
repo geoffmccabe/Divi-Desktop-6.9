@@ -1,0 +1,149 @@
+/* Points and the Purchase with Divi modal.
+
+   Same styling rule as apps.css: no literal colours, no literal fonts, and no
+   surface invented from scratch. Every box reuses the wallet's own frosted
+   recipe through the Sub-panels tokens, so this follows any skin automatically.
+   Only genuinely layout-specific sizes get their own tokens, under
+   Apps & Builder in the Style editor.
+
+   Everything here is prefixed .pd- (purchase dialog) or .pts- (points) so it
+   cannot collide with another workstream's file. */
+
+/* ---- the modal ---- */
+
+.pd-veil {
+  position: fixed; inset: 0; z-index: 70;
+  display: flex; padding: 16px;
+  background: hsl(var(--background) / 0.86);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.pd-panel {
+  margin: auto;
+  width: min(var(--purchase-modal-width), 100%);
+  max-height: calc(100vh - 32px);
+  display: flex; flex-direction: column;
+  padding: 20px 22px 18px;
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: 1px solid hsl(var(--foreground) / 0.15);
+  border-radius: var(--app-card-radius);
+  backdrop-filter: blur(var(--panel-blur));
+  -webkit-backdrop-filter: blur(var(--panel-blur));
+}
+
+.pd-head { display: flex; align-items: center; gap: 12px; }
+.pd-title { margin: 0; flex: 1; font-size: 1.05rem; font-weight: 600; }
+
+.pd-x {
+  display: grid; place-items: center;
+  width: 26px; height: 26px; padding: 0;
+  border: 0; border-radius: 6px;
+  background: transparent; cursor: pointer;
+  color: hsl(var(--foreground) / 0.6);
+}
+.pd-x:hover { background: hsl(var(--foreground) / 0.08); color: hsl(var(--foreground)); }
+
+/* Content on the left, mascot on the right. Collapses to one column on a
+   narrow window so the purchase is never squeezed by the decoration. */
+.pd-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--purchase-mascot-size);
+  gap: 18px;
+  align-items: start;
+  margin-top: 14px;
+  overflow-y: auto;
+}
+@media (max-width: 620px) {
+  .pd-body { grid-template-columns: minmax(0, 1fr); }
+  .pd-mascot { display: none; }
+}
+
+.pd-main { min-width: 0; }
+
+/* ---- the mascot's place, held open before the artwork exists ---- */
+.pd-mascot {
+  position: sticky; top: 0;
+  display: grid; place-items: center;
+  aspect-ratio: 3 / 4;
+  border: 1px dashed hsl(var(--foreground) / 0.22);
+  border-radius: var(--app-card-radius);
+  background: hsl(var(--foreground) / 0.03);
+}
+.pd-mascot-note {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: hsl(var(--foreground) / 0.35);
+}
+
+/* ---- choosing ---- */
+
+.pd-options { display: grid; gap: 10px; }
+
+.pd-option {
+  display: grid; gap: 3px;
+  padding: 12px 14px;
+  text-align: left; cursor: pointer;
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+  border: 1px solid hsl(var(--foreground) / 0.12);
+  border-radius: var(--app-card-radius);
+  color: inherit; font: inherit;
+}
+.pd-option:hover {
+  border-color: hsl(var(--primary) / 0.55);
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.25);
+}
+.pd-option-best { border-color: hsl(var(--primary) / 0.45); }
+
+.pd-option-top { display: flex; align-items: center; gap: 8px; }
+.pd-option-name { font-weight: 600; }
+.pd-option-headline { font-size: 1.15rem; font-weight: 600; }
+.pd-option-detail { font-size: 0.8rem; color: hsl(var(--foreground) / 0.6); }
+.pd-option-price { margin-top: 4px; font-size: 0.9rem; color: hsl(var(--foreground) / 0.8); }
+
+.pd-was {
+  margin-right: 8px;
+  text-decoration: line-through;
+  color: hsl(var(--foreground) / 0.4);
+}
+
+.pd-badge {
+  padding: 2px 7px;
+  font-size: 0.7rem; font-weight: 600;
+  border-radius: 999px;
+  background: hsl(var(--primary) / 0.18);
+  color: hsl(var(--primary));
+}
+
+/* ---- confirming, paying, waiting ---- */
+
+.pd-msg { display: grid; gap: 6px; }
+.pd-lead { margin: 0; font-size: 1.05rem; font-weight: 600; }
+.pd-amount { margin: 6px 0; font-size: 1.5rem; font-weight: 600; }
+.pd-detail { margin: 0; font-size: 0.85rem; line-height: 1.45; color: hsl(var(--foreground) / 0.65); }
+.pd-quiet { color: hsl(var(--foreground) / 0.45); }
+.pd-input { margin-top: 8px; width: 100%; }
+.pd-error { margin: 10px 0 0; font-size: 0.85rem; color: hsl(var(--destructive, 0 70% 60%)); }
+.pd-foot { margin: 14px 0 0; font-size: 0.75rem; color: hsl(var(--foreground) / 0.45); }
+
+.pd-actions {
+  display: flex; justify-content: flex-end; gap: 10px;
+  margin-top: 16px; padding-top: 14px;
+  border-top: 1px solid hsl(var(--foreground) / 0.1);
+  align-items: center;
+}
+
+/* ---- the balance chip and its buy button ---- */
+
+.pts-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 4px 6px 4px 11px;
+  border: 1px solid hsl(var(--foreground) / 0.12);
+  border-radius: 999px;
+  background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
+}
+.pts-value { font-weight: 600; font-size: 0.9rem; }
+.pts-label { font-size: 0.78rem; color: hsl(var(--foreground) / 0.55); }
+.pts-buy { padding: 3px 11px; font-size: 0.78rem; }
+.pts-low { color: hsl(var(--destructive, 0 70% 60%)); }
