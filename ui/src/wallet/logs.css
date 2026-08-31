@@ -8,7 +8,10 @@
 .logs-key-node { color: #33ff66; font-weight: 600; }
 .logs-key-app { color: #ffb000; font-weight: 600; }
 
-.logs-copybar { display: flex; gap: 8px; margin: 8px 0; }
+.logs-copybar { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+.logs-filter { display: flex; gap: 6px; }
+.logs-spacer { flex: 1; }
+.wl-btn-on { outline: 1px solid currentColor; filter: brightness(1.25); }
 
 .logs-crt {
   height: 400px;

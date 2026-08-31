@@ -411,6 +411,13 @@ h1, h2, h3 { font-family: var(--font-heading); }
   display: flex; flex-direction: column; gap: 6px; align-items: flex-start;
   background: none; border: none; padding: 0; cursor: pointer; color: inherit; text-align: left; min-width: 0;
 }
+/* Left column: the status line, then the Start/Stop button right beneath it. */
+.hdr-stake-col { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+.hdr-stake-action { width: 100%; }
+/* In the header the button carries no dropdown-divider, and reads uppercase to
+   match the "NOT STAKING" line above it. */
+.hdr-stake-action .stake-start { padding-bottom: 0; margin-bottom: 0; border-bottom: none; }
+.hdr-stake-action .wl-btn { text-transform: uppercase; letter-spacing: 0.04em; }
 .hdr-lottery { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
 .lot-count { font-family: ui-monospace, monospace; font-size: 1.15rem; font-weight: 600; color: hsl(var(--primary)); }
 .lot-when { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
@@ -927,7 +934,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 
 /* ---- Settings sections (Password, Coin Maturity) ---- */
-.settings-view { display: flex; flex-direction: column; gap: 20px; max-width: 600px; }
+.settings-view { display: flex; flex-direction: column; gap: 16px; width: 100%; }
+.set-body { display: flex; flex-direction: column; gap: 20px; width: 100%; }
 /* Each settings section is its own black panel on the dark-grey settings area. */
 .set-section {
   display: flex; flex-direction: column; gap: 10px;

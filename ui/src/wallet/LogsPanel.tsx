@@ -32,7 +32,9 @@ function parseNode(text: string): Line[] {
     let tsMs: number;
     let msg: string;
     if (m) {
-      tsMs = new Date(`${m[1]}T${m[2]}`).getTime();
+      // The node writes its log in UTC; parse it as UTC so it lines up with the
+      // app log's absolute timestamps (both then display in local time).
+      tsMs = new Date(`${m[1]}T${m[2]}Z`).getTime();
       msg = m[3];
       lastTs = tsMs;
     } else {
@@ -56,6 +58,7 @@ export function LogsPanel() {
   const [appLog, setAppLog] = useState<AppLogEntry[]>([]);
   const [auto, setAuto] = useState(true);
   const [copied, setCopied] = useState("");
+  const [filter, setFilter] = useState<"all" | "node" | "app">("all");
 
   const load = useCallback(() => {
     nodeLogs()
@@ -78,6 +81,14 @@ export function LogsPanel() {
     const app: Line[] = appLog.map((e) => ({ tsMs: e.tsMs, source: "app", msg: e.msg, count: e.count }));
     return [...node, ...app].sort((a, b) => a.tsMs - b.tsMs);
   }, [nodeLog, appLog]);
+
+  // What the terminal actually renders: the whole stream, or just one source.
+  // The node is a firehose and the app a trickle, so "App" is how you read the
+  // app's own events without hunting for them among the node's lines.
+  const shown = useMemo<Line[]>(
+    () => (filter === "all" ? merged : merged.filter((l) => l.source === filter)),
+    [merged, filter],
+  );
 
   const toText = (lines: Line[]) =>
     lines
@@ -108,20 +119,21 @@ export function LogsPanel() {
         </label>
         <button type="button" className="wl-link" onClick={load}>Refresh</button>
       </div>
-      <p className="set-note">
-        Node and app activity merged by time. <span className="logs-key-node">green = node</span>,{" "}
-        <span className="logs-key-app">amber = app</span>. Repeated lines collapse to a count.
-      </p>
-
       <div className="logs-copybar">
+        <div className="logs-filter">
+          <button type="button" className={"wl-btn" + (filter === "all" ? " wl-btn-on" : "")} onClick={() => setFilter("all")}>All</button>
+          <button type="button" className={"wl-btn logs-key-node" + (filter === "node" ? " wl-btn-on" : "")} onClick={() => setFilter("node")}>Node</button>
+          <button type="button" className={"wl-btn logs-key-app" + (filter === "app" ? " wl-btn-on" : "")} onClick={() => setFilter("app")}>App</button>
+        </div>
+        <span className="logs-spacer" />
         <button type="button" className="wl-btn" onClick={() => copy("all")}>{copied === "all" ? "Copied!" : "Copy all"}</button>
         <button type="button" className="wl-btn" onClick={() => copy("node")}>{copied === "node" ? "Copied!" : "Copy node"}</button>
         <button type="button" className="wl-btn" onClick={() => copy("app")}>{copied === "app" ? "Copied!" : "Copy app"}</button>
       </div>
 
       <div className="logs-crt">
-        {merged.length === 0 && <div className="logs-empty">(no activity logged yet)</div>}
-        {merged.map((l, i) => (
+        {shown.length === 0 && <div className="logs-empty">{filter === "app" ? "(no app events logged yet)" : "(no activity logged yet)"}</div>}
+        {shown.map((l, i) => (
           <div key={i} className={l.source === "node" ? "logs-line logs-node" : "logs-line logs-app"}>
             <span className="logs-ts">{fmtTime(l.tsMs)}</span>{" "}
             <span className="logs-tag">{l.source === "node" ? "[node]" : "[app] "}</span>{" "}

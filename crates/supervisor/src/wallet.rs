@@ -83,19 +83,32 @@ pub struct StakeStart {
 /// wallet stakes automatically, so this just reports the status/reason.
 pub fn start_staking(cfg: &NodeConfig, passphrase: Option<&str>) -> StakeStart {
     let rpc = RpcClient::new(cfg);
-    let winfo = rpc.call("getwalletinfo", json!([])).unwrap_or(json!({}));
+    let winfo = match rpc.call("getwalletinfo", json!([])) {
+        Ok(v) => v,
+        Err(e) => {
+            crate::applog::log(format!("staking: can't reach the node to start ({e})"));
+            return StakeStart { staking: false, needs_passphrase: false, message: e };
+        }
+    };
     let encrypted = winfo.get("unlocked_until").is_some();
     let unlocked = winfo["unlocked_until"].as_i64().map(|u| u != 0).unwrap_or(true);
+    crate::applog::log(format!(
+        "staking: start requested (encrypted={encrypted}, unlocked={unlocked}, password {})",
+        if passphrase.is_some() { "given" } else { "not given" }
+    ));
 
     if encrypted && !unlocked {
         match passphrase {
             Some(pass) => {
                 // timeout 0 = stay unlocked until locked; true = staking-only
                 if let Err(e) = rpc.call("walletpassphrase", json!([pass, 0, true])) {
+                    crate::applog::log(format!("staking: unlock failed — {e}"));
                     return StakeStart { staking: false, needs_passphrase: true, message: e };
                 }
+                crate::applog::log("staking: wallet unlocked for staking");
             }
             None => {
+                crate::applog::log("staking: waiting for the wallet password");
                 return StakeStart {
                     staking: false,
                     needs_passphrase: true,
@@ -112,6 +125,7 @@ pub fn start_staking(cfg: &NodeConfig, passphrase: Option<&str>) -> StakeStart {
     } else {
         crate::state::staking_reason_not_staking(&s)
     };
+    crate::applog::log(format!("staking: after start — active={staking} ({message})"));
     StakeStart { staking, needs_passphrase: false, message }
 }
 
