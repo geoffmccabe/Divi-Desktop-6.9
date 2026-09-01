@@ -1,53 +1,106 @@
 # DIVA — Master Index
 
 **The front door for the DIVA side-chain work.** Read this first, then the linked docs.
-**What DIVA is:** Divi's EVM side-chain — a **forked geth** client secured by **POAS** (Proof of Authority Staking), with **Divi itself as the one native gas coin.** DIVA is the *chain*; Divi is the *coin* (like Base is the chain and ETH is the coin).
-**Overall status:** design/spec. The Divi-side NFD layer several pieces depend on **is built**; the DIVA chain and its bridges are **not built yet** (a DIVA devnet is the prerequisite for all building — see bottom).
-**Last updated:** 2026-Jul-31
+
+**What DIVA is:** Divi's EVM side-chain — a **fork of BNB Chain (BSC)**, whose **Parlia engine is Proof-of-Staked-Authority = our POAS**. Green (no PoW), anchored into DIVI by signed per-minute checkpoints. chain ID **1838**.
+
+**Reality check (2026-Sep-01):** there are **two workstreams**, and they are not fully in sync:
+- **Design layer** = these `docs/DIVA-*.md` files in the DD69 repo (decisions, specs).
+- **Build layer** = a real, running implementation at **`/Users/geoffreymccabe/diva`** (its own git repo, a live local devnet, deployed contracts). This is where the actual code lives.
+
+There is **one unresolved conflict between the two that blocks further core building — see §1.** Do not treat any "decision" here as final over the running code until §1 is settled.
+
+**Last updated:** 2026-Sep-01 (rewritten to match the `~/diva` build reality)
 
 ---
 
-## 1. Canonical decisions (the settled choices — this section wins on any conflict)
+## 1. ⚠ OPEN DECISION — the token model (BLOCKS Phase 2/3, needs Geoff)
 
-| Area | Decision | Date |
+This must be decided before the consensus and bridge work hardens, because you stake and peg differently depending on the answer.
+
+- **What the BUILD (`~/diva`) has locked and is building on — the TWO-COIN model:** **DIVA** = a separate, sellable native gas + staking coin (its purpose is to *fund the project*); **dDIVI** = a separate bridged ERC-20 backed 1:1 by locked DIVI, used for value/DeFi, **not** gas by default; and *"do not force DIVA and dDIVI to 1:1 parity"* (avoids a Gresham's-law arbitrage).
+- **What Geoff leaned toward in design discussion — the UNIFIED model:** **Divi is the one coin**, bridged 1:1 to *be* the native gas; DIVA is only the chain's name (Base:ETH :: DIVA:Divi). Cleaner "connected side chain" story; but it removes the sellable-coin fundraising path, so team/founder funding would move to a **separate governance/revenue token** and/or a **vested Divi allocation**.
+
+**Status: UNRESOLVED.** The build is on two-coin; the design leaned unified. A prior version of this file wrongly called "unified" canonical — it is not. **Geoff to choose.** Trade-off in one line: *two-coin = you can sell DIVA to raise funds, at the cost of a second coin and some confusion; unified = one clean Divi story, at the cost of the DIVA-sale fundraise (replace with a governance token).*
+
+---
+
+## 2. Settled decisions
+
+### 2a. Locked in the build (`~/diva`), proven or in progress
+| Area | Decision |
+|---|---|
+| Base client | Fork of **BSC** (Parlia = POAS). Vanilla geth removed CLI block production; BSC was the right base. |
+| Chain ID | **1838** (live on the local devnet + explorer). |
+| Empty blocks | **On-demand only — verified.** No blocks when idle; one tx → one block. Optional slow ~1/min heartbeat aligned to checkpoints. |
+| Consensus target | **POAS** — authority tier for launch liveness + open staked validators, **1,000,000** bond, **38** active cap, standby rotation, slashing. (Engine not built yet — see §3.) |
+| Finality | **Per-DIVI-block (~1 min) signed checkpoint** of the DIVA tip into DIVI OP_META. Precedent: Komodo dPoW, Polygon→Ethereum. |
+| Bridge trust | **Validator-federated peg** (POAS validators = signer set; no new trust party). Flagged in-build as *"the hardest, most security-critical piece."* |
+| Footprint | Pruned full nodes (never archive); idle RSS ~38MB measured → 4GB boxes are fine. |
+
+### 2b. Decided at the design layer with Geoff (NOT yet in the build; the `~/diva` team may not have these yet)
+| Area | Decision | Doc |
 |---|---|---|
-| **Chain vs coin** | DIVA = the chain (geth fork, **chain ID 1838**). **Divi = the one native gas coin, bridged 1:1** (custom-gas-token model). **No separate premined DIVA coin.** | Jul-31 |
-| **Consensus** | **POAS** — bonded authority set, **up to 38 validators**, **1,000,000 DIVI** validator bond. No PoW. | earlier |
-| **Finality** | **Per-block checkpoint of the DIVA tip into the DIVI UTXO chain** (~1 min), quorum-signed. Deep-reorg protection. | earlier |
-| **Bridge federation** | The **POAS validators** are the signer set for every bridge. Quorum **26/38** to move value / mint / release. | earlier |
-| **Private contracts** | **FHE (Zama fhEVM) is the flagship**; **TEE (Oasis Sapphire model) also offered** as a clearly-labeled lighter-trust option. Both obey the same compliance rules. | Jul-31 |
-| **Decryption quorum** | Revealing private data needs a **higher bar than moving money: 30/38** (vs 26/38). | Jul-30 |
-| **Transparency threshold** | **$10k USD-equivalent, rolling 24h aggregate**, USD-oracle priced; optional **~$3k** "recorded-but-private" soft tier. Aggregate (not per-tx) to defeat structuring. | Jul-30 |
-| **KYC scope** | **KYC only to use confidential contracts.** All public / default activity is **permissionless and KYC-free.** | Jul-31 |
-| **Fee model** | **Prepaid retainer ("gas tank") as the default** + **staker free-gas tier** (metered by a daily *gas budget*, with per-block + per-day caps) + **congestion-pricing backstop** + **paymaster/sponsored onboarding**. Low-balance alerts via **events** (not alert-txs); **refills are always sponsored** so no one can get gas-locked. | Jul-31 |
-| **Foreign assets** | **dUSDC / dUSDT / dBTC** bridged from **Base** (anchor chain; multi-anchor-capable for Ethereum/Robinhood later). Holder-redeemable, 1:1 backed. | Jul-26 |
-| **Team funding** | **Separate governance/revenue token** (recommended) and/or a **vested Divi allocation** — funded from chain fee revenue and/or reserves. **Not** a shadow gas coin. Optional: redirect a slice of Divi's own issuance (needs a Divi-chain change). | Jul-31 |
+| Private contracts | **FHE (Zama fhEVM) flagship + TEE (Oasis model) lighter option**; both obey the same compliance rules. | `DIVA-PRIVATE-CONTRACTS-PLAN.md` |
+| Decryption quorum | **30/38** (higher than the 26/38 value quorum) to reveal private data. | same |
+| Transparency threshold | **$10k USD-equiv, rolling 24h aggregate** (+ optional $3k soft tier), USD-oracle priced; aggregate to defeat structuring. | same |
+| KYC scope | **Only to use confidential contracts.** All public/default activity permissionless + KYC-free. | same |
+| Fee model | Prepaid retainer default + staker free-gas tier (gas-budget metered, per-block+per-day caps) + congestion backstop + paymaster/sponsored onboarding; event-based low-balance alerts; refills always sponsored. | *(not written yet)* |
+| Foreign assets | dUSDC/dUSDT/dBTC bridged from **Base** (anchor; multi-anchor later). | `DIVA-STABLECOINS-BTC-PLAN.md` |
+| NFT bridge shape | Divi↔DIVA **lock-and-release**; NFD (DVXP 0x02) parked at a federation address ↔ ERC-721 on DIVA; content-key carried across. | `DIVA-EVM-AND-NFT-BRIDGE-SPEC.md` (already reconciled into `~/diva/NFT_BRIDGE_PLAN.md`) |
 
 ---
 
-## 2. Document map
+## 3. Build status (what actually runs at `~/diva`)
 
+| Phase | State |
+|---|---|
+| **0 — Foundations** | ✅ **Done.** BSC fork builds on Mac; footprint measured. |
+| **1 — DIVA base identity** | 🔧 **In progress.** chainId 1838 devnet + explorer live; on-demand blocks verified; modern EVM features on (EIP-7702, 4337, BLS, KZG). **Next:** canonical predeploys (Multicall3/Permit2/WETH/4337 EntryPoint), native-coin genesis + allocations, multi-validator devnet. |
+| **2 — POAS consensus** | ❌ **Not built.** Still dev/authority mode. The real 1M-bond / 38-validator / slashing engine is the core "is it really our chain" gap. |
+| **3 — dDIVI + federated peg** | ❌ **Not proven.** Bridge contracts stubbed/deployed on devnet, but no proven lock-release round-trip against the real divid + no security review. **The make-or-break, security-critical piece.** |
+| **4 — Checkpointing into DIVI** | ❌ **Not built.** |
+| **5 — DiviStore** | ✅ **Largely built & tested, ahead of order** (P1–P9): storage market, pay-to-store, on-chain proof-of-storage, autonomous provider agents, fee distribution, **native NFT service (DivaNFT + factory)**. Plans: `~/diva/STORAGE_PLAN.md`. |
+| **NFT cross-chain bridge** | 📝 **Planned** (`~/diva/NFT_BRIDGE_PLAN.md`, reconciled against the DD69 spec; instant-mint + maturation-lock N=10). Native NFT minting works; cross-chain lock/release against real Divi NFD not yet proven. |
+
+**Honest summary:** strong chain scaffolding + a surprisingly complete storage/NFT layer, but the **three load-bearing, security-critical pieces (POAS staking, the DIVI peg, checkpointing) are still ahead of us.**
+
+---
+
+## 4. Document map
+
+**Design layer — DD69 repo (`Divi-Desktop-6.9/docs/`):**
 | Doc | Covers | Status |
 |---|---|---|
-| **DIVA-EVM-AND-NFT-BRIDGE-SPEC.md** | DIVA's EVM feature set + the **Divi↔DIVA NFT lock-and-release bridge** (build spec for another agent). Reflects the unified-coin model. | ✅ Ready to build (DIVA devnet prerequisite) |
-| **DIVA-PRIVATE-CONTRACTS-PLAN.md** | Confidential contracts (FHE flagship + TEE), compliance knobs, anti-structuring, threshold-warrant path. All 3 open decisions now settled. | ✅ Spec complete |
-| **DIVA-STABLECOINS-BTC-PLAN.md** | The **fungible peg** from Base (dUSDC/dUSDT/dBTC) and the POAS federated bridge. | ⚠️ Predates the unified-coin decision — still describes a separate native DIVA coin + dDIVI as two coins. **Needs a reconciliation pass** (see §3). Bridge mechanics still valid; the token-model framing is stale. |
-| **DIVA-FEE-MODEL.md** | The full fee model in §1 (retainer + staker tier + congestion + paymaster + alert/refill + team funding). | ❌ Not written yet (see §3) |
+| **DIVA-EVM-AND-NFT-BRIDGE-SPEC.md** | DIVA EVM features + Divi↔DIVA NFT lock-and-release bridge. | ✅ Spec ready; already adopted into the build's NFT plan. |
+| **DIVA-PRIVATE-CONTRACTS-PLAN.md** | FHE/TEE + compliance + threshold-warrant. | ✅ Design complete; not yet in build. |
+| **DIVA-STABLECOINS-BTC-PLAN.md** | Base-anchored fungible peg (dUSDC/dUSDT/dBTC). | ⚠️ Written on the two-coin framing; revisit once §1 is decided. |
+| **DIVA-FEE-MODEL.md** | The §2b fee model in full. | ❌ Not written yet. |
 
-Related built Divi-side code the bridges depend on (source of truth, do not re-implement): `crates/supervisor/src/{dvxp.rs, nfd_record.rs, crypto_nfd.rs, collectibles.rs, base58.rs}`, plus chain branch `feat/opcodes` (`OP_NFD = 0xbb`, `createnfd`/`verifynfd`). NFD = **DVXP type 0x02** in **OP_META (0x6a)**.
+**Build layer — `~/diva/` (the running code; treat as another agent's tree — read, don't modify):**
+`PLAN.md` (north-star + phases), `NFT_BRIDGE_PLAN.md`, `BRIDGE_PLAN.md`, `STORAGE_PLAN.md`, plus `bsc/` (the fork), `bridge/`, `devnet/`, `genesis/`, `storage/`.
 
----
-
-## 3. Open / pending work
-
-1. **Write `DIVA-FEE-MODEL.md`** — capture the §1 fee decisions in full (retainer flow, staker gas-budget curve, block-space split, congestion backstop, paymaster/sponsored refills + the "can't-pay-gas-to-buy-gas" deadlock fix, and the team-funding options A/B/C).
-2. **Reconcile `DIVA-STABLECOINS-BTC-PLAN.md`** to the unified-coin model: dDIVI is *not* a separate ERC-20 alongside a premined DIVA coin — bridged Divi **is** the native gas coin. dUSDC/dBTC/dUSDT remain ERC-20s (they're foreign assets); only the Divi framing changes.
-3. **Tokenomics doc** (optional): Divi-as-gas issuance rules, founder/team allocation vesting + caps, the separate governance/revenue token.
+**Built Divi-side code the bridges depend on (DD69 repo; source of truth — do not re-implement):** `crates/supervisor/src/{dvxp.rs, nfd_record.rs, crypto_nfd.rs, collectibles.rs}` + chain branch `feat/opcodes` (`OP_NFD = 0xbb`, `createnfd`/`verifynfd`). NFD = **DVXP type 0x02** in **OP_META (0x6a)**.
 
 ---
 
-## 4. Build prerequisite & first milestone
+## 5. Open / pending work (in priority order)
 
-Nothing on DIVA can be built or tested until a **DIVA chain is running** — even a devnet geth with a stand-in PoA/POAS validator set.
+1. **Decide §1 (token model).** Blocks Phase 2/3. Nothing core should harden until this is set.
+2. **Reconcile the two doc-sets** so the design layer and `~/diva/PLAN.md` agree on the token model, quorum numbers, and NFT-bridge details (they already share the content-key design).
+3. **Sync the design-layer decisions in §2b to the `~/diva` team** (private contracts, fee model, KYC scope) — they may be building without them.
+4. **Write `DIVA-FEE-MODEL.md`** (captures §2b fee decisions).
+5. **Revisit `DIVA-STABLECOINS-BTC-PLAN.md`** after §1.
 
-**Recommended first milestone:** stand up a DIVA devnet, then prove a single **NFD lock → mint → release** round-trip (regtest-Divi ↔ devnet-DIVA) using the Solidity multisig gate, *before* hardening finality, batching, the BLS/FROST precompile, or any of the fungible/private-contract work. Get one honest cross-chain round-trip working first; everything else builds on that proof.
+---
+
+## 6. Where we need to be next (the real gates)
+
+The devnet exists; the easy scaffolding is largely done. The remaining path is the hard, slow, security-critical part:
+
+1. **Settle the token model (§1).**
+2. **Build POAS consensus for real** (Phase 2): staking, the 38-validator active set, slashing, churn — on the BSC/Parlia base.
+3. **The federated DIVI↔DIVA peg** (Phase 3), proven round-trip against the real divid, **with a security review before any real value.** This is the make-or-break gate.
+4. **Checkpointing into DIVI** (Phase 4) for deep-reorg finality.
+
+Only after those does it make sense to layer on the private-contracts, Base-asset, and cross-chain-NFT work. **Recommendation: pause new core building until §1 is decided, so Phase 2/3 aren't built twice.**
