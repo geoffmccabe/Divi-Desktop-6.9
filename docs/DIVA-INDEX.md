@@ -8,20 +8,26 @@
 - **Design layer** = these `docs/DIVA-*.md` files in the DD69 repo (decisions, specs).
 - **Build layer** = a real, running implementation at **`/Users/geoffreymccabe/diva`** (its own git repo, a live local devnet, deployed contracts). This is where the actual code lives.
 
-There is **one unresolved conflict between the two that blocks further core building — see §1.** Do not treat any "decision" here as final over the running code until §1 is settled.
+The token-model question that used to block core building is now **decided — see §1.**
 
-**Last updated:** 2026-Sep-01 (rewritten to match the `~/diva` build reality)
+**Last updated:** 2026-Sep-01 (token model decided: unified/one-coin)
 
 ---
 
-## 1. ⚠ OPEN DECISION — the token model (BLOCKS Phase 2/3, needs Geoff)
+## 1. ✅ DECIDED — token model: UNIFIED (one coin, Divi)
 
-This must be decided before the consensus and bridge work hardens, because you stake and peg differently depending on the answer.
+**Decided by Geoff, 2026-Sep-01.** There is **no separate DIVA coin.** The DIVA chain has **one coin: Divi**, bridged 1:1 from DIVI L1 to *be* the chain's native gas + main coin.
 
-- **What the BUILD (`~/diva`) has locked and is building on — the TWO-COIN model:** **DIVA** = a separate, sellable native gas + staking coin (its purpose is to *fund the project*); **dDIVI** = a separate bridged ERC-20 backed 1:1 by locked DIVI, used for value/DeFi, **not** gas by default; and *"do not force DIVA and dDIVI to 1:1 parity"* (avoids a Gresham's-law arbitrage).
-- **What Geoff leaned toward in design discussion — the UNIFIED model:** **Divi is the one coin**, bridged 1:1 to *be* the native gas; DIVA is only the chain's name (Base:ETH :: DIVA:Divi). Cleaner "connected side chain" story; but it removes the sellable-coin fundraising path, so team/founder funding would move to a **separate governance/revenue token** and/or a **vested Divi allocation**.
+- **User-facing name is always "Divi."** On DIVI L1 and on the DIVA chain it is the same coin to the user.
+- **Internal/dev shorthand** may call the bridged native coin **dDIVI** or **DIVA** — but they all mean the same thing: bridged Divi acting as native gas. There is no second, separately-issued coin.
+- **Model:** custom-gas-token chain — bridging DIVI in mints native Divi gas 1:1; bridging out burns it. (Base:ETH :: DIVA:Divi.)
 
-**Status: UNRESOLVED.** The build is on two-coin; the design leaned unified. A prior version of this file wrongly called "unified" canonical — it is not. **Geoff to choose.** Trade-off in one line: *two-coin = you can sell DIVA to raise funds, at the cost of a second coin and some confusion; unified = one clean Divi story, at the cost of the DIVA-sale fundraise (replace with a governance token).*
+**Implications now locked:**
+- **Validator/staking bond is denominated in Divi** (bridged native), not a separate DIVA coin. The 1,000,000 bond stands — in Divi.
+- **The DIVA-coin sale fundraising path is OFF.** Fund the team/project via a **separate, clearly-labeled governance/revenue token** and/or a **vested Divi allocation** — never a shadow gas coin.
+- **"dDIVI as a separate ERC-20 alongside a native DIVA coin" collapses:** the native coin *is* bridged Divi. Foreign assets (dUSDC/dBTC/dUSDT) stay separate ERC-20s; **Divi itself is native.**
+
+**⚠ Build impact:** the `~/diva` build still carries the *old two-coin* model as a "locked decision" in its `PLAN.md` (sellable DIVA + separate dDIVI). That is now **superseded** and must be updated to unified before Phase 2/3 harden. See §5.
 
 ---
 
@@ -33,7 +39,7 @@ This must be decided before the consensus and bridge work hardens, because you s
 | Base client | Fork of **BSC** (Parlia = POAS). Vanilla geth removed CLI block production; BSC was the right base. |
 | Chain ID | **1838** (live on the local devnet + explorer). |
 | Empty blocks | **On-demand only — verified.** No blocks when idle; one tx → one block. Optional slow ~1/min heartbeat aligned to checkpoints. |
-| Consensus target | **POAS** — authority tier for launch liveness + open staked validators, **1,000,000** bond, **38** active cap, standby rotation, slashing. (Engine not built yet — see §3.) |
+| Consensus target | **POAS** — authority tier for launch liveness + open staked validators, **1,000,000 Divi** bond (bridged native coin, per §1), **38** active cap, standby rotation, slashing. (Engine not built yet — see §3.) |
 | Finality | **Per-DIVI-block (~1 min) signed checkpoint** of the DIVA tip into DIVI OP_META. Precedent: Komodo dPoW, Polygon→Ethereum. |
 | Bridge trust | **Validator-federated peg** (POAS validators = signer set; no new trust party). Flagged in-build as *"the hardest, most security-critical piece."* |
 | Footprint | Pruned full nodes (never archive); idle RSS ~38MB measured → 4GB boxes are fine. |
@@ -86,11 +92,11 @@ This must be decided before the consensus and bridge work hardens, because you s
 
 ## 5. Open / pending work (in priority order)
 
-1. **Decide §1 (token model).** Blocks Phase 2/3. Nothing core should harden until this is set.
-2. **Reconcile the two doc-sets** so the design layer and `~/diva/PLAN.md` agree on the token model, quorum numbers, and NFT-bridge details (they already share the content-key design).
+1. **Propagate the unified token decision (§1) into the `~/diva` build** — update `~/diva/PLAN.md` "locked decisions": remove the sellable DIVA coin + the separate dDIVI ERC-20; native coin = bridged Divi; bond in Divi. **Highest priority — the build is still on two-coin.**
+2. **Reconcile the two doc-sets** so the design layer and `~/diva/PLAN.md` agree on quorum numbers and NFT-bridge details (they already share the content-key design).
 3. **Sync the design-layer decisions in §2b to the `~/diva` team** (private contracts, fee model, KYC scope) — they may be building without them.
 4. **Write `DIVA-FEE-MODEL.md`** (captures §2b fee decisions).
-5. **Revisit `DIVA-STABLECOINS-BTC-PLAN.md`** after §1.
+5. **Revisit `DIVA-STABLECOINS-BTC-PLAN.md`** — rewrite its two-coin framing to unified (bridged Divi = native; dUSDC/dBTC/dUSDT stay ERC-20s).
 
 ---
 
@@ -98,9 +104,10 @@ This must be decided before the consensus and bridge work hardens, because you s
 
 The devnet exists; the easy scaffolding is largely done. The remaining path is the hard, slow, security-critical part:
 
-1. **Settle the token model (§1).**
-2. **Build POAS consensus for real** (Phase 2): staking, the 38-validator active set, slashing, churn — on the BSC/Parlia base.
-3. **The federated DIVI↔DIVA peg** (Phase 3), proven round-trip against the real divid, **with a security review before any real value.** This is the make-or-break gate.
-4. **Checkpointing into DIVI** (Phase 4) for deep-reorg finality.
+1. ~~Settle the token model~~ ✅ **Done — unified (§1).**
+2. **Propagate unified into the `~/diva` build** (§5.1) before Phase 2/3 harden.
+3. **Build POAS consensus for real** (Phase 2): staking, the 38-validator active set, slashing, churn — on the BSC/Parlia base. Bond in Divi.
+4. **The federated DIVI↔DIVA peg** (Phase 3), proven round-trip against the real divid, **with a security review before any real value.** This is the make-or-break gate — and under the unified model it is *also* what mints the native gas coin, so it's doubly load-bearing.
+5. **Checkpointing into DIVI** (Phase 4) for deep-reorg finality.
 
-Only after those does it make sense to layer on the private-contracts, Base-asset, and cross-chain-NFT work. **Recommendation: pause new core building until §1 is decided, so Phase 2/3 aren't built twice.**
+Only after those does it make sense to layer on the private-contracts, Base-asset, and cross-chain-NFT work.
