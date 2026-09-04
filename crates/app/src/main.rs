@@ -872,25 +872,18 @@ async fn recent_blocks(count: i64) -> Vec<BlockDto> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PricePointDto {
-    day: String,
+    ts: String,
     close: f64,
-    market_cap: f64,
-    volume: f64,
 }
 
-/// Daily DIVI price history (oldest first) for the in-app price chart, read from
-/// the Supabase series backfilled from CoinMarketCap.
+/// DIVI price time-series (oldest first) for the in-app price chart, read from
+/// the Supabase series sourced from CoinMarketCap (daily + hourly + 15-min).
 #[tauri::command]
 async fn price_history() -> Vec<PricePointDto> {
     tauri::async_runtime::spawn_blocking(|| {
         chart::price_history()
             .into_iter()
-            .map(|p| PricePointDto {
-                day: p.day,
-                close: p.close.unwrap_or(0.0),
-                market_cap: p.market_cap.unwrap_or(0.0),
-                volume: p.volume.unwrap_or(0.0),
-            })
+            .map(|p| PricePointDto { ts: p.ts, close: p.close.unwrap_or(0.0) })
             .collect()
     })
     .await

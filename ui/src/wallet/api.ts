@@ -261,10 +261,8 @@ export interface Block {
 export const recentBlocks = (count: number) => invoke<Block[]>("recent_blocks", { count });
 
 export interface PricePoint {
-  day: string; // YYYY-MM-DD
+  ts: string; // ISO 8601 timestamp
   close: number;
-  marketCap: number;
-  volume: number;
 }
 export const priceHistory = () => invoke<PricePoint[]>("price_history");
 export interface StaleBlock {

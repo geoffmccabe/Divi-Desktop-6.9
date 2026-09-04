@@ -1847,3 +1847,53 @@ code, .mono { font-family: var(--font-mono); }
 .agent-create-footer { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; display: flex; flex-direction: column; gap: 2px; padding: 7px 4px; background: rgba(8,8,12,0.74); }
 .agent-create-name { font-size: 0.82rem; font-weight: 700; color: #fff; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-create-edit { font-size: 0.62rem; font-weight: 600; letter-spacing: 0.06em; color: hsl(var(--primary)); text-align: center; }
+
+/* ===== Latest price-chart styles (zoom/pan/axes/hover) — override v1 ===== */
+/* Charts + Node Map buttons sit together at the right of the Overview title row. */
+.title-actions { display: flex; align-items: center; gap: 10px; }
+
+/* ---- Divi price chart (Charts view) ---- */
+.pricechart { display: flex; flex-direction: column; height: 100%; }
+.pc-head { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.pc-back {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 6px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.14);
+  border: 1px solid hsl(var(--primary) / 0.45);
+}
+.pc-back:hover { background: hsl(var(--primary) / 0.28); }
+.pc-title { margin: 0; font-size: 1.4rem; }
+.pc-summary { display: inline-flex; align-items: baseline; gap: 10px; margin-left: auto; }
+.pc-price { font-size: 1.5rem; font-weight: 700; color: hsl(var(--foreground)); }
+.pc-change { font-size: 0.95rem; font-weight: 600; }
+.pc-change.up { color: #2bd94f; }
+.pc-change.down { color: #ff5252; }
+.pc-ranges { display: flex; gap: 6px; margin-bottom: 12px; }
+.pc-range {
+  cursor: pointer; padding: 5px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
+  color: hsl(var(--muted-foreground)); background: transparent; border: 1px solid hsl(var(--border));
+}
+.pc-range:hover { color: hsl(var(--foreground)); }
+.pc-range.on { color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.2); border-color: hsl(var(--primary) / 0.6); }
+.pc-plot { position: relative; flex: 1; min-height: 380px; cursor: crosshair; user-select: none; }
+.pc-plot.dragging { cursor: grabbing; }
+.pc-hint { margin-left: auto; align-self: center; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+.pc-svg { display: block; }
+.pc-empty { display: flex; align-items: center; justify-content: center; height: 380px; color: hsl(var(--muted-foreground)); }
+/* axis gridlines + labels */
+.pc-grid { stroke: hsl(var(--foreground) / 0.10); stroke-width: 1; }
+.pc-ylabel { fill: hsl(var(--muted-foreground)); font-size: 11px; text-anchor: end; }
+.pc-xlabel { fill: hsl(var(--muted-foreground)); font-size: 11px; text-anchor: middle; }
+/* hover crosshair */
+.pc-cross { stroke: hsl(var(--foreground) / 0.45); stroke-width: 1; stroke-dasharray: 3 3; }
+.pc-dot { fill: hsl(var(--primary)); stroke: hsl(var(--background)); stroke-width: 2; }
+/* hover tooltip */
+.pc-tip {
+  position: absolute; pointer-events: none; z-index: 5;
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 6px 9px; border-radius: 8px; white-space: nowrap;
+  background: hsl(var(--card) / 0.96); border: 1px solid hsl(var(--primary) / 0.5);
+  box-shadow: 0 4px 14px hsl(0 0% 0% / 0.35);
+}
+.pc-tip-price { font-weight: 700; font-size: 0.92rem; color: hsl(var(--foreground)); }
+.pc-tip-date { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }

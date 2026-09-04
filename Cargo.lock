@@ -1206,10 +1206,13 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
+ "dvxp-core",
+ "ed25519-dalek",
  "getrandom 0.2.17",
  "hkdf",
  "keyring",
  "libc",
+ "name-registry",
  "serde_json",
  "sha2 0.10.9",
  "ureq",
@@ -1445,6 +1448,13 @@ name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
+
+[[package]]
+name = "dvxp-core"
+version = "0.1.0"
+dependencies = [
+ "sha2 0.10.9",
+]
 
 [[package]]
 name = "dyn-clone"
@@ -2925,6 +2935,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "name-registry"
+version = "0.1.0"
+dependencies = [
+ "dvxp-core",
+ "ripemd",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "ndk"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4129,6 +4148,15 @@ dependencies = [
  "libc",
  "untrusted",
  "windows-sys 0.52.0",
+]
+
+[[package]]
+name = "ripemd"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd124222d17ad93a644ed9d011a40f4fb64aa54275c08cc216524a9ea82fb09f"
+dependencies = [
+ "digest 0.10.7",
 ]
 
 [[package]]

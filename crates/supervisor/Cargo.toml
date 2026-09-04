@@ -29,7 +29,6 @@ base64 = "0.22"
 aes-gcm = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 hkdf = "0.12"
-getrandom = "0.2"
 # Collection import: unpack a Kinet.ink .zip bundle (deflate only; no exotic codecs).
 zip = { version = "8", default-features = false, features = ["deflate"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
