@@ -2,8 +2,10 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{applog, bearer, c2pa_read, chaintips, chart, coins, config, config::NodeConfig, escrow, fastsend, marketmaker, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use dd69_supervisor::{applog, bearer, c2pa_read, chaintips, chart, coins, collectibles, collectibles_import, config, config::NodeConfig, escrow, fastsend, marketmaker, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
+use serde_json::Value;
 
 // Serves community app bundles over their own url scheme. Kept in its own module
 // so this file only gains the three lines that wire it in.
@@ -1556,6 +1558,7 @@ struct BearerStatusDto {
     funded: bool,
     claimed: bool,
     value: f64,
+    receivable: f64,
     confirmations: i64,
 }
 
@@ -1597,6 +1600,7 @@ async fn bearer_status(code: String) -> Result<BearerStatusDto, String> {
             funded: s.funded,
             claimed: s.claimed,
             value: s.value,
+            receivable: s.receivable,
             confirmations: s.confirmations,
         })
     })
@@ -2105,6 +2109,274 @@ async fn divi_prices(currencies: Vec<String>, cmc_key: Option<String>, use_coing
     })
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NfdMintDto {
+    txid: String,
+    owner_addr: String,
+    content_hash: String,
+    arweave_ptr: String,
+    thumb_ptr: Option<String>,
+}
+
+/// Mint a Divi Collectible (NFD). The UI passes the file bytes as base64; the
+/// content is encrypted to the owner locally and only the encrypted bundle is
+/// stored. If the creator opted into a public preview, `thumbnail_b64` +
+/// `thumbnail_mime` carry a small unencrypted thumbnail. Returns the handle the
+/// UI keeps to view it later.
+#[tauri::command]
+async fn nfd_mint(
+    content_b64: String,
+    content_mime: String,
+    encrypted: bool,
+    thumbnail_b64: Option<String>,
+    thumbnail_mime: Option<String>,
+    collection_id: Option<String>,
+    creator_addr: Option<String>,
+    traits_json: Option<String>,
+) -> Result<NfdMintDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let bytes = STANDARD.decode(&content_b64).map_err(|_| "bad file data".to_string())?;
+        let thumb_bytes = match &thumbnail_b64 {
+            Some(b64) => Some(STANDARD.decode(b64).map_err(|_| "bad thumbnail data".to_string())?),
+            None => None,
+        };
+        let thumbnail = match (&thumb_bytes, &thumbnail_mime) {
+            (Some(b), Some(mime)) => Some((b.as_slice(), mime.as_str())),
+            _ => None,
+        };
+        // Mint into a collection when the UI supplied the collection id, its
+        // creator address, and the public traits JSON.
+        let collection = match (&collection_id, &creator_addr, &traits_json) {
+            (Some(cid), Some(ca), Some(tj)) => Some(collectibles::CollectionMint {
+                creator_addr: ca.as_str(),
+                collection_id: cid.as_str(),
+                traits_json: tj.as_bytes(),
+            }),
+            _ => None,
+        };
+        let d = collectibles::mint(&cfg, &bytes, &content_mime, encrypted, thumbnail, collection)?;
+        Ok(NfdMintDto {
+            txid: d.txid,
+            owner_addr: d.owner_addr,
+            content_hash: d.content_hash,
+            arweave_ptr: d.arweave_ptr,
+            thumb_ptr: d.thumb_ptr,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Fetch, decrypt, and authenticate a collectible you own. Returns the original
+/// file bytes as base64 for the UI to display. Errors if not authentic / not yours.
+#[tauri::command]
+async fn nfd_view(owner_addr: String, arweave_ptr: String, content_hash: String, encrypted: bool) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let bytes = collectibles::view(&cfg, &owner_addr, &arweave_ptr, &content_hash, encrypted)?;
+        Ok(STANDARD.encode(bytes))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NfdCollectionDto {
+    txid: String,
+    meta_ptr: String,
+    creator_addr: String,
+}
+
+/// Create a collection. `creator_addr` is the stable address that owns the
+/// collection and must mint every item into it; it needs a little DIVI. `cover`
+/// is an optional public banner image. Returns the collection id (the txid).
+#[tauri::command]
+async fn nfd_create_collection(
+    creator_addr: String,
+    name: String,
+    description: String,
+    max_supply: u32,
+    cover_b64: Option<String>,
+    cover_mime: Option<String>,
+) -> Result<NfdCollectionDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let cover_bytes = match &cover_b64 {
+            Some(b64) => Some(STANDARD.decode(b64).map_err(|_| "bad cover data".to_string())?),
+            None => None,
+        };
+        let cover = match (&cover_bytes, &cover_mime) {
+            (Some(b), Some(mime)) => Some((b.as_slice(), mime.as_str())),
+            _ => None,
+        };
+        let c = collectibles::create_collection(&cfg, &creator_addr, &name, &description, cover, max_supply)?;
+        Ok(NfdCollectionDto { txid: c.txid, meta_ptr: c.meta_ptr, creator_addr })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Open + validate a Kinet.ink collection import (.zip). Unpacks and returns a
+/// plan (collection meta + per-item ok/error) WITHOUT publishing anything.
+#[tauri::command]
+async fn nfd_import_open(zip_path: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles_import::open(&cfg, &zip_path)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Read one item's bytes + metadata (base64) from an opened import, for minting.
+#[tauri::command]
+async fn nfd_import_read_item(import_dir: String, edition: u64) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles_import::read_item(&cfg, &import_dir, edition)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Pre-split the creator's coins into `count` spendable UTXOs so a batch of that
+/// many mints doesn't stall. Returns the fan-out txid to wait on, or null if the
+/// address already has enough UTXOs.
+#[tauri::command]
+async fn nfd_prepare_funding(address: String, count: u32) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles::prepare_funding(&cfg, &address, count as usize)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Confirmations for a txid (-1 if not yet in a block). For waiting on the fan-out.
+#[tauri::command]
+async fn nfd_tx_confirmations(txid: String) -> i64 {
+    tauri::async_runtime::spawn_blocking(move || {
+        match NodeConfig::load() {
+            Ok(cfg) => collectibles::tx_confirmations(&cfg, &txid),
+            Err(_) => -1,
+        }
+    })
+    .await
+    .unwrap_or(-1)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReceiveCodeDto {
+    address: String,
+    enc_pubkey: String,
+}
+
+/// My receive code (address + encryption pubkey) to share with a sender.
+#[tauri::command]
+async fn nfd_receive_code(address: String) -> Result<ReceiveCodeDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let c = collectibles::receive_code(&cfg, &address)?;
+        Ok(ReceiveCodeDto { address: c.address, enc_pubkey: c.enc_pubkey })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TransferDto {
+    txid: String,
+    wrapkey_ptr: String,
+}
+
+/// Transfer an NFD you own to a recipient's receive code.
+#[tauri::command]
+async fn nfd_transfer(
+    owner_addr: String,
+    mint_txid: String,
+    recipient_addr: String,
+    recipient_enc_pubkey: String,
+) -> Result<TransferDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let t = collectibles::transfer(&cfg, &owner_addr, &mint_txid, &recipient_addr, &recipient_enc_pubkey)?;
+        Ok(TransferDto { txid: t.txid, wrapkey_ptr: t.wrapkey_ptr })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Claim (fetch + decrypt) a collectible transferred to you. Returns base64.
+#[tauri::command]
+async fn nfd_claim(my_addr: String, mint_txid: String, wrapkey_ptr: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let bytes = collectibles::claim(&cfg, &my_addr, &mint_txid, &wrapkey_ptr)?;
+        Ok(STANDARD.encode(bytes))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+// ── Admin: fees / treasury (public config only — no keys) ──────────────────
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FeeConfigDto {
+    treasury_address: String,
+    nfd_mint: f64,
+}
+
+/// Read the fee/treasury config (public address + per-action amounts).
+#[tauri::command]
+async fn nfd_fee_config() -> Result<FeeConfigDto, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let f = dd69_supervisor::fees::FeeConfig::load(&cfg);
+        Ok(FeeConfigDto { treasury_address: f.treasury_address, nfd_mint: f.nfd_mint })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Set the fee/treasury config (superadmin). Stores only the public address +
+/// amounts — never any key.
+#[tauri::command]
+async fn nfd_set_fee_config(treasury_address: String, nfd_mint: f64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dd69_supervisor::fees::FeeConfig { treasury_address, nfd_mint }.save(&cfg)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayStatusDto {
+    relay_url: String,
+    reachable: bool,
+    balance_winc: Option<String>,
+}
+
+/// Arweave uploader status: its URL, reachability, and Turbo credit balance.
+#[tauri::command]
+async fn nfd_relay_status() -> RelayStatusDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let url = dd69_supervisor::nfd_storage::relay_url();
+        match dd69_supervisor::nfd_storage::relay_balance(&url) {
+            Ok(b) => RelayStatusDto { relay_url: url, reachable: true, balance_winc: Some(b) },
+            Err(_) => RelayStatusDto { relay_url: url, reachable: false, balance_winc: None },
+        }
+    })
+    .await
+    .unwrap_or(RelayStatusDto { relay_url: String::new(), reachable: false, balance_winc: None })
+}
+
 fn main() {
     tauri::Builder::default()
         // Community apps load from divi-app://<id>/ so each one gets its own
@@ -2235,7 +2507,20 @@ fn main() {
             builder_service::builder_service_status,
             builder_service::builder_service_restart,
             builder_service::set_gateway_url,
-            builder_service::gateway_url
+            builder_service::gateway_url,
+            nfd_mint,
+            nfd_view,
+            nfd_receive_code,
+            nfd_transfer,
+            nfd_claim,
+            nfd_fee_config,
+            nfd_set_fee_config,
+            nfd_relay_status,
+            nfd_create_collection,
+            nfd_import_open,
+            nfd_import_read_item,
+            nfd_prepare_funding,
+            nfd_tx_confirmations
         ])
         .build(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9")

@@ -65,6 +65,124 @@ export const poeTimestamp = (
   });
 export const poeVerify = (txid: string, hash: string) => invoke<Proof>("poe_verify", { txid, hash });
 
+// ── Divi Collectibles (NFD) ──────────────────────────────────────────────────
+export interface NfdMint {
+  txid: string;
+  ownerAddr: string;
+  contentHash: string;
+  arweavePtr: string;
+  thumbPtr: string | null;
+}
+export interface CollectionMintArgs {
+  collectionId: string;
+  creatorAddr: string;
+  traitsJson: string; // ERC-721 attributes JSON, public
+}
+export const nfdMint = (
+  contentB64: string,
+  contentMime: string,
+  encrypted: boolean,
+  thumbnailB64?: string,
+  thumbnailMime?: string,
+  collection?: CollectionMintArgs,
+) =>
+  invoke<NfdMint>("nfd_mint", {
+    contentB64,
+    contentMime,
+    encrypted,
+    thumbnailB64,
+    thumbnailMime,
+    collectionId: collection?.collectionId,
+    creatorAddr: collection?.creatorAddr,
+    traitsJson: collection?.traitsJson,
+  });
+
+export interface ImportPlanItem {
+  edition: number | null;
+  name: string;
+  tier: string | null;
+  hasPreview: boolean;
+  ok: boolean;
+  error: string | null;
+}
+export interface ImportPlan {
+  importDir: string;
+  collection: { name: string; description: string; maxSupply: number; coverB64: string | null; coverMime: string | null; encrypted: boolean };
+  items: ImportPlanItem[];
+  okCount: number;
+  warnings: { edition: number | null; error: string }[];
+}
+export interface ImportItem {
+  name: string;
+  tier: string | null;
+  attributes: { trait_type: string; value: string }[];
+  originalB64: string;
+  originalMime: string;
+  previewB64: string | null;
+  previewMime: string | null;
+}
+export const nfdImportOpen = (zipPath: string) => invoke<ImportPlan>("nfd_import_open", { zipPath });
+export const nfdImportReadItem = (importDir: string, edition: number) =>
+  invoke<ImportItem>("nfd_import_read_item", { importDir, edition });
+// Pre-split the creator's coins into `count` UTXOs so a batch doesn't stall.
+// Returns the fan-out txid to wait on, or null if already enough UTXOs.
+export const nfdPrepareFunding = (address: string, count: number) =>
+  invoke<string | null>("nfd_prepare_funding", { address, count });
+export const nfdTxConfirmations = (txid: string) => invoke<number>("nfd_tx_confirmations", { txid });
+
+export interface NfdCollection {
+  txid: string; // the collection id
+  metaPtr: string;
+  creatorAddr: string;
+}
+export const nfdCreateCollection = (
+  creatorAddr: string,
+  name: string,
+  description: string,
+  maxSupply: number,
+  coverB64?: string,
+  coverMime?: string,
+) =>
+  invoke<NfdCollection>("nfd_create_collection", {
+    creatorAddr,
+    name,
+    description,
+    maxSupply,
+    coverB64,
+    coverMime,
+  });
+
+export interface ReceiveCode {
+  address: string;
+  encPubkey: string;
+}
+export interface NfdTransfer {
+  txid: string;
+  wrapkeyPtr: string;
+}
+export const nfdReceiveCode = (address: string) => invoke<ReceiveCode>("nfd_receive_code", { address });
+export const nfdTransfer = (ownerAddr: string, mintTxid: string, recipientAddr: string, recipientEncPubkey: string) =>
+  invoke<NfdTransfer>("nfd_transfer", { ownerAddr, mintTxid, recipientAddr, recipientEncPubkey });
+export const nfdClaim = (myAddr: string, mintTxid: string, wrapkeyPtr: string) =>
+  invoke<string>("nfd_claim", { myAddr, mintTxid, wrapkeyPtr });
+
+// ── Admin: fees / treasury + Arweave status ──────────────────────────────────
+export interface FeeConfig {
+  treasuryAddress: string;
+  nfdMint: number;
+}
+export const nfdFeeConfig = () => invoke<FeeConfig>("nfd_fee_config");
+export const nfdSetFeeConfig = (treasuryAddress: string, nfdMint: number) =>
+  invoke<void>("nfd_set_fee_config", { treasuryAddress, nfdMint });
+
+export interface RelayStatus {
+  relayUrl: string;
+  reachable: boolean;
+  balanceWinc: string | null;
+}
+export const nfdRelayStatus = () => invoke<RelayStatus>("nfd_relay_status");
+export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string, encrypted: boolean) =>
+  invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash, encrypted });
 // ---- Payment requests (DVXP type 0x05) ----
 // A request only ASKS. Receiving one moves no money; paying is a separate,
 // explicitly signed act by the payer.
@@ -221,6 +339,7 @@ export interface BearerStatus {
   funded: boolean;
   claimed: boolean; // true once swept (claimed or reclaimed) or never funded
   value: number;
+  receivable: number; // value minus the sweep fee = what the redeemer receives
   confirmations: number;
 }
 export const bearerCreate = (amount: number, passphrase?: string) =>

@@ -25,6 +25,13 @@ getrandom = "0.2"
 # so this adds no new download or new supply-chain surface.
 ed25519-dalek = "2"
 base64 = "0.22"
+# NFD (Divi Collectibles) encryption core — audited RustCrypto primitives only.
+aes-gcm = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
+getrandom = "0.2"
+# Collection import: unpack a Kinet.ink .zip bundle (deflate only; no exotic codecs).
+zip = { version = "8", default-features = false, features = ["deflate"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 [target.'cfg(unix)'.dependencies]
