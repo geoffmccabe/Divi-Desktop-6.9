@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { PasswordPanel } from "./PasswordPanel";
 import { CoinMaturity } from "./CoinMaturity";
 import { MyNodes } from "./MyNodes";
+import { LogsPanel } from "./LogsPanel";
 
 // Settings: stacked panels (Password, Coin Maturity). Chain Health lives in
 // the Admin drawer instead — its node check is expensive and admin-only. The
@@ -10,6 +11,7 @@ const TABS = [
   { id: "nodes", label: "My Nodes" },
   { id: "password", label: "Password" },
   { id: "maturity", label: "Coin Maturity" },
+  { id: "logs", label: "Logs" },
 ];
 
 export function SettingsView() {
@@ -61,6 +63,7 @@ export function SettingsView() {
       {panel("nodes", <MyNodes />)}
       {panel("password", <PasswordPanel />)}
       {panel("maturity", <CoinMaturity />)}
+      {panel("logs", <LogsPanel />)}
 
       <section className="set-section">
         <h3 className="set-title">Appearance</h3>

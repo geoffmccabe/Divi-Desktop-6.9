@@ -6,6 +6,7 @@ import { ValuePanel } from "./panels/ValuePanel";
 import { PayoutPanel } from "./panels/PayoutPanel";
 import { AiPanel } from "./panels/AiPanel";
 import { ScreeningPanel } from "./panels/ScreeningPanel";
+import { MarketsPanel } from "./panels/MarketsPanel";
 import { ChainHealthPanel } from "../wallet/ChainHealthPanel";
 
 export interface AdminPanel {
@@ -26,4 +27,5 @@ export const ADMIN_PANELS: AdminPanel[] = [
   // Admin-only: the fork check costs the node ~20s, so it is deliberately
   // not somewhere an ordinary user can trigger it repeatedly.
   { id: "chain", title: "Chain", render: () => <ChainHealthPanel /> },
+  { id: "markets", title: "Markets", render: () => <MarketsPanel /> },
 ];

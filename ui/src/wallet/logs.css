@@ -1,0 +1,37 @@
+/* Settings → Logs: a single merged, time-ordered stream styled like a 1980s CRT
+   terminal — fluorescent green for the node, amber for the app, on near-black. */
+
+.logs-view-head { display: flex; align-items: center; gap: 14px; }
+.logs-view-head .set-title { margin: 0; }
+.logs-auto { display: flex; align-items: center; gap: 5px; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+
+.logs-key-node { color: #33ff66; font-weight: 600; }
+.logs-key-app { color: #ffb000; font-weight: 600; }
+
+.logs-copybar { display: flex; gap: 8px; margin: 8px 0; }
+
+.logs-crt {
+  height: 400px;
+  overflow: auto;
+  background: #060a06;              /* near-black, faint green tint */
+  border: 1px solid #1b2a1b;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-family: ui-monospace, "SFMono-Regular", Menlo, "Courier New", monospace;
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.logs-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  text-shadow: 0 0 2px currentColor; /* soft phosphor glow in the line's own color */
+}
+.logs-node { color: #33ff66; }        /* fluorescent green — the node */
+.logs-app  { color: #ffb000; }        /* amber — the app */
+
+.logs-ts  { opacity: 0.55; }
+.logs-tag { opacity: 0.85; }
+.logs-rep { opacity: 0.7; font-style: italic; }
+
+.logs-empty { color: #3a5a3a; }

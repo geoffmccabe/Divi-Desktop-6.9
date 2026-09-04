@@ -284,16 +284,24 @@ pub fn start_with_recovery(
 /// the flush between "stop" and exit is the 9-13 s corruption window.
 pub fn safe_stop(rpc: &RpcClient, datadir: &Path, timeout: Duration) -> Result<Duration, String> {
     let Some(pid) = daemon_pid(datadir) else {
+        crate::applog::log("shutdown: node was not running — nothing to stop");
         return Err("daemon is not running".into());
     };
+    crate::applog::log(format!("shutdown: asking the node to stop and save (pid {pid})"));
     rpc.call("stop", serde_json::json!([]))?;
     let started = Instant::now();
     while started.elapsed() < timeout {
         if !pid_alive(pid) {
+            let secs = started.elapsed().as_secs();
+            crate::applog::log(format!("shutdown: node saved and exited cleanly after {secs}s"));
             return Ok(started.elapsed());
         }
         std::thread::sleep(Duration::from_millis(250));
     }
+    crate::applog::log(format!(
+        "shutdown: node still saving after {}s — waiting, NOT killing it",
+        timeout.as_secs()
+    ));
     Err(format!(
         "daemon (pid {pid}) still flushing after {}s — NOT killing it; wait longer",
         timeout.as_secs()

@@ -1,4 +1,5 @@
 pub mod appbundle;
+pub mod applog;
 pub mod base58;
 pub mod coins;
 pub mod c2pa_read;
@@ -11,6 +12,7 @@ pub mod fastsend;
 pub mod health;
 pub mod bearer;
 pub mod install;
+pub mod marketmaker;
 pub mod mempool;
 pub mod multisig;
 pub mod security;

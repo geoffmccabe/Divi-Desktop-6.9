@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{bearer, c2pa_read, chaintips, chart, coins, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{applog, bearer, c2pa_read, chaintips, chart, coins, config, config::NodeConfig, escrow, fastsend, marketmaker, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 
 // Serves community app bundles over their own url scheme. Kept in its own module
@@ -1191,6 +1191,222 @@ async fn ai_status() -> AiStatusDto {
     })
 }
 
+// ── Market Maker: trade-only exchange API keys (OS keychain), plus a read-only
+// connection check. The secret never crosses back to the UI — only balances do ──
+
+/// Save trade-only API keys for one exchange (by catalog slug) into the keychain.
+#[tauri::command]
+async fn mm_save_credentials(
+    slug: String,
+    api_key: String,
+    api_secret: String,
+    passphrase: Option<String>,
+) -> Result<(), String> {
+    let pass = passphrase.unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || marketmaker::save(&slug, &api_key, &api_secret, &pass))
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+/// Whether keys are stored for this exchange (used to show connected state).
+#[tauri::command]
+async fn mm_has_credentials(slug: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || marketmaker::has(&slug))
+        .await
+        .map_err(|_| "internal error".to_string())
+}
+
+/// Remove the stored keys for one exchange.
+#[tauri::command]
+async fn mm_clear_credentials(slug: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || marketmaker::clear(&slug))
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MmBalanceDto {
+    asset: String,
+    free: f64,
+    locked: f64,
+}
+
+/// Verify the stored keys by reading account balances (read-only — never trades).
+/// `connector` and `rest_url` come from the exchange catalog the UI already has.
+#[tauri::command]
+async fn mm_test_connection(
+    slug: String,
+    connector: String,
+    rest_url: String,
+) -> Result<Vec<MmBalanceDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        marketmaker::test_connection(&slug, &connector, &rest_url).map(|rows| {
+            rows.into_iter()
+                .map(|b| MmBalanceDto { asset: b.asset, free: b.free, locked: b.locked })
+                .collect::<Vec<MmBalanceDto>>()
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Start the live market maker with a laddered config.
+#[tauri::command]
+async fn mm_start(
+    slug: String,
+    connector: String,
+    rest_url: String,
+    symbol: String,
+    levels: Vec<f64>,
+    order_usdt: f64,
+    refresh_secs: u64,
+    max_side_usdt: f64,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        marketmaker::start(marketmaker::MmConfig {
+            slug, connector, rest_url, symbol, levels, order_usdt, refresh_secs, max_side_usdt,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Stop the live market maker (cancels all resting orders).
+#[tauri::command]
+async fn mm_stop() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(marketmaker::stop)
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MmStatusDto {
+    running: bool,
+    message: String,
+    mid: f64,
+    open_orders: usize,
+    base_free: f64,
+    base_held: f64,
+    quote_free: f64,
+    quote_held: f64,
+    cycles: u64,
+}
+
+/// Current engine status (polled by the UI).
+#[tauri::command]
+async fn mm_status() -> MmStatusDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let s = marketmaker::status();
+        MmStatusDto {
+            running: s.running, message: s.message, mid: s.mid, open_orders: s.open_orders,
+            base_free: s.base_free, base_held: s.base_held, quote_free: s.quote_free,
+            quote_held: s.quote_held, cycles: s.cycles,
+        }
+    })
+    .await
+    .unwrap_or(MmStatusDto {
+        running: false, message: String::new(), mid: 0.0, open_orders: 0,
+        base_free: 0.0, base_held: 0.0, quote_free: 0.0, quote_held: 0.0, cycles: 0,
+    })
+}
+
+/// Try to (re)start the local node. Re-runs the idempotent first-run bring-up,
+/// which ensures the config + divid69 and starts the node with crash recovery.
+/// Used by the startup modal's "Try to start the node" button.
+#[tauri::command]
+async fn restart_node() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        dd69_supervisor::install::first_run_bringup(|_| {}).map(|_| ())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppLogDto {
+    ts_ms: u64,
+    msg: String,
+    count: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct NodeLogsDto {
+    node_log: String,
+    app_log: Vec<AppLogDto>,
+}
+
+/// Read the tail of a possibly-huge log file without loading it all into memory.
+fn tail_file(path: &std::path::Path, max_bytes: u64) -> String {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => return format!("(couldn't open {}: {e})", path.display()),
+    };
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let start = len.saturating_sub(max_bytes);
+    let _ = f.seek(SeekFrom::Start(start));
+    let mut buf = String::new();
+    let _ = f.take(max_bytes).read_to_string(&mut buf);
+    // Drop the partial first line when we seeked into the middle.
+    if start > 0 {
+        if let Some(i) = buf.find('\n') {
+            buf = buf[i + 1..].to_string();
+        }
+    }
+    buf
+}
+
+/// Collapse runs of identical lines (ignoring each line's leading timestamp) into
+/// one line + a "[^^ xN]" marker, so repeated spam doesn't bloat the log view.
+fn collapse_lines(text: &str) -> String {
+    fn body(line: &str) -> &str {
+        // Node lines look like "2026-08-26 12:19:47 <message>"; compare the part
+        // after the 19-char timestamp so identical events collapse across times.
+        let b = line.as_bytes();
+        if b.len() > 20 && b[4] == b'-' && b[10] == b' ' {
+            &line[20..]
+        } else {
+            line
+        }
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut iter = text.lines().peekable();
+    while let Some(line) = iter.next() {
+        let mut count = 1u32;
+        while iter.peek().map(|n| body(n) == body(line)).unwrap_or(false) {
+            iter.next();
+            count += 1;
+        }
+        out.push_str(line);
+        out.push('\n');
+        if count > 1 {
+            out.push_str(&format!("[^^ x{count}]\n"));
+        }
+    }
+    out
+}
+
+/// The node's own log (collapsed) plus the app's event log, for Settings → Logs.
+/// Read-only, so it never hangs on a busy node.
+#[tauri::command]
+async fn node_logs() -> NodeLogsDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let dir = config::dd69_datadir();
+        let raw = tail_file(&dir.join("debug.log"), 60_000);
+        let app_log = applog::entries()
+            .into_iter()
+            .map(|e| AppLogDto { ts_ms: e.ts_ms, msg: e.msg, count: e.count })
+            .collect();
+        NodeLogsDto { node_log: collapse_lines(&raw), app_log }
+    })
+    .await
+    .unwrap_or(NodeLogsDto { node_log: String::new(), app_log: Vec::new() })
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -1896,12 +2112,22 @@ fn main() {
         // why inline frame content would not work here.
         .register_uri_scheme_protocol(community::SCHEME, community::handle)
         .setup(|_app| {
-            // NOTE: first-launch node bring-up (dd69_supervisor::setup::begin) is
-            // temporarily backed out to unbreak main — its `setup` module was
-            // referenced here but never committed. The setup owner will re-land it.
-            // The App Builder's service, started beside the wallet. In the
-            // background because finding Node can involve asking a login shell,
-            // and the window must not wait on that.
+            // First-launch bring-up: create the config, download and verify
+            // divid69, and start the node — in the background so the window opens
+            // immediately and the UI shows sync progress via node_status.
+            tauri::async_runtime::spawn_blocking(|| {
+                applog::log("startup: app opened — bringing up the node");
+                let r = dd69_supervisor::install::first_run_bringup(|stage| {
+                    println!("[bringup] {stage}");
+                    applog::log(format!("startup: {stage}"));
+                });
+                match &r {
+                    Ok(_) => applog::log("startup: node bring-up finished"),
+                    Err(e) => applog::log(format!("startup: node bring-up stopped — {e}")),
+                }
+            });
+            // The App Builder's service, started beside the wallet, in the
+            // background so the window need not wait on finding Node.
             tauri::async_runtime::spawn_blocking(builder_service::start);
             Ok(())
         })
@@ -1992,6 +2218,15 @@ fn main() {
             ai_set_key,
             ai_clear_key,
             ai_status,
+            mm_save_credentials,
+            mm_has_credentials,
+            mm_clear_credentials,
+            mm_test_connection,
+            mm_start,
+            mm_stop,
+            mm_status,
+            restart_node,
+            node_logs,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,

@@ -457,6 +457,39 @@ export const aiStatus = () => invoke<AiStatus>("ai_status");
 export const aiSetKey = (provider: string, key: string) => invoke<void>("ai_set_key", { provider, key });
 export const aiClearKey = (provider: string) => invoke<void>("ai_clear_key", { provider });
 
+// Market Maker: trade-only exchange keys live in the OS keychain (Rust side); the
+// UI only ever gets balances back, never the key itself.
+export interface MmBalance {
+  asset: string;
+  free: number;
+  locked: number;
+}
+export const mmSaveCredentials = (slug: string, apiKey: string, apiSecret: string, passphrase?: string) =>
+  invoke<void>("mm_save_credentials", { slug, apiKey, apiSecret, passphrase: passphrase ?? null });
+export const mmHasCredentials = (slug: string) => invoke<boolean>("mm_has_credentials", { slug });
+export const mmClearCredentials = (slug: string) => invoke<void>("mm_clear_credentials", { slug });
+export const mmTestConnection = (slug: string, connector: string, restUrl: string) =>
+  invoke<MmBalance[]>("mm_test_connection", { slug, connector, restUrl });
+
+// The live quoting engine (start/stop/status). One market maker runs at a time.
+export interface MmStatus {
+  running: boolean;
+  message: string;
+  mid: number;
+  openOrders: number;
+  baseFree: number;
+  baseHeld: number;
+  quoteFree: number;
+  quoteHeld: number;
+  cycles: number;
+}
+export const mmStart = (
+  slug: string, connector: string, restUrl: string, symbol: string,
+  levels: number[], orderUsdt: number, refreshSecs: number, maxSideUsdt: number,
+) => invoke<void>("mm_start", { slug, connector, restUrl, symbol, levels, orderUsdt, refreshSecs, maxSideUsdt });
+export const mmStop = () => invoke<void>("mm_stop");
+export const mmStatus = () => invoke<MmStatus>("mm_status");
+
 // My Nodes: which node the wallet reads. Desktop is built in; personal nodes
 // (e.g. DIVI LOVE SCAN) live only in this machine's nodes.json.
 export interface NodeInfo {
