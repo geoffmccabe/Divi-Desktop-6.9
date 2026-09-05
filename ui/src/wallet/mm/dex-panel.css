@@ -53,3 +53,9 @@
 
 /* Connect / disconnect button in the MetaMask panel. */
 .dex-connect-btn { align-self: flex-start; margin-top: 2px; }
+
+/* Value-lost warning + connection status word. */
+.dex-loss { color: hsl(var(--destructive)); font-weight: 700; }
+.dex-status { font-weight: 700; }
+.dex-status-on { color: hsl(var(--success)); }
+.dex-status-off { color: hsl(var(--destructive)); }
