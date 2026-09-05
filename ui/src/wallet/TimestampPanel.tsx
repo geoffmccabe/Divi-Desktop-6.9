@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PoeCreate } from "./PoeCreate";
 import { PoeHistoryTab } from "./PoeHistoryTab";
 import { C2paInspect } from "./C2paInspect";
+import { PoeGalleryTab } from "./PoeGalleryTab";
 import "./poe.css";
 import { PoeVerify } from "./PoeVerify";
 import { PoeInfoModal } from "./PoeInfoModal";
@@ -13,7 +14,7 @@ import { loadPoeHistory, type PoeRecord } from "./poeHistory";
 // and only the 32-byte fingerprint is written to the chain, so nobody can read
 // the file from the blockchain, only confirm a hash matches.
 
-type Tab = "create" | "history" | "verify" | "credentials";
+type Tab = "create" | "history" | "verify" | "credentials" | "gallery";
 
 export function TimestampPanel() {
   const [tab, setTab] = useState<Tab>("create");
@@ -85,6 +86,14 @@ export function TimestampPanel() {
         >
           Credentials
         </button>
+        <button
+          className={"poe-tab" + (tab === "gallery" ? " poe-tab-on" : "")}
+          onClick={() => setTab("gallery")}
+          role="tab"
+          aria-selected={tab === "gallery"}
+        >
+          Gallery
+        </button>
       </nav>
 
       <section className="ts-section">
@@ -100,6 +109,7 @@ export function TimestampPanel() {
         {tab === "history" && <PoeHistoryTab onVerify={openVerify} />}
         {tab === "verify" && <PoeVerify prefill={prefill} />}
         {tab === "credentials" && <C2paInspect />}
+        {tab === "gallery" && <PoeGalleryTab />}
       </section>
 
       {/* Deepfake-defense detail (supplied Section 1). Deliberately OUTSIDE and

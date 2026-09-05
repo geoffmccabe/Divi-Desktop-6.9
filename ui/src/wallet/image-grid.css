@@ -1,0 +1,73 @@
+/* Reusable DD69 image grid (PoE Gallery, NFD, Agents). Column count is set live
+   via the toolbar slider; cells are square thumbs with a caption; double-click
+   opens a full-size lightbox. */
+
+.imgrid-wrap { display: flex; flex-direction: column; gap: 12px; }
+
+.imgrid-toolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+}
+.imgrid-cols {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 0.76rem; color: hsl(var(--muted-foreground));
+}
+.imgrid-cols input[type="range"] { width: 150px; accent-color: hsl(var(--primary)); cursor: pointer; }
+.imgrid-cols-n { font-family: var(--font-mono); color: hsl(var(--foreground)); min-width: 1ch; }
+.imgrid-count { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
+
+.imgrid { display: grid; gap: 12px; }
+
+.imgrid-cell {
+  display: flex; flex-direction: column; gap: 6px; text-align: left;
+  background: none; border: 1px solid hsl(var(--border) / 0.6); border-radius: 12px;
+  padding: 0; overflow: hidden; cursor: pointer; color: inherit;
+  transition: border-color 0.12s, transform 0.12s, box-shadow 0.12s;
+}
+.imgrid-cell:hover {
+  border-color: hsl(var(--primary) / 0.6);
+  box-shadow: 0 6px 20px -12px hsl(var(--primary) / 0.7);
+}
+.imgrid-thumbwrap {
+  position: relative; width: 100%; aspect-ratio: 1 / 1; overflow: hidden;
+  background: hsl(var(--subpanel-bg, var(--background)) / 0.6);
+  display: flex; align-items: center; justify-content: center;
+}
+.imgrid-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.imgrid-noimg { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+.imgrid-noimg-big { font-size: 1rem; padding: 60px 20px; }
+.imgrid-badge {
+  position: absolute; top: 6px; left: 6px; font-size: 0.6rem; font-weight: 700;
+  padding: 2px 7px; border-radius: 999px; background: hsl(var(--background) / 0.85);
+  color: hsl(var(--foreground)); border: 1px solid hsl(var(--border));
+}
+.imgrid-cap { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px 9px; min-width: 0; }
+.imgrid-title {
+  font-size: 0.78rem; font-weight: 600; color: hsl(var(--foreground));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.imgrid-sub {
+  font-size: 0.68rem; color: hsl(var(--muted-foreground));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Lightbox */
+.imgrid-lightbox {
+  position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center;
+  background: hsl(0 0% 0% / 0.82); padding: 24px; backdrop-filter: blur(3px);
+}
+.imgrid-lightbox-inner {
+  position: relative; max-width: min(92vw, 1100px); max-height: 90vh;
+  display: flex; flex-direction: column; gap: 10px; align-items: center;
+}
+.imgrid-lightbox-img {
+  max-width: 100%; max-height: 78vh; object-fit: contain; border-radius: 10px;
+  box-shadow: 0 20px 60px -20px hsl(0 0% 0% / 0.8);
+}
+.imgrid-lightbox-close {
+  position: absolute; top: -14px; right: -14px; width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--background)); color: hsl(var(--foreground));
+  font-size: 1.3rem; line-height: 1; cursor: pointer;
+}
+.imgrid-lightbox-cap { text-align: center; }
+.imgrid-lightbox-title { font-size: 0.95rem; font-weight: 700; color: #fff; }
+.imgrid-lightbox-sub { font-size: 0.8rem; color: hsl(0 0% 100% / 0.75); }
