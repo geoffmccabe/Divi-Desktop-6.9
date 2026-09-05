@@ -56,12 +56,14 @@ export const poeTimestamp = (
   fee?: number | null,
   payoutAddr?: string | null,
   payoutDivi?: number | null,
+  passphrase?: string | null,
 ) =>
   invoke<string>("poe_timestamp", {
     hash,
     fee: fee ?? null,
     payoutAddr: payoutAddr?.trim() || null,
     payoutDivi: payoutDivi ?? null,
+    passphrase: passphrase || null,
   });
 export const poeVerify = (txid: string, hash: string) => invoke<Proof>("poe_verify", { txid, hash });
 

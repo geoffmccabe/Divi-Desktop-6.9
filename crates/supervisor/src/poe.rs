@@ -59,13 +59,35 @@ pub struct AnchorCost {
 ///
 /// Amounts in `cost` are clamped; anything missing or out of range falls back to
 /// the relay minimum, so a broken price quote can never silently overspend.
-pub fn timestamp(cfg: &NodeConfig, hash_hex: &str, cost: AnchorCost) -> Result<String, String> {
+pub fn timestamp(
+    cfg: &NodeConfig,
+    hash_hex: &str,
+    cost: AnchorCost,
+    passphrase: Option<&str>,
+) -> Result<String, String> {
     let hash_hex = hash_hex.trim().to_lowercase();
     if !is_sha256_hex(&hash_hex) {
         return Err("That doesn't look like a SHA-256 hash.".into());
     }
     let rpc = RpcClient::new(cfg);
 
+    // Just-in-time full unlock (120s) only when a password was supplied, then
+    // re-lock to staking-only afterwards, exactly like send_coins — anchoring
+    // must sign a fee transaction, which an encrypted-locked wallet can't do.
+    if let Some(pass) = passphrase {
+        rpc.call("walletpassphrase", json!([pass, 120, false]))
+            .map_err(|e| format!("Unlock failed: {e}"))?;
+    }
+    let result = anchor_inner(&rpc, &hash_hex, cost);
+    if let Some(pass) = passphrase {
+        let _ = rpc.call("walletpassphrase", json!([pass, 0, true]));
+    }
+    result
+}
+
+/// The native-or-forkless anchor attempt, factored out so `timestamp` can wrap
+/// it in an unlock/re-lock window.
+fn anchor_inner(rpc: &RpcClient, hash_hex: &str, cost: AnchorCost) -> Result<String, String> {
     // ⚠ Which on-chain form to use is NOT just "whichever the node supports".
     //
     // An OP_POE output is unrecognised by nodes that predate the soft fork, so
@@ -83,16 +105,16 @@ pub fn timestamp(cfg: &NodeConfig, hash_hex: &str, cost: AnchorCost) -> Result<S
     let native_ok = match std::env::var("DIVI_POE_NATIVE").ok().as_deref() {
         Some("1") => true,
         Some("0") => false,
-        _ => !is_mainnet(&rpc),
+        _ => !is_mainnet(rpc),
     };
 
     if native_ok {
-        if let Some(id) = try_native_anchor(&rpc, &hash_hex)? {
+        if let Some(id) = try_native_anchor(rpc, hash_hex)? {
             return Ok(id);
         }
     }
 
-    timestamp_forkless(&rpc, &hash_hex, cost)
+    timestamp_forkless(rpc, hash_hex, cost)
 }
 
 /// True unless the node clearly says it is on something other than mainnet.

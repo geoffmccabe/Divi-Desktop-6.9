@@ -725,6 +725,22 @@ code, .mono { font-family: var(--font-mono); }
 
 /* Cost is part of the decision, so it sits on the button itself. */
 .ts-anchor { display: inline-flex; align-items: center; gap: 10px; }
+/* Inline wallet-unlock for PoE: a pulse-glowing call-to-action so the user knows
+   what to do next, then a password field right there. */
+.ts-unlock-glow {
+  width: 100%; background: hsl(var(--primary)); color: #fff; border: none;
+  font-weight: 800; letter-spacing: 0.03em; white-space: nowrap;
+  animation: ts-unlock-pulse 1.3s ease-in-out infinite;
+}
+.ts-unlock-glow:disabled { animation: none; opacity: 0.6; }
+@keyframes ts-unlock-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.55); }
+  50% { box-shadow: 0 0 20px 3px hsl(var(--primary) / 0.9); }
+}
+.ts-unlock-form { display: flex; gap: 8px; align-items: stretch; }
+.ts-unlock-form .wl-input { flex: 1; min-width: 0; }
+.ts-unlock-form .ts-unlock-glow { width: auto; flex: 0 0 auto; }
+.ts-passerr { margin-top: 6px; }
 .ts-cost {
   font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600;
   padding: 2px 8px; border-radius: 999px;

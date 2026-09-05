@@ -297,6 +297,7 @@ async fn poe_timestamp(
     fee: Option<f64>,
     payoutAddr: Option<String>,
     payoutDivi: Option<f64>,
+    passphrase: Option<String>,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
@@ -308,6 +309,7 @@ async fn poe_timestamp(
                 payout_addr: payoutAddr,
                 payout_divi: payoutDivi,
             },
+            passphrase.as_deref(),
         )
     })
     .await
