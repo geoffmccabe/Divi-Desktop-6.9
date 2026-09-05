@@ -50,8 +50,11 @@ pub fn price_history() -> Vec<PricePoint> {
 /// to price the PoE fee identically for every user, with no per-user API key.
 /// None on any failure (so callers show "unavailable" rather than a guess).
 pub fn price_latest() -> Option<f64> {
+    // `close=gt.0` = the newest row WITH a valid price, so a CMC outage that ever
+    // left a blank/zero row still yields the last GOOD price rather than failing
+    // (the "never goes down, use the last one" guarantee).
     let url = format!(
-        "{SUPABASE_URL}/rest/v1/divi_price?select=close&order=ts.desc&limit=1"
+        "{SUPABASE_URL}/rest/v1/divi_price?select=close&close=gt.0&order=ts.desc&limit=1"
     );
     let resp = ureq::get(&url)
         .set("apikey", ANON_KEY)
