@@ -75,6 +75,24 @@
 }
 .ip-link:hover { text-decoration: underline; }
 
+/* Cmd-N simulator badge. */
+.ip-sim-badge {
+  align-self: flex-start; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.06em;
+  color: hsl(0 85% 70%); border: 1px solid hsl(0 85% 56% / 0.6); background: hsl(0 85% 56% / 0.12);
+  border-radius: 999px; padding: 3px 9px;
+}
+/* Busy status dot (red pulse) while installing. */
+.ip-dot-busy { background: hsl(0 85% 56%); box-shadow: 0 0 8px hsl(0 85% 56% / 0.9); animation: ip-blink 1s ease-in-out infinite; }
+@keyframes ip-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* Download progress bar (simulator; real installs get it in a later slice). */
+.ip-bar { height: 8px; border-radius: 999px; background: hsl(var(--border)); overflow: hidden; }
+.ip-bar-fill {
+  height: 100%; border-radius: 999px; transition: width 0.2s linear;
+  background: linear-gradient(90deg, hsl(150 80% 46%), hsl(150 80% 60%));
+  box-shadow: 0 0 10px hsl(150 80% 52% / 0.7);
+}
+
 .ip-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.78rem; }
 .ip-stat span { color: hsl(var(--muted-foreground)); }
 .ip-stat b { color: hsl(var(--foreground)); font-family: var(--font-mono); font-weight: 600; text-align: right; }

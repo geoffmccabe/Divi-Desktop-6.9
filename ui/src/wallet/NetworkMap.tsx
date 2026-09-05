@@ -262,10 +262,31 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // setting up; also openable from the menu to preview/re-run. installingRef is
   // read by the draw loop to flash the user's own node red while setting up.
   const [setupOpen, setSetupOpen] = useState(false);
+  // Cmd/Ctrl-N: developer simulator. Pretends this is a brand-new install (no
+  // blockchain) and plays the whole setup sequence, WITHOUT touching the real
+  // wallet/node or downloading anything. Press again to exit — nothing real was
+  // created, so there is nothing to clean up.
+  const [simulateNew, setSimulateNew] = useState(false);
   const installingRef = useRef(false);
   // Auto-open the install panel on first run (node not set up yet).
   useEffect(() => {
     setupInfo().then((s) => { if (s.needsSetup) setSetupOpen(true); }).catch(() => {});
+  }, []);
+  // Cmd/Ctrl-N toggles the new-install simulator.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "n" || e.key === "N")) {
+        e.preventDefault();
+        setSimulateNew((on) => {
+          const next = !on;
+          setSetupOpen(next);
+          if (!next) installingRef.current = false; // exiting: node back to gold
+          return next;
+        });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
   const [blockDim, setBlockDim] = useState(false); // eye toggle dims the blockstream
   // FLAT vs GLOBE view. When GLOBE is on, the 2D canvas loop pauses (see draw())
@@ -1543,7 +1564,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       <div className="netmap-body">
         {setupOpen && (
           <InstallPanel
-            onClose={() => { setSetupOpen(false); installingRef.current = false; }}
+            simulate={simulateNew}
+            onClose={() => { setSetupOpen(false); setSimulateNew(false); installingRef.current = false; }}
             onStateChange={(s: InstallState) => { installingRef.current = s.installing; }}
           />
         )}
