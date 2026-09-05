@@ -69,6 +69,12 @@
 }
 .ip-btn-primary { background: hsl(var(--primary)); border-color: transparent; color: #fff; }
 .ip-btn-primary:hover { filter: brightness(1.08); }
+/* Green GO button - starts the download (matches the SNAPSHOT/NODES green). */
+.ip-btn-go {
+  background: hsl(150 80% 50%); border-color: transparent; color: #05270f; font-weight: 800; letter-spacing: 0.04em;
+  box-shadow: 0 0 16px -4px hsl(150 80% 52% / 0.8);
+}
+.ip-btn-go:hover { background: hsl(150 80% 44%); }
 .ip-link {
   border: none; background: none; cursor: pointer; color: hsl(var(--primary));
   font-size: 0.76rem; padding: 2px; align-self: flex-start;

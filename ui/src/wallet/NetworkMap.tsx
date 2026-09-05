@@ -64,6 +64,62 @@ function upArc(sx: number, sy: number, px: number, py: number, mult = 1): (u: nu
   };
 }
 
+// Draw ONE red "data channel" arc from a source (snapshot server or a peer) to
+// the user's node, with hex glyphs + arrowheads streaming inward. "snapshot" =
+// thick firehose, dense/fast; "nodes" = thin, sparser/slower. Reuses upArc().
+const HEXCH = "0123456789abcdef";
+function drawDataFlow(
+  ctx: CanvasRenderingContext2D,
+  sx: number, sy: number, dx: number, dy: number,
+  now: number, big: boolean,
+) {
+  const bez = upArc(sx, sy, dx, dy, 0.5);
+  ctx.save();
+  ctx.lineCap = "round";
+  // the channel itself (glowing red)
+  ctx.strokeStyle = `hsl(0 88% 47% / ${big ? 0.55 : 0.4})`;
+  ctx.lineWidth = big ? 5 : 2;
+  ctx.shadowColor = "hsl(0 92% 55% / 0.85)";
+  ctx.shadowBlur = big ? 16 : 7;
+  ctx.beginPath();
+  const STEPS = 44;
+  for (let i = 0; i <= STEPS; i++) { const [x, y] = bez(i / STEPS); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  // streaming hex glyphs, flowing source -> node
+  const count = big ? 26 : 8;
+  const speed = big ? 0.00055 : 0.00028; // u per ms
+  const fpx = big ? 11 : 9;
+  ctx.font = `bold ${fpx}px ui-monospace, Menlo, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let k = 0; k < count; k++) {
+    const u = (now * speed + k / count) % 1;
+    const [x, y] = bez(u);
+    const ch = HEXCH[(Math.floor(now / 60) + k * 7) & 15];
+    const fade = Math.sin(u * Math.PI); // dim at the ends, bright in the middle
+    ctx.fillStyle = `hsl(0 92% ${big ? 70 : 62}% / ${0.3 + 0.65 * fade})`;
+    ctx.fillText(ch, x, y);
+  }
+  // arrowhead chevrons racing toward the node
+  const arrows = big ? 4 : 2;
+  ctx.strokeStyle = "hsl(0 92% 64% / 0.9)";
+  ctx.lineWidth = big ? 2.5 : 1.5;
+  for (let a = 0; a < arrows; a++) {
+    const u = (now * speed * 1.1 + a / arrows) % 1;
+    const [x, y] = bez(u);
+    const [x2, y2] = bez(Math.min(1, u + 0.02));
+    const ang = Math.atan2(y2 - y, x2 - x);
+    const s = big ? 7 : 4;
+    ctx.beginPath();
+    ctx.moveTo(x - Math.cos(ang - 0.5) * s, y - Math.sin(ang - 0.5) * s);
+    ctx.lineTo(x, y);
+    ctx.lineTo(x - Math.cos(ang + 0.5) * s, y - Math.sin(ang + 0.5) * s);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 // Time-based label visibility: each peer's label appears for `visibleMs` on a
 // per-peer randomised cycle (periodMin..periodMax), fading in and out, so labels
 // stagger in time and never all crowd the map at once. Returns 0..1 opacity.
@@ -268,6 +324,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // created, so there is nothing to clean up.
   const [simulateNew, setSimulateNew] = useState(false);
   const installingRef = useRef(false);
+  // Which data-flow animation the map should draw while setting up: a thick
+  // firehose from the snapshot server ("snapshot"), thin arcs from live peers
+  // ("nodes"), or none. Read by the draw loop.
+  const flowModeRef = useRef<null | "snapshot" | "nodes">(null);
   // Auto-open the install panel on first run (node not set up yet).
   useEffect(() => {
     setupInfo().then((s) => { if (s.needsSetup) setSetupOpen(true); }).catch(() => {});
@@ -280,7 +340,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         setSimulateNew((on) => {
           const next = !on;
           setSetupOpen(next);
-          if (!next) installingRef.current = false; // exiting: node back to gold
+          if (!next) { installingRef.current = false; flowModeRef.current = null; } // exiting: node back to gold
           return next;
         });
       }
@@ -1215,6 +1275,21 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }
       }
 
+      // ── First-run install: red data channels pouring into the user's node.
+      // Snapshot = one heavy firehose; nodes = several thin peer channels. Drawn
+      // UNDER the node so the node + its red pulse rings sit on top.
+      if (selfXY && flowModeRef.current) {
+        if (flowModeRef.current === "snapshot") {
+          drawDataFlow(ctx, w * 0.14, h * 0.2, selfXY[0], selfXY[1], now, true);
+        } else {
+          const srcs: [number, number][] = [
+            [w * 0.12, h * 0.26], [w * 0.86, h * 0.18],
+            [w * 0.9, h * 0.6], [w * 0.2, h * 0.82], [w * 0.62, h * 0.86],
+          ];
+          for (const [sx, sy] of srcs) drawDataFlow(ctx, sx, sy, selfXY[0], selfXY[1], now, false);
+        }
+      }
+
       // our node — gold dot (3× and decked out when the user is the stake winner)
       if (selfXY) {
         // While first-run setup is downloading, flash the node RED so the user
@@ -1565,8 +1640,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         {setupOpen && (
           <InstallPanel
             simulate={simulateNew}
-            onClose={() => { setSetupOpen(false); setSimulateNew(false); installingRef.current = false; }}
-            onStateChange={(s: InstallState) => { installingRef.current = s.installing; }}
+            onClose={() => { setSetupOpen(false); setSimulateNew(false); installingRef.current = false; flowModeRef.current = null; }}
+            onStateChange={(s: InstallState) => {
+              installingRef.current = s.installing;
+              flowModeRef.current = s.installing && (s.method === "snapshot" || s.method === "nodes") ? s.method : null;
+            }}
           />
         )}
       <div

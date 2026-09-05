@@ -71,11 +71,10 @@ export function InstallPanel({
     return () => { alive = false; clearInterval(id); };
   }, [installing, simulate]);
 
-  // Simulator: auto-start the sequence and drive a scripted progress climb.
+  // Simulator progress climb — starts only once the user has picked a method
+  // and pressed GO (installing becomes true). No auto-start: they choose first.
   useEffect(() => {
-    if (!simulate) return;
-    setInstalling(true);
-    onStateRef.current?.({ installing: true, method: "snapshot" });
+    if (!simulate || !installing) return;
     setSim({ pct: 0, blocks: 0, peers: 0, stage: simStage(0), done: false });
     const id = setInterval(() => {
       setSim((s) => {
@@ -84,16 +83,12 @@ export function InstallPanel({
         const blocks = Math.floor((pct / 100) * SIM_TIP);
         const peers = Math.min(8, Math.floor(pct / 12));
         const done = pct >= 100;
-        if (done) onStateRef.current?.({ installing: false, method: "snapshot" }); // node -> gold
+        if (done) onStateRef.current?.({ installing: false, method: null }); // stop the flow, node -> gold
         return { pct, blocks, peers, stage: simStage(pct), done };
       });
     }, 220);
-    return () => {
-      clearInterval(id);
-      setInstalling(false);
-      onStateRef.current?.({ installing: false, method: null });
-    };
-  }, [simulate]);
+    return () => clearInterval(id);
+  }, [simulate, installing]);
 
   // Start a real setup (download/import lands in the next slice). For now this
   // flips into the "installing" look so the red node + progress area come alive.
@@ -204,8 +199,8 @@ export function InstallPanel({
                 ? "Grabs a daily snapshot of the chain from the Divi server, then catches up the last few blocks. Much faster."
                 : "Builds the chain block-by-block directly from other nodes. Slower, but trusts no single source."}
             </p>
-            <button type="button" className="ip-btn ip-btn-primary" onClick={() => start(method)}>
-              Start setup →
+            <button type="button" className="ip-btn ip-btn-go" onClick={() => start(method)}>
+              GO →
             </button>
             {(goFresh && (info.track === "dd2")) && (
               <button type="button" className="ip-link" onClick={() => setGoFresh(false)}>
