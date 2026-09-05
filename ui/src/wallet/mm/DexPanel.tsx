@@ -20,6 +20,12 @@ const usdPrice = (n: number) =>
   n <= 0 ? "-" : "$" + n.toLocaleString(undefined, n >= 1 ? { maximumFractionDigits: 2 } : { maximumSignificantDigits: 4 });
 const num = (n: number, dp: number) => n.toLocaleString(undefined, { maximumFractionDigits: dp });
 
+// The DEX pair, kept as variables so future pairs (dDIVI/POL, etc.) only need to
+// change here. BASE is the token being traded, QUOTE is the paired/gas coin.
+const BASE_SYM = "eDIVI";
+const QUOTE_SYM = "ETH";
+const FEE_PCT = 0.3; // Uniswap V2 liquidity-provider fee
+
 // Uniswap V2 constant-product output, 0.3% fee. Works in human units.
 function amountOut(amtIn: number, rIn: number, rOut: number): number {
   if (amtIn <= 0 || rIn <= 0 || rOut <= 0) return 0;
@@ -93,6 +99,19 @@ function DexInner() {
     return { impact, minOut: quote.out * (1 - slip / 100), rate: quote.out / a };
   }, [pool, quote, a, dir, slip]);
 
+  // Which coin is paid vs received this direction, and how many decimals each shows.
+  const paySym = dir === "buy" ? QUOTE_SYM : BASE_SYM;
+  const recvSym = dir === "buy" ? BASE_SYM : QUOTE_SYM;
+  const dpOf = (sym: string) => (sym === QUOTE_SYM ? 6 : 0); // ETH-like 6dp, eDIVI whole
+  const payUsdPrice = dir === "buy" ? (pool?.ethUsd ?? 0) : priceUsd; // USD price of the pay coin
+
+  // Live figures for the details panel (all 0 until an amount is typed).
+  const feeAmt = a * (FEE_PCT / 100);        // LP fee, taken from the pay coin
+  const feeUsd = feeAmt * payUsdPrice;
+  const inUsd = quote?.inUsd ?? 0;
+  const outUsd = quote?.outUsd ?? 0;
+  const lostUsd = Math.max(0, inUsd - outUsd); // value given up to fee + price impact
+
   return (
     <div className="dex-wrap">
       {/* Uniswap swap panel */}
@@ -100,47 +119,45 @@ function DexInner() {
         <div className="dex-row">
           <div className="dex-logo-box"><img className="dex-logo" src={uniswapLogo} alt="Uniswap" /><span className="dex-logo-label">UNISWAP</span></div>
           <div className="dex-body">
-            <h3 className="ts-head">Swap eDIVI on Uniswap</h3>
+            <h3 className="ts-head">Swap {BASE_SYM} on Uniswap</h3>
             {err && <p className="wl-note mmc-err">Couldn't read the pool: {err}</p>}
-            {!pool && !err && <p className="wl-note">Reading the eDIVI / ETH pool…</p>}
+            {!pool && !err && <p className="wl-note">Reading the {BASE_SYM} / {QUOTE_SYM} pool…</p>}
             {pool && (
               <>
                 <div className="dex-stats">
-                  <div><span className="dex-k">eDIVI price</span><span className="dex-v">{priceUsd > 0 ? usdPrice(priceUsd) : `${priceEth.toExponential(3)} ETH`}</span></div>
+                  <div><span className="dex-k">{BASE_SYM} price</span><span className="dex-v">{priceUsd > 0 ? usdPrice(priceUsd) : `${priceEth.toExponential(3)} ${QUOTE_SYM}`}</span></div>
                   <div><span className="dex-k">Pool liquidity</span><span className="dex-v">{usd(liqUsd)}</span></div>
-                  <div><span className="dex-k">In the pool</span><span className="dex-v">{num(pool.reserveEdivi, 0)} eDIVI · {num(pool.reserveWeth, 3)} ETH</span></div>
+                  <div><span className="dex-k">In the pool</span><span className="dex-v">{num(pool.reserveEdivi, 0)} {BASE_SYM} = {num(pool.reserveWeth, 3)} {QUOTE_SYM}</span></div>
                 </div>
 
                 <div className="dex-swap">
                   <label className="value-field">
-                    <span className="send-label">You pay ({dir === "buy" ? "ETH" : "eDIVI"})</span>
+                    <span className="send-label">You pay ({paySym})</span>
                     <input className="wl-input" type="number" min={0} value={amt} placeholder="0.0" onChange={(e) => setAmt(e.target.value)} />
                   </label>
                   <button type="button" className="dex-flip" title="Flip direction" onClick={() => { setDir((d) => (d === "buy" ? "sell" : "buy")); setAmt(""); }}>⇅</button>
                   <label className="value-field">
-                    <span className="send-label">You receive ({dir === "buy" ? "eDIVI" : "ETH"})</span>
-                    <div className="wl-input dex-out">{quote ? num(quote.out, dir === "buy" ? 0 : 6) : "0.0"}</div>
+                    <span className="send-label">You receive ({recvSym})</span>
+                    <div className="wl-input dex-out">{quote ? num(quote.out, dpOf(recvSym)) : "0.0"}</div>
                   </label>
                 </div>
 
-                {quote && details && (
-                  <div className="dex-details">
-                    <div className="dex-drow"><span>Rate</span><span>1 {dir === "buy" ? "ETH" : "eDIVI"} ≈ {num(details.rate, dir === "buy" ? 0 : 8)} {dir === "buy" ? "eDIVI" : "ETH"}</span></div>
-                    <div className="dex-drow"><span>Price impact</span><span className={details.impact >= 5 ? "dex-hi" : ""}>{details.impact.toFixed(2)}%</span></div>
-                    <div className="dex-drow"><span>Min received ({slip}% slippage)</span><span>{num(details.minOut, dir === "buy" ? 0 : 6)} {dir === "buy" ? "eDIVI" : "ETH"}</span></div>
-                    <div className="dex-drow"><span>Value</span><span>{usd(quote.inUsd)} → {usd(quote.outUsd)}</span></div>
-                    <div className="dex-drow"><span>Liquidity provider fee</span><span>0.3%</span></div>
-                  </div>
-                )}
+                <div className="dex-details">
+                  <div className="dex-drow"><span>Rate</span><span>{a > 0 && details ? `1 ${paySym} = ${num(details.rate, recvSym === QUOTE_SYM ? 8 : 0)} ${recvSym}` : "--"}</span></div>
+                  <div className="dex-drow"><span>Price impact</span><span className={details && details.impact >= 5 ? "dex-hi" : ""}>{details ? details.impact.toFixed(2) : "0.00"}%</span></div>
+                  <div className="dex-drow"><span>Min received ({slip}% slippage)</span><span>{details ? `${num(details.minOut, dpOf(recvSym))} ${recvSym}` : "--"}</span></div>
+                  <div className="dex-drow"><span>Value</span><span>{usd(inUsd)} → {usd(outUsd)} <span className="dex-loss">(USD$ {lostUsd.toFixed(2)} Lost)</span></span></div>
+                  <div className="dex-drow"><span>Liquidity provider fee</span><span>{FEE_PCT}% - {num(feeAmt, dpOf(paySym))} {paySym} = USD$ {feeUsd.toFixed(2)}</span></div>
+                </div>
 
                 <div className="dex-slip">
                   <span className="send-label">Slippage tolerance</span>
-                  {[0.5, 1, 3].map((s) => (
+                  {[0.5, 1, 2, 3, 5, 10].map((s) => (
                     <button key={s} type="button" className={"dex-slip-btn" + (slip === s ? " dex-slip-on" : "")} onClick={() => setSlip(s)}>{s}%</button>
                   ))}
                 </div>
 
-                <p className="wl-note dex-foot">Live from the Uniswap V2 eDIVI / ETH pool on Ethereum. A big price impact means the pool is thin, so smaller trades move the price less.</p>
+                <p className="wl-note dex-foot">Live from the Uniswap V2 {BASE_SYM} / {QUOTE_SYM} pool on Ethereum. A big price impact means the pool is thin, so smaller trades move the price less.</p>
               </>
             )}
           </div>
@@ -155,13 +172,13 @@ function DexInner() {
             <h3 className="ts-head">Connect your wallet</h3>
             {isConnected ? (
               <>
-                <p className="wl-note gov-wide">Connected: <strong>{shortAddr(address)}</strong></p>
+                <p className="wl-note gov-wide"><span className="dex-status dex-status-on">Connected</span>: <strong>{shortAddr(address)}</strong></p>
                 <button type="button" className="wl-btn dex-connect-btn" onClick={() => disconnect()}>Disconnect</button>
               </>
             ) : (
               <>
                 <p className="wl-note gov-wide">
-                  Connect your own MetaMask to sign swaps. Your keys never leave your wallet, and this app never holds them.
+                  <span className="dex-status dex-status-off">Not connected</span>. Connect your own MetaMask to sign swaps. Your keys never leave your wallet, and this app never holds them.
                   In this desktop app you connect by scanning a QR code with the MetaMask app on your phone.
                 </p>
                 <button type="button" className="wl-btn wl-btn-primary dex-connect-btn" disabled={connecting || !mmConnector}
