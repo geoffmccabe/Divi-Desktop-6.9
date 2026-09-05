@@ -22,7 +22,7 @@ import {
   networkPeers, stakingWallets, lotteryInfo, nodeStatusSafe,
   validateAddress, addressBalance, addressQr, mempoolSnapshot, poeVerify,
   hraResolve, hraReverse, hraMarket, hraQuote,
-  diviPriceSafe, paymentProgress, currentTheme,
+  diviPriceSafe, paymentProgress, currentTheme, pulse,
 } from "./hostApi";
 import { permission, type PermissionKey } from "./permissions";
 import type { AppManifest } from "./manifest";
@@ -69,6 +69,7 @@ const RATE_LIMITS: Record<string, number> = {
   "payment.request": 6,
   "clipboard.write": 20,
   notify: 10,
+  "map.animate": 10,
 };
 
 type Handler = (params: unknown, ctx: HostContext) => Promise<unknown>;
@@ -246,7 +247,34 @@ const HANDLERS: Record<PermissionKey, Handler> = {
     ctx.notify(text);
     return { shown: true };
   },
+  // Play a coloured ripple on the network map. Visual only. Every field is
+  // validated/clamped here before it reaches pulse(); missing fields fall back
+  // to whatever the app declared in its manifest (mapPulse), then to defaults.
+  "map.animate": async (params, ctx) => {
+    const p = (params ?? {}) as { hsl?: unknown; durationMs?: unknown; icon?: unknown; label?: unknown };
+    const dflt = ctx.manifest.mapPulse;
+    const hsl = safeHsl(p.hsl) ?? (dflt ? safeHsl(dflt.hsl) : null) ?? "200 90% 62%";
+    const durRaw = typeof p.durationMs === "number" ? p.durationMs : dflt?.durationMs;
+    const icon = text(p.icon, 4) || text(dflt?.icon, 4) || undefined;
+    const label = text(p.label, 40) || text(dflt?.label, 40) || ctx.manifest.name.slice(0, 40);
+    pulse({
+      hsl,
+      durationMs: clampInt(durRaw, 500, 15000, 8000),
+      icon,
+      label,
+      type: undefined,
+    });
+    return { shown: true };
+  },
 };
+
+// A strict "H S% L%" HSL triple, or null. Keeps an app from injecting arbitrary
+// CSS (e.g. url()/expression) into the map's colour string.
+function safeHsl(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return /^\d{1,3}\s+\d{1,3}%\s+\d{1,3}%$/.test(s) ? s : null;
+}
 
 export class BrokerDenied extends Error {}
 

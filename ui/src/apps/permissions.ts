@@ -28,7 +28,8 @@ export type PermissionKey =
   | "payment.request"
   | "network"
   | "clipboard.write"
-  | "notify";
+  | "notify"
+  | "map.animate";
 
 export interface PermissionDef {
   key: PermissionKey;
@@ -155,6 +156,13 @@ export const PERMISSIONS: PermissionDef[] = [
     key: "notify",
     label: "Show you notifications",
     detail: "Messages inside the wallet only, limited in how often they can appear.",
+    kind: "capability",
+  },
+  {
+    key: "map.animate",
+    label: "Animate the network map",
+    detail:
+      "Play a coloured ripple on your node map when the app does something. Visual only: it cannot see the map, your balance, or anything else.",
     kind: "capability",
   },
 ];

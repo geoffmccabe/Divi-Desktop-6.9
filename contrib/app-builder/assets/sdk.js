@@ -131,6 +131,9 @@
       request("payment.request", { amount, reason }).then((r) => r.paid),
     copy: (text) => request("clipboard.write", { text }),
     notify: (text) => request("notify", { text }),
+    /** Play a coloured ripple on the wallet's network map. Pass nothing to use
+     *  the app's manifest defaults, or {hsl:"200 90% 62%", durationMs, icon, label}. */
+    animateMap: (spec) => request("map.animate", spec || {}),
     /** The wallet's colours and fonts, already applied for you. */
     theme: () => request("theme.read").then((r) => r.vars),
   };

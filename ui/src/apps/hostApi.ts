@@ -25,6 +25,10 @@ export {
 
 export { hraResolve, hraReverse, hraMarket, hraQuote } from "../wallet/hra/api";
 
+// Triggers a network-map animation only. It draws a coloured ripple on the map;
+// it cannot spend, sign, read balances, or touch the node — safe to expose.
+export { pulse } from "../wallet/activityPulse";
+
 export type { Balance, AddrInfo, Tx, Peer, PeerSnapshot, Block } from "../wallet/api";
 
 import { nodeStatus } from "../bridge";
