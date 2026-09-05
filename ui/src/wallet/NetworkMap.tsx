@@ -16,6 +16,8 @@ import { pulseActivity, pulseTrigger, makeLegs, legU, holdOp, pingDone, type Leg
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
+import { InstallPanel, type InstallState } from "./setup/InstallPanel";
+import { setupInfo } from "../bridge";
 import worldmap from "../assets/worldmap.json";
 
 // A live map of the peers this node is connected to. At boot it centers on you
@@ -256,6 +258,15 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // One overlay panel at a time, chosen from the hamburger menu (all top-right).
   const [panel, setPanel] = useState<null | "country" | "mempool" | "newest" | "speed">(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // First-run install side-panel. Opens automatically when the node still needs
+  // setting up; also openable from the menu to preview/re-run. installingRef is
+  // read by the draw loop to flash the user's own node red while setting up.
+  const [setupOpen, setSetupOpen] = useState(false);
+  const installingRef = useRef(false);
+  // Auto-open the install panel on first run (node not set up yet).
+  useEffect(() => {
+    setupInfo().then((s) => { if (s.needsSetup) setSetupOpen(true); }).catch(() => {});
+  }, []);
   const [blockDim, setBlockDim] = useState(false); // eye toggle dims the blockstream
   // FLAT vs GLOBE view. When GLOBE is on, the 2D canvas loop pauses (see draw())
   // and the WebGL globe renders the same nodes/arcs on top.
@@ -1185,7 +1196,11 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
 
       // our node — gold dot (3× and decked out when the user is the stake winner)
       if (selfXY) {
-        const r = USER_IS_WINNER ? 15 : 5;
+        // While first-run setup is downloading, flash the node RED so the user
+        // can spot "that's me joining the network"; otherwise the usual gold.
+        const inst = installingRef.current;
+        const col = inst ? (a: number) => `hsl(0 85% 56% / ${a})` : selfCol;
+        const r = (USER_IS_WINNER ? 15 : 5) + (inst ? 2 : 0);
         // when winning: bright, bigger concentric pulse rings (like the search intro)
         if (USER_IS_WINNER) {
           const maxR = 75;
@@ -1198,23 +1213,33 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             ctx.stroke();
           }
         }
+        // Installing = fast, bright flash + an extra expanding ring; otherwise
+        // a calm gold pulse.
         ctx.beginPath();
         ctx.arc(selfXY[0], selfXY[1], r, 0, Math.PI * 2);
-        ctx.fillStyle = selfCol(1);
+        ctx.fillStyle = col(inst ? 0.65 + 0.35 * Math.sin(now / 160) : 1);
         ctx.fill();
-        const pulse = 4 + 2 * Math.sin(now / 400);
+        const pulse = inst ? 5 + 4 * Math.sin(now / 170) : 4 + 2 * Math.sin(now / 400);
         ctx.beginPath();
         ctx.arc(selfXY[0], selfXY[1], r + pulse, 0, Math.PI * 2);
-        ctx.strokeStyle = selfCol(0.5);
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = col(inst ? 0.7 : 0.5);
+        ctx.lineWidth = inst ? 2.5 : 1.5;
         ctx.stroke();
+        if (inst) {
+          const p2 = (now / 700) % 1;
+          ctx.beginPath();
+          ctx.arc(selfXY[0], selfXY[1], r + p2 * 26, 0, Math.PI * 2);
+          ctx.strokeStyle = col((1 - p2) * 0.6);
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
         if (USER_IS_WINNER) drawGlasses(ctx, selfXY[0], selfXY[1], r);
-        // "YOU" label below the dot, in matching gold
-        ctx.fillStyle = selfCol(1);
+        // "YOU" (or "INSTALLING" during setup) label below the dot.
+        ctx.fillStyle = col(1);
         ctx.font = "bold 11px system-ui";
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillText("YOU", selfXY[0], selfXY[1] + r + 6);
+        ctx.fillText(inst ? "INSTALLING" : "YOU", selfXY[0], selfXY[1] + r + 6);
       }
 
       // stake-winner sunglasses on a peer (only when the winner ISN'T the user —
@@ -1515,6 +1540,13 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           </button>
         </div>
       </div>
+      <div className="netmap-body">
+        {setupOpen && (
+          <InstallPanel
+            onClose={() => { setSetupOpen(false); installingRef.current = false; }}
+            onStateChange={(s: InstallState) => { installingRef.current = s.installing; }}
+          />
+        )}
       <div
         className="netmap-canvas-wrap"
         ref={wrapRef}
@@ -1541,6 +1573,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             <button type="button" onClick={() => { setPanel("newest"); setMenuOpen(false); }}>Newest Nodes</button>
             <button type="button" onClick={() => { setPanel("speed"); setMenuOpen(false); }}>Node Speed</button>
             <button type="button" onClick={() => { setPanel("country"); setMenuOpen(false); }}>Nodes by Country</button>
+            <button type="button" onClick={() => { setSetupOpen(true); setMenuOpen(false); }}>Set up wallet</button>
           </div>
         )}
         {panel === "country" && <NodesByCountry data={nodesByCountry} />}
@@ -1576,6 +1609,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             ))}
           </div>
         )}
+      </div>
       </div>
     </div>
   );

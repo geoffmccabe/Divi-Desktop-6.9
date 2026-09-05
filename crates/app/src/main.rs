@@ -261,6 +261,16 @@ async fn node_status() -> NodeStatusDto {
     })
 }
 
+/// First-run setup detection (read-only). Tells the UI which track the user is
+/// on (new / has Divi Desktop 2.0 / already ready) and what local data we could
+/// reuse, so the install panel can show the right flow.
+#[tauri::command]
+async fn setup_info() -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(|| dd69_supervisor::setup::detect().to_json())
+        .await
+        .unwrap_or_else(|_| dd69_supervisor::setup::SetupInfo::default().to_json())
+}
+
 /// Proof of existence: anchor a document's SHA-256 hash on-chain. The UI hashes
 /// the file locally (Web Crypto) and passes only the hash, so the document never
 /// leaves the machine. Returns the anchoring transaction id.
@@ -2479,6 +2489,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             node_status,
+            setup_info,
             recent_blocks,
             price_history,
             c2pa_inspect,
