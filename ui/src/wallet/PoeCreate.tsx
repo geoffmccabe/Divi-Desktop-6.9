@@ -5,6 +5,7 @@ import { getAskMode } from "./securityPrefs";
 import { fetchPrices } from "./value";
 import { addPoeRecord, makeThumb, markPoeConfirmed, poeProjects, PUBLIC_THUMB_MAX } from "./poeHistory";
 import { getPoePayout, splitForAnchor } from "./poePayout";
+import { pulse } from "./activityPulse";
 
 // Create tab: pick a file, see it, anchor its fingerprint on the chain.
 // The file never leaves the machine: only the SHA-256 goes out.
@@ -170,6 +171,8 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
       setAskPass(false);
       setPassOpen(false);
       setPass("");
+      // The anchor just broadcast to the network — light-blue ripple on the map.
+      pulse({ type: "poe" });
       // Record it locally so the History tab can show what this proof was FOR;
       // the chain only ever knows the fingerprint.
       const stored = addPoeRecord({

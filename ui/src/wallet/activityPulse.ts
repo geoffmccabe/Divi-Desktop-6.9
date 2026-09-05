@@ -12,8 +12,45 @@
 let start = 0; // performance.now() when the ripple began
 const TOTAL_MS = 4000;
 
-export function pulseActivity(): void {
+// ── Typed map activity ─────────────────────────────────────────────────────
+// Any feature (PoE, Send, staking…) can trigger a map animation in its own
+// colour and for its own duration. The maps read `pulseHsl()` for the colour
+// and `pulseActiveUntil()` to keep re-emitting ripples while a transaction is
+// still "in flight", so a user who broadcasts on one panel and then switches to
+// the map still sees it happening. Colour is an HSL triple "H S% L%".
+export type PulseType = "generic" | "staking" | "poe" | "send";
+const PULSE_STYLE: Record<PulseType, { hsl: string; durationMs: number }> = {
+  generic: { hsl: "45 100% 55%", durationMs: 4000 }, // gold (the original ripple)
+  staking: { hsl: "45 100% 55%", durationMs: 4000 }, // gold
+  poe: { hsl: "200 90% 62%", durationMs: 14000 }, // light blue, lingers ~14s
+  send: { hsl: "150 80% 52%", durationMs: 14000 }, // green, lingers ~14s
+};
+
+let currentHsl = PULSE_STYLE.generic.hsl;
+let activeUntil = 0; // performance.now() until which the maps keep re-rippling
+
+/** Trigger a typed map animation. Colour + duration come from the type unless
+ *  overridden. */
+export function pulse(opts: { type?: PulseType; hsl?: string; durationMs?: number } = {}): void {
+  const style = PULSE_STYLE[opts.type ?? "generic"];
+  currentHsl = opts.hsl ?? style.hsl;
   start = performance.now();
+  activeUntil = start + (opts.durationMs ?? style.durationMs);
+}
+
+/** Backward-compatible: the old parameterless trigger = a generic gold ripple. */
+export function pulseActivity(): void {
+  pulse();
+}
+
+/** Active pulse colour as an HSL triple "H S% L%", for both maps to tint with. */
+export function pulseHsl(): string {
+  return currentHsl;
+}
+
+/** performance.now() until which a transaction pulse should keep re-rippling. */
+export function pulseActiveUntil(): number {
+  return activeUntil;
 }
 
 export interface Pulse {

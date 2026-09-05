@@ -12,7 +12,7 @@ import { GlobeMap, type GlobePoint, type GlobeArc } from "./GlobeMap";
 import { NewestNodesPanel } from "./NewestNodesPanel";
 import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
 import { classifyNode } from "./nodeTypes";
-import { pulseActivity, pulseTrigger, makeLegs, legU, holdOp, pingDone, type Leg } from "./activityPulse";
+import { pulseActivity, pulseTrigger, pulseHsl, pulseActiveUntil, makeLegs, legU, holdOp, pingDone, type Leg } from "./activityPulse";
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
@@ -1439,9 +1439,15 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       // 4 legs — home→peer, peer→1-2 random network nodes, back, back home —
       // each leg independently jittered ±0.2s. So the map shows many little
       // round-trips at staggered times, not four synchronised group flashes.
+      // Spawn a wave on a fresh trigger, AND keep re-spawning while a typed
+      // transaction pulse is still "active" (its lingering window) so it stays
+      // watchable after switching to the map. Waves are based at `now` so a
+      // late-arriving viewer still sees fresh ripples, not ones already expired.
       const trig = pulseTrigger();
-      if (trig && trig !== lastPulseRef.current && selfXY) {
-        lastPulseRef.current = trig;
+      const pulseLive = now < pulseActiveUntil();
+      const freshTrig = !!trig && trig !== lastPulseRef.current;
+      if (selfXY && (freshTrig || (pulseLive && pingsRef.current.length === 0))) {
+        if (freshTrig) lastPulseRef.current = trig;
         const netLL: [number, number][] = blueNodes.map(([, kp]) => [kp.lon, kp.lat]);
         const pings: { peer: [number, number]; nets: [number, number][]; legs: Leg[] }[] = [];
         for (const p of s?.peers ?? []) {
@@ -1450,12 +1456,14 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           const nets: [number, number][] = [];
           const count = netLL.length ? 1 + Math.floor(Math.random() * 2) : 0; // 1-2
           for (let i = 0; i < count; i++) nets.push(netLL[Math.floor(Math.random() * netLL.length)]);
-          pings.push({ peer: [pg.lon, pg.lat], nets, legs: makeLegs(trig) });
+          pings.push({ peer: [pg.lon, pg.lat], nets, legs: makeLegs(now) });
         }
         pingsRef.current = pings;
       }
       if (selfXY && pingsRef.current.length) {
-        const GOLD = hslVar("--map-activity-pulse");
+        // Tint the ripple with the active pulse's colour (PoE = light blue, etc.).
+        const triple = pulseHsl();
+        const GOLD = (a: number) => `hsl(${triple} / ${a})`;
         const ripple = (from: [number, number], to: [number, number], u: number) => {
           const bez = upArc(from[0], from[1], to[0], to[1], 0.5);
           ctx.lineWidth = 1;

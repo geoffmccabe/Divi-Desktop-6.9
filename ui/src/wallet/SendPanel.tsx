@@ -10,6 +10,7 @@ import {
   type Balance,
 } from "./api";
 import { takeSendTarget } from "./sendTarget";
+import { pulse } from "./activityPulse";
 import { getAskMode } from "./securityPrefs";
 import { fmtDivi } from "../status";
 import { FastSendTracker } from "./FastSendTracker";
@@ -240,6 +241,7 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
       setTxid(id);
       setBroadcastAt(Date.now());
       markSent(address.trim()); // turns a matching contact known-good (both paths)
+      pulse({ type: "send" }); // green ripple on the map: coins just broadcast
       setStage("done");
     } catch (e) {
       setErr(String(e));
