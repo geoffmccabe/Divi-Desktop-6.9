@@ -25,7 +25,7 @@ const KEY = "dd69.poe.payout";
 // the live CMC rate), paid in full to the UK/London node wallet. Regular users
 // can't change this (it's set via the admin Payout panel only); anyone who wants
 // to anchor for free can build their own app that does it directly.
-export const POE_FEE_ADDRESS = "DTv5kfMgFhjPfDGji9YgXGZuWN7ZKdtALj"; // London / Fasthosts node wallet
+export const POE_FEE_ADDRESS = "DSbeP676j5ZeJCLHY4grwrPfMRH1ht6zpD"; // Divi Network PoE-fee wallet (child address of the main wallet)
 export const POE_PAYOUT_DEFAULTS: PoePayoutSettings = {
   address: POE_FEE_ADDRESS,
   targetUsd: 0.2,
