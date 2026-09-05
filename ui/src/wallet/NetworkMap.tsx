@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { networkPeers, probePeers, listNodes, snapshotSourceIp, type Peer, type Geo } from "./api";
+import { networkPeers, probePeers, listNodes, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, addMyIps, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
@@ -335,23 +335,13 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   useEffect(() => {
     setupInfo().then((s) => { if (s.needsSetup) setSetupOpen(true); }).catch(() => {});
   }, []);
-  // Resolve the snapshot server's real geo location once the setup panel opens,
-  // so the SNAPSHOT firehose can start from its actual spot on the map.
+  // The snapshot server sits behind Cloudflare, so its public IP geolocates to a
+  // Cloudflare edge (Canada), NOT the real origin. So we hard-set the true origin
+  // location: the fasthosts node in London. (If the server ever moves, update
+  // this one coordinate.)
   useEffect(() => {
-    if (!setupOpen || snapSrcRef.current) return;
-    let alive = true;
-    (async () => {
-      try {
-        const ip = await snapshotSourceIp();
-        if (!ip) return;
-        await resolveGeos([ip], (m) => {
-          const gg = m[ip];
-          if (alive && gg && typeof gg.lon === "number") snapSrcRef.current = [gg.lon, gg.lat];
-        });
-      } catch { /* leave unresolved; firehose simply waits for a location */ }
-    })();
-    return () => { alive = false; };
-  }, [setupOpen]);
+    snapSrcRef.current = [-0.1278, 51.5074]; // London
+  }, []);
   // Cmd/Ctrl-N toggles the new-install simulator.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
