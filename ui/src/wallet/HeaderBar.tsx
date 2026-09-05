@@ -2,11 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { walletBalance, walletAddresses, lotteryInfo, type Balance, type AddrInfo, type LotteryInfo } from "./api";
 import { fmtDiviParts } from "../status";
 import { AddressDropdown } from "./AddressDropdown";
-import { StakingDropdown } from "./StakingDropdown";
+import { StakingDropdown, StartStaking } from "./StakingDropdown";
 import { LotteryDropdown } from "./LotteryDropdown";
 import { LotteryCountdown } from "./LotteryCountdown";
 import { useDiviValue } from "./value";
-import { stakingSetupPending, onStakingSetupChange } from "./stakeWin";
 import { Icon } from "../Icon";
 
 type OpenPanel = null | "staking" | "addresses" | "lottery";
@@ -16,24 +15,7 @@ export function HeaderBar() {
   const [addrs, setAddrs] = useState<AddrInfo[] | null>(null);
   const [lottery, setLottery] = useState<LotteryInfo | null>(null);
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
-  // Auto-open the Staking panel once on launch when there are coins but nothing
-  // is staking — so the "Start Staking" prompt (and its password field) is right
-  // there. Users who hold coins should be staking; this nudges them to start
-  // without hunting for it. Fires at most once.
-  const promptedRef = useRef(false);
-  useEffect(() => {
-    if (promptedRef.current || !bal) return;
-    if (bal.staking === 0 && bal.spendable > 0) {
-      promptedRef.current = true;
-      setOpenPanel("staking");
-    }
-  }, [bal]);
   const [copied, setCopied] = useState(false);
-  // "Setting up staking" the instant the Start button is clicked, until the node
-  // confirms — so the header stops telling the user to click a button they just
-  // clicked. Fed by the shared signal the Start button sets.
-  const [settingUp, setSettingUp] = useState(stakingSetupPending());
-  useEffect(() => onStakingSetupChange(() => setSettingUp(stakingSetupPending())), []);
   const barRef = useRef<HTMLDivElement>(null);
 
   // Pull a fresh balance immediately (e.g. right after staking starts) so the
@@ -149,53 +131,58 @@ export function HeaderBar() {
 
       {/* Staking (left) + next lottery (right) */}
       <div className="hdr-panel glass-panel hdr-staking-panel">
-        <button type="button" className="hdr-staking-btn" onClick={() => toggle("staking")}>
-          {bal && bal.staking > 0 ? (
-            // Staking: green dot + the amount.
-            <>
-              <span className="bl-label">
-                <span className="stake-dot on" title="Staking" />
-                Staking <span className={"addr-chevron" + (openPanel === "staking" ? " up" : "")}>▾</span>
-              </span>
-              <span className="bl-amt bl-amt-staking">
-                {fmtDiviParts(bal.staking).whole} <em>DIVI</em>
-              </span>
-            </>
-          ) : bal && bal.spendable > 0 ? (
-            // Has coins but NOT staking — loud red alert so it can't be missed.
-            <>
+        <div className="hdr-stake-col">
+          {/* Status line. The chevron toggles the details dropdown; it no longer
+              opens on its own. */}
+          <button type="button" className="hdr-staking-btn" onClick={() => toggle("staking")}>
+            {bal && bal.staking > 0 ? (
+              // Staking: green dot + the amount.
+              <>
+                <span className="bl-label">
+                  <span className="stake-dot on" title="Staking" />
+                  Staking <span className={"addr-chevron" + (openPanel === "staking" ? " up" : "")}>▾</span>
+                </span>
+                <span className="bl-amt bl-amt-staking">
+                  {fmtDiviParts(bal.staking).whole} <em>DIVI</em>
+                </span>
+              </>
+            ) : bal && bal.spendable > 0 ? (
+              // Has coins but NOT staking — loud red alert so it can't be missed.
               <span className="bl-label">
                 <span className="stake-dot alert" />
                 <strong className="stake-alert-text">NOT STAKING</strong>
                 <span className={"addr-chevron" + (openPanel === "staking" ? " up" : "")}>▾</span>
               </span>
-              <span className={"stake-cta" + (settingUp ? " stake-cta-setup" : "")}>
-                {settingUp ? "SETTING UP STAKING…" : "CLICK TO START STAKING"}
-              </span>
-            </>
-          ) : (
-            // No coins yet — neutral.
-            <>
-              <span className="bl-label">
-                Staking <span className={"addr-chevron" + (openPanel === "staking" ? " up" : "")}>▾</span>
-              </span>
-              <span className="bl-amt bl-amt-staking">
-                — <em>DIVI</em>
-              </span>
-            </>
+            ) : (
+              // No coins yet — neutral.
+              <>
+                <span className="bl-label">
+                  Staking <span className={"addr-chevron" + (openPanel === "staking" ? " up" : "")}>▾</span>
+                </span>
+                <span className="bl-amt bl-amt-staking">
+                  — <em>DIVI</em>
+                </span>
+              </>
+            )}
+          </button>
+          {/* Start / Stop button lives here in the header now, not inside the
+              dropdown. Shown whenever the wallet holds any coins. */}
+          {bal && (bal.spendable > 0 || bal.staking > 0) && (
+            <div className="hdr-stake-action">
+              <StartStaking
+                onStarted={() => {
+                  setOpenPanel(null);
+                  refreshBalance(); // flip the header to green promptly
+                }}
+              />
+            </div>
           )}
-        </button>
+        </div>
         <button type="button" className="hdr-lottery-btn" onClick={() => toggle("lottery")}>
           <LotteryCountdown info={lottery} />
           <span className={"addr-chevron" + (openPanel === "lottery" ? " up" : "")}>▾</span>
         </button>
-        <StakingDropdown
-          open={openPanel === "staking"}
-          onStakingStarted={() => {
-            setOpenPanel(null); // staking began: get the dropdown off the app
-            refreshBalance(); // flip the header to green promptly
-          }}
-        />
+        <StakingDropdown open={openPanel === "staking"} />
         <LotteryDropdown open={openPanel === "lottery"} />
       </div>
 

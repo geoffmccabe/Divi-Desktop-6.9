@@ -277,14 +277,31 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
             let has_addressindex = text
                 .lines()
                 .any(|l| l.trim_start().starts_with("addressindex="));
-            if ours && (has_allowip || !has_addressindex) {
+            //   3. rpcthreads below 16 (the stock 4, or a hand-edit) makes the
+            //      node stop answering under a burst of concurrent calls — it
+            //      looks dead while healthy (see the first-run template below).
+            //      Normalise anything under 16 up to 16; leave a higher value be.
+            let has_threads = text.lines().any(|l| l.trim_start().starts_with("rpcthreads="));
+            let weak_threads = text.lines().any(|l| {
+                l.trim_start()
+                    .strip_prefix("rpcthreads=")
+                    .and_then(|v| v.trim().parse::<u32>().ok())
+                    .map(|n| n < 16)
+                    .unwrap_or(false)
+            });
+            let fix_threads = !has_threads || weak_threads;
+            if ours && (has_allowip || !has_addressindex || fix_threads) {
                 let mut fixed: String = text
                     .lines()
                     .filter(|l| !l.trim_start().starts_with("rpcallowip="))
+                    .filter(|l| !(fix_threads && l.trim_start().starts_with("rpcthreads=")))
                     .map(|l| format!("{l}\n"))
                     .collect();
                 if !has_addressindex {
                     fixed.push_str("addressindex=1\n");
+                }
+                if fix_threads {
+                    fixed.push_str("rpcthreads=16\n");
                 }
                 let _ = std::fs::write(&conf, fixed);
                 restrict_to_owner(&conf);
@@ -418,14 +435,16 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
         }
     }
 
-    // A divi.conf we did not write means an existing installation — most
-    // likely Divi Desktop 2.0 — owns this datadir. Starting our daemon on it
-    // would take the datadir lock and leave their app unable to start its own
-    // node, and two different daemon builds alternating over one block
-    // database is how databases get corrupted. So: hands off entirely. If
-    // their node is running, DD69 still reads it over RPC; we just never
-    // start, stop, or rewrite anything of theirs.
-    let datadir = crate::config::default_datadir();
+    // We run our node in DD69's OWN datadir. If a divi.conf we did not write
+    // is sitting there, some other installation owns that folder — starting our
+    // daemon on it would take the datadir lock and two daemon builds alternating
+    // over one block database is how databases get corrupted. So: hands off. If
+    // that node is running, DD69 still reads it over RPC; we just never start,
+    // stop, or rewrite anything of theirs. (This must check the folder the node
+    // actually uses — dd69_datadir — not the legacy 2.0 DIVI folder, which DD69
+    // no longer runs in; checking the wrong folder made the app wrongly back off
+    // whenever a stale 2.0 config still existed on the machine.)
+    let datadir = crate::config::dd69_datadir();
     let conf = datadir.join("divi.conf");
     if conf.is_file() {
         let ours = std::fs::read_to_string(&conf)

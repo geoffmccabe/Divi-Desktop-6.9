@@ -602,10 +602,42 @@ export interface MmStatus {
 }
 export const mmStart = (
   slug: string, connector: string, restUrl: string, symbol: string,
-  levels: number[], orderUsdt: number, refreshSecs: number, maxSideUsdt: number,
-) => invoke<void>("mm_start", { slug, connector, restUrl, symbol, levels, orderUsdt, refreshSecs, maxSideUsdt });
+  levels: number[], commitUsdt: number, refreshSecs: number, protectPct: number,
+) => invoke<void>("mm_start", { slug, connector, restUrl, symbol, levels, commitUsdt, refreshSecs, protectPct });
 export const mmStop = () => invoke<void>("mm_stop");
 export const mmStatus = () => invoke<MmStatus>("mm_status");
+// Cancel every resting order for a pair, even when the engine isn't running.
+export const mmCancelAll = (slug: string, connector: string, restUrl: string, symbol: string) =>
+  invoke<number>("mm_cancel_all", { slug, connector, restUrl, symbol });
+
+// A live order-book snapshot for the depth-ladder view: the public book, our own
+// resting orders, mid, and balances — one read-only call, polled while visible.
+export interface BookLevel { price: number; size: number }
+export interface OpenOrder { side: "buy" | "sell"; price: number; size: number }
+export interface MmBook {
+  mid: number;
+  bestBid: number;
+  bestAsk: number;
+  asks: BookLevel[]; // ascending price (lowest ask first)
+  bids: BookLevel[]; // descending price (highest bid first)
+  ourOrders: OpenOrder[];
+  baseFree: number;
+  baseHeld: number;
+  quoteFree: number;
+  quoteHeld: number;
+}
+export const mmBook = (slug: string, connector: string, restUrl: string, symbol: string) =>
+  invoke<MmBook>("mm_book", { slug, connector, restUrl, symbol });
+
+// DEX (Uniswap V2 eDIVI/WETH on Ethereum): live pool reserves + on-chain ETH/USD.
+// Read-only; used by the DEX tab to price swaps. Swapping (wallet) is a later phase.
+export interface DexPool {
+  reserveEdivi: number;
+  reserveWeth: number;
+  ethUsd: number;
+  ediviDecimals: number;
+}
+export const dexPool = () => invoke<DexPool>("dex_pool");
 
 // My Nodes: which node the wallet reads. Desktop is built in; personal nodes
 // (e.g. DIVI LOVE SCAN) live only in this machine's nodes.json.

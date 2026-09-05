@@ -1,0 +1,55 @@
+/* DEX area: two stacked panels (Uniswap swap, MetaMask connect). Each panel is a
+   15%-wide logo box on the left + content on the right. ~50% wider than before. */
+.dex-wrap { display: flex; flex-direction: column; gap: 16px; }
+.dex-panel { width: 100%; max-width: 820px; }
+
+/* Grid, not flex: the first column is EXACTLY 15% of the row for both panels,
+   independent of what content sits in it (flex-basis was letting content nudge
+   the width, so the two boxes came out different). */
+/* width:100% is essential: the parent .ts-section is align-items:flex-start, so
+   without it the row shrinks to content and the 15% track collapses to content
+   size (and differs per panel). Full width gives 15% a real basis. */
+.dex-row { display: grid; grid-template-columns: 15% 1fr; gap: 22px; align-items: stretch; width: 100%; }
+
+.dex-logo-box {
+  min-width: 0; box-sizing: border-box;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px;
+  padding: 12px 6px; border-right: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.25); border-radius: 8px 0 0 8px;
+}
+.dex-logo { width: 50px; height: 50px; object-fit: contain; display: block; }
+.dex-logo-label { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.09em; color: hsl(var(--muted-foreground)); text-align: center; }
+
+.dex-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+
+.dex-stats { display: flex; flex-wrap: wrap; gap: 32px; }
+.dex-stats > div { display: flex; flex-direction: column; gap: 3px; }
+.dex-k { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
+.dex-v { font-size: 1.1rem; font-weight: 700; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; }
+
+.dex-swap { display: flex; align-items: flex-end; gap: 14px; margin-top: 2px; }
+.dex-swap .value-field { flex: 1; min-width: 0; }
+.dex-flip {
+  background: hsl(var(--primary) / 0.16); border: 1px solid hsl(var(--border)); border-radius: 8px;
+  color: hsl(var(--foreground)); cursor: pointer; padding: 9px 12px; font-size: 1.1rem; line-height: 1;
+  margin-bottom: 1px;
+}
+.dex-flip:hover { background: hsl(var(--primary) / 0.28); }
+.dex-out { display: flex; align-items: center; min-height: 40px; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; }
+
+.dex-quote { color: hsl(var(--muted-foreground)); margin: 0; }
+.dex-connect { margin-top: 4px; opacity: 0.75; cursor: not-allowed; align-self: flex-start; }
+.dex-foot { font-size: 0.7rem; color: hsl(var(--muted-foreground)); margin: 0; }
+
+/* Uniswap-style swap details + slippage control. */
+.dex-details { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid hsl(var(--border)); border-radius: 8px; background: hsl(var(--background) / 0.3); }
+.dex-drow { display: flex; justify-content: space-between; gap: 12px; font-size: 0.78rem; }
+.dex-drow > span:first-child { color: hsl(var(--muted-foreground)); }
+.dex-drow > span:last-child { color: hsl(var(--foreground)); font-weight: 600; font-variant-numeric: tabular-nums; }
+.dex-hi { color: hsl(0 85% 62%); }
+.dex-slip { display: flex; align-items: center; gap: 8px; }
+.dex-slip-btn { padding: 4px 13px; border: 1px solid hsl(var(--border)); border-radius: 6px; background: hsl(220 6% 34%); color: #fff; font-size: 0.76rem; font-weight: 700; cursor: pointer; }
+.dex-slip-on { background: hsl(var(--primary)); }
+
+/* Connect / disconnect button in the MetaMask panel. */
+.dex-connect-btn { align-self: flex-start; margin-top: 2px; }

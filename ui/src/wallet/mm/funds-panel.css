@@ -1,0 +1,23 @@
+/* Funds panel: coins laid out left-to-right. Each coin = icon + name on the left,
+   then Available / Committed / Total stacked (smaller fonts) on the right. */
+.mm-panel .funds-panel {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 40px;
+  padding: 14px 20px;
+}
+
+.funds-item { display: flex; flex-direction: row; align-items: center; gap: 14px; }
+
+.funds-idname { display: flex; align-items: center; gap: 9px; }
+.funds-coin { width: 2.5rem; height: 2.5rem; flex: none; object-fit: contain; display: block; }
+.funds-name { font-size: 1.05rem; font-weight: 800; color: hsl(var(--foreground)); }
+
+.funds-cols { display: flex; flex-direction: column; gap: 2px; }
+.funds-line { display: flex; align-items: baseline; gap: 6px; font-size: 0.8rem; }
+.funds-k { color: hsl(var(--muted-foreground)); min-width: 74px; }
+.funds-v { font-weight: 700; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; }
+.funds-total .funds-v { color: hsl(var(--primary)); }

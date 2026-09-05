@@ -8,6 +8,12 @@ use std::time::Duration;
 /// server drops connections under churn (a new socket per call overwhelms its
 /// accept loop — "RPCAcceptHandler: Invalid argument"), so we keep connections
 /// alive and reuse them instead of opening a fresh one for every request.
+///
+/// The idle pool is capped well below the node's rpcthreads (16). That server
+/// dedicates one worker thread to each kept-alive connection, so if the app held
+/// as many idle connections as the node has threads, none would be left to
+/// answer new requests and the RPC would appear dead while the node is healthy.
+/// A small pool leaves most threads free.
 fn shared_agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
@@ -15,8 +21,8 @@ fn shared_agent() -> &'static ureq::Agent {
             .timeout_connect(Duration::from_secs(8))
             .timeout_read(Duration::from_secs(30))
             .timeout_write(Duration::from_secs(30))
-            .max_idle_connections(16)
-            .max_idle_connections_per_host(16)
+            .max_idle_connections(6)
+            .max_idle_connections_per_host(6)
             .build()
     })
 }

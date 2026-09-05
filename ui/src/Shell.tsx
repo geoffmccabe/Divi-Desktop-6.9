@@ -27,6 +27,7 @@ import { AgentPanel } from "./wallet/AgentPanel";
 import { NetworkMap } from "./wallet/NetworkMap";
 import { PriceChart } from "./wallet/PriceChart";
 import { FastReceiveHost } from "./wallet/FastReceiveHost";
+import { MmVenueToggle } from "./wallet/mmVenue";
 
 const VIEWS: Record<string, ComponentType> = {
   overview: Overview,
@@ -146,6 +147,7 @@ export function Shell() {
           {view !== "network" && view !== "charts" && (
             <div className="view-title-row">
               <h2 className="view-title">{label}</h2>
+              {view === "marketmaker" && <MmVenueToggle />}
               {view === "overview" && (
                 <div className="title-actions">
                   <button type="button" className="node-map-btn" onClick={() => setView("charts")}>

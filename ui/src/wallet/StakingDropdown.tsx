@@ -33,7 +33,7 @@ function Ellipsis() {
 //   staking  → confirmed staking. Shows "Staking · Click to Stop" (green).
 type StakeState = "checking" | "idle" | "needpass" | "staking";
 
-function StartStaking({ onStarted }: { onStarted?: () => void }) {
+export function StartStaking({ onStarted }: { onStarted?: () => void }) {
   const [state, setState] = useState<StakeState>(() => (stakingDesired() ? "checking" : "checking"));
   const [pass, setPass] = useState("");
   const [reason, setReason] = useState<string | null>(null); // why it's not staking (idle)
@@ -77,7 +77,10 @@ function StartStaking({ onStarted }: { onStarted?: () => void }) {
           }
         }
       } catch {
-        /* keep current state */
+        // If the status read fails (e.g. the node is briefly busy), don't leave
+        // the button stuck disabled on "Checking blockchain…" forever — fall to
+        // idle so the user can still click Start Staking.
+        if (alive) setState((prev) => (prev === "needpass" || prev === "staking" ? prev : "idle"));
       }
       const fast = confirm.current != null && performance.now() < confirm.current.until;
       timer = window.setTimeout(tick, fast ? 1500 : 8000);
@@ -252,7 +255,7 @@ function StakeRow({ w, win, name }: { w: StakeWallet; win?: LotteryWin; name?: s
   );
 }
 
-export function StakingDropdown({ open, onStakingStarted }: { open: boolean; onStakingStarted?: () => void }) {
+export function StakingDropdown({ open }: { open: boolean }) {
   const [render, setRender] = useState(open);
   const [wallets, setWallets] = useState<StakeWallet[] | null>(null);
   const [wins, setWins] = useState<Record<string, LotteryWin>>({});
@@ -303,7 +306,6 @@ export function StakingDropdown({ open, onStakingStarted }: { open: boolean; onS
       }}
     >
       <div className="stake-dropdown-inner">
-        <StartStaking onStarted={onStakingStarted} />
         {wallets === null ? (
           <p className="wl-empty">Loading staking wallets…</p>
         ) : list.length === 0 ? (

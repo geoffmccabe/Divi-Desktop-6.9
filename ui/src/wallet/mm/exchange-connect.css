@@ -26,3 +26,10 @@
 .xc-actions { display: flex; align-items: center; gap: 12px; margin-top: 2px; }
 .xc-msg { color: hsl(var(--foreground)); }
 .xc-bal { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+
+/* When no exchange is connected, flash the title red so it can't be missed. */
+@keyframes mm-connect-flash {
+  0%, 100% { color: hsl(0 90% 62%); text-shadow: 0 0 8px hsl(0 90% 62% / 0.5); }
+  50%      { color: hsl(0 90% 62% / 0.3); text-shadow: none; }
+}
+.mm-connect-alert { animation: mm-connect-flash 1.1s ease-in-out infinite; }

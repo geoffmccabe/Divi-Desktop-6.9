@@ -2,8 +2,14 @@
 
 .mmc { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 
-.mmc-params { display: flex; gap: 10px; flex-wrap: wrap; }
+.mmc-params { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
 .mmc-params .value-field { flex: 1 1 120px; }
+/* Each field is label-on-top / input-below. Reserve a uniform 2-line height for
+   the label (bottom-aligned) so the input boxes stay in a straight line across
+   the row whether a label is one line or two, and when the row wraps. */
+.mmc-params .send-label { min-height: 2.4em; display: flex; align-items: flex-end; line-height: 1.2; }
+/* Bigger numbers in the entry boxes (~+3pt). */
+.mmc-params .wl-input { font-size: 1.15rem; }
 
 .mmc-actions { display: flex; align-items: center; gap: 12px; }
 .mmc-stop { background: hsl(0 60% 45% / 0.22); }
@@ -19,3 +25,22 @@
 .mmc-status > div { display: flex; flex-direction: column; gap: 1px; }
 .mmc-k { font-size: 0.68rem; color: hsl(var(--muted-foreground)); text-transform: uppercase; letter-spacing: 0.04em; }
 .mmc-v { font-size: 0.9rem; color: hsl(var(--foreground)); }
+
+.mmc-avail { margin-top: 6px; }
+
+/* The "Run the market maker" card (left) and the "Live depth" card (right), each
+   about half the width, side by side. Wraps to a stack on a narrow window so
+   neither gets crushed. Both are .ts-section cards. */
+.mm-two-col { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+.mm-two-col > .ts-section { flex: 1 1 45%; min-width: 320px; margin: 0; }
+
+/* The exchange <select> renders OS-grey by default; style it to match the app -
+   custom caret + app-coloured option list (greyed for not-connected ones). */
+.mmc select.wl-input {
+  appearance: none; -webkit-appearance: none; cursor: pointer;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23b98bd0' stroke-width='1.6' stroke-linecap='round'/></svg>");
+  background-repeat: no-repeat; background-position: right 11px center;
+}
+.mmc select.wl-input option { background: hsl(var(--subpanel-bg)); color: hsl(var(--foreground)); }
+.mmc select.wl-input option:disabled { color: hsl(var(--muted-foreground)); font-style: italic; }

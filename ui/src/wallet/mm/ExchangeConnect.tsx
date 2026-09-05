@@ -41,7 +41,7 @@ export function ExchangeConnect({ exchanges }: { exchanges: Exchange[] }) {
   return (
     <section className="ts-section">
       <button type="button" className="mm-collapse-head" onClick={() => setCollapsed((c) => c !== true)}>
-        <h3 className="ts-head mm-collapse-title">Connect an exchange</h3>
+        <h3 className={"ts-head mm-collapse-title" + (connectedNames.length === 0 ? " mm-connect-alert" : "")}>Connect an exchange</h3>
         <span className="mm-collapse-meta">
           {connectedNames.length > 0 ? `${connectedNames.join(", ")} connected` : "none connected"}
         </span>
@@ -51,7 +51,7 @@ export function ExchangeConnect({ exchanges }: { exchanges: Exchange[] }) {
       {!isCollapsed && (
         <div className="mm-collapse-body">
           <p className="wl-note gov-wide">
-            Add a <strong>trade-only</strong> API key for an exchange you already use — it stays
+            Add a <strong>trade-only</strong> API key for an exchange you already use, it stays
             encrypted on this device and can place orders but never withdraw your funds.
           </p>
           <ul className="xc-list">
@@ -88,7 +88,7 @@ function ExchangeRow({ ex, onChange }: { ex: Exchange; onChange: () => void }) {
       const b = await mmTestConnection(ex.slug, ex.connector_type, ex.rest_url ?? "");
       setBalances(b);
       setConnected(true);
-      setMsg("Connected — keys verified with a read-only balance check.");
+      setMsg("Connected: keys verified with a read-only balance check.");
       setKey("");
       setSecret("");
       setPass("");

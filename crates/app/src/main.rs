@@ -1254,13 +1254,13 @@ async fn mm_start(
     rest_url: String,
     symbol: String,
     levels: Vec<f64>,
-    order_usdt: f64,
+    commit_usdt: f64,
     refresh_secs: u64,
-    max_side_usdt: f64,
+    protect_pct: f64,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         marketmaker::start(marketmaker::MmConfig {
-            slug, connector, rest_url, symbol, levels, order_usdt, refresh_secs, max_side_usdt,
+            slug, connector, rest_url, symbol, levels, commit_usdt, refresh_secs, protect_pct,
         })
     })
     .await
@@ -1271,6 +1271,15 @@ async fn mm_start(
 #[tauri::command]
 async fn mm_stop() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(marketmaker::stop)
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+/// Cancel every resting order for a pair, even if the engine isn't running —
+/// clears orders left on the exchange after an unclean stop. Returns the count.
+#[tauri::command]
+async fn mm_cancel_all(slug: String, connector: String, rest_url: String, symbol: String) -> Result<usize, String> {
+    tauri::async_runtime::spawn_blocking(move || marketmaker::cancel_all_orders(&slug, &connector, &rest_url, &symbol))
         .await
         .map_err(|_| "internal error".to_string())?
 }
@@ -1305,6 +1314,78 @@ async fn mm_status() -> MmStatusDto {
         running: false, message: String::new(), mid: 0.0, open_orders: 0,
         base_free: 0.0, base_held: 0.0, quote_free: 0.0, quote_held: 0.0, cycles: 0,
     })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BookLevelDto { price: f64, size: f64 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenOrderDto { side: String, price: f64, size: f64 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MmBookDto {
+    mid: f64,
+    best_bid: f64,
+    best_ask: f64,
+    asks: Vec<BookLevelDto>,
+    bids: Vec<BookLevelDto>,
+    our_orders: Vec<OpenOrderDto>,
+    base_free: f64,
+    base_held: f64,
+    quote_free: f64,
+    quote_held: f64,
+}
+
+/// A live order-book snapshot for the depth-ladder view: public book + our own
+/// resting orders + mid + balances, in one read-only call. Polled by the UI.
+#[tauri::command]
+async fn mm_book(slug: String, connector: String, rest_url: String, symbol: String) -> Result<MmBookDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let b = marketmaker::book(&slug, &connector, &rest_url, &symbol)?;
+        Ok::<MmBookDto, String>(MmBookDto {
+            mid: b.mid,
+            best_bid: b.best_bid,
+            best_ask: b.best_ask,
+            asks: b.asks.into_iter().map(|l| BookLevelDto { price: l.price, size: l.size }).collect(),
+            bids: b.bids.into_iter().map(|l| BookLevelDto { price: l.price, size: l.size }).collect(),
+            our_orders: b.our_orders.into_iter().map(|o| OpenOrderDto { side: o.side, price: o.price, size: o.size }).collect(),
+            base_free: b.base_free,
+            base_held: b.base_held,
+            quote_free: b.quote_free,
+            quote_held: b.quote_held,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DexPoolDto {
+    reserve_edivi: f64,
+    reserve_weth: f64,
+    eth_usd: f64,
+    edivi_decimals: u32,
+}
+
+/// Read the eDIVI/WETH Uniswap V2 pool (reserves + on-chain ETH/USD) for the DEX
+/// tab. Read-only — no keys, no signing.
+#[tauri::command]
+async fn dex_pool() -> Result<DexPoolDto, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let p = dd69_supervisor::dex::pool()?;
+        Ok::<DexPoolDto, String>(DexPoolDto {
+            reserve_edivi: p.reserve_edivi,
+            reserve_weth: p.reserve_weth,
+            eth_usd: p.eth_usd,
+            edivi_decimals: p.edivi_decimals,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
 }
 
 /// Try to (re)start the local node. Re-runs the idempotent first-run bring-up,
@@ -2489,7 +2570,10 @@ fn main() {
             mm_test_connection,
             mm_start,
             mm_stop,
+            mm_cancel_all,
+            dex_pool,
             mm_status,
+            mm_book,
             restart_node,
             node_logs,
             list_nodes,

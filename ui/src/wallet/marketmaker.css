@@ -46,3 +46,19 @@
   background: currentColor;
   opacity: 0.5;
 }
+
+/* CEX | DEX venue toggle: two buttons joined into one rounded rectangle. Only the
+   outer corners are rounded; the shared middle edge is square. Active = brand
+   purple, inactive = grey, white text on both. */
+/* Sits in the page title row: a ~8-space gap after "Market Maker", then the
+   toggle; margin-right:auto keeps it left-aligned (not shoved to the far edge by
+   the row's space-between). */
+.mm-venue-toggle { display: inline-flex; margin: 0 auto 0 3.5rem; }
+.mm-venue-btn {
+  padding: 5px 26px; border: 1px solid hsl(var(--border)); border-radius: 0;
+  background: hsl(220 6% 34%); color: #fff; font-weight: 700; font-size: 0.86rem;
+  letter-spacing: 0.04em; cursor: pointer;
+}
+.mm-venue-btn:first-child { border-top-left-radius: 10px; border-bottom-left-radius: 10px; border-right: none; }
+.mm-venue-btn:last-child { border-top-right-radius: 10px; border-bottom-right-radius: 10px; }
+.mm-venue-on { background: hsl(var(--primary)); }
