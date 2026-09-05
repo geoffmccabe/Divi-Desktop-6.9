@@ -132,6 +132,11 @@ export function DepthLadder({ ex, symbol, levels, commit }: {
         )}
         {r.planned > 0 && <div className="dl-ghost" style={{ width: plannedW }} />}
         <span className="dl-price">{r.price.toFixed(DP)}</span>
+        {r.price > 0 && (
+          <span className="dl-amt">
+            {Math.round(r.total / r.price).toLocaleString()} DIVI - US${r.total.toFixed(2)}
+          </span>
+        )}
       </div>
     );
   };

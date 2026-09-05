@@ -191,7 +191,10 @@ export function StartStaking({ onStarted }: { onStarted?: () => void }) {
         {state === "checking" ? (
           <>Checking blockchain<Ellipsis /></>
         ) : state === "staking" ? (
-          "Staking · Click to Stop"
+          <span className="stk-two">
+            <strong>STAKING NOW</strong>
+            <small>CLICK TO STOP</small>
+          </span>
         ) : (
           "Start Staking"
         )}

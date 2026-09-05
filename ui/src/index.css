@@ -330,7 +330,19 @@ code, .mono { font-family: var(--font-mono); }
 }
 .wl-btn-primary { background: hsl(var(--primary)); border-color: transparent; color: #fff; }
 /* Active-staking state: green, so "Staking · Click to Stop" reads as on/good. */
-.wl-btn-staking { background: hsl(var(--success)); border-color: transparent; color: #fff; opacity: 1; }
+.wl-btn-staking {
+  background: hsl(var(--success)); border-color: transparent; color: #fff; opacity: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding-top: 6px; padding-bottom: 6px; min-height: 40px; line-height: 1.1;
+}
+.stk-two { display: flex; flex-direction: column; align-items: center; line-height: 1.12; }
+.stk-two strong { font-weight: 800; font-size: 0.9rem; letter-spacing: 0.02em; }
+.stk-two small { font-size: 0.68rem; opacity: 0.92; letter-spacing: 0.03em; }
+/* Market Maker Start/Stop, coloured to match the liquidity bars (buy green / sell red). */
+.mmc-start { background: hsl(150 80% 52%); border-color: transparent; color: #05270f; font-weight: 700; }
+.mmc-start:hover:not(:disabled) { background: hsl(150 80% 46%); }
+.mmc-stop { background: hsl(0 55% 30%); border-color: transparent; color: #fff; font-weight: 700; }
+.mmc-stop:hover:not(:disabled) { background: hsl(0 55% 36%); }
 .wl-btn:disabled { opacity: 0.5; cursor: default; }
 .wl-link { border: none; background: none; color: hsl(var(--primary)); cursor: pointer; font-size: 0.85rem; }
 .wl-note { font-size: 0.85rem; color: hsl(var(--muted-foreground)); max-width: 460px; }
@@ -939,7 +951,9 @@ code, .mono { font-family: var(--font-mono); }
 .chip-label { font-size: 0.72rem; color: hsl(var(--muted-foreground)); display: inline-flex; align-items: center; gap: 4px; }
 .chip-num { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); white-space: nowrap; }
 /* Block-height chip: never let its number be clipped by a transient narrow layout. */
-.wl-chip-row > .glass-chip.blk-chip { min-width: max-content; overflow: visible; }
+.wl-chip-row > .glass-chip.blk-chip { min-width: 0; flex: 1 1 100%; overflow: visible; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.wl-chip-row > .glass-chip.blk-chip .chip-label,
+.wl-chip-row > .glass-chip.blk-chip .chip-num { justify-content: center; text-align: center; width: 100%; }
 /* Guard the block-height number against edge-clipping (first/last char): let it
    size to its content and never crop, even with the "+?" sync suffix. */
 .wl-status-chips .glass-chip.blk-chip .chip-num { overflow: visible; white-space: nowrap; padding: 0 4px; }
