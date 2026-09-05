@@ -45,3 +45,25 @@ pub fn price_history() -> Vec<PricePoint> {
         })
         .collect()
 }
+
+/// The single most recent DIVI/USD close from the shared CMC-sourced feed. Used
+/// to price the PoE fee identically for every user, with no per-user API key.
+/// None on any failure (so callers show "unavailable" rather than a guess).
+pub fn price_latest() -> Option<f64> {
+    let url = format!(
+        "{SUPABASE_URL}/rest/v1/divi_price?select=close&order=ts.desc&limit=1"
+    );
+    let resp = ureq::get(&url)
+        .set("apikey", ANON_KEY)
+        .set("Authorization", &format!("Bearer {ANON_KEY}"))
+        .timeout(std::time::Duration::from_secs(15))
+        .call()
+        .ok()?;
+    let text = resp.into_string().ok()?;
+    let v = serde_json::from_str::<Value>(&text).ok()?;
+    v.as_array()?
+        .first()?
+        .get("close")?
+        .as_f64()
+        .filter(|p| *p > 0.0)
+}

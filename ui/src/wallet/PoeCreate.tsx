@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
-import { poeTimestamp, poeVerify, walletStatus } from "./api";
+import { poeTimestamp, poeVerify, walletStatus, priceLatest } from "./api";
 import { getAskMode } from "./securityPrefs";
 import { fetchPrices } from "./value";
 import { addPoeRecord, makeThumb, markPoeConfirmed, poeProjects, PUBLIC_THUMB_MAX } from "./poeHistory";
@@ -66,10 +66,21 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
 
   useEffect(() => {
     let alive = true;
-    fetchPrices()
-      .then((p) => alive && setUsdPerDivi(p.prices?.usd ?? null))
+    // Price the fee from the SHARED CMC feed (server-side, no per-user API key),
+    // so $0.20 converts to DIVI the same for everyone. Fall back to the per-user
+    // price source only if the shared feed is unavailable.
+    priceLatest()
+      .then((usd) => {
+        if (!alive) return;
+        if (usd && usd > 0) { setUsdPerDivi(usd); return; }
+        return fetchPrices().then((p) => alive && setUsdPerDivi(p.prices?.usd ?? null));
+      })
       .catch(() => {
-        /* quote falls back to "cost unavailable" */
+        fetchPrices()
+          .then((p) => alive && setUsdPerDivi(p.prices?.usd ?? null))
+          .catch(() => {
+            /* quote falls back to "cost unavailable" */
+          });
       });
     return () => {
       alive = false;

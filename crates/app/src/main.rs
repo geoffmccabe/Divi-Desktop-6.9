@@ -919,6 +919,16 @@ async fn price_history() -> Vec<PricePointDto> {
     .unwrap_or_default()
 }
 
+/// The latest DIVI/USD price from the shared CMC feed, for pricing the PoE fee
+/// with no per-user API key. None if the feed is unavailable.
+#[tauri::command]
+async fn price_latest() -> Option<f64> {
+    tauri::async_runtime::spawn_blocking(chart::price_latest)
+        .await
+        .ok()
+        .flatten()
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StaleBlockDto {
@@ -2512,6 +2522,7 @@ fn main() {
             snapshot_source_ip,
             recent_blocks,
             price_history,
+            price_latest,
             c2pa_inspect,
             payment_request_create,
             payment_requests_inbox,

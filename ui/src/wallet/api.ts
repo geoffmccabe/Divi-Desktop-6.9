@@ -270,6 +270,8 @@ export interface PricePoint {
   close: number;
 }
 export const priceHistory = () => invoke<PricePoint[]>("price_history");
+// Latest DIVI/USD from the shared CMC feed (no per-user key) — used to price PoE.
+export const priceLatest = () => invoke<number | null>("price_latest");
 export interface StaleBlock {
   height: number;
   status: string;
