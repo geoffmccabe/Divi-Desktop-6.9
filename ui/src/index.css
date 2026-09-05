@@ -338,6 +338,9 @@ code, .mono { font-family: var(--font-mono); }
 .stk-two { display: flex; flex-direction: column; align-items: center; line-height: 1.12; }
 .stk-two strong { font-weight: 800; font-size: 0.9rem; letter-spacing: 0.02em; }
 .stk-two small { font-size: 0.68rem; opacity: 0.92; letter-spacing: 0.03em; }
+/* Transient "Checking blockchain…" label: 2pt smaller, single line, normal case,
+   so it always fits inside the fixed-width header button and never grows it. */
+.stk-checking { font-size: 0.7rem; white-space: nowrap; text-transform: none; letter-spacing: 0; }
 /* Market Maker Start/Stop, coloured to match the liquidity bars (buy green / sell red). */
 .mmc-start { background: hsl(150 80% 52%); border-color: transparent; color: #05270f; font-weight: 700; }
 .mmc-start:hover:not(:disabled) { background: hsl(150 80% 46%); }
@@ -487,7 +490,13 @@ code, .mono { font-family: var(--font-mono); }
 /* In the header the button carries no dropdown-divider, and reads uppercase to
    match the "NOT STAKING" line above it. */
 .hdr-stake-action .stake-start { padding-bottom: 0; margin-bottom: 0; border-bottom: none; }
-.hdr-stake-action .wl-btn { text-transform: uppercase; letter-spacing: 0.04em; }
+.hdr-stake-action .wl-btn {
+  text-transform: uppercase; letter-spacing: 0.04em;
+  /* Fixed footprint so the button NEVER changes width between Start / Checking /
+     Staking states - that resizing was pushing the header and jolting the map. */
+  box-sizing: border-box; width: 156px; padding-left: 8px; padding-right: 8px;
+  justify-content: center; text-align: center; overflow: hidden;
+}
 .hdr-lottery { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
 .lot-count { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 600; color: hsl(var(--primary)); }
 .lot-when { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
