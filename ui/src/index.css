@@ -385,6 +385,10 @@ code, .mono { font-family: var(--font-mono); }
 /* Certificate lock: not income, so shown muted, never green. */
 .act-amt-locked { color: hsl(var(--muted-foreground)); font-weight: 500; }
 .act-addr-full { font-family: var(--font-mono); font-size: 0.72rem; color: hsl(var(--muted-foreground)); word-break: break-all; line-height: 1.5; }
+/* Proof of Existence row: light-blue label + a plain-English explainer line. */
+.act-poe { color: hsl(200 90% 62%); font-weight: 600; font-size: 0.95rem; }
+.act-poe-note { font-size: 0.74rem; color: hsl(var(--muted-foreground)); line-height: 1.45; max-width: 520px; }
+.act-poe-note strong { color: hsl(var(--foreground)); font-weight: 600; }
 .act-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .act-time { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
 .act-actions { display: flex; gap: 6px; }

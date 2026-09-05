@@ -5,6 +5,7 @@ import { confDisplay } from "./confirmations";
 import { isFastTxid } from "./fastReceiveStore";
 import { loadBearerCodes } from "./bearerCodes";
 import { loadPinSends } from "./pinSends";
+import { loadPoeHistory } from "./poeHistory";
 import { fmtDivi, relTime } from "../status";
 import { Icon } from "../Icon";
 
@@ -12,6 +13,7 @@ const KIND_LABEL: Record<string, string> = {
   receive: "Received",
   send: "Sent",
   stake: "Stake Winner!",
+  poe: "🔗 Proof of Existence",
   other: "Transaction",
 };
 
@@ -21,6 +23,7 @@ const FILTERS: { id: string; label: string; c: string; disabled?: boolean; title
   { id: "stake", label: "Stakes", c: "var(--success)" }, // green
   { id: "send", label: "Sent", c: "var(--warning)" }, // gold
   { id: "receive", label: "Received", c: "var(--success)" }, // green
+  { id: "poe", label: "Timestamps", c: "hsl(200 90% 62%)" }, // light blue = PoE
   // Lottery wins are still lumped in with stakes at the data level, so this is
   // greyed until the backend tags them separately.
   { id: "lottery", label: "Lottery", c: "var(--primary)", disabled: true, title: "Coming soon — lottery wins currently appear under Stakes" },
@@ -29,7 +32,7 @@ const FILTERS: { id: string; label: string; c: string; disabled?: boolean; title
 // `cert`: if this tx is a Bearer/Pin certificate the wallet created, the type
 // and the clean intended amount (from our local record), so the row can name it
 // and show "700 DIVI" rather than the funded "700.0001".
-function Row({ t, cert }: { t: Tx; cert?: { type: "pin" | "bearer"; amount: number } }) {
+function Row({ t, cert, poeName }: { t: Tx; cert?: { type: "pin" | "bearer"; amount: number }; poeName?: string }) {
   const [copied, setCopied] = useState(false);
   // Flash the confirmation count gold each time a new confirmation lands.
   const prevConf = useRef(t.confirmations);
@@ -98,6 +101,10 @@ function Row({ t, cert }: { t: Tx; cert?: { type: "pin" | "bearer"; amount: numb
                 ? "🎟 Locked in a Bearer Certificate"
                 : "Locked in a Certificate"}
           </span>
+        ) : t.kind === "poe" ? (
+          <span className="act-kind act-poe" style={dead ? deadStyle : undefined}>
+            🔗 Proof of Existence
+          </span>
         ) : (
           <span className={"act-kind act-" + t.kind} style={dead ? deadStyle : undefined}>
             {KIND_LABEL[t.kind] ?? "Transaction"}
@@ -117,7 +124,15 @@ function Row({ t, cert }: { t: Tx; cert?: { type: "pin" | "bearer"; amount: numb
           </span>
         )}
       </div>
-      {t.address && <div className="act-addr-full">{t.address}</div>}
+      {t.kind === "poe" ? (
+        <div className="act-poe-note">
+          Timestamped {poeName ? <strong>{poeName}</strong> : "a file"} — its fingerprint is now
+          permanently recorded on the Divi blockchain. The amount is the timestamp fee; the rest of the
+          transaction was your own change coming back to you.
+        </div>
+      ) : (
+        t.address && <div className="act-addr-full">{t.address}</div>
+      )}
       <div className="act-bottom">
         <span className="act-time">
           {relTime(t.time)} ·{" "}
@@ -173,7 +188,28 @@ export function ActivityList() {
       : bearerAmt.has(txid)
         ? { type: "bearer", amount: bearerAmt.get(txid)! }
         : undefined;
-  const shown = filter === "all" ? txs : txs.filter((t) => t.kind === filter);
+  // A PoE anchor is ONE on-chain transaction, but the wallet lists it as several
+  // rows (the coins spent, the change coming back, the 0-value data output) — a
+  // confusing "sent 25,199 / received 25,199 / sent 0". Collapse every row that
+  // shares a PoE txid into a single "Proof of Existence" row whose amount is the
+  // NET cost, and name it from the local PoE history.
+  const poeMap = new Map(loadPoeHistory().map((r) => [r.txid, (r.title?.trim() || r.name || "").trim()]));
+  const display: Tx[] = [];
+  const poeAt = new Map<string, number>();
+  for (const t of txs) {
+    if (poeMap.has(t.txid)) {
+      const at = poeAt.get(t.txid);
+      if (at === undefined) {
+        poeAt.set(t.txid, display.length);
+        display.push({ ...t, kind: "poe" });
+      } else {
+        display[at] = { ...display[at], amount: display[at].amount + t.amount };
+      }
+    } else {
+      display.push(t);
+    }
+  }
+  const shown = filter === "all" ? display : display.filter((t) => t.kind === filter);
   const bad = status.state === "unreachable";
   const ok = status.state === "uptodate";
   const working = status.state === "loading" || status.state === "checking" || status.state === "parsing" || status.state === "syncing";
@@ -212,7 +248,7 @@ export function ActivityList() {
       </div>
       <ul className="activity">
         {shown.map((t, i) => (
-          <Row key={t.txid + i} t={t} cert={certOf(t.txid)} />
+          <Row key={t.txid + i} t={t} cert={certOf(t.txid)} poeName={t.kind === "poe" ? poeMap.get(t.txid) : undefined} />
         ))}
         {ok && shown.length === 0 && (
           <li className="wl-empty">{filter === "all" ? "No transactions yet." : "No matching transactions."}</li>
