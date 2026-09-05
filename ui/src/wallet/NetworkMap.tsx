@@ -12,7 +12,7 @@ import { GlobeMap, type GlobePoint, type GlobeArc } from "./GlobeMap";
 import { NewestNodesPanel } from "./NewestNodesPanel";
 import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
 import { classifyNode } from "./nodeTypes";
-import { pulseActivity, pulseTrigger, pulseHsl, pulseActiveUntil, makeLegs, legU, holdOp, pingDone, type Leg } from "./activityPulse";
+import { pulseActivity, pulseTrigger, pulseHsl, pulseIcon, pulseActiveUntil, makeLegs, legU, holdOp, pingDone, type Leg } from "./activityPulse";
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
@@ -1357,6 +1357,19 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         ctx.fillText(inst ? "INSTALLING" : "YOU", selfXY[0], selfXY[1] + r + 6);
+      }
+
+      // Map-animation icon (e.g. PoE 🔗) bobbing above the node while a pulse is
+      // active — whatever the triggering feature/app chose to show.
+      if (selfXY && now < pulseActiveUntil()) {
+        const icon = pulseIcon();
+        if (icon) {
+          const bob = Math.sin(now / 300) * 3;
+          ctx.font = "18px system-ui";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(icon, selfXY[0], selfXY[1] - 28 + bob);
+        }
       }
 
       // stake-winner sunglasses on a peer (only when the winner ISN'T the user —

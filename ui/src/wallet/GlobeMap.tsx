@@ -3,7 +3,7 @@ import Globe, { type GlobeMethods } from "react-globe.gl";
 import * as THREE from "three";
 import earthNight from "../assets/earth-night.jpg";
 import diviLogo from "../assets/divi-coin.webp";
-import { pulseTrigger, makeLegs, legU, type Leg } from "./activityPulse";
+import { pulseTrigger, pulseHsl, pulseActiveUntil, makeLegs, legU, pingDone, type Leg } from "./activityPulse";
 import { useTheme } from "../theme/ThemeProvider";
 
 // "H S% L%" (this app's HSL-triplet token format) -> a CSS hsl() string that
@@ -369,7 +369,9 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
     // Traveling gold-band color for the query ripple, as 0-1 float components
     // (computed once here, not per-frame, since `animate` runs every tick).
     const activityColor = new THREE.Color(cssHsl(mapActivityPulse));
-    const GR = activityColor.r, GG = activityColor.g, GB = activityColor.b;
+    // Mutable so a typed pulse (PoE = light blue, Send = green…) recolours the
+    // travelling band live, matching the flat map.
+    let GR = activityColor.r, GG = activityColor.g, GB = activityColor.b;
     const surfaceOf = (lat: number, lng: number) => {
       const c = g.getCoords(lat, lng, 0);
       return new THREE.Vector3(c.x, c.y, c.z);
@@ -636,6 +638,13 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
       if (trig && trig !== lastTrig) {
         lastTrig = trig;
         for (const st of streams) st.legs = makeLegs(trig);
+        // Recolour the band to this pulse's colour (light blue for PoE, etc.).
+        const pc = new THREE.Color(cssHsl(pulseHsl()));
+        GR = pc.r; GG = pc.g; GB = pc.b;
+      } else if (now < pulseActiveUntil() && streams.length && pingDone(streams[0].legs, now)) {
+        // Keep re-rippling while a transaction pulse is still in flight, so it's
+        // watchable after switching to the globe (matches the flat map).
+        for (const st of streams) st.legs = makeLegs(now);
       }
       // Gold concentration at a point `pos` (0..1 along the arc) given head `u`.
       const band = (pos: number, u: number) => (u < 0 ? 0 : Math.exp(-(((pos - u) / 0.15) * ((pos - u) / 0.15))));
