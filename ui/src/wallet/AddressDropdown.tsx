@@ -59,7 +59,16 @@ export function AddressDropdown({
   }, [open]);
 
   if (!render) return null;
-  const list = addresses ?? [];
+  const base = addresses ?? [];
+  // Safety net: any address the user has NAMED but that the node didn't return
+  // (older than the tx window, or in another account) still appears — a saved
+  // name can never disappear from this list again.
+  const known = new Set(base.map((a) => a.address));
+  const namedMissing = Object.keys(loadNames()).filter((a) => a && !known.has(a));
+  const list: AddrInfo[] = [
+    ...base,
+    ...namedMissing.map((address) => ({ address, isMain: false, receives: 0, sends: 0, stakes: 0 })),
+  ];
 
   return (
     <div
