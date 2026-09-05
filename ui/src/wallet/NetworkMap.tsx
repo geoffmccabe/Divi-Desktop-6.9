@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { networkPeers, probePeers, listNodes, type Peer, type Geo } from "./api";
+import { networkPeers, probePeers, listNodes, snapshotSourceIp, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, addMyIps, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
@@ -328,10 +328,30 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // firehose from the snapshot server ("snapshot"), thin arcs from live peers
   // ("nodes"), or none. Read by the draw loop.
   const flowModeRef = useRef<null | "snapshot" | "nodes">(null);
+  // The snapshot server's REAL [lon,lat], resolved from its IP, so the firehose
+  // starts at its actual location on the map (not a placeholder point).
+  const snapSrcRef = useRef<[number, number] | null>(null);
   // Auto-open the install panel on first run (node not set up yet).
   useEffect(() => {
     setupInfo().then((s) => { if (s.needsSetup) setSetupOpen(true); }).catch(() => {});
   }, []);
+  // Resolve the snapshot server's real geo location once the setup panel opens,
+  // so the SNAPSHOT firehose can start from its actual spot on the map.
+  useEffect(() => {
+    if (!setupOpen || snapSrcRef.current) return;
+    let alive = true;
+    (async () => {
+      try {
+        const ip = await snapshotSourceIp();
+        if (!ip) return;
+        await resolveGeos([ip], (m) => {
+          const gg = m[ip];
+          if (alive && gg && typeof gg.lon === "number") snapSrcRef.current = [gg.lon, gg.lat];
+        });
+      } catch { /* leave unresolved; firehose simply waits for a location */ }
+    })();
+    return () => { alive = false; };
+  }, [setupOpen]);
   // Cmd/Ctrl-N toggles the new-install simulator.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -864,6 +884,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         if (selfPt) nodePts.push(selfPt);
         if (s) for (const p of s.peers) { const pg = g[p.ip]; if (pg) nodePts.push(wpx(pg.lon, pg.lat)); }
         for (const [, kp] of blueNodes) nodePts.push(wpx(kp.lon, kp.lat));
+        // Keep the snapshot server in frame while its firehose is showing.
+        if (flowModeRef.current === "snapshot" && snapSrcRef.current) {
+          nodePts.push(wpx(snapSrcRef.current[0], snapSrcRef.current[1]));
+        }
         const pts: [number, number][] = [...nodePts];
         // add each arc's apex: it rises above the self→node midpoint by the (green,
         // worst-case) lift, which is in screen px — convert to world via the scale.
@@ -1275,18 +1299,25 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }
       }
 
-      // ── First-run install: red data channels pouring into the user's node.
-      // Snapshot = one heavy firehose; nodes = several thin peer channels. Drawn
-      // UNDER the node so the node + its red pulse rings sit on top.
+      // ── First-run install: red data channels pouring into the user's node
+      // from their REAL sources. SNAPSHOT = one heavy firehose from the snapshot
+      // server's actual location; NODES = a thin channel from each real connected
+      // peer. Drawn UNDER the node so the node + its red pulse rings sit on top.
       if (selfXY && flowModeRef.current) {
         if (flowModeRef.current === "snapshot") {
-          drawDataFlow(ctx, w * 0.14, h * 0.2, selfXY[0], selfXY[1], now, true);
-        } else {
-          const srcs: [number, number][] = [
-            [w * 0.12, h * 0.26], [w * 0.86, h * 0.18],
-            [w * 0.9, h * 0.6], [w * 0.2, h * 0.82], [w * 0.62, h * 0.86],
-          ];
-          for (const [sx, sy] of srcs) drawDataFlow(ctx, sx, sy, selfXY[0], selfXY[1], now, false);
+          if (snapSrcRef.current) {
+            const [sx, sy] = P(snapSrcRef.current[0], snapSrcRef.current[1]);
+            drawDataFlow(ctx, sx, sy, selfXY[0], selfXY[1], now, true);
+          }
+        } else if (s) {
+          let n = 0;
+          for (const p of s.peers) {
+            const pg = g[p.ip];
+            if (!pg) continue;
+            const [px, py] = P(pg.lon, pg.lat);
+            drawDataFlow(ctx, px, py, selfXY[0], selfXY[1], now, false);
+            if (++n >= 8) break;
+          }
         }
       }
 

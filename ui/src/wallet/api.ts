@@ -250,6 +250,9 @@ export interface Geo {
 }
 export const networkPeers = () => invoke<PeerSnapshot | null>("network_peers");
 export const geolocateIps = (ips: string[]) => invoke<Geo[]>("geolocate_ips", { ips });
+// Resolve the DIVI snapshot server's real IP (so the setup map can draw the
+// download firehose from its actual geographic location).
+export const snapshotSourceIp = () => invoke<string | null>("snapshot_source_ip");
 export const selfGeo = () => invoke<Geo | null>("self_geo");
 export interface Block {
   height: number;

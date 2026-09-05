@@ -271,6 +271,23 @@ async fn setup_info() -> serde_json::Value {
         .unwrap_or_else(|_| dd69_supervisor::setup::SetupInfo::default().to_json())
 }
 
+/// Resolve the DIVI snapshot server's real IP, so the setup map can draw the
+/// download firehose from its actual geographic location (not a made-up point).
+#[tauri::command]
+async fn snapshot_source_ip() -> Option<String> {
+    use std::net::ToSocketAddrs;
+    tauri::async_runtime::spawn_blocking(|| {
+        ("snapshots.diviproject.org", 443u16)
+            .to_socket_addrs()
+            .ok()
+            .and_then(|mut it| it.next())
+            .map(|a| a.ip().to_string())
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Proof of existence: anchor a document's SHA-256 hash on-chain. The UI hashes
 /// the file locally (Web Crypto) and passes only the hash, so the document never
 /// leaves the machine. Returns the anchoring transaction id.
@@ -2490,6 +2507,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             node_status,
             setup_info,
+            snapshot_source_ip,
             recent_blocks,
             price_history,
             c2pa_inspect,
