@@ -32,6 +32,9 @@ export interface PoeRecord {
   project?: string;
   /** The user's own name for this item, independent of the filename. */
   title?: string;
+  /** Perceptual hash (dHash) for "Close Match" — recognises resized/recompressed
+   *  copies. Images only; absent for older records and non-images. */
+  phash?: string;
   /** When this wallet broadcast the anchor. */
   createdAt: number;
   /** Block time once confirmed: this is the value the proof actually rests on. */

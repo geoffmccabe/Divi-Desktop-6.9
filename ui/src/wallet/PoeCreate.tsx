@@ -6,6 +6,7 @@ import { fetchPrices } from "./value";
 import { addPoeRecord, makeThumb, markPoeConfirmed, poeProjects, PUBLIC_THUMB_MAX } from "./poeHistory";
 import { getPoePayout, splitForAnchor } from "./poePayout";
 import { pulse } from "./activityPulse";
+import { phashFromFile } from "./phash";
 
 // Create tab: pick a file, see it, anchor its fingerprint on the chain.
 // The file never leaves the machine: only the SHA-256 goes out.
@@ -62,6 +63,7 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
 
   // Price per DIVI in USD, used to quote the anchor cost.
   const [usdPerDivi, setUsdPerDivi] = useState<number | null>(null);
+  const [phash, setPhash] = useState<string | null>(null); // perceptual hash for Close Match
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -148,6 +150,7 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
       setPreview(null);
     }
     setHash(await sha256Hex(f));
+    setPhash(f.type.startsWith("image/") ? await phashFromFile(f) : null);
   }
 
   async function anchor(passphrase?: string) {
@@ -195,6 +198,7 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
         width: dims?.w,
         height: dims?.h,
         thumb: await makeThumb(file),
+        phash: phash ?? undefined,
         publicThumb: sharePreview ? await makeThumb(file, PUBLIC_THUMB_MAX) : undefined,
         project: project.trim() || undefined,
         title: title.trim() || undefined,

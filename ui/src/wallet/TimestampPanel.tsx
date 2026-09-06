@@ -3,6 +3,7 @@ import { PoeCreate } from "./PoeCreate";
 import { PoeHistoryTab } from "./PoeHistoryTab";
 import { C2paInspect } from "./C2paInspect";
 import { PoeGalleryTab } from "./PoeGalleryTab";
+import { PoeMatchTool } from "./PoeMatchTool";
 import "./poe.css";
 import { PoeVerify } from "./PoeVerify";
 import { PoeInfoModal } from "./PoeInfoModal";
@@ -14,7 +15,7 @@ import { loadPoeHistory, type PoeRecord } from "./poeHistory";
 // and only the 32-byte fingerprint is written to the chain, so nobody can read
 // the file from the blockchain, only confirm a hash matches.
 
-type Tab = "create" | "history" | "verify" | "credentials" | "gallery";
+type Tab = "create" | "history" | "verify" | "match" | "credentials" | "gallery";
 
 export function TimestampPanel() {
   const [tab, setTab] = useState<Tab>("create");
@@ -79,6 +80,14 @@ export function TimestampPanel() {
           Verify
         </button>
         <button
+          className={"poe-tab" + (tab === "match" ? " poe-tab-on" : "")}
+          onClick={() => setTab("match")}
+          role="tab"
+          aria-selected={tab === "match"}
+        >
+          Find Matches
+        </button>
+        <button
           className={"poe-tab" + (tab === "credentials" ? " poe-tab-on" : "")}
           onClick={() => setTab("credentials")}
           role="tab"
@@ -108,6 +117,7 @@ export function TimestampPanel() {
         </div>
         {tab === "history" && <PoeHistoryTab onVerify={openVerify} />}
         {tab === "verify" && <PoeVerify prefill={prefill} />}
+        {tab === "match" && <PoeMatchTool />}
         {tab === "credentials" && <C2paInspect />}
         {tab === "gallery" && <PoeGalleryTab />}
       </section>
