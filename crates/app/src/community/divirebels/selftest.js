@@ -29,7 +29,7 @@
     Game.mode = "play"; Game.wave = 1; Game.loop = 1; Game.score = 0; Game.shield = 6;
     Game.target = 999; Game.progress = 0; clearWorld();
     Game.px = 0; Game.py = 0; Game.vx = 0; Game.vy = 0;
-    Input.aimX = 0; Input.aimY = 0; Input.firing = true;
+    Aim.x = 0; Aim.y = 0; Input.firing = true;
     const mark = { x: 0, y: 0, z: 600, phase: 0, speed: 0, hp: 1, kind: "int",
                    scale: 16, roll: 0, rollv: 0, fireAt: 1e9 };
     W.enemies.push(mark);
@@ -49,7 +49,7 @@
 
     // 3. incoming fire
     clearWorld(); Input.firing = false; Game.shield = 6; Game.px = 0; Game.py = 0;
-    Input.aimX = 0; Input.aimY = 0;
+    Aim.x = 0; Aim.y = 0;
     W.fire.push({ x: 0, y: 0, z: 300, vx: 0, vy: 0, vz: -600, life: 4 });
     step(60, 1/60);
     ok("incoming fire hurts", Game.shield === 5, "shield " + Game.shield);
@@ -61,7 +61,7 @@
 
     // 4. shooting down an incoming shot
     clearWorld(); Game.shield = 6; Game.score = 0; Input.firing = true;
-    Game.px = 0; Game.py = 0; Input.aimX = 0; Input.aimY = 0;
+    Game.px = 0; Game.py = 0; Aim.x = 0; Aim.y = 0;
     const shot = { x: 0, y: 0, z: 500, vx: 0, vy: 0, vz: -120, life: 8 };
     W.fire.push(shot);
     step(90, 1/60, () => { W.enemies.length = 0; });
@@ -78,7 +78,7 @@
     Game.mode = "play"; Game.wave = 2; Game.shield = 6; Game.score = 0;
     Game.target = 3000; Game.progress = 0; clearWorld();
     Game.py = TR_FLOOR + 60; Game.px = 0; Game.vx = 0; Game.vy = 0;
-    Input.aimX = 0; Input.aimY = TR_FLOOR + 60; Input.firing = true;
+    Aim.x = 0; Aim.y = TR_FLOOR + 60; Input.firing = true;
     const tw = { x: 0, z: 700, h: 120, gun: false, alive: true, fireAt: 1e9 };
     W.towers.push(tw);
     step(120, 1/60);
@@ -98,7 +98,7 @@
     W.bars.length = 0; W.turrets.length = 0;
     W.port.z = 800;
     Game.px = 0; Game.py = TR_FLOOR + 26; Game.vx = 0; Game.vy = 0;
-    Input.aimX = 0; Input.aimY = TR_FLOOR + 26; Input.firing = true;
+    Aim.x = 0; Aim.y = TR_FLOOR + 26; Input.firing = true;
     let guard = 0;
     while (Game.mode === "play" && guard++ < 400) step(1, 1/60);
     ok("the port can be destroyed", Game.mode === "clear", "mode " + Game.mode);
@@ -106,14 +106,14 @@
     // 9. flying into a catwalk costs a shield
     Game.mode = "play"; Game.wave = 3; Game.shield = 6; Game.progress = 0;
     clearWorld(); Input.firing = false;
-    Game.py = 0; Game.px = 0; Game.vx = 0; Game.vy = 0; Input.aimX = 0; Input.aimY = 0;
+    Game.py = 0; Game.px = 0; Game.vx = 0; Game.vy = 0; Aim.x = 0; Aim.y = 0;
     W.bars.push({ kind: "h", z: 300, y: 0, thick: 14 });
     step(90, 1/60);
     ok("hitting a catwalk hurts", Game.shield === 5, "shield " + Game.shield);
 
     // 10. and flying through the gap does not
     Game.mode = "play"; Game.shield = 6; clearWorld();
-    Game.py = TR_ROOF - 20; Input.aimY = TR_ROOF - 20;
+    Game.py = TR_ROOF - 16; Aim.y = AIM_Y;
     W.bars.push({ kind: "h", z: 300, y: TR_FLOOR + 20, thick: 14 });
     step(90, 1/60);
     ok("clearing a catwalk does not", Game.shield === 6, "shield " + Game.shield);
