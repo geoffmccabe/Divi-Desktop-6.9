@@ -5,6 +5,10 @@ import { hexToHslTriplet, hslTripletToHex } from "../../theme/color";
 import { playSound, type SoundEvent } from "../../sound";
 import { Icon } from "../../Icon";
 import { iconFileToTokenValue, textureFileToTokenValue } from "../../theme/upload";
+import type { SavedTheme } from "../../theme/store";
+import { publishSkin } from "../../theme/gallery/api";
+import { invoke } from "../../tauri";
+import { loadIdentity } from "../../wallet/nodeIdentity";
 
 function Control({ token }: { token: TokenDef }) {
   const { theme, setToken } = useTheme();
@@ -144,6 +148,130 @@ function UploadControl({
   );
 }
 
+// Inline "Publish to Gallery" form for one saved theme. Expands under its row
+// in "My themes" rather than a separate modal, matching the panel's existing
+// inline-row style. The publishing wallet's own address is what makes a
+// listing "yours" — there is no login system to attach it to instead.
+function PublishControl({ theme }: { theme: SavedTheme }) {
+  const [open, setOpen] = useState(false);
+  const [address, setAddress] = useState<string | null>(null);
+  const [addrErr, setAddrErr] = useState("");
+  const [description, setDescription] = useState("");
+  const [isFree, setIsFree] = useState(true);
+  const [priceDivi, setPriceDivi] = useState("");
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const onOpen = async () => {
+    setOpen(true);
+    if (address || addrErr) return;
+    try {
+      const a = await invoke<string | null>("signing_address");
+      if (!a) throw new Error("No signing address — is the node reachable?");
+      setAddress(a);
+    } catch (ex) {
+      setAddrErr(ex instanceof Error ? ex.message : "Couldn't read the wallet's address");
+    }
+  };
+
+  const onPickPreview = (e: ChangeEvent<HTMLInputElement>) => {
+    setPreviewFile(e.target.files?.[0] ?? null);
+  };
+
+  const onPublish = async () => {
+    if (!address) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const saved = await publishSkin({
+        name: theme.name,
+        description,
+        tokens: theme.tokens,
+        isFree,
+        priceDivi: parseFloat(priceDivi) || 0,
+        authorAddress: address,
+        authorName: loadIdentity().name || null,
+        previewFile,
+      });
+      setDone(saved.slug);
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "Publish failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button type="button" className="style-btn" onClick={onOpen}>
+        Publish
+      </button>
+    );
+  }
+
+  if (done) {
+    return <p className="style-note">Published “{theme.name}” to the Skins Gallery.</p>;
+  }
+
+  return (
+    <div className="style-publish-form">
+      <p className="style-note">
+        {address ? `Publishing as ${address}` : addrErr || "Reading wallet address…"}
+      </p>
+      <textarea
+        className="style-name"
+        placeholder="Describe this skin…"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={2}
+      />
+      <label className="style-row">
+        <span>Preview image</span>
+        <span className="style-upload">
+          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onPickPreview} />
+          <button type="button" className="style-btn" onClick={() => fileRef.current?.click()}>
+            {previewFile ? previewFile.name : "Choose image"}
+          </button>
+        </span>
+      </label>
+      <label className="style-row">
+        <span>Free</span>
+        <input type="checkbox" checked={isFree} onChange={(e) => setIsFree(e.target.checked)} />
+      </label>
+      {!isFree && (
+        <label className="style-row">
+          <span>Price (DIVI)</span>
+          <input
+            className="style-name"
+            type="number"
+            min="0"
+            step="0.01"
+            value={priceDivi}
+            onChange={(e) => setPriceDivi(e.target.value)}
+          />
+        </label>
+      )}
+      {err && <p className="style-note style-upload-err">{err}</p>}
+      <div className="style-save">
+        <button type="button" className="style-btn" onClick={() => setOpen(false)} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="style-btn style-btn-primary"
+          disabled={busy || !address || !theme.name.trim()}
+          onClick={onPublish}
+        >
+          {busy ? "Publishing…" : "Publish to Gallery"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function StylePanel() {
   const { reset, saved, saveCurrent, applySaved, deleteSaved, builtinSkins, applySkin } = useTheme();
   const [name, setName] = useState("");
@@ -217,10 +345,11 @@ export function StylePanel() {
         {saved.length > 0 && (
           <ul className="style-saved">
             {saved.map((s) => (
-              <li key={s.id}>
+              <li key={s.id} className="style-saved-row">
                 <button type="button" className="style-apply" onClick={() => applySaved(s.id)}>
                   {s.name}
                 </button>
+                <PublishControl theme={s} />
                 <button type="button" className="style-del" aria-label="Delete" onClick={() => deleteSaved(s.id)}>
                   ✕
                 </button>
