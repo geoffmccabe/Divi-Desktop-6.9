@@ -19,6 +19,27 @@ export async function nodeStatus(): Promise<NodeStatus> {
   };
 }
 
+// First-run setup detection: which track the user is on and what DD2.0 data
+// we could reuse. Read-only.
+export type SetupInfo = {
+  track: "new" | "dd2" | "ready";
+  needsSetup: boolean;
+  dd69HasChain: boolean;
+  dd2HasChain: boolean;
+  dd2HasWallet: boolean;
+  dd2ChainGb: number;
+  sameVolume: boolean;
+};
+
+export async function setupInfo(): Promise<SetupInfo> {
+  if (inApp()) return invoke<SetupInfo>("setup_info");
+  // Browser dev: pretend a fresh new-user install so the panel is previewable.
+  return {
+    track: "new", needsSetup: true, dd69HasChain: false,
+    dd2HasChain: false, dd2HasWallet: false, dd2ChainGb: 0, sameVolume: false,
+  };
+}
+
 // Try to (re)start the local node — re-runs the idempotent bring-up.
 export async function restartNode(): Promise<void> {
   if (inApp()) await invoke<void>("restart_node");

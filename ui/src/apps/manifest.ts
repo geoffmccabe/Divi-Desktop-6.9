@@ -37,14 +37,19 @@ export interface AppManifest {
   permissions: PermissionKey[];
   network: string[];
   display?: { immersive?: ImmersiveMode; minWidth?: number };
+  // The app's declared network-map animation: colour + timing + optional icon.
+  // Used as the default when the app calls the map.animate capability.
+  mapPulse?: { hsl: string; durationMs: number; icon?: string; label?: string };
   media: { thumbnail: string; showcase?: Showcase };
   price: Price;
 }
 
 const TOP_LEVEL_FIELDS = new Set([
   "schema", "id", "name", "version", "author", "description",
-  "permissions", "network", "display", "media", "price",
+  "permissions", "network", "display", "mapPulse", "media", "price",
 ]);
+// A strict "H S% L%" HSL triple for a manifest-declared map colour.
+const HSL_TRIPLE_RE = /^\d{1,3}\s+\d{1,3}%\s+\d{1,3}%$/;
 
 // Reverse-domain style, lowercase. This is the storage namespace, the
 // entitlement key and the revocation handle, so it must be tightly shaped.
@@ -222,6 +227,21 @@ export function parseManifest(input: unknown): AppManifest {
     display = { immersive: immersive as ImmersiveMode, minWidth };
   }
 
+  let mapPulse: AppManifest["mapPulse"];
+  if (o.mapPulse !== undefined) {
+    if (typeof o.mapPulse !== "object" || o.mapPulse === null) fail("mapPulse must be an object");
+    const m = o.mapPulse as Record<string, unknown>;
+    if (typeof m.hsl !== "string" || !HSL_TRIPLE_RE.test(m.hsl.trim())) {
+      fail('mapPulse.hsl must be an "H S% L%" triple, e.g. "200 90% 62%"');
+    }
+    if (typeof m.durationMs !== "number" || m.durationMs < 500 || m.durationMs > 15000) {
+      fail("mapPulse.durationMs must be between 500 and 15000");
+    }
+    const icon = m.icon === undefined ? undefined : str(m.icon, "mapPulse.icon", 4);
+    const label = m.label === undefined ? undefined : str(m.label, "mapPulse.label", 40);
+    mapPulse = { hsl: (m.hsl as string).trim(), durationMs: m.durationMs, icon, label };
+  }
+
   return {
     schema: SCHEMA_VERSION,
     id,
@@ -232,6 +252,7 @@ export function parseManifest(input: unknown): AppManifest {
     permissions,
     network,
     display,
+    mapPulse,
     media: { thumbnail, showcase },
     price,
   };

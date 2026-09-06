@@ -157,7 +157,7 @@ export function MarketMakerControl({ exchanges, onConfig, hasOrders }: { exchang
 
           <div className="mmc-actions">
             {!running ? (
-              <button type="button" className="wl-btn" disabled={busy || !liveSupported} onClick={start}>
+              <button type="button" className="wl-btn mmc-start" disabled={busy || !liveSupported} onClick={start}>
                 {busy ? "…" : "Start"}
               </button>
             ) : (

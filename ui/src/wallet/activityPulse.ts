@@ -12,8 +12,87 @@
 let start = 0; // performance.now() when the ripple began
 const TOTAL_MS = 4000;
 
-export function pulseActivity(): void {
+// ── The map-animation module ───────────────────────────────────────────────
+// A single source of truth for "what the network map should be animating right
+// now". ANY feature — built-in (PoE, Send, staking) OR a user-built app — calls
+// `pulse(spec)` to trigger a ripple in its own colour, for its own duration,
+// optionally with an icon shown on the map. Both maps (flat + globe) READ the
+// current state via the getters below and render it. This keeps the data flow
+// one-directional and modular: producers call pulse(); consumers read getters.
+//
+// A spec is fully self-describing, so it is NOT limited to a fixed enum — a user
+// app supplies its own {hsl, durationMs, icon, label}. Built-in features look up
+// a named PRESET for convenience.
+export interface MapPulseSpec {
+  /** Colour as an HSL triple, e.g. "200 90% 62%". */
+  hsl: string;
+  /** How long the map keeps re-rippling (ms). */
+  durationMs: number;
+  /** Optional glyph/emoji shown at the node while active (e.g. "🔗"). */
+  icon?: string;
+  /** Optional short label (e.g. "Proof of Existence"), for a future map caption. */
+  label?: string;
+  /** Where it came from, for debugging/future filtering. */
+  kind?: string;
+}
+
+// Named presets for built-in features. Unknown names fall back to "generic", so
+// a user app that passes only {hsl,...} still works.
+const PRESETS: Record<string, MapPulseSpec> = {
+  generic: { hsl: "45 100% 55%", durationMs: 4000, kind: "generic" }, // gold (original)
+  staking: { hsl: "45 100% 55%", durationMs: 4000, icon: "⚡", label: "Staking", kind: "staking" },
+  poe: { hsl: "200 90% 62%", durationMs: 14000, icon: "🔗", label: "Proof of Existence", kind: "poe" },
+  send: { hsl: "150 80% 52%", durationMs: 14000, icon: "💸", label: "Send", kind: "send" },
+};
+
+let current: MapPulseSpec = PRESETS.generic;
+let activeUntil = 0; // performance.now() until which the maps keep re-rippling
+
+/** Options for triggering a pulse: a preset `type`, and/or any explicit fields
+ *  that override it. A user app typically passes {hsl, durationMs, icon, label}. */
+export interface PulseOpts {
+  type?: string; // a preset key ("poe" | "send" | "staking" | "generic") or omitted
+  hsl?: string;
+  durationMs?: number;
+  icon?: string;
+  label?: string;
+}
+
+/** Trigger the map animation. Resolves a preset by `type`, then applies any
+ *  explicit overrides. This is the ONE entry point every feature/app uses. */
+export function pulse(opts: PulseOpts = {}): void {
+  const base = PRESETS[opts.type ?? "generic"] ?? PRESETS.generic;
+  current = {
+    hsl: opts.hsl ?? base.hsl,
+    durationMs: opts.durationMs ?? base.durationMs,
+    icon: opts.icon ?? base.icon,
+    label: opts.label ?? base.label,
+    kind: opts.type ?? base.kind ?? "custom",
+  };
   start = performance.now();
+  activeUntil = start + current.durationMs;
+}
+
+/** Backward-compatible: the old parameterless trigger = a generic gold ripple. */
+export function pulseActivity(): void {
+  pulse();
+}
+
+/** The full spec of the current/most-recent pulse (colour, icon, label, kind). */
+export function pulseSpec(): MapPulseSpec {
+  return current;
+}
+/** Active pulse colour as an HSL triple "H S% L%", for both maps to tint with. */
+export function pulseHsl(): string {
+  return current.hsl;
+}
+/** Icon to show at the node while a pulse is active, if the trigger set one. */
+export function pulseIcon(): string | undefined {
+  return current.icon;
+}
+/** performance.now() until which a pulse should keep re-rippling. */
+export function pulseActiveUntil(): number {
+  return activeUntil;
 }
 
 export interface Pulse {

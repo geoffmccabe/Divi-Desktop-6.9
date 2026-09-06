@@ -35,6 +35,9 @@ pub struct BearerStatus {
     pub funded: bool,
     pub claimed: bool,
     pub value: f64,
+    /// What the redeemer actually receives (value minus the sweep fee). This is
+    /// the number to show, since the sender already covered the fee.
+    pub receivable: f64,
     pub confirmations: i64,
 }
 
@@ -72,9 +75,13 @@ fn decode_code(code: &str) -> Result<Decoded, String> {
 /// fresh node-owned address; the code carries that address's key plus the exact
 /// output to sweep, so a claimer needs no address index to find it.
 pub fn create(cfg: &NodeConfig, amount: f64, passphrase: Option<&str>) -> Result<BearerCreated, String> {
-    if amount <= SWEEP_FEE {
-        return Err(format!("Amount must be more than {SWEEP_FEE} DIVI."));
+    if amount <= 0.0 {
+        return Err("Amount must be greater than zero.".into());
     }
+    // Sender pays the fee. We fund the code with amount + the sweep fee, so that
+    // after the claimer's sweep takes SWEEP_FEE the RECEIVER gets the full
+    // `amount`. `amount` (what the receiver gets) is what we display and encode.
+    let funded = round8(amount + SWEEP_FEE);
     let rpc = RpcClient::new(cfg);
 
     if let Some(pass) = passphrase {
@@ -94,7 +101,7 @@ pub fn create(cfg: &NodeConfig, amount: f64, passphrase: Option<&str>) -> Result
             .ok_or("node did not return a key")?
             .to_string();
         let txid = rpc
-            .call("sendtoaddress", json!([address, amount]))?
+            .call("sendtoaddress", json!([address, funded]))?
             .as_str()
             .ok_or("node did not return a transaction id")?
             .to_string();
@@ -164,12 +171,14 @@ pub fn status(cfg: &NodeConfig, code: &str) -> Result<BearerStatus, String> {
     let utxo = rpc.call("gettxout", json!([d.txid, d.vout, true]))?;
     if utxo.is_null() {
         // Spent (claimed/reclaimed) or the funding never confirmed/propagated.
-        return Ok(BearerStatus { funded: false, claimed: true, value: 0.0, confirmations: 0 });
+        return Ok(BearerStatus { funded: false, claimed: true, value: 0.0, receivable: 0.0, confirmations: 0 });
     }
+    let value = utxo["value"].as_f64().unwrap_or(0.0);
     Ok(BearerStatus {
         funded: true,
         claimed: false,
-        value: utxo["value"].as_f64().unwrap_or(0.0),
+        value,
+        receivable: round8((value - SWEEP_FEE).max(0.0)),
         confirmations: utxo["confirmations"].as_i64().unwrap_or(0),
     })
 }

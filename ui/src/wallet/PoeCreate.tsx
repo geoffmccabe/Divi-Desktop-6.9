@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { createPortal } from "react-dom";
-import { poeTimestamp, poeVerify } from "./api";
+import { poeTimestamp, poeVerify, walletStatus, priceLatest } from "./api";
+import { getAskMode } from "./securityPrefs";
 import { fetchPrices } from "./value";
 import { addPoeRecord, makeThumb, markPoeConfirmed, poeProjects, PUBLIC_THUMB_MAX } from "./poeHistory";
 import { getPoePayout, splitForAnchor } from "./poePayout";
+import { pulse } from "./activityPulse";
+import { phashFromFile } from "./phash";
 
 // Create tab: pick a file, see it, anchor its fingerprint on the chain.
 // The file never leaves the machine: only the SHA-256 goes out.
@@ -39,6 +42,13 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [confirmedAt, setConfirmedAt] = useState<number | null>(null);
+  // Inline unlock: anchoring signs a fee transaction, so an encrypted-locked
+  // wallet needs a password. askPass = show the glowing unlock button; passOpen
+  // = the password field is revealed; passErr = a wrong-password retry message.
+  const [askPass, setAskPass] = useState(false);
+  const [passOpen, setPassOpen] = useState(false);
+  const [pass, setPass] = useState("");
+  const [passErr, setPassErr] = useState<string | null>(null);
   // Full-size view of the chosen image, opened by double-clicking the preview.
   const [zoom, setZoom] = useState(false);
   // How the user files this proof. The chain can't remember any of it, so this
@@ -53,14 +63,26 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
 
   // Price per DIVI in USD, used to quote the anchor cost.
   const [usdPerDivi, setUsdPerDivi] = useState<number | null>(null);
+  const [phash, setPhash] = useState<string | null>(null); // perceptual hash for Close Match
   const pollRef = useRef<number | null>(null);
 
   useEffect(() => {
     let alive = true;
-    fetchPrices()
-      .then((p) => alive && setUsdPerDivi(p.prices?.usd ?? null))
+    // Price the fee from the SHARED CMC feed (server-side, no per-user API key),
+    // so $0.20 converts to DIVI the same for everyone. Fall back to the per-user
+    // price source only if the shared feed is unavailable.
+    priceLatest()
+      .then((usd) => {
+        if (!alive) return;
+        if (usd && usd > 0) { setUsdPerDivi(usd); return; }
+        return fetchPrices().then((p) => alive && setUsdPerDivi(p.prices?.usd ?? null));
+      })
       .catch(() => {
-        /* quote falls back to "cost unavailable" */
+        fetchPrices()
+          .then((p) => alive && setUsdPerDivi(p.prices?.usd ?? null))
+          .catch(() => {
+            /* quote falls back to "cost unavailable" */
+          });
       });
     return () => {
       alive = false;
@@ -128,12 +150,28 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
       setPreview(null);
     }
     setHash(await sha256Hex(f));
+    setPhash(f.type.startsWith("image/") ? await phashFromFile(f) : null);
   }
 
-  async function anchor() {
+  async function anchor(passphrase?: string) {
     if (!hash || !file) return;
+    // If the wallet is encrypted+locked and we don't have a password yet, show
+    // the unlock button instead of failing with a dead-end error.
+    if (!passphrase) {
+      try {
+        const st = await walletStatus();
+        if (st.encrypted && !(getAskMode() === "open" && st.unlocked)) {
+          setAskPass(true);
+          setPassErr(null);
+          return;
+        }
+      } catch {
+        /* couldn't read status; just attempt and let the catch below handle it */
+      }
+    }
     setBusy(true);
     setErr(null);
+    setPassErr(null);
     setConfirmedAt(null);
     try {
       const id = await poeTimestamp(
@@ -141,8 +179,14 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
         split?.feeDivi ?? null,
         payout.address,
         split?.payoutDivi ?? null,
+        passphrase ?? null,
       );
       setTxid(id);
+      setAskPass(false);
+      setPassOpen(false);
+      setPass("");
+      // The anchor just broadcast to the network — light-blue ripple on the map.
+      pulse({ type: "poe" });
       // Record it locally so the History tab can show what this proof was FOR;
       // the chain only ever knows the fingerprint.
       const stored = addPoeRecord({
@@ -154,6 +198,7 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
         width: dims?.w,
         height: dims?.h,
         thumb: await makeThumb(file),
+        phash: phash ?? undefined,
         publicThumb: sharePreview ? await makeThumb(file, PUBLIC_THUMB_MAX) : undefined,
         project: project.trim() || undefined,
         title: title.trim() || undefined,
@@ -169,7 +214,15 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
         );
       }
     } catch (e) {
-      setErr(String(e));
+      const msg = String(e);
+      // A locked wallet (RPC -13) surfaces as "…locked — unlock it first."
+      if (/lock/i.test(msg)) {
+        setAskPass(true);
+        setPassOpen(true);
+        setPassErr(passphrase ? "That password didn't work. Try again." : null);
+      } else {
+        setErr(msg);
+      }
     }
     setBusy(false);
   }
@@ -252,21 +305,52 @@ export function PoeCreate({ onFileState }: { onFileState: (hasFile: boolean) => 
                 </label>
               )}
             </div>
-            <button className="wl-btn wl-btn-primary ts-anchor" disabled={busy} onClick={anchor}>
-              {busy ? (
-                "Anchoring…"
+            {askPass ? (
+              !passOpen ? (
+                <button
+                  type="button"
+                  className="wl-btn ts-unlock-glow"
+                  onClick={() => { setPassOpen(true); setPassErr(null); }}
+                >
+                  🔒 ENTER WALLET PASSWORD TO CONFIRM
+                </button>
               ) : (
-                <>
-                  <span>Timestamp this file</span>
-                  <span className="ts-cost">
-                    {split
-                      ? `${split.totalDivi.toLocaleString(undefined, { maximumFractionDigits: 0 })} DIVI` +
-                        (payout.address.trim() ? ` ≈ $${payout.targetUsd.toFixed(2)}` : "")
-                      : "cost unavailable"}
-                  </span>
-                </>
-              )}
-            </button>
+                <form
+                  className="ts-unlock-form"
+                  onSubmit={(e) => { e.preventDefault(); if (pass) anchor(pass); }}
+                >
+                  <input
+                    className="wl-input"
+                    type="password"
+                    placeholder="Wallet password"
+                    value={pass}
+                    disabled={busy}
+                    autoFocus
+                    onChange={(e) => setPass(e.target.value)}
+                  />
+                  <button type="submit" className="wl-btn ts-unlock-glow" disabled={busy || !pass}>
+                    {busy ? "Confirming…" : "Confirm & Timestamp"}
+                  </button>
+                </form>
+              )
+            ) : (
+              <button className="wl-btn wl-btn-primary ts-anchor" disabled={busy} onClick={() => anchor()}>
+                {busy ? (
+                  "Anchoring…"
+                ) : (
+                  <>
+                    <span>Timestamp this file</span>
+                    <span className="ts-cost">
+                      {split
+                        ? `${split.totalDivi.toLocaleString(undefined, { maximumFractionDigits: 0 })} DIVI` +
+                          (payout.address.trim() ? ` ≈ $${payout.targetUsd.toFixed(2)}` : "")
+                        : "cost unavailable"}
+                    </span>
+                  </>
+                )}
+              </button>
+            )}
+            {passErr && <p className="wl-err ts-passerr">{passErr}</p>}
             <p className="wl-note ts-costnote">
               {/* Never imply a price we haven't actually priced. */}
               {!split

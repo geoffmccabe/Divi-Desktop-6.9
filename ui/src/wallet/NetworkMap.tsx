@@ -12,10 +12,12 @@ import { GlobeMap, type GlobePoint, type GlobeArc } from "./GlobeMap";
 import { NewestNodesPanel } from "./NewestNodesPanel";
 import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
 import { classifyNode } from "./nodeTypes";
-import { pulseActivity, pulseTrigger, makeLegs, legU, holdOp, pingDone, type Leg } from "./activityPulse";
+import { pulseActivity, pulseTrigger, pulseHsl, pulseIcon, pulseActiveUntil, makeLegs, legU, holdOp, pingDone, type Leg } from "./activityPulse";
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
+import { InstallPanel, type InstallState } from "./setup/InstallPanel";
+import { setupInfo } from "../bridge";
 import worldmap from "../assets/worldmap.json";
 
 // A live map of the peers this node is connected to. At boot it centers on you
@@ -60,6 +62,62 @@ function upArc(sx: number, sy: number, px: number, py: number, mult = 1): (u: nu
     const v = 1 - u;
     return [v * v * sx + 2 * v * u * cx + u * u * px, v * v * sy + 2 * v * u * cy + u * u * py];
   };
+}
+
+// Draw ONE red "data channel" arc from a source (snapshot server or a peer) to
+// the user's node, with hex glyphs + arrowheads streaming inward. "snapshot" =
+// thick firehose, dense/fast; "nodes" = thin, sparser/slower. Reuses upArc().
+const HEXCH = "0123456789abcdef";
+function drawDataFlow(
+  ctx: CanvasRenderingContext2D,
+  sx: number, sy: number, dx: number, dy: number,
+  now: number, big: boolean,
+) {
+  const bez = upArc(sx, sy, dx, dy, 0.5);
+  ctx.save();
+  ctx.lineCap = "round";
+  // the channel itself (glowing red)
+  ctx.strokeStyle = `hsl(0 88% 47% / ${big ? 0.55 : 0.4})`;
+  ctx.lineWidth = big ? 5 : 2;
+  ctx.shadowColor = "hsl(0 92% 55% / 0.85)";
+  ctx.shadowBlur = big ? 16 : 7;
+  ctx.beginPath();
+  const STEPS = 44;
+  for (let i = 0; i <= STEPS; i++) { const [x, y] = bez(i / STEPS); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+  // streaming hex glyphs, flowing source -> node
+  const count = big ? 26 : 8;
+  const speed = big ? 0.00055 : 0.00028; // u per ms
+  const fpx = big ? 11 : 9;
+  ctx.font = `bold ${fpx}px ui-monospace, Menlo, monospace`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (let k = 0; k < count; k++) {
+    const u = (now * speed + k / count) % 1;
+    const [x, y] = bez(u);
+    const ch = HEXCH[(Math.floor(now / 60) + k * 7) & 15];
+    const fade = Math.sin(u * Math.PI); // dim at the ends, bright in the middle
+    ctx.fillStyle = `hsl(0 92% ${big ? 70 : 62}% / ${0.3 + 0.65 * fade})`;
+    ctx.fillText(ch, x, y);
+  }
+  // arrowhead chevrons racing toward the node
+  const arrows = big ? 4 : 2;
+  ctx.strokeStyle = "hsl(0 92% 64% / 0.9)";
+  ctx.lineWidth = big ? 2.5 : 1.5;
+  for (let a = 0; a < arrows; a++) {
+    const u = (now * speed * 1.1 + a / arrows) % 1;
+    const [x, y] = bez(u);
+    const [x2, y2] = bez(Math.min(1, u + 0.02));
+    const ang = Math.atan2(y2 - y, x2 - x);
+    const s = big ? 7 : 4;
+    ctx.beginPath();
+    ctx.moveTo(x - Math.cos(ang - 0.5) * s, y - Math.sin(ang - 0.5) * s);
+    ctx.lineTo(x, y);
+    ctx.lineTo(x - Math.cos(ang + 0.5) * s, y - Math.sin(ang + 0.5) * s);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 // Time-based label visibility: each peer's label appears for `visibleMs` on a
@@ -256,6 +314,50 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // One overlay panel at a time, chosen from the hamburger menu (all top-right).
   const [panel, setPanel] = useState<null | "country" | "mempool" | "newest" | "speed">(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // First-run install side-panel. Opens automatically when the node still needs
+  // setting up; also openable from the menu to preview/re-run. installingRef is
+  // read by the draw loop to flash the user's own node red while setting up.
+  const [setupOpen, setSetupOpen] = useState(false);
+  // Cmd/Ctrl-N: developer simulator. Pretends this is a brand-new install (no
+  // blockchain) and plays the whole setup sequence, WITHOUT touching the real
+  // wallet/node or downloading anything. Press again to exit — nothing real was
+  // created, so there is nothing to clean up.
+  const [simulateNew, setSimulateNew] = useState(false);
+  const installingRef = useRef(false);
+  // Which data-flow animation the map should draw while setting up: a thick
+  // firehose from the snapshot server ("snapshot"), thin arcs from live peers
+  // ("nodes"), or none. Read by the draw loop.
+  const flowModeRef = useRef<null | "snapshot" | "nodes">(null);
+  // The snapshot server's REAL [lon,lat], resolved from its IP, so the firehose
+  // starts at its actual location on the map (not a placeholder point).
+  const snapSrcRef = useRef<[number, number] | null>(null);
+  // Auto-open the install panel on first run (node not set up yet).
+  useEffect(() => {
+    setupInfo().then((s) => { if (s.needsSetup) setSetupOpen(true); }).catch(() => {});
+  }, []);
+  // The snapshot server sits behind Cloudflare, so its public IP geolocates to a
+  // Cloudflare edge (Canada), NOT the real origin. So we hard-set the true origin
+  // location: the fasthosts node in London. (If the server ever moves, update
+  // this one coordinate.)
+  useEffect(() => {
+    snapSrcRef.current = [-0.1278, 51.5074]; // London
+  }, []);
+  // Cmd/Ctrl-N toggles the new-install simulator.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "n" || e.key === "N")) {
+        e.preventDefault();
+        setSimulateNew((on) => {
+          const next = !on;
+          setSetupOpen(next);
+          if (!next) { installingRef.current = false; flowModeRef.current = null; } // exiting: node back to gold
+          return next;
+        });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   const [blockDim, setBlockDim] = useState(false); // eye toggle dims the blockstream
   // FLAT vs GLOBE view. When GLOBE is on, the 2D canvas loop pauses (see draw())
   // and the WebGL globe renders the same nodes/arcs on top.
@@ -772,6 +874,10 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         if (selfPt) nodePts.push(selfPt);
         if (s) for (const p of s.peers) { const pg = g[p.ip]; if (pg) nodePts.push(wpx(pg.lon, pg.lat)); }
         for (const [, kp] of blueNodes) nodePts.push(wpx(kp.lon, kp.lat));
+        // Keep the snapshot server in frame while its firehose is showing.
+        if (flowModeRef.current === "snapshot" && snapSrcRef.current) {
+          nodePts.push(wpx(snapSrcRef.current[0], snapSrcRef.current[1]));
+        }
         const pts: [number, number][] = [...nodePts];
         // add each arc's apex: it rises above the self→node midpoint by the (green,
         // worst-case) lift, which is in screen px — convert to world via the scale.
@@ -1183,9 +1289,35 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         }
       }
 
+      // ── First-run install: red data channels pouring into the user's node
+      // from their REAL sources. SNAPSHOT = one heavy firehose from the snapshot
+      // server's actual location; NODES = a thin channel from each real connected
+      // peer. Drawn UNDER the node so the node + its red pulse rings sit on top.
+      if (selfXY && flowModeRef.current) {
+        if (flowModeRef.current === "snapshot") {
+          if (snapSrcRef.current) {
+            const [sx, sy] = P(snapSrcRef.current[0], snapSrcRef.current[1]);
+            drawDataFlow(ctx, sx, sy, selfXY[0], selfXY[1], now, true);
+          }
+        } else if (s) {
+          let n = 0;
+          for (const p of s.peers) {
+            const pg = g[p.ip];
+            if (!pg) continue;
+            const [px, py] = P(pg.lon, pg.lat);
+            drawDataFlow(ctx, px, py, selfXY[0], selfXY[1], now, false);
+            if (++n >= 8) break;
+          }
+        }
+      }
+
       // our node — gold dot (3× and decked out when the user is the stake winner)
       if (selfXY) {
-        const r = USER_IS_WINNER ? 15 : 5;
+        // While first-run setup is downloading, flash the node RED so the user
+        // can spot "that's me joining the network"; otherwise the usual gold.
+        const inst = installingRef.current;
+        const col = inst ? (a: number) => `hsl(0 85% 56% / ${a})` : selfCol;
+        const r = (USER_IS_WINNER ? 15 : 5) + (inst ? 2 : 0);
         // when winning: bright, bigger concentric pulse rings (like the search intro)
         if (USER_IS_WINNER) {
           const maxR = 75;
@@ -1198,23 +1330,46 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             ctx.stroke();
           }
         }
+        // Installing = fast, bright flash + an extra expanding ring; otherwise
+        // a calm gold pulse.
         ctx.beginPath();
         ctx.arc(selfXY[0], selfXY[1], r, 0, Math.PI * 2);
-        ctx.fillStyle = selfCol(1);
+        ctx.fillStyle = col(inst ? 0.65 + 0.35 * Math.sin(now / 160) : 1);
         ctx.fill();
-        const pulse = 4 + 2 * Math.sin(now / 400);
+        const pulse = inst ? 5 + 4 * Math.sin(now / 170) : 4 + 2 * Math.sin(now / 400);
         ctx.beginPath();
         ctx.arc(selfXY[0], selfXY[1], r + pulse, 0, Math.PI * 2);
-        ctx.strokeStyle = selfCol(0.5);
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = col(inst ? 0.7 : 0.5);
+        ctx.lineWidth = inst ? 2.5 : 1.5;
         ctx.stroke();
+        if (inst) {
+          const p2 = (now / 700) % 1;
+          ctx.beginPath();
+          ctx.arc(selfXY[0], selfXY[1], r + p2 * 26, 0, Math.PI * 2);
+          ctx.strokeStyle = col((1 - p2) * 0.6);
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
         if (USER_IS_WINNER) drawGlasses(ctx, selfXY[0], selfXY[1], r);
-        // "YOU" label below the dot, in matching gold
-        ctx.fillStyle = selfCol(1);
+        // "YOU" (or "INSTALLING" during setup) label below the dot.
+        ctx.fillStyle = col(1);
         ctx.font = "bold 11px system-ui";
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillText("YOU", selfXY[0], selfXY[1] + r + 6);
+        ctx.fillText(inst ? "INSTALLING" : "YOU", selfXY[0], selfXY[1] + r + 6);
+      }
+
+      // Map-animation icon (e.g. PoE 🔗) bobbing above the node while a pulse is
+      // active — whatever the triggering feature/app chose to show.
+      if (selfXY && now < pulseActiveUntil()) {
+        const icon = pulseIcon();
+        if (icon) {
+          const bob = Math.sin(now / 300) * 3;
+          ctx.font = "18px system-ui";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(icon, selfXY[0], selfXY[1] - 28 + bob);
+        }
       }
 
       // stake-winner sunglasses on a peer (only when the winner ISN'T the user —
@@ -1297,9 +1452,15 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       // 4 legs — home→peer, peer→1-2 random network nodes, back, back home —
       // each leg independently jittered ±0.2s. So the map shows many little
       // round-trips at staggered times, not four synchronised group flashes.
+      // Spawn a wave on a fresh trigger, AND keep re-spawning while a typed
+      // transaction pulse is still "active" (its lingering window) so it stays
+      // watchable after switching to the map. Waves are based at `now` so a
+      // late-arriving viewer still sees fresh ripples, not ones already expired.
       const trig = pulseTrigger();
-      if (trig && trig !== lastPulseRef.current && selfXY) {
-        lastPulseRef.current = trig;
+      const pulseLive = now < pulseActiveUntil();
+      const freshTrig = !!trig && trig !== lastPulseRef.current;
+      if (selfXY && (freshTrig || (pulseLive && pingsRef.current.length === 0))) {
+        if (freshTrig) lastPulseRef.current = trig;
         const netLL: [number, number][] = blueNodes.map(([, kp]) => [kp.lon, kp.lat]);
         const pings: { peer: [number, number]; nets: [number, number][]; legs: Leg[] }[] = [];
         for (const p of s?.peers ?? []) {
@@ -1308,12 +1469,14 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           const nets: [number, number][] = [];
           const count = netLL.length ? 1 + Math.floor(Math.random() * 2) : 0; // 1-2
           for (let i = 0; i < count; i++) nets.push(netLL[Math.floor(Math.random() * netLL.length)]);
-          pings.push({ peer: [pg.lon, pg.lat], nets, legs: makeLegs(trig) });
+          pings.push({ peer: [pg.lon, pg.lat], nets, legs: makeLegs(now) });
         }
         pingsRef.current = pings;
       }
       if (selfXY && pingsRef.current.length) {
-        const GOLD = hslVar("--map-activity-pulse");
+        // Tint the ripple with the active pulse's colour (PoE = light blue, etc.).
+        const triple = pulseHsl();
+        const GOLD = (a: number) => `hsl(${triple} / ${a})`;
         const ripple = (from: [number, number], to: [number, number], u: number) => {
           const bez = upArc(from[0], from[1], to[0], to[1], 0.5);
           ctx.lineWidth = 1;
@@ -1515,6 +1678,17 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           </button>
         </div>
       </div>
+      <div className="netmap-body">
+        {setupOpen && (
+          <InstallPanel
+            simulate={simulateNew}
+            onClose={() => { setSetupOpen(false); setSimulateNew(false); installingRef.current = false; flowModeRef.current = null; }}
+            onStateChange={(s: InstallState) => {
+              installingRef.current = s.installing;
+              flowModeRef.current = s.installing && (s.method === "snapshot" || s.method === "nodes") ? s.method : null;
+            }}
+          />
+        )}
       <div
         className="netmap-canvas-wrap"
         ref={wrapRef}
@@ -1541,6 +1715,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             <button type="button" onClick={() => { setPanel("newest"); setMenuOpen(false); }}>Newest Nodes</button>
             <button type="button" onClick={() => { setPanel("speed"); setMenuOpen(false); }}>Node Speed</button>
             <button type="button" onClick={() => { setPanel("country"); setMenuOpen(false); }}>Nodes by Country</button>
+            <button type="button" onClick={() => { setSetupOpen(true); setMenuOpen(false); }}>Set up wallet</button>
           </div>
         )}
         {panel === "country" && <NodesByCountry data={nodesByCountry} />}
@@ -1576,6 +1751,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             ))}
           </div>
         )}
+      </div>
       </div>
     </div>
   );

@@ -1,0 +1,7 @@
+node_modules/
+package-lock.json
+# never commit the funded Arweave keyfile
+*.json
+!package.json
+*.key
+.env

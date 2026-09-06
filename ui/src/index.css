@@ -332,7 +332,22 @@ code, .mono { font-family: var(--font-mono); }
 }
 .wl-btn-primary { background: hsl(var(--primary)); border-color: transparent; color: #fff; }
 /* Active-staking state: green, so "Staking · Click to Stop" reads as on/good. */
-.wl-btn-staking { background: hsl(var(--success)); border-color: transparent; color: #fff; opacity: 1; }
+.wl-btn-staking {
+  background: hsl(var(--success)); border-color: transparent; color: #fff; opacity: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding-top: 6px; padding-bottom: 6px; min-height: 40px; line-height: 1.1;
+}
+.stk-two { display: flex; flex-direction: column; align-items: center; line-height: 1.12; }
+.stk-two strong { font-weight: 800; font-size: 0.9rem; letter-spacing: 0.02em; }
+.stk-two small { font-size: 0.68rem; opacity: 0.92; letter-spacing: 0.03em; }
+/* Transient "Checking blockchain…" label: 2pt smaller, single line, normal case,
+   so it always fits inside the fixed-width header button and never grows it. */
+.stk-checking { font-size: 0.7rem; white-space: nowrap; text-transform: none; letter-spacing: 0; }
+/* Market Maker Start/Stop, coloured to match the liquidity bars (buy green / sell red). */
+.mmc-start { background: hsl(150 80% 52%); border-color: transparent; color: #05270f; font-weight: 700; }
+.mmc-start:hover:not(:disabled) { background: hsl(150 80% 46%); }
+.mmc-stop { background: hsl(0 55% 30%); border-color: transparent; color: #fff; font-weight: 700; }
+.mmc-stop:hover:not(:disabled) { background: hsl(0 55% 36%); }
 .wl-btn:disabled { opacity: 0.5; cursor: default; }
 .wl-link { border: none; background: none; color: hsl(var(--primary)); cursor: pointer; font-size: 0.85rem; }
 .wl-note { font-size: 0.85rem; color: hsl(var(--muted-foreground)); max-width: 460px; }
@@ -372,6 +387,10 @@ code, .mono { font-family: var(--font-mono); }
 /* Certificate lock: not income, so shown muted, never green. */
 .act-amt-locked { color: hsl(var(--muted-foreground)); font-weight: 500; }
 .act-addr-full { font-family: var(--font-mono); font-size: 0.72rem; color: hsl(var(--muted-foreground)); word-break: break-all; line-height: 1.5; }
+/* Proof of Existence row: light-blue label + a plain-English explainer line. */
+.act-poe { color: hsl(200 90% 62%); font-weight: 600; font-size: 0.95rem; }
+.act-poe-note { font-size: 0.74rem; color: hsl(var(--muted-foreground)); line-height: 1.45; max-width: 520px; }
+.act-poe-note strong { color: hsl(var(--foreground)); font-weight: 600; }
 .act-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .act-time { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
 .act-actions { display: flex; gap: 6px; }
@@ -477,7 +496,13 @@ code, .mono { font-family: var(--font-mono); }
 /* In the header the button carries no dropdown-divider, and reads uppercase to
    match the "NOT STAKING" line above it. */
 .hdr-stake-action .stake-start { padding-bottom: 0; margin-bottom: 0; border-bottom: none; }
-.hdr-stake-action .wl-btn { text-transform: uppercase; letter-spacing: 0.04em; }
+.hdr-stake-action .wl-btn {
+  text-transform: uppercase; letter-spacing: 0.04em;
+  /* Fixed footprint so the button NEVER changes width between Start / Checking /
+     Staking states - that resizing was pushing the header and jolting the map. */
+  box-sizing: border-box; width: 156px; padding-left: 8px; padding-right: 8px;
+  justify-content: center; text-align: center; overflow: hidden;
+}
 .hdr-lottery { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
 .lot-count { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 600; color: hsl(var(--primary)); }
 .lot-when { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
@@ -706,6 +731,22 @@ code, .mono { font-family: var(--font-mono); }
 
 /* Cost is part of the decision, so it sits on the button itself. */
 .ts-anchor { display: inline-flex; align-items: center; gap: 10px; }
+/* Inline wallet-unlock for PoE: a pulse-glowing call-to-action so the user knows
+   what to do next, then a password field right there. */
+.ts-unlock-glow {
+  width: 100%; background: hsl(var(--primary)); color: #fff; border: none;
+  font-weight: 800; letter-spacing: 0.03em; white-space: nowrap;
+  animation: ts-unlock-pulse 1.3s ease-in-out infinite;
+}
+.ts-unlock-glow:disabled { animation: none; opacity: 0.6; }
+@keyframes ts-unlock-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0.55); }
+  50% { box-shadow: 0 0 20px 3px hsl(var(--primary) / 0.9); }
+}
+.ts-unlock-form { display: flex; gap: 8px; align-items: stretch; }
+.ts-unlock-form .wl-input { flex: 1; min-width: 0; }
+.ts-unlock-form .ts-unlock-glow { width: auto; flex: 0 0 auto; }
+.ts-passerr { margin-top: 6px; }
 .ts-cost {
   font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600;
   padding: 2px 8px; border-radius: 999px;
@@ -828,6 +869,61 @@ code, .mono { font-family: var(--font-mono); }
   display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 600;
   background: hsl(var(--primary)); color: #fff;
 }
+.coll-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.coll-card {
+  display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer;
+  padding: 14px; border-radius: 12px; border: 1px solid hsl(var(--border));
+  background: hsl(var(--background) / 0.5); color: hsl(var(--foreground));
+}
+.coll-card:hover { border-color: hsl(var(--primary)); background: hsl(var(--primary) / 0.08); }
+.coll-card-name { font-weight: 600; font-size: 0.9rem; word-break: break-word; }
+.coll-card-meta { font-size: 0.76rem; color: hsl(var(--muted-foreground)); }
+.coll-card-thumb { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; background: hsl(var(--background) / 0.5); }
+.coll-card-noimg {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; aspect-ratio: 1; border-radius: 8px; font-size: 1.7rem;
+  background: hsl(var(--background) / 0.5);
+}
+.coll-check {
+  display: flex; gap: 10px; align-items: flex-start; max-width: 520px; cursor: pointer;
+  font-size: 0.85rem; color: hsl(var(--foreground));
+}
+.coll-check input { margin-top: 3px; flex-shrink: 0; }
+.coll-field { display: flex; flex-direction: column; gap: 4px; max-width: 520px; font-size: 0.85rem; color: hsl(var(--foreground)); }
+.coll-traits { display: flex; flex-direction: column; gap: 6px; max-width: 520px; }
+.coll-trait-row { display: flex; gap: 8px; }
+.nfd-tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid hsl(var(--border)); }
+.nfd-tab {
+  padding: 8px 16px; background: transparent; border: none; cursor: pointer;
+  font-size: 0.9rem; color: hsl(var(--muted-foreground)); border-bottom: 2px solid transparent;
+}
+.nfd-tab:hover { color: hsl(var(--foreground)); }
+.nfd-tab-active { color: hsl(var(--foreground)); border-bottom-color: hsl(var(--primary)); font-weight: 600; }
+.coll-trait-row .wl-input { flex: 1; }
+.coll-traitchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.coll-traitchip {
+  font-size: 0.68rem; padding: 2px 6px; border-radius: 6px;
+  background: hsl(var(--muted)); color: hsl(var(--muted-foreground));
+}
+.coll-tierchip { background: hsl(var(--primary)); color: #fff; font-weight: 600; }
+.wl-btn-disabled { opacity: 0.5; pointer-events: none; }
+.import-plan { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.import-warn { margin: 0; padding-left: 18px; font-size: 0.78rem; color: hsl(var(--muted-foreground)); max-height: 140px; overflow-y: auto; }
+.coll-xfer { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.admin-panel-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
+.pay-row { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: hsl(var(--foreground)); }
+.coll-viewer {
+  position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, 0.6); padding: 24px;
+}
+.coll-viewer-inner {
+  display: flex; flex-direction: column; gap: 12px; max-width: 640px; max-height: 88vh; overflow: auto;
+  padding: 18px; border-radius: 16px; border: 1px solid hsl(var(--border));
+  background: hsl(var(--card, var(--background))); box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.coll-viewer-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.coll-viewer-img { max-width: 100%; border-radius: 10px; display: block; }
+.coll-owner { font-family: ui-monospace, monospace; font-size: 0.74rem; word-break: break-all; }
 
 /* ── Staking dropdown ──────────────────────────────────────────────────────── */
 .stake-dropdown {
@@ -886,7 +982,9 @@ code, .mono { font-family: var(--font-mono); }
 .chip-label { font-size: 0.72rem; color: hsl(var(--muted-foreground)); display: inline-flex; align-items: center; gap: 4px; }
 .chip-num { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); white-space: nowrap; }
 /* Block-height chip: never let its number be clipped by a transient narrow layout. */
-.wl-chip-row > .glass-chip.blk-chip { min-width: max-content; overflow: visible; }
+.wl-chip-row > .glass-chip.blk-chip { min-width: 0; flex: 1 1 100%; overflow: visible; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.wl-chip-row > .glass-chip.blk-chip .chip-label,
+.wl-chip-row > .glass-chip.blk-chip .chip-num { justify-content: center; text-align: center; width: 100%; }
 /* Guard the block-height number against edge-clipping (first/last char): let it
    size to its content and never crop, even with the "+?" sync suffix. */
 .wl-status-chips .glass-chip.blk-chip .chip-num { overflow: visible; white-space: nowrap; padding: 0 4px; }
@@ -928,6 +1026,9 @@ code, .mono { font-family: var(--font-mono); }
 .nm-out { background: hsl(var(--primary)); } /* Active Peers — matches connection arcs */
 .nm-in { background: hsl(210 85% 62%); } /* Full Network — matches the blue background mesh */
 .nm-self { background: hsl(var(--warning)); }
+/* Row below the topbar: optional install panel (left) + the map (right, flex:1).
+   When no panel is open the map fills the whole row unchanged. */
+.netmap-body { flex: 1; display: flex; flex-direction: row; min-height: 0; gap: 12px; }
 .netmap-canvas-wrap { cursor: grab; }
 .netmap-canvas-wrap:active { cursor: grabbing; }
 .nm-count { margin-left: auto; color: hsl(var(--foreground)); }
@@ -1089,7 +1190,8 @@ code, .mono { font-family: var(--font-mono); }
 /* ---- Send ---- */
 .send-panel { display: flex; flex-direction: column; gap: 16px; max-width: 440px; }
 
-/* Four send types, two across, collapsing to one column when narrow. */
+/* Four send types as a 2x2 grid: Send + Fast Send on top, Pin Code + Bearer
+   below. Collapses to a single column on a narrow window. */
 .send-grid {
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px; align-items: start;
@@ -1116,6 +1218,12 @@ code, .mono { font-family: var(--font-mono); }
   border: 1px solid hsl(var(--primary) / 0.5); border-radius: 999px; padding: 2px 10px;
 }
 .pincode-sub { opacity: 0.85; }
+.pin-code-big {
+  align-self: center; font-family: ui-monospace, Menlo, monospace; font-weight: 700;
+  font-size: 2rem; letter-spacing: 0.35em; padding-left: 0.35em;
+  color: hsl(var(--primary)); background: hsl(var(--primary) / 0.1);
+  border: 1px solid hsl(var(--primary) / 0.45); border-radius: 10px; padding: 8px 18px;
+}
 .send-field { display: flex; flex-direction: column; gap: 5px; }
 .send-label { font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
 .send-avail { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
@@ -1422,6 +1530,40 @@ code, .mono { font-family: var(--font-mono); }
   transition: background 0.15s, border-color 0.15s;
 }
 .node-map-btn:hover { background: hsl(var(--primary) / 0.28); border-color: hsl(var(--primary) / 0.7); }
+/* Charts + Node Map buttons sit together at the right of the Overview title row. */
+.title-actions { display: flex; align-items: center; gap: 10px; }
+
+/* ---- Divi price chart (Charts view) ---- */
+.pricechart { display: flex; flex-direction: column; height: 100%; }
+.pc-head { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.pc-back {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 6px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.14);
+  border: 1px solid hsl(var(--primary) / 0.45);
+}
+.pc-back:hover { background: hsl(var(--primary) / 0.28); }
+.pc-title { margin: 0; font-size: 1.4rem; }
+.pc-summary { display: inline-flex; align-items: baseline; gap: 10px; margin-left: auto; }
+.pc-price { font-size: 1.5rem; font-weight: 700; color: hsl(var(--foreground)); }
+.pc-change { font-size: 0.95rem; font-weight: 600; }
+.pc-change.up { color: #2bd94f; }
+.pc-change.down { color: #ff5252; }
+.pc-ranges { display: flex; gap: 6px; margin-bottom: 12px; }
+.pc-range {
+  cursor: pointer; padding: 5px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
+  color: hsl(var(--muted-foreground)); background: transparent; border: 1px solid hsl(var(--border));
+}
+.pc-range:hover { color: hsl(var(--foreground)); }
+.pc-range.on { color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.2); border-color: hsl(var(--primary) / 0.6); }
+.pc-chartwrap { position: relative; flex: 1; min-height: 340px; }
+.pc-svg { width: 100%; height: 340px; display: block; }
+.pc-empty { display: flex; align-items: center; justify-content: center; height: 340px; color: hsl(var(--muted-foreground)); }
+.pc-hi, .pc-lo, .pc-d0, .pc-d1 { position: absolute; font-size: 0.72rem; color: hsl(var(--muted-foreground)); pointer-events: none; }
+.pc-hi { top: 2px; left: 4px; }
+.pc-lo { bottom: 24px; left: 4px; }
+.pc-d0 { bottom: 4px; left: 4px; }
+.pc-d1 { bottom: 4px; right: 4px; }
 
 /* ---- My Nodes (Settings): switch which node the wallet reads ---- */
 .mynodes { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
@@ -1761,3 +1903,53 @@ code, .mono { font-family: var(--font-mono); }
 .agent-create-footer { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; display: flex; flex-direction: column; gap: 2px; padding: 7px 4px; background: rgba(8,8,12,0.74); }
 .agent-create-name { font-size: 0.82rem; font-weight: 700; color: #fff; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-create-edit { font-size: 0.62rem; font-weight: 600; letter-spacing: 0.06em; color: hsl(var(--primary)); text-align: center; }
+
+/* ===== Latest price-chart styles (zoom/pan/axes/hover) — override v1 ===== */
+/* Charts + Node Map buttons sit together at the right of the Overview title row. */
+.title-actions { display: flex; align-items: center; gap: 10px; }
+
+/* ---- Divi price chart (Charts view) ---- */
+.pricechart { display: flex; flex-direction: column; height: 100%; }
+.pc-head { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.pc-back {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 6px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.14);
+  border: 1px solid hsl(var(--primary) / 0.45);
+}
+.pc-back:hover { background: hsl(var(--primary) / 0.28); }
+.pc-title { margin: 0; font-size: 1.4rem; }
+.pc-summary { display: inline-flex; align-items: baseline; gap: 10px; margin-left: auto; }
+.pc-price { font-size: 1.5rem; font-weight: 700; color: hsl(var(--foreground)); }
+.pc-change { font-size: 0.95rem; font-weight: 600; }
+.pc-change.up { color: #2bd94f; }
+.pc-change.down { color: #ff5252; }
+.pc-ranges { display: flex; gap: 6px; margin-bottom: 12px; }
+.pc-range {
+  cursor: pointer; padding: 5px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
+  color: hsl(var(--muted-foreground)); background: transparent; border: 1px solid hsl(var(--border));
+}
+.pc-range:hover { color: hsl(var(--foreground)); }
+.pc-range.on { color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.2); border-color: hsl(var(--primary) / 0.6); }
+.pc-plot { position: relative; flex: 1; min-height: 380px; cursor: crosshair; user-select: none; }
+.pc-plot.dragging { cursor: grabbing; }
+.pc-hint { margin-left: auto; align-self: center; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+.pc-svg { display: block; }
+.pc-empty { display: flex; align-items: center; justify-content: center; height: 380px; color: hsl(var(--muted-foreground)); }
+/* axis gridlines + labels */
+.pc-grid { stroke: hsl(var(--foreground) / 0.10); stroke-width: 1; }
+.pc-ylabel { fill: hsl(var(--muted-foreground)); font-size: 11px; text-anchor: end; }
+.pc-xlabel { fill: hsl(var(--muted-foreground)); font-size: 11px; text-anchor: middle; }
+/* hover crosshair */
+.pc-cross { stroke: hsl(var(--foreground) / 0.45); stroke-width: 1; stroke-dasharray: 3 3; }
+.pc-dot { fill: hsl(var(--primary)); stroke: hsl(var(--background)); stroke-width: 2; }
+/* hover tooltip */
+.pc-tip {
+  position: absolute; pointer-events: none; z-index: 5;
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 6px 9px; border-radius: 8px; white-space: nowrap;
+  background: hsl(var(--card) / 0.96); border: 1px solid hsl(var(--primary) / 0.5);
+  box-shadow: 0 4px 14px hsl(0 0% 0% / 0.35);
+}
+.pc-tip-price { font-weight: 700; font-size: 0.92rem; color: hsl(var(--foreground)); }
+.pc-tip-date { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }

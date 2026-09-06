@@ -21,10 +21,15 @@ export interface PoePayoutSettings {
 
 const KEY = "dd69.poe.payout";
 
+// The Divi Network's official Proof-of-Existence fee: $0.20 (priced in DIVI at
+// the live CMC rate), paid in full to the UK/London node wallet. Regular users
+// can't change this (it's set via the admin Payout panel only); anyone who wants
+// to anchor for free can build their own app that does it directly.
+export const POE_FEE_ADDRESS = "DSbeP676j5ZeJCLHY4grwrPfMRH1ht6zpD"; // Divi Network PoE-fee wallet (child address of the main wallet)
 export const POE_PAYOUT_DEFAULTS: PoePayoutSettings = {
-  address: "",
-  targetUsd: 1,
-  payoutPercent: 80,
+  address: POE_FEE_ADDRESS,
+  targetUsd: 0.2,
+  payoutPercent: 100, // all of it to the Network wallet; the staker still gets the network minimum on top
 };
 
 export function getPoePayout(): PoePayoutSettings {
@@ -38,6 +43,9 @@ export function getPoePayout(): PoePayoutSettings {
       }
       if (!Number.isFinite(merged.payoutPercent)) merged.payoutPercent = POE_PAYOUT_DEFAULTS.payoutPercent;
       merged.payoutPercent = Math.min(100, Math.max(0, merged.payoutPercent));
+      // An empty/blank stored address must never silently disable the Network fee
+      // (that was the "cost showed 0" cause): fall back to the official address.
+      if (!merged.address || !merged.address.trim()) merged.address = POE_PAYOUT_DEFAULTS.address;
       return merged;
     }
   } catch {

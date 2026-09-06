@@ -34,6 +34,12 @@
   position: absolute; right: 7px; top: 50%; transform: translateY(-50%); z-index: 2;
   color: hsl(var(--muted-foreground)); font-size: 0.62rem; text-shadow: 0 1px 2px #000;
 }
+/* Per-bar DIVI amount + USD, far right, 2pt smaller than the price. */
+.dl-amt {
+  position: absolute; right: 7px; top: 50%; transform: translateY(-50%); z-index: 2;
+  color: #eafff2; font-size: 0.52rem; white-space: nowrap;
+  text-shadow: 0 1px 2px #000, 0 0 3px #000;
+}
 
 .dl-bar { position: absolute; top: 2px; left: 0; height: 14px; border-radius: 3px; min-width: 2px; }
 .dl-ours { position: absolute; top: 0; left: 0; height: 100%; border-radius: 3px; }

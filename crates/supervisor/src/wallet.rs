@@ -15,8 +15,12 @@ pub struct AddrInfo {
     pub stakes: i64,
 }
 
-/// The account's deposit addresses that have seen activity (plus the main one),
-/// with per-address counts by category. Counts are tallied from recent history.
+/// EVERY address in the wallet, in natural (account + creation) order with the
+/// main address first — NOT just ones seen in recent history. Building the list
+/// from `listtransactions` alone (as this used to) meant an address silently
+/// dropped out of the "My Addresses" list once it fell past the recent-tx
+/// window, taking the user's saved name off screen with it. Per-address counts
+/// are still tallied from recent history (0 when older than the window).
 pub fn addresses(cfg: &NodeConfig) -> Vec<AddrInfo> {
     let rpc = RpcClient::new(cfg);
     let main = rpc
@@ -24,7 +28,8 @@ pub fn addresses(cfg: &NodeConfig) -> Vec<AddrInfo> {
         .ok()
         .and_then(|v| v.as_str().map(|s| s.to_string()));
 
-    let mut map: HashMap<String, (i64, i64, i64)> = HashMap::new();
+    // Activity counts (receive / send / staked) from recent history.
+    let mut counts: HashMap<String, (i64, i64, i64)> = HashMap::new();
     if let Ok(txs) = rpc.call("listtransactions", json!(["*", 1000])) {
         if let Some(arr) = txs.as_array() {
             for t in arr {
@@ -32,7 +37,7 @@ pub fn addresses(cfg: &NodeConfig) -> Vec<AddrInfo> {
                 if addr.is_empty() {
                     continue;
                 }
-                let e = map.entry(addr.to_string()).or_insert((0, 0, 0));
+                let e = counts.entry(addr.to_string()).or_insert((0, 0, 0));
                 let cat = t["category"].as_str().unwrap_or("");
                 if cat == "receive" {
                     e.0 += 1;
@@ -44,24 +49,54 @@ pub fn addresses(cfg: &NodeConfig) -> Vec<AddrInfo> {
             }
         }
     }
+
+    // Full address set, in a stable order: main first, then every account's
+    // addresses (default account first), then any active address not otherwise
+    // listed. Dedup while preserving first-seen order.
+    let mut ordered: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     if let Some(m) = &main {
-        map.entry(m.clone()).or_insert((0, 0, 0));
+        if seen.insert(m.clone()) {
+            ordered.push(m.clone());
+        }
+    }
+    let mut accounts: Vec<String> = vec![String::new()];
+    if let Ok(v) = rpc.call("listaccounts", json!([0])) {
+        if let Some(obj) = v.as_object() {
+            for k in obj.keys() {
+                if !k.is_empty() {
+                    accounts.push(k.clone());
+                }
+            }
+        }
+    }
+    for acct in &accounts {
+        if let Ok(v) = rpc.call("getaddressesbyaccount", json!([acct])) {
+            if let Some(arr) = v.as_array() {
+                for a in arr {
+                    if let Some(s) = a.as_str() {
+                        if seen.insert(s.to_string()) {
+                            ordered.push(s.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for k in counts.keys() {
+        if seen.insert(k.clone()) {
+            ordered.push(k.clone());
+        }
     }
 
-    let mut out: Vec<AddrInfo> = map
+    ordered
         .into_iter()
-        .map(|(address, (r, s, st))| {
+        .map(|address| {
+            let (r, s, st) = counts.get(&address).copied().unwrap_or((0, 0, 0));
             let is_main = main.as_deref() == Some(address.as_str());
             AddrInfo { address, is_main, receives: r, sends: s, stakes: st }
         })
-        .collect();
-    // Main first, then busiest.
-    out.sort_by(|a, b| {
-        b.is_main
-            .cmp(&a.is_main)
-            .then((b.receives + b.sends + b.stakes).cmp(&(a.receives + a.sends + a.stakes)))
-    });
-    out
+        .collect()
 }
 
 pub struct Balance {

@@ -1,0 +1,17 @@
+{
+  "name": "nfd-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Divi Collectibles (NFD) Arweave upload relay for nfds.divi.love",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@ardrive/turbo-sdk": "^1.23.0",
+    "express": "^4.21.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

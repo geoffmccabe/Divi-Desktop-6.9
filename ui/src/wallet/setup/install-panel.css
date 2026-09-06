@@ -1,0 +1,109 @@
+/* First-run install side-panel: docked left of the network map, map shrinks to
+   fit. Frosted glass + a fuchsia edge glow so it reads as part of the app. */
+
+.ip-panel {
+  width: 340px; flex: 0 0 340px; height: 100%;
+  box-sizing: border-box; padding: 16px 16px 20px;
+  overflow-y: auto; overflow-x: hidden;
+  border-right: 1px solid hsl(var(--primary) / 0.45);
+  box-shadow: inset -18px 0 40px -30px hsl(var(--primary) / 0.6);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.ip-loading, .ip-panel .ip-loading { color: hsl(var(--muted-foreground)); font-size: 0.82rem; padding: 20px 4px; }
+
+.ip-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ip-title { margin: 0; font-size: 1.02rem; font-weight: 800; letter-spacing: 0.01em; color: hsl(var(--foreground)); }
+.ip-close {
+  border: none; background: none; cursor: pointer; line-height: 1;
+  font-size: 1.4rem; color: hsl(var(--muted-foreground)); padding: 0 4px;
+}
+.ip-close:hover { color: hsl(var(--foreground)); }
+
+/* Each install section is a sub-card. */
+.ip-sec {
+  border: 1px solid hsl(var(--border)); border-radius: 12px;
+  background: hsl(var(--subpanel-bg, var(--background)) / 0.5);
+  padding: 12px 13px;
+}
+.ip-sec-active {
+  border-color: hsl(var(--primary) / 0.55);
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.25), 0 6px 22px -14px hsl(var(--primary) / 0.7);
+}
+.ip-sec-soon { opacity: 0.5; }
+.ip-sec-soon .ip-note { margin-bottom: 0; }
+
+.ip-sec-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ip-sec-dot { width: 9px; height: 9px; border-radius: 50%; background: hsl(var(--muted-foreground) / 0.5); flex: 0 0 auto; }
+.ip-dot-on { background: hsl(var(--success)); box-shadow: 0 0 8px hsl(var(--success) / 0.8); }
+.ip-sec-name { margin: 0; font-size: 0.86rem; font-weight: 700; color: hsl(var(--foreground)); flex: 1; }
+.ip-soon {
+  font-size: 0.6rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
+  color: hsl(var(--warning)); border: 1px solid hsl(var(--warning) / 0.5);
+  border-radius: 999px; padding: 2px 7px; white-space: nowrap;
+}
+
+.ip-flow, .ip-progress { display: flex; flex-direction: column; gap: 9px; }
+.ip-lead { margin: 0; font-size: 0.84rem; color: hsl(var(--foreground)); }
+.ip-note { margin: 0; font-size: 0.76rem; line-height: 1.4; color: hsl(var(--muted-foreground)); }
+.ip-field-label { font-size: 0.74rem; font-weight: 600; color: hsl(var(--muted-foreground)); margin-top: 2px; }
+
+/* SNAPSHOT | NODES split button. Selected = green accent (SNAPSHOT by default). */
+.ip-split { display: flex; gap: 8px; }
+.ip-split-btn {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  cursor: pointer; border-radius: 9px; padding: 9px 6px;
+  border: 1.5px solid hsl(var(--border)); background: hsl(var(--background) / 0.4);
+  color: hsl(var(--muted-foreground)); font-weight: 800; font-size: 0.78rem; letter-spacing: 0.04em;
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+.ip-split-btn small { font-weight: 500; font-size: 0.62rem; letter-spacing: 0; opacity: 0.9; }
+.ip-split-btn:hover { border-color: hsl(var(--primary) / 0.6); color: hsl(var(--foreground)); }
+.ip-split-btn.on {
+  border-color: hsl(150 80% 52%); background: hsl(150 80% 52% / 0.14); color: hsl(150 80% 72%);
+  box-shadow: 0 0 0 1px hsl(150 80% 52% / 0.4), 0 0 14px -4px hsl(150 80% 52% / 0.6);
+}
+
+.ip-btn {
+  cursor: pointer; border-radius: 9px; padding: 10px 14px; font-weight: 700; font-size: 0.84rem;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--background) / 0.5); color: hsl(var(--foreground));
+}
+.ip-btn-primary { background: hsl(var(--primary)); border-color: transparent; color: #fff; }
+.ip-btn-primary:hover { filter: brightness(1.08); }
+/* Green GO button - starts the download (matches the SNAPSHOT/NODES green). */
+.ip-btn-go {
+  background: hsl(150 80% 50%); border-color: transparent; color: #05270f; font-weight: 800; letter-spacing: 0.04em;
+  box-shadow: 0 0 16px -4px hsl(150 80% 52% / 0.8);
+}
+.ip-btn-go:hover { background: hsl(150 80% 44%); }
+.ip-link {
+  border: none; background: none; cursor: pointer; color: hsl(var(--primary));
+  font-size: 0.76rem; padding: 2px; align-self: flex-start;
+}
+.ip-link:hover { text-decoration: underline; }
+
+/* Cmd-N simulator badge. */
+.ip-sim-badge {
+  align-self: flex-start; font-size: 0.6rem; font-weight: 800; letter-spacing: 0.06em;
+  color: hsl(0 85% 70%); border: 1px solid hsl(0 85% 56% / 0.6); background: hsl(0 85% 56% / 0.12);
+  border-radius: 999px; padding: 3px 9px;
+}
+/* Busy status dot (red pulse) while installing. */
+.ip-dot-busy { background: hsl(0 85% 56%); box-shadow: 0 0 8px hsl(0 85% 56% / 0.9); animation: ip-blink 1s ease-in-out infinite; }
+@keyframes ip-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* Download progress bar (simulator; real installs get it in a later slice). */
+.ip-bar { height: 8px; border-radius: 999px; background: hsl(var(--border)); overflow: hidden; }
+.ip-bar-fill {
+  height: 100%; border-radius: 999px; transition: width 0.2s linear;
+  background: linear-gradient(90deg, hsl(150 80% 46%), hsl(150 80% 60%));
+  box-shadow: 0 0 10px hsl(150 80% 52% / 0.7);
+}
+
+.ip-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.78rem; }
+.ip-stat span { color: hsl(var(--muted-foreground)); }
+.ip-stat b { color: hsl(var(--foreground)); font-family: var(--font-mono); font-weight: 600; text-align: right; }
+
+/* Narrow screens: don't let the panel eat the whole map. */
+@media (max-width: 720px) {
+  .ip-panel { width: 260px; flex-basis: 260px; }
+}
