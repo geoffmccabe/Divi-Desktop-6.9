@@ -1795,3 +1795,36 @@ code, .mono { font-family: var(--font-mono); }
   border: 1px solid hsl(var(--border)); border-radius: 8px;
 }
 .style-publish-form textarea.style-name { resize: vertical; font: inherit; }
+
+/* ── Skins Gallery: browse (SkinsGallery.tsx) + detail (SkinDetail.tsx) ── */
+.skins-gallery { padding: 4px; }
+.gallery-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+.gallery-card {
+  display: flex; flex-direction: column; text-align: left; cursor: pointer;
+  border: 1px solid hsl(var(--border)); border-radius: 10px; overflow: hidden;
+  background: hsl(var(--card) / 0.5); padding: 0; font: inherit; color: inherit;
+}
+.gallery-card:hover { border-color: hsl(var(--primary) / 0.6); }
+.gallery-card-preview {
+  aspect-ratio: 16 / 10; background: hsl(var(--muted, 0 0% 20%) / 0.4) center / cover no-repeat;
+}
+.gallery-card-body { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; }
+.gallery-card-name { font-weight: 700; color: hsl(var(--foreground)); }
+.gallery-card-author { font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
+.gallery-card-price { font-size: 0.78rem; font-weight: 600; color: hsl(var(--primary)); }
+
+.gallery-detail { display: flex; flex-direction: column; gap: 14px; }
+.gallery-detail-body { display: flex; gap: 20px; flex-wrap: wrap; }
+.gallery-detail-preview {
+  width: min(360px, 100%); aspect-ratio: 16 / 10; border-radius: 12px;
+  background: hsl(var(--muted, 0 0% 20%) / 0.4) center / cover no-repeat;
+  border: 1px solid hsl(var(--border));
+}
+.gallery-detail-info { display: flex; flex-direction: column; gap: 8px; min-width: 220px; flex: 1; }
+.gallery-detail-info h2 { margin: 0; color: hsl(var(--foreground)); }
+.gallery-detail-author { margin: 0; font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
+.gallery-detail-desc { margin: 0; color: hsl(var(--foreground)); line-height: 1.5; }
+.gallery-price { margin: 0; font-weight: 700; color: hsl(var(--primary)); }

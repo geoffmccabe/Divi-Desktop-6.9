@@ -26,5 +26,6 @@ export const NAV: NavItem[] = [
   // the whole sidebar wider or truncate.
   { id: "hra", label: "Human Readable\nAddresses", icon: "hra" },
   { id: "addressbook", label: "Address Book", icon: "addressbook" },
+  { id: "skinsgallery", label: "Skins Gallery", icon: "collectibles" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
