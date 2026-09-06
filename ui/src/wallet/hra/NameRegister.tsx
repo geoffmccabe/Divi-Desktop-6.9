@@ -89,6 +89,11 @@ export function NameRegister({
   };
 
   const alreadyPending = quote ? pending.some((p) => p.name === quote.canonical) : false;
+  // One coherent state per name. "Owned" means it is taken and cannot be claimed
+  // here; "free" means the index positively says it is available. Anything else
+  // is the index still catching up, and we say exactly that rather than guessing.
+  const owned = !!quote && (quote.available === false || !!quote.owner);
+  const isFree = !!quote && quote.available === true && !quote.owner;
 
   return (
     <div className="hra-form">
@@ -115,40 +120,50 @@ export function NameRegister({
         <div className="hra-quote">
           {checking && <p className="wl-note">Checking…</p>}
           {!checking && problem && <p className="wl-err">{problem}</p>}
-          {!checking && quote && (
+          {!checking && quote && owned && (
             <>
               <p className="hra-canon">
                 <span className="mono">{quote.canonical.toLowerCase()}</span>
-                {quote.available === false && <span className="hra-taken">already taken</span>}
-                {quote.available === true && <span className="hra-free">available</span>}
+                <span className="hra-taken">already registered</span>
               </p>
-              {quote.available === null && (
-                <p className="wl-note">
-                  Availability is unknown until the wallet has read the chain. It will not guess.
-                </p>
-              )}
+              <p className="wl-note">This name is taken, so it cannot be claimed here.</p>
               {quote.owner && (
                 <p className="wl-note">
-                  Owned by <span className="mono">{quote.owner}</span>
-                </p>
-              )}
-              <p className="wl-note">
-                {quote.registrationDivi.toLocaleString()} DIVI for the first year, then{" "}
-                {quote.renewalDivi.toLocaleString()} DIVI a year to keep it. Shorter names cost more,
-                which is what stops one person hoarding all the good ones.
-              </p>
-              {quote.canBeTicker && (
-                <p className="wl-note">
-                  Short enough to also be used as a token ticker, since names and tickers are one
-                  and the same list.
+                  Held by <span className="mono">{quote.owner}</span>.
                 </p>
               )}
               <p className="wl-note hra-dim">
-                Capitals and small letters are the same name here, so nobody can register a
-                lookalike of yours. Accented and non-English letters are not allowed at all, for the
-                same reason.
+                Try a different spelling, or add a word, to find one that is free.
               </p>
             </>
+          )}
+          {!checking && quote && isFree && (
+            <>
+              <p className="hra-canon">
+                <span className="mono">{quote.canonical.toLowerCase()}</span>
+                <span className="hra-free">available</span>
+              </p>
+              <p className="wl-note">
+                {quote.registrationDivi.toLocaleString()} DIVI to register for the first year, then{" "}
+                {quote.renewalDivi.toLocaleString()} DIVI a year to keep it.
+              </p>
+              <p className="wl-note hra-dim">
+                Shorter names cost more, which stops one person hoarding all the good ones.
+              </p>
+              {quote.canBeTicker && (
+                <p className="wl-note">
+                  Short enough to double as a token ticker too, since names and tickers share one
+                  list.
+                </p>
+              )}
+              <p className="wl-note hra-dim">
+                Capitals and small letters count as the same name, so nobody can register a lookalike
+                of yours. Accented and non-English letters are not allowed, for the same reason.
+              </p>
+            </>
+          )}
+          {!checking && quote && !owned && !isFree && (
+            <p className="wl-note">Still reading the chain, one moment…</p>
           )}
         </div>
       )}
@@ -173,13 +188,7 @@ export function NameRegister({
 
       <button
         className="wl-btn wl-btn-primary"
-        disabled={
-          !canRegister ||
-          !quote ||
-          quote.available === false ||
-          alreadyPending ||
-          busy !== ""
-        }
+        disabled={!canRegister || !isFree || alreadyPending || busy !== ""}
         onClick={() => quote && run("commit", () => hraCommit(quote.canonical))}
       >
         {busy === "commit" ? "Reserving…" : "Reserve this name"}

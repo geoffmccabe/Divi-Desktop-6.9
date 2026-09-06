@@ -70,7 +70,6 @@ export function HraPanel() {
   return (
     <div className="hra">
       <header className="hra-intro">
-        <h3 className="ts-head">Human Readable Addresses</h3>
         <p className="wl-note">
           A short name instead of a long string of characters. Own it, point it at your wallet, hang
           your other details off it, and sell it if you want to.

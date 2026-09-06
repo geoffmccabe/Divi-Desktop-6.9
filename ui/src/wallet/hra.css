@@ -179,6 +179,27 @@
 /* Never abbreviated: the whole point is that the user can read it and compare. */
 .hra-answer-addr { font-size: 0.95rem; word-break: break-all; color: hsl(var(--foreground)); }
 
+/* The list of other names that contain what was typed, below the exact match. */
+.hra-otherhits { margin-top: 14px; }
+.hra-hit-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+.hra-hit-row:hover { background: hsl(var(--primary) / 0.08); }
+.hra-hit-name { font-size: 0.95rem; }
+.hra-hit-addr { font-size: 0.8rem; word-break: break-all; text-align: right; }
+
 .hra-footnote {
   font-size: 0.76rem;
   line-height: 1.5;

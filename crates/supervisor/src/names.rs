@@ -545,12 +545,21 @@ fn has_txindex(rpc: &RpcClient, chain: &str, tip: u64) -> bool {
         let txid = block["tx"].as_array()?.first()?.as_str()?.to_string();
         Some(rpc.call("getrawtransaction", json!([txid, 1])).is_ok())
     };
-    let answer = probe(1.min(tip)).or_else(|| probe(tip)).unwrap_or(false);
-
-    if let Ok(mut c) = cache.lock() {
-        c.insert(chain.to_string(), answer);
+    // ⚠ Only cache an AUTHORITATIVE answer. `probe` returns None when it could
+    // not even read the block (node still starting, RPC busy), which is NOT the
+    // same as "no index". Caching that None-as-false would stick "your node
+    // cannot read names" for the whole session, long after the node is fine.
+    // On a failed probe, report false for this tick but do not cache it, so the
+    // next sync tick tries again.
+    match probe(1.min(tip)).or_else(|| probe(tip)) {
+        Some(known) => {
+            if let Ok(mut c) = cache.lock() {
+                c.insert(chain.to_string(), known);
+            }
+            known
+        }
+        None => false,
     }
-    answer
 }
 
 /// Every DVXP payload in a block, with the address that authored each.
@@ -1140,6 +1149,66 @@ pub fn resolve(cfg: &NodeConfig, name: &str) -> Result<Option<String>, String> {
     Ok(Some(base58::payload_to_address(bytes[0], &h160, is_testnet_like(&chain))))
 }
 
+/// A match for the Look Up screen. `exact` marks the one whose name equals the
+/// query; the interface shows it first and in bold. `has_address` says only
+/// whether the name currently carries a Divi-address pointer, as a hint in the
+/// list. Serialised for the wallet by the app layer (this crate has no serde
+/// derive).
+///
+/// ⚠ Deliberately carries NO address. The actual send-to address must come from
+/// resolve(), which refuses to answer from an index that is not caught up. A
+/// stale address shown here with a Copy button would send money to whoever the
+/// name USED to point at. Search is discovery; resolve is the money answer.
+pub struct SearchHit {
+    pub name: String,
+    pub exact: bool,
+    pub has_address: bool,
+}
+
+/// Names matching `query`, case-insensitively, exact match first, then names
+/// that start with it, then names that merely contain it, alphabetical within
+/// each group and capped. Empty query returns nothing.
+///
+/// Unlike resolve() this tolerates the index being a block behind: a list of
+/// names is discovery, not a spend decision. It returns NO address for that
+/// reason (see the struct note); the caller resolves the chosen name through
+/// resolve(), which has the freshness guard.
+pub fn search(cfg: &NodeConfig, query: &str) -> Result<Vec<SearchHit>, String> {
+    let rpc = RpcClient::new(cfg);
+    let chain = chain_name(&rpc);
+    let q = charset::canonicalise(query);
+    if q.is_empty() {
+        return Ok(vec![]);
+    }
+    let idx = load_index(cfg, &chain);
+    let tip = tip_height(&rpc).unwrap_or(idx.scanned_height);
+    let pointed = |st: &NameState| -> bool {
+        !is_expired(st, tip) && st.records.contains_key(&record::KEY_DIVI_ADDRESS)
+    };
+    let mut hits: Vec<SearchHit> = idx
+        .names
+        .iter()
+        .filter(|(n, _)| n.contains(&q))
+        .map(|(n, st)| SearchHit {
+            name: n.clone(),
+            exact: n.as_str() == q,
+            has_address: pointed(st),
+        })
+        .collect();
+    let rank = |h: &SearchHit| {
+        if h.exact {
+            0
+        } else if h.name.starts_with(&q) {
+            1
+        } else {
+            2
+        }
+    };
+    hits.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| a.name.cmp(&b.name)));
+    hits.truncate(25);
+    Ok(hits)
+}
+
 /// The name an address wants shown for itself, if the two sides agree.
 pub fn reverse(cfg: &NodeConfig, address: &str) -> Result<Option<String>, String> {
     let addr = address.trim();
@@ -1509,7 +1578,16 @@ fn require_ours(cfg: &NodeConfig, addr: &str, what: &str) -> Result<(), String> 
 /// edit happening and silently not happening.
 fn owner_of(cfg: &NodeConfig, canonical: &str) -> Result<String, String> {
     let rpc = RpcClient::new(cfg);
-    let idx = load_index(cfg, &chain_name(&rpc));
+    let chain = chain_name(&rpc);
+    let idx = load_index(cfg, &chain);
+    // ⚠ Ownership must be read from a caught-up index. If the name changed hands
+    // in a block we have not read, we would still believe we own it, author a
+    // record every indexer then ignores, and spend a transaction fee for
+    // nothing. buy() guards this same race; the edit paths must too.
+    let tip = tip_height(&rpc)?;
+    if tip == 0 || idx.scanned_height < tip {
+        return Err("Still reading the chain, so this name's current owner cannot be confirmed yet. Wait for it to catch up before changing it.".into());
+    }
     let owner = idx
         .names
         .get(canonical)
@@ -1759,6 +1837,13 @@ pub fn set_record(cfg: &NodeConfig, name: &str, key: u8, value_hex: &str) -> Res
     if key == record::KEY_DIVI_ADDRESS && value.len() != 21 {
         return Err("A Divi address record must be exactly 21 bytes. Use the address field rather than entering raw data.".into());
     }
+    // The first byte is the address kind and only 0x00 (P2PKH) or 0x01 (P2SH)
+    // are meaningful; anything else would still resolve to a valid-looking but
+    // unintended address, so refuse it rather than store a money record nobody
+    // asked for.
+    if key == record::KEY_DIVI_ADDRESS && value.len() == 21 && value[0] > 0x01 {
+        return Err("That is not a valid Divi address record. Use the address field rather than entering raw data.".into());
+    }
     if value.len() > record::MAX_VALUE_LEN {
         return Err(format!("That value is too long: {} bytes, maximum {}.", value.len(), record::MAX_VALUE_LEN));
     }
@@ -1869,8 +1954,23 @@ pub fn set_primary(cfg: &NodeConfig, name: &str) -> Result<String, String> {
 pub fn renew(cfg: &NodeConfig, name: &str) -> Result<String, String> {
     let q = name_registry::quote(name).map_err(name_registry::explain)?;
     let rpc = RpcClient::new(cfg);
-    let treasury = treasury_address(&chain_name(&rpc))?;
+    let chain = chain_name(&rpc);
+    let treasury = treasury_address(&chain)?;
     let owner = owner_of(cfg, &q.canonical)?;
+    // ⚠ Refuse to renew a name that cannot benefit from it, so the fee is never
+    // paid to the treasury for a record every indexer ignores. A reserved name
+    // is perpetual; a name already released past its grace period is gone and
+    // must be registered afresh. (delist() and buy() guard this same class of
+    // wasted fee; renew() was the gap.)
+    let idx = load_index(cfg, &chain);
+    if let Some(st) = idx.names.get(&q.canonical) {
+        if st.expires_height == NEVER_EXPIRES {
+            return Err("This is a permanent reserved name. It never expires, so there is nothing to renew.".into());
+        }
+        if is_released(st, tip_height(&rpc)?) {
+            return Err("This name has already lapsed past its grace period and been released, so renewing would pay a fee for nothing. It would have to be registered again from scratch.".into());
+        }
+    }
     Ok(send_record(
         cfg,
         &NameRecord::Renew { name: q.canonical.clone().into_bytes() },

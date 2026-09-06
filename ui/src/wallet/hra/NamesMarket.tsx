@@ -61,14 +61,12 @@ export function NamesMarket({ canTrade, onChanged }: { canTrade: boolean; onChan
 
   return (
     <div className="hra-market">
-      <p className="wl-note">
-        Names people have put up for sale. Buying is a single payment straight to the seller: there
-        is no escrow and nobody holds your money in between.
-      </p>
+      <p className="wl-note">Buy a name with a single payment without an escrow.</p>
 
       {rows.length === 0 && (
         <p className="wl-note">
-          Nothing is for sale yet. You can offer one of your own from the My Names tab.
+          Nothing is for sale yet. To sell one you own, open it under My Names and use Put on the
+          market.
         </p>
       )}
 
@@ -152,11 +150,6 @@ export function NamesMarket({ canTrade, onChanged }: { canTrade: boolean; onChan
 
       {done && <p className="wl-note">{done}</p>}
       {err && <p className="wl-err">{err}</p>}
-
-      <p className="wl-note hra-dim">
-        Prices are whatever a seller asked for. Nobody vets them, and a name being expensive says
-        nothing about whether it is worth anything.
-      </p>
     </div>
   );
 }

@@ -24,7 +24,7 @@ export const NAV: NavItem[] = [
   // in index.css). Used where a name is genuinely long rather than to save a
   // few pixels — "Human Readable Addresses" on one line would either squeeze
   // the whole sidebar wider or truncate.
-  { id: "hra", label: "Human Readable\nAddresses", icon: "hra" },
+  { id: "hra", label: "Human Readable\nAddresses (HRAs)", icon: "hra" },
   { id: "addressbook", label: "Address Book", icon: "addressbook" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];

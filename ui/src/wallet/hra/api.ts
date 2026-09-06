@@ -234,6 +234,15 @@ export const hraTransfer = (name: string, newOwner: string) =>
 export const hraSetPrimary = (name: string) => invoke<string>("hra_set_primary", { name });
 export const hraRenew = (name: string) => invoke<string>("hra_renew", { name });
 export const hraResolve = (name: string) => invoke<string | null>("hra_resolve", { name });
+/** A name matching what the user typed. `exact` is the one that equals it.
+ *  Carries no address on purpose: the send-to address comes from hraResolve,
+ *  which refuses a stale answer. `hasAddress` is only a "points somewhere" hint. */
+export interface NameHit {
+  name: string;
+  exact: boolean;
+  hasAddress: boolean;
+}
+export const hraSearch = (query: string) => invoke<NameHit[]>("hra_search", { query });
 /** The name an address displays as, if both directions agree. Decoration only. */
 export const hraReverse = (address: string) => invoke<string | null>("hra_reverse", { address });
 export const hraMarket = () => invoke<MarketListing[]>("hra_market");

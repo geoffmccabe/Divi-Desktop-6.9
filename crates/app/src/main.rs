@@ -500,6 +500,26 @@ async fn hra_resolve(name: String) -> Result<Option<String>, String> {
     hra_blocking!(move |cfg: &NodeConfig| names::resolve(cfg, &name))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HraHitDto {
+    name: String,
+    exact: bool,
+    has_address: bool,
+}
+
+/// Names matching what the user has typed, exact match first, for the Look Up
+/// screen. Discovery only: it returns names, never addresses. The chosen name's
+/// send-to address comes from hra_resolve, which refuses a stale answer.
+#[tauri::command]
+async fn hra_search(query: String) -> Result<Vec<HraHitDto>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::search(cfg, &query).map(|hits| {
+        hits.into_iter()
+            .map(|h| HraHitDto { name: h.name, exact: h.exact, has_address: h.has_address })
+            .collect::<Vec<_>>()
+    }))
+}
+
 /// The name an address displays as, if both directions agree.
 ///
 /// Decoration for an address already on screen, so it degrades to "no name"
@@ -1900,6 +1920,7 @@ fn main() {
             hra_set_primary,
             hra_renew,
             hra_resolve,
+            hra_search,
             hra_reverse,
             hra_market,
             hra_list_for_sale,
