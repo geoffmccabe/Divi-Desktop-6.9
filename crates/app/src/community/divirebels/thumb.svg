@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200" width="300" height="200">
+  <rect width="300" height="200" fill="#000"/>
+  <g fill="none" stroke="#8f6cff" stroke-width="1.4" opacity="0.9">
+    <path d="M0 8 L96 88 M300 8 L204 88 M0 192 L96 112 M300 192 L204 112"/>
+    <path d="M96 88 L204 88 L204 112 L96 112 Z"/>
+    <path d="M124 96 L176 96 L176 104 L124 104 Z" opacity="0.7"/>
+    <path d="M60 48 L60 152 M240 48 L240 152" opacity="0.55"/>
+  </g>
+  <g fill="none" stroke="#4fd6ff" stroke-width="1.6">
+    <path d="M112 58 h6 v-16 l10 -6 v44 l-10 -6 v-16"/>
+    <circle cx="128" cy="58" r="7"/>
+    <path d="M144 58 h-6 v-16 l-10 -6 v44 l10 -6 v-16"/>
+  </g>
+  <g fill="none" stroke="#c77dff" stroke-width="2.2">
+    <path d="M78 176 L112 132 M222 176 L188 132"/>
+  </g>
+  <g fill="none" stroke="#b45cf5" stroke-width="1.8">
+    <path d="M150 88 l9 5 v10 l-9 5 l-9 -5 v-10 z" opacity="0.85"/>
+  </g>
+  <text x="150" y="34" text-anchor="middle" fill="none" stroke="#b45cf5" stroke-width="1"
+        font-family="ui-monospace, Menlo, monospace" font-size="22" font-weight="bold"
+        letter-spacing="2">DIVI REBELS</text>
+</svg>
