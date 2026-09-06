@@ -30,6 +30,7 @@ import { NetworkMap } from "./wallet/NetworkMap";
 import { PriceChart } from "./wallet/PriceChart";
 import { FastReceiveHost } from "./wallet/FastReceiveHost";
 import { MmVenueToggle } from "./wallet/mmVenue";
+import { SkinsGallery } from "./theme/gallery/SkinsGallery";
 
 const VIEWS: Record<string, ComponentType> = {
   overview: Overview,
@@ -48,6 +49,7 @@ const VIEWS: Record<string, ComponentType> = {
   appbuilder: BuilderPanel,
   communityapps: CommunityApps,
   addressbook: AddressBook,
+  skinsgallery: SkinsGallery,
   settings: SettingsView,
   network: NetworkMap,
 };

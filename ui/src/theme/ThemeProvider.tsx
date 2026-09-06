@@ -21,6 +21,7 @@ interface ThemeCtx {
   deleteSaved: (id: string) => void;
   builtinSkins: Skin[];
   applySkin: (id: string) => void;
+  applyExternal: (tokens: Theme) => void;
 }
 
 const Ctx = createContext<ThemeCtx | null>(null);
@@ -64,6 +65,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         const s = BUILTIN_SKINS.find((x) => x.id === id);
         if (s) setTheme({ ...defaultTheme(), ...s.tokens });
       },
+      // For a skin that isn't in either local list — e.g. one just downloaded
+      // from the Skins Gallery. Same shape as applySaved/applySkin above.
+      applyExternal: (tokens) => setTheme({ ...defaultTheme(), ...tokens }),
     }),
     [theme, saved]
   );

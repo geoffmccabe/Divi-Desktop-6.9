@@ -31,5 +31,6 @@ export const NAV: NavItem[] = [
   /* Straight into the cockpit: the map in globe view with the game started,
      rather than the map and then a button. */
   { id: "divirebels", label: "Divi Rebels Game", icon: "divirebels" },
+  { id: "skinsgallery", label: "Skins Gallery", icon: "collectibles" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];

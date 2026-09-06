@@ -27,6 +27,44 @@ export interface PublishedSkin {
   preview_url: string | null;
 }
 
+// The full row as read back from the gallery (browse/detail views).
+export interface GallerySkin {
+  slug: string;
+  name: string;
+  description: string | null;
+  author_address: string;
+  author_name: string | null;
+  is_free: boolean;
+  price_divi: number;
+  tokens: Theme;
+  preview_url: string | null;
+  downloads: number;
+  created_at: string;
+}
+
+const GALLERY_SELECT =
+  "slug,name,description,author_address,author_name,is_free,price_divi,tokens,preview_url,downloads,created_at";
+
+// Public read — no auth needed, RLS already only exposes published rows.
+export async function listSkins(): Promise<GallerySkin[]> {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/skins?select=${GALLERY_SELECT}&published=eq.true&order=created_at.desc`,
+    { headers: supabaseHeaders() }
+  );
+  if (!res.ok) throw new Error(`Couldn't load the gallery (${res.status})`);
+  return (await res.json()) as GallerySkin[];
+}
+
+export async function getSkin(slug: string): Promise<GallerySkin | null> {
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/skins?select=${GALLERY_SELECT}&published=eq.true&slug=eq.${encodeURIComponent(slug)}`,
+    { headers: supabaseHeaders() }
+  );
+  if (!res.ok) throw new Error(`Couldn't load that skin (${res.status})`);
+  const rows = (await res.json()) as GallerySkin[];
+  return rows[0] ?? null;
+}
+
 function slugify(name: string): string {
   const base = name
     .toLowerCase()
