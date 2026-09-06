@@ -73,7 +73,11 @@ export function StartStaking({ onStarted }: { onStarted?: () => void }) {
             if (c) setStakingSetupPending(false); // a pending confirm just expired
             confirm.current = null;
             setState((prev) => (prev === "needpass" ? prev : isStaking ? "staking" : "idle"));
-            setReason(isStaking ? null : s.headline || null);
+            // Don't echo the node's sync/status headline under the staking button —
+            // it already shows in the status panel (bottom-left); showing it twice
+            // is noise. Only staking-specific reasons (maturity, password) appear,
+            // set by go()/stop().
+            setReason(null);
           }
         }
       } catch {
