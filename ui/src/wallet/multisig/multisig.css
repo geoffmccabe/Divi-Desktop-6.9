@@ -124,7 +124,10 @@
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* One full-width card per row, capped to the same width as the forms below so
+     the wallet panel and the text inputs line up on the right. */
+  grid-template-columns: 1fr;
+  max-width: 560px;
   gap: 12px;
 }
 .ms-wallet {
@@ -165,9 +168,19 @@
   color: hsl(var(--muted-foreground));
 }
 .ms-wallet-actions {
-  display: flex;
-  gap: 8px;
+  /* All 5 buttons fit across the panel as equal, responsive columns. */
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
   margin-top: 2px;
+}
+.ms-wallet-actions .ms-mini-btn {
+  font-size: 0.66rem;
+  padding: 5px 4px;
+  text-align: center;
+  white-space: normal; /* allow a longer label like "Back up / share" to wrap */
+  line-height: 1.15;
+  min-width: 0;
 }
 
 /* ── Forms ───────────────────────────────────────────────────────────────── */

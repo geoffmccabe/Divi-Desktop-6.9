@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { diviPrices, type DiviPrices } from "./api";
+import { diviPrices, priceLatest, type DiviPrices } from "./api";
 
 // Admin-configured DIVI value settings + a shared, cached price fetch so the
 // header value and the admin preview don't hammer the APIs independently.
@@ -94,8 +94,19 @@ export async function fetchPrices(force = false): Promise<DiviPrices> {
   if (!force && cache && Date.now() - cache.at < TTL) return cache.data;
   if (inflight) return inflight;
   const s = getValueSettings();
-  inflight = diviPrices(s.currencies, s.cmcKey, s.useCoingecko)
-    .then((d) => {
+  inflight = Promise.all([
+    diviPrices(s.currencies, s.cmcKey, s.useCoingecko).catch(
+      () => ({ prices: {}, coingeckoOk: false, coinmarketcapOk: false } as DiviPrices),
+    ),
+    priceLatest().catch(() => null), // shared central CMC feed (USD, no per-user key)
+  ])
+    .then(([d, sharedUsd]) => {
+      // Fill USD from the shared feed whenever the per-user source doesn't quote
+      // it (the default — most wallets set no CMC key). One central price source
+      // for the whole app instead of every wallet needing its own key.
+      if (sharedUsd && sharedUsd > 0 && !(typeof d.prices.usd === "number" && d.prices.usd > 0)) {
+        d = { ...d, prices: { ...d.prices, usd: sharedUsd }, coinmarketcapOk: true };
+      }
       cache = { at: Date.now(), data: d };
       return d;
     })
