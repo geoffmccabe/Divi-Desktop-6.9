@@ -94,21 +94,26 @@ export async function fetchPrices(force = false): Promise<DiviPrices> {
   if (!force && cache && Date.now() - cache.at < TTL) return cache.data;
   if (inflight) return inflight;
   const s = getValueSettings();
-  inflight = Promise.all([
-    diviPrices(s.currencies, s.cmcKey, s.useCoingecko).catch(
-      () => ({ prices: {}, coingeckoOk: false, coinmarketcapOk: false } as DiviPrices),
-    ),
-    priceLatest().catch(() => null), // shared central CMC feed (USD, no per-user key)
-  ])
-    .then(([d, sharedUsd]) => {
-      // Fill USD from the shared feed whenever the per-user source doesn't quote
-      // it (the default — most wallets set no CMC key). One central price source
-      // for the whole app instead of every wallet needing its own key.
-      if (sharedUsd && sharedUsd > 0 && !(typeof d.prices.usd === "number" && d.prices.usd > 0)) {
-        d = { ...d, prices: { ...d.prices, usd: sharedUsd }, coinmarketcapOk: true };
+  // The shared central CMC feed is the primary USD source (no per-user key, one
+  // central fetch). The per-user source is best-effort for OTHER currencies and
+  // must never BLOCK or hang the USD value, so it's raced against a timeout.
+  const perUser = Promise.race([
+    diviPrices(s.currencies, s.cmcKey, s.useCoingecko).catch(() => null),
+    new Promise<null>((r) => setTimeout(() => r(null), 8000)),
+  ]);
+  inflight = Promise.all([priceLatest().catch(() => null), perUser])
+    .then(([sharedUsd, d]) => {
+      const prices: Record<string, number> = { ...(d?.prices ?? {}) };
+      if (sharedUsd && sharedUsd > 0 && !(typeof prices.usd === "number" && prices.usd > 0)) {
+        prices.usd = sharedUsd; // fill USD from the shared feed
       }
-      cache = { at: Date.now(), data: d };
-      return d;
+      const out: DiviPrices = {
+        prices,
+        coingeckoOk: d?.coingeckoOk ?? false,
+        coinmarketcapOk: (d?.coinmarketcapOk ?? false) || !!(sharedUsd && sharedUsd > 0),
+      };
+      cache = { at: Date.now(), data: out };
+      return out;
     })
     .finally(() => {
       inflight = null;
