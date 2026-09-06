@@ -86,6 +86,16 @@ const NEAR = 6;             /* near clip plane, in world units */
 const FAR = 3600;           /* nothing is drawn past this */
 const FOV = 0.82;           /* focal length as a fraction of viewport height */
 const BOLT_SPEED = 1500;    /* player fire, units per second */
+/* How far the crosshair can be thrown from the centre line. This is the number
+   that decides whether the game feels responsive, and the first version had it
+   about five times too small. */
+const AIM_X = 640;
+const AIM_Y = 400;
+/* The depth the crosshair sits at. Shots are fired through it, so anything that
+   appears under the crosshair on screen is on the shot's path whatever its own
+   distance. */
+const ZREF = 700;
+const KEY_RATE = 1100;      /* crosshair travel from the keys, units per second */
 const CRUISE = 260;         /* forward speed of the world past the player */
 const MAX_SHIELD = 6;
 
@@ -327,23 +337,35 @@ const Sound = (function () {
 })();
 
 /* -------------------------------------------------------------------- input */
-/* Two control schemes at once, because a wallet is not a place where anybody
-   expects to learn a control scheme. The pointer flies the ship, and the keys
-   do the same job for anyone who would rather not chase a hidden cursor. */
+/* The crosshair moves with your hand and the ship follows it. That is how the
+   arcade cabinet worked, and getting it backwards is exactly what the first
+   version did: with the crosshair pinned to the centre of the screen there is
+   nothing that visibly moves the way you pushed, so the whole world appears to
+   slide the wrong way.
+
+   Two schemes at once, because a wallet is not a place where anybody expects to
+   learn a control scheme. */
+const Aim = { x: 0, y: 0 };
 const Input = {
-  aimX: 0, aimY: 0,       /* target offset in world units */
   keys: Object.create(null),
   firing: false,
-  firePressedAt: 0,
   usedPointer: false,
 };
+
+function clampAim() {
+  Aim.x = Math.max(-AIM_X, Math.min(AIM_X, Aim.x));
+  Aim.y = Math.max(-AIM_Y, Math.min(AIM_Y, Aim.y));
+}
 
 function pointerTo(clientX, clientY) {
   const r = canvas.getBoundingClientRect();
   const nx = ((clientX - r.left) / r.width) * 2 - 1;
   const ny = ((clientY - r.top) / r.height) * 2 - 1;
-  Input.aimX = nx * 150;
-  Input.aimY = -ny * 100;
+  /* Pointer left means crosshair left. Screen y grows downward and world y
+     grows upward, which is the only inversion here and it is a fact about the
+     coordinate systems, not a preference. */
+  Aim.x = nx * AIM_X;
+  Aim.y = -ny * AIM_Y;
   Input.usedPointer = true;
 }
 canvas.addEventListener("pointermove", (e) => pointerTo(e.clientX, e.clientY));
@@ -351,7 +373,6 @@ canvas.addEventListener("pointerdown", (e) => {
   pointerTo(e.clientX, e.clientY);
   Sound.wake();
   Input.firing = true;
-  Input.firePressedAt = performance.now();
   e.preventDefault();
 });
 window.addEventListener("pointerup", () => { Input.firing = false; });
@@ -364,7 +385,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (Input.keys[k]) return;
   Input.keys[k] = true;
-  if (k === " ") { Sound.wake(); Input.firing = true; Input.firePressedAt = performance.now(); }
+  if (k === " ") { Sound.wake(); Input.firing = true; }
   if (k === "m") Sound.toggle();
   if (k === "p") Game.togglePause();
 });
@@ -386,6 +407,13 @@ function keyAxis() {
   if (Input.keys["arrowup"] || Input.keys["w"]) y += 1;
   if (Input.keys["arrowdown"] || Input.keys["s"]) y -= 1;
   return { x, y };
+}
+
+/* Where the crosshair is on screen. Shots go through this point, so it is also
+   the answer to "what am I about to hit". */
+function aimScreen() {
+  const s = F / ZREF;
+  return { x: CX + (Aim.x - CAM.x) * s, y: CY - (Aim.y - CAM.y) * s };
 }
 
 /* ------------------------------------------------------------- high scores */
@@ -624,7 +652,7 @@ function beginWave() {
   Game.portHits = 0;
   Game.px = 0; Game.py = 0; Game.vx = 0; Game.vy = 0;
   if (Game.wave === 1) {
-    Game.target = Math.round(12 + Game.loop * 3);
+    Game.target = 8 + (Game.loop - 1) * 3;
     Game.message = "WAVE " + waveNumber() + "  INTERCEPTORS";
   } else if (Game.wave === 2) {
     Game.target = 2600 + Game.loop * 300;
@@ -685,14 +713,20 @@ function playerFire() {
   const now = Game.t;
   if (now - Game.lastFire < 0.20) return;
   Game.lastFire = now;
-  /* Two bolts from the wing roots, converging on the centre line. The converge
-     is pure theatre and it is most of why firing feels good. */
+  /* Both bolts are aimed at the crosshair, so they leave the wing roots, meet
+     exactly where you are pointing and carry on. The convergence is theatre and
+     it is most of why firing feels good, but aiming them at the crosshair is
+     also what makes screen-space aiming true at every distance: anything drawn
+     under the crosshair is on this line. */
   for (const side of [-1, 1]) {
-    const ox = 30 * side, oy = -22;
+    const ox = 34 * side, oy = -26;
+    const sx = Game.px + ox, sy = Game.py + oy, sz = NEAR + 2;
+    const dx = Aim.x - sx, dy = Aim.y - sy, dz = ZREF - sz;
+    const d = Math.hypot(dx, dy, dz) || 1;
     W.bolts.push({
-      x: Game.px + ox, y: Game.py + oy, z: NEAR + 2,
-      vx: -ox / 0.30, vy: -oy / 0.30, vz: BOLT_SPEED,
-      converge: 0.30, life: 1.2,
+      x: sx, y: sy, z: sz,
+      vx: (dx / d) * BOLT_SPEED, vy: (dy / d) * BOLT_SPEED, vz: (dz / d) * BOLT_SPEED,
+      life: 1.2,
     });
   }
   Sound.fire();
@@ -894,24 +928,30 @@ function playerBounds() {
 
 /* --------------------------------------------------------- shared movement */
 function updateCommon(dt) {
-  /* The ship chases the aim point instead of snapping to it. The lag is what
-     gives the thing mass: with a direct assignment it feels like dragging an
-     icon, not flying. */
   const b = playerBounds();
-  let tx = Input.aimX, ty = Input.aimY;
+
+  /* The keys push the crosshair at a steady rate. The pointer sets it outright,
+     and whichever was used last wins, so both can be used in one session
+     without either yanking control away from the other. */
   const k = keyAxis();
   if (k.x || k.y) {
-    /* Keys steer by pushing the target, so both schemes can be used in the
-       same session without one yanking control away from the other. */
-    tx = Game.px + k.x * 220;
-    ty = Game.py + k.y * 180;
-    Input.aimX = tx; Input.aimY = ty;
+    Aim.x += k.x * KEY_RATE * dt;
+    Aim.y += k.y * KEY_RATE * dt;
+    clampAim();
   }
-  tx = Math.max(-b.x, Math.min(b.x, tx));
-  ty = Math.max(b.yLo, Math.min(b.yHi, ty));
-  Input.aimX = tx; Input.aimY = ty;
 
-  const stiff = 9, damp = 6.2;
+  /* The ship flies toward where you are pointing, but it only has as much room
+     as the wave gives it: full deflection puts it exactly at the edge of its
+     bounds and never past them. Mapping through the bounds like this is what
+     stops the trench run from pinning you against a wall every time you aim at
+     something on the far side of it. */
+  const midY = (b.yLo + b.yHi) / 2, halfY = (b.yHi - b.yLo) / 2;
+  const tx = (Aim.x / AIM_X) * b.x;
+  const ty = midY + (Aim.y / AIM_Y) * halfY;
+
+  /* The ship lags the crosshair, and that lag is the whole feeling of mass. The
+     crosshair itself never lags, which is why aiming stays crisp. */
+  const stiff = 15, damp = 7.6;
   Game.vx += ((tx - Game.px) * stiff - Game.vx * damp) * dt;
   Game.vy += ((ty - Game.py) * stiff - Game.vy * damp) * dt;
   Game.px += Game.vx * dt;
@@ -927,8 +967,6 @@ function updateCommon(dt) {
   for (let i = W.bolts.length - 1; i >= 0; i--) {
     const s = W.bolts[i];
     const z0 = s.z, x0 = s.x, y0 = s.y;
-    s.converge -= dt;
-    if (s.converge <= 0) { s.vx = 0; s.vy = 0; }
     s.x += s.vx * dt; s.y += s.vy * dt; s.z += s.vz * dt;
     s.life -= dt;
     let spent = false;
@@ -1282,24 +1320,38 @@ function drawPort(t) {
 /* Drawn in screen space. The reticle is a hexagon because that is the Divi
    mark, and because a hexagon reads as "targeting" at any size. */
 function drawReticle() {
-  const r = Math.min(VW, VH) * 0.055;
+  const a = aimScreen();
+  /* Kept on screen even at full deflection near a wall, where the ship is
+     clamped and the crosshair would otherwise swing out of sight. */
+  const m = 24;
+  const x = Math.max(m, Math.min(VW - m, a.x));
+  const y = Math.max(m, Math.min(VH - m, a.y));
+  const r = Math.min(VW, VH) * 0.048;
   const pts = [];
   for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
-    pts.push([CX + Math.cos(a) * r, CY + Math.sin(a) * r]);
+    const t = (i / 6) * Math.PI * 2 - Math.PI / 2;
+    pts.push([x + Math.cos(t) * r, y + Math.sin(t) * r]);
   }
   for (let i = 0; i < 6; i++) {
-    const a = pts[i], b = pts[(i + 1) % 6];
+    const p = pts[i], q = pts[(i + 1) % 6];
     /* Broken sides, so the reticle frames the target instead of enclosing it. */
-    seg2(a[0] + (b[0] - a[0]) * 0.00, a[1] + (b[1] - a[1]) * 0.00,
-         a[0] + (b[0] - a[0]) * 0.28, a[1] + (b[1] - a[1]) * 0.28, C.player, 2);
-    seg2(a[0] + (b[0] - a[0]) * 0.72, a[1] + (b[1] - a[1]) * 0.72,
-         b[0], b[1], C.player, 2);
+    seg2(p[0], p[1], p[0] + (q[0] - p[0]) * 0.28, p[1] + (q[1] - p[1]) * 0.28, C.player, 2);
+    seg2(p[0] + (q[0] - p[0]) * 0.72, p[1] + (q[1] - p[1]) * 0.72, q[0], q[1], C.player, 2);
   }
-  seg2(CX - 4, CY, CX + 4, CY, C.playerHi, 2);
-  seg2(CX, CY - 4, CX, CY + 4, C.playerHi, 2);
-  seg2(CX - r * 1.5, CY, CX - r * 1.15, CY, C.player, 1);
-  seg2(CX + r * 1.15, CY, CX + r * 1.5, CY, C.player, 1);
+  seg2(x - 5, y, x + 5, y, C.playerHi, 2);
+  seg2(x, y - 5, x, y + 5, C.playerHi, 2);
+
+  /* A faint tether back to the ship, which sits at the centre of the view. It
+     is the only thing that shows how far you have thrown the crosshair, and
+     without it a hard turn reads as the world drifting for no reason. */
+  const shipX = CX, shipY = CY + VH * 0.36;
+  const dx = x - shipX, dy = y - shipY;
+  const len = Math.hypot(dx, dy) || 1;
+  seg2(shipX + (dx / len) * 26, shipY + (dy / len) * 26,
+       x - (dx / len) * r * 1.5, y - (dy / len) * r * 1.5, C.player, 1);
+  /* The ship itself, a small chevron, so there is something of yours on screen. */
+  seg2(shipX - 20, shipY + 8, shipX, shipY - 8, C.playerHi, 2);
+  seg2(shipX, shipY - 8, shipX + 20, shipY + 8, C.playerHi, 2);
 }
 
 function drawShieldBar() {
