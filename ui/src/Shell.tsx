@@ -25,6 +25,7 @@ import { MultisigPanel } from "./wallet/multisig/MultisigPanel";
 import "./sidebar-compact.css";
 import { AgentPanel } from "./wallet/AgentPanel";
 import { NetworkMap } from "./wallet/NetworkMap";
+import { OrbitPanel } from "./wallet/rebels/OrbitPanel";
 import { PriceChart } from "./wallet/PriceChart";
 import { FastReceiveHost } from "./wallet/FastReceiveHost";
 import { MmVenueToggle } from "./wallet/mmVenue";
@@ -44,6 +45,7 @@ const VIEWS: Record<string, ComponentType> = {
   hra: HraPanel,
   appbuilder: BuilderPanel,
   communityapps: CommunityApps,
+  rebels: OrbitPanel,
   addressbook: AddressBook,
   settings: SettingsView,
   network: NetworkMap,
