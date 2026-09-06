@@ -18,7 +18,6 @@ export const NAV: NavItem[] = [
   { id: "tokens", label: "Divi Meta Tokens", icon: "tokens" },
   { id: "appbuilder", label: "App Builder", icon: "appbuilder" },
   { id: "communityapps", label: "Community Apps", icon: "communityapps" },
-  { id: "rebels", label: "Divi Rebels", icon: "globe" },
   { id: "governance", label: "Governance", icon: "governance" },
   { id: "multisig", label: "MultiSig", icon: "multisig" },
   { id: "marketmaker", label: "Market Maker", icon: "marketmaker" },

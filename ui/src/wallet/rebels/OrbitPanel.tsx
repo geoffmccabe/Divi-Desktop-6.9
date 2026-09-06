@@ -43,7 +43,12 @@ function label(n: OrbitNode | null): string {
   return n.city || n.country || n.ip;
 }
 
-export function OrbitPanel() {
+export interface OrbitPanelProps {
+  /** Called when the player leaves. The map shows itself again. */
+  onExit?: () => void;
+}
+
+export function OrbitPanel({ onExit }: OrbitPanelProps = {}) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [flying, setFlying] = useState(false);
@@ -340,6 +345,11 @@ export function OrbitPanel() {
       <canvas className="orbit-canvas" ref={canvasRef} />
 
       <div className="orbit-hud">
+        {onExit && (
+          <button type="button" className="orbit-exit" onClick={onExit} title="Back to the map">
+            BACK TO MAP
+          </button>
+        )}
         <div className="orbit-tl">
           <div className="orbit-big">{Math.round(hud.speed * 64)} <span className="orbit-dim">km/s</span></div>
           <div className="orbit-row orbit-dim">ALT {Math.round((hud.alt / MAX_ALT) * 100)}%</div>
