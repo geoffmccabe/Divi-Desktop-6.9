@@ -32,8 +32,13 @@ export function BalanceCard() {
         <span className="bl-amt">
           {b ? fmtDivi(b.spendable) : "—"} <em>DIVI</em>
         </span>
-        {spendableUsd.state === "ok" && (
+        {spendableUsd.state === "ok" ? (
           <span className="bl-usd">= {spendableUsd.value} {spendableUsd.code}</span>
+        ) : (
+          <span className="bl-usd" style={{ fontSize: "0.7rem", opacity: 0.7 }}>
+            [{spendableUsd.state}
+            {spendableUsd.state === "unavailable" ? `: ${spendableUsd.reason}` : ""}]
+          </span>
         )}
       </div>
       <div className="balance-card">
