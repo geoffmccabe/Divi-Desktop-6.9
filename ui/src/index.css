@@ -1968,7 +1968,11 @@ code, .mono { font-family: var(--font-mono); }
 /* The game takes the map window, not the screen. It sits above the map canvas
    and below the toolbar, so the Flat/Globe toggle and the launcher stay
    reachable while flying. */
-.netmap-game { position: absolute; inset: 0; z-index: 3; }
+.netmap-game { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+/* The globe's own canvas is what the game reads the pointer from, so the
+   cockpit must never sit in front of it. Only the cards and buttons take
+   clicks. */
+.netmap-flying canvas { cursor: none; }
 
 .orbit-exit {
   position: absolute; left: 16px; bottom: 14px;

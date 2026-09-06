@@ -29,6 +29,35 @@ export interface GlobePoint {
   city?: string;
   country?: string;
 }
+/**
+ * How Divi Rebels flies THIS globe.
+ *
+ * The game does not build a planet of its own. It borrows this one: the same
+ * earth, the same node towers, the same double-helix links with hex characters
+ * running along them. All it wants is the camera, the scene to put a ship in,
+ * and where the tower tips are. Anything else would be a second, worse copy of
+ * a map that already exists.
+ */
+export interface GlobeFlight {
+  /** Handed the live scene once it is built, and again if it is rebuilt. */
+  attach(api: {
+    scene: THREE.Scene;
+    camera: THREE.PerspectiveCamera;
+    /** Tip of every tower, keyed by node ip: what you dock with. */
+    tips: Map<string, THREE.Vector3>;
+    /** Which ip is this wallet's own node, if it is on the map. */
+    selfIp: string | null;
+    /** Globe radius in scene units. */
+    radius: number;
+    /** The globe's own canvas, which is where the pointer already is. */
+    dom: HTMLCanvasElement;
+  }): void;
+  /** Every frame while flying. Move the camera here. */
+  frame(dt: number): void;
+  /** Flying stopped, or the scene is being torn down. */
+  detach(): void;
+}
+
 export interface GlobeArc {
   startLat: number;
   startLng: number;
@@ -282,7 +311,7 @@ interface Stream {
 }
 interface Glyph { s: number; strand: number; base: number; }
 
-export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null; getWinnerIp?: () => string | null }) {
+export function GlobeMap({ points, center, getWinnerIp, flight }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null; getWinnerIp?: () => string | null; flight?: GlobeFlight | null }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [size, setSize] = useState({ w: 600, h: 400 });
@@ -293,6 +322,11 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
   const centerRef = useRef(center);
   centerRef.current = center;
   const userMovedRef = useRef(false);
+  /* Held in a ref, not a dependency: starting or leaving the game must not
+     rebuild every tower and helix on the planet. */
+  const flightRef = useRef<GlobeFlight | null | undefined>(flight);
+  flightRef.current = flight;
+  const attachedRef = useRef<GlobeFlight | null>(null);
   // Rebuild the scene only when the set of nodes changes, not on every 10s poll
   // (rebuilding all the helix tubes each poll would hitch).
   const sig = useMemo(() => points.map((p) => `${p.ip}:${p.kind}`).sort().join("|"), [points]);
@@ -561,6 +595,29 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
 
     scene.add(group);
 
+    /* Hand the live scene to the game, if one is running. These are the REAL
+       tower tips off the real map, so docking lines up with the towers you can
+       see rather than with a second set built from the same numbers. */
+    const attachFlight = () => {
+      const f = flightRef.current;
+      if (!f || attachedRef.current === f) return;
+      if (attachedRef.current) attachedRef.current.detach();
+      attachedRef.current = f;
+      f.attach({
+        scene,
+        camera: camera as THREE.PerspectiveCamera,
+        tips: tipOf,
+        selfIp: selfIp ?? null,
+        radius: R,
+        dom,
+      });
+    };
+    const detachFlight = () => {
+      if (!attachedRef.current) return;
+      attachedRef.current.detach();
+      attachedRef.current = null;
+    };
+
     // Hover tooltips: raycast the towers on pointer move. A hit farther from the
     // camera than the globe centre is on the back side (occluded) — ignore it.
     const raycaster = new THREE.Raycaster();
@@ -597,10 +654,29 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
     let last = performance.now();
     let goldOn = false; // was the gold ripple painting last frame (to restore once)
     let lastTrig = 0; // last pulse trigger seen (to hand out fresh legs)
+    const controls = g.controls() as unknown as { enabled: boolean; autoRotate: boolean; update: () => void };
+    let wasFlying = false;
     const animate = () => {
       const now = performance.now();
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
+
+      /* The game owns the camera while it runs. Orbit controls have to be off
+         or they fight it back to their own target every frame. Everything else
+         in this loop keeps running, which is the point: the helix characters,
+         the query ripple and the stake-winner coin all carry on animating
+         while you fly through them. */
+      const isFlying = !!flightRef.current;
+      if (isFlying !== wasFlying) {
+        wasFlying = isFlying;
+        if (isFlying) { attachFlight(); controls.enabled = false; controls.autoRotate = false; }
+        else { detachFlight(); controls.enabled = true; }
+      }
+      if (isFlying) {
+        attachFlight();
+        flightRef.current!.frame(dt);
+      }
+
       const cam = camera.position;
 
       // Move / show the winner coin when the winning node changes.
@@ -732,6 +808,7 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
 
     return () => {
       cancelAnimationFrame(raf);
+      detachFlight();
       dom.removeEventListener("pointermove", onMove);
       scene.remove(group);
       group.traverse((o) => {
