@@ -49,11 +49,33 @@ static SNAPSHOT_FILES: &[(&str, &[u8])] = &[
     ("thumb.svg", include_bytes!("community/snapshot/thumb.svg")),
 ];
 
+/// The arcade game. It is the first built-in that is not a wallet utility, and
+/// it is here for two reasons beyond being a game: it gives the Community Apps
+/// shelf something real on it, and it is the worked example a third-party
+/// developer can read, since it is built exactly the way the App Builder builds
+/// an app. It asks for storage and nothing else, which is the whole point: a
+/// guest app in a wallet should be able to do something worth doing while
+/// reaching none of the wallet.
+///
+/// `selftest.js` sits next to these in the source folder and is deliberately
+/// not listed, so it is never compiled in and never served. Run it with
+/// `sh scripts/run-divirebels-tests.sh`.
+static REBELS_FILES: &[(&str, &[u8])] = &[
+    ("index.html", include_bytes!("community/divirebels/index.html")),
+    ("sdk.js", SDK_JS),
+    ("thumb.svg", include_bytes!("community/divirebels/thumb.svg")),
+];
+
 static BUILTINS: &[BuiltinBundle] = &[
     BuiltinBundle {
         id: "io.divi.snapshot",
         manifest: include_str!("community/snapshot/manifest.json"),
         files: SNAPSHOT_FILES,
+    },
+    BuiltinBundle {
+        id: "io.divi.rebels",
+        manifest: include_str!("community/divirebels/manifest.json"),
+        files: REBELS_FILES,
     },
     BuiltinBundle {
         id: "io.divi.sandbox-test",
