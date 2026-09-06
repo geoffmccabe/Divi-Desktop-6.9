@@ -10,7 +10,7 @@
 import * as THREE from "three";
 import { R, MIN_ALT, MAX_ALT } from "./orbitWorld";
 import {
-  createFlight, stepFlight, chaseCamera, CRUISE, MAX_AMMO, MAX_SHIELD,
+  createFlight, stepFlight, CRUISE, MAX_AMMO, MAX_SHIELD,
   DOCK_SECONDS, type Stick,
 } from "./orbitFlight";
 
@@ -25,13 +25,14 @@ const stick = (o: Partial<Stick> = {}): Stick =>
 
 const DT = 1 / 60;
 function run(f: ReturnType<typeof createFlight>, frames: number, s: Stick, tips: THREE.Vector3[] = [], home = -1) {
-  let hits = 0, docks = 0;
+  let hits = 0, docks = 0, shots = 0;
   for (let i = 0; i < frames; i++) {
     const r = stepFlight(f, DT, s, tips, home);
     if (r.hit) hits++;
     if (r.docked) docks++;
+    if (r.fired) shots++;
   }
-  return { hits, docks };
+  return { hits, docks, shots };
 }
 
 /* A launch pad well away from anything, so nothing else interferes. */
@@ -101,17 +102,19 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      `speed ${f.speed.toFixed(1)}`);
 }
 
-// 6. Guns fire, cost ammo, and stop when empty.
+// 6. Guns fire, cost ammo, and stop when empty. What comes OUT of them is the
+//    combat module's business and is tested there.
 {
   const f = createFlight(pad);
-  run(f, 30, stick({ firing: true }));
+  const a = run(f, 30, stick({ firing: true }));
   ok("firing costs ammo", f.ammo < MAX_AMMO, `ammo ${f.ammo}`);
-  ok("firing makes bolts", f.bolts.length > 0, `${f.bolts.length} in flight`);
+  ok("firing reports shots", a.shots > 0, `${a.shots} shots in half a second`);
+  ok("ammo spent matches shots fired", MAX_AMMO - f.ammo === a.shots,
+     `${MAX_AMMO - f.ammo} spent vs ${a.shots} fired`);
   run(f, 60 * 20, stick({ firing: true }));
   ok("ammo runs out and stays out", f.ammo === 0);
-  const boltsBefore = f.bolts.length;
-  run(f, 60, stick({ firing: true }));
-  ok("an empty gun makes no bolts", f.bolts.length <= boltsBefore);
+  const b = run(f, 60, stick({ firing: true }));
+  ok("an empty gun does not fire", b.shots === 0, `${b.shots} shots`);
 }
 
 // 7. Docking at a tower repairs and rearms, but only when slow enough.
@@ -206,18 +209,6 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      `best dock progress ${best.toFixed(2)}, shields ${f.shields}`);
 }
 
-// 8. The camera sits behind the ship and looks where it is going.
-{
-  const f = createFlight(pad);
-  run(f, 30, stick());
-  const cam = new THREE.Vector3(), look = new THREE.Vector3();
-  chaseCamera(f, cam, look);
-  const toShip = f.pos.clone().sub(cam).normalize();
-  ok("camera is behind the ship", toShip.dot(f.fwd) > 0.8, `dot ${toShip.dot(f.fwd).toFixed(2)}`);
-  ok("camera is above the surface", cam.length() > R, `radius ${cam.length().toFixed(1)}`);
-  ok("camera looks ahead of the ship", look.distanceTo(f.pos) > 5);
-}
-
 // 9. A long unattended flight does not drift, blow up or leak bolts.
 {
   const f = createFlight(pad);
@@ -225,7 +216,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   ok("two minutes of flight stays finite", Number.isFinite(f.pos.length()) && Number.isFinite(f.fwd.length()),
      `radius ${f.pos.length().toFixed(1)}`);
   ok("two minutes of flight stays on the sphere", Math.abs(f.pos.length() - (R + f.alt)) < 1e-3);
-  ok("bolts do not accumulate", f.bolts.length < 60, `${f.bolts.length} alive`);
+  ok("shields survive a long clean flight", f.shields > 0, `${f.shields} left`);
 }
 
 console.log(out.join("\n"));

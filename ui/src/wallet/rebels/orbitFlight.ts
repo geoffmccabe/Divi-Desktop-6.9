@@ -30,13 +30,6 @@ export const DOCK_SECONDS = 2.2;
 export const PARK = 2.2;
 export const MAX_SHIELD = 6;
 export const MAX_AMMO = 60;
-export const BOLT_SPEED = 90;
-
-export interface Bolt {
-  pos: THREE.Vector3;
-  dir: THREE.Vector3;
-  life: number;
-}
 
 export interface Flight {
   pos: THREE.Vector3;
@@ -50,7 +43,6 @@ export interface Flight {
   dock: number;       /* 0..1 progress into a docking */
   dockedAt: number;   /* index of the tower being docked with, or -1 */
   cooldown: number;
-  bolts: Bolt[];
   /** Seconds of invulnerability after a hit, so one scrape is not five. */
   grace: number;
 }
@@ -85,7 +77,6 @@ export function createFlight(at: THREE.Vector3): Flight {
     dock: 0,
     dockedAt: -1,
     cooldown: 0,
-    bolts: [],
     grace: 0,
   };
 }
@@ -98,6 +89,9 @@ export interface StepResult {
   hit: boolean;
   /** True on the frame docking completed. */
   docked: boolean;
+  /** True on the frame the guns went off. What comes out of them is the combat
+   *  module's business; this only decides when. */
+  fired: boolean;
 }
 
 export function stepFlight(
@@ -107,7 +101,7 @@ export function stepFlight(
   towerTips: THREE.Vector3[],
   homeIndex: number,
 ): StepResult {
-  const out: StepResult = { hit: false, docked: false };
+  const out: StepResult = { hit: false, docked: false, fired: false };
   f.grace = Math.max(0, f.grace - dt);
 
   /* ---- how near is the nearest tower ----
@@ -222,32 +216,10 @@ export function stepFlight(
   /* ---- guns ---- */
   f.cooldown -= dt;
   if (stick.firing && f.cooldown <= 0 && f.ammo > 0) {
-    f.cooldown = 0.12;
+    f.cooldown = 0.11;
     f.ammo -= 1;
-    const side = new THREE.Vector3().crossVectors(f.fwd, _up).normalize();
-    for (const s of [-1, 1]) {
-      f.bolts.push({
-        pos: f.pos.clone().addScaledVector(side, s * 1.0),
-        dir: f.fwd.clone(),
-        life: 1.4,
-      });
-    }
-  }
-  for (let i = f.bolts.length - 1; i >= 0; i--) {
-    const b = f.bolts[i];
-    b.pos.addScaledVector(b.dir, BOLT_SPEED * dt);
-    b.life -= dt;
-    if (b.life <= 0) f.bolts.splice(i, 1);
+    out.fired = true;
   }
 
   return out;
-}
-
-/** Where the chase camera wants to be, and what it wants to look at. */
-export function chaseCamera(f: Flight, camPos: THREE.Vector3, lookAt: THREE.Vector3): void {
-  const up = f.pos.clone().normalize();
-  /* Pulling back with speed is the cheapest sensation of going fast there is. */
-  const back = 7 + (f.speed / BOOST) * 5;
-  camPos.copy(f.pos).addScaledVector(f.fwd, -back).addScaledVector(up, 2.6);
-  lookAt.copy(f.pos).addScaledVector(f.fwd, 14);
 }

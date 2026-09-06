@@ -56,6 +56,10 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           {hud.homeDist > 0 ? `${Math.round(hud.homeDist * 64)} km away` : " "}
         </div>
         <div className="orbit-row orbit-dim">{hud.towers} towers</div>
+        <div className={"orbit-row" + (hud.contacts > 0 ? " orbit-alert" : " orbit-dim")}>
+          {hud.contacts > 0 ? `${hud.contacts} CONTACT${hud.contacts > 1 ? "S" : ""}` : "no contacts"}
+        </div>
+        <div className="orbit-row orbit-dim">{hud.kills} down</div>
       </div>
 
       {hud.launched && !hud.dead && !hud.broken && <div className="orbit-cross" ref={crossRef} />}

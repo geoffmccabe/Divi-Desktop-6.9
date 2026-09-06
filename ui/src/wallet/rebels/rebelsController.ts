@@ -9,11 +9,12 @@
 
 import * as THREE from "three";
 import type { GlobeFlight } from "../GlobeMap";
-import { buildShip, readPalette, type Palette } from "./orbitWorld";
 import {
-  createFlight, stepFlight, chaseCamera, MAX_AMMO, MAX_SHIELD,
+  createFlight, stepFlight, MAX_AMMO, MAX_SHIELD,
   type Flight, type Stick,
 } from "./orbitFlight";
+import { createCombat, stepCombat, fireGuns, type CombatState } from "./rebelsCombat";
+import { createFx, makeFighter, type Fx } from "./rebelsFx";
 
 export interface HudState {
   ready: boolean;
@@ -27,6 +28,9 @@ export interface HudState {
   homeName: string;
   homeDist: number;
   towers: number;
+  /** Fighters in the air right now, and how many you have taken down. */
+  contacts: number;
+  kills: number;
   dead: boolean;
   launched: boolean;
   broken: string | null;
@@ -34,13 +38,11 @@ export interface HudState {
 
 const BLANK: HudState = {
   ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO, boost: 1,
-  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, dead: false, launched: false, broken: null,
+  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, dead: false, launched: false, broken: null,
 };
 
-const BOLT_CAP = 200;
-/** The ship next to a three-unit tower. Small on purpose: the towers are the
- *  landmarks and the planet is the world, the fighter is a speck crossing it. */
-const SHIP_SCALE = 0.42;
+/** Fighters are drawn about a unit across, against three-unit towers. */
+const ENEMY_SCALE = 0.85;
 
 export interface RebelsController extends GlobeFlight {
   hud(): HudState;
@@ -58,11 +60,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let scene: THREE.Scene | null = null;
   let camera: THREE.PerspectiveCamera | null = null;
   let dom: HTMLCanvasElement | null = null;
-  let pal: Palette | null = null;
-  let ship: THREE.Object3D | null = null;
-  let boltMesh: THREE.LineSegments | null = null;
-  let boltGeo: THREE.BufferGeometry | null = null;
-  let boltMat: THREE.LineBasicMaterial | null = null;
+  let fx: Fx | null = null;
+  let combat: CombatState = createCombat();
+  /* One model per fighter in the air, kept in step with the simulation's list
+     by index. Built from a single prototype and cloned, so a spawn costs a
+     clone rather than a pile of new geometry. */
+  let proto: THREE.Group | null = null;
+  const enemyMeshes: THREE.Group[] = [];
 
   let tipList: THREE.Vector3[] = [];
   let ipList: string[] = [];
@@ -151,7 +155,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         scene = api.scene;
         camera = api.camera;
         dom = api.dom;
-        pal = readPalette();
 
         /* Real tower tips off the real map. Docking lines up with the towers
            you can actually see, because they ARE those towers. */
@@ -165,17 +168,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         camera.far = Math.max(camera.far, 4000);
         camera.updateProjectionMatrix();
 
-        ship = buildShip(pal);
-        ship.scale.setScalar(SHIP_SCALE);
-        ship.renderOrder = 10;
-        scene.add(ship);
-
-        boltGeo = new THREE.BufferGeometry();
-        boltGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(BOLT_CAP * 6), 3));
-        boltMat = new THREE.LineBasicMaterial({ color: pal.bolt });
-        boltMesh = new THREE.LineSegments(boltGeo, boltMat);
-        boltMesh.frustumCulled = false;
-        scene.add(boltMesh);
+        fx = createFx();
+        scene.add(fx.group);
+        proto = makeFighter();
+        combat = createCombat();
 
         startAt(homeIndex);
 
@@ -200,40 +196,88 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     },
 
     frame(dt) {
-      if (!flight || !camera || !ship || !boltGeo) return;
+      if (!flight || !camera || !fx || !scene || !proto) return;
       try {
         const live = flying && !hud.dead;
         const blank: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false };
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
-        if (res.hit && flight.shields <= 0) setHud({ dead: true });
+        if (res.hit) fx.boom(flight.pos.clone(), 1.2, false);
 
         const s = scratch;
         s.up.copy(flight.pos).normalize();
+
+        /* ---- the cockpit ----
+           The camera IS the ship. There is no model in the middle of the view
+           because you are sitting in it, and the bank is applied to the camera
+           so a turn rolls the horizon rather than rolling a toy in front of
+           you. */
         s.target.copy(flight.pos).addScaledVector(flight.fwd, 10);
         s.m4.lookAt(flight.pos, s.target, s.up);
-        ship.quaternion.setFromRotationMatrix(s.m4);
-        s.qBank.setFromAxisAngle(s.zAxis, flight.bank);
-        ship.quaternion.multiply(s.qBank);
-        ship.position.copy(flight.pos);
+        camera.quaternion.setFromRotationMatrix(s.m4);
+        s.qBank.setFromAxisAngle(s.zAxis, flight.bank * 0.55);
+        camera.quaternion.multiply(s.qBank);
+        camera.position.copy(flight.pos);
+        camera.updateMatrixWorld();
 
-        chaseCamera(flight, s.camPos, s.lookAt);
-        camera.position.copy(s.camPos);
-        camera.up.copy(s.up);
-        camera.lookAt(s.lookAt);
-
-        const attr = boltGeo.getAttribute("position") as THREE.BufferAttribute;
-        const buf = attr.array as Float32Array;
-        const n = Math.min(flight.bolts.length, BOLT_CAP);
-        for (let i = 0; i < n; i++) {
-          const b = flight.bolts[i];
-          const o = i * 6;
-          buf[o] = b.pos.x; buf[o + 1] = b.pos.y; buf[o + 2] = b.pos.z;
-          buf[o + 3] = b.pos.x - b.dir.x * 1.2;
-          buf[o + 4] = b.pos.y - b.dir.y * 1.2;
-          buf[o + 5] = b.pos.z - b.dir.z * 1.2;
+        /* ---- guns ----
+           Fired from the edges of the frame at eye level, converging on the
+           crosshair, which is why the muzzles come from the camera's frustum
+           rather than from a fixed offset. */
+        if (res.fired) {
+          const muzzles = fireGuns(combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect);
+          fx.muzzle(muzzles[0]);
+          fx.muzzle(muzzles[1]);
         }
-        attr.needsUpdate = true;
-        boltGeo.setDrawRange(0, n * 2);
+
+        /* ---- fighters and their fire ---- */
+        stepCombat(combat, dt, {
+          tips: tipList,
+          playerPos: flight.pos,
+          playerFwd: flight.fwd,
+          wanted: live ? 4 : 0,
+        });
+
+        for (const ev of combat.events) {
+          if (ev.kind === "playerHit") {
+            if (flight.grace <= 0) {
+              flight.shields -= 1;
+              flight.grace = 1.1;
+              if (flight.shields <= 0) setHud({ dead: true });
+            }
+            fx.boom(ev.at, 1.4, false);
+          } else if (ev.kind === "enemyDown") {
+            fx.boom(ev.at, 3, true);
+          } else if (ev.kind === "towerHit") {
+            fx.boom(ev.at, 2, true);
+          } else {
+            fx.boom(ev.at, 0.7, true);
+          }
+        }
+        if (flight.shields <= 0 && !hud.dead) setHud({ dead: true });
+
+        /* Keep one model per live fighter, cloning and hiding rather than
+           building and destroying. */
+        while (enemyMeshes.length < combat.enemies.length) {
+          const m = proto.clone(true);
+          m.scale.setScalar(ENEMY_SCALE);
+          scene.add(m);
+          enemyMeshes.push(m);
+        }
+        for (let i = 0; i < enemyMeshes.length; i++) {
+          const m = enemyMeshes[i];
+          const e = combat.enemies[i];
+          if (!e) { m.visible = false; continue; }
+          m.visible = true;
+          m.position.copy(e.pos);
+          s.target.copy(e.pos).addScaledVector(e.fwd, 10);
+          s.m4.lookAt(e.pos, s.target, e.pos.clone().normalize());
+          m.quaternion.setFromRotationMatrix(s.m4);
+          s.qBank.setFromAxisAngle(s.zAxis, e.roll);
+          m.quaternion.multiply(s.qBank);
+        }
+
+        fx.drawBullets(combat.bullets);
+        fx.step(dt, camera);
 
         const now = performance.now();
         if (now - hudAt > 100) {
@@ -247,6 +291,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             dock: flight.dock,
             dockName: flight.dockedAt >= 0 ? labelFor(ipList[flight.dockedAt] ?? "") : "",
             homeDist: homeIndex >= 0 ? flight.pos.distanceTo(tipList[homeIndex]) : 0,
+            contacts: combat.enemies.length,
+            kills: combat.kills,
           });
         }
       } catch (err) {
@@ -269,13 +315,23 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         camera.far = savedFar;
         camera.updateProjectionMatrix();
       }
-      if (scene && ship) scene.remove(ship);
-      if (scene && boltMesh) scene.remove(boltMesh);
-      (ship as THREE.LineSegments | null)?.geometry?.dispose();
-      ((ship as THREE.LineSegments | null)?.material as THREE.Material | undefined)?.dispose();
-      boltGeo?.dispose();
-      boltMat?.dispose();
-      ship = null; boltMesh = null; boltGeo = null; boltMat = null;
+      if (scene) {
+        for (const m of enemyMeshes) scene.remove(m);
+        if (fx) scene.remove(fx.group);
+      }
+      enemyMeshes.length = 0;
+      fx?.dispose();
+      /* The prototype's geometry is shared by every clone, so it is disposed
+         once, here, and not per fighter. */
+      proto?.traverse((o) => {
+        const m = o as THREE.Mesh;
+        m.geometry?.dispose();
+        const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+        else if (mat) mat.dispose();
+      });
+      fx = null; proto = null;
+      combat = createCombat();
       scene = null; camera = null; dom = null; flight = null;
       setHud({ ready: false });
     },

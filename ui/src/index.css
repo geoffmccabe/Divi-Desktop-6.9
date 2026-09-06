@@ -1974,6 +1974,7 @@ code, .mono { font-family: var(--font-mono); }
    clicks. */
 .netmap-flying canvas { cursor: none; }
 
+.orbit-alert { color: hsl(var(--destructive)); }
 .orbit-exit {
   position: absolute; left: 16px; bottom: 14px;
   pointer-events: auto;

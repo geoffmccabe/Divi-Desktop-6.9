@@ -78,8 +78,8 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
   const h = ctl.hud();
-  ok("attach adds the ship and its guns to the map's own scene",
-     g.scene.children.length === before + 2, `${before} -> ${g.scene.children.length}`);
+  ok("attach adds its effects layer to the map's own scene",
+     g.scene.children.length === before + 1, `${before} -> ${g.scene.children.length}`);
   ok("attach reports ready", h.ready && h.broken === null);
   ok("it uses the real towers it was handed", h.towers === 2, `${h.towers} towers`);
   ok("it knows which tower is yours", h.homeName === "San Jose, Costa Rica", h.homeName);
@@ -97,26 +97,24 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
      `radius ${g.camera.position.length().toFixed(1)}`);
 
   // 3. the ship is in the scene, above the surface, and near the camera.
-  const ship = g.scene.children[before];
-  ok("there is a ship object at all", !!ship,
-     ship ? "yes" : `scene has ${g.scene.children.length}, broken=${ctl.hud().broken}`);
-  if (!ship) throw new Error("no ship: " + (ctl.hud().broken ?? "attach added nothing"));
-  ok("the ship flies above the surface", ship.position.length() > R,
-     `radius ${ship.position.length().toFixed(1)}`);
-  ok("the ship is small next to a tower", (ship.scale.x < 0.8), `scale ${ship.scale.x}`);
-  ok("the camera is behind the ship", g.camera.position.distanceTo(ship.position) < 20,
-     `${g.camera.position.distanceTo(ship.position).toFixed(1)} away`);
+  /* The view is from the cockpit, so there is deliberately no model in the
+     middle of it: the camera IS the ship. */
+  ok("nothing is parked in front of the camera",
+     !g.scene.children.some((o) => o.type === "LineSegments" && o.position.length() > R),
+     `${g.scene.children.length} objects`);
 
-  // 4. the ship is actually travelling, frame to frame.
-  const p1 = ship.position.clone();
+  // 4. the cockpit is actually travelling, frame to frame.
+  const p1 = g.camera.position.clone();
   for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
-  ok("the ship travels over the globe", ship.position.distanceTo(p1) > 5,
-     `moved ${ship.position.distanceTo(p1).toFixed(1)} units in a second`);
+  ok("the cockpit travels over the globe", g.camera.position.distanceTo(p1) > 5,
+     `moved ${g.camera.position.distanceTo(p1).toFixed(1)} units in a second`);
+  ok("and stays above the surface", g.camera.position.length() > R,
+     `radius ${g.camera.position.length().toFixed(1)}`);
   ok("window listeners were hooked", (winListeners.keydown ?? 0) === 1 && (winListeners.blur ?? 0) === 1);
 
   // 5. detach hands everything back.
   ctl.detach();
-  ok("detach removes the ship and guns", g.scene.children.length === before,
+  ok("detach removes everything the game added", g.scene.children.length === before,
      `${g.scene.children.length} left`);
   ok("detach restores the map's near plane", g.camera.near === nearStart, `near ${g.camera.near}`);
   ok("detach unhooks every listener",
@@ -131,11 +129,11 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.attach({ ...g, selfIp: "self-ip" });
   ctl.launch();
   ctl.frame(1 / 60);
-  const ship = g.scene.children[g.scene.children.length - 2];
-  /* Checked on the FIRST frame: six seconds later it has flown a hundred units
-     away, which is the game working, not the spawn being wrong. */
+  /* Checked on the FIRST frame: six seconds later you have flown a hundred
+     units away, which is the game working, not the spawn being wrong. */
   ok("you launch from your own tower, not from nowhere",
-     ship.position.distanceTo(home) < 40, `${ship.position.distanceTo(home).toFixed(1)} from the tip`);
+     g.camera.position.distanceTo(home) < 40,
+     `${g.camera.position.distanceTo(home).toFixed(1)} from the tip`);
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
   const h = ctl.hud();
   ok("shields and ammo start full", h.shields === MAX_SHIELD && h.ammo <= MAX_AMMO);
@@ -163,7 +161,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.attach({ ...g, selfIp: "self-ip" });
   ctl.detach();
   ctl.attach({ ...g, selfIp: "self-ip" });
-  ok("re-attaching does not pile up ships", g.scene.children.length === before + 2,
+  ok("re-attaching does not pile up scenery", g.scene.children.length === before + 1,
      `${g.scene.children.length - before} objects`);
   ctl.detach();
   ok("and the second detach still cleans up", g.scene.children.length === before);
