@@ -1,8 +1,11 @@
 -- Divi Desktop 6.9 — skins marketplace.
 -- A skin is a named theme (token map: colors, fonts, panel, sounds, icons).
--- Free or priced in DIVI. Security-first: RLS on, public can only read
--- published skins; all writes go through the server (service role), never
--- the anon/authenticated client.
+-- Free or priced in DIVI. DD69 has no login system (identity = signing with
+-- a Divi wallet address, nothing else), so this table is NOT auth-gated:
+-- anyone may publish a skin directly from the client, tagged with whatever
+-- wallet address they claim as author (see the follow-up migration for the
+-- exact write policy). Security-first only in the sense that RLS is on and
+-- the public can only ever read published rows.
 
 create table if not exists public.skins (
   id           uuid primary key default gen_random_uuid(),
