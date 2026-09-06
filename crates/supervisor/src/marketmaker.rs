@@ -545,7 +545,9 @@ fn run_loop(cfg: MmConfig, stop: Arc<AtomicBool>) {
         let floor = ref_high * (1.0 - cfg.protect_pct / 100.0);
         let ceiling = ref_low * (1.0 + cfg.protect_pct / 100.0);
 
-        let (qf, qh, bf, bh) = nonkyc_two_bals(&cfg.rest_url, &c, &base, &quote);
+        // Held is read right after cancel-all above, so it is ~0 here; we report
+        // what we actually place below instead of these held figures.
+        let (qf, _qh, bf, _bh) = nonkyc_two_bals(&cfg.rest_url, &c, &base, &quote);
 
         let mut quote_used = 0.0; // USDT committed to bids
         let mut ask_notional = 0.0; // USDT-equiv committed to asks
@@ -589,7 +591,9 @@ fn run_loop(cfg: MmConfig, stop: Arc<AtomicBool>) {
             running: true,
             message: format!("quoting {placed} orders around {mid:.7}"),
             mid, open_orders: placed,
-            base_free: bf, base_held: bh, quote_free: qf, quote_held: qh, cycles,
+            base_free: (bf - base_used).max(0.0), base_held: base_used,
+            quote_free: (qf - quote_used).max(0.0), quote_held: quote_used,
+            cycles,
         });
         sleep_stoppable(&stop, cfg.refresh_secs);
     }

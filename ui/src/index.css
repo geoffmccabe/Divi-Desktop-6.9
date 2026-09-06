@@ -293,6 +293,8 @@ code, .mono { font-family: var(--font-mono); }
 .bl-amt { font-size: 1.5rem; font-weight: 600; color: hsl(var(--foreground)); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .bl-divi { white-space: nowrap; }
 .bl-amt em { font-size: 0.85rem; font-style: normal; color: hsl(var(--muted-foreground)); }
+/* USD value under the Spendable DIVI amount: 2pt smaller so DIVI stays largest. */
+.bl-usd { display: block; font-size: 1.33rem; font-weight: 500; color: hsl(var(--muted-foreground)); margin-top: 2px; }
 /* Staking amount: 2pt smaller than Spendable, and half the gap before "DIVI". */
 .bl-amt-staking { font-size: 1.33rem; gap: 6px; }
 /* At-a-glance staking health dot next to the "Staking" label. */

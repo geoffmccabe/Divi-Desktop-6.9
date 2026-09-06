@@ -95,8 +95,11 @@ export function MarketMakerControl({ exchanges, onConfig, hasOrders }: { exchang
     if (!ex) return;
     setBusy(true); setErr(null); setCancelMsg(null);
     try {
+      // The engine re-quotes every cycle, so stop it first or the orders come
+      // straight back; then cancel whatever is resting to free the funds.
+      if (running) await mmStop();
       const n = await mmCancelAll(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol);
-      setCancelMsg(n > 0 ? `Cancelled ${n} resting order${n === 1 ? "" : "s"} on the exchange.` : "No resting orders found to cancel.");
+      setCancelMsg(n > 0 ? `Cancelled ${n} resting order${n === 1 ? "" : "s"} and freed your funds.` : "No resting orders found to cancel.");
     } catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
 
@@ -115,7 +118,7 @@ export function MarketMakerControl({ exchanges, onConfig, hasOrders }: { exchang
 
           <div className="mmc-params">
             <label className="value-field">
-              <span className="send-label">Liquidity to commit (total $, ~half USDT, half DIVI)</span>
+              <span className="send-label">Total to commit ($): about half comes from your USDT (buy orders) and half from your DIVI (sell orders), so it won't use all of one coin</span>
               <input className="wl-input" type="number" min={1} value={commit}
                 onChange={(e) => setCommit(Number(e.target.value))} />
             </label>
@@ -163,9 +166,9 @@ export function MarketMakerControl({ exchanges, onConfig, hasOrders }: { exchang
               </button>
             )}
             <span className={running ? "mmc-on" : "mmc-off"}>{running ? "running" : "stopped"}</span>
-            {liveSupported && !running && hasOrders && (
+            {liveSupported && hasOrders && (
               <button type="button" className="wl-link" disabled={busy} onClick={cancelAll}>
-                Cancel my resting orders
+                {running ? "Stop and cancel my orders (free my funds)" : "Cancel my resting orders (free my funds)"}
               </button>
             )}
           </div>

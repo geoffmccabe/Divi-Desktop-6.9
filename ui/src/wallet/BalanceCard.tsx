@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { walletBalance, type Balance } from "./api";
 import { fmtDivi } from "../status";
+import { useDiviValue } from "./value";
 
 export function BalanceCard() {
   const [b, setB] = useState<Balance | null>(null);
+  const spendableUsd = useDiviValue(b ? b.spendable : null);
 
   useEffect(() => {
     let alive = true;
@@ -30,6 +32,9 @@ export function BalanceCard() {
         <span className="bl-amt">
           {b ? fmtDivi(b.spendable) : "—"} <em>DIVI</em>
         </span>
+        {spendableUsd.state === "ok" && (
+          <span className="bl-usd">= {spendableUsd.value} {spendableUsd.code}</span>
+        )}
       </div>
       <div className="balance-card">
         <span className="bl-label">Staking</span>
