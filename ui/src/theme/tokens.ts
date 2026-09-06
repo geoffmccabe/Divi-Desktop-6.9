@@ -176,7 +176,23 @@ export const TOKENS: TokenDef[] = [
   { key: "purchaseModalWidth", label: "Purchase window width", group: "Apps & Builder", type: "range", cssVar: "--purchase-modal-width", default: "560px", min: 380, max: 820, step: 10, unit: "px" },
   { key: "purchaseMascotSize", label: "Mascot size", group: "Apps & Builder", type: "range", cssVar: "--purchase-mascot-size", default: "150px", min: 0, max: 260, step: 10, unit: "px" },
 
+  // Divi Rebels (Orbit mode) — the planet, its towers and the cockpit.
+  //
+  // Its own group because the game is a surface nobody else shares: a skin that
+  // makes the wallet mint green should be able to make the planet mint green
+  // too, without dragging the Send panel along with it. Everything structural
+  // (panel corners, blur, glow) is reused from the groups above rather than
+  // duplicated here.
+  { key: "rebelsOcean", label: "Space & sea", group: "Divi Rebels", type: "color", cssVar: "--rebels-ocean", default: "250 40% 4%" },
+  { key: "rebelsLand", label: "Coastlines", group: "Divi Rebels", type: "color", cssVar: "--rebels-land", default: "168 70% 61%" },
+  { key: "rebelsGrid", label: "Lat/long grid", group: "Divi Rebels", type: "color", cssVar: "--rebels-grid", default: "252 53% 26%" },
+  { key: "rebelsLink", label: "Node links", group: "Divi Rebels", type: "color", cssVar: "--rebels-link", default: "255 100% 71%" },
+  { key: "rebelsHome", label: "Your node", group: "Divi Rebels", type: "color", cssVar: "--rebels-home", default: "45 100% 64%" },
+  { key: "rebelsShip", label: "Your ship", group: "Divi Rebels", type: "color", cssVar: "--rebels-ship", default: "276 100% 88%" },
+  { key: "rebelsBolt", label: "Gunfire", group: "Divi Rebels", type: "color", cssVar: "--rebels-bolt", default: "276 100% 74%" },
+  { key: "rebelsHud", label: "Cockpit readouts", group: "Divi Rebels", type: "color", cssVar: "--rebels-hud", default: "260 70% 75%" },
+
   ...ICON_TOKENS,
 ];
 
-export const TOKEN_GROUPS = ["Colors", "Typography", "Panel", "Sub-panels", "Maps", "Icons", "Sounds", "Apps & Builder"];
+export const TOKEN_GROUPS = ["Colors", "Typography", "Panel", "Sub-panels", "Maps", "Icons", "Sounds", "Apps & Builder", "Divi Rebels"];

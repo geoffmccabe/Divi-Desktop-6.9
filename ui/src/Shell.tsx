@@ -27,6 +27,7 @@ import { NetworkMap } from "./wallet/NetworkMap";
 import { PriceChart } from "./wallet/PriceChart";
 import { FastReceiveHost } from "./wallet/FastReceiveHost";
 import { SkinsGallery } from "./theme/gallery/SkinsGallery";
+import { OrbitPanel } from "./wallet/rebels/OrbitPanel";
 
 const VIEWS: Record<string, ComponentType> = {
   overview: Overview,
@@ -42,6 +43,7 @@ const VIEWS: Record<string, ComponentType> = {
   hra: HraPanel,
   appbuilder: BuilderPanel,
   communityapps: CommunityApps,
+  rebels: OrbitPanel,
   addressbook: AddressBook,
   skinsgallery: SkinsGallery,
   settings: SettingsView,

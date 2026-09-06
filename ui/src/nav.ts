@@ -18,13 +18,14 @@ export const NAV: NavItem[] = [
   { id: "tokens", label: "Divi Meta Tokens", icon: "tokens" },
   { id: "appbuilder", label: "App Builder", icon: "appbuilder" },
   { id: "communityapps", label: "Community Apps", icon: "communityapps" },
+  { id: "rebels", label: "Divi Rebels", icon: "globe" },
   { id: "governance", label: "Governance", icon: "governance" },
   { id: "multisig", label: "MultiSig", icon: "multisig" },
   // A newline in a label wraps the row onto two tight lines (see .nav-item span
   // in index.css). Used where a name is genuinely long rather than to save a
   // few pixels — "Human Readable Addresses" on one line would either squeeze
   // the whole sidebar wider or truncate.
-  { id: "hra", label: "Human Readable\nAddresses", icon: "hra" },
+  { id: "hra", label: "Human Readable\nAddresses (HRAs)", icon: "hra" },
   { id: "addressbook", label: "Address Book", icon: "addressbook" },
   { id: "skinsgallery", label: "Skins Gallery", icon: "collectibles" },
   { id: "settings", label: "Settings", icon: "settings" },
