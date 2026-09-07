@@ -126,7 +126,10 @@ export function createFlight(at: THREE.Vector3): Flight {
     grace: 0,
     dockFrom: null,
     dockHold: 0,
-    redock: 0,
+    /* You launch from your own tower, which means you launch INSIDE its docking
+       range. Without this the ship docks again on its first frame and the hard
+       brake pins it there: launching would stop you leaving. */
+    redock: 3,
   };
 }
 
@@ -180,9 +183,18 @@ export function stepFlight(
   if (wantBoost) f.boost = Math.max(0, f.boost - dt / 6);
   let target = CRUISE;
   if (wantBoost) target = BOOST;
+  /* Docked means STOPPED. Not slowed: stopped. Being handed fuel while drifting
+     past is not docking, and it was what happened before. */
+  else if (f.dock > 0) target = 0;
   else if (stick.braking) target = PARK;
-  else if (nearDist < DOCK_RANGE * 1.8) target = DOCK_SPEED * 0.55;
-  f.speed += (target - f.speed) * Math.min(1, dt * 3);
+  else if (nearDist < DOCK_RANGE * 1.8 && f.redock <= 0) target = DOCK_SPEED * 0.55;
+  /* Braking to a halt is quick and docking brakes hardest, because the resupply
+     itself only lasts a second or two: at the ordinary rate the ship was still
+     moving for most of it. Getting under way again is deliberately slower,
+     which is what makes arriving somewhere feel like arriving. */
+  const ease = f.dock > 0 ? 16 : target < f.speed ? 5 : 2;
+  f.speed += (target - f.speed) * Math.min(1, dt * ease);
+  if (f.speed < 0.05) f.speed = 0;
 
   /* ---- steering ---- */
   _up.copy(f.pos).normalize();

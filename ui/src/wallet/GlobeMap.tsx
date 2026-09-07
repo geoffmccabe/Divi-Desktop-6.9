@@ -352,6 +352,10 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
   const mapNetworkLink = theme.mapNetworkLink ?? "207 90% 54%";
   const mapActivityPulse = theme.mapActivityPulse ?? "45 100% 55%";
   const mapStakeAccent = theme.mapStakeAccent ?? "353 76% 50%";
+  /* The winner's tower has its own gold. It used to borrow the "your node"
+     colour, so once your own tower went red the winner would have gone red with
+     it and the two would be confusable again, just the other way round. */
+  const mapStakeTower = theme.mapStakeTower ?? "45 93% 47%";
   const mapBackground = theme.mapBackground ?? "216 33% 6%";
   const mapAtmosphere = theme.mapAtmosphere ?? "211 100% 68%";
 
@@ -654,7 +658,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
 
     // Stake-winner coin: a spinning Divi coin on a 2x gold pyramid, moved onto
     // whichever tower currently holds the (placeholder) winner.
-    const { deco: winnerDeco, pivot: coinPivot, glow: winnerGlow, particles: winnerParticles } = makeWinnerDeco(selfCss, cssHsl(mapStakeAccent));
+    const { deco: winnerDeco, pivot: coinPivot, glow: winnerGlow, particles: winnerParticles } = makeWinnerDeco(cssHsl(mapStakeTower), cssHsl(mapStakeAccent));
     group.add(winnerDeco);
     let curWinner: string | null = null;
 
@@ -832,7 +836,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         else if (mat) drop(mat);
       });
     };
-  }, [sig, ready, mapSelf, mapPeerLink, mapNetworkLink, mapActivityPulse, mapStakeAccent]);
+  }, [sig, ready, mapSelf, mapPeerLink, mapNetworkLink, mapActivityPulse, mapStakeAccent, mapStakeTower]);
 
   return (
     <div className="netmap-globe" ref={wrapRef}>

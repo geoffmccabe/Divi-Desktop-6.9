@@ -140,13 +140,14 @@ export const TOKENS: TokenDef[] = [
   // (the flat map's previous --primary/--info/--warning-driven look, and the
   // globe's previous hardcoded hex) so switching this on changes nothing until
   // a skin creator actually touches these.
-  { key: "mapSelf", label: "Your node", group: "Maps", type: "color", cssVar: "--map-self", default: "45 93% 47%" },
+  { key: "mapSelf", label: "Your node", group: "Maps", type: "color", cssVar: "--map-self", default: "0 85% 55%" },
   { key: "mapPeerLink", label: "Peer connections", group: "Maps", type: "color", cssVar: "--map-peer-link", default: "280 80% 60%" },
   { key: "mapNetworkLink", label: "Network connections", group: "Maps", type: "color", cssVar: "--map-network-link", default: "207 90% 54%" },
   { key: "mapOfflineNode", label: "Remembered/offline nodes", group: "Maps", type: "color", cssVar: "--map-offline", default: "215 14% 58%" },
   { key: "mapDiscoveryPulse", label: "Discovery pulse", group: "Maps", type: "color", cssVar: "--map-discovery-pulse", default: "145 80% 50%" },
   { key: "mapActivityPulse", label: "Activity pulse", group: "Maps", type: "color", cssVar: "--map-activity-pulse", default: "45 100% 55%" },
   { key: "mapNewNode", label: "New node highlight", group: "Maps", type: "color", cssVar: "--map-new-node", default: "177 85% 58%" },
+  { key: "mapStakeTower", label: "Stake-winner tower", group: "Maps", type: "color", cssVar: "--map-stake-tower", default: "45 93% 47%" },
   { key: "mapStakeAccent", label: "Stake-winner accent", group: "Maps", type: "color", cssVar: "--map-stake-accent", default: "353 76% 50%" },
   { key: "mapBackground", label: "Globe background", group: "Maps", type: "color", cssVar: "--map-background", default: "216 33% 6%" },
   { key: "mapAtmosphere", label: "Globe atmosphere", group: "Maps", type: "color", cssVar: "--map-atmosphere", default: "211 100% 68%" },

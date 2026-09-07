@@ -13,6 +13,12 @@ const SHARD_CAP = 320;
 const FLASH_CAP = 14;
 const RING_CAP = 10;
 const JUNK_CAP = 64;
+const TRACER_CAP = 220;
+/* Warm gold going out, green coming back, pale for the mini gun: the same
+   language the rounds themselves use. */
+const MINE_TRAIL = [1.0, 0.78, 0.25] as const;
+const MINI_TRAIL = [1.0, 0.94, 0.72] as const;
+const HOSTILE_TRAIL = [0.45, 1.0, 0.25] as const;
 
 /** A soft round blob, drawn once and reused for every flash and glow. */
 function glowTexture(): THREE.Texture {
@@ -120,6 +126,10 @@ export interface Fx {
   drawTorpedoes(torpedoes: { pos: THREE.Vector3; vel: THREE.Vector3 }[]): void;
   /** Wreckage in orbit. Instanced, because a long fight makes a lot of it. */
   drawJunk(junk: { pos: THREE.Vector3; rot: THREE.Vector3; kind: string }[]): void;
+  /** The lines rounds leave behind them. */
+  drawTracers(tracers: {
+    from: THREE.Vector3; to: THREE.Vector3; life: number; hostile: boolean; mini: boolean; live: boolean;
+  }[], maxLife: number): void;
   muzzle(at: THREE.Vector3): void;
   step(dt: number, camera: THREE.Camera): void;
   dispose(): void;
@@ -217,6 +227,21 @@ export function createFx(): Fx {
   }
   bin.push(torpedoGeo, torpedoCoreMat, torpedoGlowMat);
 
+  /* Tracers: one line list for every trail on screen, coloured per vertex so a
+     fading trail costs nothing but a colour write. */
+  const tracerGeo = new THREE.BufferGeometry();
+  tracerGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(TRACER_CAP * 6), 3));
+  tracerGeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(TRACER_CAP * 6), 3));
+  const tracerMat = new THREE.LineBasicMaterial({
+    vertexColors: true, transparent: true, opacity: 0.85,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const tracerMesh = new THREE.LineSegments(tracerGeo, tracerMat);
+  tracerMesh.frustumCulled = false;
+  tracerGeo.setDrawRange(0, 0);
+  group.add(tracerMesh);
+  bin.push(tracerGeo, tracerMat);
+
   /* Wreckage. Two shapes, both instanced: the cockpit ball, and the panels.
      They are the fighter's own parts, so a dead one visibly comes apart into
      the thing it was made of. */
@@ -309,6 +334,36 @@ export function createFx(): Fx {
       junkWings.count = nWing;
       junkBodies.instanceMatrix.needsUpdate = true;
       junkWings.instanceMatrix.needsUpdate = true;
+    },
+
+    drawTracers(tracers, maxLife) {
+      const pos = tracerGeo.getAttribute("position") as THREE.BufferAttribute;
+      const col = tracerGeo.getAttribute("color") as THREE.BufferAttribute;
+      const p = pos.array as Float32Array;
+      const c = col.array as Float32Array;
+      let n = 0;
+      for (const t of tracers) {
+        if (n >= TRACER_CAP) break;
+        const o = n * 6;
+        p[o] = t.from.x; p[o + 1] = t.from.y; p[o + 2] = t.from.z;
+        p[o + 3] = t.to.x; p[o + 4] = t.to.y; p[o + 5] = t.to.z;
+        /* Additive blending, so fading to black IS fading out. A live round's
+           line is at full strength; once it has landed the line dims over its
+           remaining life. */
+        const k = t.live ? 1 : Math.max(0, t.life / maxLife);
+        const tint = t.hostile ? HOSTILE_TRAIL : t.mini ? MINI_TRAIL : MINE_TRAIL;
+        /* Brighter at the head than the tail, which is what makes the
+           direction of travel readable at a glance. */
+        for (const [end, w] of [[0, 0.35], [3, 1]] as const) {
+          c[o + end] = tint[0] * k * w;
+          c[o + end + 1] = tint[1] * k * w;
+          c[o + end + 2] = tint[2] * k * w;
+        }
+        n++;
+      }
+      tracerGeo.setDrawRange(0, n * 2);
+      pos.needsUpdate = true;
+      col.needsUpdate = true;
     },
 
     boom(at, power, style = "hot") {

@@ -205,6 +205,86 @@ export function playMiniSound(): void {
   src.start();
 }
 
+/* ------------------------------------------------------------ 3D audio ----
+   The same approach DreadRoot uses (src/lib/spatialAudio.ts): a PannerNode with
+   HRTF and an inverse distance model, and a listener that is told where the
+   cockpit is AND which way it is facing. The orientation is the part that is
+   easy to leave out and the part that makes a shot from behind sound like it
+   came from behind rather than merely quiet. */
+
+/** Where the cockpit is and which way it looks. Set once a frame. */
+export function setListener(
+  px: number, py: number, pz: number,
+  fx: number, fy: number, fz: number,
+  ux: number, uy: number, uz: number,
+): void {
+  const ctx = audioContext();
+  if (!ctx) return;
+  const l = ctx.listener;
+  const t = ctx.currentTime;
+  if (l.positionX) {
+    l.positionX.setValueAtTime(px, t);
+    l.positionY.setValueAtTime(py, t);
+    l.positionZ.setValueAtTime(pz, t);
+    l.forwardX.setValueAtTime(fx, t);
+    l.forwardY.setValueAtTime(fy, t);
+    l.forwardZ.setValueAtTime(fz, t);
+    l.upX.setValueAtTime(ux, t);
+    l.upY.setValueAtTime(uy, t);
+    l.upZ.setValueAtTime(uz, t);
+  } else {
+    /* Older WebKit. Deprecated, and the only thing that works there. */
+    (l as unknown as { setPosition(x: number, y: number, z: number): void })
+      .setPosition(px, py, pz);
+    (l as unknown as { setOrientation(a: number, b: number, c: number, d: number, e: number, f: number): void })
+      .setOrientation(fx, fy, fz, ux, uy, uz);
+  }
+}
+
+/** Distances are in globe units, where the whole planet is 628 around. */
+const SHOT_REF = 6;
+const SHOT_MAX = 260;
+
+/**
+ * A shot fired somewhere out in the world.
+ *
+ * Panned and attenuated by where it happened, so fire from behind is heard
+ * behind you. That is the point of it: it is the only warning the player gets
+ * that something is on their tail.
+ */
+export function playShotAt(x: number, y: number, z: number, pitch = 0.7): void {
+  const ctx = audioContext();
+  if (!ctx || failed || !buffer) return;
+  const volume = masterVolume();
+  if (!(volume > 0)) return;
+
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.playbackRate.value = pitch * wobble();
+
+  const gain = ctx.createGain();
+  gain.gain.value = volume * wobble();
+
+  const panner = ctx.createPanner();
+  panner.panningModel = "HRTF";
+  panner.distanceModel = "inverse";
+  panner.refDistance = SHOT_REF;
+  panner.maxDistance = SHOT_MAX;
+  panner.rolloffFactor = 1.3;
+  if (panner.positionX) {
+    panner.positionX.value = x;
+    panner.positionY.value = y;
+    panner.positionZ.value = z;
+  } else {
+    (panner as unknown as { setPosition(a: number, b: number, c: number): void }).setPosition(x, y, z);
+  }
+
+  src.connect(gain);
+  gain.connect(panner);
+  panner.connect(ctx.destination);
+  src.start();
+}
+
 /** A torpedo leaving the tube. */
 export function playTorpedoSound(): void {
   once(torpedoBuffer);

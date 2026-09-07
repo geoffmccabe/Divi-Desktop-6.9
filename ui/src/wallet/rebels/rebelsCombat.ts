@@ -137,6 +137,24 @@ export const TORPEDO_DAMAGE = 5;
 /** Everything inside this radius takes the hit, not just what it touched. */
 export const TORPEDO_BLAST = 11;
 
+/* ---- tracers ----
+   A round leaves a line behind it that stays for three seconds after the round
+   itself is gone, then fades. This is not decoration: it is how a player works
+   out that they are being shot at from behind or from the side, and where the
+   shooter must be, in a game where the view only faces one way. */
+export const TRACER_LIFE = 3;
+export const TRACER_MAX = 220;
+
+export interface Tracer {
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  life: number;
+  hostile: boolean;
+  mini: boolean;
+  /** The round still drawing it, if it is still flying. */
+  live: boolean;
+}
+
 export interface Bullet {
   pos: THREE.Vector3;
   vel: THREE.Vector3;
@@ -145,6 +163,8 @@ export interface Bullet {
   hostile: boolean;
   /** From the mini gun: quarter damage, drawn smaller. */
   mini?: boolean;
+  /** The line this round is drawing behind it. */
+  tracer?: Tracer;
 }
 
 export interface Enemy {
@@ -190,7 +210,7 @@ export interface Torpedo {
 
 export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
-      | "enemyHit" | "junkGone";
+      | "enemyHit" | "junkGone" | "enemyShot";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
   power: number;
@@ -207,6 +227,7 @@ export interface CombatState {
   torpedoes: Torpedo[];
   enemies: Enemy[];
   junk: Junk[];
+  tracers: Tracer[];
   events: CombatEvent[];
   kills: number;
   /** Kills this run, one count per tier, indexed from zero. */
@@ -216,7 +237,7 @@ export interface CombatState {
 
 export function createCombat(): CombatState {
   return {
-    bullets: [], torpedoes: [], enemies: [], junk: [], events: [],
+    bullets: [], torpedoes: [], enemies: [], junk: [], tracers: [], events: [],
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -385,7 +406,9 @@ export function fireGuns(
   const target = new THREE.Vector3().copy(pos).addScaledVector(fwd, CONVERGE);
   for (const muzzle of m) {
     const vel = target.clone().sub(muzzle).normalize().multiplyScalar(BULLET_SPEED);
-    c.bullets.push({ pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false });
+    const b: Bullet = { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false };
+    c.bullets.push(b);
+    addTracer(c, b);
   }
   return m;
 }
@@ -430,12 +453,34 @@ export function fireMini(
 ): void {
   const target = aimFrom.clone().addScaledVector(aimDir, CONVERGE);
   const vel = target.sub(muzzle).normalize().multiplyScalar(BULLET_SPEED * MINI_SPEED_MULT);
-  c.bullets.push({ pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true });
+  const b: Bullet = { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true };
+  c.bullets.push(b);
+  addTracer(c, b);
 }
 
 export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
   const vel = at.clone().sub(e.pos).normalize().multiplyScalar(BULLET_SPEED * 0.6);
-  c.bullets.push({ pos: e.pos.clone().addScaledVector(vel, 0.02), vel, life: BULLET_LIFE * 1.4, hostile: true });
+  const b: Bullet = {
+    pos: e.pos.clone().addScaledVector(vel, 0.02), vel, life: BULLET_LIFE * 1.4, hostile: true,
+  };
+  c.bullets.push(b);
+  addTracer(c, b);
+  /* Reported so it can be HEARD where it happened. A shot from behind is the
+     only warning a player gets that something is on their tail. */
+  c.events.push({ kind: "enemyShot", at: e.pos.clone(), power: 1 });
+}
+
+/** Start a round's trail. Called wherever a bullet is created. */
+function addTracer(c: CombatState, b: Bullet): void {
+  const t: Tracer = {
+    from: b.pos.clone(), to: b.pos.clone(),
+    life: TRACER_LIFE, hostile: b.hostile, mini: !!b.mini, live: true,
+  };
+  b.tracer = t;
+  c.tracers.push(t);
+  /* Oldest out first. A long fight would otherwise draw every shot ever
+     fired. */
+  while (c.tracers.length > TRACER_MAX) c.tracers.shift();
 }
 
 /** Closest approach of a moving point to a target over one step. Bullets travel
@@ -483,6 +528,8 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     const from = b.pos.clone();
     b.pos.addScaledVector(b.vel, dt);
     b.life -= dt;
+    /* The trail grows with the round and stops where it stopped. */
+    if (b.tracer) b.tracer.to.copy(b.pos);
     let spent = false;
 
     if (!b.hostile) {
@@ -520,7 +567,10 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       spent = true;
       c.events.push({ kind: "bulletSpent", at: b.pos.clone(), power: 1 });
     }
-    if (spent || b.life <= 0) c.bullets.splice(i, 1);
+    if (spent || b.life <= 0) {
+      if (b.tracer) b.tracer.live = false;
+      c.bullets.splice(i, 1);
+    }
   }
 
   /* ---- torpedoes ----
@@ -533,6 +583,17 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     if (t.life <= 0 || t.pos.length() < R) {
       detonate(c, t, w);
     }
+  }
+
+  /* ---- trails ----
+     They only start counting down once their round has finished flying, so a
+     long shot leaves its line for three seconds after it lands rather than
+     three seconds after it was fired. */
+  for (let i = c.tracers.length - 1; i >= 0; i--) {
+    const t = c.tracers[i];
+    if (t.live) continue;
+    t.life -= dt;
+    if (t.life <= 0) c.tracers.splice(i, 1);
   }
 
   /* ---- wreckage ----

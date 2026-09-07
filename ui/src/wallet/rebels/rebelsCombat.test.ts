@@ -9,6 +9,7 @@ import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
   fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
+  TRACER_LIFE, TRACER_MAX,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   type CombatState, type Enemy,
 } from "./rebelsCombat";
@@ -559,6 +560,61 @@ function run(c: CombatState, frames: number, w = world()) {
   const ratio = mini / normal;
   ok("a mini round does a quarter of the damage", Math.abs(ratio - 0.25) < 0.03,
      `${(ratio * 100).toFixed(1)}% of a normal round`);
+}
+
+// 13. Tracers, and enemy shots being reported so they can be heard.
+{
+  const c = createCombat();
+  const w = world();
+  fireGuns(c, pos, fwd, up, FOV, ASPECT);
+  ok("firing leaves a trail per round", c.tracers.length === 2, `${c.tracers.length}`);
+  ok("a trail starts where the round started",
+     c.tracers[0].from.distanceTo(c.bullets[0].pos) < 0.01);
+  ok("and is live while the round is flying", c.tracers.every((t) => t.live));
+
+  const start = c.tracers[0].to.clone();
+  run(c, 20, w);
+  ok("the trail follows the round out", c.tracers[0].to.distanceTo(start) > 5,
+     `${c.tracers[0].to.distanceTo(start).toFixed(1)} units`);
+
+  /* Once the round is gone the trail stays put and starts counting down. */
+  for (let i = 0; i < 60 * 3 && c.bullets.length; i++) stepCombat(c, DT, w);
+  clearEvents(c);
+  const frozen = c.tracers[0]?.to.clone();
+  ok("a spent round leaves its trail behind", c.tracers.length > 0 && !c.tracers[0].live);
+  run(c, 60, w);
+  ok("and the trail does not move afterwards",
+     !frozen || c.tracers.length === 0 || c.tracers[0].to.distanceTo(frozen) < 1e-9);
+}
+{
+  /* Three seconds, then gone. */
+  const c = createCombat();
+  const w = world();
+  fireGuns(c, pos, fwd, up, FOV, ASPECT);
+  for (let i = 0; i < 60 * 3 && c.bullets.length; i++) stepCombat(c, DT, w);
+  clearEvents(c);
+  ok("a trail is still there a second after the round has gone",
+     (run(c, 60, w), c.tracers.length > 0), `${c.tracers.length}`);
+  run(c, 60 * TRACER_LIFE, w);
+  ok("and gone after three", c.tracers.length === 0, `${c.tracers.length} left`);
+}
+{
+  /* They do not pile up for ever. */
+  const c = createCombat();
+  for (let i = 0; i < 400; i++) fireGuns(c, pos, fwd, up, FOV, ASPECT);
+  ok("trails are capped", c.tracers.length <= TRACER_MAX, `${c.tracers.length}`);
+}
+{
+  /* Every enemy shot is announced, so it can be heard where it happened. */
+  const c = createCombat();
+  const e = fighter(pos.clone().addScaledVector(fwd, 30));
+  c.enemies.push(e);
+  enemyFire(c, e, pos);
+  const shot = c.events.find((x) => x.kind === "enemyShot");
+  ok("an enemy shot is reported", !!shot);
+  ok("at the ship that fired it", !!shot && shot.at.distanceTo(e.pos) < 0.01);
+  ok("and its trail is marked hostile",
+     c.tracers.length === 1 && c.tracers[0].hostile);
 }
 
 console.log(out.join("\n"));

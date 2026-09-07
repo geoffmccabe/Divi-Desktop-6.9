@@ -17,7 +17,7 @@ import {
 import {
   createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest,
   fireMini, miniMuzzle,
-  STAKE_BONUS, STAKE_BONUS_MS, TIERS,
+  STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE,
   type CombatState,
 } from "./rebelsCombat";
 import { userWonRecently } from "../stakeWin";
@@ -29,7 +29,7 @@ import {
 import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
-  playMiniSound,
+  playMiniSound, playShotAt, setListener,
 } from "./rebelsAudio";
 
 export interface HudState {
@@ -462,6 +462,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         camera.position.copy(flight.pos);
         camera.updateMatrixWorld();
 
+        /* The ears go where the cockpit is, facing the way it faces, so a shot
+           behind you sounds behind you. */
+        setListener(
+          flight.pos.x, flight.pos.y, flight.pos.z,
+          flight.fwd.x, flight.fwd.y, flight.fwd.z,
+          s.up.x, s.up.y, s.up.z,
+        );
+
         /* The guard rides with the cockpit, since it is around the player. */
         if (guardShell) {
           guardShell.mesh.position.copy(flight.pos);
@@ -542,6 +550,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             score += Math.round(ev.damage ?? 0);
             /* A small spark where the shot landed. The bubble does the rest. */
             fx.boom(ev.at, ev.power, "cold");
+          } else if (ev.kind === "enemyShot") {
+            playShotAt(ev.at.x, ev.at.y, ev.at.z, 0.7);
           } else if (ev.kind === "junkGone") {
             fx.boom(ev.at, ev.power, "hot");
             playShipExplosion(0.45);
@@ -621,6 +631,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         fx.drawBullets(combat.bullets);
         fx.drawTorpedoes(combat.torpedoes);
         fx.drawJunk(combat.junk);
+        fx.drawTracers(combat.tracers, TRACER_LIFE);
         fx.step(dt, camera);
 
         const now = performance.now();

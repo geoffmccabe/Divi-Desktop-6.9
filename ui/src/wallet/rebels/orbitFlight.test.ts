@@ -133,6 +133,9 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 {
   const tip = pad.clone().normalize().multiplyScalar(R + 4.2);
   const f = createFlight(pad);
+  /* These test DOCKING, not launching, so the grace that stops a ship
+     re-docking the instant it leaves its own pad is cleared. */
+  f.redock = 0;
   f.shields = 2; f.ammo = 5; f.boost = 0.1;
   let docked = 0;
   for (let i = 0; i < Math.ceil(DOCK_SECONDS * 60) + 90; i++) {
@@ -147,6 +150,9 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 {
   const tip = pad.clone().normalize().multiplyScalar(R + 4.2);
   const f = createFlight(pad);
+  /* These test DOCKING, not launching, so the grace that stops a ship
+     re-docking the instant it leaves its own pad is cleared. */
+  f.redock = 0;
   f.shields = 2;
   for (let i = 0; i < 240; i++) {
     f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 3);
@@ -161,6 +167,9 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 //     docking literally unreachable.
 {
   const f = createFlight(pad);
+  /* These test DOCKING, not launching, so the grace that stops a ship
+     re-docking the instant it leaves its own pad is cleared. */
+  f.redock = 0;
   run(f, 120, stick());
   ok("the brake actually slows the ship", (run(f, 90, stick({ braking: true })), f.speed < 9),
      `speed ${f.speed.toFixed(1)}`);
@@ -172,6 +181,9 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      whether the ease-off works. */
   const tip = pad.clone().normalize().multiplyScalar(R + 4.2);
   const f = createFlight(pad);
+  /* These test DOCKING, not launching, so the grace that stops a ship
+     re-docking the instant it leaves its own pad is cleared. */
+  f.redock = 0;
   for (let i = 0; i < 90; i++) {
     f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 3);
     stepFlight(f, DT, stick(), [tip], 0);
@@ -190,6 +202,9 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const upAt = tip.clone().normalize();
   const beside = new THREE.Vector3(0, 1, 0).cross(upAt).normalize().multiplyScalar(3.6).add(tip);
   const f = createFlight(pad);
+  /* These test DOCKING, not launching, so the grace that stops a ship
+     re-docking the instant it leaves its own pad is cleared. */
+  f.redock = 0;
   let best = 0;
   for (let i = 0; i < 60 * 14; i++) {
     /* Steer toward the tower each frame: a crude autopilot standing in for a
@@ -219,6 +234,36 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   }
   ok("flying to a tower and parking gets you docked", best >= 1,
      `best dock progress ${best.toFixed(2)}, shields ${f.shields}`);
+}
+
+// 8b2. Docking has to STOP the ship.
+//
+//      Geoff: "when he recharges he should stop flying during that time, and
+//      it's not doing that now... it just keeps flying."
+{
+  const tip = pad.clone().normalize().multiplyScalar(R + 4.2);
+  const f = createFlight(pad);
+  /* These test DOCKING, not launching, so the grace that stops a ship
+     re-docking the instant it leaves its own pad is cleared. */
+  f.redock = 0;
+  /* Flown in and held by the tower, which is what an arriving player does. */
+  let docked = false;
+  let movingWhileDocked = 0;
+  let framesDocked = 0;
+  for (let i = 0; i < 60 * 8; i++) {
+    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 3);
+    stepFlight(f, DT, stick(), [tip], 0);
+    if (f.dock > 0) {
+      docked = true;
+      framesDocked++;
+      /* Ignore the first few frames: coming to a stop is allowed to take a
+         moment, it is being stopped for most of it that matters. */
+      if (framesDocked > 12 && f.speed > 0.5) movingWhileDocked++;
+    }
+  }
+  ok("docking happens at all", docked && f.guards === MAX_GUARDS);
+  ok("and the ship is stopped for the whole resupply", movingWhileDocked === 0,
+     `still moving on ${movingWhileDocked} of ${framesDocked} docked frames`);
 }
 
 // 8c2. The mini gun.
