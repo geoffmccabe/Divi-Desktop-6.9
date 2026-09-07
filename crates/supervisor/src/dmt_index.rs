@@ -51,6 +51,22 @@ const IDLE_PAUSE: Duration = Duration::from_secs(20);
 /// Pause after losing the node, which happens routinely when it restarts.
 const RETRY_PAUSE: Duration = Duration::from_secs(10);
 
+/// Read a lock without panicking.
+///
+/// A wallet must not die because a background thread did. `IndexStatus` is a
+/// plain data struct: there is no state it can be caught half-way through that
+/// matters, so recovering a poisoned guard is safe and strictly better than
+/// taking a user-facing command down with it. The `halted` field is how a dead
+/// scanner is reported, not a panic in whatever asked.
+macro_rules! guard {
+    ($lock:expr) => {
+        match $lock {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    };
+}
+
 /// Fetches blocks through the wallet's existing node connection.
 ///
 /// The connection is already pooled and keep-alive, so this adds no new
@@ -214,7 +230,7 @@ impl TokenIndex {
         let genesis = match genesis_height(&chain) {
             Ok(h) => h,
             Err(why) => {
-                status.lock().expect("status lock").unavailable = Some(why);
+                guard!(status.lock()).unavailable = Some(why);
                 return Self { overlay, status, stop };
             }
         };
@@ -229,11 +245,15 @@ impl TokenIndex {
     }
 
     pub fn status(&self) -> IndexStatus {
-        self.status.lock().expect("status lock").clone()
+        guard!(self.status.lock()).clone()
     }
 
     /// Read the ledger. Returns `None` while a scan slice holds the writer,
     /// which the caller should treat as "ask again", never as "empty".
+    ///
+    /// Also `None` if the lock is poisoned, but in that case `status().halted`
+    /// is set, so a caller that checks status will see a reason rather than
+    /// retrying forever against a scanner that is never coming back.
     pub fn read<T>(&self, f: impl FnOnce(&Overlay) -> T) -> Option<T> {
         self.overlay.try_read().ok().map(|o| f(&o))
     }
@@ -260,20 +280,26 @@ fn run(
 ) {
     let mut follower = Follower::new(genesis);
     let mut source = NodeBlocks { rpc: &rpc };
-    status.lock().expect("status lock").running = true;
+    guard!(status.lock()).running = true;
 
     while !stop.load(Ordering::Relaxed) {
         // The writer lock is held for one slice only, so a balance query waits
         // milliseconds rather than a whole catch-up.
         let outcome = {
-            let mut o = overlay.write().expect("index owns the only writer");
+            let Ok(mut o) = overlay.write() else {
+                // Poisoned: a scan died part-way through a block, so the ledger
+                // is neither one block nor the next and nothing can vouch for
+                // it. Unlike the status struct, recovering this would mean
+                // serving balances from state we know is torn.
+                return halted_because(&status, "the index failed part-way through a block");
+            };
             follower.catch_up(&mut o, &mut source, SLICE_BLOCKS)
         };
 
         match outcome {
             Ok(progress) => {
                 {
-                    let mut s = status.lock().expect("status lock");
+                    let mut s = guard!(status.lock());
                     s.height = progress.height;
                     s.tip = progress.tip;
                     s.caught_up = progress.caught_up;
@@ -291,7 +317,12 @@ fn run(
                         return;
                     }
                     let reorg = {
-                        let mut o = overlay.write().expect("index owns the only writer");
+                        let Ok(mut o) = overlay.write() else {
+                            return halted_because(
+                                &status,
+                                "the index failed part-way through a block",
+                            );
+                        };
                         follower.check_for_reorg(&mut o, &mut source)
                     };
                     match reorg {
@@ -320,7 +351,7 @@ fn run(
         }
     }
 
-    status.lock().expect("status lock").running = false;
+    guard!(status.lock()).running = false;
 }
 
 /// Stopping loudly, and staying stopped.
@@ -329,7 +360,11 @@ fn run(
 /// past something it could not read would be serving balances it cannot justify,
 /// which is not.
 fn halt(status: &Arc<Mutex<IndexStatus>>, why: FollowError) {
-    let mut s = status.lock().expect("status lock");
+    halted_because(status, &why.to_string())
+}
+
+fn halted_because(status: &Arc<Mutex<IndexStatus>>, why: &str) {
+    let mut s = guard!(status.lock());
     s.halted = Some(why.to_string());
     s.running = false;
     crate::applog::log(&format!("dmt-index: stopped. {why}"));

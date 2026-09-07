@@ -2584,6 +2584,44 @@ async fn token_lock_supply(from: String, token: String, fee: Option<f64>) -> Res
     .map_err(|e| e.to_string())?
 }
 
+/// Create a token and claim a ticker reserved earlier.
+///
+/// `saltHex` is what token_commit_ticker returned. Must be sent from the same
+/// address that made the reservation, and not until it has matured.
+#[tauri::command]
+#[allow(non_snake_case)]
+async fn token_create_named(
+    from: String,
+    ticker: String,
+    saltHex: String,
+    premine: String,
+    decimals: u8,
+    fee: Option<f64>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dmt::create_named_token(
+            &cfg,
+            &from,
+            &ticker,
+            &saltHex,
+            parse_units(&premine)?,
+            decimals,
+            fee.unwrap_or(0.0001),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// What a ticker costs to register, so the user is told before being asked.
+#[tauri::command]
+async fn token_ticker_price(ticker: String) -> Result<f64, String> {
+    tauri::async_runtime::spawn_blocking(move || dmt::ticker_price_divi(&ticker))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Reserve a ticker. Returns the txid and the salt, hex encoded.
 ///
 /// **The caller must keep the salt.** The reveal cannot be built without it and
@@ -2759,7 +2797,9 @@ fn main() {
             token_airdrop,
             token_burn,
             token_lock_supply,
-            token_commit_ticker
+            token_commit_ticker,
+            token_create_named,
+            token_ticker_price
         ])
         .build(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9")

@@ -108,6 +108,26 @@ export const tokenLockSupply = (from: string, token: string, fee?: number) =>
 export const tokenCommitTicker = (from: string, ticker: string, fee?: number) =>
   invoke<[string, string]>("token_commit_ticker", { from, ticker, fee });
 
+/**
+ * The second half: create the token and claim the name reserved earlier.
+ *
+ * `saltHex` is what tokenCommitTicker returned, and must be sent from the same
+ * address that made the reservation once it has matured. Without this the
+ * reservation is a fee paid for nothing.
+ */
+export const tokenCreateNamed = (
+  from: string,
+  ticker: string,
+  saltHex: string,
+  premine: string,
+  decimals: number,
+  fee?: number,
+) => invoke<string>("token_create_named", { from, ticker, saltHex, premine, decimals, fee });
+
+/** What a name costs, so the user is told before being asked to pay it. */
+export const tokenTickerPrice = (ticker: string) =>
+  invoke<number>("token_ticker_price", { ticker });
+
 // ── Divi Collectibles (NFD) ──────────────────────────────────────────────────
 export interface NfdMint {
   txid: string;

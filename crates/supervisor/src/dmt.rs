@@ -40,6 +40,7 @@ use serde_json::json;
 
 use dmt_indexer::encode;
 use dmt_indexer::record::TokenId;
+use dmt_indexer::ticker;
 use dvxp_core::codec::Address;
 
 use crate::config::NodeConfig;
@@ -130,13 +131,6 @@ fn address_of(s: &str) -> Result<Address, String> {
         .ok_or_else(|| format!("{s} is not a Divi address, so nothing was sent."))
 }
 
-/// What the wallet knows before it spends anything.
-#[derive(Debug, Clone)]
-pub struct PreflightWarning {
-    pub blocking: bool,
-    pub message: String,
-}
-
 /// Checks that need no index: does this address hold any DIVI to author with?
 ///
 /// The index-dependent half (does this address hold enough of the token, is the
@@ -159,12 +153,11 @@ fn preflight_author(rpc: &RpcClient, from: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Create a token.
+/// Create a token with no ticker.
 ///
-/// `ticker` may be empty: a token always has a numeric id and works without a
-/// name, and the name is separately priced. Claiming one is a two-step
-/// commit-then-reveal, so this refuses a ticker outright rather than half-doing
-/// it; see [`commit_ticker`].
+/// A token always has a numeric id and works without a name; the name is
+/// separately priced and claimed through the two-step flow in
+/// [`commit_ticker`] then [`create_named_token`].
 #[allow(clippy::too_many_arguments)]
 pub fn create_token(
     cfg: &NodeConfig,
@@ -298,6 +291,95 @@ pub fn lock_supply(
     Ok(sent.txid)
 }
 
+/// Create a token AND claim the ticker reserved earlier.
+///
+/// The second half of the two-step flow. It existed only as a first half for a
+/// while, which was worse than not offering it at all: a reservation you cannot
+/// spend is a fee taken for nothing.
+///
+/// `salt_hex` is what [`commit_ticker`] returned. The wallet cannot recover it
+/// and neither can the chain: that secrecy is the entire reason the reservation
+/// protects the name, so a lost salt means a lost reservation.
+///
+/// Must be sent from the SAME address that made the reservation, and not until
+/// the reservation has matured. Both are the rules' requirements, not this
+/// function's, and both are checked by the ledger; passing the wrong address
+/// here produces a record that is mined, paid for and ignored.
+pub fn create_named_token(
+    cfg: &NodeConfig,
+    from: &str,
+    ticker: &str,
+    salt_hex: &str,
+    premine: u64,
+    decimals: u8,
+    fee_divi: f64,
+) -> Result<String, String> {
+    let name = ticker.trim().to_ascii_uppercase();
+    ticker::validate(name.as_bytes()).map_err(|_| format!("{name} is not a usable ticker."))?;
+
+    let salt = parse_salt(salt_hex)?;
+
+    let rpc = RpcClient::new(cfg);
+    preflight_author(&rpc, from)?;
+    let treasury = treasury_address(&chain_name(&rpc))?;
+
+    let issue = dmt_indexer::record::issue::Issue {
+        flags: 0,
+        decimals,
+        ticker: name.as_bytes().to_vec(),
+        salt: Some(salt),
+        premine,
+        terms: None,
+        metadata_ptr: None,
+    };
+    let payload = encode::issue(&issue).map_err(|e| e.to_string())?;
+
+    // Two separate charges: creating the token, and registering the name. The
+    // name price scales with how short it is.
+    let ticker_fee = dmt_indexer::fees::ticker_fee_duffs(name.len())
+        .ok_or("There is no registration price for a ticker that length.")?;
+    let total = dmt_indexer::fees::token_creation_fee_duffs()
+        .checked_add(ticker_fee)
+        .ok_or("Those fees do not add up.")?;
+
+    let sent = dvxp::broadcast_record(
+        &rpc,
+        &payload,
+        &[Payment { address: treasury, divi: total as f64 / 1e8 }],
+        fee_divi,
+        Some(from),
+    )?;
+    Ok(sent.txid)
+}
+
+/// What a ticker registration costs, so the wallet can say so before asking.
+pub fn ticker_price_divi(ticker: &str) -> Result<f64, String> {
+    let name = ticker.trim().to_ascii_uppercase();
+    ticker::validate(name.as_bytes()).map_err(|_| format!("{name} is not a usable ticker."))?;
+    dmt_indexer::fees::ticker_fee_duffs(name.len())
+        .map(|d| d as f64 / 1e8)
+        .ok_or_else(|| "There is no registration price for a ticker that length.".into())
+}
+
+fn parse_salt(hex: &str) -> Result<[u8; 20], String> {
+    let h = hex.trim();
+    if h.len() != 40 {
+        return Err(
+            "That reservation code is not the right length. It is the value the wallet gave you              when you reserved the name, and it cannot be recovered if lost."
+                .into(),
+        );
+    }
+    let mut salt = [0u8; 20];
+    for (i, byte) in salt.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(
+            h.get(i * 2..i * 2 + 2).ok_or("That reservation code is not readable.")?,
+            16,
+        )
+        .map_err(|_| "That reservation code is not readable.")?;
+    }
+    Ok(salt)
+}
+
 /// Reserve a ticker, about twelve minutes before revealing it.
 ///
 /// Front-running protection, not a delay to apologise for: it turns a mempool
@@ -313,8 +395,7 @@ pub fn commit_ticker(
     fee_divi: f64,
 ) -> Result<(String, [u8; 20]), String> {
     let name = ticker.trim().to_ascii_uppercase();
-    dmt_indexer::ticker::validate(name.as_bytes())
-        .map_err(|_| format!("{name} is not a usable ticker."))?;
+    ticker::validate(name.as_bytes()).map_err(|_| format!("{name} is not a usable ticker."))?;
 
     let rpc = RpcClient::new(cfg);
     preflight_author(&rpc, from)?;
@@ -352,6 +433,30 @@ mod tests {
         assert!(e.contains("306:2"), "the message should show the shape: {e}");
         assert!(parse_token_id("4131200").is_err());
         assert!(parse_token_id("4131200:x").is_err());
+    }
+
+    /// The salt is the whole security of a reservation, so a mistyped one must
+    /// be refused with an explanation rather than silently producing a record
+    /// that will be ignored after the fee is paid.
+    #[test]
+    fn a_reservation_code_round_trips_and_bad_ones_explain_themselves() {
+        let salt = [0xabu8; 20];
+        let hex: String = salt.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(parse_salt(&hex).unwrap(), salt);
+        assert_eq!(parse_salt(&format!("  {hex}  ")).unwrap(), salt, "trimmed");
+
+        let short = parse_salt("abcd").unwrap_err();
+        assert!(short.contains("cannot be recovered"), "say why it matters: {short}");
+        assert!(parse_salt(&"zz".repeat(20)).is_err(), "not hex");
+    }
+
+    #[test]
+    fn a_ticker_has_a_price_and_nonsense_does_not() {
+        assert!(ticker_price_divi("HELLO").unwrap() > 0.0);
+        // Shorter names cost more: that is the anti-squatting property.
+        assert!(ticker_price_divi("ABC").unwrap() >= ticker_price_divi("ABCDEFG").unwrap());
+        assert!(ticker_price_divi("").is_err());
+        assert!(ticker_price_divi("!!").is_err());
     }
 
     #[test]
