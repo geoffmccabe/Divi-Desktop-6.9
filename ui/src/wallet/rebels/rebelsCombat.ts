@@ -27,8 +27,11 @@ export interface ShipClass {
   /** 1..7. Also the index into the per-tier kill counts. */
   tier: number;
   name: string;
+  /** The shield IS the ship's health. There is deliberately no second layer
+   *  under it: a hull meant a fighter sat at nought percent still flying while
+   *  another hundred damage went into something the player could not see, which
+   *  read as shots not counting. Shield gone, ship gone. */
   shieldMax: number;
-  hullMax: number;
   /** Hull and panel colour, and the colour of its shield bubble. */
   colour: number;
   /** Multiplier on flying speed. */
@@ -53,7 +56,6 @@ export const TIERS: ShipClass[] = TIER_COLOURS.map((colour, i) => ({
   tier: i + 1,
   name: TIER_NAMES[i],
   shieldMax: 100 + i * 30,
-  hullMax: 100 + i * 30,
   colour,
   speed: 1 + i * 0.3,
   weight: 0.8 * Math.pow(0.2, i),
@@ -140,7 +142,6 @@ export interface Enemy {
   roll: number;
   cls: ShipClass;
   shield: number;
-  hull: number;
   /** Knockback, decaying. Sits on top of ordinary flight. */
   vel: THREE.Vector3;
   /** Tumble from being hit: axis times radians per second, decaying. */
@@ -237,21 +238,17 @@ export function hurtEnemy(
   /* What is actually there to take. A shot for eighty into a fighter with ten
      left lands ten, not eighty, which is what stops points running ahead of the
      damage actually done. */
-  const applied = Math.min(amount, Math.max(0, e.shield) + Math.max(0, e.hull));
-
-  const soaked = Math.min(e.shield, amount);
-  e.shield -= soaked;
-  const through = amount - soaked;
-  /* Once the shield is gone even a single point gets through. */
-  if (through > 0) e.hull -= through;
+  const applied = Math.min(amount, Math.max(0, e.shield));
+  e.shield -= amount;
 
   c.events.push({
     kind: "enemyHit", at: e.pos.clone(), power: Math.min(2, 0.4 + amount / 90),
-    shield: e.shield / e.cls.shieldMax,
+    shield: Math.max(0, e.shield) / e.cls.shieldMax,
     damage: applied,
   });
 
-  if (e.hull <= 0) {
+  /* Shield through nought is the end of it. */
+  if (e.shield <= 0) {
     breakUp(c, e);
     const i = c.enemies.indexOf(e);
     if (i >= 0) c.enemies.splice(i, 1);
@@ -619,7 +616,6 @@ function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3): Enemy {
     pos, fwd, roll: 0,
     cls,
     shield: cls.shieldMax,
-    hull: cls.hullMax,
     vel: new THREE.Vector3(),
     tumble: new THREE.Vector3(),
     spin: new THREE.Vector3(),

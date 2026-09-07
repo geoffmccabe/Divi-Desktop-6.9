@@ -45,7 +45,7 @@ const world = (over: Partial<Parameters<typeof stepCombat>[2]> = {}) => ({
 function fighter(at: THREE.Vector3, over: Partial<Enemy> = {}): Enemy {
   return {
     pos: at.clone(), fwd: fwd.clone().negate(), roll: 0,
-    cls: FIGHTER, shield: 0, hull: 1,
+    cls: FIGHTER, shield: 1,
     vel: new THREE.Vector3(), tumble: new THREE.Vector3(), spin: new THREE.Vector3(),
     flash: 0, ammo: 60, reload: 0, fireAt: 1e9, weave: 1e9, weaveDir: 1,
     ...over,
@@ -197,7 +197,7 @@ function run(c: CombatState, frames: number, w = world()) {
   ok("nor does wreckage", c.junk.length <= 60, `${c.junk.length} pieces`);
   ok("fighters stay capped", c.enemies.length <= 4, `${c.enemies.length}`);
   /* Shots land. Kills are not asserted any more: a fighter now carries a
-     hundred of shield and a hundred of hull, so blind fire from a fixed point
+     hundred of shield and rarer ones more, so blind fire from a fixed point
      lands hits without finishing anyone, which is the point of shields. */
   ok("shots land during it", hits > 0, `${hits} hits`);
   ok("hit radius is a sane size next to a fighter", ENEMY_R > 0.5 && ENEMY_R < 3);
@@ -248,9 +248,9 @@ function run(c: CombatState, frames: number, w = world()) {
   const c = createCombat();
   const w = world();
   const at = pos.clone().addScaledVector(fwd, 30);
-  /* Full shields and full hull: a torpedo has to get through both. */
+  /* Full shields: a torpedo has to get through all of them. */
   c.enemies.push(fighter(at.clone(), {
-    fwd: fwd.clone(), shield: FIGHTER.shieldMax, hull: FIGHTER.hullMax,
+    fwd: fwd.clone(), shield: FIGHTER.shieldMax,
   }));
   c.torpedoes.push({ pos: at.clone(), vel: fwd.clone(), life: 1 });
   detonateOldest(c, w);
@@ -278,12 +278,12 @@ function run(c: CombatState, frames: number, w = world()) {
 // 8c. Points can never run ahead of the damage actually done.
 {
   const c = createCombat();
-  const nearlyDead = fighter(pos.clone(), { shield: 0, hull: 10 });
+  const nearlyDead = fighter(pos.clone(), { shield: 10 });
   c.enemies.push(nearlyDead);
   const landed = hurtEnemy(c, nearlyDead, 80, pos);
   ok("a big hit on a nearly-dead fighter only scores what was there",
      landed === 10, `landed ${landed}`);
-  const fresh = fighter(pos.clone(), { shield: FIGHTER.shieldMax, hull: FIGHTER.hullMax });
+  const fresh = fighter(pos.clone(), { shield: FIGHTER.shieldMax });
   c.enemies.push(fresh);
   ok("and a normal hit scores all of itself", hurtEnemy(c, fresh, 45, pos) === 45);
   ok("the hit event carries the same figure",
@@ -294,36 +294,43 @@ function run(c: CombatState, frames: number, w = world()) {
 {
   const c = createCombat();
   const e = fighter(pos.clone().addScaledVector(fwd, 30), {
-    shield: FIGHTER.shieldMax, hull: FIGHTER.hullMax,
+    shield: FIGHTER.shieldMax,
   });
   c.enemies.push(e);
   const before = e.pos.clone();
   hurtEnemy(c, e, 40, pos);
-  ok("damage comes off the shield first", e.shield === FIGHTER.shieldMax - 40 && e.hull === FIGHTER.hullMax,
-     `shield ${e.shield} hull ${e.hull}`);
+  ok("damage comes off the shield", e.shield === FIGHTER.shieldMax - 40, `shield ${e.shield}`);
   ok("a hit reports the new shield level", c.events.some((x) => x.kind === "enemyHit" && x.shield === 0.6));
   ok("a hit knocks them back", e.vel.length() > 1, `impulse ${e.vel.length().toFixed(1)}`);
   ok("a hit sets them spinning", e.tumble.length() > 0.1, `tumble ${e.tumble.length().toFixed(2)}`);
   ok("and it is knocked AWAY from the shooter", e.vel.dot(before.clone().sub(pos)) > 0);
 
-  const hard = fighter(pos.clone(), { shield: FIGHTER.shieldMax, hull: FIGHTER.hullMax });
+  const hard = fighter(pos.clone(), { shield: FIGHTER.shieldMax });
   c.enemies.push(hard);
   hurtEnemy(c, hard, 100, pos);
   ok("a harder hit spins them faster", hard.tumble.length() > e.tumble.length(),
      `${e.tumble.length().toFixed(2)} vs ${hard.tumble.length().toFixed(2)}`);
 }
 {
-  /* Overflow: the shot that breaks the shield still reaches the hull. */
+  /* Geoff: "The enemy ships often go to 0% and don't die." They had a hull
+     under the shield, so nought percent meant another hundred damage into
+     something invisible. Now the shield is the whole of it. */
   const c = createCombat();
-  const e = fighter(pos.clone(), { shield: 30, hull: FIGHTER.hullMax });
+  const e = fighter(pos.clone(), { shield: 30 });
   c.enemies.push(e);
   hurtEnemy(c, e, 80, pos);
-  ok("the shot that breaks a shield still hurts", e.shield === 0 && e.hull === FIGHTER.hullMax - 50,
-     `shield ${e.shield} hull ${e.hull}`);
-  ok("and once the shield is gone, one point gets through", (() => {
-    hurtEnemy(c, e, 1, pos);
-    return e.hull === FIGHTER.hullMax - 51;
-  })(), `hull ${e.hull}`);
+  ok("a shot that takes the shield past nought destroys the ship",
+     !c.enemies.includes(e), `shield ${e.shield}`);
+  ok("and it is counted as a kill", c.kills === 1);
+  ok("and it broke apart", c.junk.length === 3, `${c.junk.length} pieces`);
+}
+{
+  /* Exactly nought is dead too, not one point from it. */
+  const c = createCombat();
+  const e = fighter(pos.clone(), { shield: 40 });
+  c.enemies.push(e);
+  hurtEnemy(c, e, 40, pos);
+  ok("a shield taken to exactly nought is a kill too", !c.enemies.includes(e));
 }
 {
   /* Laser rolls stay inside the stated range. */
@@ -338,7 +345,7 @@ function run(c: CombatState, frames: number, w = world()) {
 {
   /* Killing one leaves three pieces: body and two wings. */
   const c = createCombat();
-  const e = fighter(pos.clone().addScaledVector(fwd, 30), { shield: 0, hull: 1 });
+  const e = fighter(pos.clone().addScaledVector(fwd, 30), { shield: 0 });
   c.enemies.push(e);
   hurtEnemy(c, e, 50, pos);
   ok("a dead fighter comes apart into three pieces", c.junk.length === 3, `${c.junk.length}`);
@@ -390,7 +397,7 @@ function run(c: CombatState, frames: number, w = world()) {
   /* And it hurts whatever it runs into. */
   const c = createCombat();
   const w = world();
-  const e = fighter(pos.clone().addScaledVector(fwd, 30), { shield: FIGHTER.shieldMax, hull: FIGHTER.hullMax });
+  const e = fighter(pos.clone().addScaledVector(fwd, 30), { shield: FIGHTER.shieldMax });
   c.enemies.push(e);
   c.junk.push({ pos: e.pos.clone(), vel: new THREE.Vector3(), spin: new THREE.Vector3(),
                 rot: new THREE.Vector3(), life: 1e9, kind: "wingL" });
@@ -401,7 +408,7 @@ function run(c: CombatState, frames: number, w = world()) {
 {
   /* Winning a stake triples what the guns do. */
   const c = createCombat();
-  const e = fighter(pos.clone(), { shield: FIGHTER.shieldMax, hull: FIGHTER.hullMax });
+  const e = fighter(pos.clone(), { shield: FIGHTER.shieldMax });
   c.enemies.push(e);
   hurtEnemy(c, e, 20 * 3, pos);
   ok("a tripled hit takes triple the shield", e.shield === FIGHTER.shieldMax - 60, `shield ${e.shield}`);
@@ -442,17 +449,17 @@ function run(c: CombatState, frames: number, w = world()) {
   /* A rarer fighter really is tougher: the same shots that finish a grey one
      leave a red one flying. */
   const c = createCombat();
-  const grey = fighter(pos.clone(), { cls: TIERS[0], shield: TIERS[0].shieldMax, hull: TIERS[0].hullMax });
-  const red = fighter(pos.clone(), { cls: TIERS[4], shield: TIERS[4].shieldMax, hull: TIERS[4].hullMax });
+  const grey = fighter(pos.clone(), { cls: TIERS[0], shield: TIERS[0].shieldMax });
+  const red = fighter(pos.clone(), { cls: TIERS[4], shield: TIERS[4].shieldMax });
   c.enemies.push(grey, red);
-  for (let i = 0; i < 4; i++) { hurtEnemy(c, grey, 50, pos); hurtEnemy(c, red, 50, pos); }
-  ok("two hundred damage finishes a grey one", !c.enemies.includes(grey));
-  ok("but not a red one", c.enemies.includes(red), `hull ${red.hull}`);
+  for (let i = 0; i < 2; i++) { hurtEnemy(c, grey, 50, pos); hurtEnemy(c, red, 50, pos); }
+  ok("a hundred damage finishes a grey one", !c.enemies.includes(grey));
+  ok("but not a red one", c.enemies.includes(red), `shield ${red.shield}`);
 }
 {
   /* Kills are counted per tier. */
   const c = createCombat();
-  const blue = fighter(pos.clone(), { cls: TIERS[2], shield: 0, hull: 1 });
+  const blue = fighter(pos.clone(), { cls: TIERS[2], shield: 0 });
   c.enemies.push(blue);
   hurtEnemy(c, blue, 10, pos);
   ok("a kill is counted against its own tier",
@@ -475,7 +482,7 @@ function run(c: CombatState, frames: number, w = world()) {
   for (let i = 0; i < 4; i++) {
     c.enemies.push(fighter(
       pos.clone().addScaledVector(fwd, 30 + i * 4),
-      { fwd: fwd.clone().negate(), shield: FIGHTER.shieldMax, hull: FIGHTER.hullMax,
+      { fwd: fwd.clone().negate(), shield: FIGHTER.shieldMax,
         fireAt: 0.2 * i, weave: 1e9 },
     ));
   }
