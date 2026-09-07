@@ -39,7 +39,7 @@ export const MAX_SHIELD = 1000;
  *  shield: enough to matter, not enough to end a run on one clumsy moment. */
 export const CRASH_DAMAGE = 250;
 export const MAX_AMMO = 60;
-import { MINI_AMMO } from "./rebelsCombat";
+import { MINI_AMMO, MINI_INTERVAL } from "./rebelsCombat";
 
 export const MAX_TORPEDOES = 2;
 /* ---- the guard ----
@@ -322,10 +322,11 @@ export function stepFlight(
   if (stick.heavy) {
     if (pressed) out.heavyPress = true;
   } else if (stick.mini) {
-    /* A quarter of a round each, so four of them cost one shot of the main
-       guns, and a leftover fraction is still usable here. */
-    if (pressed && f.cooldown <= 0 && f.ammo >= MINI_AMMO) {
-      f.cooldown = 0.05;
+    /* The mini gun is the one gun that DOES run on while the trigger is held,
+       ten a second. A quarter of a round each, so four of them cost one shot of
+       the main guns, and a leftover fraction is still usable here. */
+    if (stick.firing && f.cooldown <= 0 && f.ammo >= MINI_AMMO) {
+      f.cooldown = MINI_INTERVAL;
       f.ammo -= MINI_AMMO;
       out.miniFired = true;
     }

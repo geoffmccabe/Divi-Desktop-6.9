@@ -41,6 +41,8 @@ export interface HudState {
   /** How many are still in the rack, and how many are out there right now. */
   torpedoes: number;
   inFlight: number;
+  /** When the player was last hit, for the cockpit's flash. */
+  hitAt: number;
   /** Guards left, and whether one is up right now. */
   guards: number;
   guarding: boolean;
@@ -71,7 +73,8 @@ export interface HudState {
 
 const BLANK: HudState = {
   ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO,
-  torpedoes: MAX_TORPEDOES, inFlight: 0, guards: MAX_GUARDS, guarding: false, boost: 1,
+  torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
+  guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, score: 0,
   tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
 };
@@ -169,6 +172,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      the trigger reads as the trigger not having worked. */
   let lastInFlight = -1;
   let lastRack = -1;
+  /* Being hit: the view inverts for a tenth of a second and the camera is
+     knocked off centre for a fifth, then settles. Both are driven from here so
+     they cannot disagree about when a hit happened. */
+  const SHAKE_SECONDS = 0.2;
+  /** How far off centre the jolt throws the view, as a fraction of it. */
+  const SHAKE_FRACTION = 0.15;
+  let shakeFor = 0;
+  const shakeAxis = new THREE.Vector3();
   /* Lifetime tier kills, seeded from the player's own row so the counters start
      where they left off rather than at zero every session. */
   let lifetimeTiers: number[] = new Array(TIER_COUNT).fill(0);
@@ -459,6 +470,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         camera.quaternion.setFromRotationMatrix(s.m4);
         s.qBank.setFromAxisAngle(s.zAxis, flight.bank * 0.55);
         camera.quaternion.multiply(s.qBank);
+        /* The jolt. Applied after the cockpit's own orientation, so it throws
+           the whole view rather than steering the ship, and eased back to
+           nothing over its fifth of a second. */
+        if (shakeFor > 0) {
+          shakeFor = Math.max(0, shakeFor - dt);
+          const k = shakeFor / SHAKE_SECONDS;
+          const halfFov = (camera.fov * Math.PI) / 360;
+          const angle = Math.atan(Math.tan(halfFov) * SHAKE_FRACTION * 2) * k;
+          s.qBank.setFromAxisAngle(shakeAxis, angle);
+          camera.quaternion.multiply(s.qBank);
+        }
+
         camera.position.copy(flight.pos);
         camera.updateMatrixWorld();
 
@@ -529,6 +552,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         for (const ev of combat.events) {
           if (ev.kind === "playerHit") {
             if (flight.grace <= 0) {
+              /* Tell the cockpit to flash, and knock the view off centre in
+                 some direction that is not the same one every time. */
+              setHud({ hitAt: performance.now() });
+              shakeFor = SHAKE_SECONDS;
+              shakeAxis.set(Math.random() * 2 - 1, Math.random() * 2 - 1, 0).normalize();
               /* The guard soaks four fifths of it, which is what makes ten of
                  them worth spending carefully. */
               const soak = flight.guardFor > 0 ? 1 - GUARD_ABSORB : 1;

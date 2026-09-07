@@ -1975,6 +1975,16 @@ code, .mono { font-family: var(--font-mono); }
 .netmap-flying canvas { cursor: none; }
 
 .orbit-alert { color: hsl(var(--destructive)); }
+
+/* Taking a hit: everything behind this inverts for a tenth of a second. A
+   backdrop filter rather than a coloured wash, so it reads as the instruments
+   glitching rather than as a red screen, and it needs no access to the map's
+   own canvas. */
+.orbit-invert {
+  position: absolute; inset: 0; pointer-events: none;
+  -webkit-backdrop-filter: invert(1);
+  backdrop-filter: invert(1);
+}
 /* Torpedoes get their own violet, matching their blast. */
 .orbit-pip.orbit-torp.on { background: hsl(270 90% 72%); border-color: hsl(270 90% 72%); }
 .orbit-torp-live { color: hsl(270 95% 80%); }

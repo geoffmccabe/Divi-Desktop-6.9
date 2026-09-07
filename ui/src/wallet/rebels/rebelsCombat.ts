@@ -18,6 +18,8 @@ export const CONVERGE = 55;           /* where the two guns cross, in units ahea
 export const MINI_DAMAGE = 0.25;
 export const MINI_SPEED_MULT = 1.5;
 export const MINI_AMMO = 0.25;
+/** It keeps firing while the trigger is held, ten times a second. */
+export const MINI_INTERVAL = 0.1;
 export const ENEMY_R = 1.05;          /* hit radius of a fighter */
 
 /* ---- damage ----

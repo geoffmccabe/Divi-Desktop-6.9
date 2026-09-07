@@ -269,9 +269,10 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 // 8c2. The mini gun.
 {
   const f = createFlight(pad);
-  const pull = (o: Partial<Stick> = {}) => {
+  /** Hold the trigger for a while, then let go. */
+  const hold = (seconds: number, o: Partial<Stick> = {}) => {
     let main = 0, mini = 0;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < Math.round(seconds * 60); i++) {
       const r = stepFlight(f, DT, stick({ firing: true, ...o }), [], -1);
       if (r.fired) main++;
       if (r.miniFired) mini++;
@@ -279,29 +280,31 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
     for (let i = 0; i < 6; i++) stepFlight(f, DT, stick(o), [], -1);
     return { main, mini };
   };
-  const a = pull({ mini: true });
-  ok("holding E fires the mini gun and not the main guns",
-     a.mini === 1 && a.main === 0, `main ${a.main}, mini ${a.mini}`);
-  ok("a mini round costs a quarter", Math.abs(f.ammo - (MAX_AMMO - 0.25)) < 1e-9,
-     `ammo ${f.ammo}`);
 
-  /* Four of them is one round of the main guns. */
-  for (let i = 0; i < 3; i++) pull({ mini: true });
-  ok("four mini rounds cost one whole round", Math.abs(f.ammo - (MAX_AMMO - 1)) < 1e-9,
-     `ammo ${f.ammo}`);
+  /* Unlike the main guns, this one runs on while the trigger is down. Half a
+     second at ten a second is five or six rounds depending on where the frames
+     land. */
+  const a = hold(0.55, { mini: true });
+  ok("the mini gun keeps firing while E and the trigger are held",
+     a.mini >= 5 && a.mini <= 7, `${a.mini} rounds in 0.55s`);
+  ok("and the main guns stay silent", a.main === 0);
+  ok("each round costs a quarter",
+     Math.abs((MAX_AMMO - f.ammo) - a.mini * 0.25) < 1e-9,
+     `spent ${(MAX_AMMO - f.ammo).toFixed(2)} on ${a.mini} rounds`);
 
-  const b = pull();
-  ok("letting go of E goes back to the main guns", b.main === 1 && b.mini === 0);
+  /* The main guns are still one per pull however long it is held. */
+  const b = hold(0.55);
+  ok("the main guns do not run on", b.main === 1 && b.mini === 0, `${b.main} shots`);
 
-  /* And the main guns cannot fire on a leftover fraction. */
+  /* And the main guns cannot fire on a leftover fraction, while the mini gun
+     can, right down to a quarter. */
   f.ammo = 0.75;
-  const c = pull();
-  ok("the main guns will not fire on part of a round", c.main === 0, `ammo ${f.ammo}`);
-  const d = pull({ mini: true });
-  ok("but the mini gun will", d.mini === 1, `ammo ${f.ammo}`);
+  ok("the main guns will not fire on part of a round", hold(0.3).main === 0);
+  f.ammo = 0.75;
+  const c = hold(0.05, { mini: true });
+  ok("but the mini gun will", c.mini === 1 && Math.abs(f.ammo - 0.5) < 1e-9, `ammo ${f.ammo}`);
   f.ammo = 0.1;
-  const e2 = pull({ mini: true });
-  ok("and not on less than a quarter", e2.mini === 0, `ammo ${f.ammo}`);
+  ok("and not on less than a quarter", hold(0.3, { mini: true }).mini === 0, `ammo ${f.ammo}`);
 }
 
 // 8d. The guard: ten of them, half a second each, and only your own tower

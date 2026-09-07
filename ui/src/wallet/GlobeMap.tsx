@@ -135,6 +135,43 @@ const FRAG = `
   }
 `;
 
+/**
+ * The beam that marks your own node.
+ *
+ * Straight up, away from the centre of the planet, five tower-heights tall, and
+ * fading from full at the mast to nothing at the top. It exists so a player can
+ * find home from across the world without hunting for one red spire among two
+ * hundred grey ones.
+ *
+ * Built from vertex colours on an open cylinder with additive blending: the
+ * fade IS the colour going to black, which costs nothing and needs no texture.
+ */
+function makeHomeBeacon(colour: THREE.ColorRepresentation, height: number): THREE.Mesh {
+  const len = height * 5;
+  const geo = new THREE.CylinderGeometry(BASE * 0.42, BASE * 0.18, len, 10, 1, true);
+  /* Its own origin sits at its middle, so it is shifted up to start at the
+     mast rather than half way down the tower. */
+  geo.translate(0, len / 2, 0);
+
+  const pos = geo.getAttribute("position");
+  const col = new Float32Array(pos.count * 3);
+  const c = new THREE.Color(colour);
+  for (let i = 0; i < pos.count; i++) {
+    /* Full at the bottom, nothing at the top, linear across the five heights. */
+    const k = 1 - Math.min(1, Math.max(0, pos.getY(i) / len));
+    col[i * 3] = c.r * k;
+    col[i * 3 + 1] = c.g * k;
+    col[i * 3 + 2] = c.b * k;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+
+  const mat = new THREE.MeshBasicMaterial({
+    vertexColors: true, transparent: true, opacity: 0.5,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  return new THREE.Mesh(geo, mat);
+}
+
 function makeTower(color: THREE.ColorRepresentation, scale = 1): THREE.Group {
   const h = PYR_H * scale;
   /* Shared materials, one pair per colour, carrying the window shader. See
@@ -441,6 +478,8 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         const d2 = base.clone().add(east.multiplyScalar(offs[i][0])).add(north.multiplyScalar(offs[i][1])).normalize();
         const scale = p.kind === "self" ? 2 : 1; // your node is twice the size
         const t = makeTower(COLORS[p.kind], scale);
+        /* Only yours gets a beam. Two hundred of them would be a forest. */
+        if (p.kind === "self") t.add(makeHomeBeacon(COLORS.self, PYR_H * scale));
         t.position.copy(d2.clone().multiplyScalar(R));
         t.quaternion.setFromUnitVectors(UP, d2);
         t.userData.node = p; // for hover

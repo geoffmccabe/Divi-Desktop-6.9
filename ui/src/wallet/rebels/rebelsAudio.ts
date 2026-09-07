@@ -19,8 +19,9 @@ import { audioContext, masterVolume } from "../../sound";
 
 /** How far speed, pitch and volume may wander, either way. */
 const WOBBLE = 0.1;
-/** The gap between the two barrels. */
-const SECOND_BARREL = 0.05;
+/** The gap between the two barrels. A twentieth of a second was too tight to
+ *  hear as two reports: it read as one thicker one. */
+const SECOND_BARREL = 0.2;
 
 let buffer: AudioBuffer | null = null;
 let rechargeBuffer: AudioBuffer | null = null;

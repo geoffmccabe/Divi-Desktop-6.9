@@ -23,6 +23,17 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
      "finding your node" for ever with nothing explaining why. Say so instead. */
   const [slow, setSlow] = useState(false);
   const [scores, setScores] = useState(false);
+
+  /* The hit flash: everything behind the cockpit inverts for a tenth of a
+     second. Driven by a timestamp rather than a boolean so two hits in quick
+     succession each get their own flash. */
+  const [flashing, setFlashing] = useState(false);
+  useEffect(() => {
+    if (!hud.hitAt) return;
+    setFlashing(true);
+    const t = setTimeout(() => setFlashing(false), 100);
+    return () => clearTimeout(t);
+  }, [hud.hitAt]);
   useEffect(() => {
     const t = setTimeout(() => setSlow(true), 10000);
     return () => clearTimeout(t);
@@ -109,6 +120,8 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         {hud.junk > 0 && <div className="orbit-row orbit-dim">{hud.junk} wreckage</div>}
         {hud.bonus && <div className="orbit-row orbit-bonus">STAKE WON &middot; TRIPLE DAMAGE</div>}
       </div>
+
+      {flashing && <div className="orbit-invert" />}
 
       {hud.launched && !hud.dead && !hud.broken && <div className="orbit-cross" ref={crossRef} />}
 
