@@ -14,6 +14,7 @@ import { ExchangeConnect } from "./mm/ExchangeConnect";
 import { MarketMakerControl, type MmLiveConfig } from "./mm/MarketMakerControl";
 import { DepthLadder } from "./mm/DepthLadder";
 import { FundsPanel } from "./mm/FundsPanel";
+import { TradePnlPanel } from "./mm/TradePnlPanel";
 import { DexPanel } from "./mm/DexPanel";
 import { useVenue } from "./mmVenue";
 
@@ -61,6 +62,7 @@ export function MarketMakerPanel() {
       ) : (
       <>
       {cfg && <FundsPanel symbol={cfg.symbol} bals={bals} />}
+      {cfg && cfg.ex.connector_type === "nonkyc" && <TradePnlPanel ex={cfg.ex} symbol={cfg.symbol} />}
       {exchanges && exchanges.length > 0 && (
         <div className="mm-two-col">
           <MarketMakerControl exchanges={exchanges} onConfig={setCfg} hasOrders={hasOrders} bals={bals} mid={mid} />

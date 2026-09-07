@@ -636,6 +636,18 @@ export interface MmBook {
 export const mmBook = (slug: string, connector: string, restUrl: string, symbol: string) =>
   invoke<MmBook>("mm_book", { slug, connector, restUrl, symbol });
 
+// Realized market-making P&L, reconstructed from the exchange's own filled-order
+// history: the source of truth for where the money went.
+export interface TradePnl {
+  fills: number; buys: number; sells: number;
+  diviBought: number; diviSold: number; usdtSpent: number; usdtRecv: number;
+  avgBuy: number; avgSell: number;
+  netDivi: number; netUsdt: number; grossVolume: number;
+  mid: number; totalPnl: number; firstMs: number; lastMs: number;
+}
+export const mmTradeHistory = (slug: string, connector: string, restUrl: string, symbol: string) =>
+  invoke<TradePnl>("mm_trade_history", { slug, connector, restUrl, symbol });
+
 // DEX (Uniswap V2 eDIVI/WETH on Ethereum): live pool reserves + on-chain ETH/USD.
 // Read-only; used by the DEX tab to price swaps. Swapping (wallet) is a later phase.
 export interface DexPool {

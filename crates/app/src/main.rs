@@ -1403,6 +1403,46 @@ async fn mm_book(slug: String, connector: String, rest_url: String, symbol: Stri
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct TradePnlDto {
+    fills: usize,
+    buys: usize,
+    sells: usize,
+    divi_bought: f64,
+    divi_sold: f64,
+    usdt_spent: f64,
+    usdt_recv: f64,
+    avg_buy: f64,
+    avg_sell: f64,
+    net_divi: f64,
+    net_usdt: f64,
+    gross_volume: f64,
+    mid: f64,
+    total_pnl: f64,
+    first_ms: i64,
+    last_ms: i64,
+}
+
+/// Realized market-making P&L, reconstructed from the exchange's own filled-order
+/// history. This is how a node holder audits where their money went. Read-only.
+#[tauri::command]
+async fn mm_trade_history(slug: String, connector: String, rest_url: String, symbol: String) -> Result<TradePnlDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = marketmaker::trade_history(&slug, &connector, &rest_url, &symbol)?;
+        Ok::<TradePnlDto, String>(TradePnlDto {
+            fills: p.fills, buys: p.buys, sells: p.sells,
+            divi_bought: p.divi_bought, divi_sold: p.divi_sold,
+            usdt_spent: p.usdt_spent, usdt_recv: p.usdt_recv,
+            avg_buy: p.avg_buy, avg_sell: p.avg_sell,
+            net_divi: p.net_divi, net_usdt: p.net_usdt, gross_volume: p.gross_volume,
+            mid: p.mid, total_pnl: p.total_pnl, first_ms: p.first_ms, last_ms: p.last_ms,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DexPoolDto {
     reserve_edivi: f64,
     reserve_weth: f64,
@@ -2614,6 +2654,7 @@ fn main() {
             mm_stop,
             mm_cancel_all,
             dex_pool,
+            mm_trade_history,
             mm_status,
             mm_book,
             restart_node,
