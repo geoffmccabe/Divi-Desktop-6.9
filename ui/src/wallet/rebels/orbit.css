@@ -144,3 +144,145 @@
   cursor: pointer;
 }
 .orbit-card button:hover { filter: brightness(1.12); }
+
+/* ---- the Ship Market ----
+   A round viewport in the middle of the screen with a hull turning in it. The
+   game's other panels are rectangles down an edge because that is what a
+   cockpit readout is; this one is meant to read as looking THROUGH something,
+   so it is circular, centred, and the ship is allowed to overlap its rim. */
+.ship-market-scrim {
+  position: absolute; inset: 0;
+  background: rgb(0 0 0 / 0.72);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.ship-market {
+  position: absolute; inset: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(320px, 460px) minmax(220px, 1fr);
+  grid-template-rows: 1fr auto;
+  align-items: center;
+  gap: 18px;
+  padding: 24px;
+  pointer-events: auto;
+  font-family: var(--font-mono);
+  color: hsl(var(--rebels-hud));
+}
+
+/* The ring itself. Two rings, actually: a bright hairline and a wide soft
+   glow, which is what stops a circle on a dark background looking like a hole
+   cut out of it. */
+.ship-market-ring {
+  grid-column: 2; grid-row: 1;
+  position: relative;
+  justify-self: center;
+  width: min(46vh, 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 42%, hsl(var(--rebels-ocean) / 0.92) 0%, hsl(var(--rebels-ocean) / 0.55) 62%, transparent 72%);
+  border: 1px solid hsl(var(--rebels-hud) / 0.55);
+  box-shadow:
+    0 0 0 1px hsl(var(--primary) / 0.25),
+    0 0 42px hsl(var(--primary) / 0.35),
+    inset 0 0 60px hsl(var(--primary) / 0.18);
+  backdrop-filter: blur(var(--panel-blur));
+}
+.ship-preview { position: absolute; inset: -8%; }
+.ship-preview-note {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 11px; letter-spacing: 0.2em;
+  color: hsl(var(--rebels-hud) / 0.6);
+}
+
+.ship-market-head {
+  grid-column: 1; grid-row: 1;
+  align-self: center; text-align: right;
+}
+.ship-market-head h2 {
+  margin: 0; font-size: 26px; letter-spacing: 0.1em;
+  color: hsl(var(--primary));
+}
+.ship-market-tier {
+  font-size: 11px; letter-spacing: 0.24em;
+  color: hsl(var(--rebels-home));
+  margin-top: 2px;
+}
+.ship-market-role {
+  margin: 12px 0 0; font-size: 12px; line-height: 1.5; opacity: 0.8;
+}
+
+.ship-market-stats { grid-column: 3; grid-row: 1; align-self: center; }
+.ship-stat {
+  display: grid;
+  grid-template-columns: 84px 1fr 96px;
+  align-items: center; gap: 8px;
+  font-size: 11px; margin-bottom: 6px;
+}
+.ship-stat-label { letter-spacing: 0.08em; opacity: 0.75; }
+.ship-stat-bar {
+  height: 5px; border-radius: 3px;
+  background: hsl(var(--rebels-hud) / 0.16);
+  overflow: hidden;
+}
+.ship-stat-bar > i {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, hsl(var(--rebels-home)), hsl(var(--primary)));
+}
+.ship-stat-value { text-align: right; letter-spacing: 0.04em; }
+.ship-stat-value em { font-style: normal; opacity: 0.5; }
+.ship-market-note { margin: 10px 0 0; font-size: 10px; opacity: 0.55; line-height: 1.4; }
+
+/* The chooser: one row per class, one square per tier in it. */
+.ship-market-list {
+  grid-column: 1 / -1; grid-row: 2;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 14px 22px;
+  padding-top: 10px;
+  border-top: 1px solid hsl(var(--rebels-hud) / 0.2);
+}
+.ship-market-class h3 {
+  margin: 0 0 5px; font-size: 10px; letter-spacing: 0.14em;
+  opacity: 0.7; font-weight: 400; text-align: center;
+}
+.ship-market-tiers { display: flex; gap: 4px; justify-content: center; }
+.ship-market-tiers button {
+  width: 26px; height: 26px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11px;
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.1);
+  border: 1px solid hsl(var(--rebels-hud) / 0.3);
+  border-radius: calc(var(--panel-radius) * 0.35);
+}
+.ship-market-tiers button.on {
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+}
+
+.ship-market-close {
+  position: absolute; top: 18px; right: 18px;
+  padding: 7px 16px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em;
+  color: hsl(var(--primary-foreground)); background: hsl(var(--primary));
+  border: none; border-radius: calc(var(--panel-radius) * 0.5);
+}
+.ship-market-count {
+  position: absolute; bottom: 8px; left: 0; right: 0;
+  text-align: center; font-size: 10px; letter-spacing: 0.12em; opacity: 0.45;
+}
+
+/* Narrow: the ring keeps the middle and the text stacks under it, rather than
+   three columns each too thin to read. */
+@media (max-width: 900px) {
+  .ship-market {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto auto;
+    align-content: start;
+    overflow-y: auto;
+  }
+  .ship-market-ring { grid-column: 1; grid-row: 1; width: min(38vh, 82vw); }
+  .ship-market-head { grid-column: 1; grid-row: 2; text-align: center; }
+  .ship-market-stats { grid-column: 1; grid-row: 3; }
+  .ship-market-list { grid-column: 1; grid-row: 4; }
+}

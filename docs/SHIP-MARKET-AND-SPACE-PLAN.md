@@ -77,7 +77,7 @@ WKWebView.
 
 ## The phases
 
-### Phase 1 — the pipeline. The one that everything else stands on.
+### Phase 1 — the pipeline. DONE (69.7.57).
 * Add `assets.dreadroot.com` to `connect-src`.
 * A loader: fetch a `.glb` once, keep the bytes in IndexedDB, serve every later
   request from there. Never fetch the same model twice on one machine.
@@ -92,12 +92,12 @@ Asteroid belts, the six stations, the warp gate and debris fields, scattered
 at fixed positions among the planets. Loaded with the planets, since they are
 scenery too.
 
-### Phase 3 — names and the approach readout.
-Every planet, station and belt gets a name that sounds like it belongs in a
-space game, plus its details. Come within three of its diameters and the name
-and details appear in the top right, and go again when you leave.
+### Phase 3 — names and the approach readout. DONE for the planets (69.7.57).
+Every planet has a name, a type and a distance, and comes up in the top right
+within three of its own diameters. The belts and stations join it once Phase 2
+puts them in the sky.
 
-### Phase 4 — the Ship Market.
+### Phase 4 — the Ship Market. DONE (69.7.58).
 A circular panel in the middle of the screen in the game's own style, one ship
 turning slowly in front of it, its stats beside it, and a way through all 32.
 Ship models load **only when shown**, which is what makes a 32-model shop cost

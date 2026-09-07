@@ -11,6 +11,7 @@ import { TIERS } from "./rebelsCombat";
 import type { RebelsController, HudState } from "./rebelsController";
 import { RebelsScoreboard } from "./RebelsScoreboard";
 import { RebelsControls, CONTROLS, DOCKING } from "./RebelsControls";
+import { ShipMarket } from "./ShipMarket";
 
 export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () => void }) {
   const [hud, setHud] = useState<HudState>(() => ctl.hud());
@@ -24,6 +25,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
   const [slow, setSlow] = useState(false);
   const [scores, setScores] = useState(false);
   const [help, setHelp] = useState(false);
+  const [market, setMarket] = useState(false);
 
   /* The hit flash: everything behind the cockpit inverts for a tenth of a
      second. Driven by a timestamp rather than a boolean so two hits in quick
@@ -261,7 +263,9 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       {scores && <RebelsScoreboard onClose={() => setScores(false)} />}
 
-      {!hud.broken && !hud.launched && !scores && (
+      {market && <ShipMarket onClose={() => setMarket(false)} />}
+
+      {!hud.broken && !hud.launched && !scores && !market && (
         <div className="orbit-card orbit-card-clear">
           <h2>DIVI REBELS</h2>
           <p>{hud.homeName === "no node located" ? "No node of your own found, launching from the network." : `Launching from ${hud.homeName}.`}</p>
@@ -277,6 +281,9 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
             </button>
             <button type="button" className="orbit-secondary" onClick={() => setScores(true)}>
               HIGH SCORES
+            </button>
+            <button type="button" className="orbit-secondary" onClick={() => setMarket(true)}>
+              SHIP MARKET
             </button>
           </div>
           {!hud.ready && slow && (
