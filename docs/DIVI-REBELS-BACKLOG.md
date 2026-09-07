@@ -118,16 +118,55 @@ Settled with Geoff, to be built ON TOP of 54 and not before it:
 * **A low-balance banner in the wallet**, with a button that sends 2000 DIVI
   from Geoff's wallet to the game wallet in one go.
 
-Not started. Kills must be counted by the room before a single DIVI moves.
+### 56. The room and the ledger (2026-Sep-06)
+
+**Built and deployed**, at `https://divi-rebels-room.geoff-de3.workers.dev`.
+Source in `/Users/geoffreymccabe/dd69-rebels/contrib/rebels-room`.
+
+Two Durable Objects.
+
+**`RebelsRoom`**, one per world, runs the fight. Fighters, bullets, hit
+arbitration, kills, coins and waves all live there. A cockpit reports where its
+own ship is and pulls triggers; it never reports what it hit, and there is no
+message it can send that raises its own score. Ammunition, shields, guards and
+torpedoes are the room's numbers. Transforms are bounded by what the ship can
+physically fly since the last accepted one, and a report outside that is
+refused and snapped back.
+
+The simulation is the game's own `rebelsCombat`, extended to many players,
+rather than a second copy written for the server. Two implementations of one
+fight always end up disagreeing, and the disagreement always favours the liar.
+
+**`RebelsLedger`**, one for everything, holds what each node is owed. It cannot
+send DIVI, deliberately: the treasury key stays on the London node, so the worst
+a break-in here can do is corrupt a scoreboard. A claim subtracts the balance
+BEFORE any coin moves, so a repeated or racing claim finds it already gone.
+A confirmation turns the hold into a payment; a release gives it back.
+
+Still to do, in order:
+
+1. **Wire the cockpit to the room.** The client still runs its own fight. Until
+   it connects, multiplayer exists on the server and nowhere else.
+2. **The London payout service.** The half that actually signs and sends. It
+   reserves from the ledger, sends, then confirms; on failure it releases.
+3. **The CASH IN DIVI button** and the low-balance banner.
+4. **Server-side flight.** The one thing still taken on trust. It needs
+   prediction and reconciliation to feel right, and shipping it badly makes the
+   game worse while making it no harder to cheat at the thing that pays.
 
 ## Testing
 
-Four suites, run from the repo root, no renderer and no DOM:
+Six suites, run from the repo root, no renderer and no DOM:
 
     sh scripts/run-orbit-tests.sh               flight model
     sh scripts/run-rebels-combat-tests.sh       bullets, fighters, wreckage
     sh scripts/run-rebels-controller-tests.sh   the globe hook and input
     sh scripts/run-divirebels-tests.sh          the solo arcade game
+    sh scripts/run-rebels-room-tests.sh         what the room refuses
+    sh scripts/run-rebels-ledger-tests.sh       ways to be paid twice
+
+The last two are written from the attacker's side: not "does an honest player
+work" but "what happens when the message is a lie".
 
 The rendering cannot be tested headlessly: react-globe.gl will not initialise
 under software rendering, so a headless browser shows a black sphere and the map
