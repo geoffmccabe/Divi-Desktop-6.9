@@ -183,7 +183,7 @@ const all = shipCatalog();
   let depth = 0;
   let balanced = true;
   for (const line of srcLines.slice(from)) {
-    const tag = /className="(ship-market|ship-market-left|ship-market-head|ship-market-stage|ship-market-ring|ship-paint|ship-market-stats|ship-market-list)"/.exec(line);
+    const tag = /className="(ship-market|ship-market-ship|ship-market-head|ship-market-stage|ship-market-ring|ship-paint|ship-market-stats|ship-market-list)"/.exec(line);
     if (tag && !depths.has(tag[1])) depths.set(tag[1], depth);
     depth += (line.match(/<div\b/g) ?? []).length - (line.match(/<\/div>/g) ?? []).length;
     if (depth < 0) balanced = false;
@@ -191,22 +191,38 @@ const all = shipCatalog();
   ok("the panel's tags balance", balanced && depth === 0, `ends at ${depth}`);
 
   const at = (k: string) => depths.get(k) ?? -1;
-  ok("the ship's column is a child of the panel", at("ship-market-left") === at("ship-market") + 1,
-     `${at("ship-market")} -> ${at("ship-market-left")}`);
+  ok("the ship's column is a child of the panel", at("ship-market-ship") === at("ship-market") + 1,
+     `${at("ship-market")} -> ${at("ship-market-ship")}`);
   ok("the name, the ring and the paint shop are inside it",
-     at("ship-market-head") === at("ship-market-left") + 1
-     && at("ship-market-stage") === at("ship-market-left") + 1
-     && at("ship-paint") === at("ship-market-left") + 1,
+     at("ship-market-head") === at("ship-market-ship") + 1
+     && at("ship-market-stage") === at("ship-market-ship") + 1
+     && at("ship-paint") === at("ship-market-ship") + 1,
      `head ${at("ship-market-head")}, stage ${at("ship-market-stage")}, paint ${at("ship-paint")}`);
 
   /* THE ONE THAT BROKE: the specs must be a sibling of the ship's column, not
      a child of it. One level too deep and they render in the wrong half of the
      screen and sit on the ship. */
   ok("the specs are a SIBLING of it, not inside it",
-     at("ship-market-stats") === at("ship-market-left"),
-     `specs at ${at("ship-market-stats")}, ship column at ${at("ship-market-left")}`);
+     at("ship-market-stats") === at("ship-market-ship"),
+     `specs at ${at("ship-market-stats")}, ship column at ${at("ship-market-ship")}`);
+
+  /* AND THEY ARE ON THE RIGHT SIDES OF THE PANEL. Being siblings is only half
+     of it: the grid decides which half each one lands in, and getting that
+     backwards is invisible to any structural check. Specs left at 35%, ship
+     right at 65%. */
+  const css = readFileSync("src/wallet/rebels/orbit.css", "utf8");
+  const rule = (name: string) => {
+    const at = css.indexOf(`.${name} {`);
+    return at < 0 ? "" : css.slice(at, css.indexOf("}", at));
+  };
+  const cols = /grid-template-columns:\s*([^;]+);/.exec(rule("ship-market"))?.[1].trim();
+  ok("the panel is split 35 then 65", cols === "35% 65%", String(cols));
+  ok("the specs take the first column",
+     /grid-column:\s*1\b/.test(rule("ship-market-stats")), rule("ship-market-stats").split("\n")[1]?.trim());
+  ok("and the ship takes the second",
+     /grid-column:\s*2\b/.test(rule("ship-market-ship")), rule("ship-market-ship").split("\n")[1]?.trim());
   ok("and so is the class chooser",
-     at("ship-market-list") === at("ship-market-left"),
+     at("ship-market-list") === at("ship-market-ship"),
      `${at("ship-market-list")}`);
 }
 

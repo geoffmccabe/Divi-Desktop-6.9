@@ -79,8 +79,10 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
       <div className="ship-market">
         {/* ---- ONE COLUMN HOLDS THE SHIP ----
             The name, the ring and the paint shop, in that order, in a single
-            flex column that owns the left 65%. The specs are its SIBLING and
-            own the right 35%.
+            flex column that owns the RIGHT 65%. The specs are its SIBLING and
+            own the LEFT 35%. The grid decides which side each lands on; the
+            source order does not, which is why the specs are written after the
+            ship here and appear before it on screen.
 
             Nesting them like this is the point rather than tidiness. Both of
             the last two goes at this layout put things in the same grid cell
@@ -91,7 +93,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
             landed on top of the ship. Geoff, both times, correctly. Elements
             stacked in a flex column cannot overlap each other however small the
             window gets, so the failure is not available any more. */}
-        <div className="ship-market-left">
+        <div className="ship-market-ship">
           <div className="ship-market-head">
             <h2>{ship.name}</h2>
             <div className="ship-market-tier">TIER {ship.tier}</div>
