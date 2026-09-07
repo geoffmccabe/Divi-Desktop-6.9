@@ -5,6 +5,7 @@ import earthNight from "../assets/earth-night.jpg";
 import diviLogo from "../assets/divi-coin.webp";
 import { pulseTrigger, pulseHsl, pulseActiveUntil, makeLegs, legU, pingDone, type Leg } from "./activityPulse";
 import { useTheme } from "../theme/ThemeProvider";
+import { towerMaterials, tickTowerLights } from "./towerLights";
 
 // "H S% L%" (this app's HSL-triplet token format) -> a CSS hsl() string that
 // THREE.Color / material `color` params accept directly.
@@ -136,14 +137,21 @@ const FRAG = `
 
 function makeTower(color: THREE.ColorRepresentation, scale = 1): THREE.Group {
   const h = PYR_H * scale;
-  const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.2 });
+  /* Shared materials, one pair per colour, carrying the window shader. See
+     towerLights.ts for why this is not a texture and not a per-tower anything. */
+  const { spire, beacon } = towerMaterials(color, h, PYR_CIRC * scale, SPH_R * scale);
   const cone = new THREE.ConeGeometry(PYR_CIRC * scale, h, 4);
   cone.translate(0, h / 2, 0);
-  const sph = new THREE.SphereGeometry(SPH_R * scale, 16, 12);
-  sph.translate(0, h, 0);
+  /* The sphere is POSITIONED at the tip rather than having the offset baked
+     into its geometry, so its local coordinates stay centred on itself. The
+     spinning windows are wrapped using those coordinates and would smear if
+     the origin sat down at the tower's foot. */
+  const sph = new THREE.SphereGeometry(SPH_R * scale, 20, 14);
   const g = new THREE.Group();
-  g.add(new THREE.Mesh(cone, mat));
-  g.add(new THREE.Mesh(sph, mat));
+  g.add(new THREE.Mesh(cone, spire));
+  const tip = new THREE.Mesh(sph, beacon);
+  tip.position.y = h;
+  g.add(tip);
   return g;
 }
 
@@ -677,6 +685,8 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         flightRef.current!.frame(dt);
       }
 
+      tickTowerLights(now / 1000);
+
       const cam = camera.position;
 
       // Move / show the winner coin when the winning node changes.
@@ -815,8 +825,11 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         const m = o as THREE.Mesh;
         if (m.geometry) m.geometry.dispose();
         const mat = m.material as THREE.Material | THREE.Material[] | undefined;
-        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-        else if (mat) mat.dispose();
+        /* Shared tower materials outlive any one scene build. Disposing one
+           here would blank every tower the next time the map is opened. */
+        const drop = (x: THREE.Material) => { if (!x.userData?.shared) x.dispose(); };
+        if (Array.isArray(mat)) mat.forEach(drop);
+        else if (mat) drop(mat);
       });
     };
   }, [sig, ready, mapSelf, mapPeerLink, mapNetworkLink, mapActivityPulse, mapStakeAccent]);

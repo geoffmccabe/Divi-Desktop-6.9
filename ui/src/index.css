@@ -1975,6 +1975,35 @@ code, .mono { font-family: var(--font-mono); }
 .netmap-flying canvas { cursor: none; }
 
 .orbit-alert { color: hsl(var(--destructive)); }
+
+/* The launch card sits over the live globe, so it must not paint over it. Only
+   the text carries a shadow, to stay readable against a bright coastline. */
+.orbit-card-clear {
+  background: none;
+  backdrop-filter: none;
+  text-shadow: 0 2px 14px hsl(var(--rebels-ocean)), 0 0 30px hsl(var(--rebels-ocean));
+}
+
+.orbit-dock-title { font-size: 13px; letter-spacing: 0.12em; }
+.orbit-dock-lines {
+  margin-top: 8px;
+  display: grid;
+  gap: 4px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+.orbit-dock-lines > div { display: flex; align-items: center; gap: 8px; }
+.orbit-dock-lines span { width: 44px; text-align: right; opacity: 0.72; }
+.orbit-dock-lines i {
+  flex: 1; height: 6px; display: block;
+  border: 1px solid hsl(var(--rebels-home) / 0.45);
+  border-radius: 2px; overflow: hidden;
+}
+.orbit-dock-lines b {
+  display: block; height: 100%;
+  background: hsl(var(--rebels-home));
+  transition: width 0.12s linear;
+}
 .orbit-exit {
   position: absolute; left: 16px; bottom: 14px;
   pointer-events: auto;

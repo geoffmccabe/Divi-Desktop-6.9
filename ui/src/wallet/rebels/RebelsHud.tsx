@@ -66,8 +66,16 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       {hud.launched && hud.dock > 0 && (
         <div className="orbit-dock">
-          {hud.dock >= 1 ? "REARMED" : `DOCKING ${hud.dockName}`}
+          <div className="orbit-dock-title">
+            {hud.docked ? "RESUPPLIED" : `DOCKED  ${hud.dockName}`}
+          </div>
           <div className="orbit-dockbar"><i style={{ width: pct(hud.dock) }} /></div>
+          {/* What is actually being restored, filling as it goes. */}
+          <div className="orbit-dock-lines">
+            <div><span>HULL</span><i><b style={{ width: pct(hud.shields / MAX_SHIELD) }} /></i></div>
+            <div><span>AMMO</span><i><b style={{ width: pct(hud.ammo / MAX_AMMO) }} /></i></div>
+            <div><span>BOOST</span><i><b style={{ width: pct(hud.boost) }} /></i></div>
+          </div>
         </div>
       )}
 
@@ -104,7 +112,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       )}
 
       {!hud.broken && !hud.launched && (
-        <div className="orbit-card">
+        <div className="orbit-card orbit-card-clear">
           <h2>DIVI REBELS</h2>
           <p>{hud.homeName === "no node located" ? "No node of your own found, launching from the network." : `Launching from ${hud.homeName}.`}</p>
           <p className="orbit-keys">

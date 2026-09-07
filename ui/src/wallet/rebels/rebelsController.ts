@@ -15,6 +15,7 @@ import {
 } from "./orbitFlight";
 import { createCombat, stepCombat, fireGuns, type CombatState } from "./rebelsCombat";
 import { createFx, makeFighter, type Fx } from "./rebelsFx";
+import { playGunSound, primeGunSound } from "./rebelsAudio";
 
 export interface HudState {
   ready: boolean;
@@ -31,6 +32,8 @@ export interface HudState {
   /** Fighters in the air right now, and how many you have taken down. */
   contacts: number;
   kills: number;
+  /** Sitting on a pad with the resupply finished. */
+  docked: boolean;
   dead: boolean;
   launched: boolean;
   broken: string | null;
@@ -38,7 +41,7 @@ export interface HudState {
 
 const BLANK: HudState = {
   ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO, boost: 1,
-  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, dead: false, launched: false, broken: null,
+  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, docked: false, dead: false, launched: false, broken: null,
 };
 
 /** Fighters are drawn about a unit across, against three-unit towers. */
@@ -73,6 +76,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let homeIndex = -1;
   let flight: Flight | null = null;
   let flying = false;
+  /* Before launch the camera is NOT taken over. It eases from wherever the map
+     had it to a framing where the globe just fills the view, and the launch
+     card sits over that. Cutting straight to a cockpit on the surface is what
+     made it feel like the map had been replaced by something else. */
+  let approach = 0;
+  let approachFrom = new THREE.Vector3();
+  let approachTo = 0;
   /* Near and far get changed so the ship is not clipped at arm's length; the
      map's own values are put back on the way out. */
   let savedNear = 0, savedFar = 0;
@@ -175,6 +185,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         startAt(homeIndex);
 
+        /* Where the globe exactly fills the height of the frame. Slightly
+           inside it, so it fills rather than floats. */
+        const half = (camera.fov * Math.PI) / 360;
+        approachTo = (api.radius / Math.sin(half)) * 0.92;
+        approachFrom.copy(camera.position);
+        if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
+        approach = 0;
+
         dom.addEventListener("pointermove", onMove);
         dom.addEventListener("pointerdown", onDown);
         window.addEventListener("pointerup", onUp);
@@ -198,12 +216,29 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     frame(dt) {
       if (!flight || !camera || !fx || !scene || !proto) return;
       try {
-        const live = flying && !hud.dead;
+        const s = scratch;
+
+        /* ---- before launch: ease the map's own view in or out until the
+               globe just fills the frame, keeping whatever direction it was
+               already looking from ---- */
+        if (!flying) {
+          approach = Math.min(1, approach + dt / 3.2);
+          /* Smoothstep, so it starts and stops gently instead of lurching. */
+          const k = approach * approach * (3 - 2 * approach);
+          const fromLen = approachFrom.length() || approachTo;
+          const len = fromLen + (approachTo - fromLen) * k;
+          camera.position.copy(approachFrom).normalize().multiplyScalar(len);
+          camera.up.set(0, 1, 0);
+          camera.lookAt(0, 0, 0);
+          fx.step(dt, camera);
+          return;
+        }
+
+        const live = !hud.dead;
         const blank: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false };
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
         if (res.hit) fx.boom(flight.pos.clone(), 1.2, false);
 
-        const s = scratch;
         s.up.copy(flight.pos).normalize();
 
         /* ---- the cockpit ----
@@ -227,6 +262,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           const muzzles = fireGuns(combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect);
           fx.muzzle(muzzles[0]);
           fx.muzzle(muzzles[1]);
+          playGunSound();
         }
 
         /* ---- fighters and their fire ---- */
@@ -293,6 +329,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             homeDist: homeIndex >= 0 ? flight.pos.distanceTo(tipList[homeIndex]) : 0,
             contacts: combat.enemies.length,
             kills: combat.kills,
+            docked: flight.dock >= 1,
           });
         }
       } catch (err) {
@@ -338,7 +375,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
     hud: () => hud,
     subscribe(fn) { listeners.add(fn); fn(hud); return () => { listeners.delete(fn); }; },
-    launch() { flying = true; setHud({ launched: true, dead: false }); },
+    launch() {
+      flying = true;
+      /* Decoding on the first trigger pull would swallow that shot. The launch
+         button is also the gesture that lets a webview start audio at all. */
+      primeGunSound();
+      setHud({ launched: true, dead: false });
+    },
     respawn() { startAt(homeIndex); flying = true; setHud({ launched: true }); },
     dispose() { listeners.clear(); },
   };

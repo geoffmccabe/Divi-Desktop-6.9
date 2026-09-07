@@ -112,19 +112,26 @@ export function createFx(): Fx {
   const tex = glowTexture();
   bin.push(tex);
 
-  /* ---- bullets: a bright core inside a soft halo, both instanced ---- */
+  /* ---- bullets: a bright core inside a soft halo ----
+     Four meshes, one pair per side, each with a plain coloured material. The
+     first version used one pair with per-instance colours and came out black:
+     not worth debugging when two more draw calls buys certainty. */
   const boltGeo = new THREE.SphereGeometry(1, 10, 8);
-  const coreMat = new THREE.MeshBasicMaterial({ vertexColors: true });
-  const haloMat = new THREE.MeshBasicMaterial({
-    vertexColors: true, transparent: true, opacity: 0.32,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  });
-  const core = new THREE.InstancedMesh(boltGeo, coreMat, BULLET_CAP);
-  const halo = new THREE.InstancedMesh(boltGeo, haloMat, BULLET_CAP);
-  core.frustumCulled = false; halo.frustumCulled = false;
-  core.count = 0; halo.count = 0;
-  group.add(core, halo);
-  bin.push(boltGeo, coreMat, haloMat, core, halo);
+  const makeBolt = (colour: number, halo: boolean) => {
+    const mat = new THREE.MeshBasicMaterial(halo
+      ? { color: colour, transparent: true, opacity: 0.36, blending: THREE.AdditiveBlending, depthWrite: false }
+      : { color: colour });
+    const mesh = new THREE.InstancedMesh(boltGeo, mat, BULLET_CAP);
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+    group.add(mesh);
+    bin.push(mat, mesh);
+    return mesh;
+  };
+  /* Gold going out, hot orange coming back, so you always know whose is whose. */
+  const mine = { core: makeBolt(0xffd24a, false), halo: makeBolt(0xffa617, true) };
+  const theirs = { core: makeBolt(0xff8a5c, false), halo: makeBolt(0xff3a1c, true) };
+  bin.push(boltGeo);
 
   /* ---- explosion debris ---- */
   const shardGeo = new THREE.TetrahedronGeometry(1, 0);
@@ -177,63 +184,63 @@ export function createFx(): Fx {
   const zAxis = new THREE.Vector3(0, 0, 1);
   const dir = new THREE.Vector3();
 
-  const PLAYER_CORE = new THREE.Color(0x9ff0ff);
-  const PLAYER_HALO = new THREE.Color(0x3fa8ff);
-  const HOSTILE_CORE = new THREE.Color(0xffd0a0);
-  const HOSTILE_HALO = new THREE.Color(0xff5a3c);
-
   return {
     group,
 
     drawBullets(bullets) {
-      const n = Math.min(bullets.length, BULLET_CAP);
-      for (let i = 0; i < n; i++) {
-        const b = bullets[i];
+      let a = 0, b2 = 0;
+      for (const b of bullets) {
+        const set = b.hostile ? theirs : mine;
+        const i = b.hostile ? b2 : a;
+        if (i >= BULLET_CAP) continue;
         dir.copy(b.vel).normalize();
         q.setFromUnitVectors(zAxis, dir);
         /* Stretched along its own path, which is what makes a bullet read as
-           moving fast rather than as a floating bead. */
-        scl.set(0.11, 0.11, 0.62);
+           moving fast rather than as a floating bead. Half the girth it started
+           at: the first pass drew tennis balls. */
+        scl.set(0.055, 0.055, 0.31);
         m4.compose(b.pos, q, scl);
-        core.setMatrixAt(i, m4);
-        scl.set(0.34, 0.34, 1.15);
+        set.core.setMatrixAt(i, m4);
+        scl.set(0.17, 0.17, 0.58);
         m4.compose(b.pos, q, scl);
-        halo.setMatrixAt(i, m4);
-        core.setColorAt(i, b.hostile ? HOSTILE_CORE : PLAYER_CORE);
-        halo.setColorAt(i, b.hostile ? HOSTILE_HALO : PLAYER_HALO);
+        set.halo.setMatrixAt(i, m4);
+        if (b.hostile) b2++; else a++;
       }
-      core.count = n; halo.count = n;
-      core.instanceMatrix.needsUpdate = true;
-      halo.instanceMatrix.needsUpdate = true;
-      if (core.instanceColor) core.instanceColor.needsUpdate = true;
-      if (halo.instanceColor) halo.instanceColor.needsUpdate = true;
+      mine.core.count = a; mine.halo.count = a;
+      theirs.core.count = b2; theirs.halo.count = b2;
+      mine.core.instanceMatrix.needsUpdate = true;
+      mine.halo.instanceMatrix.needsUpdate = true;
+      theirs.core.instanceMatrix.needsUpdate = true;
+      theirs.halo.instanceMatrix.needsUpdate = true;
     },
 
     boom(at, power, hot = true) {
-      const n = Math.min(SHARD_CAP - shardPool.length, Math.round(10 + power * 14));
+      /* Everything here is half what it first was. Explosions at the old size
+         filled the view and hid the thing you had just shot. */
+      const n = Math.min(SHARD_CAP - shardPool.length, Math.round(8 + power * 11));
       for (let i = 0; i < n; i++) {
-        const v = new THREE.Vector3().randomDirection().multiplyScalar((3 + Math.random() * 11) * power);
+        const v = new THREE.Vector3().randomDirection().multiplyScalar((1.5 + Math.random() * 5.5) * power);
         shardPool.push({
           pos: at.clone(), vel: v,
           spin: new THREE.Vector3().randomDirection().multiplyScalar(6),
-          life: 0.5 + Math.random() * 0.7 * power, max: 1.2, size: (0.05 + Math.random() * 0.12) * power,
+          life: 0.4 + Math.random() * 0.55 * power, max: 1.0, size: (0.025 + Math.random() * 0.06) * power,
         });
       }
       const f = flashes.find((x) => x.state === null);
       if (f) {
-        f.state = { pos: at.clone(), life: 0.34 * power, max: 0.34 * power, size: 2.6 * power };
+        f.state = { pos: at.clone(), life: 0.3 * power, max: 0.3 * power, size: 1.3 * power };
         (f.sprite.material as THREE.SpriteMaterial).color.set(hot ? 0xffd9a0 : 0x9fd8ff);
       }
       const r = rings.find((x) => x.state === null);
       if (r && power > 1.2) {
-        r.state = { pos: at.clone(), nrm: at.clone().normalize(), life: 0.5, max: 0.5, size: 5 * power };
+        r.state = { pos: at.clone(), nrm: at.clone().normalize(), life: 0.45, max: 0.45, size: 2.5 * power };
       }
     },
 
     muzzle(at) {
       const f = flashes.find((x) => x.state === null);
       if (!f) return;
-      f.state = { pos: at.clone(), life: 0.09, max: 0.09, size: 1.1 };
+      f.state = { pos: at.clone(), life: 0.09, max: 0.09, size: 0.55 };
       (f.sprite.material as THREE.SpriteMaterial).color.set(0xbfefff);
     },
 

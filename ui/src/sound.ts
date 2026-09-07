@@ -4,6 +4,12 @@
 
 let ctx: AudioContext | null = null;
 
+/** The wallet's one and only audio context, shared with anything else that
+ *  needs to make a noise. Browsers cap how many a page may open. */
+export function audioContext(): AudioContext | null {
+  return getCtx();
+}
+
 function getCtx(): AudioContext | null {
   try {
     if (!ctx) ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -17,6 +23,13 @@ function getCtx(): AudioContext | null {
 function cssVar(name: string, fallback: string): string {
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
+}
+
+/** The user's master volume, as set by the theme. Anything that plays sound
+ *  should scale by it so muting the wallet mutes everything. */
+export function masterVolume(): number {
+  const v = parseFloat(cssVar("--sound-volume", "0.15"));
+  return Number.isFinite(v) ? v : 0.15;
 }
 
 export type SoundEvent = "click" | "send" | "receive" | "peer";

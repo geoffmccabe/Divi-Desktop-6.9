@@ -45,6 +45,13 @@ export interface Flight {
   cooldown: number;
   /** Seconds of invulnerability after a hit, so one scrape is not five. */
   grace: number;
+  /** What you arrived with, so the gauges can be seen filling rather than
+   *  snapping to full the instant the bar completes. */
+  dockFrom: { shields: number; ammo: number; boost: number } | null;
+  /** Seconds left sitting at the pad after a finished resupply. */
+  dockHold: number;
+  /** Seconds before a tower will take you again, so leaving actually leaves. */
+  redock: number;
 }
 
 export interface Stick {
@@ -78,6 +85,9 @@ export function createFlight(at: THREE.Vector3): Flight {
     dockedAt: -1,
     cooldown: 0,
     grace: 0,
+    dockFrom: null,
+    dockHold: 0,
+    redock: 0,
   };
 }
 
@@ -185,19 +195,41 @@ export function stepFlight(
     f.pos.addScaledVector(f.pos.clone().sub(towerTips[near]).normalize(), 2);
   }
 
-  const canDock = near >= 0 && nearDist < DOCK_RANGE && f.speed < DOCK_SPEED;
+  const canDock = near >= 0 && nearDist < DOCK_RANGE && f.speed < DOCK_SPEED
+    && f.redock <= 0 && !wantBoost;
   if (canDock) {
     /* Your own tower serves you twice as fast. Any tower will do, which is what
        keeps a fight far from home survivable. */
     const rate = near === homeIndex ? 2 : 1;
+    if (f.dock === 0) {
+      f.dockFrom = { shields: Math.max(0, f.shields), ammo: f.ammo, boost: f.boost };
+    }
+    const was = f.dock;
     f.dock = Math.min(1, f.dock + (dt / DOCK_SECONDS) * rate);
     f.dockedAt = near;
+    /* Refilled gradually rather than all at once on completion, so the gauges
+       can be watched climbing. That IS the docking graphic. */
+    const from = f.dockFrom ?? { shields: f.shields, ammo: f.ammo, boost: f.boost };
+    f.shields = Math.max(f.shields, from.shields + (MAX_SHIELD - from.shields) * f.dock);
+    f.ammo = Math.max(f.ammo, Math.round(from.ammo + (MAX_AMMO - from.ammo) * f.dock));
+    f.boost = Math.max(f.boost, from.boost + (1 - from.boost) * f.dock);
     if (f.dock >= 1) {
-      const wasFull = f.shields >= MAX_SHIELD && f.ammo >= MAX_AMMO && f.boost >= 1;
-      f.shields = MAX_SHIELD;
-      f.ammo = MAX_AMMO;
-      f.boost = 1;
-      if (!wasFull) out.docked = true;
+      if (was < 1) {
+        f.shields = MAX_SHIELD;
+        f.ammo = MAX_AMMO;
+        f.boost = 1;
+        f.dockHold = 1.1;
+        out.docked = true;
+      }
+      /* Sit on the pad a moment, then let go and fly on, rather than being
+         stuck at the tower until the player works out how to leave. */
+      f.dockHold -= dt;
+      if (f.dockHold <= 0) {
+        f.dock = 0;
+        f.dockFrom = null;
+        f.dockedAt = -1;
+        f.redock = 4;
+      }
     }
   } else {
     /* Wobbling in and out of the zone must not undo the approach. A ship that
