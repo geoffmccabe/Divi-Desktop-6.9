@@ -59,6 +59,31 @@ export function planetDistance(n: number): number {
  *  strand anybody. */
 export const MAX_ALT = planetDistance(PLANET_COUNT) + planetDiameter(PLANET_COUNT) * 3.5 - R;
 
+/* ---- getting anywhere ----
+   Geoff: "I don't seem to be able to get any closer to the planets. They just
+   never get closer even though the Earth gets farther away."
+
+   He was right, and the arithmetic says so. The nearest planet is 1,000 units
+   out. Cruise is 16 a second and the boost cells last six seconds, so reaching
+   it meant a minute of holding a stick at a dot that barely grew; the furthest
+   would have taken nearly four minutes.
+
+   Shrinking the sky was not an option, because the spacing is what was asked
+   for. So the ship goes faster the further it is from Earth instead. Nothing
+   worth dogfighting is out there, so nothing is lost by it, and close-quarters
+   fighting is completely untouched because the multiplier is exactly 1 out to
+   sixty units, which is well above the towers.
+
+   Five times at full stretch, which puts the nearest planet about sixteen
+   seconds away and the furthest just under a minute. Squared rather than
+   linear, so it stays slow around the towers and only really opens up once
+   Earth is behind you. */
+const OPEN_SPACE = 5;
+export function cruiseScale(alt: number): number {
+  const t = Math.min(1, Math.max(0, (alt - 60) / 700));
+  return 1 + (OPEN_SPACE - 1) * t * t;
+}
+
 /** Latitude and longitude in degrees to a point on a sphere of this radius. */
 export function llToVec(lat: number, lon: number, radius: number, out = new THREE.Vector3()): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);

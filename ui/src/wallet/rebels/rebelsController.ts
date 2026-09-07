@@ -24,7 +24,7 @@ import { userWonRecently } from "../stakeWin";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
-import { installSky, type SkyHandle } from "./starfield";
+import { installSky, skyTexture, type SkyHandle } from "./starfield";
 import { loadModel, unitCopy } from "./spaceAssets";
 import { loadShip } from "./shipChoice";
 import { loadPaint, makeRepaintable, type PaintHandle } from "./shipColours";
@@ -168,7 +168,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const hullWorld: Array<{ at: THREE.Vector3; r: number }> = [];
   const shipQuat = new THREE.Quaternion();
   const shipM4 = new THREE.Matrix4();
-  const zero = new THREE.Vector3();
+  const worldM4 = new THREE.Matrix4();
+  const worldRight = new THREE.Vector3();
+  /** The hull's own frame, worked out from its geometry when it loads. */
+  const modelFwd = new THREE.Vector3(0, 0, -1);
+  const modelUp = new THREE.Vector3(0, 1, 0);
+  const modelRight = new THREE.Vector3(1, 0, 0);
   /** What the ship is currently close enough to, so the readout only changes
    *  when it actually changes. */
   let nearBody: string = "";
@@ -293,9 +298,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
 
   const stick: Stick = {
-    x: 0, y: 0, lookX: 0, lookY: 0, roll: 0, strafe: 0, throttle: 0,
-    fullStop: false, boosting: false, firing: false, secondary: false,
-    guard: false, mini: false,
+    x: 0, y: 0, lookX: 0, lookY: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
+    throttle: 0, fullStop: false, boosting: false, firing: false,
+    secondary: false, guard: false, mini: false,
   };
   const keys: Record<string, boolean> = {};
 
@@ -370,33 +375,71 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      than a special case. */
 
   /**
-   * Relative look: the mouse turns the ship, and the ship stops when it does.
+   * TWO WAYS TO FLY WITH A MOUSE, because the game has to work in both cases.
    *
-   * No crosshair offset and nothing to spring back from. Accumulated here and
-   * consumed by the flight step, which is why it is added to rather than set:
-   * several pointer events can arrive between two frames and every one of them
-   * moved the mouse.
+   * With the pointer LOCKED the mouse cannot leave the window, so its movement
+   * is the turn directly and the reticle stays in the middle where the guns
+   * converge. That is the better feel and what the genre has settled on.
+   *
+   * Without the lock — and a webview may simply refuse it — a relative scheme
+   * has nothing to work with: the real cursor walks out of the window and no
+   * more movement arrives. Geoff: "the mouse just goes quickly outside of the
+   * window and then it doesn't turn." So in that case the cursor becomes a
+   * VISIBLE reticle and the ship turns toward it, which is how Freelancer flew
+   * and needs no lock at all. Leaving the canvas stops the turn rather than
+   * leaving the ship chasing a reticle nobody can see.
+   *
+   * The two write to different channels — `look` and `aim` — so they sum in the
+   * flight model instead of overwriting each other, which is the mistake the
+   * last two versions of this made.
    */
   const LOOK_PER_PIXEL = 0.0028;
+  /** Where the reticle stops meaning "straight ahead", and where it reaches
+   *  full deflection. Short of the frame edge on purpose: nobody should have to
+   *  put the cursor on the last pixel to turn hard. */
+  const AIM_DEAD = 0.06;
+  const AIM_FULL = 0.42;
+
+  function aimFromCursor() {
+    const shape = (v: number) => {
+      const a = Math.abs(v);
+      if (a <= AIM_DEAD) return 0;
+      return Math.sign(v) * Math.min(1, (a - AIM_DEAD) / (AIM_FULL - AIM_DEAD));
+    };
+    stick.aimX = shape(cursor.x * 2 - 1);
+    stick.aimY = -shape(cursor.y * 2 - 1);
+  }
+
   function onMove(e: PointerEvent) {
-    if (!dom) return;
-    if (flying) {
+    if (!dom || !flying) return;
+    if (locked) {
       stick.lookX += (e.movementX || 0) * LOOK_PER_PIXEL;
       stick.lookY += (e.movementY || 0) * LOOK_PER_PIXEL;
+      cursor.x = 0.5;
+      cursor.y = 0.5;
+      stick.aimX = 0;
+      stick.aimY = 0;
+      return;
     }
-    /* HOW FAR THE MOUSE MOVED, always. Never where it is.
-       There used to be two schemes here: relative accumulation under pointer
-       lock, and the crosshair snapping to the pointer's absolute position when
-       the lock was refused. The self-centring stick suits the first and is
-       flatly incompatible with the second — every mouse move snapped the
-       crosshair to the pointer and every frame dragged it back to the middle,
-       so the two fought each other. That is the shake. And if the mouse happened
-       to be resting above the middle of the canvas, which it is the moment you
-       reach up to the game, the crosshair was pinned high and the ship pitched
-       up until it looped. Geoff: "the controls are shaky, and when I try to go
-       forward, it just starts looping upwards."
-       movementX and movementY are on the event whether or not the lock took, so
-       one scheme serves both and there is nothing left to disagree. */
+    const r = dom.getBoundingClientRect();
+    /* GUARDED, because an event without coordinates would otherwise put NaN in
+       the cursor, NaN in the stick, NaN in the ship's heading, and the whole
+       flight would quietly stop being a number. Nothing recovers from that: it
+       propagates into the position and the ship is gone for the rest of the
+       run. A missing coordinate is a bad event, so it is ignored. */
+    if (!Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return;
+    cursor.x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    cursor.y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    aimFromCursor();
+  }
+
+  /** Pointer gone from the canvas: stop turning, and put the reticle back in
+   *  the middle so it does not reappear mid-turn where it was left. */
+  function onLeave() {
+    stick.aimX = 0;
+    stick.aimY = 0;
+    cursor.x = 0.5;
+    cursor.y = 0.5;
   }
 
   /* Escape releases the lock, which the browser does for us, and that is the
@@ -417,6 +460,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        keydown listener, which misses the first one after the window regains
        focus. Control-click no longer means anything: the secondary weapon is on
        the right button, where the genre puts it. */
+    /* LEFT ONLY. Any button used to fire, so a click of the wheel emptied the
+       guns — and the middle button is wanted for something of its own. */
+    if (e.button !== 0) return;
     stick.firing = true;
   }
   /* And no context menu in the middle of a dogfight. */
@@ -461,6 +507,45 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* Fitted BEFORE the model is scaled into the world, so the spheres are
            in the hull's own space and can be turned with it. */
         shipHull = fitCollider(model);
+
+        /* Forward is the direction of the narrow end of the hull, and up is
+           whatever is left of the model's own +Y once that is taken out. */
+        modelFwd.copy(noseOf(shipHull));
+        if (modelFwd.lengthSq() < 1e-9) modelFwd.set(0, 0, -1);
+        modelFwd.normalize();
+        modelUp.set(0, 1, 0).addScaledVector(modelFwd, -modelFwd.y);
+        if (modelUp.lengthSq() < 1e-9) modelUp.set(1, 0, 0).addScaledVector(modelFwd, -modelFwd.x);
+        modelUp.normalize();
+        modelRight.crossVectors(modelUp, modelFwd).normalize();
+
+        /* ---- LIGHT ----
+           The map's scene has one enormous ambient light and nothing else, so a
+           lit hull in it is a flat grey shape with no sense of being anywhere.
+           Geoff: "it doesn't capture any of the light or glow from planets or
+           anything happening in the scene."
+
+           The sky is already an equirectangular texture, so it can be the hull's
+           environment map: the ship then genuinely reflects the starfield and
+           the Milky Way, and picks up their colour along its edges. Given to
+           THIS model's materials rather than to scene.environment, which would
+           relight every tower on the map as well. */
+        const env = skyTexture();
+        model.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (!m.isMesh) return;
+          for (const mat of (Array.isArray(m.material) ? m.material : [m.material])) {
+            const std = mat as THREE.MeshStandardMaterial;
+            if (!std.isMeshStandardMaterial) continue;
+            if (env) { std.envMap = env; std.envMapIntensity = 1.15; }
+            /* Enough metal to catch a reflection, enough roughness that it is a
+               sheen rather than a mirror. Flat paint reflects nothing and was
+               most of why it looked pasted on. */
+            std.metalness = 0.35;
+            std.roughness = 0.55;
+            std.needsUpdate = true;
+          }
+        });
+
         shipModel = model;
         scene.add(model);
       })
@@ -469,6 +554,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
   function onUp(e: PointerEvent) {
     if (e.button === 2) { stick.secondary = false; return; }
+    if (e.button !== 0) return;
     stick.firing = false;
   }
 
@@ -614,6 +700,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         approach = 0;
 
         dom.addEventListener("wheel", onWheel, { passive: false });
+        dom.addEventListener("pointerleave", onLeave);
         dom.addEventListener("pointermove", onMove);
         dom.addEventListener("pointerdown", onDown);
         dom.addEventListener("contextmenu", onContextMenu);
@@ -746,9 +833,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         const live = !hud.dead;
         const blank: Stick = {
-          x: 0, y: 0, lookX: 0, lookY: 0, roll: 0, strafe: 0, throttle: 0,
-          fullStop: false, boosting: false, firing: false, secondary: false,
-          guard: false, mini: false,
+          x: 0, y: 0, lookX: 0, lookY: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
+          throttle: 0, fullStop: false, boosting: false, firing: false,
+          secondary: false, guard: false, mini: false,
         };
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
         /* CONSUMED. The mouse delta is an angle that has already happened, so
@@ -772,10 +859,24 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         if (shipModel && flight.view > 0.01) {
           shipModel.visible = true;
           shipModel.position.copy(flight.pos);
-          /* Synty hulls face -Z, which is also what lookAt points down, so the
-             model can be oriented straight from the flight frame. */
-          shipM4.lookAt(zero, flight.fwd, flight.up);
-          shipQuat.setFromRotationMatrix(shipM4);
+          /* ---- WHICH WAY IS FORWARD ----
+             Not assumed. The first version took Synty hulls to face -Z, which is
+             what three's lookAt points down, and the ship flew backwards:
+             "it's pointing right at me instead of in the direction we're going."
+             Worse, the guns went with it — the muzzles are placed at the nose,
+             so a nose at the back put the fire behind the camera, which is the
+             fire appearing at the bottom of the screen.
+
+             The model's own geometry knows the answer. The collider was fitted
+             along the hull and its narrow end is the nose, so the direction from
+             the centre to that end IS forward, whichever axis the exporter
+             happened to use. Two bases are built from it and one is rotated onto
+             the other. */
+          shipM4.makeBasis(modelRight, modelUp, modelFwd);
+          worldRight.crossVectors(flight.up, flight.fwd).normalize();
+          worldM4.makeBasis(worldRight, flight.up, flight.fwd);
+          shipM4.transpose();
+          shipQuat.setFromRotationMatrix(worldM4.multiply(shipM4));
           shipModel.quaternion.copy(shipQuat);
 
           /* And the hull becomes what bullets hit, instead of the ball around
@@ -1119,6 +1220,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       wasDocking = false;
       if (dom) {
         dom.removeEventListener("wheel", onWheel);
+        dom.removeEventListener("pointerleave", onLeave);
         dom.removeEventListener("pointermove", onMove);
         dom.removeEventListener("pointerdown", onDown);
         dom.removeEventListener("contextmenu", onContextMenu);

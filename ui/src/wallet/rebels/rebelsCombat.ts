@@ -3,7 +3,7 @@
 // same way the flight model is.
 
 import * as THREE from "three";
-import { R } from "./orbitWorld";
+import { R, cruiseScale } from "./orbitWorld";
 
 export const BULLET_SPEED = 120;      /* globe units per second */
 export const BULLET_LIFE = 2.2;
@@ -1037,8 +1037,18 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     e.roll += (e.weaveDir * 0.8 - e.roll) * Math.min(1, dt * 3);
 
     /* Break off rather than ram, then come round again. Rarer tiers fly
-       faster, which is most of what makes them dangerous. */
-    const speed = (range < 8 ? ENEMY_SPEED * 1.35 : ENEMY_SPEED) * e.cls.speed;
+       faster, which is most of what makes them dangerous.
+
+       AND THEY GET OPEN SPACE TOO. The player's cruise is multiplied out among
+       the planets so the sky is crossable; leaving the fighters on their old
+       nineteen units a second meant that above about two hundred units the
+       player simply outran every one of them, and ten seconds later they were
+       culled for being too far away. With free flight the ship climbs past that
+       height on its own within seconds, so the sky quietly emptied itself.
+       Geoff: "there also seem to be no enemies... they aren't chasing me."
+       Symmetry fixes it: whatever the player gets out there, so do they. */
+    const open = cruiseScale(e.pos.length() - R);
+    const speed = (range < 8 ? ENEMY_SPEED * 1.35 : ENEMY_SPEED) * e.cls.speed * open;
     e.pos.addScaledVector(e.fwd, speed * dt);
     /* Knockback rides on top and bleeds off, so a hit shoves them visibly
        without taking their flying away for long. */
@@ -1058,7 +1068,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       if (e.reload <= 0) e.ammo = ENEMY_AMMO;
     }
     e.fireAt -= dt;
-    if (e.fireAt <= 0 && e.ammo > 0 && range < ENEMY_FIRE_RANGE && dot > 0.9) {
+    if (e.fireAt <= 0 && e.ammo > 0 && range < ENEMY_FIRE_RANGE * open && dot > 0.9) {
       /* Slower than it was. Four of them at the old rate put up a wall of fire
          that could not be flown through, whatever the player's shield. */
       e.fireAt = 1.6 + Math.random() * 1.6;
@@ -1069,8 +1079,10 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       enemyFire(c, e, prey.pos);
     }
 
-    /* Wandered off. Let it go and let a fresh one spawn in front. */
-    if (range > 320) c.enemies.splice(i, 1);
+    /* Wandered off. Let it go and let a fresh one spawn in front. The range
+       scales with open space as well, or at deep-space speeds a fighter would
+       be out of the world within a few seconds of a turn. */
+    if (range > 320 * open) c.enemies.splice(i, 1);
   }
 }
 

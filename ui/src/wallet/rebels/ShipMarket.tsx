@@ -106,6 +106,42 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
             </div>
           </div>
 
+        </div>
+
+
+        {/* ---- the left column ----
+            The specs, and the paint shop under them. Wrapped together for the
+            same reason the ship and its name are: elements stacked in a flex
+            column cannot land on top of each other, and this panel has already
+            had two goes at proving that placement alone will not stop them. */}
+        <div className="ship-market-side">
+          <div className="ship-market-stats">
+            {STAT_ROWS.map((row) => {
+              const v = Number(ship.stats[row.key]) || 0;
+              const top = peak[row.key] || 1;
+              /* A square-root scale. Linear would make every fighter stat a
+                 sliver next to a station's, and the point of the bar is to
+                 compare hulls you might actually choose between. */
+              const fill = Math.max(0.02, Math.sqrt(v / top));
+              return (
+                <div className="ship-stat" key={row.key}>
+                  <span className="ship-stat-label">{row.label}</span>
+                  <span className="ship-stat-bar">
+                    <i style={{ width: `${fill * 100}%` }} />
+                  </span>
+                  <span className="ship-stat-value">
+                    {v.toLocaleString()}{row.unit && <em> {row.unit}</em>}
+                  </span>
+                </div>
+              );
+            })}
+            <p className="ship-market-note">
+              Signature is the one to read backwards: lower is harder to see.
+            </p>
+          </div>
+
+
+
           {/* ---- the paint shop ----
               Five buttons, three sliders each. Five because that is how many
               distinct swatches every ship in the pack actually samples: the blue
@@ -191,32 +227,6 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
           </div>
 
         </div>
-
-        <div className="ship-market-stats">
-          {STAT_ROWS.map((row) => {
-            const v = Number(ship.stats[row.key]) || 0;
-            const top = peak[row.key] || 1;
-            /* A square-root scale. Linear would make every fighter stat a
-               sliver next to a station's, and the point of the bar is to
-               compare hulls you might actually choose between. */
-            const fill = Math.max(0.02, Math.sqrt(v / top));
-            return (
-              <div className="ship-stat" key={row.key}>
-                <span className="ship-stat-label">{row.label}</span>
-                <span className="ship-stat-bar">
-                  <i style={{ width: `${fill * 100}%` }} />
-                </span>
-                <span className="ship-stat-value">
-                  {v.toLocaleString()}{row.unit && <em> {row.unit}</em>}
-                </span>
-              </div>
-            );
-          })}
-          <p className="ship-market-note">
-            Signature is the one to read backwards: lower is harder to see.
-          </p>
-        </div>
-
 
         <div className="ship-market-list">
           {grouped.map(([className, ships]) => (

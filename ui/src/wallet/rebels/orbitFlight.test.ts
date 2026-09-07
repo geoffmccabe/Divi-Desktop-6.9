@@ -8,9 +8,9 @@
 // Run: sh scripts/run-orbit-tests.sh
 
 import * as THREE from "three";
-import { R, MIN_ALT, MAX_ALT, planetDistance } from "./orbitWorld";
+import { R, MIN_ALT, MAX_ALT, planetDistance, cruiseScale } from "./orbitWorld";
 import {
-  createFlight, stepFlight, distanceToTower, cruiseScale, CRUISE, MAX_AMMO, MAX_SHIELD,
+  createFlight, stepFlight, distanceToTower, CRUISE, MAX_AMMO, MAX_SHIELD,
   CRASH_DAMAGE, MAX_GUARDS, MAX_TORPEDOES,
   DOCK_SECONDS, type Stick,
 } from "./orbitFlight";
@@ -22,9 +22,9 @@ function ok(name: string, cond: boolean, extra = "") {
   out.push(`${cond ? "PASS" : "FAIL"} ${name}${extra ? `  [${extra}]` : ""}`);
 }
 const stick = (o: Partial<Stick> = {}): Stick => ({
-  x: 0, y: 0, lookX: 0, lookY: 0, roll: 0, strafe: 0, throttle: 0,
-  fullStop: false, boosting: false, firing: false, secondary: false,
-  guard: false, mini: false, ...o,
+  x: 0, y: 0, lookX: 0, lookY: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
+  throttle: 0, fullStop: false, boosting: false, firing: false,
+  secondary: false, guard: false, mini: false, ...o,
 });
 
 const DT = 1 / 60;
@@ -146,12 +146,34 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   ok("going straight in at full boost costs most of the hull",
      h.shields < MAX_SHIELD * 0.5, `${h.shields.toFixed(0)} of ${MAX_SHIELD} left`);
 
+  /* A gentle landing is free: the throttle closed, the hull settles and sits
+     there. */
   const graze = createFlight(pad);
   graze.pos.normalize().multiplyScalar(R + MIN_ALT + 0.2);
   const beforeGraze = graze.shields;
-  run(graze, 60 * 8, stick({ fullStop: true }));  /* trundling along the surface */
-  ok("but sliding along it is not", graze.shields > beforeGraze - CRASH_DAMAGE,
+  run(graze, 60 * 8, stick({ fullStop: true }));
+  ok("but settling onto it gently is not", graze.shields > beforeGraze - CRASH_DAMAGE,
      `${beforeGraze} -> ${graze.shields.toFixed(0)}`);
+
+  /* DRAGGING along it at speed is not free, though, or a ship could plough
+     through a planet indefinitely while the repair healed the one hit it took
+     going in. */
+  /* Nose put down and then LEFT there. Holding the stick down does not keep a
+     ship on the ground, it loops it: pitch is a rate, so a second of it is a
+     hundred degrees and the nose comes back up the other side. Point it in,
+     then fly. */
+  const drag = createFlight(pad);
+  drag.pos.normalize().multiplyScalar(R + MIN_ALT + 0.1);
+  run(drag, 40, stick({ y: -1 }));
+  run(drag, 60 * 20, stick({ boosting: true }));
+  /* Costly rather than instantly fatal, and the difference is worth stating.
+     A ship cannot actually plough along a sphere for long without steering: the
+     surface curves away under a nose that is fixed in world space, so it
+     departs on its own. What the scrape removes is the free ride — twenty
+     seconds of it is half the hull, where before it was nothing at all. */
+  ok("and dragging along it costs half the hull",
+     drag.shields < MAX_SHIELD * 0.6 && drag.shields > 0,
+     `${drag.shields.toFixed(0)} of ${MAX_SHIELD} left after twenty seconds`);
 
   /* OPEN SPACE IS FAST, and the towers are not.
      The planets are 1,000 to 3,600 units out and cruise is 16 a second, so

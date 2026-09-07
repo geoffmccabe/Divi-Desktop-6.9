@@ -316,8 +316,14 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   }
   Math.random = realRandom;
 
-  ok("the ship can actually be lost", died);
-  ok("a death that scored files a row", rows.length > 0, `gave up after ${tries} fights`);
+  /* The run is filed whichever way it ended. It used to assert a DEATH, and
+     that stopped being reliable for a reason worth knowing rather than papering
+     over: the hull doubled to two thousand and gained a slow repair, so a
+     scripted pilot flying badly now survives the full five minutes and the run
+     is filed by leaving instead. Both paths file, and both are covered — the
+     one below drives a death deliberately rather than hoping for one. */
+  void died;
+  ok("a run that scored is filed", rows.length > 0, `gave up after ${tries} fights`);
   ok("filed under the node's name", rows.some((r) => r.name === "Test Node"),
      rows.map((r) => r.name).join(","));
   ok("counted as a game played", rows[0]?.games === 1, `${rows[0]?.games}`);
@@ -403,30 +409,31 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.launch();
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);   /* through the dive */
 
-  /* Push the mouse up, the way a player does when they mean "climb", then take
-     their hand off it. Up rather than down on purpose: a sustained dive from a
-     launch pad flies the ship into the planet and kills it, and a dead ship
-     cannot demonstrate anything about steering.
+  /* THE RETICLE STEERS, and putting it back in the middle stops the turn.
+     `document` is deliberately undefined in this harness, so there is never a
+     pointer lock here — which is the same state a webview that refuses the lock
+     leaves a player in, and the one that was completely broken. Driving the
+     locked path would need a stub of the lock itself; what is worth testing is
+     that the game flies in the state it actually finds itself in.
 
-     THE SHIP is what is measured, not a crosshair. There is no crosshair offset
-     any more: the mouse turns the ship directly, which is the whole change. */
+     Up rather than down on purpose: a sustained dive from a launch pad flies
+     the ship into the planet and kills it, and a dead ship cannot demonstrate
+     anything about steering. */
   const aim = () => g.camera.getWorldDirection(new THREE.Vector3());
   const aimBefore = aim();
-  for (let i = 0; i < 20; i++) {
-    g.fire("pointermove", { movementX: 0, movementY: -30 });
-    ctl.frame(1 / 60);
-  }
+  g.fire("pointermove", { clientX: 400, clientY: 60 });
+  for (let i = 0; i < 40; i++) ctl.frame(1 / 60);
   const swung = aimBefore.angleTo(aim());
-  ok("pushing the mouse turns the ship", swung > 0.5, `${swung.toFixed(2)} radians`);
+  ok("the reticle turns the ship", swung > 0.5, `${swung.toFixed(2)} radians`);
 
-  /* Hand off the mouse. The ship must stop turning AT ONCE — not ease to a
-     stop, not drift on for a second, stop. That is the whole reason for
-     relative look over a stick that springs back. */
+  /* Back to the middle. The ship must stop, not ease to a stop over a second:
+     the middle of the frame means straight ahead. */
+  g.fire("pointermove", { clientX: 400, clientY: 300 });
   const held = aim();
-  ctl.frame(1 / 60);
-  const oneFrame = held.angleTo(aim());
-  ok("and it stops the moment the mouse does", oneFrame < 1e-6,
-     `${oneFrame.toExponential(1)} radians on the next frame`);
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  const drift = held.angleTo(aim());
+  ok("and centring it stops the turn", drift < 1e-6,
+     `${drift.toExponential(1)} radians in the second after`);
 
   /* THE ONE THAT MATTERS: the SHIP has to stop turning, not just the
      crosshair. A ship that kept looping would swing its altitude up and down
@@ -450,6 +457,50 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("and the ship stops turning too", reversals === 0,
      `${reversals} reversals in ${alts.map((a) => a.toFixed(0)).join(", ")}`);
 
+  /* ---- FLYING WITH NO POINTER LOCK ----
+     The case that was completely broken, and the one the test harness happens
+     to be in: nothing here grants a pointer lock, so `locked` is false, which
+     is exactly the state a webview that refuses the lock leaves a player in.
+     Relative movement has nothing to work with there — the real cursor walks
+     out of the window and no more events arrive. Geoff: "the mouse just goes
+     quickly outside of the window and then it doesn't turn."
+
+     Unlocked, the cursor is a reticle and the ship turns toward it. */
+  const g2 = stubGlobe([["self-ip", home]]);
+  const ctl2 = createRebels(labelFor);
+  ctl2.attach({ ...g2, selfIp: "self-ip" });
+  ctl2.launch();
+  for (let i = 0; i < 60 * 6; i++) ctl2.frame(1 / 60);
+
+  const aim2 = () => g2.camera.getWorldDirection(new THREE.Vector3());
+  const flat = aim2();
+  /* The reticle put well left of centre. The canvas is 800 wide. */
+  g2.fire("pointermove", { clientX: 150, clientY: 300 });
+  for (let i = 0; i < 45; i++) ctl2.frame(1 / 60);
+  ok("with no pointer lock the reticle still steers", flat.angleTo(aim2()) > 0.3,
+     `${flat.angleTo(aim2()).toFixed(2)} radians`);
+  ok("and the reticle is where the mouse is", Math.abs(ctl2.cursor().x - 0.1875) < 0.01,
+     `${ctl2.cursor().x.toFixed(3)}`);
+
+  /* Middle of the canvas is straight ahead: a deadzone, so resting near the
+     centre does not creep. */
+  g2.fire("pointermove", { clientX: 402, clientY: 301 });
+  const straight = aim2();
+  for (let i = 0; i < 60; i++) ctl2.frame(1 / 60);
+  ok("and the middle means straight ahead", straight.angleTo(aim2()) < 1e-6,
+     `${straight.angleTo(aim2()).toExponential(1)} radians of creep`);
+
+  /* THE ONE THAT MATTERS: the pointer leaving the window stops the turn, rather
+     than leaving the ship circling toward a reticle nobody can see. */
+  g2.fire("pointermove", { clientX: 150, clientY: 300 });
+  for (let i = 0; i < 10; i++) ctl2.frame(1 / 60);
+  g2.fire("pointerleave", {});
+  const parked = aim2();
+  for (let i = 0; i < 120; i++) ctl2.frame(1 / 60);
+  ok("and leaving the window stops the turn", parked.angleTo(aim2()) < 1e-6,
+     `${parked.angleTo(aim2()).toExponential(1)} radians after two seconds`);
+  ctl2.detach();
+
   /* AND THE KEYBOARD STILL WORKS. Recentring has to reapply the cursor every
      frame, and the cursor and the keys write to the same stick, so getting the
      order wrong would silently kill arrow-key steering — a fix for one control
@@ -467,6 +518,115 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const after = shipAlt();
   ok("a held arrow key still steers", after < turned && turned > before,
      `${before.toFixed(0)} climbing to ${turned.toFixed(0)}, then falling to ${after.toFixed(0)}`);
+  ctl.detach();
+}
+
+// 10. THE WEAPON SLOTS, and the wheel that should not shoot.
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
+
+  /* The main guns cost a whole round; the mini gun costs a quarter and runs on
+     while held. So which weapon is selected is visible in the ammunition.
+
+     SETTLE FIRST. The gauges are pushed on a hundred-millisecond wall-clock
+     tick, and this loop runs seconds of game time in a fraction of one, so
+     reading the ammunition straight after firing reads the value from before.
+     That is not a wrinkle in the test, it is the reason an earlier version of
+     this reported that the guns did not fire at all when they were firing
+     perfectly well. */
+  const settle = () => {
+    const until = performance.now() + 130;
+    while (performance.now() < until) ctl.frame(1 / 60);
+  };
+  const spend = (hold: number) => {
+    settle();
+    const before = ctl.hud().ammo;
+    g.fire("pointerdown", { button: 0 });
+    for (let i = 0; i < hold; i++) ctl.frame(1 / 60);
+    press("pointerup", { button: 0 });
+    settle();
+    return before - ctl.hud().ammo;
+  };
+
+  const one = spend(6);
+  ok("slot 1 is the pulse laser and costs a whole round", Math.abs(one - 1) < 0.01,
+     `${one} spent`);
+
+  press("keydown", { key: "2" });
+  press("keyup", { key: "2" });
+  const mini = spend(30);
+  ok("2 selects the mini gun, which runs on while held", mini > 1.5,
+     `${mini.toFixed(2)} rounds in half a second`);
+  ok("and it costs quarters rather than whole rounds",
+     Math.abs(mini * 4 - Math.round(mini * 4)) < 0.01, `${mini}`);
+
+  press("keydown", { key: "1" });
+  press("keyup", { key: "1" });
+  ok("1 puts the pulse laser back", ctl.hud().primary === 0, `${ctl.hud().primary}`);
+
+  /* An empty slot says so rather than doing nothing, and leaves the weapon
+     alone. Checked against the SELECTION rather than by firing again: the
+     ammunition reading needs the gauges to settle, and stacking two settles and
+     two bursts on top of each other made this the one assertion in the suite
+     that came and went between runs. What is being asserted is that a refused
+     slot does not change the choice, and the choice is readable directly. */
+  const chosen = ctl.hud().primary;
+  press("keydown", { key: "3" });
+  press("keyup", { key: "3" });
+  ok("an unfitted slot says so", /not yet fitted/.test(ctl.hud().note), ctl.hud().note);
+  ok("and does not change the weapon", ctl.hud().primary === chosen,
+     `${chosen} -> ${ctl.hud().primary}`);
+
+  /* THE WHEEL MUST NOT SHOOT. Geoff: "clicking the mousewheel fires bullets and
+     I don't want it to do that, we should have that reserved for something
+     else." Any button used to fire; only the left one does now. */
+  settle();
+  const before = ctl.hud().ammo;
+  g.fire("pointerdown", { button: 1 });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  press("pointerup", { button: 1 });
+  settle();
+  ok("a click of the wheel fires nothing", ctl.hud().ammo === before,
+     `${before} -> ${ctl.hud().ammo}`);
+  ctl.detach();
+}
+
+// 11. A ship CAN be destroyed, driven rather than hoped for.
+//
+//     This used to be a by-product of the scoring test, which flew a scripted
+//     pilot around and waited for the fighters to get it. That stopped working
+//     when the hull doubled and gained a repair, and a test that depends on a
+//     bad pilot dying is not a test of anything. Flying into a planet at full
+//     boost is deterministic.
+{
+  store.clear();
+  store.set("dd69.nodeIdentity", JSON.stringify({ name: "Test Node" }));
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
+
+  /* Nose put down and LEFT there, then everything open. Holding the key does
+     not keep a ship pointed down — pitch is a rate, so a second of it is a
+     hundred degrees and the nose comes back up the other side. */
+  /* Dived at repeatedly rather than held down. Pitch is a RATE, so holding the
+     key loops the ship; and a sphere curves away under a nose fixed in world
+     space, so even a good dive departs on its own. A pilot determined to fly
+     into a planet keeps pointing at it, which is what this does. */
+  press("keydown", { key: "shift" });
+  for (let i = 0; i < 60 * 60 && !ctl.hud().dead; i++) {
+    press(i % 120 < 25 ? "keydown" : "keyup", { key: "arrowdown" });
+    ctl.frame(1 / 60);
+  }
+  press("keyup", { key: "arrowdown" });
+  press("keyup", { key: "shift" });
+
+  ok("flying into the planet destroys the ship", ctl.hud().dead, "still alive");
   ctl.detach();
 }
 

@@ -21,7 +21,7 @@
 // which keeps the free model from becoming the disorienting one.
 
 import * as THREE from "three";
-import { R, MIN_ALT, MAX_ALT } from "./orbitWorld";
+import { R, MIN_ALT, MAX_ALT, cruiseScale } from "./orbitWorld";
 
 export const CRUISE = 16;      /* globe units per second, about 1024 km/s of Earth */
 export const BOOST = 38;
@@ -119,6 +119,10 @@ export const REPAIR_DELAY = 6;
 /** Fraction of a full hull returned per second, once the delay has passed. */
 export const REPAIR_RATE = 0.012;
 
+/** Hull lost per second while dragging along the ground at cruise, scaled by
+ *  how fast. At full boost that is fatal in about seven seconds. */
+export const SCRAPE_RATE = 120;
+
 export interface Flight {
   pos: THREE.Vector3;
   fwd: THREE.Vector3;
@@ -205,6 +209,23 @@ export interface Stick {
    */
   lookX: number;
   lookY: number;
+  /**
+   * The visible reticle, when the pointer is NOT locked, as a rate from -1 to 1.
+   *
+   * Two ways to fly with a mouse, because the game has to work in both cases.
+   * With the pointer locked the mouse is a direct turn and `look` carries it.
+   * Without the lock the pointer is a real cursor that can leave the window
+   * entirely, and a relative scheme simply stops receiving movement — which is
+   * exactly what Geoff hit: "the mouse just goes quickly outside of the window
+   * and then it doesn't turn."
+   *
+   * So when there is no lock the cursor becomes a visible reticle and the ship
+   * turns toward it, which is how Freelancer flew and needs no lock at all. It
+   * is a separate channel from the keyboard so the two sum rather than
+   * overwrite each other.
+   */
+  aimX: number;
+  aimY: number;
   /** -1 left to +1 right. Q and E. */
   roll: number;
   /** -1 left to +1 right. A and D. Sideways, without turning. */
@@ -270,30 +291,6 @@ export function createFlight(at: THREE.Vector3): Flight {
   };
 }
 
-/* ---- getting anywhere ----
-   Geoff: "I don't seem to be able to get any closer to the planets. They just
-   never get closer even though the Earth gets farther away."
-
-   He was right, and the arithmetic says so. The nearest planet is 1,000 units
-   out. Cruise is 16 a second and the boost cells last six seconds, so reaching
-   it meant a minute of holding a stick at a dot that barely grew; the furthest
-   would have taken nearly four minutes.
-
-   Shrinking the sky was not an option, because the spacing is what was asked
-   for. So the ship goes faster the further it is from Earth instead. Nothing
-   worth dogfighting is out there, so nothing is lost by it, and close-quarters
-   fighting is completely untouched because the multiplier is exactly 1 out to
-   sixty units, which is well above the towers.
-
-   Five times at full stretch, which puts the nearest planet about sixteen
-   seconds away and the furthest just under a minute. Squared rather than
-   linear, so it stays slow around the towers and only really opens up once
-   Earth is behind you. */
-const OPEN_SPACE = 5;
-export function cruiseScale(alt: number): number {
-  const t = Math.min(1, Math.max(0, (alt - 60) / 700));
-  return 1 + (OPEN_SPACE - 1) * t * t;
-}
 
 /**
  * How far a point is from a tower, treating the tower as the mast it is rather
@@ -432,13 +429,13 @@ export function stepFlight(
      happened. Adding them means a player can use either or both without one
      overriding the other, which is what the old "keys win while held" rule did
      and why reaching for an arrow key used to kill the mouse. */
-  const pitch = stick.y * PITCH_RATE * dt - stick.lookY;
+  const pitch = (stick.y + stick.aimY) * PITCH_RATE * dt - stick.lookY;
   if (pitch !== 0) {
     _q.setFromAxisAngle(_right, pitch);
     f.fwd.applyQuaternion(_q);
     f.up.applyQuaternion(_q);
   }
-  const yaw = -stick.x * YAW_RATE * dt - stick.lookX;
+  const yaw = -(stick.x + stick.aimX) * YAW_RATE * dt - stick.lookX;
   if (yaw !== 0) {
     _q.setFromAxisAngle(f.up, yaw);
     f.fwd.applyQuaternion(_q);
@@ -508,6 +505,21 @@ export function stepFlight(
     }
     f.alt = MIN_ALT;
     f.pos.copy(_up).multiplyScalar(R + MIN_ALT);
+
+    /* ---- and STAYING there costs something ----
+       One impact per touchdown is right for arriving, and wrong for what comes
+       after: a ship could plough along the surface at full boost indefinitely,
+       taking nothing, while the slow repair healed the one hit it took going
+       in. Flying into a planet was survivable as long as you kept doing it,
+       which is not what "smash into the earth" should mean.
+
+       So dragging the hull along the ground costs while it is fast. Scaled by
+       speed, so a gentle landing is free and a boosted scrape is fatal in a few
+       seconds, and it holds the repair off for as long as it lasts. */
+    if (Math.abs(f.speed) > CRUISE * 0.4) {
+      f.shields -= SCRAPE_RATE * (Math.abs(f.speed) / CRUISE) * dt;
+      f.sinceHit = 0;
+    }
   } else {
     f.grounded = false;
   }

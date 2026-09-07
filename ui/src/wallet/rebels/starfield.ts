@@ -147,6 +147,15 @@ export function paintSky(
   }
 }
 
+/** The sky as a texture, once it has been painted.
+ *
+ *  Handed out so the player's own hull can use it as an environment map and
+ *  actually reflect the starfield it is flying through, rather than sitting in
+ *  front of it looking pasted on. Null until the paint finishes, which is a
+ *  tick after the game opens. */
+let painted: THREE.CanvasTexture | null = null;
+export function skyTexture(): THREE.CanvasTexture | null { return painted; }
+
 /** What was on the scene before, so leaving the game puts the map back. */
 export interface SkyHandle {
   restore(): void;
@@ -198,6 +207,7 @@ export function installSky(scene: THREE.Scene): SkyHandle {
     scene.background = texture;
     scene.backgroundBlurriness = 0;
     scene.backgroundIntensity = 1;
+    painted = texture;
   };
   setTimeout(build, 0);
 
@@ -205,6 +215,7 @@ export function installSky(scene: THREE.Scene): SkyHandle {
     restore() {
       gone = true;
       scene.background = had;
+      if (painted === texture) painted = null;
       texture?.dispose();
       texture = null;
     },

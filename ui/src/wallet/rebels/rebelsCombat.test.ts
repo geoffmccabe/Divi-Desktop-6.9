@@ -3,8 +3,8 @@
 // Run: sh scripts/run-rebels-combat-tests.sh
 
 import * as THREE from "three";
-import { R } from "./orbitWorld";
-import { MAX_SHIELD } from "./orbitFlight";
+import { R, cruiseScale } from "./orbitWorld";
+import { MAX_SHIELD, CRUISE } from "./orbitFlight";
 import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
   fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
@@ -846,6 +846,62 @@ function run(c: CombatState, frames: number, w = world()) {
      `warned at ${warnedAt.toFixed(2)}s, hit at ${hitAt.toFixed(2)}s`);
   ok("with about half a second in hand", hitAt - warnedAt > 0.3 && hitAt - warnedAt <= 0.6,
      `${(hitAt - warnedAt).toFixed(2)}s of warning`);
+}
+
+// THE FIGHTERS MUST BE ABLE TO CATCH YOU.
+//
+// The player's cruise is multiplied out among the planets so the sky can be
+// crossed at all. Leaving the fighters on their old flat speed meant that above
+// about two hundred units the player outran every one of them and they were
+// culled ten seconds later for being too far away — and with free flight the
+// ship climbs past that height on its own within seconds, so the sky emptied
+// itself. Geoff: "there also seem to be no enemies... they aren't chasing me."
+{
+  const at = (alt: number) => {
+    const c = createCombat();
+    const pos = new THREE.Vector3(0, 0, R + alt);
+    const fwd = new THREE.Vector3(0, 1, 0);
+    startWave(c, 1);
+    const w = { tips: [], playerPos: pos, playerFwd: fwd, damageScale: 1 };
+    /* Long enough for the wave to send something. */
+    for (let i = 0; i < 60 * 4; i++) { stepCombat(c, 1 / 60, w); clearEvents(c); }
+    return c;
+  };
+
+  /* How fast a fighter actually moves, measured rather than read off a
+     constant: what matters is whether it gains on a ship at the same height. */
+  const chaseSpeed = (alt: number) => {
+    const c = at(alt);
+    if (c.enemies.length === 0) return 0;
+    const e = c.enemies[0];
+    const was = e.pos.clone();
+    const w = {
+      tips: [], playerPos: new THREE.Vector3(0, 0, R + alt),
+      playerFwd: new THREE.Vector3(0, 1, 0), damageScale: 1,
+    };
+    stepCombat(c, 1 / 60, w);
+    clearEvents(c);
+    return c.enemies[0] ? was.distanceTo(c.enemies[0].pos) * 60 : 0;
+  };
+
+  const low = chaseSpeed(8);
+  const high = chaseSpeed(500);
+  ok("fighters fly at their own pace near the towers", low > 10 && low < 40,
+     `${low.toFixed(0)} units a second`);
+  /* Twice, not the full multiplier: a fighter's own height varies as it weaves
+     around the player, so the measured figure sits under the ceiling. What is
+     asserted below is the property that matters. */
+  ok("and much faster out among the planets", high > low * 1.8,
+     `${low.toFixed(0)} near home, ${high.toFixed(0)} out there`);
+
+  /* THE ONE THAT MATTERS: at any height a fighter has to be quicker than a
+     cruising ship, or it can never close. */
+  for (const alt of [8, 200, 500, 1000]) {
+    const player = CRUISE * cruiseScale(alt);
+    const enemy = chaseSpeed(alt);
+    ok(`a fighter can still catch a cruising ship at ${alt} units`, enemy > player,
+       `fighter ${enemy.toFixed(0)} vs ship ${player.toFixed(0)}`);
+  }
 }
 
 console.log(out.join("\n"));

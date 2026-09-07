@@ -183,7 +183,7 @@ const all = shipCatalog();
   let depth = 0;
   let balanced = true;
   for (const line of srcLines.slice(from)) {
-    const tag = /className="(ship-market|ship-market-ship|ship-market-head|ship-market-stage|ship-market-ring|ship-paint|ship-market-stats|ship-market-list)"/.exec(line);
+    const tag = /className="(ship-market|ship-market-ship|ship-market-head|ship-market-stage|ship-market-ring|ship-market-side|ship-paint|ship-market-stats|ship-market-list)"/.exec(line);
     if (tag && !depths.has(tag[1])) depths.set(tag[1], depth);
     depth += (line.match(/<div\b/g) ?? []).length - (line.match(/<\/div>/g) ?? []).length;
     if (depth < 0) balanced = false;
@@ -193,18 +193,21 @@ const all = shipCatalog();
   const at = (k: string) => depths.get(k) ?? -1;
   ok("the ship's column is a child of the panel", at("ship-market-ship") === at("ship-market") + 1,
      `${at("ship-market")} -> ${at("ship-market-ship")}`);
-  ok("the name, the ring and the paint shop are inside it",
+  ok("the name and the ring are inside it",
      at("ship-market-head") === at("ship-market-ship") + 1
-     && at("ship-market-stage") === at("ship-market-ship") + 1
-     && at("ship-paint") === at("ship-market-ship") + 1,
-     `head ${at("ship-market-head")}, stage ${at("ship-market-stage")}, paint ${at("ship-paint")}`);
+     && at("ship-market-stage") === at("ship-market-ship") + 1,
+     `head ${at("ship-market-head")}, stage ${at("ship-market-stage")}`);
 
-  /* THE ONE THAT BROKE: the specs must be a sibling of the ship's column, not
-     a child of it. One level too deep and they render in the wrong half of the
-     screen and sit on the ship. */
-  ok("the specs are a SIBLING of it, not inside it",
-     at("ship-market-stats") === at("ship-market-ship"),
-     `specs at ${at("ship-market-stats")}, ship column at ${at("ship-market-ship")}`);
+  /* THE ONE THAT BROKE: the left column must be a sibling of the ship's, not a
+     child of it. One level too deep and it renders in the wrong half of the
+     screen and sits on the ship. */
+  ok("the left column is a SIBLING of it, not inside it",
+     at("ship-market-side") === at("ship-market-ship"),
+     `side at ${at("ship-market-side")}, ship column at ${at("ship-market-ship")}`);
+  ok("and the specs and the paint shop are both inside THAT",
+     at("ship-market-stats") === at("ship-market-side") + 1
+     && at("ship-paint") === at("ship-market-side") + 1,
+     `specs ${at("ship-market-stats")}, paint ${at("ship-paint")}`);
 
   /* AND THEY ARE ON THE RIGHT SIDES OF THE PANEL. Being siblings is only half
      of it: the grid decides which half each one lands in, and getting that
@@ -218,7 +221,14 @@ const all = shipCatalog();
   const cols = /grid-template-columns:\s*([^;]+);/.exec(rule("ship-market"))?.[1].trim();
   ok("the panel is split 35 then 65", cols === "35% 65%", String(cols));
   ok("the specs take the first column",
-     /grid-column:\s*1\b/.test(rule("ship-market-stats")), rule("ship-market-stats").split("\n")[1]?.trim());
+     /grid-column:\s*1\b/.test(rule("ship-market-side")), rule("ship-market-side").split("\n")[1]?.trim());
+
+  /* The tier squares are smaller than the digit needs, on purpose: the number
+     is what you read and the square is only what you hit. */
+  const sq = /width:\s*(\d+)px/.exec(rule("ship-market-tiers button"))?.[1];
+  const font = /font-size:\s*(\d+)px/.exec(rule("ship-market-tiers button"))?.[1];
+  ok("the tier squares are 22px", sq === "22", String(sq));
+  ok("and the number inside them is still 11px", font === "11", String(font));
   ok("and the ship takes the second",
      /grid-column:\s*2\b/.test(rule("ship-market-ship")), rule("ship-market-ship").split("\n")[1]?.trim());
   ok("and so is the class chooser",

@@ -235,12 +235,20 @@
   margin: 12px 0 0; font-size: 12px; line-height: 1.5; opacity: 0.8;
 }
 
-.ship-market-stats {
+/* The left column: the specs, and the paint shop under them. Stacked, so the
+   two cannot reach for the same pixels whatever the window does. */
+.ship-market-side {
   grid-column: 1; grid-row: 1;
-  align-self: center;
+  display: flex; flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+.ship-market-stats {
   /* Scrollable, because ten stats plus a note do not fit a short window and a
-     list you cannot reach the bottom of is worse than no list. */
-  max-height: 100%;
+     list you cannot reach the bottom of is worse than no list. The paint shop
+     below it keeps its own height; only the specs give way. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding-right: 6px;
 }
@@ -274,9 +282,14 @@
    Under the ship's name, in the same column, because the name and the colours
    are both "what this thing is" where the stats on the right are "what it
    does". */
-.ship-paint { text-align: center; max-width: 460px; }
+.ship-paint {
+  flex: 0 0 auto;
+  text-align: left;
+  padding-top: 12px;
+  border-top: 1px solid hsl(var(--rebels-hud) / 0.2);
+}
 .ship-paint-parts {
-  display: flex; flex-wrap: wrap; gap: 5px; justify-content: center;
+  display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-start;
 }
 .ship-paint-parts button {
   display: inline-flex; align-items: center; gap: 6px;
@@ -339,7 +352,9 @@
 }
 .ship-market-tiers { display: flex; gap: 4px; justify-content: center; }
 .ship-market-tiers button {
-  width: 26px; height: 26px; cursor: pointer;
+  /* 15% smaller than they were, and the number inside them deliberately is
+     not: the digit is what you read, the square is only what you hit. */
+  width: 22px; height: 22px; cursor: pointer;
   font-family: var(--font-mono); font-size: 11px;
   color: hsl(var(--rebels-hud));
   background: hsl(var(--rebels-hud) / 0.1);
@@ -378,7 +393,10 @@
   .ship-market-head { text-align: center; }
   .ship-paint { text-align: center; }
   .ship-paint-parts { justify-content: center; }
-  .ship-market-stats { grid-column: 1; grid-row: 2; max-height: none; }
+  .ship-market-side { grid-column: 1; grid-row: 2; min-height: 0; }
+  .ship-market-stats { max-height: none; overflow: visible; }
+  .ship-paint { text-align: center; }
+  .ship-paint-parts { justify-content: center; }
   .ship-market-list { grid-column: 1; grid-row: 3; }
 }
 
