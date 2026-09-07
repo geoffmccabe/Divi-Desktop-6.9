@@ -597,7 +597,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
           rig.group.position.copy(e.pos);
           rig.setColour(e.cls.colour);
-          rig.setLevel(e.shield / e.cls.shieldMax);
+          rig.setLevel(e.shield, e.cls.shieldMax);
           /* Shown for a couple of seconds after a hit, fading out. */
           rig.step(nowS, Math.min(1, e.flash / 0.6));
         }

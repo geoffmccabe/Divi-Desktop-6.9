@@ -440,9 +440,9 @@ export interface ShieldRig {
   group: THREE.Group;
   /** Recoloured when the model is reused for a different tier. */
   setColour(colour: number): void;
-  /** 0..1 of this ship class's maximum. Values above 1 are allowed, for a
-   *  future ship with a bigger shield than today's. */
-  setLevel(level: number): void;
+  /** The shield the ship has left, and what it started with. The number shown
+   *  is the points remaining; the fraction drives the brightness. */
+  setLevel(current: number, max: number): void;
   /** `seconds` drives the pulse; `strength` fades the whole thing out. */
   step(seconds: number, strength: number): void;
   dispose(): void;
@@ -488,6 +488,7 @@ export function makeShieldRig(colour = 0x66ccff): ShieldRig {
   }
 
   let level = 1;
+  let points = 0;
   let shown = -1;
 
   function redraw() {
@@ -498,12 +499,14 @@ export function makeShieldRig(colour = 0x66ccff): ShieldRig {
     x.font = "bold 62px ui-monospace, Menlo, monospace";
     x.textAlign = "center";
     x.textBaseline = "middle";
-    const pct = Math.max(0, Math.round(level * 100));
-    /* Blue while it is holding, red once it is nearly gone. */
-    x.fillStyle = pct > 33 ? "#9fe4ff" : "#ff8a8a";
+    /* The points left before it comes apart, not a percentage: a rare ship
+       carrying two hundred and eighty and a common one carrying a hundred both
+       read "50%" at the same moment, which tells the player nothing about how
+       many more shots it will take. */
+    x.fillStyle = level > 0.33 ? "#9fe4ff" : "#ff8a8a";
     x.shadowColor = "#000";
     x.shadowBlur = 12;
-    x.fillText(`${pct}%`, 128, 50);
+    x.fillText(String(Math.max(0, Math.round(points))), 128, 50);
     tex.needsUpdate = true;
   }
 
@@ -513,10 +516,11 @@ export function makeShieldRig(colour = 0x66ccff): ShieldRig {
       mat.color.set(c);
       skinMat.color.set(c);
     },
-    setLevel(v) {
-      level = v;
-      const pct = Math.max(0, Math.round(v * 100));
-      if (pct !== shown) { shown = pct; redraw(); }
+    setLevel(current, max) {
+      points = current;
+      level = max > 0 ? current / max : 0;
+      const n = Math.max(0, Math.round(current));
+      if (n !== shown) { shown = n; redraw(); }
     },
     step(seconds, strength) {
       const on = strength > 0.001;
