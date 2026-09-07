@@ -24,6 +24,7 @@ import { userWonRecently } from "../stakeWin";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
+import { installSky, type SkyHandle } from "./starfield";
 import { pulseHealth } from "./healthPulse";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
@@ -131,6 +132,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const enemyShields: ShieldRig[] = [];
   let guardShell: ReturnType<typeof makeGuardShell> | null = null;
   let space: ReturnType<typeof createSpace> | null = null;
+  let sky: SkyHandle | null = null;
   /** What the ship is currently close enough to, so the readout only changes
    *  when it actually changes. */
   let nearBody: string = "";
@@ -454,6 +456,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            finished reading the launch card. */
         space = createSpace();
         scene.add(space.group);
+
+        /* And the stars behind all of it. The scene belongs to the Node Map,
+           which is used outside the game, so whatever background it had is
+           handed back on the way out — the same courtesy the camera's near and
+           far planes get. */
+        sky = installSky(scene);
         guardShell = makeGuardShell();
         scene.add(guardShell.mesh);
         /* One prototype per tier, cloned per fighter. Seven models built once
@@ -931,6 +939,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (scene) {
         for (const m of enemyMeshes) scene.remove(m);
         for (const r of enemyShields) scene.remove(r.group);
+        sky?.restore();
+        sky = null;
         if (space) { scene.remove(space.group); space.dispose(); space = null; }
         if (fx) scene.remove(fx.group);
       }
