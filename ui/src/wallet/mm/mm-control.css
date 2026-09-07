@@ -44,3 +44,8 @@
 }
 .mmc select.wl-input option { background: hsl(var(--subpanel-bg)); color: hsl(var(--foreground)); }
 .mmc select.wl-input option:disabled { color: hsl(var(--muted-foreground)); font-style: italic; }
+
+/* Capacity guidance under the commit / levels fields. Muted info by default,
+   red + bold when it's a blocking warning (the mmc-err modifier). */
+.mmc-cap { display: block; margin-top: 5px; font-size: 0.76rem; line-height: 1.35; color: hsl(var(--muted-foreground)); }
+.mmc-cap.mmc-err { color: hsl(12 80% 62%); font-weight: 600; }
