@@ -308,7 +308,9 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      second at ten a second is five or six rounds depending on where the frames
      land. */
   const a = hold(0.55, { mini: true });
-  ok("the mini gun keeps firing while E and the trigger are held",
+  /* Ten a second, as asked. Half a second gets five or six depending on where
+     the frames fall; nine would mean it was running at twenty. */
+  ok("the mini gun keeps firing while E and the trigger are held, ten a second",
      a.mini >= 5 && a.mini <= 7, `${a.mini} rounds in 0.55s`);
   ok("and the main guns stay silent", a.main === 0);
   ok("each round costs a quarter",
