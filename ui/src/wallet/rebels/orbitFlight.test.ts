@@ -10,7 +10,8 @@
 import * as THREE from "three";
 import { R, MIN_ALT, MAX_ALT } from "./orbitWorld";
 import {
-  createFlight, stepFlight, CRUISE, MAX_AMMO, MAX_SHIELD, CRASH_DAMAGE, MAX_GUARDS,
+  createFlight, stepFlight, distanceToTower, CRUISE, MAX_AMMO, MAX_SHIELD,
+  CRASH_DAMAGE, MAX_GUARDS,
   DOCK_SECONDS, type Stick,
 } from "./orbitFlight";
 
@@ -234,6 +235,28 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   }
   ok("flying to a tower and parking gets you docked", best >= 1,
      `best dock progress ${best.toFixed(2)}, shields ${f.shields}`);
+}
+
+// 8b1. The tower is a mast, not a dot on top of one.
+//
+//      Geoff, four times: "Running into my tower still doesn't happen."
+//      The target used to be the point at the tip, so a player flying at the
+//      tower they can SEE passed the only spot that counted.
+{
+  const tipDir = pad.clone().normalize();
+  const tip = tipDir.clone().multiplyScalar(R + 6);
+  /* Level with the middle of the mast, an arm's length to the side: that is
+     flying into the tower by any reasonable reading. */
+  const side = new THREE.Vector3(1, 0, 0).cross(tipDir).normalize();
+  const beside = tipDir.clone().multiplyScalar(R + 3).addScaledVector(side, 2);
+  ok("beside the middle of a tower counts as being at it",
+     distanceToTower(beside, tip) < 3, `${distanceToTower(beside, tip).toFixed(1)} away`);
+  ok("and the old measure to the tip alone did not",
+     beside.distanceTo(tip) > 3, `tip was ${beside.distanceTo(tip).toFixed(1)} away`);
+  ok("at the foot counts too",
+     distanceToTower(tipDir.clone().multiplyScalar(R).addScaledVector(side, 1), tip) < 2);
+  ok("and something genuinely far away still does not",
+     distanceToTower(tipDir.clone().multiplyScalar(R + 3).addScaledVector(side, 40), tip) > 30);
 }
 
 // 8b2. Docking has to STOP the ship.

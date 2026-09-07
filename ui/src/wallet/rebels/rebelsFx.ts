@@ -16,6 +16,7 @@ const RING_CAP = 10;
 const JUNK_CAP = 64;
 const TRACER_CAP = 220;
 const COIN_CAP = 400;
+const DOCK_RUNGS = 14;
 /** A tenth of the fighter's hull ball across, as asked. */
 const COIN_RADIUS = 0.031;
 /* Warm gold going out, green coming back, pale for the mini gun: the same
@@ -130,6 +131,8 @@ export interface Fx {
   drawTorpedoes(torpedoes: { pos: THREE.Vector3; vel: THREE.Vector3 }[]): void;
   /** Wreckage in orbit. Instanced, because a long fight makes a lot of it. */
   drawJunk(junk: { pos: THREE.Vector3; rot: THREE.Vector3; kind: string }[]): void;
+  /** The line between ship and tower while a resupply runs. */
+  drawDockLink(from: THREE.Vector3 | null, to: THREE.Vector3 | null, seconds: number): void;
   /** DIVI in orbit, waiting to be flown into. */
   drawCoins(coins: { pos: THREE.Vector3; spin: number }[]): void;
   /** The lines rounds leave behind them. */
@@ -232,6 +235,19 @@ export function createFx(): Fx {
     torpedoMeshes.push(holder);
   }
   bin.push(torpedoGeo, torpedoCoreMat, torpedoGlowMat);
+
+  /* The docking tether. */
+  const dockGeo = new THREE.BufferGeometry();
+  dockGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(DOCK_RUNGS * 6), 3));
+  const dockMat = new THREE.LineBasicMaterial({
+    color: 0x8fffd0, transparent: true, opacity: 0.85,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const dockLink = new THREE.LineSegments(dockGeo, dockMat);
+  dockLink.frustumCulled = false;
+  dockLink.visible = false;
+  group.add(dockLink);
+  bin.push(dockGeo, dockMat);
 
   /* DIVI coins. The logo is tiled three across and two around, which wraps it
      onto the sphere six times, one to a face. */
@@ -369,6 +385,29 @@ export function createFx(): Fx {
       junkWings.count = nWing;
       junkBodies.instanceMatrix.needsUpdate = true;
       junkWings.instanceMatrix.needsUpdate = true;
+    },
+
+    drawDockLink(from, to, seconds) {
+      if (!from || !to) { dockLink.visible = false; return; }
+      dockLink.visible = true;
+      const a = dockGeo.getAttribute("position") as THREE.BufferAttribute;
+      const arr = a.array as Float32Array;
+      /* A ladder of rungs running up the tether, sliding toward the tower, so
+         the resupply reads as something flowing rather than a static line. */
+      const dir = to.clone().sub(from);
+      const len = dir.length() || 1;
+      dir.normalize();
+      const rungs = DOCK_RUNGS;
+      for (let i = 0; i < rungs; i++) {
+        const t = ((i / rungs) + (seconds * 0.6) % 1) % 1;
+        const at = from.clone().addScaledVector(dir, t * len);
+        const o = i * 6;
+        arr[o] = at.x; arr[o + 1] = at.y; arr[o + 2] = at.z;
+        arr[o + 3] = at.x + dir.x * 0.35;
+        arr[o + 4] = at.y + dir.y * 0.35;
+        arr[o + 5] = at.z + dir.z * 0.35;
+      }
+      a.needsUpdate = true;
     },
 
     drawCoins(coins) {

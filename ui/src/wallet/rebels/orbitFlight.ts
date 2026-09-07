@@ -20,14 +20,20 @@ export const YAW_RATE = 1.5;   /* radians per second at full stick */
    turn radius down to about 3, which fits inside the zone. That is why the
    brake is not a luxury control. */
 export const CLIMB_RATE = 11;
-/* Docking has been reported not working twice, and both times the logic was
-   right and the WINDOW was too small: a six-unit sphere around a mast, entered
-   at cruising speed, needs the ship to be slowed to under nine before it gets
-   there. Widened a long way. The hard brake below stops the ship the moment it
-   catches, so arriving fast is no longer a reason to be refused. */
+/* Docking, fourth attempt, and the model was wrong rather than the numbers.
+   The target was the POINT at the top of the mast. A tower is a spire three or
+   six units tall standing on a planet, and a player aiming at the tower they
+   can see flies at the WHOLE THING, so passing its middle missed the only spot
+   that counted. What is measured now is the distance to the tower's AXIS, the
+   line from its foot to its tip, so any part of it is the target.
+
+   The window around that line is generous on purpose, and the hard brake stops
+   the ship the moment it catches, so arriving fast is not a reason to be
+   refused either. */
 export const DOCK_RANGE = 12;
 export const DOCK_SPEED = 14;
-export const DOCK_SECONDS = 2.2;
+/** A full resupply: about two passes of the station sample. */
+export const DOCK_SECONDS = 4;
 /* What the brake slows you to. Nearly a hover, on purpose: at this speed the
    turn radius is about one unit, so the ship can be parked against a tower
    rather than flown in circles around it. Braking to a quarter of cruise was
@@ -138,6 +144,27 @@ export function createFlight(at: THREE.Vector3): Flight {
   };
 }
 
+/**
+ * How far a point is from a tower, treating the tower as the mast it is rather
+ * than as the dot on top of it.
+ *
+ * Towers stand radially, so the foot is the tip's direction times the planet
+ * radius and the whole tower is the segment between them. Both ends are derived
+ * from the tip alone, which is all the map hands over.
+ */
+const _foot = new THREE.Vector3();
+const _axis = new THREE.Vector3();
+const _rel = new THREE.Vector3();
+export function distanceToTower(p: THREE.Vector3, tip: THREE.Vector3): number {
+  _foot.copy(tip).normalize().multiplyScalar(R);
+  _axis.copy(tip).sub(_foot);
+  const len2 = _axis.lengthSq();
+  if (len2 < 1e-9) return p.distanceTo(tip);
+  _rel.copy(p).sub(_foot);
+  const t = Math.max(0, Math.min(1, _rel.dot(_axis) / len2));
+  return _rel.sub(_axis.multiplyScalar(t)).length();
+}
+
 const _up = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 
@@ -181,7 +208,7 @@ export function stepFlight(
   let near = -1;
   let nearDist = Infinity;
   for (let i = 0; i < towerTips.length; i++) {
-    const d = f.pos.distanceTo(towerTips[i]);
+    const d = distanceToTower(f.pos, towerTips[i]);
     if (d < nearDist) { nearDist = d; near = i; }
   }
 
@@ -254,7 +281,7 @@ export function stepFlight(
      ended up rather than where it set off from. */
   nearDist = Infinity;
   for (let i = 0; i < towerTips.length; i++) {
-    const d = f.pos.distanceTo(towerTips[i]);
+    const d = distanceToTower(f.pos, towerTips[i]);
     if (d < nearDist) { nearDist = d; near = i; }
   }
   if (near >= 0 && nearDist < 1.6 && f.grace <= 0) {
@@ -278,7 +305,9 @@ export function stepFlight(
   if (canDock) {
     /* Your own tower serves you twice as fast. Any tower will do, which is what
        keeps a fight far from home survivable. */
-    const rate = near === homeIndex ? 2 : 1;
+    /* Four seconds at your own tower, which is about two passes of the station
+       sample; slower anywhere else. */
+    const rate = near === homeIndex ? 1 : 0.6;
     if (f.dock === 0) {
       f.dockFrom = { shields: Math.max(0, f.shields), ammo: f.ammo, boost: f.boost };
     }

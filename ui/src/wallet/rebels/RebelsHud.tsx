@@ -155,10 +155,12 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       {/* Close to a tower but not docking: say why. A player who cannot tell
           the difference between "not close enough" and "too fast" cannot fix
           either of them. */}
-      {hud.launched && hud.dock === 0 && hud.nearTower < 30 && (
+      {hud.launched && !hud.dead && hud.dock === 0 && (
         <div className="orbit-dock orbit-dock-hint">
-          TOWER {Math.round(hud.nearTower * 64)} km
-          {hud.dockBlock ? ` · ${hud.dockBlock.toUpperCase()}` : " · SLOWING TO DOCK"}
+          {Number.isFinite(hud.nearTower)
+            ? `TOWER ${hud.nearTower.toFixed(1)}u · ${Math.round(hud.speed * 64)} km/s`
+            : "NO TOWERS ON THIS MAP"}
+          {hud.dockBlock ? ` · ${hud.dockBlock.toUpperCase()}` : " · DOCKING"}
         </div>
       )}
 

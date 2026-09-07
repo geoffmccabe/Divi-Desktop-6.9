@@ -708,6 +708,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         fx.drawJunk(combat.junk);
         fx.drawTracers(combat.tracers, TRACER_LIFE);
         fx.drawCoins(combat.coins);
+        /* The tether, drawn only while a resupply is running. */
+        fx.drawDockLink(
+          flight.dock > 0 ? flight.pos : null,
+          flight.dock > 0 && flight.dockedAt >= 0 ? tipList[flight.dockedAt] ?? null : null,
+          performance.now() / 1000,
+        );
         fx.step(dt, camera);
 
         const now = performance.now();
