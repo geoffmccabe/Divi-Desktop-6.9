@@ -9,7 +9,7 @@ import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
   fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
-  TRACER_LIFE, TRACER_MAX,
+  TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   type CombatState, type Enemy,
 } from "./rebelsCombat";
@@ -615,6 +615,84 @@ function run(c: CombatState, frames: number, w = world()) {
   ok("at the ship that fired it", !!shot && shot.at.distanceTo(e.pos) < 0.01);
   ok("and its trail is marked hostile",
      c.tracers.length === 1 && c.tracers[0].hostile);
+}
+
+// 14. DIVI in orbit.
+{
+  const c = createCombat();
+  const e = fighter(pos.clone().addScaledVector(fwd, 30), { shield: 1 });
+  c.enemies.push(e);
+  hurtEnemy(c, e, 50, pos);
+  ok("a dead fighter scatters coins", c.coins.length === COIN_PER_KILL, `${c.coins.length}`);
+  ok("five coins is a tenth of a DIVI, the payout rate",
+     Math.abs(c.coins.reduce((a, k) => a + k.value, 0) - 0.1) < 1e-9);
+  ok("each is worth two hundredths", c.coins.every((k) => k.value === COIN_VALUE));
+}
+{
+  /* The number that decides whether this is a game: can a player catch one?
+     Cruise is 16 and boost is 38, so a coin has to sit under that. */
+  const c = createCombat();
+  const e = fighter(new THREE.Vector3(0, 0, R + 12), { shield: 1 });
+  c.enemies.push(e);
+  hurtEnemy(c, e, 50, pos);
+  const speeds = c.coins.map((k) => k.vel.length());
+  ok("coins move slower than a boosting player can fly",
+     Math.max(...speeds) < 30, `fastest ${Math.max(...speeds).toFixed(1)} u/s`);
+  ok("but faster than the player cruises, so they take chasing",
+     Math.min(...speeds) > 16, `slowest ${Math.min(...speeds).toFixed(1)} u/s`);
+}
+{
+  /* They have to STAY up. A coin that falls in ten seconds is not a pickup, it
+     is a light show. */
+  const c = createCombat();
+  const w = world({ playerPos: new THREE.Vector3(0, 900, 0) });   /* far away */
+  const e = fighter(new THREE.Vector3(0, 0, R + 12), { shield: 1 });
+  c.enemies.push(e);
+  hurtEnemy(c, e, 50, pos);
+  clearEvents(c);
+  const before = c.coins.length;
+  let lowest = Infinity, highest = 0, travelled = 0;
+  const start = c.coins[0].pos.clone();
+  for (let i = 0; i < 60 * 120; i++) {
+    stepCombat(c, DT, w);
+    clearEvents(c);
+    if (!c.coins[0]) break;
+    const r = c.coins[0].pos.length();
+    lowest = Math.min(lowest, r);
+    highest = Math.max(highest, r);
+    travelled = Math.max(travelled, c.coins[0].pos.distanceTo(start));
+  }
+  ok("coins stay in orbit for two minutes", c.coins.length === before,
+     `${c.coins.length} of ${before} left`);
+  ok("without falling in", lowest > R, `lowest ${lowest.toFixed(1)}`);
+  ok("or flying off", highest < R + 60, `highest ${highest.toFixed(1)}`);
+  ok("and they go right round the planet", travelled > 150,
+     `${travelled.toFixed(0)} units from where they started`);
+}
+{
+  /* Flying into one collects it. */
+  const c = createCombat();
+  const at = new THREE.Vector3(0, 0, R + 12);
+  const w = world({ playerPos: at.clone() });
+  c.coins.push({ pos: at.clone().add(new THREE.Vector3(1, 0, 0)), vel: new THREE.Vector3(), spin: 0, value: COIN_VALUE });
+  stepCombat(c, DT, w);
+  const got = c.events.find((x) => x.kind === "coin");
+  ok("flying into a coin collects it", !!got && c.coins.length === 0);
+  ok("and it says what it was worth", got?.value === COIN_VALUE);
+}
+{
+  /* And one just out of reach is pulled in rather than needing to be threaded. */
+  const at = new THREE.Vector3(0, 0, R + 12);
+  const w = world({ playerPos: at.clone() });
+  const c = createCombat();
+  c.coins.push({ pos: at.clone().add(new THREE.Vector3(8, 0, 0)), vel: new THREE.Vector3(), spin: 0, value: COIN_VALUE });
+  let collected = false;
+  for (let i = 0; i < 60 * 3 && !collected; i++) {
+    stepCombat(c, DT, w);
+    collected = c.events.some((x) => x.kind === "coin");
+    clearEvents(c);
+  }
+  ok("a coin nearby comes to the player", collected);
 }
 
 console.log(out.join("\n"));

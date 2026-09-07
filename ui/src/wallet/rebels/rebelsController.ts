@@ -21,7 +21,7 @@ import {
   type CombatState,
 } from "./rebelsCombat";
 import { userWonRecently } from "../stakeWin";
-import { recordScore, myTotals, TIER_COUNT } from "./rebelsScores";
+import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
   type Fx, type ShieldRig,
@@ -58,6 +58,8 @@ export interface HudState {
   /** Points this run. Only damage landed on fighters scores, and never more
    *  than the damage that actually landed. */
   score: number;
+  /** DIVI collected, ever. Survives being shot down. */
+  divi: number;
   /** Lifetime kills, one count per tier from tier one upward. */
   tierKills: number[];
   /** Wreckage in orbit right now. */
@@ -66,6 +68,9 @@ export interface HudState {
   bonus: boolean;
   /** Sitting on a pad with the resupply finished. */
   docked: boolean;
+  /** How far the nearest tower is, and why docking is not happening. */
+  nearTower: number;
+  dockBlock: string;
   dead: boolean;
   launched: boolean;
   broken: string | null;
@@ -75,8 +80,8 @@ const BLANK: HudState = {
   ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO,
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
-  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, score: 0,
-  tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
+  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
+  divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
 };
 
 /** Fighters are drawn about a unit across, against three-unit towers. */
@@ -167,9 +172,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* Points for this run, zeroed on death. Live rather than React state so the
      frame loop can add to it without a render. */
   let score = 0;
+  /* DIVI collected, ever. Loaded from what this wallet has already banked and
+     added to as coins are flown into. */
+  let divi = 0;
   /* The torpedo readouts are pushed the moment they change rather than on the
      ten-times-a-second HUD tick: a rack that updates a tenth of a second after
      the trigger reads as the trigger not having worked. */
+  let nearTower = Infinity;
+  let dockBlock: string = "";
   let lastInFlight = -1;
   let lastRack = -1;
   /* Being hit: the view inverts for a tenth of a second and the camera is
@@ -382,6 +392,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         /* What this player has already killed, so the tallies are lifetime and
            not per session. Offline it falls back to the local copy. */
+        divi = totalDivi();
+        setHud({ divi });
+
         void myTotals().then((row) => {
           lifetimeTiers = row.tierKills.slice(0, TIER_COUNT);
           setHud({ tierKills: lifetimeTiers.slice() });
@@ -457,6 +470,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         const blank: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false, mini: false };
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
         if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
+        nearTower = res.nearTower;
+        dockBlock = res.dockBlock;
 
         s.up.copy(flight.pos).normalize();
 
@@ -578,6 +593,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             score += Math.round(ev.damage ?? 0);
             /* A small spark where the shot landed. The bubble does the rest. */
             fx.boom(ev.at, ev.power, "cold");
+          } else if (ev.kind === "coin") {
+            /* Picked up. Kept for ever, not for this life: earnings survive
+               being shot down. */
+            divi += ev.value ?? 0;
+            addDivi(ev.value ?? 0);
+            setHud({ divi });
           } else if (ev.kind === "enemyShot") {
             playShotAt(ev.at.x, ev.at.y, ev.at.z, 0.7);
           } else if (ev.kind === "junkGone") {
@@ -660,6 +681,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         fx.drawTorpedoes(combat.torpedoes);
         fx.drawJunk(combat.junk);
         fx.drawTracers(combat.tracers, TRACER_LIFE);
+        fx.drawCoins(combat.coins);
         fx.step(dt, camera);
 
         const now = performance.now();
@@ -684,6 +706,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             junk: combat.junk.length,
             bonus: damageScale() > 1,
             docked: flight.dock >= 1,
+            nearTower,
+            dockBlock,
           });
         }
       } catch (err) {

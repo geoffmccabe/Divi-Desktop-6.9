@@ -20,8 +20,13 @@ export const YAW_RATE = 1.5;   /* radians per second at full stick */
    turn radius down to about 3, which fits inside the zone. That is why the
    brake is not a luxury control. */
 export const CLIMB_RATE = 11;
-export const DOCK_RANGE = 6.5;
-export const DOCK_SPEED = 9;
+/* Docking has been reported not working twice, and both times the logic was
+   right and the WINDOW was too small: a six-unit sphere around a mast, entered
+   at cruising speed, needs the ship to be slowed to under nine before it gets
+   there. Widened a long way. The hard brake below stops the ship the moment it
+   catches, so arriving fast is no longer a reason to be refused. */
+export const DOCK_RANGE = 12;
+export const DOCK_SPEED = 14;
 export const DOCK_SECONDS = 2.2;
 /* What the brake slows you to. Nearly a hover, on purpose: at this speed the
    turn radius is about one unit, so the ship can be parked against a tower
@@ -150,6 +155,11 @@ export interface StepResult {
   heavyPress: boolean;
   /** True on the frame the mini gun went off. */
   miniFired: boolean;
+  /** Distance to the nearest tower, and why docking is or is not happening.
+   *  On screen, because "it does not work" needs to become something a player
+   *  can read back. */
+  nearTower: number;
+  dockBlock: "" | "too fast" | "cooling down" | "boosting" | "out of range";
 }
 
 export function stepFlight(
@@ -159,7 +169,10 @@ export function stepFlight(
   towerTips: THREE.Vector3[],
   homeIndex: number,
 ): StepResult {
-  const out: StepResult = { hit: false, docked: false, fired: false, heavyPress: false, miniFired: false };
+  const out: StepResult = {
+    hit: false, docked: false, fired: false, heavyPress: false, miniFired: false,
+    nearTower: Infinity, dockBlock: "",
+  };
   f.grace = Math.max(0, f.grace - dt);
 
   /* ---- how near is the nearest tower ----
@@ -187,7 +200,7 @@ export function stepFlight(
      past is not docking, and it was what happened before. */
   else if (f.dock > 0) target = 0;
   else if (stick.braking) target = PARK;
-  else if (nearDist < DOCK_RANGE * 1.8 && f.redock <= 0) target = DOCK_SPEED * 0.55;
+  else if (nearDist < DOCK_RANGE * 2.2 && f.redock <= 0) target = DOCK_SPEED * 0.5;
   /* Braking to a halt is quick and docking brakes hardest, because the resupply
      itself only lasts a second or two: at the ordinary rate the ship was still
      moving for most of it. Getting under way again is deliberately slower,
@@ -252,8 +265,16 @@ export function stepFlight(
     f.pos.addScaledVector(f.pos.clone().sub(towerTips[near]).normalize(), 2);
   }
 
+  out.nearTower = nearDist;
   const canDock = near >= 0 && nearDist < DOCK_RANGE && f.speed < DOCK_SPEED
     && f.redock <= 0 && !wantBoost;
+  if (!canDock) {
+    out.dockBlock = nearDist >= DOCK_RANGE ? "out of range"
+      : wantBoost ? "boosting"
+      : f.redock > 0 ? "cooling down"
+      : f.speed >= DOCK_SPEED ? "too fast"
+      : "";
+  }
   if (canDock) {
     /* Your own tower serves you twice as fast. Any tower will do, which is what
        keeps a fight far from home survivable. */

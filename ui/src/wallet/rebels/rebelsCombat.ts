@@ -114,6 +114,42 @@ export const GRAVITY_MU = 44_800;
    comes down, which is the thing that was asked for. */
 export const JUNK_DRAG = 0.0008;
 export const JUNK_R = 0.7;
+
+/* ---- DIVI in orbit ----
+   A destroyed fighter scatters coins. They are thrown out on the ship's own
+   momentum and then fly under gravity, and they stay up there until somebody
+   flies into them: anybody's kill can be anybody's pickup.
+
+   The numbers here were worked out rather than picked, because the whole thing
+   turns on being catchable. The player cruises at 16 units a second and boosts
+   to 38. A coin in a circular orbit runs at sqrt(mu/r), so:
+
+     mu = 44,800 (the wreckage's)  ->  20 u/s, once round in 36s
+     mu = 60,000                  ->  23 u/s, once round in 29s   <- this
+     mu = 403,200                 ->  60 u/s, once round in 11s, uncatchable
+
+   Sixty thousand goes round quicker than the wreckage does while staying well
+   under a boosting player, so a coin can be run down rather than merely watched.
+   They also pull toward a player who gets close, because the spheres themselves
+   are a tenth of a hull across and threading a needle that small at those speeds
+   would not be a game. */
+export const COIN_VALUE = 0.02;
+/** Five a kill, which is a tenth of a DIVI: exactly the rate the payout uses. */
+export const COIN_PER_KILL = 5;
+export const COIN_MU = 60_000;
+/** Radius of the sphere itself: a tenth of the fighter's hull ball. */
+export const COIN_R = 0.031;
+/** How close counts as collected, and how close before it starts coming to you. */
+export const COIN_PICKUP = 2.2;
+export const COIN_MAGNET = 11;
+export const COIN_MAX = 400;
+
+export interface Coin {
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  spin: number;
+  value: number;
+}
 export const ENEMY_SPEED = 19;
 export const ENEMY_TURN = 1.1;        /* radians per second of chase */
 export const ENEMY_FIRE_RANGE = 70;
@@ -212,7 +248,7 @@ export interface Torpedo {
 
 export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
-      | "enemyHit" | "junkGone" | "enemyShot";
+      | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
   power: number;
@@ -222,6 +258,8 @@ export interface CombatEvent {
   damage?: number;
   /** enemyDown only: which of the seven it was. */
   tier?: number;
+  /** coin only: what it was worth. */
+  value?: number;
 }
 
 export interface CombatState {
@@ -229,6 +267,7 @@ export interface CombatState {
   torpedoes: Torpedo[];
   enemies: Enemy[];
   junk: Junk[];
+  coins: Coin[];
   tracers: Tracer[];
   events: CombatEvent[];
   kills: number;
@@ -239,7 +278,7 @@ export interface CombatState {
 
 export function createCombat(): CombatState {
   return {
-    bullets: [], torpedoes: [], enemies: [], junk: [], tracers: [], events: [],
+    bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -323,6 +362,52 @@ function breakUp(c: CombatState, e: Enemy): void {
   }
   /* Oldest out first, so a long fight cannot fill the sky. */
   while (c.junk.length > JUNK_MAX) c.junk.shift();
+
+  scatterCoins(c, e);
+}
+
+/**
+ * The DIVI a fighter was carrying, thrown clear.
+ *
+ * Each coin leaves on the ship's own momentum, in its own direction, and is
+ * then put into an orbit rather than left to whatever that momentum happened to
+ * be. That is a deliberate compromise: keeping the raw speed would send most of
+ * them straight into the planet within seconds, and the point of these is that
+ * they stay up until somebody comes for them. The DIRECTION is the ship's, the
+ * speed is what will hold an orbit at that height.
+ */
+function scatterCoins(c: CombatState, e: Enemy): void {
+  const up = e.pos.clone().normalize();
+  for (let i = 0; i < COIN_PER_KILL; i++) {
+    /* Thrown outward in a spread around the fighter's own heading. */
+    const dir = e.fwd.clone()
+      .addScaledVector(e.vel.clone().normalize(), 0.4)
+      .add(new THREE.Vector3().randomDirection().multiplyScalar(0.7))
+      .normalize();
+    /* Flatten it against local up, then set it to orbital speed for this
+       altitude, with a little variation so they spread out over time instead of
+       travelling as a clump for ever. */
+    const tangent = dir.addScaledVector(up, -dir.dot(up));
+    if (tangent.lengthSq() < 1e-6) tangent.copy(e.fwd);
+    tangent.normalize();
+    /* Speed is worked out from where the coin actually STARTS, and never below
+       circular. Below it the orbit becomes an ellipse whose low point is under
+       the ground, and the coin is in the planet within a minute: three in five
+       were being lost that way. At or a little above circular, the starting
+       height is the LOWEST the orbit ever gets. */
+    const at = e.pos.clone().addScaledVector(up, (Math.random() - 0.5) * 1.5);
+    const r = at.length();
+    const speed = Math.sqrt(COIN_MU / r) * (1 + Math.random() * 0.06);
+    c.coins.push({
+      pos: at,
+      vel: tangent.multiplyScalar(speed),
+      spin: Math.random() * Math.PI * 2,
+      value: COIN_VALUE,
+    });
+  }
+  /* They stay up until collected, so the only limit is a ceiling on how many
+     the sky may hold. Oldest go first. */
+  while (c.coins.length > COIN_MAX) c.coins.shift();
 }
 
 /** Launched straight down the middle, from between the guns. */
@@ -596,6 +681,39 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     if (t.live) continue;
     t.life -= dt;
     if (t.life <= 0) c.tracers.splice(i, 1);
+  }
+
+  /* ---- DIVI ----
+     Gravity, no drag: these are meant to stay up. A coin near the player is
+     drawn toward them, which is what makes something a tenth of a hull across
+     collectable at orbital speed. */
+  for (let i = c.coins.length - 1; i >= 0; i--) {
+    const k = c.coins[i];
+    const r2 = k.pos.lengthSq();
+    const r = Math.sqrt(r2);
+    k.vel.addScaledVector(k.pos, -(COIN_MU / (r2 * r)) * dt);
+
+    const toPlayer = w.playerPos.clone().sub(k.pos);
+    const range = toPlayer.length();
+    if (range < COIN_MAGNET) {
+      /* Stronger the closer it gets, so the last stretch is certain. */
+      const pull = (1 - range / COIN_MAGNET) ** 2 * 140;
+      k.vel.addScaledVector(toPlayer.normalize(), pull * dt);
+    }
+
+    k.pos.addScaledVector(k.vel, dt);
+    k.spin += dt * 2.2;
+
+    if (range < COIN_PICKUP) {
+      c.events.push({ kind: "coin", at: k.pos.clone(), power: 0.4, value: k.value });
+      c.coins.splice(i, 1);
+      continue;
+    }
+    /* Into the planet: gone, like anything else that falls. */
+    if (r < R) {
+      c.events.push({ kind: "coinLost", at: k.pos.clone(), power: 0.3 });
+      c.coins.splice(i, 1);
+    }
   }
 
   /* ---- wreckage ----

@@ -2001,6 +2001,11 @@ code, .mono { font-family: var(--font-mono); }
 .orbit-score > span {
   display: block; font-size: 10px; letter-spacing: 0.18em; opacity: 0.7;
 }
+.orbit-score > b.orbit-divi {
+  color: hsl(0 90% 62%);
+  text-shadow: 0 0 calc(var(--glow-strength) * 0.5) hsl(0 90% 55% / 0.6);
+  margin-bottom: 6px;
+}
 .orbit-score > b {
   display: block; font-size: 30px; line-height: 1.05; font-weight: 700;
   color: hsl(var(--rebels-home));
@@ -2063,6 +2068,7 @@ code, .mono { font-family: var(--font-mono); }
 }
 
 .orbit-dock-title { font-size: 13px; letter-spacing: 0.12em; }
+.orbit-dock-hint { font-size: 11px; opacity: 0.8; letter-spacing: 0.14em; }
 .orbit-dock-lines {
   margin-top: 8px;
   display: grid;

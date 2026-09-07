@@ -125,6 +125,16 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       {hud.launched && !hud.dead && !hud.broken && <div className="orbit-cross" ref={crossRef} />}
 
+      {/* Close to a tower but not docking: say why. A player who cannot tell
+          the difference between "not close enough" and "too fast" cannot fix
+          either of them. */}
+      {hud.launched && hud.dock === 0 && hud.nearTower < 30 && (
+        <div className="orbit-dock orbit-dock-hint">
+          TOWER {Math.round(hud.nearTower * 64)} km
+          {hud.dockBlock ? ` · ${hud.dockBlock.toUpperCase()}` : " · SLOWING TO DOCK"}
+        </div>
+      )}
+
       {hud.launched && hud.dock > 0 && (
         <div className="orbit-dock">
           <div className="orbit-dock-title">
@@ -144,6 +154,8 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       {hud.launched && (
         <div className="orbit-score">
+          <span>DIVI EARNED</span>
+          <b className="orbit-divi">{hud.divi.toFixed(2)}</b>
           <span>SCORE</span>
           <b>{hud.score.toLocaleString()}</b>
           {/* Lifetime kills by ship tier, rarest last, in each tier's colour. */}

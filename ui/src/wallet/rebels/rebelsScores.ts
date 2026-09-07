@@ -221,3 +221,31 @@ export async function myTotals(name = playerName()): Promise<ScoreRow> {
     return local;
   }
 }
+
+/* ------------------------------------------------------------------ DIVI ---
+   Coins flown into in orbit. Kept locally for now and deliberately NOT sent
+   anywhere: a client that can tell a server how much DIVI it has earned is a
+   client that can tell it anything. This becomes a server-side number when the
+   room does, which is the same reason the payout waits for it. */
+
+const DIVI_KEY = "dd69.rebels.divi";
+
+export function totalDivi(): number {
+  try {
+    const n = parseFloat(localStorage.getItem(DIVI_KEY) || "0");
+    return Number.isFinite(n) ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function addDivi(amount: number): number {
+  if (!(amount > 0)) return totalDivi();
+  const next = totalDivi() + amount;
+  try {
+    localStorage.setItem(DIVI_KEY, next.toFixed(4));
+  } catch {
+    /* storage blocked; the number is still right for this session */
+  }
+  return next;
+}

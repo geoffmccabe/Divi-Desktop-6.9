@@ -7,6 +7,7 @@
 // the globe every time a trigger was pulled.
 
 import * as THREE from "three";
+import diviLogo from "../../assets/divi-coin.webp";
 
 const BULLET_CAP = 160;
 const SHARD_CAP = 320;
@@ -14,6 +15,9 @@ const FLASH_CAP = 14;
 const RING_CAP = 10;
 const JUNK_CAP = 64;
 const TRACER_CAP = 220;
+const COIN_CAP = 400;
+/** A tenth of the fighter's hull ball across, as asked. */
+const COIN_RADIUS = 0.031;
 /* Warm gold going out, green coming back, pale for the mini gun: the same
    language the rounds themselves use. */
 const MINE_TRAIL = [1.0, 0.78, 0.25] as const;
@@ -126,6 +130,8 @@ export interface Fx {
   drawTorpedoes(torpedoes: { pos: THREE.Vector3; vel: THREE.Vector3 }[]): void;
   /** Wreckage in orbit. Instanced, because a long fight makes a lot of it. */
   drawJunk(junk: { pos: THREE.Vector3; rot: THREE.Vector3; kind: string }[]): void;
+  /** DIVI in orbit, waiting to be flown into. */
+  drawCoins(coins: { pos: THREE.Vector3; spin: number }[]): void;
   /** The lines rounds leave behind them. */
   drawTracers(tracers: {
     from: THREE.Vector3; to: THREE.Vector3; life: number; hostile: boolean; mini: boolean; live: boolean;
@@ -226,6 +232,35 @@ export function createFx(): Fx {
     torpedoMeshes.push(holder);
   }
   bin.push(torpedoGeo, torpedoCoreMat, torpedoGlowMat);
+
+  /* DIVI coins. The logo is tiled three across and two around, which wraps it
+     onto the sphere six times, one to a face. */
+  /* No document means the headless tests, where a texture loader reaches for an
+     Image that is not there. The coins are still there, just plain. */
+  const coinTex = typeof document === "undefined" ? null : (() => {
+    const t = new THREE.TextureLoader().load(diviLogo);
+    t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(3, 2);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  })();
+  const coinGeo = new THREE.SphereGeometry(COIN_RADIUS, 12, 10);
+  const coinMat = new THREE.MeshBasicMaterial({ map: coinTex, color: 0xff4d4d });
+  const coinMesh = new THREE.InstancedMesh(coinGeo, coinMat, COIN_CAP);
+  coinMesh.frustumCulled = false;
+  coinMesh.count = 0;
+  const coinGlowMat = new THREE.MeshBasicMaterial({
+    color: 0xff3a3a, transparent: true, opacity: 0.28,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const coinGlow = new THREE.InstancedMesh(coinGeo, coinGlowMat, COIN_CAP);
+  coinGlow.frustumCulled = false;
+  coinGlow.count = 0;
+  group.add(coinMesh, coinGlow);
+  bin.push(coinGeo, coinMat, coinGlowMat, coinMesh, coinGlow);
+  if (coinTex) bin.push(coinTex);
+  const upAxis = new THREE.Vector3(0, 1, 0);
 
   /* Tracers: one line list for every trail on screen, coloured per vertex so a
      fading trail costs nothing but a colour write. */
@@ -334,6 +369,27 @@ export function createFx(): Fx {
       junkWings.count = nWing;
       junkBodies.instanceMatrix.needsUpdate = true;
       junkWings.instanceMatrix.needsUpdate = true;
+    },
+
+    drawCoins(coins) {
+      const n = Math.min(coins.length, COIN_CAP);
+      for (let i = 0; i < n; i++) {
+        const k = coins[i];
+        q.setFromAxisAngle(upAxis, k.spin);
+        scl.setScalar(1);
+        m4.compose(k.pos, q, scl);
+        coinMesh.setMatrixAt(i, m4);
+        /* A halo, so something a thirtieth of a unit across can still be seen
+           from across the sky. Without it these would be invisible, which is
+           what a tenth of a hull actually works out to at this scale. */
+        scl.setScalar(9);
+        m4.compose(k.pos, q, scl);
+        coinGlow.setMatrixAt(i, m4);
+      }
+      coinMesh.count = n;
+      coinGlow.count = n;
+      coinMesh.instanceMatrix.needsUpdate = true;
+      coinGlow.instanceMatrix.needsUpdate = true;
     },
 
     drawTracers(tracers, maxLife) {
