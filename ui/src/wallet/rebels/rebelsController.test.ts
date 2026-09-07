@@ -679,6 +679,63 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
      `${g.tips.get("self-ip")!.length().toFixed(1)}`);
 }
 
+// 14. THE CHEAT KEY. Geoff's format: "!1#".
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
+  const settle = () => {
+    const until = performance.now() + 130;
+    while (performance.now() < until) ctl.frame(1 / 60);
+  };
+  const type = (s: string) => {
+    for (const ch of s) { press("keydown", { key: ch }); press("keyup", { key: ch }); }
+  };
+
+  settle();
+  const before = ctl.hud().contacts;
+  type("!11");
+  settle();
+  const after = ctl.hud().contacts;
+  ok("!11 sends a fleet of twenty-four", after - before >= 24, `${before} -> ${after}`);
+
+  /* THE DIGITS MUST NOT ALSO SWAP THE GUNS.
+     1, 2 and 3 are the weapon keys. If typing a cheat also selected a weapon
+     the key would be unusable in a fight, which is the only place anyone would
+     ever want it. */
+  press("keydown", { key: "2" });
+  press("keyup", { key: "2" });
+  settle();
+  const armed = ctl.hud().primary;
+  type("!11");
+  settle();
+  ok("and does not change the weapon under you", ctl.hud().primary === armed,
+     `${armed} -> ${ctl.hud().primary}`);
+
+  /* An abandoned sequence must not leave the weapon keys dead. */
+  press("keydown", { key: "!" });
+  press("keyup", { key: "!" });
+  press("keydown", { key: "q" });
+  press("keyup", { key: "q" });
+  press("keydown", { key: "1" });
+  press("keyup", { key: "1" });
+  settle();
+  ok("an abandoned sequence gives the digits back", ctl.hud().primary === 0,
+     `${ctl.hud().primary}`);
+
+  /* Nonsense is ignored rather than crashing or sending something. */
+  const steady = ctl.hud().contacts;
+  type("!99");
+  type("!17");
+  settle();
+  ok("nonsense sends nothing", ctl.hud().contacts <= steady + 1,
+     `${steady} -> ${ctl.hud().contacts}`);
+
+  ctl.detach();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

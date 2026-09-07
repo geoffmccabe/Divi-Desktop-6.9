@@ -16,7 +16,7 @@ import {
 } from "./orbitFlight";
 import {
   createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest,
-  fireMini, miniMuzzle,
+  fireMini, miniMuzzle, spawnFleet,
   STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
   type CombatState,
 } from "./rebelsCombat";
@@ -603,9 +603,53 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stick.guard = !!keys.f;
     stick.mini = weapons.primary === 1;
   }
+  /* ---- the cheat key ----
+     Geoff's format: "!1#", where ! opens it, 1 says what to send, and # is the
+     tier. So "!11" sends a fleet of twenty-four grey spheres and "!15" sends
+     purple ones.
+
+     Typed as a SEQUENCE rather than bound to a chord, because the digits are
+     already the weapon keys and a chord would have to fight them. While a
+     sequence is open the digits are swallowed, so tapping out a cheat never
+     also swaps the guns out from under the player. It closes itself after four
+     seconds so a stray exclamation mark cannot leave the weapon keys dead.
+
+     Nothing it summons is worth anything: see the anti-cheat guard in
+     rebelsCombat, which refuses a conjured drone its kill, its tier count and
+     its DIVI. A key that makes enemies out of nothing must not also make
+     money out of nothing. */
+  let cheat = "";
+  let cheatUntil = 0;
+  function runCheat(code: string) {
+    const kind = code[1];
+    const tier = Number(code[2]);
+    if (kind !== "1" || !(tier >= 1 && tier <= 6)) return;
+    if (!flight) return;
+    spawnFleet(combat, tier, flight.pos, flight.fwd, { cheat: true });
+  }
   function onKeyDown(e: KeyboardEvent) {
     if (!flying) return;
     const k = e.key.toLowerCase();
+
+    const now = performance.now();
+    if (cheat && now > cheatUntil) cheat = "";
+    if (k === "!") {
+      cheat = "!";
+      cheatUntil = now + 4000;
+      e.preventDefault();
+      return;
+    }
+    if (cheat) {
+      if (k >= "0" && k <= "9") {
+        cheat += k;
+        e.preventDefault();
+        if (cheat.length >= 3) { runCheat(cheat); cheat = ""; }
+        return;
+      }
+      /* Anything else abandons it and is handled normally. */
+      cheat = "";
+    }
+
     if (MAPPED.includes(k)) e.preventDefault();
     keys[k] = true;
     if (k === " ") stick.firing = true;
@@ -1110,11 +1154,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* A model per fighter, and it has to match that fighter's tier, so a
            slot whose occupant changed tier is rebuilt rather than recoloured. */
         for (let i = 0; i < combat.enemies.length; i++) {
-          const want = combat.enemies[i].cls.tier;
+          /* Drones are spheres drawn by the instanced pass, not models. A
+             sentinel tier keeps their slot in step with the enemy list without
+             building a hull nobody will ever see. */
+          const want = combat.enemies[i].drone ? 0 : combat.enemies[i].cls.tier;
           const have = enemyMeshes[i];
           if (have && have.userData.tier === want) continue;
           if (have) scene.remove(have);
-          const m = protos[want - 1].clone(true);
+          const m = want === 0 ? new THREE.Group() : protos[want - 1].clone(true);
           m.userData.tier = want;
           m.scale.setScalar(ENEMY_SCALE);
           scene.add(m);
@@ -1133,7 +1180,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           const m = enemyMeshes[i];
           const rig = enemyShields[i];
           const e = combat.enemies[i];
-          if (!e) { m.visible = false; rig.step(nowS, 0); continue; }
+          if (!e || e.drone) { m.visible = false; rig.step(nowS, 0); continue; }
           m.visible = true;
           m.position.copy(e.pos);
           s.target.copy(e.pos).addScaledVector(e.fwd, 10);
@@ -1167,6 +1214,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         clearEvents(combat);
 
         fx.drawBullets(combat.bullets);
+        /* The swarm and its fire. Both are instanced, so the cost of drawing a
+           hundred and forty spheres is the cost of drawing one. */
+        fx.drawDrones(combat.enemies.filter((e) => e.drone), nowS);
+        fx.drawOrbs(combat.bullets.filter((b) => b.orb), nowS);
         fx.drawTorpedoes(combat.torpedoes);
         fx.drawJunk(combat.junk);
         fx.drawTracers(combat.tracers, TRACER_LIFE);

@@ -4,6 +4,11 @@
 
 import * as THREE from "three";
 import { R, cruiseScale } from "./orbitWorld";
+import {
+  droneClass, newGroup, newFleetId, stepFlock, reslot, slotOffsets,
+  FLEET_SIZE, DRONE_CAP, DRONE_R, DRONE_RELOAD, DRONE_BULLET_SPEED, DRONE_FIRE_RANGE,
+  type FlockGroup,
+} from "./rebelsFlock";
 
 export const BULLET_SPEED = 120;      /* globe units per second */
 export const BULLET_LIFE = 2.2;
@@ -232,6 +237,11 @@ export interface Bullet {
   owner?: string;
   /** From the mini gun: quarter damage, drawn smaller. */
   mini?: boolean;
+  /** From a swarm drone: drawn as a pulsing red energy sphere rather than as a
+   *  stretched bolt, and slower than an ordinary round. */
+  orb?: boolean;
+  /** Where in its pulse this one is, so a volley does not throb in unison. */
+  phase?: number;
   /** The line this round is drawing behind it. */
   tracer?: Tracer;
   /** The cockpit has already called this one out. Once each, or a stream of
@@ -282,6 +292,23 @@ export interface Enemy {
   passFor: number;
   /** Which wave sent it, so a wave can tell when it is finished. */
   wave: number;
+
+  /* ---- swarm drones ----
+     A drone is an Enemy with these filled in. It is deliberately the SAME
+     record rather than a second kind of thing in a second list: every bullet
+     test, every shield hit, every explosion and every piece of wreckage in
+     this file then works on it without being told about it. Only the flying is
+     different, and only the flying is branched on. */
+  drone?: true;
+  /** Which formation it flies in, and which fleet that came from. */
+  group?: number;
+  fleet?: number;
+  /** Its place in the formation lattice. */
+  slot?: number;
+  /** Phase offset so a swarm does not pulse in unison. */
+  pulse?: number;
+  /** Conjured by the cheat key. Worth no DIVI and no score. */
+  cheat?: boolean;
 }
 
 export type JunkKind = "body" | "wingL" | "wingR";
@@ -387,6 +414,8 @@ export interface CombatState {
   events: CombatEvent[];
   /** The wave in progress, or null when nothing is being sent. */
   wave: Wave | null;
+  /** Live swarm formations. Empty until a fleet is sent. */
+  flocks: FlockGroup[];
   kills: number;
   /** Kills this run, one count per tier, indexed from zero. */
   tierKills: number[];
@@ -396,7 +425,7 @@ export interface CombatState {
 export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
-    wave: null,
+    wave: null, flocks: [],
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -445,9 +474,23 @@ export function hurtEnemy(
     breakUp(c, e);
     const i = c.enemies.indexOf(e);
     if (i >= 0) c.enemies.splice(i, 1);
-    c.kills++;
-    c.tierKills[e.cls.tier - 1] += 1;
-    c.events.push({ kind: "enemyDown", at: e.pos.clone(), power: 3, tier: e.cls.tier, who: by });
+    /* ---- ANTI-CHEAT ----
+       A drone conjured out of nothing by the cheat key is worth nothing: no
+       kill, no tier count, no DIVI. The key exists so a swarm can be LOOKED
+       at, and a key that also minted currency would be the most obvious
+       exploit in the game. The guard is here, at the one place a kill is
+       recorded, rather than at the call sites, so a new way to kill something
+       cannot quietly reopen it. */
+    if (!e.cheat) {
+      c.kills++;
+      /* Drone tiers are their own scale and would otherwise land in the
+         fighter tier buckets and inflate them. */
+      if (!e.drone) c.tierKills[e.cls.tier - 1] += 1;
+    }
+    c.events.push({
+      kind: "enemyDown", at: e.pos.clone(), power: e.drone ? 2 : 3,
+      tier: e.cls.tier, who: by,
+    });
   }
   return applied;
 }
@@ -456,7 +499,12 @@ export function hurtEnemy(
 function breakUp(c: CombatState, e: Enemy): void {
   const up = e.pos.clone().normalize();
   const right = new THREE.Vector3().crossVectors(e.fwd, up).normalize();
-  const kinds: JunkKind[] = ["body", "wingL", "wingR"];
+  /* A drone is a ball, so it comes apart into three lumps rather than into a
+     fuselage and two wings. Wings shed by something with no wings on it was
+     the sort of detail that gets noticed immediately. */
+  const kinds: JunkKind[] = e.drone
+    ? ["body", "body", "body"]
+    : ["body", "wingL", "wingR"];
   const offs = [0, -1, 1];
   for (let i = 0; i < 3; i++) {
     /* Each piece leaves with the fighter's own motion plus a shove outward, so
@@ -483,7 +531,7 @@ function breakUp(c: CombatState, e: Enemy): void {
   /* Oldest out first, so a long fight cannot fill the sky. */
   while (c.junk.length > JUNK_MAX) c.junk.shift();
 
-  scatterCoins(c, e);
+  if (!e.cheat) scatterCoins(c, e);
 }
 
 /**
@@ -694,6 +742,111 @@ export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
   c.events.push({ kind: "enemyShot", at: e.pos.clone(), power: 1 });
 }
 
+/* ---- the swarm ----
+   A drone fires one round every thirty seconds and no more. That is the whole
+   balance of the thing: twenty-four of them still put up a round every second
+   and a bit between them, so a fleet overhead is a steady patter of fire from
+   all directions, but no single sphere can ever pin you. */
+export function droneFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
+  const vel = at.clone().sub(e.pos).normalize()
+    .multiplyScalar(BULLET_SPEED * DRONE_BULLET_SPEED);
+  const b: Bullet = {
+    pos: e.pos.clone().addScaledVector(vel, 0.02), vel,
+    /* Slower rounds need longer to cover the same ground, or they would wink
+       out short of a player they were aimed squarely at. */
+    life: BULLET_LIFE * 1.9, hostile: true, orb: true,
+    phase: Math.random() * Math.PI * 2,
+  };
+  c.bullets.push(b);
+  addTracer(c, b);
+  c.events.push({ kind: "enemyShot", at: e.pos.clone(), power: 1 });
+}
+
+/**
+ * Send a fleet in.
+ *
+ * They arrive as ONE body, well out, and travel in together. The split
+ * happens later and on its own, when the formation gets close enough that a
+ * player can see it happen.
+ */
+export function spawnFleet(
+  c: CombatState,
+  tier: number,
+  playerPos: THREE.Vector3,
+  playerFwd: THREE.Vector3,
+  opts: { count?: number; cheat?: boolean } = {},
+): Enemy[] {
+  const cls = droneClass(tier);
+  const room = Math.max(0, DRONE_CAP - c.enemies.filter((e) => e.drone).length);
+  const count = Math.min(opts.count ?? FLEET_SIZE, room);
+  if (count <= 0) return [];
+
+  /* Out in front and off to one side, far enough away to be a shape on the
+     sky rather than something that appeared in your lap. Ahead of the player
+     on purpose: a fleet that spawns behind you is a fleet you never see
+     arrive, and arriving is most of what this is for. */
+  const up = playerPos.clone().normalize();
+  const side = new THREE.Vector3().crossVectors(playerFwd, up).normalize();
+  const at = playerPos.clone()
+    .addScaledVector(playerFwd, 300)
+    .addScaledVector(side, (Math.random() - 0.5) * 160)
+    .addScaledVector(up, 40 + Math.random() * 90);
+  /* Never inside the planet, and never below the height they would instantly
+     have to climb out of. */
+  if (at.length() < R + 60) at.normalize().multiplyScalar(R + 60);
+
+  const heading = playerPos.clone().sub(at).normalize();
+  const fleet = newFleetId();
+  const g = newGroup(fleet, cls.tier, at, heading);
+  c.flocks.push(g);
+
+  const slots = slotOffsets(count);
+  const right = new THREE.Vector3().crossVectors(heading, at.clone().normalize()).normalize();
+  const realUp = new THREE.Vector3().crossVectors(right, heading).normalize();
+
+  const made: Enemy[] = [];
+  for (let i = 0; i < count; i++) {
+    const off = slots[i];
+    const pos = at.clone()
+      .addScaledVector(right, off.x)
+      .addScaledVector(realUp, off.y)
+      .addScaledVector(heading, off.z);
+    const e: Enemy = {
+      pos,
+      fwd: heading.clone(),
+      roll: 0,
+      cls: { ...cls, weight: 0 } as ShipClass,
+      shield: cls.shieldMax,
+      vel: new THREE.Vector3(),
+      tumble: new THREE.Vector3(),
+      spin: new THREE.Vector3(),
+      flash: 0,
+      ammo: 1,
+      reload: 0,
+      /* Staggered, so the first shots do not all arrive together. */
+      fireAt: Math.random() * DRONE_RELOAD,
+      weave: 0,
+      weaveDir: 1,
+      mode: "in",
+      breakAt: 0,
+      rejoinAt: 0,
+      escape: heading.clone(),
+      passFor: 0,
+      wave: 0,
+      drone: true,
+      group: g.id,
+      fleet,
+      slot: i,
+      pulse: Math.random() * Math.PI * 2,
+      cheat: opts.cheat,
+    };
+    c.enemies.push(e);
+    made.push(e);
+  }
+  g.alive = made.length;
+  return made;
+}
+
 /** Start a round's trail. Called wherever a bullet is created. */
 function addTracer(c: CombatState, b: Bullet): void {
   const t: Tracer = {
@@ -807,6 +960,10 @@ function nearestPlayer(w: CombatWorld, to: THREE.Vector3): PlayerBody {
  * so torpedoes vanished without a bang. Ownership sits with the reader now, so
  * the order of calls cannot break it again.
  */
+/** Scratch for the per-group head count. Module level so a frame allocates no
+ *  map of its own. */
+const headCount = new Map<number, number>();
+
 export function clearEvents(c: CombatState): void {
   c.events.length = 0;
 }
@@ -826,7 +983,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     if (!b.hostile) {
       for (let j = c.enemies.length - 1; j >= 0 && !spent; j--) {
         const e = c.enemies[j];
-        if (!segmentHit(from, b.pos, e.pos, ENEMY_R)) continue;
+        if (!segmentHit(from, b.pos, e.pos, e.drone ? DRONE_R : ENEMY_R)) continue;
         spent = true;
         const scale = (b.mini ? MINI_DAMAGE : 1) * w.damageScale;
         hurtEnemy(c, e, rollLaserDamage() * scale, from, b.owner ?? "");
@@ -981,7 +1138,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     let struck = false;
     for (let k = c.enemies.length - 1; k >= 0 && !struck; k--) {
       const e = c.enemies[k];
-      if (e.pos.distanceTo(j.pos) > ENEMY_R + JUNK_R) continue;
+      if (e.pos.distanceTo(j.pos) > (e.drone ? DRONE_R : ENEMY_R) + JUNK_R) continue;
       struck = true;
       hurtEnemy(c, e, rollLaserDamage(), j.pos);
     }
@@ -1039,6 +1196,10 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
   const _want = new THREE.Vector3();
   for (let i = c.enemies.length - 1; i >= 0; i--) {
     const e = c.enemies[i];
+    /* Drones are flown by the flock, below. They share this list so that every
+       bullet, shield and explosion in this file works on them unchanged, but
+       nothing about how a fighter flies applies to a sphere in formation. */
+    if (e.drone) continue;
     /* Each fighter hunts whoever is closest to it, re-checked every frame, so
        flying past a dogfight pulls some of it onto you. */
     const prey = nearestPlayer(w, e.pos);
@@ -1183,6 +1344,57 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
        scales with open space as well, or at deep-space speeds a fighter would
        be out of the world within a few seconds of a turn. */
     if (range > 320 * open) c.enemies.splice(i, 1);
+  }
+
+  /* ---- the swarm ----
+     Flown as groups rather than as individuals, in its own file. Everything
+     above this point has already had its say about damage, wreckage and
+     collisions; all that is left is where they go. */
+  if (c.flocks.length) {
+    const drones = c.enemies.filter((e) => e.drone) as (Enemy & { group: number; slot: number })[];
+    stepFlock(c.flocks, drones, dt, { playerPos: w.playerPos, scale: cruiseScale });
+
+    for (let i = drones.length - 1; i >= 0; i--) {
+      const d = drones[i];
+      const prey = nearestPlayer(w, d.pos);
+      const gap = d.pos.distanceTo(prey.pos);
+      const open = cruiseScale(d.pos.length() - R);
+
+      /* One round, then thirty seconds of nothing. stepFlock already counted
+         the clock down; this only decides whether the shot is taken. */
+      if (d.fireAt <= 0 && gap < DRONE_FIRE_RANGE * open) {
+        d.fireAt = DRONE_RELOAD;
+        droneFire(c, d, prey.pos);
+      }
+
+      /* Gone for good. A whole fleet that has run off is a whole fleet still
+         being simulated, so the leash matters more here than for a fighter. */
+      if (gap > 900 * open) {
+        const k = c.enemies.indexOf(d);
+        if (k >= 0) c.enemies.splice(k, 1);
+      }
+    }
+
+    /* Membership changed under them, so slots are handed out again: a group
+       down to four should fly as a tight diamond, not as four survivors
+       holding four scattered places out of a twenty-four point lattice.
+
+       Counted first and only rebuilt for the groups that actually changed. A
+       death is rare and a frame is not, so the common case does no work and
+       allocates nothing. */
+    for (const g of c.flocks) headCount.set(g.id, 0);
+    for (const d of drones) {
+      const had = headCount.get(d.group);
+      if (had !== undefined) headCount.set(d.group, had + 1);
+    }
+    for (let i = c.flocks.length - 1; i >= 0; i--) {
+      const g = c.flocks[i];
+      const now = headCount.get(g.id) ?? 0;
+      if (now === 0) { c.flocks.splice(i, 1); continue; }
+      if (now !== g.alive) reslot(drones.filter((d) => d.group === g.id));
+      g.alive = now;
+    }
+    headCount.clear();
   }
 }
 

@@ -8,6 +8,7 @@
 
 import * as THREE from "three";
 import diviLogo from "../../assets/divi-coin.webp";
+import { DRONE_SIZE } from "./rebelsFlock";
 
 const BULLET_CAP = 160;
 const SHARD_CAP = 320;
@@ -17,6 +18,10 @@ const JUNK_CAP = 64;
 const TRACER_CAP = 220;
 const COIN_CAP = 400;
 const DOCK_RUNGS = 14;
+/** Swarm drones on screen at once. Matches the simulation's own cap. */
+const DRONE_CAP = 144;
+/** Their rounds. One per drone per thirty seconds, but they last a while. */
+const ORB_CAP = 96;
 /** A tenth of the fighter's hull ball across, as asked. */
 const COIN_RADIUS = 0.031;
 /* Warm gold going out, green coming back, pale for the mini gun: the same
@@ -125,7 +130,9 @@ export type BoomStyle = "hot" | "cold" | "torpedo";
 export interface Fx {
   group: THREE.Group;
   /** Point the bullet meshes at the live bullet list. */
-  drawBullets(bullets: { pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean; mini?: boolean }[]): void;
+  drawBullets(bullets: {
+    pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean; mini?: boolean; orb?: boolean;
+  }[]): void;
   boom(at: THREE.Vector3, power: number, style?: BoomStyle): void;
   /** Torpedoes in flight. There are only ever two, so they get real meshes. */
   drawTorpedoes(torpedoes: { pos: THREE.Vector3; vel: THREE.Vector3 }[]): void;
@@ -135,6 +142,12 @@ export interface Fx {
   drawDockLink(from: THREE.Vector3 | null, to: THREE.Vector3 | null, seconds: number): void;
   /** DIVI in orbit, waiting to be flown into. */
   drawCoins(coins: { pos: THREE.Vector3; spin: number }[]): void;
+  /** The swarm: glowing spheres, breathing out of step with each other. */
+  drawDrones(drones: {
+    pos: THREE.Vector3; pulse?: number; flash: number; cls: { colour: number };
+  }[], now: number): void;
+  /** Their fire: red energy spheres, pulsing in size and brightness. */
+  drawOrbs(orbs: { pos: THREE.Vector3; phase?: number }[], now: number): void;
   /** The lines rounds leave behind them. */
   drawTracers(tracers: {
     from: THREE.Vector3; to: THREE.Vector3; life: number; hostile: boolean; mini: boolean; live: boolean;
@@ -174,6 +187,61 @@ export function createFx(): Fx {
      main guns. */
   const small = { core: makeBolt(0xfff4c2, false), halo: makeBolt(0xffd98a, true) };
   bin.push(boltGeo);
+
+  /* ---- swarm drones ----
+     A low-poly ball. Two subdivisions of an icosahedron is eighty triangles,
+     which at a hundred and forty-four instances is under twelve thousand: an
+     instanced mesh saves draw calls, not vertices, and a smooth sphere here
+     would cost more than the instancing saved. Faceted also suits them: these
+     are meant to look grown rather than machined. */
+  const droneGeo = new THREE.IcosahedronGeometry(1, 2);
+  const droneCoreMat = new THREE.MeshStandardMaterial({
+    metalness: 0.1, roughness: 0.35,
+    emissive: 0x222222, emissiveIntensity: 1,
+  });
+  const droneGlowMat = new THREE.MeshBasicMaterial({
+    transparent: true, opacity: 0.5,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const droneCore = new THREE.InstancedMesh(droneGeo, droneCoreMat, DRONE_CAP);
+  const droneGlow = new THREE.InstancedMesh(droneGeo, droneGlowMat, DRONE_CAP);
+  for (const m of [droneCore, droneGlow]) {
+    /* See drawDrones: an InstancedMesh is culled as one object, so a spread
+       out flock would disappear all at once. */
+    m.frustumCulled = false;
+    m.count = 0;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    /* Allocate the colour buffer up front. Without this the first setColorAt
+       creates it lazily and the sizes can end up out of step. */
+    m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(DRONE_CAP * 3), 3);
+    m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    group.add(m);
+  }
+  /* Additive glow must be drawn after the solid bodies. */
+  droneGlow.renderOrder = 2;
+  bin.push(droneGeo, droneCoreMat, droneGlowMat, droneCore, droneGlow);
+
+  /* ---- their rounds ---- */
+  const ORB_RED = new THREE.Color(0xff2b2b);
+  const WHITE = new THREE.Color(0xffffff);
+  const orbGeo = new THREE.IcosahedronGeometry(1, 1);
+  const orbCoreMat = new THREE.MeshBasicMaterial({ color: 0xffdede });
+  const orbGlowMat = new THREE.MeshBasicMaterial({
+    transparent: true, opacity: 0.75,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const orbCore = new THREE.InstancedMesh(orbGeo, orbCoreMat, ORB_CAP);
+  const orbGlow = new THREE.InstancedMesh(orbGeo, orbGlowMat, ORB_CAP);
+  for (const m of [orbCore, orbGlow]) {
+    m.frustumCulled = false;
+    m.count = 0;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    group.add(m);
+  }
+  orbGlow.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(ORB_CAP * 3), 3);
+  orbGlow.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  orbGlow.renderOrder = 2;
+  bin.push(orbGeo, orbCoreMat, orbGlowMat, orbCore, orbGlow);
 
   /* ---- explosion debris ---- */
   const shardGeo = new THREE.TetrahedronGeometry(1, 0);
@@ -277,6 +345,12 @@ export function createFx(): Fx {
   bin.push(coinGeo, coinMat, coinGlowMat, coinMesh, coinGlow);
   if (coinTex) bin.push(coinTex);
   const upAxis = new THREE.Vector3(0, 1, 0);
+  /* Scratch. Two of them, and reused rather than cloned per instance: at a
+     hundred and forty-four drones a frame, cloning would throw away seventeen
+     thousand Colors a second, and a garbage collection pause is a far more
+     likely cause of a dropped frame here than any of the arithmetic. */
+  const colour = new THREE.Color();
+  const tinted = new THREE.Color();
 
   /* Tracers: one line list for every trail on screen, coloured per vertex so a
      fading trail costs nothing but a colour write. */
@@ -328,6 +402,10 @@ export function createFx(): Fx {
     drawBullets(bullets) {
       let a = 0, b2 = 0, c2 = 0;
       for (const b of bullets) {
+        /* Swarm rounds get their own pass: they are spheres of light, not
+           stretched bolts, and drawing them here as well would put a hard
+           bright streak through the middle of each one. */
+        if (b.orb) continue;
         const kind = b.hostile ? 2 : b.mini ? 1 : 0;
         const set = kind === 2 ? theirs : kind === 1 ? small : mine;
         const i = kind === 2 ? b2 : kind === 1 ? c2 : a;
@@ -353,6 +431,75 @@ export function createFx(): Fx {
         m.core.instanceMatrix.needsUpdate = true;
         m.halo.instanceMatrix.needsUpdate = true;
       }
+    },
+
+    /* ---- the swarm ----
+       One draw call for the bodies and one for the glow around them, whether
+       there are four of them or a hundred and forty-four. Both are told not to
+       frustum-cull: three.js culls an InstancedMesh as ONE object against a
+       bounding sphere taken from the geometry rather than from where the
+       instances actually are, so a flock that spreads out would vanish
+       wholesale the moment its notional bounds left the view. */
+    drawDrones(list, now) {
+      let n = 0;
+      for (const d of list) {
+        if (n >= DRONE_CAP) break;
+        /* Each breathes on its own clock. In unison it reads as one object
+           flashing; out of step it reads as a swarm of living things. */
+        const beat = Math.sin(now * 2.4 + (d.pulse ?? 0));
+        const size = DRONE_SIZE * (1 + beat * 0.16);
+        /* A hit swells and whitens it for a moment, which is the only feedback
+           there is that a sphere with no cockpit and no wings was struck. */
+        const struck = Math.min(1, d.flash / 0.5);
+
+        colour.setHex(d.cls.colour);
+        droneCore.setMatrixAt(n, m4.compose(d.pos, q.identity(), scl.setScalar(size)));
+        droneCore.setColorAt(n, tinted.copy(colour).lerp(WHITE, 0.15 + struck * 0.5));
+
+        /* The halo is additive, and under additive blending dimming a colour
+           and making it more transparent are THE SAME THING: what lands on the
+           screen is colour times coverage either way. So the pulse rides on
+           the instance colour, and a per-instance transparency comes out of it
+           for nothing, with no custom shader and no second material. */
+        const glowLift = 0.55 + beat * 0.3 + struck * 0.5;
+        droneGlow.setMatrixAt(n, m4.compose(d.pos, q.identity(),
+          scl.setScalar(size * (2.3 + beat * 0.5))));
+        droneGlow.setColorAt(n, tinted.copy(colour).multiplyScalar(Math.max(0.12, glowLift)));
+        n++;
+      }
+      droneCore.count = n;
+      droneGlow.count = n;
+      droneCore.instanceMatrix.needsUpdate = true;
+      droneGlow.instanceMatrix.needsUpdate = true;
+      /* Forgetting these is the classic InstancedMesh bug: the matrices go up
+         and the colours silently do not. */
+      if (droneCore.instanceColor) droneCore.instanceColor.needsUpdate = true;
+      if (droneGlow.instanceColor) droneGlow.instanceColor.needsUpdate = true;
+    },
+
+    /* ---- their fire ----
+       Not a bolt. A round sphere of red light that swells and fades as it
+       comes, which is what makes it read as energy rather than as ammunition,
+       and which also makes it easy to pick out of a sky already full of gold
+       and green tracer. */
+    drawOrbs(list, now) {
+      let n = 0;
+      for (const o of list) {
+        if (n >= ORB_CAP) break;
+        const beat = Math.sin(now * 7 + (o.phase ?? 0));
+        const size = 0.26 * (1 + beat * 0.3);
+        orbCore.setMatrixAt(n, m4.compose(o.pos, q.identity(), scl.setScalar(size * 0.45)));
+        orbGlow.setMatrixAt(n, m4.compose(o.pos, q.identity(), scl.setScalar(size * 2.2)));
+        /* Same trick as the drones: on an additive material the instance
+           colour IS the transparency. */
+        orbGlow.setColorAt(n, tinted.copy(ORB_RED).multiplyScalar(0.5 + beat * 0.35));
+        n++;
+      }
+      orbCore.count = n;
+      orbGlow.count = n;
+      orbCore.instanceMatrix.needsUpdate = true;
+      orbGlow.instanceMatrix.needsUpdate = true;
+      if (orbGlow.instanceColor) orbGlow.instanceColor.needsUpdate = true;
     },
 
     drawTorpedoes(torpedoes) {
