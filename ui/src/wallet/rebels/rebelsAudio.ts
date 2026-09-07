@@ -15,6 +15,8 @@ import rechargeUrl from "../../assets/recharge_station_v1.mp3";
 import torpedoUrl from "../../assets/torpedo_v1.mp3";
 import torpedoBlastUrl from "../../assets/torpedo_explosion_v1.mp3";
 import shipBlastUrl from "../../assets/spaceship_explosion_v1.mp3";
+import warnUrl from "../../assets/warning_bullet_approach.mp3";
+import bounceUrl from "../../assets/bullet_bounce.mp3";
 import { audioContext, masterVolume } from "../../sound";
 
 /** How far speed, pitch and volume may wander, either way. */
@@ -28,6 +30,8 @@ let rechargeBuffer: AudioBuffer | null = null;
 let torpedoBuffer: AudioBuffer | null = null;
 let torpedoBlastBuffer: AudioBuffer | null = null;
 let shipBlastBuffer: AudioBuffer | null = null;
+let warnBuffer: AudioBuffer | null = null;
+let bounceBuffer: AudioBuffer | null = null;
 let loading: Promise<void> | null = null;
 let failed = false;
 
@@ -69,20 +73,22 @@ export function resumeAudio(): void {
 /** Decode every sample once and hold them. */
 export function primeGunSound(): void {
   if (loading || failed || (buffer && rechargeBuffer && torpedoBuffer
-      && torpedoBlastBuffer && shipBlastBuffer)) return;
+      && torpedoBlastBuffer && shipBlastBuffer && warnBuffer && bounceBuffer)) return;
   const ctx = audioContext();
   if (!ctx) { failed = true; return; }
   const load = (url: string) => toArrayBuffer(url).then((raw) => ctx.decodeAudioData(raw));
   loading = Promise.all([
     load(laserUrl), load(rechargeUrl), load(torpedoUrl),
-    load(torpedoBlastUrl), load(shipBlastUrl),
+    load(torpedoBlastUrl), load(shipBlastUrl), load(warnUrl), load(bounceUrl),
   ])
-    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast]) => {
+    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast, warn, bounce]) => {
       buffer = gun;
       rechargeBuffer = recharge;
       torpedoBuffer = torpedo;
       torpedoBlastBuffer = torpedoBlast;
       shipBlastBuffer = shipBlast;
+      warnBuffer = warn;
+      bounceBuffer = bounce;
     })
     .catch(() => {
       /* Silence is not worth breaking a game over. */
@@ -299,4 +305,19 @@ export function playShipExplosion(loudness = 1.1): void {
 /** A torpedo going off. The big one, so it is given a little more level. */
 export function playTorpedoBlast(): void {
   once(torpedoBlastBuffer, 1.25);
+}
+
+/**
+ * A round on course for the ship.
+ *
+ * Half the natural level, as asked: it is a cue to reach for the right button,
+ * not an air-raid siren, and in a busy fight several are in the air at once.
+ */
+export function playIncomingWarning(): void {
+  once(warnBuffer, 0.5);
+}
+
+/** A round turned away by the guard. The reward for having reacted. */
+export function playBounce(): void {
+  once(bounceBuffer, 1);
 }

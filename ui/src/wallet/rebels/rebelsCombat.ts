@@ -18,8 +18,8 @@ export const CONVERGE = 55;           /* where the two guns cross, in units ahea
 export const MINI_DAMAGE = 0.25;
 export const MINI_SPEED_MULT = 1.5;
 export const MINI_AMMO = 0.25;
-/** It keeps firing while the trigger is held, ten times a second. */
-export const MINI_INTERVAL = 0.1;
+/** It keeps firing while the trigger is held, twenty times a second. */
+export const MINI_INTERVAL = 0.05;
 export const ENEMY_R = 1.05;          /* hit radius of a fighter */
 
 /* ---- damage ----
@@ -185,6 +185,12 @@ export const TORPEDO_BLAST = 11;
    itself is gone, then fades. This is not decoration: it is how a player works
    out that they are being shot at from behind or from the side, and where the
    shooter must be, in a game where the view only faces one way. */
+/** How long before impact the cockpit calls out an incoming round. Half a
+ *  second is enough to reach for the right button and not enough to ignore. */
+export const WARN_LEAD = 0.5;
+/** What a round has to come within to count as on course. */
+export const PLAYER_HIT_R = 1.4;
+
 export const TRACER_LIFE = 3;
 export const TRACER_MAX = 220;
 
@@ -208,6 +214,9 @@ export interface Bullet {
   mini?: boolean;
   /** The line this round is drawing behind it. */
   tracer?: Tracer;
+  /** The cockpit has already called this one out. Once each, or a stream of
+   *  fire would be one long tone. */
+  warned?: boolean;
 }
 
 export interface Enemy {
@@ -255,7 +264,8 @@ export interface Torpedo {
 
 export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
-      | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "waveStart";
+      | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "waveStart"
+      | "incoming" | "blocked";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
   power: number;
@@ -700,11 +710,30 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
            see and costs the map nothing. */
         c.events.push({ kind: "towerHit", at: b.pos.clone(), power: 2 });
       }
-    } else if (segmentHit(from, b.pos, w.playerPos, 1.4)) {
+    } else if (segmentHit(from, b.pos, w.playerPos, PLAYER_HIT_R)) {
       spent = true;
       c.events.push({
         kind: "playerHit", at: b.pos.clone(), power: 1.4, damage: rollLaserDamage(),
       });
+    }
+
+    /* Is this one going to hit? A straight ray against the player: where in
+       the round's next half second does it come closest, and is that close
+       enough to matter. The player's own motion is left out because a round
+       travels four times faster than the ship, so it barely changes the answer
+       and including it would mean calling out shots a turn has already dealt
+       with. Once per round, or a stream of fire becomes one long tone. */
+    if (!spent && b.hostile && !b.warned) {
+      const rel = w.playerPos.clone().sub(b.pos);
+      const speed2 = b.vel.lengthSq();
+      if (speed2 > 1e-9) {
+        const t = Math.max(0, Math.min(WARN_LEAD, rel.dot(b.vel) / speed2));
+        const miss = rel.addScaledVector(b.vel, -t).length();
+        if (miss < PLAYER_HIT_R && t > 0 && t <= WARN_LEAD) {
+          b.warned = true;
+          c.events.push({ kind: "incoming", at: b.pos.clone(), power: 1 });
+        }
+      }
     }
 
     /* Into the planet. */

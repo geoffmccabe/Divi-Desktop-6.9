@@ -29,7 +29,7 @@ import {
 import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
-  playMiniSound, playShotAt, setListener,
+  playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce,
 } from "./rebelsAudio";
 
 export interface HudState {
@@ -588,7 +588,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         }
 
         for (const ev of combat.events) {
-          if (ev.kind === "playerHit") {
+          if (ev.kind === "incoming") {
+            playIncomingWarning();
+          } else if (ev.kind === "playerHit") {
             if (flight.grace <= 0) {
               /* Tell the cockpit to flash, and knock the view off centre in
                  some direction that is not the same one every time. */
@@ -597,7 +599,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               shakeAxis.set(Math.random() * 2 - 1, Math.random() * 2 - 1, 0).normalize();
               /* The guard soaks four fifths of it, which is what makes ten of
                  them worth spending carefully. */
-              const soak = flight.guardFor > 0 ? 1 - GUARD_ABSORB : 1;
+              const guarded = flight.guardFor > 0;
+              const soak = guarded ? 1 - GUARD_ABSORB : 1;
+              /* And it is worth HEARING that the button worked. */
+              if (guarded) playBounce();
               flight.shields -= (ev.damage ?? 25) * soak;
               flight.grace = 0.45;
               if (flight.shields <= 0) die();

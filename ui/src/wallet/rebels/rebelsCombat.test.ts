@@ -767,6 +767,87 @@ function run(c: CombatState, frames: number, w = world()) {
      `${count(3)} vs ${count(0.5)} of 20000`);
 }
 
+// 16. Calling out a round that is going to hit.
+{
+  /* Dead on line, and close enough that it lands inside half a second. */
+  const c = createCombat();
+  const w = world();
+  const away = pos.clone().addScaledVector(fwd, 25);
+  c.bullets.push({
+    pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
+    life: 3, hostile: true,
+  });
+  const seen = run(c, 30, w);
+  ok("a round on course is called out", seen.includes("incoming"), seen.join(",") || "nothing");
+  ok("and only once", seen.filter((k) => k === "incoming").length === 1,
+     `${seen.filter((k) => k === "incoming").length} times`);
+}
+{
+  /* Far enough away that it is more than half a second out: no call yet. */
+  const c = createCombat();
+  const w = world();
+  const away = pos.clone().addScaledVector(fwd, 200);
+  c.bullets.push({
+    pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
+    life: 6, hostile: true,
+  });
+  stepCombat(c, DT, w);
+  ok("a round still seconds away is not called out yet",
+     !c.events.some((e) => e.kind === "incoming"));
+  clearEvents(c);
+  /* Let it close, and then it is. */
+  const seen = run(c, 60 * 3, w);
+  ok("but it is once it is half a second out", seen.includes("incoming"));
+}
+{
+  /* One that will miss is never called out, however close it passes. */
+  const c = createCombat();
+  const w = world();
+  const away = pos.clone().addScaledVector(fwd, 25).add(new THREE.Vector3(0, 6, 0));
+  c.bullets.push({
+    pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
+    life: 3, hostile: true,
+  });
+  const seen = run(c, 60, w);
+  ok("a round that will miss is not called out", !seen.includes("incoming"));
+}
+{
+  /* And the player's own fire never sets it off. */
+  const c = createCombat();
+  const w = world();
+  const away = pos.clone().addScaledVector(fwd, 25);
+  c.bullets.push({
+    pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
+    life: 3, hostile: false,
+  });
+  const seen = run(c, 60, w);
+  ok("your own rounds never warn you", !seen.includes("incoming"));
+}
+{
+  /* Half a second really is the lead: the warning has to come before the hit. */
+  const c = createCombat();
+  const w = world();
+  const away = pos.clone().addScaledVector(fwd, 30);
+  c.bullets.push({
+    pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
+    life: 3, hostile: true,
+  });
+  let warnedAt = -1, hitAt = -1, t = 0;
+  for (let i = 0; i < 120; i++) {
+    stepCombat(c, DT, w);
+    t += DT;
+    for (const e of c.events) {
+      if (e.kind === "incoming" && warnedAt < 0) warnedAt = t;
+      if (e.kind === "playerHit" && hitAt < 0) hitAt = t;
+    }
+    clearEvents(c);
+  }
+  ok("the warning arrives before the round does", warnedAt > 0 && hitAt > warnedAt,
+     `warned at ${warnedAt.toFixed(2)}s, hit at ${hitAt.toFixed(2)}s`);
+  ok("with about half a second in hand", hitAt - warnedAt > 0.3 && hitAt - warnedAt <= 0.6,
+     `${(hitAt - warnedAt).toFixed(2)}s of warning`);
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);
