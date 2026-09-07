@@ -67,18 +67,20 @@ export function fitCollider(root: THREE.Object3D): HitSphere[] {
   box.getCenter(centre);
 
   /* ---- which way is "along the ship" ----
-     The longest axis, EXCEPT that on a fighter it is a coin toss: Fighter 01 is
-     13.3 across the wings and 12.9 from nose to tail, and slicing across the
-     wings would give one fat sphere per wingtip and nothing down the fuselage.
-     So a near-tie goes to Z, which is the length axis for every hull in this
-     pack. */
-  const axis: 0 | 1 | 2 = (() => {
-    const longest = Math.max(size.x, size.y, size.z);
-    if (size.z >= longest * 0.85) return 2;
-    return size.x >= size.y && size.x >= size.z ? 0 : size.y >= size.z ? 1 : 2;
-  })();
-  const lo = box.min.getComponent(axis);
-  const span = Math.max(1e-6, size.getComponent(axis));
+     Z. Not the longest axis, which is what this used to use and which is a
+     trap, because on a fighter the longest axis is the WINGSPAN: Fighter 04 is
+     19.3 across and 15.2 long. Slicing that way gives one fat sphere per
+     wingtip and nothing down the fuselage, so a shot straight up the middle of
+     the ship passed through it while one well past the wing hit.
+
+     Measured across all thirty-two hulls in the pack, the length axis is Z
+     every time. There was already a guard for this — a near-tie went to Z —
+     and it was set at 85%, which caught Fighter 01 at 97% and missed twelve
+     other hulls that are wider than they are long by more than that. A
+     threshold was the wrong shape of answer; the axis is simply known. See
+     HULL_FORWARD below for the measurements. */
+  const lo = box.min.z;
+  const span = Math.max(1e-6, size.z);
 
   /* ---- a SLIDING window, not disjoint buckets ----
      Bucketing vertices into slices sounds right and falls over on exactly the
@@ -98,7 +100,7 @@ export function fitCollider(root: THREE.Object3D): HitSphere[] {
   for (let i = 0; i < SLICES; i++) {
     const mid = (i + 0.5) / SLICES;
     const near = points.filter((p) => {
-      const t = (p.getComponent(axis) - lo) / span;
+      const t = (p.z - lo) / span;
       return Math.abs(t - mid) <= half;
     });
     if (near.length === 0) continue;
@@ -109,7 +111,7 @@ export function fitCollider(root: THREE.Object3D): HitSphere[] {
     const c = new THREE.Vector3();
     for (const p of near) c.add(p);
     c.divideScalar(near.length);
-    c.setComponent(axis, lo + mid * span);
+    c.z = lo + mid * span;
 
     /* Sized by the CROSS-SECTION at this slice, not by the 3D distance to the
        furthest vertex in the window. The sphere is already centred on its
@@ -120,7 +122,7 @@ export function fitCollider(root: THREE.Object3D): HitSphere[] {
     let r = 0;
     for (const p of near) {
       const dx = p.x - c.x, dy = p.y - c.y, dz = p.z - c.z;
-      const along = axis === 0 ? dx : axis === 1 ? dy : dz;
+      const along = dz;
       r = Math.max(r, Math.sqrt(Math.max(0, dx * dx + dy * dy + dz * dz - along * along)));
     }
     /* A touch under the true cross-section, so a round that visibly clears the
@@ -162,17 +164,50 @@ export function colliderBound(fitted: HitSphere[]): number {
   return far;
 }
 
+/* ---- WHICH WAY A HULL FACES ----
+   +Z, and +Y is up. Every hull in this pack, without exception.
+
+   This used to be worked out per model, from the collider: slice the hull
+   along its longest axis and call the narrower end the nose. It reads as the
+   careful thing to do and it is wrong, because on a fighter the LONGEST AXIS
+   IS THE WINGSPAN. Fighter 04 is 19.3 across and 15.2 long. So the hull was
+   sliced across the wings, the "nose" came out as a wingtip, and the ship flew
+   sideways. Geoff: "instead of rotating it 180 degrees you rotated it 90
+   degrees so now it's facing sideways and worse than before."
+
+   Not a near miss either. Every one of the thirty-two hulls in the pack was
+   measured, straight out of the .glb files, and TWELVE of them came out ninety
+   degrees wrong: Fighter 03, 04 and 05, all four Heavies, three of the four
+   Bombers, Stealth 05 and two stations.
+
+   The measurement also settles what the answer should be. A ship is
+   mirror-symmetric about its own length, so the wing axis has, by
+   construction, exactly the same cross-section at both ends: the taper along X
+   measured 0% on every single hull. Along Z it measured 44%, 54%, 63%, 77% and
+   so on, narrow end forward, on twenty-one of the twenty-two flyable ships.
+   That is the pack's convention, it agrees with Unity's own +Z forward, and it
+   agrees with Geoff's report that the FIRST version was a hundred and eighty
+   degrees out rather than ninety.
+
+   So it is stated here once instead of being re-derived, wrongly, per hull. */
+export const HULL_FORWARD = new THREE.Vector3(0, 0, 1);
+export const HULL_UP = new THREE.Vector3(0, 1, 0);
+
 /**
- * Where the guns and the tubes are: the front of the hull.
+ * Where the guns and the tubes are: the front of the hull, in model space.
  *
- * The END of the chain, whichever axis it was sliced along, and the end with
- * the SMALLER sphere. A ship tapers to its nose and is widest at its engines,
- * so the narrower end is the front — which beats assuming a sign on an axis,
- * since half this pack could be modelled either way round.
+ * The sphere furthest along the ship's forward axis. Taking the END of the
+ * chain instead would be the same thing only when the chain happens to have
+ * been sliced along that axis, which — see above — is exactly the assumption
+ * that put a wingtip at the front of half the fleet.
  */
-export function noseOf(fitted: HitSphere[]): THREE.Vector3 {
+export function noseOf(fitted: HitSphere[], forward = HULL_FORWARD): THREE.Vector3 {
   if (fitted.length === 0) return new THREE.Vector3();
-  const first = fitted[0];
-  const last = fitted[fitted.length - 1];
-  return (first.radius <= last.radius ? first : last).local.clone();
+  let best = fitted[0];
+  let far = -Infinity;
+  for (const s of fitted) {
+    const d = s.local.dot(forward);
+    if (d > far) { far = d; best = s; }
+  }
+  return best.local.clone();
 }

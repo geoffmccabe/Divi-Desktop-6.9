@@ -28,11 +28,14 @@ import { installSky, skyTexture, type SkyHandle } from "./starfield";
 import { loadModel, unitCopy } from "./spaceAssets";
 import { loadShip } from "./shipChoice";
 import { loadPaint, makeRepaintable, type PaintHandle } from "./shipColours";
-import { fitCollider, placeCollider, noseOf, type HitSphere } from "./shipCollider";
+import {
+  fitCollider, placeCollider, noseOf, HULL_FORWARD, HULL_UP, type HitSphere,
+} from "./shipCollider";
 import {
   loadLoadout, saveLoadout, weaponAt, type Loadout, type SlotKind,
 } from "./shipLoadout";
 import { pulseHealth } from "./healthPulse";
+import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
   type Fx, type ShieldRig,
@@ -162,12 +165,31 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      there is nothing to draw and a fighter's worth of geometry for a model
      nobody looks at is a fighter's worth of geometry wasted. */
   let shipModel: THREE.Object3D | null = null;
+  /* The lean: how the hull reacts to being flown. See shipLean. */
+  const lean = createLean();
+  const leanNose = new THREE.Vector3();
+  const leanRef = new THREE.Vector3();
   let shipPaint: PaintHandle | null = null;
   let shipHull: HitSphere[] = [];
   let shipLoading = false;
   /** How long the hull is in world units, which sets both how far the camera
    *  pulls back and how big a target the ship is. */
   const SHIP_LENGTH = 2.6;
+  /* The smallest and largest notch of the third-person zoom, in units of view.
+     See zoomStep. */
+  const ZOOM_BASE = 0.04;
+  const ZOOM_GROWTH = 0.10;
+  /* ---- HOW CLOSE THE CAMERA CAN GET ----
+     In ship lengths behind the hull's centre. The hull is one ship length from
+     nose to tail, so its tail is at half of one: 0.62 puts the camera a tenth
+     of a length behind the tail, which is close enough that the cockpit and one
+     wingtip fill the frame. Geoff asked for exactly that and for it not to be
+     the only option, so the far end reaches nine and a half lengths, where the
+     ship is a shape against the planet. */
+  const VIEW_NEAR = 0.62;
+  const VIEW_FAR = 1.48;
+
+
   /** The hull's spheres, placed in the world, reused every frame. */
   const hullWorld: Array<{ at: THREE.Vector3; r: number }> = [];
   const shipQuat = new THREE.Quaternion();
@@ -481,11 +503,30 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
    * player has open, and a game that swallows every scroll is a game that fights
    * the app it lives in. DreadRoot does the same thing for the same reason.
    */
+  /* ---- HOW FAR ONE NOTCH MOVES ----
+     Proportionally, not by a fixed amount.
+
+     It used to be a flat half a unit of view, which at this scale is nearly a
+     whole ship length per notch: twelve notches to cross the entire range and
+     no way to stop anywhere in particular. Geoff: "the zoom in/out isn't
+     granular enough so I can't get the ship the right size."
+
+     A fixed step is the wrong shape for a distance. Half a ship length matters
+     enormously when the hull fills the frame and not at all when it is a speck,
+     so the step grows with the distance. That puts about ten notches inside the
+     first ship length, where the difference between "cockpit and wingtip" and
+     "whole ship" is decided, and still crosses the whole range in about twenty:
+     fine where it needs to be fine, quick where it does not. */
+  function zoomStep(view: number, dir: number): number {
+    const step = ZOOM_BASE + view * ZOOM_GROWTH;
+    return Math.max(0, Math.min(MAX_VIEW, view + dir * step));
+  }
+
   function onWheel(e: WheelEvent) {
     if (!flying || !flight) return;
     if (!e.altKey) return;
     e.preventDefault();
-    flight.view = Math.max(0, Math.min(MAX_VIEW, flight.view - Math.sign(e.deltaY) * 0.5));
+    flight.view = zoomStep(flight.view, -Math.sign(e.deltaY));
     if (flight.view > 0) ensureShip();
     setHud({ view: flight.view });
   }
@@ -507,21 +548,25 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       .then((proto) => {
         if (!scene) return;
         const model = unitCopy(proto);
-        model.scale.setScalar(SHIP_LENGTH);
         shipPaint = makeRepaintable(model);
         shipPaint.apply(loadPaint());
         /* Fitted BEFORE the model is scaled into the world, so the spheres are
-           in the hull's own space and can be turned with it. */
-        shipHull = fitCollider(model);
+           in the hull's own space and can be turned with it.
 
-        /* Forward is the direction of the narrow end of the hull, and up is
-           whatever is left of the model's own +Y once that is taken out. */
-        modelFwd.copy(noseOf(shipHull));
-        if (modelFwd.lengthSq() < 1e-9) modelFwd.set(0, 0, -1);
-        modelFwd.normalize();
-        modelUp.set(0, 1, 0).addScaledVector(modelFwd, -modelFwd.y);
-        if (modelUp.lengthSq() < 1e-9) modelUp.set(1, 0, 0).addScaledVector(modelFwd, -modelFwd.x);
-        modelUp.normalize();
+           And it really does have to be before. The scaling used to happen on
+           the line above this one, which put the whole chain into world-sized
+           space; placeCollider then scaled it AGAIN, so every ship was flying
+           around inside a hit shape two and a half times too big and taking
+           rounds that visibly missed it. */
+        shipHull = fitCollider(model);
+        model.scale.setScalar(SHIP_LENGTH);
+
+        /* Which way the hull faces is a property of the PACK, not of the
+           model, and is stated once in shipCollider. It used to be worked out
+           per hull from the collider and came out ninety degrees wrong on
+           twelve of the thirty-two. */
+        modelFwd.copy(HULL_FORWARD);
+        modelUp.copy(HULL_UP);
         modelRight.crossVectors(modelUp, modelFwd).normalize();
 
         /* ---- LIGHT ----
@@ -922,7 +967,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           worldM4.makeBasis(worldRight, flight.up, flight.fwd);
           shipM4.transpose();
           shipQuat.setFromRotationMatrix(worldM4.multiply(shipM4));
-          shipModel.quaternion.copy(shipQuat);
+
+          /* ---- LEANING INTO IT ----
+             The hull is drawn where it will be a fifth of a second from now, so
+             it visibly banks into a roll instead of sitting dead centre and
+             dead straight. The whole idea, and why it is one idea rather than
+             three, is in shipLean. The COLLIDER and the guns below keep the
+             true orientation. */
+          shipModel.quaternion.copy(shipQuat).multiply(stepLean(lean, shipQuat, dt));
+
+          /* And it slides a little in the frame as well as turning, which is
+             most of what sells it. Taken from where the leaned nose points
+             against where the real one does, so it needs no signs either. */
+          leanNose.set(0, 0, 1).applyQuaternion(shipModel.quaternion)
+            .sub(leanRef.set(0, 0, 1).applyQuaternion(shipQuat));
+          shipModel.position.addScaledVector(leanNose, LEAN_SLIDE * SHIP_LENGTH);
 
           /* And the hull becomes what bullets hit, instead of the ball around
              the camera. */
@@ -965,10 +1024,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* Behind and slightly above, or exactly at the ship in the cockpit. */
         camera.position.copy(flight.pos);
         if (flight.view > 0.01) {
-          const back = flight.view * SHIP_LENGTH * 1.6 + SHIP_LENGTH * 0.9;
+          const back = SHIP_LENGTH * (VIEW_NEAR + flight.view * VIEW_FAR);
           camera.position
             .addScaledVector(flight.fwd, -back)
-            .addScaledVector(flight.up, back * 0.28);
+            .addScaledVector(flight.up, back * 0.30);
         }
         camera.updateMatrixWorld();
 

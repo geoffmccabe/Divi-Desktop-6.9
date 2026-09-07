@@ -736,6 +736,61 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.detach();
 }
 
+// 15. THIRD PERSON: which way it faces, how far away, and whether it reacts.
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
+  const settle = () => {
+    const until = performance.now() + 130;
+    while (performance.now() < until) ctl.frame(1 / 60);
+  };
+
+  /* ---- THE ZOOM ----
+     Geoff: "the zoom in/out isn't granular enough so I can't get the ship the
+     right size." A flat half-unit step gave twelve notches across the whole
+     range, nearly a ship length each. */
+  settle();
+  const wheelOut = (n: number) => {
+    for (let i = 0; i < n; i++) g.fire("wheel", { altKey: true, deltaY: 100 });
+  };
+  const wheelIn = (n: number) => {
+    for (let i = 0; i < n; i++) g.fire("wheel", { altKey: true, deltaY: -100 });
+  };
+
+  wheelOut(60);
+  settle();
+  ok("scrolling all the way out reaches the cockpit", ctl.hud().view === 0,
+     `${ctl.hud().view}`);
+
+  /* Ten notches in must still be close. This is the assertion that a flat step
+     fails: at half a unit a notch, ten notches was already five units of view,
+     which is nearly the whole range. */
+  wheelIn(10);
+  settle();
+  const near = ctl.hud().view;
+  ok("ten notches in is still a close view", near > 0 && near < 1,
+     `view ${near.toFixed(3)}`);
+
+  /* And the notches around there are FINE: no single one of them should move
+     the camera by anything like a ship length. */
+  const before = ctl.hud().view;
+  wheelIn(1);
+  settle();
+  const oneNotch = ctl.hud().view - before;
+  ok("one notch near the hull is a small step", oneNotch > 0 && oneNotch < 0.25,
+     `${oneNotch.toFixed(3)} of view`);
+
+  /* But it still crosses the whole range in a sane number of turns. */
+  wheelIn(40);
+  settle();
+  ok("and it still reaches the far end", ctl.hud().view >= 5.9, `${ctl.hud().view}`);
+
+  ctl.detach();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);
