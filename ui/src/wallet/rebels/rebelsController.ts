@@ -302,7 +302,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
 
   const stick: Stick = {
-    x: 0, y: 0, lookX: 0, lookY: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
+    x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
     throttle: 0, fullStop: false, boosting: false, firing: false,
     secondary: false, guard: false, mini: false,
   };
@@ -379,30 +379,38 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      than a special case. */
 
   /**
-   * TWO WAYS TO FLY WITH A MOUSE, because the game has to work in both cases.
+   * ONE RETICLE, and the mouse moves it.
    *
-   * With the pointer LOCKED the mouse cannot leave the window, so its movement
-   * is the turn directly and the reticle stays in the middle where the guns
-   * converge. That is the better feel and what the genre has settled on.
+   * The ship turns toward it, and the mini gun fires exactly AT it. That is
+   * what gives navigation and aiming at the same time rather than one or the
+   * other: fly by pushing the reticle where you want to go, and shoot whatever
+   * the reticle is on. It is how War Thunder, Rebel Galaxy and Freelancer fly,
+   * and it is what Geoff had and liked — "a freely-moving cursor like before to
+   * shoot FPS-game style at enemies with the super-fast bullets. That was fun."
    *
-   * Without the lock — and a webview may simply refuse it — a relative scheme
-   * has nothing to work with: the real cursor walks out of the window and no
-   * more movement arrives. Geoff: "the mouse just goes quickly outside of the
-   * window and then it doesn't turn." So in that case the cursor becomes a
-   * VISIBLE reticle and the ship turns toward it, which is how Freelancer flew
-   * and needs no lock at all. Leaving the canvas stops the turn rather than
-   * leaving the ship chasing a reticle nobody can see.
+   * THIS REPLACES RELATIVE LOOK, which I put in a few versions ago on the
+   * research's advice, and the reversal is deliberate rather than a wobble.
+   * Relative look turns the ship directly and leaves no reticle to aim with, so
+   * it cannot give free aim at all. The reason the research warns against a
+   * reticle that does not spring back is that games ship it INVISIBLE, under a
+   * pointer lock, where you cannot see it is off centre — and every one of them
+   * then needs a "recentre mouse" key. Ours is drawn on screen, clamped inside
+   * the frame, and stops turning the moment the pointer leaves. Those three
+   * things are the difference between this and the version that was disliked.
    *
-   * The two write to different channels — `look` and `aim` — so they sum in the
-   * flight model instead of overwriting each other, which is the mistake the
-   * last two versions of this made.
+   * Locked or not, the reticle works the same way. Under a lock there is no
+   * pointer position to read, so movement is accumulated instead; without one
+   * the pointer's own position is used. Two paths, one behaviour — which is
+   * also what stops the two schemes fighting each other, as they did when one
+   * was relative and the other absolute.
    */
-  const LOOK_PER_PIXEL = 0.0028;
   /** Where the reticle stops meaning "straight ahead", and where it reaches
-   *  full deflection. Short of the frame edge on purpose: nobody should have to
-   *  put the cursor on the last pixel to turn hard. */
+   *  full deflection. Short of the frame edge, so nobody has to put it on the
+   *  last pixel to turn hard. */
   const AIM_DEAD = 0.06;
   const AIM_FULL = 0.42;
+  /** How far from the middle it may get. */
+  const AIM_REACH = 0.45;
 
   function aimFromCursor() {
     const shape = (v: number) => {
@@ -416,24 +424,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
   function onMove(e: PointerEvent) {
     if (!dom || !flying) return;
-    if (locked) {
-      stick.lookX += (e.movementX || 0) * LOOK_PER_PIXEL;
-      stick.lookY += (e.movementY || 0) * LOOK_PER_PIXEL;
-      cursor.x = 0.5;
-      cursor.y = 0.5;
-      stick.aimX = 0;
-      stick.aimY = 0;
-      return;
-    }
     const r = dom.getBoundingClientRect();
-    /* GUARDED, because an event without coordinates would otherwise put NaN in
-       the cursor, NaN in the stick, NaN in the ship's heading, and the whole
-       flight would quietly stop being a number. Nothing recovers from that: it
-       propagates into the position and the ship is gone for the rest of the
-       run. A missing coordinate is a bad event, so it is ignored. */
-    if (!Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return;
-    cursor.x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    cursor.y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    if (locked) {
+      const lo = 0.5 - AIM_REACH, hi = 0.5 + AIM_REACH;
+      cursor.x = Math.max(lo, Math.min(hi, cursor.x + (e.movementX || 0) / r.width));
+      cursor.y = Math.max(lo, Math.min(hi, cursor.y + (e.movementY || 0) / r.height));
+    } else {
+      /* Guarded: an event without coordinates would put NaN in the cursor, the
+         stick and then the ship's heading, and nothing recovers from that. */
+      if (!Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return;
+      cursor.x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+      cursor.y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    }
     aimFromCursor();
   }
 
@@ -632,7 +634,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stick.firing = false; stick.boosting = false; stick.secondary = false;
     stick.guard = false; stick.fullStop = false;
     stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.throttle = 0;
-    stick.lookX = 0; stick.lookY = 0;
+    stick.aimX = 0; stick.aimY = 0;
   }
 
   function startAt(index: number) {
@@ -838,17 +840,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         const live = !hud.dead;
         const blank: Stick = {
-          x: 0, y: 0, lookX: 0, lookY: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
+          x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
           throttle: 0, fullStop: false, boosting: false, firing: false,
           secondary: false, guard: false, mini: false,
         };
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
-        /* CONSUMED. The mouse delta is an angle that has already happened, so
-           it must be spent exactly once: leaving it set would turn the ship
-           again on every later frame, which is the spinning-forever bug in a
-           new costume. */
-        stick.lookX = 0;
-        stick.lookY = 0;
         if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
         nearTower = res.nearTower;
         dockBlock = res.dockBlock;
@@ -1324,9 +1320,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
       diveT = 0;
       phase = "dive";
-      /* Launching starts with nothing on the stick: no leftover mouse delta
-         from lining up the LAUNCH button. */
-      stick.lookX = 0; stick.lookY = 0;
+      /* Launching starts with the reticle centred, wherever the pointer was
+         when it hit the LAUNCH button. */
+      cursor.x = 0.5; cursor.y = 0.5;
+      stick.aimX = 0; stick.aimY = 0;
       /* Confine the pointer to the game. Without this a stray click lands on
          the sidebar and the panel unmounts mid-flight. If the webview refuses,
          the game still plays, it just is not fenced in. */

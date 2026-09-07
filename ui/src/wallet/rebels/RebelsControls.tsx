@@ -12,7 +12,7 @@ export interface ControlLine {
 }
 
 export const CONTROLS: ControlLine[] = [
-  { keys: "MOUSE", what: "Fly. The ship turns as you move and stops as you stop." },
+  { keys: "MOUSE", what: "Move the crosshair. The ship turns toward it and the mini gun fires AT it." },
   { keys: "W / S", what: "Throttle up and down. Below zero it reverses." },
   { keys: "A / D", what: "Strafe left and right, without turning." },
   { keys: "Q / E", what: "Roll left and right." },
@@ -20,9 +20,9 @@ export const CONTROLS: ControlLine[] = [
   { keys: "X", what: "Full stop." },
   { keys: "LEFT CLICK", what: "Primary weapon. Only the left button fires." },
   { keys: "RIGHT CLICK", what: "Secondary weapon. Press again to detonate a torpedo." },
-  { keys: "1 2 3", what: "Choose the primary: 1 pulse laser, 2 MINI GUN, 3 beam." },
+  { keys: "1 2 3", what: "Primary: 1 pulse laser, 2 MINI GUN (aims at the crosshair), 3 beam." },
   { keys: "4 5 6", what: "Choose the secondary: torpedo, mine, bomb." },
-  { keys: "F", what: "Shield. Absorbs 80% of a hit. Ten charges, one every half second held." },
+  { keys: "F  (HOLD)", what: "SHIELD. Absorbs 80% of a hit. Ten charges, one every half second held." },
   { keys: "V", what: "Cockpit or third person. OPTION + WHEEL sets the distance." },
   { keys: "ARROWS", what: "Steer, for anyone who would rather not use the mouse." },
   { keys: "ESC", what: "Back to the map." },

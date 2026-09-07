@@ -22,7 +22,7 @@ function ok(name: string, cond: boolean, extra = "") {
   out.push(`${cond ? "PASS" : "FAIL"} ${name}${extra ? `  [${extra}]` : ""}`);
 }
 const stick = (o: Partial<Stick> = {}): Stick => ({
-  x: 0, y: 0, lookX: 0, lookY: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
+  x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
   throttle: 0, fullStop: false, boosting: false, firing: false,
   secondary: false, guard: false, mini: false, ...o,
 });
@@ -642,41 +642,31 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      `${before} -> ${f.shields}`);
 }
 
-// 8f. THE NEW CONTROLS: relative look, roll, strafe and a throttle lever.
+// 8f. THE CONTROLS: reticle steering, roll, strafe and a throttle lever.
 //
-//     Geoff asked for the scheme the genre has settled on, so these check the
-//     four things that changed rather than the four that did not.
+//     The mouse moves a reticle and the ship turns toward it, so the same input
+//     flies the ship and aims the guns. What is checked here is the steering
+//     channel; the reticle itself belongs to the controller.
 {
-  /* ---- the mouse is an ANGLE, not a rate ----
-     The old scheme held a crosshair off centre and read its offset as a turn
-     rate, which is why a ship kept turning after the mouse stopped. A mouse
-     delta is a turn that already happened, so it must be applied once and
-     never again — and the caller clears it, which this test does not, so a
-     second step with the same stick would turn twice if the model scaled it by
-     time instead of taking it whole. */
   const f = createFlight(pad);
   const before = f.fwd.clone();
-  stepFlight(f, DT, stick({ lookX: 0.4 }), [], -1);
-  const turned = before.angleTo(f.fwd);
-  ok("the mouse turns the ship by what it moved", Math.abs(turned - 0.4) < 0.01,
-     `${turned.toFixed(3)} radians for a 0.4 push`);
+  run(f, 60, stick({ aimX: 1 }));
+  ok("the reticle turns the ship", before.angleTo(f.fwd) > 1,
+     `${before.angleTo(f.fwd).toFixed(2)} radians in a second`);
 
-  /* And a frame with nothing on the stick turns nothing, which is the whole
-     point: stop the mouse, stop the ship. */
+  /* Centred means straight ahead: no creep, ever. */
   const held = f.fwd.clone();
-  for (let i = 0; i < 60; i++) stepFlight(f, DT, stick({}), [], -1);
-  ok("and stops the instant the mouse does", held.angleTo(f.fwd) < 1e-6,
-     `${held.angleTo(f.fwd).toExponential(1)} radians of drift in a second`);
+  run(f, 180, stick({}));
+  ok("and centred means straight ahead", held.angleTo(f.fwd) < 1e-9,
+     `${held.angleTo(f.fwd).toExponential(1)} radians of creep in three seconds`);
 
-  /* A longer frame must not turn further: the movement happened over the frame
-     that reported it, whatever length that frame was. */
-  const a = createFlight(pad), b = createFlight(pad);
-  stepFlight(a, 1 / 240, stick({ lookY: 0.3 }), [], -1);
-  stepFlight(b, 1 / 15, stick({ lookY: 0.3 }), [], -1);
-  const fa = a.fwd.angleTo(new THREE.Vector3(0, 1, 0).cross(pad).normalize());
-  void fa;
-  ok("and the frame rate does not change how far it turns",
-     Math.abs(a.fwd.angleTo(b.fwd)) < 1e-6, a.fwd.angleTo(b.fwd).toExponential(1));
+  /* Left and right disagree, or one of them is wired backwards. */
+  const l = createFlight(pad), r2 = createFlight(pad);
+  run(l, 30, stick({ aimX: -1 }));
+  run(r2, 30, stick({ aimX: 1 }));
+  const side = (g: typeof l) => new THREE.Vector3().crossVectors(before, g.fwd).dot(g.up);
+  ok("and they turn opposite ways", Math.sign(side(l)) === -Math.sign(side(r2)),
+     `${side(l).toFixed(2)} vs ${side(r2).toFixed(2)}`);
 }
 
 // 8g. Roll turns the ship without turning where it is pointing.

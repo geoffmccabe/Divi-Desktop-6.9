@@ -231,6 +231,8 @@ const home: [number, number, number] = [0, 0, R + 8];
     cls: { tier: 1, name: "Grey", shieldMax: 100, colour: 0, speed: 1, weight: 1 },
     shield: 100, vel: new THREE.Vector3(), tumble: new THREE.Vector3(), spin: new THREE.Vector3(),
     flash: 0, ammo: 0, reload: 99, fireAt: 99, weave: 9, weaveDir: 1, wave: 1,
+    mode: "in" as const, breakAt: 0, rejoinAt: 1e9,
+    escape: new THREE.Vector3(), passFor: 1e9,
   });
   a.deliver(JSON.stringify({ t: "fire", k: "main", p: home, f: [0, 1, 0] }));
   for (let i = 0; i < 20; i++) room.step();

@@ -158,7 +158,15 @@ export interface Coin {
 /* Halved along with the player's, so a dogfight plays exactly as it did while
    the world around it feels twice the size. */
 export const ENEMY_SPEED = 9.5;
-export const ENEMY_TURN = 1.1;        /* radians per second of chase */
+/* Radians a second of turn. THIS is the number that decides whether a fighter
+   reads as a spaceship or as an insect: turn radius is speed divided by turn
+   rate, so at 1.1 a fighter came round in eight units and could hold station on
+   a player who was trying to shake it. At 0.6 it needs sixteen, which is wider
+   than the range it shoots from — so it has to commit to an approach, take its
+   shot, and go past. */
+export const ENEMY_TURN = 0.6;
+/** Below this height a fighter starts pulling up, hard. */
+export const ENEMY_FLOOR = 25;
 export const ENEMY_FIRE_RANGE = 70;
 /** They carry the same magazine a player does, then have to break off and
  *  recharge, which is what gives you a breather rather than an endless stream. */
@@ -252,6 +260,26 @@ export interface Enemy {
   /** Seconds left of the little sidestep that stops them flying in a line. */
   weave: number;
   weaveDir: number;
+  /**
+   * What this fighter is doing: closing for a pass, or breaking off after one.
+   *
+   * Without this they simply turned toward the player every frame for ever and
+   * flew faster the closer they got, which is not a fighter, it is a wasp.
+   * Geoff: "they are swarming around me like bugs and not moving like a
+   * spaceship with a limited ability to turn... they need to make strafing runs
+   * like a reasonable spaceship."
+   */
+  mode: "in" | "out";
+  /** How close this one comes before it breaks off, and how far it goes before
+   *  it turns back. Per fighter, so a flight of them does not move as one. */
+  breakAt: number;
+  rejoinAt: number;
+  /** The heading it committed to when it broke off. Held, rather than
+   *  recomputed, or "away" would curve back into the player. */
+  escape: THREE.Vector3;
+  /** Seconds left on this pass before it breaks off regardless. Stops a fighter
+   *  that cannot get a firing solution from following you around all day. */
+  passFor: number;
   /** Which wave sent it, so a wave can tell when it is finished. */
   wave: number;
 }
@@ -1008,6 +1036,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
 
   const toPlayer = new THREE.Vector3();
   const axis = new THREE.Vector3();
+  const _want = new THREE.Vector3();
   for (let i = c.enemies.length - 1; i >= 0; i--) {
     const e = c.enemies[i];
     /* Each fighter hunts whoever is closest to it, re-checked every frame, so
@@ -1017,26 +1046,90 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     const range = toPlayer.length();
     toPlayer.normalize();
 
-    /* Turn toward the player, but only so fast: a fighter that snapped onto
-       your tail every frame would be unshakeable and no fun. */
+    /* ---- STRAFING RUNS ----
+       A fighter makes a pass and leaves. It does not hover.
+
+       Closing: turn toward the player at a limited rate and fly. Once it is
+       close, or once the pass has gone on long enough, it commits to a heading
+       AWAY and holds it — held rather than recomputed each frame, or "away"
+       curves gently back into the player and the whole thing becomes an orbit
+       again. When it is far enough out it turns and comes back.
+
+       The turn rate is the number that decides whether this reads as a
+       spaceship. At this speed a fighter needs about sixteen units to come
+       round, so it cannot pivot on the spot to stay on your tail: it has to
+       commit to an approach, take its shot, and go past. */
     const dot = Math.max(-1, Math.min(1, e.fwd.dot(toPlayer)));
-    const off = Math.acos(dot);
-    if (off > 1e-3) {
-      axis.crossVectors(e.fwd, toPlayer);
-      if (axis.lengthSq() > 1e-9) {
-        axis.normalize();
-        /* They turn faster too, or a fast one would fly in a straight line
-           past you and never come back. */
-        e.fwd.applyAxisAngle(axis, Math.min(off, ENEMY_TURN * e.cls.speed * dt)).normalize();
-      }
+
+    e.passFor -= dt;
+    if (e.mode === "in" && (range < e.breakAt || e.passFor <= 0)) {
+      e.mode = "out";
+      /* STRAIGHT ON, and off to one side.
+         The fighter is a few units short of the player and pointed at them, so
+         simply holding its heading carries it through the merge and out the far
+         side, which is what a pass IS. The first version subtracted a bit of
+         "toward the player" from the heading to make it fly away — but at the
+         merge the heading already IS toward the player, so taking a third of it
+         off left the fighter still pointed at them. It flew past, curved back,
+         and never got far enough away to come round again: one pass in three
+         minutes, and the rest of it loitering. */
+      e.escape.copy(e.fwd).addScaledVector(
+        axis.copy(e.fwd).cross(e.pos).normalize(), (Math.random() - 0.5) * 0.8);
+      e.escape.normalize();
+    } else if (e.mode === "out" && range > e.rejoinAt) {
+      e.mode = "in";
+      e.passFor = 7 + Math.random() * 5;
+      e.breakAt = 9 + Math.random() * 9;
+      e.rejoinAt = 55 + Math.random() * 45;
     }
 
-    /* A slow sidestep so they do not fly in on rails. */
-    e.weave -= dt;
-    if (e.weave <= 0) { e.weave = 0.8 + Math.random(); e.weaveDir = Math.random() < 0.5 ? -1 : 1; }
-    const up = e.pos.clone().normalize();
-    e.fwd.applyAxisAngle(up, e.weaveDir * 0.5 * dt).normalize();
-    e.roll += (e.weaveDir * 0.8 - e.roll) * Math.min(1, dt * 3);
+    const want = _want.copy(e.mode === "in" ? toPlayer : e.escape);
+
+    /* ---- PULL UP ----
+       Fighters had no idea the planet was there. One that broke off downward
+       flew into the surface, was clamped to it by the floor below, and then slid
+       around underneath the player at a fixed distance for ever — which in a
+       test read as a fighter that made one pass and then loitered at 39 units
+       and never came back, and in the game would read as an enemy stuck in the
+       ground. Below about twenty-five units the wanted heading is bent outward,
+       hard enough at the bottom to overcome anything else it wants to do. */
+    const altE = e.pos.length() - R;
+    if (altE < ENEMY_FLOOR) {
+      want.addScaledVector(e.pos.clone().normalize(), (1 - altE / ENEMY_FLOOR) * 2.2);
+      want.normalize();
+    }
+
+    const off = Math.acos(Math.max(-1, Math.min(1, e.fwd.dot(want))));
+    if (off > 1e-3) {
+      axis.crossVectors(e.fwd, want);
+      /* THE HALF-TURN TRAP.
+         A fighter pointed exactly opposite to where it wants to go has no
+         defined axis to turn about: the cross product of two antiparallel
+         vectors is zero, so the turn was skipped and it flew on for ever. That
+         is not a corner case here, it is where a fighter ENDS UP — one that
+         broke off downward reached the floor pointing straight down, wanted to
+         go straight up, and was pinned there sliding around under the player at
+         a fixed range for the rest of the run. Any perpendicular will do to
+         start it turning; a moment later the two are no longer opposed and the
+         real axis takes over. */
+      if (axis.lengthSq() < 1e-9) {
+        axis.set(1, 0, 0).cross(e.fwd);
+        if (axis.lengthSq() < 1e-9) axis.set(0, 1, 0).cross(e.fwd);
+      }
+      axis.normalize();
+      e.fwd.applyAxisAngle(axis, Math.min(off, ENEMY_TURN * e.cls.speed * dt)).normalize();
+    }
+
+    /* A slow sidestep on the way in, so an approach is not a straight line to
+       shoot down. Nothing on the way out: a fighter running for distance flies
+       straight, which is also what makes it a target worth chasing. */
+    if (e.mode === "in") {
+      e.weave -= dt;
+      if (e.weave <= 0) { e.weave = 0.8 + Math.random(); e.weaveDir = Math.random() < 0.5 ? -1 : 1; }
+      const up = e.pos.clone().normalize();
+      e.fwd.applyAxisAngle(up, e.weaveDir * 0.35 * dt).normalize();
+    }
+    e.roll += ((e.mode === "in" ? e.weaveDir * 0.8 : 0) - e.roll) * Math.min(1, dt * 3);
 
     /* Break off rather than ram, then come round again. Rarer tiers fly
        faster, which is most of what makes them dangerous.
@@ -1050,7 +1143,11 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
        Geoff: "there also seem to be no enemies... they aren't chasing me."
        Symmetry fixes it: whatever the player gets out there, so do they. */
     const open = cruiseScale(e.pos.length() - R);
-    const speed = (range < 8 ? ENEMY_SPEED * 1.35 : ENEMY_SPEED) * e.cls.speed * open;
+    /* One speed. It used to fly HALF AGAIN AS FAST inside eight units, which is
+       precisely how a fighter turns into a gnat: the closer it got the harder
+       it was to shake. A fighter that is quicker in close is a fighter that
+       never leaves. */
+    const speed = ENEMY_SPEED * e.cls.speed * open;
     e.pos.addScaledVector(e.fwd, speed * dt);
     /* Knockback rides on top and bleeds off, so a hit shoves them visibly
        without taking their flying away for long. */
@@ -1070,7 +1167,8 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       if (e.reload <= 0) e.ammo = ENEMY_AMMO;
     }
     e.fireAt -= dt;
-    if (e.fireAt <= 0 && e.ammo > 0 && range < ENEMY_FIRE_RANGE * open && dot > 0.9) {
+    if (e.mode === "in" && e.fireAt <= 0 && e.ammo > 0
+        && range < ENEMY_FIRE_RANGE * open && dot > 0.9) {
       /* Slower than it was. Four of them at the old rate put up a wall of fire
          that could not be flown through, whatever the player's shield. */
       e.fireAt = 1.6 + Math.random() * 1.6;
@@ -1115,6 +1213,13 @@ function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3, bias = 1)
     reload: 0,
     fireAt: 0.8 + Math.random() * 1.4,
     weave: 1, weaveDir: 1,
+    /* Comes in on a pass. The three distances are drawn per fighter so a flight
+       of them arrives as a flight rather than as one shape moving together. */
+    mode: "in" as const,
+    breakAt: 9 + Math.random() * 9,
+    rejoinAt: 55 + Math.random() * 45,
+    escape: new THREE.Vector3(),
+    passFor: 7 + Math.random() * 5,
     wave: 0,
   };
 }

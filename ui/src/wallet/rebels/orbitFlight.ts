@@ -202,22 +202,6 @@ export interface Stick {
   x: number;          /* -1 left to +1 right, from the keyboard only */
   y: number;          /* -1 dive to +1 climb, from the keyboard only */
   /**
-   * How far the MOUSE moved this frame, in radians of turn.
-   *
-   * Already an angle, not a rate, which is the whole point: the ship turns by
-   * exactly what the mouse did and stops the instant the mouse does. It is
-   * therefore NOT multiplied by dt — the movement already happened over that
-   * frame — and the caller zeroes it once it has been used.
-   *
-   * The old model held a crosshair off centre and read its offset as a turn
-   * RATE, which is the scheme every game that uses it ships a "recentre mouse"
-   * key for. That key is the tell: a stick that can be left deflected with no
-   * way to feel it is a stick that turns your ship while you are not touching
-   * it. It is what Geoff hit three separate times.
-   */
-  lookX: number;
-  lookY: number;
-  /**
    * The visible reticle, when the pointer is NOT locked, as a rate from -1 to 1.
    *
    * Two ways to fly with a mouse, because the game has to work in both cases.
@@ -437,13 +421,13 @@ export function stepFlight(
      happened. Adding them means a player can use either or both without one
      overriding the other, which is what the old "keys win while held" rule did
      and why reaching for an arrow key used to kill the mouse. */
-  const pitch = (stick.y + stick.aimY) * PITCH_RATE * dt - stick.lookY;
+  const pitch = (stick.y + stick.aimY) * PITCH_RATE * dt;
   if (pitch !== 0) {
     _q.setFromAxisAngle(_right, pitch);
     f.fwd.applyQuaternion(_q);
     f.up.applyQuaternion(_q);
   }
-  const yaw = -(stick.x + stick.aimX) * YAW_RATE * dt - stick.lookX;
+  const yaw = -(stick.x + stick.aimX) * YAW_RATE * dt;
   if (yaw !== 0) {
     _q.setFromAxisAngle(f.up, yaw);
     f.fwd.applyQuaternion(_q);

@@ -13,6 +13,7 @@ import {
   TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   type CombatState, type Enemy,
+  ENEMY_SPEED,
 } from "./rebelsCombat";
 
 const out: string[] = [];
@@ -49,6 +50,10 @@ function fighter(at: THREE.Vector3, over: Partial<Enemy> = {}): Enemy {
     cls: FIGHTER, shield: 1,
     vel: new THREE.Vector3(), tumble: new THREE.Vector3(), spin: new THREE.Vector3(),
     flash: 0, ammo: 60, reload: 0, fireAt: 1e9, weave: 1e9, weaveDir: 1, wave: 0,
+    /* Set up mid-approach, and with a long fuse on the break-off, so a test
+       measuring a single pass is not interrupted by the fighter deciding to
+       leave halfway through it. */
+    mode: "in", breakAt: 0, rejoinAt: 1e9, escape: new THREE.Vector3(), passFor: 1e9,
     ...over,
   };
 }
@@ -190,20 +195,35 @@ function run(c: CombatState, frames: number, w = world()) {
   const c = createCombat();
   const w = world({ tips: [pos.clone().addScaledVector(fwd, 25)] });
   startWave(c, 1);
-  let hits = 0;
+  let hits = 0, incoming = 0;
   for (let i = 0; i < 60 * 90; i++) {
     if (i % 7 === 0) fireGuns(c, pos, fwd, up, FOV, ASPECT);
     stepCombat(c, DT, w);
-    for (const e of c.events) if (e.kind === "enemyHit") hits++;
+    for (const e of c.events) {
+      if (e.kind === "enemyHit") hits++;
+      if (e.kind === "playerHit") incoming++;
+    }
+    /* CLEARED, as the game clears it. Without this the list grows all run and
+       every frame re-counts everything before it, so a handful of real events
+       reads as tens of thousands — this loop reported 67,209 rounds taken in
+       ninety seconds, which is 747 a second. Counting a growing array is not
+       counting. */
+    clearEvents(c);
   }
   ok("bullets do not pile up over 90 seconds", c.bullets.length < 120, `${c.bullets.length} alive`);
   ok("nor does wreckage", c.junk.length <= 60, `${c.junk.length} pieces`);
   ok("fighters stay within what the waves have sent",
      c.enemies.length <= waveSize(1) + waveSize(2), `${c.enemies.length}`);
-  /* Shots land. Kills are not asserted any more: a fighter now carries a
-     hundred of shield and rarer ones more, so blind fire from a fixed point
-     lands hits without finishing anyone, which is the point of shields. */
-  ok("shots land during it", hits > 0, `${hits} hits`);
+  /* A FIGHT HAPPENS, measured by what the fighters do rather than by what a
+     fixed gun hits.
+     This used to assert that blind fire from a stationary point landed
+     something, and that stopped being true the day the fighters started making
+     strafing runs: they now spend most of a fight away from the player and
+     arrive at speed, so a gun that never moves and never leads hits nothing.
+     That is the intended difference, not a regression — so what is asserted is
+     that they came, engaged and shot back. */
+  ok("the fighters engage during it", incoming > 0, `${incoming} rounds taken`);
+  void hits;
   ok("hit radius is a sane size next to a fighter", ENEMY_R > 0.5 && ENEMY_R < 3);
 }
 
@@ -904,6 +924,87 @@ function run(c: CombatState, frames: number, w = world()) {
     ok(`a fighter can still catch a cruising ship at ${alt} units`, enemy > player,
        `fighter ${enemy.toFixed(0)} vs ship ${player.toFixed(0)}`);
   }
+}
+
+// FIGHTERS MAKE PASSES. THEY DO NOT SWARM.
+//
+// Geoff: "they are swarming around me like bugs and not moving like a spaceship
+// with a limited ability to turn... they need limited speed and turning ability
+// and need to make strafing runs like a reasonable spaceship."
+//
+// Two things caused it. They turned toward the player every single frame with a
+// turn radius of eight units, tighter than the range they shoot from, so they
+// could hold station on anyone; and they flew HALF AGAIN AS FAST inside eight
+// units, so the closer they got the harder they were to shake.
+{
+  /* One fighter, one stationary player, three minutes. What is measured is the
+     SHAPE of what it does. */
+  const c = createCombat();
+  const player = new THREE.Vector3(0, 0, R + 40);
+  const e = fighter(player.clone().add(new THREE.Vector3(0, 0, 90)), {
+    shield: 1e9, breakAt: 12, rejoinAt: 70, passFor: 9, fireAt: 1e9,
+  });
+  e.fwd.copy(player).sub(e.pos).normalize();
+  c.enemies.push(e);
+
+  const w = { tips: [], playerPos: player, playerFwd: new THREE.Vector3(0, 1, 0), damageScale: 1 };
+  const ranges: number[] = [];
+  let closest = Infinity, furthest = 0, passes = 0, wasIn = true;
+  for (let i = 0; i < 60 * 180; i++) {
+    stepCombat(c, 1 / 60, w);
+    clearEvents(c);
+    if (c.enemies.length === 0) break;
+    const r = player.distanceTo(c.enemies[0].pos);
+    ranges.push(r);
+    closest = Math.min(closest, r);
+    furthest = Math.max(furthest, r);
+    const isIn = c.enemies[0].mode === "in";
+    if (wasIn && !isIn) passes++;
+    wasIn = isIn;
+  }
+
+  ok("the fighter is still in the fight after three minutes", c.enemies.length === 1);
+  ok("it makes repeated passes rather than one", passes >= 3, `${passes} passes`);
+
+  /* THE ONE THAT MATTERS: it must actually go away between passes. A swarming
+     fighter's range barely changes; one making runs swings between close and
+     far. */
+  ok("it breaks off to a real distance", furthest > 60, `furthest ${furthest.toFixed(0)}`);
+  ok("and it does get close on the way in", closest < 20, `closest ${closest.toFixed(0)}`);
+  ok("so the range genuinely swings", furthest - closest > 45,
+     `${closest.toFixed(0)} to ${furthest.toFixed(0)}`);
+
+  /* And it does not simply sit at one distance, which is what an orbit looks
+     like in this measurement: count how much of the time it spends close. */
+  const near = ranges.filter((r) => r < 25).length / ranges.length;
+  ok("and it does not loiter on top of the player", near < 0.4,
+     `${Math.round(near * 100)}% of the time inside 25 units`);
+}
+
+// A fighter cannot turn tighter than the range it shoots from.
+//
+// That is the whole difference between a spaceship and a wasp: if its turn
+// radius is smaller than its firing range it can hold station on you for ever.
+{
+  const c = createCombat();
+  const player = new THREE.Vector3(0, 0, R + 40);
+  const e = fighter(player.clone().add(new THREE.Vector3(120, 0, 0)), { shield: 1e9 });
+  /* Pointing straight away, so what is measured is purely how fast it comes
+     round. */
+  e.fwd.set(1, 0, 0);
+  c.enemies.push(e);
+  const w = { tips: [], playerPos: player, playerFwd: new THREE.Vector3(0, 1, 0), damageScale: 1 };
+
+  const start = e.fwd.clone();
+  for (let i = 0; i < 30; i++) { stepCombat(c, 1 / 60, w); clearEvents(c); }
+  const turned = start.angleTo(c.enemies[0].fwd) * 2;      /* radians a second */
+  const radius = (ENEMY_SPEED * cruiseScale(40)) / turned;
+  ok("a fighter's turn is limited", turned < 0.9, `${turned.toFixed(2)} radians a second`);
+  /* Wider than the distance it breaks off at, which is the property that
+     matters: a fighter that can turn inside its own merge never leaves. It used
+     to come round in eight units at a turn rate of 1.1. */
+  ok("and it cannot turn inside its own break-off", radius > 10,
+     `${radius.toFixed(0)} units to come round`);
 }
 
 console.log(out.join("\n"));

@@ -435,6 +435,9 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const aim = () => g.camera.getWorldDirection(new THREE.Vector3());
   const aimBefore = aim();
   g.fire("pointermove", { clientX: 400, clientY: 60 });
+  /* The reticle went where the pointer went, which is what the mini gun aims
+     down: free aim and steering are the same input. */
+  ok("the reticle follows the pointer", ctl.cursor().y < 0.2, `${ctl.cursor().y.toFixed(2)}`);
   for (let i = 0; i < 40; i++) ctl.frame(1 / 60);
   const swung = aimBefore.angleTo(aim());
   ok("the reticle turns the ship", swung > 0.5, `${swung.toFixed(2)} radians`);
