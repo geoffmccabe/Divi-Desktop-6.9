@@ -14,6 +14,7 @@ pub mod install;
 pub mod mempool;
 pub mod multisig;
 pub mod security;
+pub mod skinbuy;
 pub mod process;
 pub mod names;
 pub mod network;

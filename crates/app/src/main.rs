@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{bearer, c2pa_read, chaintips, chart, coins, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, chart, coins, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, skinbuy, wallet};
 use serde::Serialize;
 
 // Serves community app bundles over their own url scheme. Kept in its own module
@@ -1306,6 +1306,24 @@ async fn fast_send(address: String, amount: f64, passphrase: Option<String>) -> 
     .map_err(|e| e.to_string())?
 }
 
+/// Buy a Skins Gallery skin: one immediate payment to the creator, tagged
+/// on-chain with the skin's id/slug so it can be recognised again later
+/// (see `skinbuy.rs`). Not a payment request -- the buyer pays right now.
+#[tauri::command]
+async fn skin_buy(
+    pay_to_address: String,
+    amount: f64,
+    skin_ref: String,
+    passphrase: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        skinbuy::buy(&cfg, &pay_to_address, amount, &skin_ref, passphrase.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PayReqDto {
@@ -1987,6 +2005,7 @@ fn main() {
             resume_staking,
             send_coins,
             fast_send,
+            skin_buy,
             tx_status,
             divi_prices,
             ai_set_key,

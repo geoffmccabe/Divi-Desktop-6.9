@@ -1828,3 +1828,8 @@ code, .mono { font-family: var(--font-mono); }
 .gallery-detail-author { margin: 0; font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
 .gallery-detail-desc { margin: 0; color: hsl(var(--foreground)); line-height: 1.5; }
 .gallery-price { margin: 0; font-weight: 700; color: hsl(var(--primary)); }
+
+.gallery-buy-confirm { display: flex; flex-direction: column; gap: 8px; }
+.gallery-buy-actions { display: flex; gap: 8px; }
+.gallery-buy-done { display: flex; flex-direction: column; gap: 4px; }
+.gallery-buy-txid { font-size: 0.72rem; word-break: break-all; opacity: 0.75; }

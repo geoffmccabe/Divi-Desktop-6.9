@@ -420,6 +420,11 @@ export const sendCoins = (address: string, amount: number, passphrase?: string) 
 export const fastSend = (address: string, amount: number, passphrase?: string) =>
   invoke<string>("fast_send", { address, amount, passphrase: passphrase ?? null });
 
+// Skins Gallery purchase: one immediate payment to the skin's creator, tagged
+// on-chain with the skin's slug so it can be recognised again later.
+export const buySkin = (payToAddress: string, amount: number, skinRef: string, passphrase?: string) =>
+  invoke<string>("skin_buy", { payToAddress, amount, skinRef, passphrase: passphrase ?? null });
+
 // Live status of one wallet transaction, for the Fast Send tracker. Negative
 // `confirmations` means the node sees a conflicting (double-spent) transaction.
 export interface TxStatus {
