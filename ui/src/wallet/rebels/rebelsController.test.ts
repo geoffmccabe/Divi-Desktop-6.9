@@ -89,8 +89,20 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const camStart = g.camera.position.clone();
   ok("near plane opened up so the ship is not clipped", g.camera.near < nearStart && g.camera.near <= 0.1,
      `${nearStart} -> ${g.camera.near}`);
+  /* A second of the approach, then launch, then long enough for the dive to
+     finish, which is what actually happens. */
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  const orbit = g.camera.position.length();
+  ok("the approach pulls back to frame the globe", orbit > R,
+     `radius ${orbit.toFixed(1)}`);
   ctl.launch();
-  for (let i = 0; i < 120; i++) ctl.frame(1 / 60);
+  let lowest = Infinity;
+  for (let i = 0; i < 60 * 6; i++) {
+    ctl.frame(1 / 60);
+    lowest = Math.min(lowest, g.camera.position.length());
+  }
+  ok("the dive never passes through the planet", lowest >= R,
+     `closest ${lowest.toFixed(1)}`);
   ok("frame moves the map's camera", g.camera.position.distanceTo(camStart) > 1,
      `moved ${g.camera.position.distanceTo(camStart).toFixed(1)}`);
   ok("the camera stays outside the planet", g.camera.position.length() > R,
@@ -128,13 +140,13 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
   ctl.launch();
-  ctl.frame(1 / 60);
-  /* Checked on the FIRST frame: six seconds later you have flown a hundred
-     units away, which is the game working, not the spawn being wrong. */
-  ok("you launch from your own tower, not from nowhere",
+  /* The dive lands you at your own tower. Checked once it has finished, not
+     during it. */
+  for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);
+  ok("the dive ends at your own tower",
      g.camera.position.distanceTo(home) < 40,
      `${g.camera.position.distanceTo(home).toFixed(1)} from the tip`);
-  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
+  for (let i = 0; i < 60 * 3; i++) ctl.frame(1 / 60);
   const h = ctl.hud();
   ok("shields and ammo start full", h.shields === MAX_SHIELD && h.ammo <= MAX_AMMO);
   ctl.detach();

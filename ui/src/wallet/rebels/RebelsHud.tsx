@@ -25,19 +25,61 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
     return () => clearTimeout(t);
   }, []);
 
-  /* The crosshair follows the pointer directly rather than through React. At
-     sixty moves a second a setState per move makes the stick feel soggy. */
+  /* The crosshair is read from the controller every frame rather than from
+     pointer events. Under pointer lock there is no cursor position to read, only
+     movement, so the controller owns where the crosshair is and this just draws
+     it. Going through React state instead would make aiming feel soggy. */
   useEffect(() => {
-    const onMove = (e: PointerEvent) => {
+    let raf = 0;
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
       const wrap = wrapRef.current, cross = crossRef.current;
       if (!wrap || !cross) return;
+      const c = ctl.cursor();
       const r = wrap.getBoundingClientRect();
-      cross.style.left = `${e.clientX - r.left}px`;
-      cross.style.top = `${e.clientY - r.top}px`;
+      cross.style.left = `${c.x * r.width}px`;
+      cross.style.top = `${c.y * r.height}px`;
     };
-    window.addEventListener("pointermove", onMove);
-    return () => window.removeEventListener("pointermove", onMove);
-  }, []);
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [ctl]);
+
+  /* Escape leaves. The browser hands the pointer back when it is pressed, which
+     the controller notices; this covers the case where the webview would not
+     take the pointer in the first place. */
+  useEffect(() => {
+    ctl.onEscape(onExit);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.preventDefault(); onExit(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [ctl, onExit]);
+
+  /* Fence the game in. With the pointer locked this never fires, because the
+     cursor cannot leave the canvas at all. Without a lock it is the fallback:
+     a click that lands outside the map is swallowed rather than being allowed
+     to navigate away and unmount the game mid-flight. */
+  useEffect(() => {
+    if (!hud.launched || hud.dead) return;
+    const swallow = (e: Event) => {
+      const wrap = wrapRef.current;
+      if (!wrap) return;
+      const map = wrap.closest(".netmap-canvas-wrap");
+      if (map && e.target instanceof Node && !map.contains(e.target)) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+    for (const k of ["pointerdown", "mousedown", "click"]) {
+      document.addEventListener(k, swallow, true);
+    }
+    return () => {
+      for (const k of ["pointerdown", "mousedown", "click"]) {
+        document.removeEventListener(k, swallow, true);
+      }
+    };
+  }, [hud.launched, hud.dead]);
 
   const pct = (v: number) => `${Math.round(Math.max(0, Math.min(1, v)) * 100)}%`;
   /* One globe unit is about 64 km of real Earth, which is what makes this a
@@ -99,7 +141,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       </div>
 
       <button type="button" className="orbit-exit" onClick={onExit} title="Back to the map">
-        BACK TO MAP
+        {hud.launched ? "ESC  BACK TO MAP" : "BACK TO MAP"}
       </button>
 
       {hud.broken && (

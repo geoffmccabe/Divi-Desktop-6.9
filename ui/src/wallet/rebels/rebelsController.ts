@@ -15,7 +15,7 @@ import {
 } from "./orbitFlight";
 import { createCombat, stepCombat, fireGuns, type CombatState } from "./rebelsCombat";
 import { createFx, makeFighter, type Fx } from "./rebelsFx";
-import { playGunSound, primeGunSound } from "./rebelsAudio";
+import { playGunSound, primeGunSound, startRechargeSound, stopRechargeSound } from "./rebelsAudio";
 
 export interface HudState {
   ready: boolean;
@@ -48,6 +48,10 @@ const BLANK: HudState = {
 const ENEMY_SCALE = 0.85;
 
 export interface RebelsController extends GlobeFlight {
+  cursor(): { x: number; y: number };
+  /** Called when the player presses Escape, which the browser signals by
+   *  releasing the pointer. */
+  onEscape(fn: () => void): void;
   hud(): HudState;
   subscribe(fn: (h: HudState) => void): () => void;
   launch(): void;
@@ -75,18 +79,50 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let ipList: string[] = [];
   let homeIndex = -1;
   let flight: Flight | null = null;
+  /* Three phases, and the whole point is that there is never a cut between
+     them. APPROACH eases the map's own view until the globe fills the frame,
+     with the launch card over it. DIVE flies from there down to the player's
+     own node in one continuous motion. FLY hands over to the cockpit, at
+     exactly the pose the dive ended on, so the handover cannot be seen. */
+  let phase: "approach" | "dive" | "fly" = "approach";
   let flying = false;
-  /* Before launch the camera is NOT taken over. It eases from wherever the map
-     had it to a framing where the globe just fills the view, and the launch
-     card sits over that. Cutting straight to a cockpit on the surface is what
-     made it feel like the map had been replaced by something else. */
   let approach = 0;
-  let approachFrom = new THREE.Vector3();
+  const approachFrom = new THREE.Vector3();
   let approachTo = 0;
+  /** How long the flight down from orbit takes. */
+  const DIVE_SECONDS = 4.2;
+  let diveT = 0;
+  const diveFromPos = new THREE.Vector3();
+  const diveFromQuat = new THREE.Quaternion();
+  const endQuat = new THREE.Quaternion();
+  const dirA = new THREE.Vector3();
+  const dirB = new THREE.Vector3();
+  const dirMix = new THREE.Vector3();
+
+  /** Where the crosshair is, 0..1 across the canvas. Live, not React state:
+   *  the cockpit reads it every frame and so does the HUD. */
+  const cursor = { x: 0.5, y: 0.5 };
+  let locked = false;
+  let globeRadius = 100;
+  let onEscape: (() => void) | null = null;
+
+  /** Great-circle blend between two directions, so the dive curves round the
+     planet instead of cutting a chord through it. */
+  function slerpDir(a: THREE.Vector3, b: THREE.Vector3, k: number, out: THREE.Vector3) {
+    const dot = Math.max(-1, Math.min(1, a.dot(b)));
+    const omega = Math.acos(dot);
+    if (omega < 1e-4) return out.copy(b);
+    const sin = Math.sin(omega);
+    return out.copy(a).multiplyScalar(Math.sin((1 - k) * omega) / sin)
+      .addScaledVector(b, Math.sin(k * omega) / sin).normalize();
+  }
   /* Near and far get changed so the ship is not clipped at arm's length; the
      map's own values are put back on the way out. */
   let savedNear = 0, savedFar = 0;
   let hudAt = 0;
+  /* Last frame's docking progress, so the station sound starts and stops on
+     the edges rather than being re-triggered sixty times a second. */
+  let wasDocking = false;
 
   const stick: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false };
   const keys: Record<string, boolean> = {};
@@ -109,13 +145,36 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* ---------------- input ----------------
      The pointer is a stick: its offset from the middle of the canvas is the
      deflection, so the crosshair goes where the hand goes. */
-  function onMove(e: PointerEvent) {
-    if (!dom) return;
-    const r = dom.getBoundingClientRect();
-    const nx = ((e.clientX - r.left) / r.width) * 2 - 1;
-    const ny = ((e.clientY - r.top) / r.height) * 2 - 1;
+  function applyCursor() {
+    const nx = cursor.x * 2 - 1;
+    const ny = cursor.y * 2 - 1;
     stick.x = Math.max(-1, Math.min(1, nx * 1.25));
     stick.y = Math.max(-1, Math.min(1, -ny * 1.25));
+  }
+  function onMove(e: PointerEvent) {
+    if (!dom) return;
+    if (locked) {
+      /* Under pointer lock there is no cursor position, only movement, so the
+         crosshair is ours to keep and to clamp. That clamping is the whole
+         reason for the lock: the pointer can no longer wander out of the game
+         and click something that closes it. */
+      const r = dom.getBoundingClientRect();
+      cursor.x = Math.max(0, Math.min(1, cursor.x + e.movementX / r.width));
+      cursor.y = Math.max(0, Math.min(1, cursor.y + e.movementY / r.height));
+    } else {
+      const r = dom.getBoundingClientRect();
+      cursor.x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+      cursor.y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+    }
+    applyCursor();
+  }
+
+  /* Escape releases the lock, which the browser does for us, and that is the
+     signal to leave the game. Nothing else can take the pointer away. */
+  function onLockChange() {
+    const was = locked;
+    locked = typeof document !== "undefined" && document.pointerLockElement === dom;
+    if (was && !locked && flying) onEscape?.();
   }
   function onDown(e: PointerEvent) { stick.firing = true; e.preventDefault(); }
   function onUp() { stick.firing = false; }
@@ -188,6 +247,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* Where the globe exactly fills the height of the frame. Slightly
            inside it, so it fills rather than floats. */
         const half = (camera.fov * Math.PI) / 360;
+        globeRadius = api.radius;
         approachTo = (api.radius / Math.sin(half)) * 0.92;
         approachFrom.copy(camera.position);
         if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
@@ -199,6 +259,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         window.addEventListener("keydown", onKeyDown);
         window.addEventListener("keyup", onKeyUp);
         window.addEventListener("blur", onBlur);
+        if (typeof document !== "undefined") {
+          document.addEventListener("pointerlockchange", onLockChange);
+        }
 
         setHud({
           ready: true,
@@ -221,7 +284,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* ---- before launch: ease the map's own view in or out until the
                globe just fills the frame, keeping whatever direction it was
                already looking from ---- */
-        if (!flying) {
+        if (phase === "approach") {
           approach = Math.min(1, approach + dt / 3.2);
           /* Smoothstep, so it starts and stops gently instead of lurching. */
           const k = approach * approach * (3 - 2 * approach);
@@ -231,6 +294,38 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           camera.up.set(0, 1, 0);
           camera.lookAt(0, 0, 0);
           fx.step(dt, camera);
+          return;
+        }
+
+        /* ---- the dive ----
+           One unbroken move from orbit down to the player's own tower. The
+           direction travels the great circle so it curves round the planet
+           rather than cutting through it, and the altitude falls on a steeper
+           curve so it hangs in space for a moment and then drops. It ends on
+           EXACTLY the cockpit pose, which is what makes the handover to live
+           flight invisible. */
+        if (phase === "dive") {
+          diveT = Math.min(1, diveT + dt / DIVE_SECONDS);
+          const k = diveT * diveT * (3 - 2 * diveT);
+
+          s.up.copy(flight.pos).normalize();
+          s.target.copy(flight.pos).addScaledVector(flight.fwd, 10);
+          s.m4.lookAt(flight.pos, s.target, s.up);
+          endQuat.setFromRotationMatrix(s.m4);
+
+          dirA.copy(diveFromPos).normalize();
+          dirB.copy(flight.pos).normalize();
+          slerpDir(dirA, dirB, k, dirMix);
+          const rA = diveFromPos.length();
+          const rB = flight.pos.length();
+          /* Altitude on a squarer curve than the ground track: the descent
+             starts gently and finishes fast, which is what a dive feels like. */
+          const rk = k * k * (3 - 2 * k) * 0.35 + k * k * k * 0.65;
+          camera.position.copy(dirMix).multiplyScalar(rA + (rB - rA) * rk);
+          camera.quaternion.slerpQuaternions(diveFromQuat, endQuat, k);
+          camera.updateMatrixWorld();
+          fx.step(dt, camera);
+          if (diveT >= 1) phase = "fly";
           return;
         }
 
@@ -289,7 +384,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             fx.boom(ev.at, 0.7, true);
           }
         }
-        if (flight.shields <= 0 && !hud.dead) setHud({ dead: true });
+        if (flight.shields <= 0 && !hud.dead) {
+          setHud({ dead: true });
+          /* Hand the pointer back, or the "launch again" button cannot be
+             clicked. */
+          if (typeof document !== "undefined" && document.pointerLockElement === dom) {
+            document.exitPointerLock();
+          }
+        }
 
         /* Keep one model per live fighter, cloning and hiding rather than
            building and destroying. */
@@ -310,6 +412,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           m.quaternion.setFromRotationMatrix(s.m4);
           s.qBank.setFromAxisAngle(s.zAxis, e.roll);
           m.quaternion.multiply(s.qBank);
+        }
+
+        /* The recharging station, on for exactly as long as the resupply. */
+        const docking = flight.dock > 0;
+        if (docking !== wasDocking) {
+          wasDocking = docking;
+          if (docking) startRechargeSound(); else stopRechargeSound();
         }
 
         fx.drawBullets(combat.bullets);
@@ -339,6 +448,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     },
 
     detach() {
+      stopRechargeSound();
+      wasDocking = false;
       if (dom) {
         dom.removeEventListener("pointermove", onMove);
         dom.removeEventListener("pointerdown", onDown);
@@ -347,6 +458,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("pointerlockchange", onLockChange);
+        if (document.pointerLockElement === dom) document.exitPointerLock();
+      }
+      locked = false;
       if (camera && savedNear) {
         camera.near = savedNear;
         camera.far = savedFar;
@@ -373,16 +489,47 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       setHud({ ready: false });
     },
 
+    /** The live crosshair, 0..1 across the canvas. Read every frame by the HUD;
+     *  putting it through React state would make aiming feel soggy. */
+    cursor: () => cursor,
+    onEscape(fn) { onEscape = fn; },
     hud: () => hud,
     subscribe(fn) { listeners.add(fn); fn(hud); return () => { listeners.delete(fn); }; },
     launch() {
       flying = true;
       /* Decoding on the first trigger pull would swallow that shot. The launch
-         button is also the gesture that lets a webview start audio at all. */
+         button is also the gesture that lets a webview start audio at all, and
+         the gesture a browser requires before it will hand over the pointer. */
       primeGunSound();
+      startAt(homeIndex);
+      if (camera) {
+        diveFromPos.copy(camera.position);
+        diveFromQuat.copy(camera.quaternion);
+      }
+      /* If the approach has not moved the camera yet, launching this instant
+         would dive from wherever it happened to be, and from inside the planet
+         if that was the origin. Start from the approach framing instead. */
+      if (diveFromPos.length() < globeRadius * 1.05) {
+        diveFromPos.copy(approachFrom.lengthSq() > 1 ? approachFrom : new THREE.Vector3(0, 0, 1))
+          .normalize().multiplyScalar(approachTo || globeRadius * 2.4);
+      }
+      diveT = 0;
+      phase = "dive";
+      cursor.x = 0.5; cursor.y = 0.5;
+      applyCursor();
+      /* Confine the pointer to the game. Without this a stray click lands on
+         the sidebar and the panel unmounts mid-flight. If the webview refuses,
+         the game still plays, it just is not fenced in. */
+      try { dom?.requestPointerLock?.(); } catch { /* not supported here */ }
       setHud({ launched: true, dead: false });
     },
-    respawn() { startAt(homeIndex); flying = true; setHud({ launched: true }); },
+    respawn() {
+      startAt(homeIndex);
+      flying = true;
+      phase = "fly";
+      try { dom?.requestPointerLock?.(); } catch { /* not supported here */ }
+      setHud({ launched: true });
+    },
     dispose() { listeners.clear(); },
   };
 }

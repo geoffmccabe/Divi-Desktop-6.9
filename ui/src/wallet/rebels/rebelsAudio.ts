@@ -11,6 +11,7 @@
 // double shot rather than as one louder shot.
 
 import laserUrl from "../../assets/laser_shot_v1.mp3";
+import rechargeUrl from "../../assets/recharge_station_v1.mp3";
 import { audioContext, masterVolume } from "../../sound";
 
 /** How far speed, pitch and volume may wander, either way. */
@@ -19,8 +20,13 @@ const WOBBLE = 0.1;
 const SECOND_BARREL = 0.05;
 
 let buffer: AudioBuffer | null = null;
+let rechargeBuffer: AudioBuffer | null = null;
 let loading: Promise<void> | null = null;
 let failed = false;
+
+/** The recharging loop, while it is running. */
+let rechargeNode: AudioBufferSourceNode | null = null;
+let rechargeGain: GainNode | null = null;
 
 /**
  * Turn the bundled sample into something Web Audio can play.
@@ -40,14 +46,14 @@ function toArrayBuffer(url: string): Promise<ArrayBuffer> {
   return Promise.resolve(bytes.buffer);
 }
 
-/** Decode once, on the first shot, and hold it. */
+/** Decode both samples once, at launch, and hold them. */
 export function primeGunSound(): void {
-  if (buffer || loading || failed) return;
+  if (loading || failed || (buffer && rechargeBuffer)) return;
   const ctx = audioContext();
   if (!ctx) { failed = true; return; }
-  loading = toArrayBuffer(laserUrl)
-    .then((raw) => ctx.decodeAudioData(raw))
-    .then((decoded) => { buffer = decoded; })
+  const load = (url: string) => toArrayBuffer(url).then((raw) => ctx.decodeAudioData(raw));
+  loading = Promise.all([load(laserUrl), load(rechargeUrl)])
+    .then(([gun, recharge]) => { buffer = gun; rechargeBuffer = recharge; })
     .catch(() => {
       /* Silence is not worth breaking a game over. */
       failed = true;
@@ -85,4 +91,51 @@ export function playGunSound(): void {
   const now = ctx.currentTime;
   shot(ctx, now, volume);
   shot(ctx, now + SECOND_BARREL, volume);
+}
+
+/**
+ * The recharging station, while you sit on the pad.
+ *
+ * Looped rather than fired once: a resupply at your own tower takes about a
+ * second and at anyone else's about two, and sitting there holds it longer
+ * still, so a one-shot would either stop early or trail off after you left.
+ * Calling this twice is harmless; the second call is ignored.
+ */
+export function startRechargeSound(): void {
+  const ctx = audioContext();
+  if (!ctx || failed || rechargeNode || !rechargeBuffer) return;
+  const volume = masterVolume();
+  if (!(volume > 0)) return;
+  const src = ctx.createBufferSource();
+  src.buffer = rechargeBuffer;
+  src.loop = true;
+  const gain = ctx.createGain();
+  /* Eased in, because a looping sample snapped on at full level clicks. */
+  gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(volume, ctx.currentTime + 0.08);
+  src.connect(gain);
+  gain.connect(ctx.destination);
+  src.start();
+  rechargeNode = src;
+  rechargeGain = gain;
+}
+
+/** Undocked, finished, destroyed, or the panel closed. Fades rather than cuts. */
+export function stopRechargeSound(): void {
+  const ctx = audioContext();
+  const node = rechargeNode;
+  const gain = rechargeGain;
+  rechargeNode = null;
+  rechargeGain = null;
+  if (!node) return;
+  if (!ctx || !gain) { try { node.stop(); } catch { /* already stopped */ } return; }
+  const end = ctx.currentTime + 0.12;
+  try {
+    gain.gain.cancelScheduledValues(ctx.currentTime);
+    gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, end);
+    node.stop(end + 0.02);
+  } catch {
+    try { node.stop(); } catch { /* already stopped */ }
+  }
 }
