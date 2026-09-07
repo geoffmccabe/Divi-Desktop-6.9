@@ -13,6 +13,8 @@
 import laserUrl from "../../assets/laser_shot_v1.mp3";
 import rechargeUrl from "../../assets/recharge_station_v1.mp3";
 import torpedoUrl from "../../assets/torpedo_v1.mp3";
+import torpedoBlastUrl from "../../assets/torpedo_explosion_v1.mp3";
+import shipBlastUrl from "../../assets/spaceship_explosion_v1.mp3";
 import { audioContext, masterVolume } from "../../sound";
 
 /** How far speed, pitch and volume may wander, either way. */
@@ -23,6 +25,8 @@ const SECOND_BARREL = 0.05;
 let buffer: AudioBuffer | null = null;
 let rechargeBuffer: AudioBuffer | null = null;
 let torpedoBuffer: AudioBuffer | null = null;
+let torpedoBlastBuffer: AudioBuffer | null = null;
+let shipBlastBuffer: AudioBuffer | null = null;
 let loading: Promise<void> | null = null;
 let failed = false;
 
@@ -50,13 +54,21 @@ function toArrayBuffer(url: string): Promise<ArrayBuffer> {
 
 /** Decode both samples once, at launch, and hold them. */
 export function primeGunSound(): void {
-  if (loading || failed || (buffer && rechargeBuffer && torpedoBuffer)) return;
+  if (loading || failed || (buffer && rechargeBuffer && torpedoBuffer
+      && torpedoBlastBuffer && shipBlastBuffer)) return;
   const ctx = audioContext();
   if (!ctx) { failed = true; return; }
   const load = (url: string) => toArrayBuffer(url).then((raw) => ctx.decodeAudioData(raw));
-  loading = Promise.all([load(laserUrl), load(rechargeUrl), load(torpedoUrl)])
-    .then(([gun, recharge, torpedo]) => {
-      buffer = gun; rechargeBuffer = recharge; torpedoBuffer = torpedo;
+  loading = Promise.all([
+    load(laserUrl), load(rechargeUrl), load(torpedoUrl),
+    load(torpedoBlastUrl), load(shipBlastUrl),
+  ])
+    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast]) => {
+      buffer = gun;
+      rechargeBuffer = recharge;
+      torpedoBuffer = torpedo;
+      torpedoBlastBuffer = torpedoBlast;
+      shipBlastBuffer = shipBlast;
     })
     .catch(() => {
       /* Silence is not worth breaking a game over. */
@@ -144,66 +156,33 @@ export function stopRechargeSound(): void {
   }
 }
 
-/** A torpedo leaving the tube. One shot, lightly varied like the guns. */
-export function playTorpedoSound(): void {
+/** Play a decoded sample once, lightly varied so repeats never sound identical. */
+function once(buf: AudioBuffer | null, loudness = 1): void {
   const ctx = audioContext();
-  if (!ctx || failed || !torpedoBuffer) return;
+  if (!ctx || failed || !buf) return;
   const volume = masterVolume();
   if (!(volume > 0)) return;
   const src = ctx.createBufferSource();
-  src.buffer = torpedoBuffer;
+  src.buffer = buf;
   src.playbackRate.value = wobble();
   const gain = ctx.createGain();
-  gain.gain.value = volume * wobble();
+  gain.gain.value = volume * loudness * wobble();
   src.connect(gain);
   gain.connect(ctx.destination);
   src.start();
 }
 
-/**
- * A torpedo going off.
- *
- * ⚠ PLACEHOLDER. Geoff is making the real sample. When it arrives, drop it in
- * `ui/src/assets/`, import it beside the others, decode it in primeGunSound
- * alongside them, and play it here the way playTorpedoSound does. Everything
- * below this comment is then deleted; nothing else has to change.
- *
- * Until then it is synthesised, so a detonation is not silent: a deep body with
- * a noise crack over it.
- */
+/** A torpedo leaving the tube. */
+export function playTorpedoSound(): void {
+  once(torpedoBuffer);
+}
+
+/** A fighter coming apart. */
+export function playShipExplosion(): void {
+  once(shipBlastBuffer, 1.1);
+}
+
+/** A torpedo going off. The big one, so it is given a little more level. */
 export function playTorpedoBlast(): void {
-  const ctx = audioContext();
-  if (!ctx || failed) return;
-  const volume = masterVolume();
-  if (!(volume > 0)) return;
-  const now = ctx.currentTime;
-
-  const body = ctx.createOscillator();
-  const bodyGain = ctx.createGain();
-  body.type = "sine";
-  body.frequency.setValueAtTime(150, now);
-  body.frequency.exponentialRampToValueAtTime(28, now + 0.9);
-  bodyGain.gain.setValueAtTime(volume * 1.4, now);
-  bodyGain.gain.exponentialRampToValueAtTime(0.0008, now + 1.1);
-  body.connect(bodyGain);
-  bodyGain.connect(ctx.destination);
-  body.start(now);
-  body.stop(now + 1.15);
-
-  const len = Math.floor(ctx.sampleRate * 0.7);
-  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len) ** 2;
-  const crack = ctx.createBufferSource();
-  crack.buffer = buf;
-  const filter = ctx.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.frequency.setValueAtTime(2600, now);
-  filter.frequency.exponentialRampToValueAtTime(180, now + 0.7);
-  const crackGain = ctx.createGain();
-  crackGain.gain.value = volume * 1.1;
-  crack.connect(filter);
-  filter.connect(crackGain);
-  crackGain.connect(ctx.destination);
-  crack.start(now);
+  once(torpedoBlastBuffer, 1.25);
 }

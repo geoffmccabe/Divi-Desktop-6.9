@@ -22,7 +22,7 @@ import { userWonRecently } from "../stakeWin";
 import { createFx, makeFighter, makeShieldRig, type Fx, type ShieldRig } from "./rebelsFx";
 import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
-  playTorpedoSound, playTorpedoBlast,
+  playTorpedoSound, playTorpedoBlast, playShipExplosion,
 } from "./rebelsAudio";
 
 export interface HudState {
@@ -424,6 +424,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             fx.boom(ev.at, 1.4, "cold");
           } else if (ev.kind === "enemyDown") {
             fx.boom(ev.at, 3, "hot");
+            playShipExplosion();
           } else if (ev.kind === "enemyHit") {
             /* A small spark where the shot landed. The bubble does the rest. */
             fx.boom(ev.at, ev.power, "cold");
