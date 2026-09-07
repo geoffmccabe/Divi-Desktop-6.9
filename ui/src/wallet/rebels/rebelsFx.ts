@@ -9,6 +9,7 @@
 import * as THREE from "three";
 import diviLogo from "../../assets/divi-coin.webp";
 import { DRONE_SIZE } from "./rebelsFlock";
+import { SHIELD_SHOW } from "./rebelsCombat";
 
 const BULLET_CAP = 160;
 const SHARD_CAP = 320;
@@ -18,6 +19,8 @@ const JUNK_CAP = 64;
 const TRACER_CAP = 220;
 const COIN_CAP = 400;
 const DOCK_RUNGS = 14;
+/** How long a struck drone glows white. */
+const FLASH_FOR = 0.32;
 /** Swarm drones on screen at once. Matches the simulation's own cap. */
 const DRONE_CAP = 144;
 /** Their rounds. One per drone per thirty seconds, but they last a while. */
@@ -448,9 +451,17 @@ export function createFx(): Fx {
            flashing; out of step it reads as a swarm of living things. */
         const beat = Math.sin(now * 2.4 + (d.pulse ?? 0));
         const size = DRONE_SIZE * (1 + beat * 0.16);
-        /* A hit swells and whitens it for a moment, which is the only feedback
-           there is that a sphere with no cockpit and no wings was struck. */
-        const struck = Math.min(1, d.flash / 0.5);
+        /* A hit whitens it for a moment, which is the only feedback there is
+           that a sphere with no cockpit and no wings was struck.
+
+           Read off the TOP of the timer, not the bottom. A hit sets flash to
+           SHIELD_SHOW, which is nearly two and a half seconds, because a
+           fighter's shield bubble is meant to linger. Dividing that by a half
+           second the obvious way would peg a drone at full white for two
+           solid seconds after every graze, and a swarm under fire would read
+           as a swarm of white balls. What is wanted is a flash, so only the
+           first third of a second of the timer counts. */
+        const struck = Math.max(0, (d.flash - (SHIELD_SHOW - FLASH_FOR)) / FLASH_FOR);
 
         colour.setHex(d.cls.colour);
         droneCore.setMatrixAt(n, m4.compose(d.pos, q.identity(), scl.setScalar(size)));
