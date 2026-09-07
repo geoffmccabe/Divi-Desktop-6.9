@@ -31,6 +31,8 @@ export interface SpaceBody {
   /** How wide it is drawn, in scene units. */
   diameter: number;
   object: THREE.Object3D;
+  /** The colour multiplied through the greyscale mask. */
+  tint: number;
   /** Radians per second about its own axis. */
   spin: number;
   axis: THREE.Vector3;
@@ -52,24 +54,60 @@ const PLANET_KINDS = [
 ];
 
 /**
- * Where each planet sits.
+ * Which way each planet lies from Earth.
  *
- * The direction is random but FIXED: a hash of the planet's number rather than
- * Math.random, so the sky is the same sky every time the game is opened. A sky
- * that rearranges itself between sessions is not an environment, it is noise.
+ * A FIBONACCI SPHERE, not a hash.
+ *
+ * The first version hashed the planet's number and mapped that onto a sphere,
+ * which is the usual trick and is fine for a thousand points. For fourteen it
+ * is not: the hash happened to put eleven of them below the equator and most of
+ * those on one side, and the sky came out as a clump with nothing opposite it.
+ * Geoff: "they are all in a cluster in the same area on one side of the Earth."
+ *
+ * A Fibonacci lattice has no such luck in it. Walking the golden angle round
+ * while stepping evenly down the axis spreads any number of points about as
+ * evenly as points can be spread on a sphere, so Earth ends up genuinely in the
+ * middle of them. Still completely deterministic, so it is the same sky every
+ * time; a sky that rearranges itself between sessions is not an environment.
+ *
+ * The order is then shuffled by a fixed permutation, so the sizes do not
+ * spiral neatly from pole to pole: without that, the planets grow in a visible
+ * band as you fly along the lattice, which reads as a pattern rather than as a
+ * solar system.
  */
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
 function directionFor(n: number): THREE.Vector3 {
-  /* A cheap deterministic hash, then the standard even-sphere mapping so the
-     fourteen do not clump around a pole. */
-  const h = Math.sin(n * 127.1 + 311.7) * 43758.5453;
-  const a = h - Math.floor(h);
-  const h2 = Math.sin(n * 269.5 + 183.3) * 43758.5453;
-  const b = h2 - Math.floor(h2);
-  const z = 1 - 2 * a;
-  const r = Math.sqrt(Math.max(0, 1 - z * z));
-  const phi = b * Math.PI * 2;
-  return new THREE.Vector3(r * Math.cos(phi), z, r * Math.sin(phi));
+  /* A fixed co-prime step round the fourteen, which mixes the order without
+     changing the set of directions. 5 and 14 share no factors, so it visits
+     every one exactly once. */
+  const i = ((n - 1) * 5) % PLANET_COUNT;
+  /* Evenly down the axis, avoiding the exact poles. */
+  const y = 1 - (2 * (i + 0.5)) / PLANET_COUNT;
+  const r = Math.sqrt(Math.max(0, 1 - y * y));
+  const theta = GOLDEN_ANGLE * i;
+  return new THREE.Vector3(r * Math.cos(theta), y, r * Math.sin(theta));
 }
+
+/* ---- colour ----
+   Synty's planet texture is a greyscale mask, so the colour is ours to choose
+   and there is one per world, matched to what it is said to be below. */
+const PLANET_TINTS = [
+  0xb9a894, /* Ceralt       barren rock    */
+  0xb2643c, /* Bhoro        iron           */
+  0xcfe6f2, /* Ixion Minor  ice            */
+  0xd4472a, /* Kelvarr      volcanic       */
+  0xdfc178, /* Ondrus       desert         */
+  0x2f7fd0, /* Tessimar     ocean          */
+  0x4fbf8a, /* Halcyne      terraformed    */
+  0xe0a63f, /* Vaskir Prime gas giant      */
+  0xf0d9a0, /* Ormundi      ringed giant   */
+  0x8b5bd6, /* Threx        storm          */
+  0x7fd8e8, /* Calladon     frozen giant   */
+  0xd45bb5, /* Sepharis     crystalline    */
+  0x3f8f4a, /* Yggdral      forest         */
+  0x2f6e73, /* Morrowain    shrouded giant */
+];
 
 /** Every planet, described. Cheap, synchronous, and has nothing to do with
  *  whether the models have arrived yet. */
@@ -92,6 +130,7 @@ export function planetLayout(): Array<Omit<SpaceBody, "object">> {
       detail: `${PLANET_KINDS[n - 1] ?? "Unclassified"} · ${(diameter / 200).toFixed(1)} Earth diameters · ${Math.round(distance * 64).toLocaleString()} km out`,
       at,
       diameter,
+      tint: PLANET_TINTS[n - 1] ?? 0xb9a894,
       spin,
       axis: tilt,
     });
@@ -132,8 +171,10 @@ export function createSpace(): {
     void loadModel(spec.id)
       .then((proto) => {
         if (dead) return;
-        /* Unlit: this lives in the map's scene, whose lighting is not ours. */
-        const model = unitCopy(proto, { unlit: true });
+        /* Unlit because this lives in the map's scene, whose lighting is not
+           ours; tinted because the planet texture is a greyscale mask and the
+           colour has to come from somewhere. */
+        const model = unitCopy(proto, { unlit: true, tint: spec.tint });
         model.scale.setScalar(spec.diameter);
         holder.add(model);
       })

@@ -124,7 +124,18 @@ function loadAtlas(url: string): THREE.Texture {
   return t;
 }
 
-/** The right atlas for a model, by what it is. */
+/**
+ * The right atlas for a model, by what it is.
+ *
+ * A word about the planet one, because it is not what it looks like. Synty's
+ * planet texture is a GREYSCALE MASK: a shaded ball on white, with no colour in
+ * it at all. In Unity each planet gets its own material colour multiplied
+ * through it, which is how one 22KB file makes fourteen different worlds.
+ *
+ * Applied on its own it renders exactly as Geoff reported: "all the planets
+ * have only white and grey". So planets are tinted at the point of use, and the
+ * mask supplies the shading rather than the colour.
+ */
 function atlasFor(id: string): THREE.Texture {
   if (/Planet/i.test(id)) {
     planetAtlas ??= loadAtlas(planetAtlasUrl);
@@ -225,7 +236,7 @@ function repair(root: THREE.Object3D, id: string): void {
  * else's scene is the only safe answer. The Ship Market keeps lit materials,
  * because there the lights are ours.
  */
-function unlit(root: THREE.Object3D): void {
+function unlit(root: THREE.Object3D, tint = 0xffffff): void {
   const swapped = new Map<THREE.Material, THREE.Material>();
   root.traverse((o) => {
     const m = o as THREE.Mesh;
@@ -236,7 +247,8 @@ function unlit(root: THREE.Object3D): void {
         const std = mat as THREE.MeshStandardMaterial;
         got = new THREE.MeshBasicMaterial({
           map: std.map ?? null,
-          color: 0xffffff,
+          /* Multiplied into the map, which is the whole point for planets. */
+          color: tint,
           side: THREE.FrontSide,
           transparent: std.transparent,
           opacity: std.opacity,
@@ -259,12 +271,16 @@ function unlit(root: THREE.Object3D): void {
  * be written as the size the thing should APPEAR, which is the only way the
  * numbers in the plan stay readable.
  */
-export function unitCopy(proto: THREE.Group, opts: { unlit?: boolean } = {}): THREE.Group {
+export function unitCopy(
+  proto: THREE.Group,
+  opts: { unlit?: boolean; tint?: number } = {},
+): THREE.Group {
   const model = proto.clone(true);
   /* clone() SHARES materials with the prototype, so the swap has to happen on
      the copy and has to make its own materials, or unlighting one planet would
-     unlight the ship turning in the Market. */
-  if (opts.unlit) unlit(model);
+     unlight the ship turning in the Market — and tinting one would tint all
+     fourteen the same colour. */
+  if (opts.unlit) unlit(model, opts.tint ?? 0xffffff);
   const box = new THREE.Box3().setFromObject(model);
   const size = new THREE.Vector3();
   const centre = new THREE.Vector3();

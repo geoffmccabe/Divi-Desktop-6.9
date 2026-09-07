@@ -93,6 +93,74 @@ function ok(name: string, cond: boolean, extra = "") {
   ok("none of them is on top of Earth", nearest > R * 4, `nearest edge ${nearest.toFixed(0)}`);
 }
 
+// 4b. EARTH IS IN THE MIDDLE OF THEM.
+//
+//     Geoff: "they aren't spaced around the earth randomly. They are all in a
+//     cluster in the same area on one side of the Earth."
+//
+//     The first version hashed the planet's number onto a sphere, which is the
+//     usual trick and is fine for a thousand points. For fourteen the hash
+//     happened to put eleven of them below the equator and most on one side.
+//     Nothing in the old tests could see that, so these look at the SHAPE of the
+//     set rather than at any one planet.
+{
+  const all = planetLayout();
+  const dirs = all.map((p) => p.at.clone().normalize());
+
+  /* If the directions are evenly spread they cancel out and their mean is near
+     zero. A clump pulls the mean towards itself: the hashed version scored
+     0.42, which is a long way off centre. */
+  const mean = new THREE.Vector3();
+  for (const d of dirs) mean.add(d);
+  mean.divideScalar(dirs.length);
+  ok("the planets surround Earth rather than clumping", mean.length() < 0.12,
+     `mean direction ${mean.length().toFixed(3)}`);
+
+  /* And they are not all in one hemisphere, in ANY direction. Checked against
+     each planet's own direction, so no axis is special. */
+  let worst = 0;
+  for (const axis of dirs) {
+    const oneSide = dirs.filter((d) => d.dot(axis) > 0).length;
+    worst = Math.max(worst, oneSide / dirs.length);
+  }
+  ok("no half of the sky holds most of them", worst < 0.72,
+     `${Math.round(worst * 100)}% on one side at worst`);
+
+  /* Nothing is hiding behind anything else. */
+  let closest = Math.PI;
+  for (let i = 0; i < dirs.length; i++) {
+    for (let j = i + 1; j < dirs.length; j++) {
+      closest = Math.min(closest, dirs[i].angleTo(dirs[j]));
+    }
+  }
+  ok("and no two share a patch of sky", closest > 0.5,
+     `closest pair ${Math.round((closest * 180) / Math.PI)} degrees apart`);
+}
+
+// 4c. THEY ARE NOT ALL GREY.
+//
+//     Geoff, twice: "they have no textures, they are all just white/grey."
+//     Synty's planet texture is a greyscale MASK, a shaded ball on white with
+//     no colour in it, meant to be tinted per planet by its material. Applied
+//     on its own it renders exactly as reported, and no amount of checking the
+//     model or the loader would have found it, because both were working.
+{
+  const all = planetLayout();
+  const tints = all.map((p) => p.tint);
+  ok("every planet has a colour", tints.every((t) => typeof t === "number"));
+  ok("and no two are the same", new Set(tints).size === tints.length,
+     `${new Set(tints).size} distinct`);
+
+  /* A colour, not another grey. Grey is where red, green and blue are equal,
+     so the spread between the brightest and dimmest channel is the test. */
+  const flat = all.filter((p) => {
+    const r = (p.tint >> 16) & 255, g = (p.tint >> 8) & 255, b = p.tint & 255;
+    return Math.max(r, g, b) - Math.min(r, g, b) < 24;
+  });
+  ok("and none of them is grey", flat.length === 0,
+     flat.map((p) => `${p.name} #${p.tint.toString(16)}`).join(", "));
+}
+
 // 5. The approach ring is three of the body's OWN diameters.
 //
 //    So a giant announces itself from much further off than a rock does, which
