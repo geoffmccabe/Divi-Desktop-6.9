@@ -19,7 +19,7 @@ export const MINI_DAMAGE = 0.25;
 export const MINI_SPEED_MULT = 1.5;
 export const MINI_AMMO = 0.25;
 /** It keeps firing while the trigger is held, twenty times a second. */
-export const MINI_INTERVAL = 0.1;
+export const MINI_INTERVAL = 0.05;
 export const ENEMY_R = 1.05;          /* hit radius of a fighter */
 
 /* ---- damage ----
@@ -210,6 +210,16 @@ export interface Bullet {
   life: number;
   /** Whose it is. Enemy fire is drawn differently and hurts you, not them. */
   hostile: boolean;
+  /**
+   * Which player fired it. Empty in the solo game, where there is only one
+   * possible answer.
+   *
+   * This is what makes scoring in a room safe. Points follow the round back to
+   * the gun that fired it, so nobody can be credited for a kill they were not
+   * near — and, just as importantly, nobody LOSES a kill to whoever happens to
+   * be closest when the fighter comes apart.
+   */
+  owner?: string;
   /** From the mini gun: quarter damage, drawn smaller. */
   mini?: boolean;
   /** The line this round is drawing behind it. */
@@ -260,6 +270,8 @@ export interface Torpedo {
   vel: THREE.Vector3;
   /** Seconds left on the fuse. */
   life: number;
+  /** Who launched it, so the blast scores to them. */
+  owner?: string;
 }
 
 export interface CombatEvent {
@@ -279,6 +291,12 @@ export interface CombatEvent {
   value?: number;
   /** waveStart only: which wave. */
   wave?: number;
+  /** Which ship this happened TO, or was done BY. Empty in the solo game,
+   *  where there is only ever one answer. */
+  who?: string;
+  /** playerHit only: true when the guard was up and took the brunt. Decided
+   *  here so that in a room it is decided by the server. */
+  guarded?: boolean;
 }
 
 /* ---- waves ----
@@ -369,6 +387,7 @@ export function hurtEnemy(
   e: Enemy,
   amount: number,
   from: THREE.Vector3,
+  by = "",
 ): number {
   const push = e.pos.clone().sub(from);
   if (push.lengthSq() < 1e-9) push.copy(e.fwd);
@@ -388,6 +407,7 @@ export function hurtEnemy(
     kind: "enemyHit", at: e.pos.clone(), power: Math.min(2, 0.4 + amount / 90),
     shield: Math.max(0, e.shield) / e.cls.shieldMax,
     damage: applied,
+    who: by,
   });
 
   /* Shield through nought is the end of it. */
@@ -397,7 +417,7 @@ export function hurtEnemy(
     if (i >= 0) c.enemies.splice(i, 1);
     c.kills++;
     c.tierKills[e.cls.tier - 1] += 1;
-    c.events.push({ kind: "enemyDown", at: e.pos.clone(), power: 3, tier: e.cls.tier });
+    c.events.push({ kind: "enemyDown", at: e.pos.clone(), power: 3, tier: e.cls.tier, who: by });
   }
   return applied;
 }
@@ -481,11 +501,12 @@ function scatterCoins(c: CombatState, e: Enemy): void {
 }
 
 /** Launched straight down the middle, from between the guns. */
-export function fireTorpedo(c: CombatState, pos: THREE.Vector3, fwd: THREE.Vector3): void {
+export function fireTorpedo(c: CombatState, pos: THREE.Vector3, fwd: THREE.Vector3, owner = ""): void {
   c.torpedoes.push({
     pos: pos.clone().addScaledVector(fwd, 1.5),
     vel: fwd.clone().multiplyScalar(TORPEDO_SPEED),
     life: TORPEDO_FUSE,
+    owner,
   });
 }
 
@@ -496,13 +517,13 @@ export function fireTorpedo(c: CombatState, pos: THREE.Vector3, fwd: THREE.Vecto
  * bullet has to touch a fighter, a torpedo only has to be near a few.
  */
 export function detonate(c: CombatState, t: Torpedo, w: CombatWorld): void {
-  c.events.push({ kind: "torpedoBlast", at: t.pos.clone(), power: 6 });
+  c.events.push({ kind: "torpedoBlast", at: t.pos.clone(), power: 6, who: t.owner ?? "" });
   for (let i = c.enemies.length - 1; i >= 0; i--) {
     const e = c.enemies[i];
     if (e.pos.distanceTo(t.pos) > TORPEDO_BLAST) continue;
     /* Five lasers' worth, so a torpedo strips a full shield and the hull under
        it in one go. */
-    hurtEnemy(c, e, LASER_MAX * TORPEDO_DAMAGE, t.pos);
+    hurtEnemy(c, e, LASER_MAX * TORPEDO_DAMAGE, t.pos, t.owner ?? "");
   }
   for (const tip of w.tips) {
     if (tip.distanceTo(t.pos) <= TORPEDO_BLAST) {
@@ -515,9 +536,12 @@ export function detonate(c: CombatState, t: Torpedo, w: CombatWorld): void {
 
 /** Set off the one that has been in the air longest. Returns whether there was
  *  one to set off, which is what tells the caller to launch instead. */
-export function detonateOldest(c: CombatState, w: CombatWorld): boolean {
-  if (c.torpedoes.length === 0) return false;
-  detonate(c, c.torpedoes[0], w);
+export function detonateOldest(c: CombatState, w: CombatWorld, owner = ""): boolean {
+  /* In a room you may only set off your OWN. Otherwise the first player to
+     press the key would detonate somebody else's run of torpedoes. */
+  const i = owner ? c.torpedoes.findIndex((t) => t.owner === owner) : 0;
+  if (i < 0 || c.torpedoes.length === 0) return false;
+  detonate(c, c.torpedoes[i], w);
   return true;
 }
 
@@ -555,6 +579,7 @@ export function fireGuns(
   up: THREE.Vector3,
   fovDeg: number,
   aspect: number,
+  owner = "",
 ): [THREE.Vector3, THREE.Vector3] {
   const m: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
   gunMuzzles(pos, fwd, up, fovDeg, aspect, m);
@@ -563,7 +588,7 @@ export function fireGuns(
   const target = new THREE.Vector3().copy(pos).addScaledVector(fwd, CONVERGE);
   for (const muzzle of m) {
     const vel = target.clone().sub(muzzle).normalize().multiplyScalar(BULLET_SPEED);
-    const b: Bullet = { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false };
+    const b: Bullet = { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, owner };
     c.bullets.push(b);
     addTracer(c, b);
   }
@@ -607,10 +632,11 @@ export function fireMini(
   muzzle: THREE.Vector3,
   aimFrom: THREE.Vector3,
   aimDir: THREE.Vector3,
+  owner = "",
 ): void {
   const target = aimFrom.clone().addScaledVector(aimDir, CONVERGE);
   const vel = target.sub(muzzle).normalize().multiplyScalar(BULLET_SPEED * MINI_SPEED_MULT);
-  const b: Bullet = { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true };
+  const b: Bullet = { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true, owner };
   c.bullets.push(b);
   addTracer(c, b);
 }
@@ -652,14 +678,58 @@ function segmentHit(from: THREE.Vector3, to: THREE.Vector3, target: THREE.Vector
   return from.clone().addScaledVector(ab, t).distanceTo(target) < radius;
 }
 
+/** One flyable ship in the fight, as far as the simulation cares. */
+export interface PlayerBody {
+  /** Empty in the solo game. In a room it is the seat this ship belongs to,
+   *  and it rides on every event the ship causes or suffers. */
+  id: string;
+  pos: THREE.Vector3;
+  fwd: THREE.Vector3;
+  /** Guard up right now. Checked HERE rather than by whoever reads the events,
+   *  so a client cannot decide for itself that it blocked something. */
+  guard?: boolean;
+}
+
 export interface CombatWorld {
   /** Tower tips, straight off the map. */
   tips: THREE.Vector3[];
   playerPos: THREE.Vector3;
   playerFwd: THREE.Vector3;
+  /**
+   * Everyone in the fight, when a room is running it.
+   *
+   * The solo game leaves this out and the pair of fields above are the whole
+   * roster. That is deliberate: ONE simulation serves both, so the server and
+   * the client cannot drift apart in the way that quietly ruins these games —
+   * two implementations of the same fight always end up disagreeing about who
+   * shot whom, and the disagreement always favours whoever is lying.
+   */
+  players?: PlayerBody[];
   /** Multiplies everything the player's guns do. Three for a minute after
    *  winning a stake on your node. */
   damageScale: number;
+}
+
+/* The roster, with the solo case folded in. Reused rather than rebuilt, since
+   this is called several times per frame. */
+const _solo: PlayerBody[] = [{ id: "", pos: new THREE.Vector3(), fwd: new THREE.Vector3() }];
+function roster(w: CombatWorld): PlayerBody[] {
+  if (w.players && w.players.length > 0) return w.players;
+  _solo[0].pos = w.playerPos;
+  _solo[0].fwd = w.playerFwd;
+  return _solo;
+}
+
+/** Whoever is closest to a point. Fighters chase them and coins drift to them. */
+function nearestPlayer(w: CombatWorld, to: THREE.Vector3): PlayerBody {
+  const all = roster(w);
+  let best = all[0];
+  let bestD = Infinity;
+  for (const p of all) {
+    const d = p.pos.distanceToSquared(to);
+    if (d < bestD) { bestD = d; best = p; }
+  }
+  return best;
 }
 
 /**
@@ -693,7 +763,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
         if (!segmentHit(from, b.pos, e.pos, ENEMY_R)) continue;
         spent = true;
         const scale = (b.mini ? MINI_DAMAGE : 1) * w.damageScale;
-        hurtEnemy(c, e, rollLaserDamage() * scale, from);
+        hurtEnemy(c, e, rollLaserDamage() * scale, from, b.owner ?? "");
       }
       /* Wreckage is solid: shoot a piece and it goes. */
       for (let j = c.junk.length - 1; j >= 0 && !spent; j--) {
@@ -710,11 +780,19 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
            see and costs the map nothing. */
         c.events.push({ kind: "towerHit", at: b.pos.clone(), power: 2 });
       }
-    } else if (segmentHit(from, b.pos, w.playerPos, PLAYER_HIT_R)) {
-      spent = true;
-      c.events.push({
-        kind: "playerHit", at: b.pos.clone(), power: 1.4, damage: rollLaserDamage(),
-      });
+    } else {
+      /* Against EVERY ship in the fight, not just the one holding the camera.
+         In a room this is the only place a player takes damage, and it is the
+         server's copy of this loop that decides it. */
+      for (const pl of roster(w)) {
+        if (!segmentHit(from, b.pos, pl.pos, PLAYER_HIT_R)) continue;
+        spent = true;
+        c.events.push({
+          kind: "playerHit", at: b.pos.clone(), power: 1.4, damage: rollLaserDamage(),
+          who: pl.id, guarded: !!pl.guard,
+        });
+        break;
+      }
     }
 
     /* Is this one going to hit? A straight ray against the player: where in
@@ -724,14 +802,19 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
        and including it would mean calling out shots a turn has already dealt
        with. Once per round, or a stream of fire becomes one long tone. */
     if (!spent && b.hostile && !b.warned) {
-      const rel = w.playerPos.clone().sub(b.pos);
       const speed2 = b.vel.lengthSq();
       if (speed2 > 1e-9) {
-        const t = Math.max(0, Math.min(WARN_LEAD, rel.dot(b.vel) / speed2));
-        const miss = rel.addScaledVector(b.vel, -t).length();
-        if (miss < PLAYER_HIT_R && t > 0 && t <= WARN_LEAD) {
-          b.warned = true;
-          c.events.push({ kind: "incoming", at: b.pos.clone(), power: 1 });
+        for (const pl of roster(w)) {
+          const rel = pl.pos.clone().sub(b.pos);
+          const t = Math.max(0, Math.min(WARN_LEAD, rel.dot(b.vel) / speed2));
+          const miss = rel.addScaledVector(b.vel, -t).length();
+          if (miss < PLAYER_HIT_R && t > 0 && t <= WARN_LEAD) {
+            b.warned = true;
+            /* Only the ship it is aimed at hears it. Everybody's warnings going
+               off in everybody's cockpit would be one long tone. */
+            c.events.push({ kind: "incoming", at: b.pos.clone(), power: 1, who: pl.id });
+            break;
+          }
         }
       }
     }
@@ -780,7 +863,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     const r = Math.sqrt(r2);
     k.vel.addScaledVector(k.pos, -(COIN_MU / (r2 * r)) * dt);
 
-    const toPlayer = w.playerPos.clone().sub(k.pos);
+    /* Coins go to whoever is nearest, so in a room they are worth racing for. */
+    const claimant = nearestPlayer(w, k.pos);
+    const toPlayer = claimant.pos.clone().sub(k.pos);
     const range = toPlayer.length();
     if (range < COIN_MAGNET) {
       /* Stronger the closer it gets, so the last stretch is certain. */
@@ -792,7 +877,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     k.spin += dt * 2.2;
 
     if (range < COIN_PICKUP) {
-      c.events.push({ kind: "coin", at: k.pos.clone(), power: 0.4, value: k.value });
+      c.events.push({ kind: "coin", at: k.pos.clone(), power: 0.4, value: k.value, who: claimant.id });
       c.coins.splice(i, 1);
       continue;
     }
@@ -834,10 +919,13 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       struck = true;
       hurtEnemy(c, e, rollLaserDamage(), j.pos);
     }
-    if (!struck && j.pos.distanceTo(w.playerPos) < 1.4 + JUNK_R) {
+    for (const pl of roster(w)) {
+      if (struck) break;
+      if (j.pos.distanceTo(pl.pos) > 1.4 + JUNK_R) continue;
       struck = true;
       c.events.push({
         kind: "playerHit", at: j.pos.clone(), power: 1.6, damage: rollLaserDamage(),
+        who: pl.id, guarded: !!pl.guard,
       });
     }
     if (struck) {
@@ -855,7 +943,14 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     if (wave.toSpawn > 0) {
       wave.nextAt -= dt;
       if (wave.nextAt <= 0) {
-        const e = spawnNear(w.playerPos, w.playerFwd, wave.bias);
+        /* In front of SOMEBODY, picked at random, so a room's fighters do
+           not all pile onto whoever happens to be first in the list. With one
+           player there is nothing to pick, and drawing anyway would consume a
+           random number and shift every later roll — which is enough to turn a
+           seeded test into a different fight. */
+        const all = roster(w);
+        const mark = all.length > 1 ? all[Math.floor(Math.random() * all.length)] : all[0];
+        const e = spawnNear(mark.pos, mark.fwd, wave.bias);
         e.wave = wave.n;
         c.enemies.push(e);
         wave.toSpawn -= 1;
@@ -877,7 +972,10 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
   const axis = new THREE.Vector3();
   for (let i = c.enemies.length - 1; i >= 0; i--) {
     const e = c.enemies[i];
-    toPlayer.copy(w.playerPos).sub(e.pos);
+    /* Each fighter hunts whoever is closest to it, re-checked every frame, so
+       flying past a dogfight pulls some of it onto you. */
+    const prey = nearestPlayer(w, e.pos);
+    toPlayer.copy(prey.pos).sub(e.pos);
     const range = toPlayer.length();
     toPlayer.normalize();
 
@@ -932,7 +1030,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       if (e.ammo <= 0) e.reload = ENEMY_RELOAD;
       /* Dead on target, every time. Dodging is the player's job, and a shot
          that misses by design would make that meaningless. */
-      enemyFire(c, e, w.playerPos);
+      enemyFire(c, e, prey.pos);
     }
 
     /* Wandered off. Let it go and let a fresh one spawn in front. */

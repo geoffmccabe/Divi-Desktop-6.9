@@ -11,7 +11,7 @@ import * as THREE from "three";
 import { R, MIN_ALT, MAX_ALT } from "./orbitWorld";
 import {
   createFlight, stepFlight, distanceToTower, CRUISE, MAX_AMMO, MAX_SHIELD,
-  CRASH_DAMAGE, MAX_GUARDS,
+  CRASH_DAMAGE, MAX_GUARDS, MAX_TORPEDOES,
   DOCK_SECONDS, type Stick,
 } from "./orbitFlight";
 
@@ -149,18 +149,54 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   ok("docking reports completing once", docked === 1, `${docked} times`);
 }
 {
-  const tip = pad.clone().normalize().multiplyScalar(R + 4.2);
+  /* Geoff: "you can run into it at any speed and then it will stop and do the
+     recharge... You don't need to slow down and you don't take damage from
+     hitting your own tower." Both halves of that are checked here. */
+  const tip = pad.clone().normalize().multiplyScalar(R + 6);
   const f = createFlight(pad);
-  /* These test DOCKING, not launching, so the grace that stops a ship
-     re-docking the instant it leaves its own pad is cleared. */
   f.redock = 0;
-  f.shields = 2;
-  for (let i = 0; i < 240; i++) {
-    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 3);
-    f.speed = 30;   /* screaming past, far too fast to dock */
+  f.shields = 200;
+  f.ammo = 3;
+  let slowest = Infinity;
+  for (let i = 0; i < 60 * 6; i++) {
+    /* Flat out, straight into it, for the first second only: after that the
+       tower has it and forcing the speed again would just be the test fighting
+       its own result. */
+    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 2);
+    if (i < 60) f.speed = 38;
     stepFlight(f, DT, stick(), [tip], 0);
+    if (f.dock > 0.3) slowest = Math.min(slowest, f.speed);
   }
-  ok("cannot dock at speed", f.shields === 2, `shields ${f.shields}`);
+  ok("your own tower catches you at any speed", f.dock > 0 || f.ammo === MAX_AMMO,
+     `dock ${f.dock.toFixed(2)}, ammo ${f.ammo}`);
+  ok("and it never damages you", f.shields >= 200, `shields ${f.shields.toFixed(0)}`);
+  /* Measured DURING the resupply. Afterwards it lets go and gets under way
+     again, so the speed at the end says nothing. */
+  ok("it stops the ship while it works", slowest < 1, `slowest ${slowest.toFixed(2)}`);
+  ok("and restores everything, torpedoes and shields included",
+     f.ammo === MAX_AMMO && f.torpedoes === MAX_TORPEDOES && f.guards === MAX_GUARDS,
+     `ammo ${f.ammo}, torps ${f.torpedoes}, guards ${f.guards}`);
+}
+{
+  /* Somebody else's tower is not a pad. It does nothing, and running into it
+     is exactly as unpleasant as running into anything else. */
+  const tip = pad.clone().normalize().multiplyScalar(R + 3);
+  const f = createFlight(pad);
+  f.redock = 0;
+  f.shields = 900;
+  f.ammo = 3;
+  /* Level with the mast. The step re-projects the ship to its own altitude
+     every frame, so putting it beside the tower without matching the height
+     leaves it floating above and touching nothing. */
+  f.alt = 3;
+  for (let i = 0; i < 60 * 6; i++) {
+    const dir = tip.clone().normalize();
+    f.pos.copy(dir).multiplyScalar(R + f.alt);
+    /* homeIndex -1: none of these towers are yours. */
+    stepFlight(f, DT, stick(), [tip], -1);
+  }
+  ok("a stranger's tower does not resupply you", f.ammo === 3, `ammo ${f.ammo}`);
+  ok("and flying into it hurts", f.shields < 900, `shields ${f.shields.toFixed(0)}`);
 }
 
 // 7b. There has to be a way to get slow enough to dock. Cruise is 16 and
@@ -308,10 +344,10 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      second at ten a second is five or six rounds depending on where the frames
      land. */
   const a = hold(0.55, { mini: true });
-  /* Ten a second, as asked. Half a second gets five or six depending on where
-     the frames fall; nine would mean it was running at twenty. */
-  ok("the mini gun keeps firing while E and the trigger are held, ten a second",
-     a.mini >= 5 && a.mini <= 7, `${a.mini} rounds in 0.55s`);
+  /* Twenty a second. Half a second gets ten or eleven depending on where the
+     frames fall; five would mean it was running at ten. */
+  ok("the mini gun keeps firing while E and the trigger are held, twenty a second",
+     a.mini >= 9 && a.mini <= 12, `${a.mini} rounds in 0.55s`);
   ok("and the main guns stay silent", a.main === 0);
   ok("each round costs a quarter",
      Math.abs((MAX_AMMO - f.ammo) - a.mini * 0.25) < 1e-9,
@@ -332,30 +368,78 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   ok("and not on less than a quarter", hold(0.3, { mini: true }).mini === 0, `ammo ${f.ammo}`);
 }
 
-// 8d. The guard: ten of them, half a second each, and only your own tower
-//     gives them back.
+// 8d. The guard: HELD, ten charges, half a second each.
+//
+//     Geoff: "holding the shield button doesn't keep the shields on. It should
+//     stay on, using one charge every half-second it's held on." It used to be
+//     edge-triggered, which gave one half-second per click no matter how long
+//     the button was down. In a fight that meant the shield was down for almost
+//     every round that arrived, which is why it read as doing nothing at all
+//     and why the bounce sample was never heard.
 {
   const f = createFlight(pad);
-  const tap = () => {
-    stepFlight(f, DT, stick({ guard: true }), [], -1);
-    stepFlight(f, DT, stick(), [], -1);
-  };
-  tap();
+  const hold = (seconds: number) => run(f, Math.round(seconds * 60), stick({ guard: true }));
+
+  run(f, 1, stick({ guard: true }));
   ok("the right button raises a guard", f.guardFor > 0, `${f.guardFor.toFixed(2)}s left`);
   ok("and it costs one", f.guards === MAX_GUARDS - 1, `${f.guards} left`);
 
-  /* Holding it must not stack: it is a tap, not a hold. */
-  const held = f.guards;
-  run(f, 20, stick({ guard: true }));
-  ok("holding the button does not spend more", f.guards === held, `${f.guards} left`);
+  /* THE FIX: hold for just under two seconds from a standing start. That is
+     four half-second charges — at 0, 0.5, 1.0 and 1.5 — and the shield is up
+     for every single frame in between. */
+  const g = createFlight(pad);
+  let downFrames = 0;
+  for (let i = 0; i < 119; i++) {
+    stepFlight(g, DT, stick({ guard: true }), [], -1);
+    if (g.guardFor <= 0) downFrames++;
+  }
+  ok("holding keeps the shield up the whole time", downFrames === 0,
+     `${downFrames} frames with no shield`);
+  ok("and holding spends one charge every half second", MAX_GUARDS - g.guards === 4,
+     `spent ${MAX_GUARDS - g.guards} in two seconds`);
 
-  run(f, 60, stick());
-  ok("it runs out after half a second", f.guardFor === 0);
+  /* Letting go drops it at once, so an early release banks the rest. */
+  run(f, 2, stick());
+  ok("letting go drops the shield", f.guardFor === 0);
 
-  for (let i = 0; i < MAX_GUARDS + 5; i++) { tap(); run(f, 40, stick()); }
-  ok("guards run out", f.guards === 0);
-  tap();
+  hold(60);
+  ok("ten charges is five seconds of cover, then nothing", f.guards === 0, `${f.guards} left`);
   ok("and an empty rack raises nothing", f.guardFor === 0);
+}
+
+// 8e. Docking must not be stolen by the neighbours.
+//
+//     Geoff, a fifth time: "I still am unable to dock with my tower, I just fly
+//     right through it every time." Nodes cluster, and the map packs a city\'s
+//     towers a couple of units apart. Docking used to test "is the NEAREST
+//     tower mine", so a neighbour standing beside your own pad answered no:
+//     the dock was refused and you were charged crash damage at your own front
+//     door. Home is now measured on its own.
+{
+  const dir = pad.clone().normalize();
+  const side = new THREE.Vector3(1, 0, 0).cross(dir).normalize();
+  /* Mine, and a neighbour a metre and a half to the side of it: exactly the
+     packing the map uses for co-located nodes. */
+  const home = dir.clone().multiplyScalar(R + 4.2);
+  const neighbourDir = dir.clone().addScaledVector(side, 0.02).normalize();
+  const neighbour = neighbourDir.clone().multiplyScalar(R + 4.2);
+  const tips = [neighbour, home];
+  const HOME = 1;
+
+  /* Coming in over the cluster: well inside my own dock zone, but at this
+     instant the neighbour's mast is the nearer of the two. */
+  const f = createFlight(pad);
+  f.redock = 0;
+  f.pos.copy(home).addScaledVector(side, 1.6);
+  ok("the neighbour really is the nearer one",
+     distanceToTower(f.pos, neighbour) < distanceToTower(f.pos, home),
+     `neighbour ${distanceToTower(f.pos, neighbour).toFixed(2)}, home ${distanceToTower(f.pos, home).toFixed(2)}`);
+
+  const before = f.shields;
+  const r = run(f, 60 * 5, stick(), tips, HOME);
+  ok("and docking still happens", r.docks === 1, `${r.docks} docks`);
+  ok("with no crash damage from the neighbour", f.shields >= before,
+     `${before} -> ${f.shields}`);
 }
 
 // 9. A long unattended flight does not drift, blow up or leak bolts.

@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    /* DOM is here for the TYPE CHECKER only. The wallet modules this worker
+       shares with the game guard every DOM use at runtime — `typeof document
+       === "undefined"` — because they were written to run headless in the node
+       tests, which is the same situation a Worker is in. Without the lib, tsc
+       fails on code that is never reached. */
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["@cloudflare/workers-types", "node"],
+    /* three's own package ships no declarations; the wallet gets them from
+       @types/three, which lives in the ui install alongside it. */
+    "paths": { "three": ["../../ui/node_modules/@types/three"] },
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

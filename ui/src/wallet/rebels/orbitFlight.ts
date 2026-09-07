@@ -31,7 +31,6 @@ export const CLIMB_RATE = 11;
    the ship the moment it catches, so arriving fast is not a reason to be
    refused either. */
 export const DOCK_RANGE = 12;
-export const DOCK_SPEED = 14;
 /** A full resupply: about two passes of the station sample. */
 export const DOCK_SECONDS = 4;
 /* What the brake slows you to. Nearly a hover, on purpose: at this speed the
@@ -186,7 +185,7 @@ export interface StepResult {
    *  On screen, because "it does not work" needs to become something a player
    *  can read back. */
   nearTower: number;
-  dockBlock: "" | "too fast" | "cooling down" | "boosting" | "out of range";
+  dockBlock: "" | "no node located" | "cooling down" | "out of range";
 }
 
 export function stepFlight(
@@ -227,7 +226,7 @@ export function stepFlight(
      past is not docking, and it was what happened before. */
   else if (f.dock > 0) target = 0;
   else if (stick.braking) target = PARK;
-  else if (nearDist < DOCK_RANGE * 2.2 && f.redock <= 0) target = DOCK_SPEED * 0.5;
+
   /* Braking to a halt is quick and docking brakes hardest, because the resupply
      itself only lasts a second or two: at the ordinary rate the ship was still
      moving for most of it. Getting under way again is deliberately slower,
@@ -284,7 +283,25 @@ export function stepFlight(
     const d = distanceToTower(f.pos, towerTips[i]);
     if (d < nearDist) { nearDist = d; near = i; }
   }
-  if (near >= 0 && nearDist < 1.6 && f.grace <= 0) {
+
+  /* HOME IS MEASURED ON ITS OWN, never as "whichever tower happens to be the
+     nearest".
+     That distinction is the whole bug behind flying straight through your own
+     tower. Nodes cluster: a city block of them is drawn as a little packed
+     group, tips a couple of units apart. Fly at your own and a NEIGHBOUR's axis
+     is very often the closer one, so the nearest-tower test named someone
+     else's tower, refused the dock, and charged you crash damage at your own
+     front door. Asking "how far am I from MY tower" cannot be confused by a
+     neighbour standing next to it. */
+  const homeDist = homeIndex >= 0 && homeIndex < towerTips.length
+    ? distanceToTower(f.pos, towerTips[homeIndex])
+    : Infinity;
+  const atHome = homeDist < DOCK_RANGE;
+
+  /* Your own tower never hurts you: you are meant to fly straight into it. And
+     nor does a neighbour of it while you are on your way in, or a packed city
+     would be a minefield around your own pad. */
+  if (near >= 0 && near !== homeIndex && nearDist < 1.6 && !atHome && f.grace <= 0) {
     f.shields -= CRASH_DAMAGE;
     f.grace = 1.2;
     out.hit = true;
@@ -292,28 +309,28 @@ export function stepFlight(
     f.pos.addScaledVector(f.pos.clone().sub(towerTips[near]).normalize(), 2);
   }
 
-  out.nearTower = nearDist;
-  const canDock = near >= 0 && nearDist < DOCK_RANGE && f.speed < DOCK_SPEED
-    && f.redock <= 0 && !wantBoost;
+  /* ONLY your own tower, and at ANY speed. Fly into it and it catches you.
+     There is no slowing down to be done and no way to arrive too fast: the
+     brake below stops the ship once it has caught. */
+  out.nearTower = homeDist;
+  const canDock = atHome && f.redock <= 0;
   if (!canDock) {
-    out.dockBlock = nearDist >= DOCK_RANGE ? "out of range"
-      : wantBoost ? "boosting"
+    out.dockBlock = homeIndex < 0 ? "no node located"
+      : !atHome ? "out of range"
       : f.redock > 0 ? "cooling down"
-      : f.speed >= DOCK_SPEED ? "too fast"
       : "";
   }
   if (canDock) {
     /* Your own tower serves you twice as fast. Any tower will do, which is what
        keeps a fight far from home survivable. */
-    /* Four seconds at your own tower, which is about two passes of the station
-       sample; slower anywhere else. */
-    const rate = near === homeIndex ? 1 : 0.6;
+    /* Four seconds, which is about two passes of the station sample. */
+    const rate = 1;
     if (f.dock === 0) {
       f.dockFrom = { shields: Math.max(0, f.shields), ammo: f.ammo, boost: f.boost };
     }
     const was = f.dock;
     f.dock = Math.min(1, f.dock + (dt / DOCK_SECONDS) * rate);
-    f.dockedAt = near;
+    f.dockedAt = homeIndex;
     /* Refilled gradually rather than all at once on completion, so the gauges
        can be watched climbing. That IS the docking graphic. */
     const from = f.dockFrom ?? { shields: f.shields, ammo: f.ammo, boost: f.boost };
@@ -325,12 +342,8 @@ export function stepFlight(
         f.shields = MAX_SHIELD;
         f.ammo = MAX_AMMO;
         f.boost = 1;
-        /* Torpedoes and guards come from your OWN tower and nowhere else,
-           which is what gives home a reason to exist beyond being faster. */
-        if (near === homeIndex) {
-          f.torpedoes = MAX_TORPEDOES;
-          f.guards = MAX_GUARDS;
-        }
+        f.torpedoes = MAX_TORPEDOES;
+        f.guards = MAX_GUARDS;
         f.dockHold = 1.1;
         out.docked = true;
       }
@@ -351,7 +364,7 @@ export function stepFlight(
        this the ship settles into a circuit that is inside the zone about half
        the time and the bar sits near three quarters for ever, which is exactly
        what the approach test found. */
-    const stillTrying = nearDist < DOCK_RANGE * 1.9 && f.speed < DOCK_SPEED * 1.5;
+    const stillTrying = homeDist < DOCK_RANGE * 1.9;
     if (!stillTrying) {
       f.dock = Math.max(0, f.dock - dt * 0.6);
       if (f.dock === 0) f.dockedAt = -1;
@@ -390,13 +403,22 @@ export function stepFlight(
   f.heavyWasDown = stick.firing;
 
   /* ---- the guard ----
-     Raised on the press, not the hold: it runs for its half second and then it
-     is gone, so it has to be timed rather than leant on. */
+     HELD, not tapped. While the button is down the shield stays up, and it
+     spends one charge for every half second it is up. Ten charges is therefore
+     five seconds of cover, taken in one go or in ten separate flinches.
+
+     It used to be edge-triggered, which meant holding the button gave a single
+     half second and then nothing: the shield was down for almost every round
+     that arrived, which is why it read as "the shield does nothing" and why the
+     bounce sample was never heard. */
   f.guardFor = Math.max(0, f.guardFor - dt);
-  if (stick.guard && !f.guardWasDown && f.guardFor <= 0 && f.guards > 0) {
+  if (stick.guard && f.guardFor <= 0 && f.guards > 0) {
     f.guards -= 1;
     f.guardFor = GUARD_SECONDS;
   }
+  /* Let go and it drops at once, so releasing early saves the rest of a charge
+     rather than burning it. */
+  if (!stick.guard) f.guardFor = 0;
   f.guardWasDown = stick.guard;
 
   return out;

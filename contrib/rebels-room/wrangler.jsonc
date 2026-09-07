@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "divi-rebels-room",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  /* The room shares the game's simulation rather than reimplementing it, and
+     that simulation is built on three's vector maths. three lives in the ui
+     install, which is the only copy in the repo, so the bundler is pointed at
+     it directly instead of a second identical dependency being added here that
+     could drift to a different version. */
+  "alias": { "three": "../../ui/node_modules/three/build/three.module.js" },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOM", "class_name": "RebelsRoom" },
+      { "name": "LEDGER", "class_name": "RebelsLedger" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RebelsRoom", "RebelsLedger"] }
+  ]
+}

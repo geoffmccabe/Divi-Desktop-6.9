@@ -213,55 +213,77 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
 //     already marked dead, so the first always won and NOTHING was ever
 //     recorded from any death. This drives a real death and looks in the table.
 {
-  store.clear();
-  store.set("dd69.nodeIdentity", JSON.stringify({ name: "Test Node" }));
-  const g = stubGlobe([["self-ip", home]]);
-  const ctl = createRebels(labelFor);
-  ctl.attach({ ...g, selfIp: "self-ip" });
-  ctl.launch();
-  for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);   /* through the dive */
-
-  /* The invariant, rather than a scripted kill.
+  /* SEEDED, and run over several seeds until one of them scores.
    *
-   * Driving the controller to reliably land a shot needs an aiming autopilot:
-   * the magazine is sixty rounds, there is no docking here, and the fighters
-   * weave, so whether anything hits is luck. What is checked instead is the
-   * thing that must always hold: a run that reaches the table has the points
-   * it earned on it. That is exactly the bug this covers, where two death
-   * paths meant a scoring run was silently never filed at all.
+   * Whether a shot lands is luck: sixty rounds, no resupply, and fighters that
+   * weave. Driving this reliably would need an aiming autopilot. Left to real
+   * randomness the run scored on some passes and not on others, and the old
+   * "nothing scored, nothing filed" branch passed vacuously on the quiet ones,
+   * which is worthless for the bug this covers — two death paths meant a
+   * scoring run was silently never filed at all.
    *
-   * The HUD's own score is NOT used as the measure. It is pushed on a
-   * wall-clock tick, and this loop runs minutes of game time in a fraction of
-   * a second, so it reads zero here while reading correctly in the real game.
+   * One fixed seed was no better: it made the fight reproducible but pinned the
+   * whole test on that one fight still being a scoring one, and the very next
+   * change to the simulation shifted every roll and turned it quiet. A LIST of
+   * seeds, tried until one scores, is deterministic AND survives the sim being
+   * worked on, which it is going to be.
+   *
+   * The HUD's own score is NOT the measure. It is pushed on a wall-clock tick,
+   * and this loop runs minutes of game time in a fraction of a second, so it
+   * reads zero here while reading correctly in the real game.
    */
-  let guard = 0;
-  while (!ctl.hud().dead && guard < 60 * 300) {
-    guard++;
-    const sweep = Math.floor(guard / 45) % 2 === 0 ? "arrowleft" : "arrowright";
-    press("keydown", { key: sweep });
-    if (guard % 6 === 0) press("keydown", { key: " " });
-    if (guard % 6 === 3) press("keyup", { key: " " });
-    if (guard > 60 * 60) press("keydown", { key: "arrowdown" });
-    ctl.frame(1 / 60);
-  }
-  ok("the ship can actually be lost", ctl.hud().dead, `after ${(guard / 60).toFixed(1)}s`);
+  const realRandom = Math.random;
+  const SEEDS = [0x2f6e2b1, 0x1a2b3c4, 0x5d4c3b2, 0x7f0e1d2, 0x33ccff1, 0x0badf00];
+  let rows: Array<{ name: string; games: number; best: number; total: number }> = [];
+  let died = false;
+  let tries = 0;
 
-  const raw = store.get("dd69.rebels.scores");
-  const rows = raw
-    ? (JSON.parse(raw) as { rows: Array<{ name: string; games: number; best: number; total: number }> }).rows
-    : [];
-  if (rows.length > 0) {
-    ok("filed under the node's name", rows.some((r) => r.name === "Test Node"),
-       rows.map((r) => r.name).join(","));
-    ok("counted as a game played", rows[0]?.games === 1, `${rows[0]?.games}`);
-    ok("a filed run carries the points it earned", rows[0].best > 0 && rows[0].total > 0,
-       `best ${rows[0].best}, total ${rows[0].total}`);
-  } else {
-    /* Nothing was hit in the time available, which is luck rather than a
-       fault, and the quitter case below covers the other half. */
-    ok("nothing scored, nothing filed", true, "no hits landed this run");
+  for (const s0 of SEEDS) {
+    tries++;
+    store.clear();
+    store.set("dd69.nodeIdentity", JSON.stringify({ name: "Test Node" }));
+    let seed = s0;
+    Math.random = () => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed / 0x7fffffff;
+    };
+
+    const g = stubGlobe([["self-ip", home]]);
+    const ctl = createRebels(labelFor);
+    ctl.attach({ ...g, selfIp: "self-ip" });
+    ctl.launch();
+    for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);   /* through the dive */
+
+    let n = 0;
+    while (!ctl.hud().dead && n < 60 * 300) {
+      n++;
+      press("keydown", { key: Math.floor(n / 45) % 2 === 0 ? "arrowleft" : "arrowright" });
+      /* SPACED OUT, because the magazine is the whole budget. Firing ten a
+         second emptied all sixty rounds in the first six seconds of a
+         seventy-second fight, so every shot was taken before the fighters had
+         even closed and the run scored precisely nothing. One shot a second
+         spreads the same sixty rounds across the whole engagement. */
+      if (n % 60 === 0) press("keydown", { key: " " });
+      if (n % 60 === 30) press("keyup", { key: " " });
+      if (n > 60 * 60) press("keydown", { key: "arrowdown" });
+      ctl.frame(1 / 60);
+    }
+    died = died || ctl.hud().dead;
+    ctl.detach();
+
+    const raw = store.get("dd69.rebels.scores");
+    rows = raw ? (JSON.parse(raw) as { rows: typeof rows }).rows : [];
+    if (rows.length > 0) break;
   }
-  ctl.detach();
+  Math.random = realRandom;
+
+  ok("the ship can actually be lost", died);
+  ok("a death that scored files a row", rows.length > 0, `gave up after ${tries} fights`);
+  ok("filed under the node's name", rows.some((r) => r.name === "Test Node"),
+     rows.map((r) => r.name).join(","));
+  ok("counted as a game played", rows[0]?.games === 1, `${rows[0]?.games}`);
+  ok("a filed run carries the points it earned", (rows[0]?.best ?? 0) > 0 && (rows[0]?.total ?? 0) > 0,
+     `best ${rows[0]?.best}, total ${rows[0]?.total}`);
 }
 {
   /* And backing out mid-run files it too, rather than throwing it away. */

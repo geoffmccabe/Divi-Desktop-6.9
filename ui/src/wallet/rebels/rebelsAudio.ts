@@ -176,17 +176,26 @@ export function stopRechargeSound(): void {
   }
 }
 
-/** Play a decoded sample once, lightly varied so repeats never sound identical. */
-function once(buf: AudioBuffer | null, loudness = 1): void {
+/**
+ * Play a decoded sample once, lightly varied so repeats never sound identical.
+ *
+ * `vary` turns that variation off. Wobble suits things that are meant to sound
+ * like a physical event happening twice — a gun, an explosion — where two
+ * identical copies read as a loop. It does NOT suit a signal. The cockpit
+ * warning is an instrument tone, and playing it at a random speed each time
+ * made it sound slowed down and out of tune rather than urgent, which is
+ * exactly the complaint. Signals play at their own pitch.
+ */
+function once(buf: AudioBuffer | null, loudness = 1, vary = true): void {
   const ctx = audioContext();
   if (!ctx || failed || !buf) return;
   const volume = masterVolume();
   if (!(volume > 0)) return;
   const src = ctx.createBufferSource();
   src.buffer = buf;
-  src.playbackRate.value = wobble();
+  src.playbackRate.value = vary ? wobble() : 1;
   const gain = ctx.createGain();
-  gain.gain.value = volume * loudness * wobble();
+  gain.gain.value = volume * loudness * (vary ? wobble() : 1);
   src.connect(gain);
   gain.connect(ctx.destination);
   src.start();
@@ -314,10 +323,19 @@ export function playTorpedoBlast(): void {
  * not an air-raid siren, and in a busy fight several are in the air at once.
  */
 export function playIncomingWarning(): void {
-  once(warnBuffer, 0.5);
+  /* One at a time. Four fighters firing at once raise four warnings inside a
+     few frames, and four copies of the same tone laid over each other with
+     random offsets is the smeared, detuned noise that got reported. A quarter
+     second between them keeps it a series of pips. */
+  const ctx = audioContext();
+  const now = ctx ? ctx.currentTime : 0;
+  if (now - lastWarnAt < 0.25) return;
+  lastWarnAt = now;
+  once(warnBuffer, 0.5, false);
 }
+let lastWarnAt = -1;
 
 /** A round turned away by the guard. The reward for having reacted. */
 export function playBounce(): void {
-  once(bounceBuffer, 1);
+  once(bounceBuffer, 1, false);
 }
