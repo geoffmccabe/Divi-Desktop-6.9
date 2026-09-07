@@ -370,6 +370,43 @@ mod tests {
         std::env::remove_var("DIVI_DMT_GENESIS");
     }
 
+    /// A guard rather than a comment.
+    ///
+    /// These numbers exist to keep the index from starving the node the user is
+    /// STAKING with, so the cost of "optimising" them is somebody's block
+    /// reward. That reasoning is easy to miss and easy to overrule when a first
+    /// sync feels slow, and a comment cannot stop anyone. This can.
+    ///
+    /// If you are here because this test failed: you are about to make the
+    /// wallet's index greedier with a node that is also earning. Raise these
+    /// only with a measurement showing staking is unaffected, and move the bound
+    /// deliberately rather than to whatever the new value happens to be.
+    #[test]
+    fn the_index_stays_polite_enough_to_share_a_node_with_staking() {
+        assert!(
+            SLICE_BLOCKS <= 50,
+            "a slice of {SLICE_BLOCKS} blocks holds the node and the writer lock too long"
+        );
+        assert!(
+            CATCHUP_PAUSE >= Duration::from_millis(200),
+            "too little breathing room between slices"
+        );
+        assert!(
+            IDLE_PAUSE >= Duration::from_secs(10),
+            "polling this often once caught up is pointless: Divi targets a block a minute"
+        );
+        assert!(RETRY_PAUSE >= Duration::from_secs(5), "retrying a missing node this fast is a spin");
+
+        // The whole slice happens under the writer lock, so it also bounds how
+        // long a balance query can be made to wait.
+        // A block costs roughly 40ms of RPC round trips on a local node.
+        let worst_case_lock = Duration::from_millis(40) * SLICE_BLOCKS as u32;
+        assert!(
+            worst_case_lock <= Duration::from_secs(2),
+            "a balance query could be blocked for {worst_case_lock:?}"
+        );
+    }
+
     /// Nothing may be shown as a current balance unless the index is running,
     /// unhalted, and at the tip.
     #[test]
