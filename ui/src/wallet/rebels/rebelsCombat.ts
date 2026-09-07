@@ -62,6 +62,12 @@ export const JUNK_R = 0.7;
 export const ENEMY_SPEED = 19;
 export const ENEMY_TURN = 1.1;        /* radians per second of chase */
 export const ENEMY_FIRE_RANGE = 70;
+/** They carry the same magazine a player does, then have to break off and
+ *  recharge, which is what gives you a breather rather than an endless stream. */
+export const ENEMY_AMMO = 60;
+export const ENEMY_RELOAD = 10;
+/** The player's own shield, on the same hundred-point scale as theirs. */
+export const PLAYER_SHIELD_MAX = 100;
 export const TOWER_HIT_R = 2.2;
 
 /* ---- torpedoes ----
@@ -70,7 +76,7 @@ export const TOWER_HIT_R = 2.2;
    Five times the damage of a bullet, over an area, which is what makes carrying
    only two a real decision. */
 export const TORPEDO_MAX = 2;
-export const TORPEDO_SPEED = 52;
+export const TORPEDO_SPEED = 38;
 export const TORPEDO_FUSE = 4;
 export const TORPEDO_DAMAGE = 5;
 /** Everything inside this radius takes the hit, not just what it touched. */
@@ -99,6 +105,9 @@ export interface Enemy {
   spin: THREE.Vector3;
   /** Seconds left showing the shield bubble. */
   flash: number;
+  /** Rounds left, and seconds until the magazine is back. */
+  ammo: number;
+  reload: number;
   fireAt: number;
   /** Seconds left of the little sidestep that stops them flying in a line. */
   weave: number;
@@ -131,6 +140,8 @@ export interface CombatEvent {
   power: number;
   /** enemyHit only: what the shield is down to, 0..1 of its class maximum. */
   shield?: number;
+  /** enemyHit only: damage actually landed, which is what scores. */
+  damage?: number;
 }
 
 export interface CombatState {
@@ -163,7 +174,7 @@ export function hurtEnemy(
   e: Enemy,
   amount: number,
   from: THREE.Vector3,
-): boolean {
+): number {
   const push = e.pos.clone().sub(from);
   if (push.lengthSq() < 1e-9) push.copy(e.fwd);
   push.normalize();
@@ -171,6 +182,11 @@ export function hurtEnemy(
   /* A random axis, so a fighter tumbles rather than pivoting neatly. */
   e.tumble.addScaledVector(new THREE.Vector3().randomDirection(), amount * SPIN_PER_DAMAGE);
   e.flash = SHIELD_SHOW;
+
+  /* What is actually there to take. A shot for eighty into a fighter with ten
+     left lands ten, not eighty, which is what stops points running ahead of the
+     damage actually done. */
+  const applied = Math.min(amount, Math.max(0, e.shield) + Math.max(0, e.hull));
 
   const soaked = Math.min(e.shield, amount);
   e.shield -= soaked;
@@ -181,6 +197,7 @@ export function hurtEnemy(
   c.events.push({
     kind: "enemyHit", at: e.pos.clone(), power: Math.min(2, 0.4 + amount / 90),
     shield: e.shield / e.cls.shieldMax,
+    damage: applied,
   });
 
   if (e.hull <= 0) {
@@ -189,9 +206,8 @@ export function hurtEnemy(
     if (i >= 0) c.enemies.splice(i, 1);
     c.kills++;
     c.events.push({ kind: "enemyDown", at: e.pos.clone(), power: 3 });
-    return true;
   }
-  return false;
+  return applied;
 }
 
 /** A dead fighter comes apart into its body and its two panels. */
@@ -337,8 +353,20 @@ export interface CombatWorld {
   damageScale: number;
 }
 
-export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
+/**
+ * Throw away events that have been dealt with.
+ *
+ * The caller clears, NOT stepCombat. It used to clear its own list on entry,
+ * which quietly ate anything raised between two steps: setting off a torpedo
+ * pushed its explosion and the next step wiped it before the renderer looked,
+ * so torpedoes vanished without a bang. Ownership sits with the reader now, so
+ * the order of calls cannot break it again.
+ */
+export function clearEvents(c: CombatState): void {
   c.events.length = 0;
+}
+
+export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
 
   /* ---- bullets ---- */
   for (let i = c.bullets.length - 1; i >= 0; i--) {
@@ -372,7 +400,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       }
     } else if (segmentHit(from, b.pos, w.playerPos, 1.4)) {
       spent = true;
-      c.events.push({ kind: "playerHit", at: b.pos.clone(), power: 1.4 });
+      c.events.push({
+        kind: "playerHit", at: b.pos.clone(), power: 1.4, damage: rollLaserDamage(),
+      });
     }
 
     /* Into the planet. */
@@ -428,7 +458,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
     if (!struck && j.pos.distanceTo(w.playerPos) < 1.4 + JUNK_R) {
       struck = true;
-      c.events.push({ kind: "playerHit", at: j.pos.clone(), power: 1.6 });
+      c.events.push({
+        kind: "playerHit", at: j.pos.clone(), power: 1.6, damage: rollLaserDamage(),
+      });
     }
     if (struck) {
       c.events.push({ kind: "junkGone", at: j.pos.clone(), power: 1.4 });
@@ -485,9 +517,18 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     const alt = e.pos.length();
     if (alt < R + 1.5) e.pos.normalize().multiplyScalar(R + 1.5);
 
+    /* Out of rounds: break off for ten seconds, then come back loaded. */
+    if (e.ammo <= 0) {
+      e.reload -= dt;
+      if (e.reload <= 0) e.ammo = ENEMY_AMMO;
+    }
     e.fireAt -= dt;
-    if (e.fireAt <= 0 && range < ENEMY_FIRE_RANGE && dot > 0.9) {
-      e.fireAt = 1.1 + Math.random() * 1.6;
+    if (e.fireAt <= 0 && e.ammo > 0 && range < ENEMY_FIRE_RANGE && dot > 0.9) {
+      e.fireAt = 0.55 + Math.random() * 0.7;
+      e.ammo -= 1;
+      if (e.ammo <= 0) e.reload = ENEMY_RELOAD;
+      /* Dead on target, every time. Dodging is the player's job, and a shot
+         that misses by design would make that meaningless. */
       enemyFire(c, e, w.playerPos);
     }
 
@@ -519,6 +560,8 @@ function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3): Enemy {
     tumble: new THREE.Vector3(),
     spin: new THREE.Vector3(),
     flash: 0,
+    ammo: ENEMY_AMMO,
+    reload: 0,
     fireAt: 0.8 + Math.random() * 1.4,
     weave: 1, weaveDir: 1,
   };

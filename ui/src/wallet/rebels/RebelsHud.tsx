@@ -7,8 +7,9 @@
 import { useEffect, useRef, useState } from "react";
 import "./orbit.css";
 import { MAX_ALT } from "./orbitWorld";
-import { MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES } from "./orbitFlight";
+import { MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS } from "./orbitFlight";
 import type { RebelsController, HudState } from "./rebelsController";
+import { RebelsScoreboard } from "./RebelsScoreboard";
 
 export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () => void }) {
   const [hud, setHud] = useState<HudState>(() => ctl.hud());
@@ -20,6 +21,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
   /* If the globe never hands the game its scene, the launch button would sit on
      "finding your node" for ever with nothing explaining why. Say so instead. */
   const [slow, setSlow] = useState(false);
+  const [scores, setScores] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setSlow(true), 10000);
     return () => clearTimeout(t);
@@ -121,17 +123,23 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
             <div><span>AMMO</span><i><b style={{ width: pct(hud.ammo / MAX_AMMO) }} /></i></div>
             <div><span>BOOST</span><i><b style={{ width: pct(hud.boost) }} /></i></div>
             <div><span>TORP</span><i><b style={{ width: pct(hud.torpedoes / MAX_TORPEDOES) }} /></i></div>
+            <div><span>GUARD</span><i><b style={{ width: pct(hud.guards / MAX_GUARDS) }} /></i></div>
           </div>
+        </div>
+      )}
+
+      {hud.launched && (
+        <div className="orbit-score">
+          <span>SCORE</span>
+          <b>{hud.score.toLocaleString()}</b>
         </div>
       )}
 
       <div className="orbit-bars">
         <div className="orbit-gauge">
-          <span>SHIELDS</span>
-          <div className="orbit-pips">
-            {Array.from({ length: MAX_SHIELD }, (_, i) => (
-              <div key={i} className={"orbit-pip" + (i < hud.shields ? " on" : "") + (hud.shields <= 2 ? " low" : "")} />
-            ))}
+          <span>SHIELDS {Math.max(0, Math.round(hud.shields))}%</span>
+          <div className={"orbit-meter" + (hud.shields <= MAX_SHIELD * 0.3 ? " low" : "")}>
+            <i style={{ width: pct(hud.shields / MAX_SHIELD) }} />
           </div>
         </div>
         <div className="orbit-gauge">
@@ -143,6 +151,15 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           <div className="orbit-pips">
             {Array.from({ length: MAX_TORPEDOES }, (_, i) => (
               <div key={i} className={"orbit-pip orbit-torp" + (i < hud.torpedoes ? " on" : "")} />
+            ))}
+          </div>
+        </div>
+        <div className="orbit-gauge">
+          <span>GUARD</span>
+          <div className="orbit-pips">
+            {Array.from({ length: MAX_GUARDS }, (_, i) => (
+              <div key={i} className={"orbit-pip orbit-guard" + (i < hud.guards ? " on" : "")
+                + (hud.guarding ? " up" : "")} />
             ))}
           </div>
         </div>
@@ -165,7 +182,9 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         </div>
       )}
 
-      {!hud.broken && !hud.launched && (
+      {scores && <RebelsScoreboard onClose={() => setScores(false)} />}
+
+      {!hud.broken && !hud.launched && !scores && (
         <div className="orbit-card orbit-card-clear">
           <h2>DIVI REBELS</h2>
           <p>{hud.homeName === "no node located" ? "No node of your own found, launching from the network." : `Launching from ${hud.homeName}.`}</p>
@@ -175,9 +194,14 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
             CTRL+CLICK LAUNCHES A TORPEDO, AGAIN TO DETONATE IT<br />
             FLY UP TO ANY TOWER TO REPAIR AND REARM. YOUR OWN IS TWICE AS FAST.
           </p>
-          <button type="button" onClick={() => ctl.launch()} disabled={!hud.ready}>
-            {hud.ready ? "LAUNCH" : slow ? "GLOBE NOT READY" : "FINDING YOUR NODE…"}
-          </button>
+          <div className="orbit-buttons">
+            <button type="button" onClick={() => ctl.launch()} disabled={!hud.ready}>
+              {hud.ready ? "LAUNCH" : slow ? "GLOBE NOT READY" : "FINDING YOUR NODE…"}
+            </button>
+            <button type="button" className="orbit-secondary" onClick={() => setScores(true)}>
+              HIGH SCORES
+            </button>
+          </div>
           {!hud.ready && slow && (
             <p className="orbit-keys">
               The globe has not finished loading. Leave and come back once the
@@ -187,11 +211,17 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         </div>
       )}
 
-      {!hud.broken && hud.dead && (
+      {!hud.broken && hud.dead && !scores && (
         <div className="orbit-card">
           <h2>SHIP LOST</h2>
           <p>Recovered to {hud.homeName}.</p>
-          <button type="button" onClick={() => ctl.respawn()}>LAUNCH AGAIN</button>
+          <p className="orbit-keys">Run filed. Score resets from here.</p>
+          <div className="orbit-buttons">
+            <button type="button" onClick={() => ctl.respawn()}>LAUNCH AGAIN</button>
+            <button type="button" className="orbit-secondary" onClick={() => setScores(true)}>
+              HIGH SCORES
+            </button>
+          </div>
         </div>
       )}
     </div>

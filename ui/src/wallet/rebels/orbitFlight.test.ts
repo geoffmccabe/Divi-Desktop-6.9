@@ -10,7 +10,7 @@
 import * as THREE from "three";
 import { R, MIN_ALT, MAX_ALT } from "./orbitWorld";
 import {
-  createFlight, stepFlight, CRUISE, MAX_AMMO, MAX_SHIELD,
+  createFlight, stepFlight, CRUISE, MAX_AMMO, MAX_SHIELD, CRASH_DAMAGE, MAX_GUARDS,
   DOCK_SECONDS, type Stick,
 } from "./orbitFlight";
 
@@ -21,7 +21,7 @@ function ok(name: string, cond: boolean, extra = "") {
   out.push(`${cond ? "PASS" : "FAIL"} ${name}${extra ? `  [${extra}]` : ""}`);
 }
 const stick = (o: Partial<Stick> = {}): Stick =>
-  ({ x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, ...o });
+  ({ x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false, ...o });
 
 const DT = 1 / 60;
 function run(f: ReturnType<typeof createFlight>, frames: number, s: Stick, tips: THREE.Vector3[] = [], home = -1) {
@@ -86,8 +86,10 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   ok("cannot fly under the surface", g.alt >= MIN_ALT - 1e-9, `alt ${g.alt.toFixed(2)}`);
   ok("flying into the planet costs shields, not the game", g.shields > 0 && g.shields < MAX_SHIELD,
      `shields ${g.shields}`);
-  /* Grace has to stop one dive costing every shield at sixty frames a second. */
-  ok("one dive costs one shield, not six", g.shields === MAX_SHIELD - 1, `shields ${g.shields}`);
+  /* Grace has to stop one dive draining the whole shield at sixty frames a
+     second: the ground is touched on every one of them. */
+  ok("one dive costs one hit, not sixty", g.shields === MAX_SHIELD - CRASH_DAMAGE,
+     `shields ${g.shields}`);
 }
 
 // 5. Boost is faster and runs out.
@@ -105,16 +107,26 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 // 6. Guns fire, cost ammo, and stop when empty. What comes OUT of them is the
 //    combat module's business and is tested there.
 {
+  /** One pull of the trigger: press, hold a moment, release. */
+  const pull = (f: ReturnType<typeof createFlight>) => {
+    let shots = 0;
+    for (let i = 0; i < 12; i++) if (stepFlight(f, DT, stick({ firing: true }), [], -1).fired) shots++;
+    for (let i = 0; i < 8; i++) stepFlight(f, DT, stick(), [], -1);
+    return shots;
+  };
   const f = createFlight(pad);
-  const a = run(f, 30, stick({ firing: true }));
-  ok("firing costs ammo", f.ammo < MAX_AMMO, `ammo ${f.ammo}`);
-  ok("firing reports shots", a.shots > 0, `${a.shots} shots in half a second`);
-  ok("ammo spent matches shots fired", MAX_AMMO - f.ammo === a.shots,
-     `${MAX_AMMO - f.ammo} spent vs ${a.shots} fired`);
-  run(f, 60 * 20, stick({ firing: true }));
+  ok("one pull is one shot", pull(f) === 1, "and not a burst");
+  ok("firing costs one round", f.ammo === MAX_AMMO - 1, `ammo ${f.ammo}`);
+
+  /* Holding the trigger down must NOT keep firing: at nine a second the laser
+     sample overlapped itself into a drone. */
+  const held = run(f, 60 * 3, stick({ firing: true }));
+  ok("holding the trigger does not empty the magazine", held.shots <= 1,
+     `${held.shots} shots in three seconds of holding`);
+
+  for (let i = 0; i < MAX_AMMO + 5; i++) pull(f);
   ok("ammo runs out and stays out", f.ammo === 0);
-  const b = run(f, 60, stick({ firing: true }));
-  ok("an empty gun does not fire", b.shots === 0, `${b.shots} shots`);
+  ok("an empty gun does not fire", pull(f) === 0);
 }
 
 // 7. Docking at a tower repairs and rearms, but only when slow enough.
@@ -207,6 +219,32 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   }
   ok("flying to a tower and parking gets you docked", best >= 1,
      `best dock progress ${best.toFixed(2)}, shields ${f.shields}`);
+}
+
+// 8d. The guard: ten of them, half a second each, and only your own tower
+//     gives them back.
+{
+  const f = createFlight(pad);
+  const tap = () => {
+    stepFlight(f, DT, stick({ guard: true }), [], -1);
+    stepFlight(f, DT, stick(), [], -1);
+  };
+  tap();
+  ok("the right button raises a guard", f.guardFor > 0, `${f.guardFor.toFixed(2)}s left`);
+  ok("and it costs one", f.guards === MAX_GUARDS - 1, `${f.guards} left`);
+
+  /* Holding it must not stack: it is a tap, not a hold. */
+  const held = f.guards;
+  run(f, 20, stick({ guard: true }));
+  ok("holding the button does not spend more", f.guards === held, `${f.guards} left`);
+
+  run(f, 60, stick());
+  ok("it runs out after half a second", f.guardFor === 0);
+
+  for (let i = 0; i < MAX_GUARDS + 5; i++) { tap(); run(f, 40, stick()); }
+  ok("guards run out", f.guards === 0);
+  tap();
+  ok("and an empty rack raises nothing", f.guardFor === 0);
 }
 
 // 9. A long unattended flight does not drift, blow up or leak bolts.

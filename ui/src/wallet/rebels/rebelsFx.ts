@@ -142,9 +142,10 @@ export function createFx(): Fx {
     bin.push(mat, mesh);
     return mesh;
   };
-  /* Gold going out, hot orange coming back, so you always know whose is whose. */
+  /* Gold going out, bright green coming back, so you always know whose is
+     whose at a glance in a crowded fight. */
   const mine = { core: makeBolt(0xffd24a, false), halo: makeBolt(0xffa617, true) };
-  const theirs = { core: makeBolt(0xff8a5c, false), halo: makeBolt(0xff3a1c, true) };
+  const theirs = { core: makeBolt(0xc8ff5a, false), halo: makeBolt(0x4bff2e, true) };
   bin.push(boltGeo);
 
   /* ---- explosion debris ---- */
@@ -434,6 +435,9 @@ export interface ShieldRig {
   dispose(): void;
 }
 
+/** Pulses a second on a shield bubble. */
+const PULSE_HZ = 3;
+
 export function makeShieldRig(colour = 0x66ccff): ShieldRig {
   const group = new THREE.Group();
 
@@ -501,14 +505,16 @@ export function makeShieldRig(colour = 0x66ccff): ShieldRig {
       const on = strength > 0.001;
       group.visible = on;
       if (!on) return;
-      /* Radius by a tenth, brightness by a fifth, both fast. */
-      const pulse = Math.sin(seconds * 9);
-      const r = 1 + pulse * 0.1;
+      /* Three pulses a second, a fifth of the radius each way. */
+      const pulse = Math.sin(seconds * Math.PI * 2 * PULSE_HZ);
+      const r = 1 + pulse * 0.2;
       shell.scale.setScalar(r);
       skin.scale.setScalar(r * 0.97);
+      /* Halved again: at the old level the bubble read as a solid ball and hid
+         the ship it was protecting. */
       const bright = Math.max(0, Math.min(1.4, level)) * (1 + pulse * 0.2) * strength;
-      mat.opacity = 0.55 * bright;
-      skinMat.opacity = 0.16 * bright;
+      mat.opacity = 0.28 * bright;
+      skinMat.opacity = 0.08 * bright;
       if (labelMat) labelMat.opacity = Math.min(1, strength * 1.6);
     },
     dispose() {
@@ -516,5 +522,37 @@ export function makeShieldRig(colour = 0x66ccff): ShieldRig {
       skinGeo.dispose(); skinMat.dispose();
       tex?.dispose(); labelMat?.dispose();
     },
+  };
+}
+
+/**
+ * The player's guard: a red shell seen from the INSIDE.
+ *
+ * Drawn with BackSide, because the camera sits within it. Kept faint on purpose
+ * at three tenths: this is over the whole view, and anything more solid would
+ * hide the fight it is protecting you from.
+ */
+export function makeGuardShell(): { mesh: THREE.Object3D; step(seconds: number, strength: number): void; dispose(): void } {
+  const geo = new THREE.SphereGeometry(3.2, 22, 16);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xff3a3a, wireframe: true, transparent: true, opacity: 0,
+    side: THREE.BackSide, depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.visible = false;
+  mesh.renderOrder = 20;
+  return {
+    mesh,
+    step(seconds, strength) {
+      mesh.visible = strength > 0.001;
+      if (!mesh.visible) return;
+      /* The same three-a-second pulse the fighters' shields use, so the two
+         read as the same kind of thing. */
+      const pulse = Math.sin(seconds * Math.PI * 2 * PULSE_HZ);
+      mesh.scale.setScalar(1 + pulse * 0.06);
+      mat.opacity = 0.3 * strength * (1 + pulse * 0.2);
+      mesh.rotation.y += 0.004;
+    },
+    dispose() { geo.dispose(); mat.dispose(); },
   };
 }

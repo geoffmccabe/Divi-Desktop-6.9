@@ -1978,7 +1978,60 @@ code, .mono { font-family: var(--font-mono); }
 /* Torpedoes get their own violet, matching their blast. */
 .orbit-pip.orbit-torp.on { background: hsl(270 90% 72%); border-color: hsl(270 90% 72%); }
 .orbit-torp-live { color: hsl(270 95% 80%); }
+/* The guard is red, like the shell it raises. */
+.orbit-pip.orbit-guard { width: 9px; }
+.orbit-pip.orbit-guard.on { background: hsl(0 90% 62%); border-color: hsl(0 90% 62%); }
+.orbit-pip.orbit-guard.on.up { box-shadow: 0 0 8px hsl(0 95% 65%); }
 .orbit-bonus { color: hsl(var(--rebels-home)); font-weight: 700; }
+
+/* Score, bottom right and big enough to read mid-turn. */
+.orbit-score {
+  position: absolute; right: 18px; bottom: 16px; text-align: right;
+}
+.orbit-score > span {
+  display: block; font-size: 10px; letter-spacing: 0.18em; opacity: 0.7;
+}
+.orbit-score > b {
+  display: block; font-size: 30px; line-height: 1.05; font-weight: 700;
+  color: hsl(var(--rebels-home));
+  text-shadow: 0 0 calc(var(--glow-strength) * 0.5) hsl(var(--rebels-home) / 0.55);
+}
+
+.orbit-meter.low > i { background: hsl(var(--destructive)); }
+
+.orbit-buttons { display: flex; gap: 10px; justify-content: center; }
+.orbit-card .orbit-secondary {
+  background: transparent;
+  color: hsl(var(--rebels-hud));
+  border: 1px solid hsl(var(--rebels-hud) / 0.5);
+}
+.orbit-card .orbit-secondary:hover { background: hsl(var(--primary) / 0.25); }
+
+/* The high score tables. */
+.orbit-scores { gap: 6px; }
+.rs-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 4px; }
+.rs-tabs button {
+  padding: 6px 14px; font-size: 11px; letter-spacing: 0.12em;
+  background: transparent; color: hsl(var(--rebels-hud));
+  border: 1px solid hsl(var(--rebels-hud) / 0.45);
+  border-radius: calc(var(--panel-radius) * 0.5); cursor: pointer;
+}
+.rs-tabs button.on { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border-color: transparent; }
+.rs-list {
+  list-style: none; margin: 0; padding: 0;
+  width: min(520px, 74vw); max-height: 44vh; overflow-y: auto;
+  font-size: 12px;
+}
+.rs-list li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 8px; border-bottom: 1px solid hsl(var(--rebels-hud) / 0.14);
+}
+.rs-list li.rs-me { background: hsl(var(--primary) / 0.18); border-radius: 4px; }
+.rs-rank { width: 26px; text-align: right; opacity: 0.6; }
+.rs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.rs-pts { font-weight: 700; color: hsl(var(--rebels-home)); font-size: 14px; }
+.rs-games { width: 66px; text-align: right; opacity: 0.55; font-size: 11px; }
+.rs-note { max-width: 460px; }
 
 /* The launch card sits over the live globe, so it must not paint over it. Only
    the text carries a shadow, to stay readable against a bright coastline. */

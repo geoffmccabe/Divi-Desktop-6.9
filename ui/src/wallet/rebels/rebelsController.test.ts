@@ -19,10 +19,21 @@ import { R } from "./orbitWorld";
    window, so stand one up; `document` is deliberately left undefined so the
    palette exercises its own no-theme fallback. */
 const winListeners: Record<string, number> = {};
+/* Handlers are kept, not just counted, so a test can actually press a key. */
+const winHandlers: Record<string, ((e: unknown) => void)[]> = {};
 (globalThis as unknown as { window: unknown }).window = {
-  addEventListener: (k: string) => { winListeners[k] = (winListeners[k] ?? 0) + 1; },
-  removeEventListener: (k: string) => { winListeners[k] = (winListeners[k] ?? 0) - 1; },
+  addEventListener: (k: string, fn: (e: unknown) => void) => {
+    winListeners[k] = (winListeners[k] ?? 0) + 1;
+    (winHandlers[k] ??= []).push(fn);
+  },
+  removeEventListener: (k: string, fn: (e: unknown) => void) => {
+    winListeners[k] = (winListeners[k] ?? 0) - 1;
+    winHandlers[k] = (winHandlers[k] ?? []).filter((f) => f !== fn);
+  },
 };
+function press(type: string, e: Record<string, unknown>) {
+  for (const fn of winHandlers[type] ?? []) fn({ preventDefault() {}, ...e });
+}
 
 const out: string[] = [];
 let failures = 0;
@@ -78,8 +89,9 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
   const h = ctl.hud();
-  ok("attach adds its effects layer to the map's own scene",
-     g.scene.children.length === before + 1, `${before} -> ${g.scene.children.length}`);
+  /* The effects layer and the player's guard shell. */
+  ok("attach adds its own objects to the map's scene",
+     g.scene.children.length === before + 2, `${before} -> ${g.scene.children.length}`);
   ok("attach reports ready", h.ready && h.broken === null);
   ok("it uses the real towers it was handed", h.towers === 2, `${h.towers} towers`);
   ok("it knows which tower is yours", h.homeName === "San Jose, Costa Rica", h.homeName);
@@ -134,6 +146,53 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
      (winListeners.keydown ?? 0) === 0 && (winListeners.blur ?? 0) === 0);
 }
 
+// 5b. The torpedo path, end to end through the real input handlers.
+//      Reported broken twice, so it is driven the way a player drives it: hold
+//      the key, press fire, let go.
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);   /* through the dive */
+
+  const before = ctl.hud().torpedoes;
+  press("keydown", { key: "t" });
+  ctl.frame(1 / 60);
+  press("keyup", { key: "t" });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  ok("the torpedo key launches one", ctl.hud().inFlight === 1 || ctl.hud().torpedoes < before,
+     `rack ${before} -> ${ctl.hud().torpedoes}, in flight ${ctl.hud().inFlight}`);
+
+  /* And a second press sets it off rather than launching another. */
+  const racked = ctl.hud().torpedoes;
+  press("keydown", { key: "t" });
+  ctl.frame(1 / 60);
+  press("keyup", { key: "t" });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  ok("a second press detonates rather than launching another",
+     ctl.hud().torpedoes === racked, `rack still ${ctl.hud().torpedoes}`);
+  ok("and nothing is left in the air", ctl.hud().inFlight === 0, `${ctl.hud().inFlight}`);
+  ctl.detach();
+}
+{
+  /* Left alone, the fuse does the job. */
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);
+  press("keydown", { key: "t" });
+  ctl.frame(1 / 60);
+  press("keyup", { key: "t" });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  const flying = ctl.hud().inFlight;
+  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
+  ok("an unattended torpedo goes off on its own", flying === 1 && ctl.hud().inFlight === 0,
+     `was ${flying}, now ${ctl.hud().inFlight}`);
+  ctl.detach();
+}
+
 // 6. Docking uses the tips the map handed over, not a guess.
 {
   const g = stubGlobe([["self-ip", home]]);
@@ -173,7 +232,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.attach({ ...g, selfIp: "self-ip" });
   ctl.detach();
   ctl.attach({ ...g, selfIp: "self-ip" });
-  ok("re-attaching does not pile up scenery", g.scene.children.length === before + 1,
+  ok("re-attaching does not pile up scenery", g.scene.children.length === before + 2,
      `${g.scene.children.length - before} objects`);
   ctl.detach();
   ok("and the second detach still cleans up", g.scene.children.length === before);

@@ -52,7 +52,20 @@ function toArrayBuffer(url: string): Promise<ArrayBuffer> {
   return Promise.resolve(bytes.buffer);
 }
 
-/** Decode both samples once, at launch, and hold them. */
+/**
+ * Wake the audio up. MUST be called from a real click.
+ *
+ * A webview creates an audio context suspended and only lets it be resumed from
+ * a user gesture. Decoding is started as soon as the panel opens, which is not a
+ * gesture, so without this the context would sit suspended and every sound would
+ * queue up silently behind it.
+ */
+export function resumeAudio(): void {
+  const ctx = audioContext();
+  if (ctx && ctx.state === "suspended") void ctx.resume();
+}
+
+/** Decode every sample once and hold them. */
 export function primeGunSound(): void {
   if (loading || failed || (buffer && rechargeBuffer && torpedoBuffer
       && torpedoBlastBuffer && shipBlastBuffer)) return;
@@ -177,9 +190,9 @@ export function playTorpedoSound(): void {
   once(torpedoBuffer);
 }
 
-/** A fighter coming apart. */
-export function playShipExplosion(): void {
-  once(shipBlastBuffer, 1.1);
+/** A fighter coming apart, or something smaller if the level is turned down. */
+export function playShipExplosion(loudness = 1.1): void {
+  once(shipBlastBuffer, loudness);
 }
 
 /** A torpedo going off. The big one, so it is given a little more level. */

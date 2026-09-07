@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { R } from "./orbitWorld";
 import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
-  fireTorpedo, detonateOldest,
+  fireTorpedo, detonateOldest, clearEvents,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy,
   type CombatState, type Enemy,
@@ -46,7 +46,7 @@ function fighter(at: THREE.Vector3, over: Partial<Enemy> = {}): Enemy {
     pos: at.clone(), fwd: fwd.clone().negate(), roll: 0,
     cls: FIGHTER, shield: 0, hull: 1,
     vel: new THREE.Vector3(), tumble: new THREE.Vector3(), spin: new THREE.Vector3(),
-    flash: 0, fireAt: 1e9, weave: 1e9, weaveDir: 1,
+    flash: 0, ammo: 60, reload: 0, fireAt: 1e9, weave: 1e9, weaveDir: 1,
     ...over,
   };
 }
@@ -56,6 +56,7 @@ function run(c: CombatState, frames: number, w = world()) {
   for (let i = 0; i < frames; i++) {
     stepCombat(c, DT, w);
     for (const e of c.events) seen.push(e.kind);
+    clearEvents(c);
   }
   return seen;
 }
@@ -253,6 +254,39 @@ function run(c: CombatState, frames: number, w = world()) {
   c.torpedoes.push({ pos: at.clone(), vel: fwd.clone(), life: 1 });
   detonateOldest(c, w);
   ok("one torpedo is worth five bullets", c.kills === 1);
+}
+
+// 8b. Events belong to whoever reads them.
+{
+  const c = createCombat();
+  const w = world();
+  fireTorpedo(c, pos, fwd);
+  stepCombat(c, DT, w);
+  clearEvents(c);
+  detonateOldest(c, w);
+  ok("setting off a torpedo raises its explosion", c.events.some((e) => e.kind === "torpedoBlast"));
+  /* THE BUG: stepCombat used to clear on entry, so this next call ate the
+     explosion before anything could draw it and torpedoes silently vanished. */
+  stepCombat(c, DT, w);
+  ok("and the next step does not eat it before it is read",
+     c.events.some((e) => e.kind === "torpedoBlast"));
+  clearEvents(c);
+  ok("clearing is what empties it", c.events.length === 0);
+}
+
+// 8c. Points can never run ahead of the damage actually done.
+{
+  const c = createCombat();
+  const nearlyDead = fighter(pos.clone(), { shield: 0, hull: 10 });
+  c.enemies.push(nearlyDead);
+  const landed = hurtEnemy(c, nearlyDead, 80, pos);
+  ok("a big hit on a nearly-dead fighter only scores what was there",
+     landed === 10, `landed ${landed}`);
+  const fresh = fighter(pos.clone(), { shield: FIGHTER.shieldMax, hull: FIGHTER.hullMax });
+  c.enemies.push(fresh);
+  ok("and a normal hit scores all of itself", hurtEnemy(c, fresh, 45, pos) === 45);
+  ok("the hit event carries the same figure",
+     c.events.filter((e) => e.kind === "enemyHit").pop()?.damage === 45);
 }
 
 // 9. Shields, knockback and wreckage.

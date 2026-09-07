@@ -28,9 +28,21 @@ export const DOCK_SECONDS = 2.2;
    rather than flown in circles around it. Braking to a quarter of cruise was
    not enough and docking stayed fiddly. */
 export const PARK = 2.2;
-export const MAX_SHIELD = 6;
+/** The player's shield, on the same hundred-point scale the fighters use. */
+export const MAX_SHIELD = 100;
+/** What flying into the planet or clipping a tower costs. A quarter of a full
+ *  shield: enough to matter, not enough to end a run on one clumsy moment. */
+export const CRASH_DAMAGE = 25;
 export const MAX_AMMO = 60;
 export const MAX_TORPEDOES = 2;
+/* ---- the guard ----
+   A short, hard shield on the right button. Ten of them, half a second each,
+   and only your own tower puts them back, so it is a thing you spend rather
+   than a thing you hold. */
+export const MAX_GUARDS = 10;
+export const GUARD_SECONDS = 0.5;
+/** How much of an incoming hit it soaks. */
+export const GUARD_ABSORB = 0.8;
 
 export interface Flight {
   pos: THREE.Vector3;
@@ -42,6 +54,10 @@ export interface Flight {
   shields: number;
   ammo: number;
   torpedoes: number;
+  /** Guards left, and seconds the current one has to run. */
+  guards: number;
+  guardFor: number;
+  guardWasDown: boolean;
   dock: number;       /* 0..1 progress into a docking */
   dockedAt: number;   /* index of the tower being docked with, or -1 */
   cooldown: number;
@@ -67,6 +83,8 @@ export interface Stick {
   /** Control held: the trigger launches or sets off a torpedo instead of
    *  firing the guns. */
   heavy: boolean;
+  /** Right button: raise the guard. */
+  guard: boolean;
 }
 
 /** Start on the pad above a tower, pointing north. */
@@ -89,6 +107,9 @@ export function createFlight(at: THREE.Vector3): Flight {
     shields: MAX_SHIELD,
     ammo: MAX_AMMO,
     torpedoes: MAX_TORPEDOES,
+    guards: MAX_GUARDS,
+    guardFor: 0,
+    guardWasDown: false,
     dock: 0,
     dockedAt: -1,
     cooldown: 0,
@@ -172,7 +193,7 @@ export function stepFlight(
   if (wantAlt < MIN_ALT) {
     const wasFlying = f.alt > MIN_ALT + 1e-6;
     if (wasFlying && stick.y < -0.15 && f.speed > CRUISE * 0.6 && f.grace <= 0) {
-      f.shields -= 1;
+      f.shields -= CRASH_DAMAGE;
       f.grace = 1.2;
       out.hit = true;
     }
@@ -201,7 +222,7 @@ export function stepFlight(
     if (d < nearDist) { nearDist = d; near = i; }
   }
   if (near >= 0 && nearDist < 1.6 && f.grace <= 0) {
-    f.shields -= 1;
+    f.shields -= CRASH_DAMAGE;
     f.grace = 1.2;
     out.hit = true;
     /* Shoved away rather than stopped dead, so a clip is a scare not a wall. */
@@ -231,9 +252,12 @@ export function stepFlight(
         f.shields = MAX_SHIELD;
         f.ammo = MAX_AMMO;
         f.boost = 1;
-        /* Torpedoes come from your OWN tower and nowhere else, which is what
-           gives home a reason to exist beyond being faster. */
-        if (near === homeIndex) f.torpedoes = MAX_TORPEDOES;
+        /* Torpedoes and guards come from your OWN tower and nowhere else,
+           which is what gives home a reason to exist beyond being faster. */
+        if (near === homeIndex) {
+          f.torpedoes = MAX_TORPEDOES;
+          f.guards = MAX_GUARDS;
+        }
         f.dockHold = 1.1;
         out.docked = true;
       }
@@ -262,18 +286,35 @@ export function stepFlight(
   }
 
   /* ---- guns, or the heavy trigger ----
+     ONE PULL, ONE SHOT. The guns used to run at nine shots a second for as long
+     as the button was down, which fired eighteen overlapping copies of the
+     laser sample every second and came out as a drone rather than as gunfire.
+     Both triggers are now edge-triggered: a click is a shot, and a shot is one
+     double-barrelled bang.
+
      Control held swaps the trigger over entirely, so a torpedo run never sprays
-     bullets at the same time. The heavy press is reported on the EDGE, because
-     the same button both launches one and sets it off. */
+     bullets at the same time. */
   f.cooldown -= dt;
+  const pressed = stick.firing && !f.heavyWasDown;
   if (stick.heavy) {
-    if (stick.firing && !f.heavyWasDown) out.heavyPress = true;
-  } else if (stick.firing && f.cooldown <= 0 && f.ammo > 0) {
-    f.cooldown = 0.11;
+    if (pressed) out.heavyPress = true;
+  } else if (pressed && f.cooldown <= 0 && f.ammo > 0) {
+    /* Just enough to stop a bouncy button reading as two shots. */
+    f.cooldown = 0.08;
     f.ammo -= 1;
     out.fired = true;
   }
   f.heavyWasDown = stick.firing;
+
+  /* ---- the guard ----
+     Raised on the press, not the hold: it runs for its half second and then it
+     is gone, so it has to be timed rather than leant on. */
+  f.guardFor = Math.max(0, f.guardFor - dt);
+  if (stick.guard && !f.guardWasDown && f.guardFor <= 0 && f.guards > 0) {
+    f.guards -= 1;
+    f.guardFor = GUARD_SECONDS;
+  }
+  f.guardWasDown = stick.guard;
 
   return out;
 }
