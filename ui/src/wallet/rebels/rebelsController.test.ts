@@ -59,12 +59,25 @@ function stubGlobe(towers: Array<[string, THREE.Vector3]>) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(50, 1.5, 1, 1000);
   const listeners: Record<string, number> = {};
+  /* The handlers themselves, not just a count: the mouse-flight test has to be
+     able to actually move the pointer. */
+  const on: Record<string, Array<(e: Record<string, unknown>) => void>> = {};
   const dom = {
     getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
-    addEventListener: (k: string) => { listeners[k] = (listeners[k] ?? 0) + 1; },
-    removeEventListener: (k: string) => { listeners[k] = (listeners[k] ?? 0) - 1; },
+    addEventListener: (k: string, fn: (e: Record<string, unknown>) => void) => {
+      listeners[k] = (listeners[k] ?? 0) + 1;
+      (on[k] ??= []).push(fn);
+    },
+    removeEventListener: (k: string, fn: (e: Record<string, unknown>) => void) => {
+      listeners[k] = (listeners[k] ?? 0) - 1;
+      on[k] = (on[k] ?? []).filter((f) => f !== fn);
+    },
+    requestPointerLock: () => {},
   } as unknown as HTMLCanvasElement;
-  return { scene, camera, dom, listeners, tips: new Map(towers), radius: R };
+  const fire = (k: string, e: Record<string, unknown>) => {
+    for (const fn of on[k] ?? []) fn({ preventDefault() {}, ...e });
+  };
+  return { scene, camera, dom, listeners, fire, tips: new Map(towers), radius: R };
 }
 
 /** Tower tips exactly where the real map puts them: R + 3, and R + 6 for your
@@ -355,6 +368,60 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
      `${g.scene.children.length - before} objects`);
   ctl.detach();
   ok("and the second detach still cleans up", g.scene.children.length === before);
+}
+
+// 9. MOUSE FLIGHT: stop moving the mouse and the ship stops turning.
+//
+//    Geoff, twice: "something is fighting my controls and making the screen
+//    jerk up and down."
+//
+//    The crosshair accumulates mouse movement and its distance from the middle
+//    is a RATE of turn. Nothing returned it to the middle, so nudging the mouse
+//    down and letting go left the ship pitching down for ever, and pushing to
+//    the edge left it looping continuously. That is the jerking.
+//
+//    It was harmless before the flight model was freed, because up and down was
+//    a throttle on an altitude that saturated at the floor. Making pitch a real
+//    direction turned the same input into a command with no way to cancel it.
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);   /* through the dive */
+
+  /* Shove the mouse to the bottom of the frame, the way a player does when
+     they mean "dive", and then take their hand off it. */
+  for (let i = 0; i < 20; i++) {
+    g.fire("pointermove", { clientX: 400, clientY: 560 });
+    ctl.frame(1 / 60);
+  }
+  const turning = ctl.cursor().y;
+  ok("pushing the mouse down does steer", turning > 0.62, `crosshair at ${turning.toFixed(2)}`);
+
+  /* Hand off the mouse. Within a second the stick must be back at neutral. */
+  for (let i = 0; i < 90; i++) ctl.frame(1 / 60);
+  const settled = ctl.cursor().y;
+  ok("and letting go returns the stick", Math.abs(settled - 0.5) < 0.06,
+     `crosshair at ${settled.toFixed(3)}`);
+
+  /* THE ONE THAT MATTERS: the SHIP has to stop turning, not just the
+     crosshair. A ship that kept looping would swing its altitude up and down
+     for ever; one flying straight changes it in one direction. Sampled over
+     six seconds, which is longer than a loop takes. */
+  const alts: number[] = [];
+  for (let s = 0; s < 6; s++) {
+    for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+    alts.push(ctl.hud().alt);
+  }
+  let reversals = 0;
+  for (let i = 2; i < alts.length; i++) {
+    const a = alts[i - 1] - alts[i - 2], b = alts[i] - alts[i - 1];
+    if (Math.sign(a) !== Math.sign(b) && Math.abs(a) > 0.5 && Math.abs(b) > 0.5) reversals++;
+  }
+  ok("and the ship stops turning too", reversals === 0,
+     `${reversals} reversals in ${alts.map((a) => a.toFixed(0)).join(", ")}`);
+  ctl.detach();
 }
 
 console.log(out.join("\n"));

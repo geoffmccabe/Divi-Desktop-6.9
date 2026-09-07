@@ -274,11 +274,51 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* ---------------- input ----------------
      The pointer is a stick: its offset from the middle of the canvas is the
      deflection, so the crosshair goes where the hand goes. */
+  /* ---- the crosshair is a SELF-CENTRING STICK ----
+
+     It was not, and that made the game unflyable. The crosshair accumulates
+     mouse movement and clamps at the edges of the frame, and its distance from
+     the middle is a RATE of turn. Move the mouse down and stop, and the
+     crosshair stays below the middle, and the ship keeps pitching down. For
+     ever. Push it to the bottom edge and the ship simply loops, over and over,
+     which is exactly what Geoff saw: "something is fighting my controls and
+     making the screen jerk up and down."
+
+     This was survivable before the flight model was freed, because up and down
+     used to be a throttle on an altitude between 0.8 and 30 units: a pinned
+     crosshair meant "sit on the floor" and nothing worse. Turning pitch into a
+     real direction turned the same input into a permanent command, and there
+     was no way to cancel it except to find the exact middle of a frame you
+     cannot see.
+
+     Two things fix it, and they are what every mouse-flown game does. A
+     DEADZONE, so the middle of the screen means straight ahead rather than
+     nearly straight ahead. And a RETURN, so letting go of the mouse returns
+     the stick to neutral and the ship stops turning. Moving the mouse outruns
+     the return easily, so it costs nothing in responsiveness. */
+  const DEADZONE = 0.07;
+  /** Seconds for the stick to fall back most of the way to the middle. */
+  const STICK_RETURN = 0.45;
+  /** How far from the middle the crosshair may get. Short of the frame edge,
+   *  so full deflection is reachable without the crosshair sticking to the rim
+   *  where nothing the mouse does can move it further. */
+  const STICK_REACH = 0.42;
+
+  function shape(v: number): number {
+    const a = Math.abs(v);
+    if (a <= DEADZONE) return 0;
+    return Math.sign(v) * Math.min(1, (a - DEADZONE) / (STICK_REACH - DEADZONE));
+  }
   function applyCursor() {
-    const nx = cursor.x * 2 - 1;
-    const ny = cursor.y * 2 - 1;
-    stick.x = Math.max(-1, Math.min(1, nx * 1.25));
-    stick.y = Math.max(-1, Math.min(1, -ny * 1.25));
+    stick.x = shape(cursor.x * 2 - 1);
+    stick.y = -shape(cursor.y * 2 - 1);
+  }
+  /** Ease the crosshair back to the middle. Called once a frame while flying. */
+  function centreStick(dt: number) {
+    const k = Math.min(1, dt / STICK_RETURN);
+    cursor.x += (0.5 - cursor.x) * k;
+    cursor.y += (0.5 - cursor.y) * k;
+    applyCursor();
   }
   function onMove(e: PointerEvent) {
     if (!dom) return;
@@ -288,8 +328,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          reason for the lock: the pointer can no longer wander out of the game
          and click something that closes it. */
       const r = dom.getBoundingClientRect();
-      cursor.x = Math.max(0, Math.min(1, cursor.x + e.movementX / r.width));
-      cursor.y = Math.max(0, Math.min(1, cursor.y + e.movementY / r.height));
+      const lo = 0.5 - STICK_REACH, hi = 0.5 + STICK_REACH;
+      cursor.x = Math.max(lo, Math.min(hi, cursor.x + e.movementX / r.width));
+      cursor.y = Math.max(lo, Math.min(hi, cursor.y + e.movementY / r.height));
     } else {
       const r = dom.getBoundingClientRect();
       cursor.x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
@@ -550,6 +591,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           if (diveT >= 1) phase = "fly";
           return;
         }
+
+        /* The stick falls back to neutral whenever the mouse is not pushing it,
+           so stopping the mouse stops the turn. */
+        if (!hud.dead) centreStick(dt);
 
         const live = !hud.dead;
         const blank: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false, mini: false };

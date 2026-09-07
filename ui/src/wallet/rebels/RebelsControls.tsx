@@ -12,7 +12,7 @@ export interface ControlLine {
 }
 
 export const CONTROLS: ControlLine[] = [
-  { keys: "MOUSE", what: "Fly. The crosshair goes where you point and the ship follows it." },
+  { keys: "MOUSE", what: "Fly. Push the crosshair off centre to turn; let go and it comes back." },
   { keys: "ARROWS / WASD", what: "Steer using the traditional keyboard navigation keys." },
   { keys: "LEFT CLICK / SPACE", what: "Main guns. One double shot per press." },
   { keys: "E + CLICK", what: "Mini gun. Twenty a second while held, aimed at the crosshair, 25% damage, uses 1/4 bullet" },
