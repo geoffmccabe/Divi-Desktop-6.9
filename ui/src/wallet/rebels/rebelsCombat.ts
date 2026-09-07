@@ -691,21 +691,38 @@ export function fireGuns(
  * corner whatever the window size.
  */
 export function miniMuzzle(
-  pos: THREE.Vector3,
-  fwd: THREE.Vector3,
-  up: THREE.Vector3,
+  camPos: THREE.Vector3,
+  camFwd: THREE.Vector3,
+  camRight: THREE.Vector3,
+  camUp: THREE.Vector3,
   fovDeg: number,
   aspect: number,
   out: THREE.Vector3,
+  at?: THREE.Vector3,
 ): void {
+  /* Third person: out of the ship's nose, because there is a ship on screen
+     and fire that starts anywhere else reads as broken. */
+  if (at) { out.copy(at); return; }
+
+  /* ---- THE CORNER OF THE SCREEN ----
+     Measured in the CAMERA's own frame, not the ship's.
+
+     These used to be the ship's own forward and up, which is the same thing
+     only in the cockpit and only while flying level. In third person the
+     camera sits metres behind the ship, so a corner offset sized for a viewer
+     at the ship subtends a far smaller angle from where the camera actually
+     is, and the muzzle landed near the middle of the frame instead: Geoff,
+     "the minigun shots are going from the cursor". And even in the cockpit the
+     camera is rolled by the bank and thrown by a hit, so "up" for the ship and
+     "up" for the screen are not the same vector during exactly the manoeuvres
+     anyone would be shooting through. */
   const d = 2.2;
   const halfH = Math.tan((fovDeg * Math.PI) / 360) * d;
   const halfW = halfH * aspect;
-  const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
-  out.copy(pos)
-    .addScaledVector(fwd, d)
-    .addScaledVector(right, halfW * 0.94)
-    .addScaledVector(up, halfH * 0.86);
+  out.copy(camPos)
+    .addScaledVector(camFwd, d)
+    .addScaledVector(camRight, halfW * 0.94)
+    .addScaledVector(camUp, halfH * 0.86);
 }
 
 /**

@@ -169,6 +169,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const lean = createLean();
   const leanNose = new THREE.Vector3();
   const leanRef = new THREE.Vector3();
+  /* The screen's own axes, taken off the camera each time a gun fires. */
+  const camRight = new THREE.Vector3();
+  const camUp = new THREE.Vector3();
+  const camFwd = new THREE.Vector3();
   let shipPaint: PaintHandle | null = null;
   let shipHull: HitSphere[] = [];
   let shipLoading = false;
@@ -1074,7 +1078,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           ndc.unproject(camera);
           const aimDir = ndc.sub(camera.position).normalize();
           const muzzle = new THREE.Vector3();
-          miniMuzzle(flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, muzzle);
+          /* The SCREEN's axes, read off the camera itself, so the corner is the
+             corner of the picture whatever the bank is doing and wherever the
+             camera happens to be sitting. */
+          camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+          camUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+          camFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
+          miniMuzzle(
+            camera.position, camFwd, camRight, camUp, camera.fov, camera.aspect, muzzle,
+            /* In third person it comes out of the nose instead, the same way
+               the main guns already do. */
+            shipModel && flight.view > 0.01 ? shipNose(flight) : undefined,
+          );
           fireMini(combat, muzzle, camera.position, aimDir);
           fx.muzzle(muzzle);
           playMiniSound();

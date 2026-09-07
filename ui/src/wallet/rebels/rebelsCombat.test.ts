@@ -538,12 +538,86 @@ function run(c: CombatState, frames: number, w = world()) {
 
 // 12. The mini gun's own rounds.
 {
+  /* ---- ASSERTED ON THE SCREEN, NOT IN THE MATHS ----
+     What a player sees is WHERE ON THE PICTURE the round comes from, so that
+     is what is measured: a real camera, posed the way the game poses it, and
+     the muzzle projected through it into screen coordinates.
+
+     The old version of this test compared the muzzle against the ship's own
+     right and up vectors, which is not the same question. It passed happily
+     while the rounds were coming out of the middle of the frame in third
+     person, because relative to the SHIP they really were up and to the right.
+     Geoff: "the minigun shots are going from the cursor." */
+  const camera = new THREE.PerspectiveCamera(FOV, ASPECT, 0.1, 5000);
+  /** Pose a camera exactly as the flight loop does, and give back the screen
+   *  position of a point: -1 to 1 across, -1 to 1 up. */
+  const onScreen = (camPos: THREE.Vector3, look: THREE.Vector3, camUp: THREE.Vector3) => {
+    const m4 = new THREE.Matrix4().lookAt(camPos, camPos.clone().add(look), camUp);
+    camera.position.copy(camPos);
+    camera.quaternion.setFromRotationMatrix(m4);
+    camera.updateMatrixWorld(true);
+    camera.updateProjectionMatrix();
+    return (p: THREE.Vector3) => p.clone().project(camera);
+  };
+  const axes = (q: THREE.Quaternion) => ({
+    right: new THREE.Vector3(1, 0, 0).applyQuaternion(q),
+    up: new THREE.Vector3(0, 1, 0).applyQuaternion(q),
+    fwd: new THREE.Vector3(0, 0, -1).applyQuaternion(q),
+  });
+
+  /* ---- first person: the camera is the ship ---- */
   const m = new THREE.Vector3();
-  miniMuzzle(pos, fwd, up, FOV, ASPECT, m);
-  const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
-  ok("the mini gun sits in the top right",
-     m.clone().sub(pos).dot(right) > 0 && m.clone().sub(pos).dot(up) > 0,
-     `right ${m.clone().sub(pos).dot(right).toFixed(2)}, up ${m.clone().sub(pos).dot(up).toFixed(2)}`);
+  {
+    const project = onScreen(pos, fwd, up);
+    const a = axes(camera.quaternion);
+    miniMuzzle(camera.position, a.fwd, a.right, a.up, FOV, ASPECT, m);
+    const ndc = project(m);
+    ok("the mini gun sits in the TOP RIGHT of the screen",
+       ndc.x > 0.8 && ndc.y > 0.7,
+       `screen ${ndc.x.toFixed(2)}, ${ndc.y.toFixed(2)}`);
+  }
+
+  /* ---- and it stays there through a bank ----
+     The camera rolls with the bank; the ship's own up does not. Reading the
+     corner off the ship put the muzzle off the corner for exactly the
+     manoeuvres anybody would be shooting through. */
+  {
+    const rolled = up.clone().applyAxisAngle(fwd, 0.5);
+    const project = onScreen(pos, fwd, rolled);
+    const a = axes(camera.quaternion);
+    miniMuzzle(camera.position, a.fwd, a.right, a.up, FOV, ASPECT, m);
+    const ndc = project(m);
+    ok("and stays in the corner through a hard bank",
+       ndc.x > 0.8 && ndc.y > 0.7,
+       `screen ${ndc.x.toFixed(2)}, ${ndc.y.toFixed(2)}`);
+  }
+
+  /* ---- third person: out of the nose ----
+     The camera is well behind the ship. A corner measured from the SHIP's
+     position subtends a much smaller angle from back here, which is how the
+     rounds ended up near the middle of the frame. */
+  {
+    const back = pos.clone().addScaledVector(fwd, -6).addScaledVector(up, 1.8);
+    const project = onScreen(back, fwd, up);
+    const a = axes(camera.quaternion);
+
+    /* What the old code did, kept as the thing being guarded against. */
+    const wrong = new THREE.Vector3();
+    const halfH = Math.tan((FOV * Math.PI) / 360) * 2.2;
+    wrong.copy(pos).addScaledVector(fwd, 2.2)
+      .addScaledVector(new THREE.Vector3().crossVectors(fwd, up).normalize(), halfH * ASPECT * 0.94)
+      .addScaledVector(up, halfH * 0.86);
+    const bad = project(wrong);
+    ok("(the old way really did put it near the middle)",
+       Math.abs(bad.x) < 0.6, `screen ${bad.x.toFixed(2)}, ${bad.y.toFixed(2)}`);
+
+    const nose = pos.clone().addScaledVector(fwd, 1.3);
+    miniMuzzle(camera.position, a.fwd, a.right, a.up, FOV, ASPECT, m, nose);
+    ok("in third person it comes out of the nose", m.distanceTo(nose) < 1e-9);
+    const ndc = project(m);
+    ok("which is on screen ahead of the camera", Math.abs(ndc.x) < 0.5 && ndc.z < 1,
+       `screen ${ndc.x.toFixed(2)}, ${ndc.y.toFixed(2)}`);
+  }
 
   /* It follows the pointer, not the ship's axis: aimed off to one side, the
      round has to go that way. */
