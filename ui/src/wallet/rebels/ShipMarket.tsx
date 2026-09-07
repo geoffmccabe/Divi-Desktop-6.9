@@ -77,26 +77,118 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
     <>
       <div className="ship-market-scrim" onClick={onClose} />
       <div className="ship-market">
-        <div className="ship-market-stage">
-          <div className="ship-market-ring">
-            <ShipPreview id={ship.id} paint={paint} />
-          </div>
-        </div>
+        {/* ---- ONE COLUMN HOLDS THE SHIP ----
+            The name, the ring and the paint shop, in that order, in a single
+            flex column that owns the left 65%. The specs are its SIBLING and
+            own the right 35%.
 
-        {/* ONE COLUMN, STACKED. The name and the paint controls used to be given
-            the same grid cell, one anchored to its centre and one to its
-            bottom, so they sat ON TOP of each other: the sliders covered the
-            description, and the buttons underneath them — Accent and Highlight
-            among them — never saw a click. Geoff: "some buttons like Accent and
-            Highlight don't work." Stacking them in one flex column means
-            opening the sliders simply pushes the name up, which is what he
-            asked for and what should have happened in the first place. */}
+            Nesting them like this is the point rather than tidiness. Both of
+            the last two goes at this layout put things in the same grid cell
+            and relied on placement to keep them apart: first the name and the
+            paint shop, where the sliders covered the description and the
+            buttons under them never saw a click; then the specs themselves,
+            whose whole column was accidentally rendered inside this one and
+            landed on top of the ship. Geoff, both times, correctly. Elements
+            stacked in a flex column cannot overlap each other however small the
+            window gets, so the failure is not available any more. */}
         <div className="ship-market-left">
           <div className="ship-market-head">
             <h2>{ship.name}</h2>
             <div className="ship-market-tier">TIER {ship.tier}</div>
             <p className="ship-market-role">{ship.role}</p>
           </div>
+
+          <div className="ship-market-stage">
+            <div className="ship-market-ring">
+              <ShipPreview id={ship.id} paint={paint} />
+            </div>
+          </div>
+
+          {/* ---- the paint shop ----
+              Five buttons, three sliders each. Five because that is how many
+              distinct swatches every ship in the pack actually samples: the blue
+              hull, the dark panelling under it, the orange trim, the light edges
+              and the engine glow. Not a guess — the atlas was sampled through a
+              fighter's, a cruiser's and a station's own UVs to find out. */}
+          <div className="ship-paint">
+            <div className="ship-paint-parts">
+              {PARTS.map((part) => (
+                <button
+                  type="button"
+                  key={part.key}
+                  className={tuning === part.key ? "on" : ""}
+                  onClick={() => setTuning(tuning === part.key ? null : part.key)}
+                  title={part.note}
+                >
+                  <span className="ship-paint-chip" style={{ background: chipColour(part.key, paint) }} />
+                  {part.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="ship-paint-reset"
+                onClick={() => setConfirmReset(true)}
+              >
+                RESET
+              </button>
+            </div>
+
+            {tuning && (
+              <div className="ship-paint-sliders">
+                <p>{PARTS.find((p) => p.key === tuning)?.note}</p>
+                <label>
+                  <span>Hue</span>
+                  <input
+                    type="range" min={0} max={360} step={1}
+                    value={paint[tuning].hue}
+                    onChange={(e) => setPart(tuning, "hue", Number(e.target.value))}
+                  />
+                  <b>{Math.round(paint[tuning].hue)}&deg;</b>
+                </label>
+                <label>
+                  <span>Saturation</span>
+                  <input
+                    type="range" min={0} max={100} step={1}
+                    value={Math.round(paint[tuning].sat * 100)}
+                    onChange={(e) => setPart(tuning, "sat", Number(e.target.value) / 100)}
+                  />
+                  <b>{Math.round(paint[tuning].sat * 100)}%</b>
+                </label>
+                <label>
+                  <span>Brightness</span>
+                  <input
+                    type="range" min={0} max={600} step={1}
+                    value={Math.round(paint[tuning].bright * 100)}
+                    onChange={(e) => setPart(tuning, "bright", Number(e.target.value) / 100)}
+                  />
+                  <b>{Math.round(paint[tuning].bright * 100)}%</b>
+                </label>
+                <p className="ship-paint-hint">
+                  0% is black. For white, take saturation to 0 and brightness up.
+                </p>
+
+                <div className="ship-paint-overlays">
+                  <span>Overlay</span>
+                  <div>
+                    {OVERLAYS.map((o) => (
+                      <button
+                        type="button"
+                        key={o}
+                        className={paint[tuning].overlay === o ? "on" : ""}
+                        onClick={() => setPaint((p) => ({
+                          ...p, [tuning]: { ...p[tuning], overlay: o },
+                        }))}
+                      >
+                        {o === "none" ? "PLAIN" : o.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+        </div>
 
         <div className="ship-market-stats">
           {STAT_ROWS.map((row) => {
@@ -123,91 +215,6 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
           </p>
         </div>
 
-        {/* ---- the paint shop ----
-            Five buttons, three sliders each. Five because that is how many
-            distinct swatches every ship in the pack actually samples: the blue
-            hull, the dark panelling under it, the orange trim, the light edges
-            and the engine glow. Not a guess — the atlas was sampled through a
-            fighter's, a cruiser's and a station's own UVs to find out. */}
-        <div className="ship-paint">
-          <div className="ship-paint-parts">
-            {PARTS.map((part) => (
-              <button
-                type="button"
-                key={part.key}
-                className={tuning === part.key ? "on" : ""}
-                onClick={() => setTuning(tuning === part.key ? null : part.key)}
-                title={part.note}
-              >
-                <span className="ship-paint-chip" style={{ background: chipColour(part.key, paint) }} />
-                {part.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="ship-paint-reset"
-              onClick={() => setConfirmReset(true)}
-            >
-              RESET
-            </button>
-          </div>
-
-          {tuning && (
-            <div className="ship-paint-sliders">
-              <p>{PARTS.find((p) => p.key === tuning)?.note}</p>
-              <label>
-                <span>Hue</span>
-                <input
-                  type="range" min={0} max={360} step={1}
-                  value={paint[tuning].hue}
-                  onChange={(e) => setPart(tuning, "hue", Number(e.target.value))}
-                />
-                <b>{Math.round(paint[tuning].hue)}&deg;</b>
-              </label>
-              <label>
-                <span>Saturation</span>
-                <input
-                  type="range" min={0} max={100} step={1}
-                  value={Math.round(paint[tuning].sat * 100)}
-                  onChange={(e) => setPart(tuning, "sat", Number(e.target.value) / 100)}
-                />
-                <b>{Math.round(paint[tuning].sat * 100)}%</b>
-              </label>
-              <label>
-                <span>Brightness</span>
-                <input
-                  type="range" min={0} max={600} step={1}
-                  value={Math.round(paint[tuning].bright * 100)}
-                  onChange={(e) => setPart(tuning, "bright", Number(e.target.value) / 100)}
-                />
-                <b>{Math.round(paint[tuning].bright * 100)}%</b>
-              </label>
-              <p className="ship-paint-hint">
-                0% is black. For white, take saturation to 0 and brightness up.
-              </p>
-
-              <div className="ship-paint-overlays">
-                <span>Overlay</span>
-                <div>
-                  {OVERLAYS.map((o) => (
-                    <button
-                      type="button"
-                      key={o}
-                      className={paint[tuning].overlay === o ? "on" : ""}
-                      onClick={() => setPaint((p) => ({
-                        ...p, [tuning]: { ...p[tuning], overlay: o },
-                      }))}
-                    >
-                      {o === "none" ? "PLAIN" : o.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
-        </div>
 
         <div className="ship-market-list">
           {grouped.map(([className, ships]) => (

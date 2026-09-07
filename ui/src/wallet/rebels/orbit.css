@@ -176,13 +176,20 @@
   color: hsl(var(--rebels-hud));
 }
 
-/* The ship's own space. The ring is centred in whatever is left after the name
-   above it and the paint controls below, which is what stops the three of them
-   ever reaching for the same pixels. */
-.ship-market-stage {
+/* The ship's own column: name, ring, paint shop, stacked. The ring takes
+   whatever height the other two leave, which is what stops the three of them
+   ever reaching for the same pixels — not placement, but the fact that items in
+   a flex column cannot occupy the same space. */
+.ship-market-left {
   grid-column: 1; grid-row: 1;
-  display: flex; align-items: center; justify-content: center;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 10px;
   min-height: 0; min-width: 0;
+}
+.ship-market-stage {
+  flex: 1 1 auto;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 0; width: 100%;
 }
 
 /* The ring itself. Two rings, actually: a bright hairline and a wide soft
@@ -190,10 +197,11 @@
    cut out of it. */
 .ship-market-ring {
   position: relative;
-  /* Fifteen percent larger than it was, and bounded by the height as well as
-     the width so it can never grow past its own column again. */
-  width: min(53vh, 92%);
+  /* Bounded by the height of the space it is given as well as by the width, so
+     it can never grow past its own column. */
+  height: 100%;
   aspect-ratio: 1;
+  max-width: 92%;
   border-radius: 50%;
   background:
     radial-gradient(circle at 50% 42%, hsl(var(--rebels-ocean) / 0.92) 0%, hsl(var(--rebels-ocean) / 0.55) 62%, transparent 72%);
@@ -216,19 +224,8 @@
    They used to share one grid cell — one anchored to its centre, one to its
    bottom — which put the sliders directly over the description and made the
    buttons beneath them unclickable. A flex column cannot do that. */
-/* The name and the paint controls share the ship's column, above and below it.
-   Absolutely placed so the ring keeps the full height to be centred in, and
-   pointer-events only on the controls themselves, so the empty space around
-   them stays grabbable for turning the ship. */
-.ship-market-left {
-  grid-column: 1; grid-row: 1;
-  display: flex; flex-direction: column; justify-content: space-between;
-  align-items: center;
-  pointer-events: none;
-  z-index: 2;
-}
-.ship-market-left > * { pointer-events: auto; }
-.ship-market-head { text-align: center; }
+.ship-market-head { text-align: center; flex: 0 0 auto; }
+.ship-paint { flex: 0 0 auto; }
 .ship-market-head h2 {
   margin: 0; font-size: 26px; letter-spacing: 0.1em;
   color: hsl(var(--primary));
@@ -376,21 +373,17 @@
 @media (max-width: 900px) {
   .ship-market {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto auto;
+    grid-template-rows: auto auto auto;
     align-content: start;
     overflow-y: auto;
   }
-  .ship-market-stage { grid-column: 1; grid-row: 1; }
-  .ship-market-ring { width: min(44vh, 82vw); }
-  .ship-market-left {
-    grid-column: 1; grid-row: 2;
-    position: static; display: contents;
-  }
+  .ship-market-left { grid-column: 1; grid-row: 1; }
+  .ship-market-ring { height: auto; width: min(44vh, 82vw); }
   .ship-market-head { text-align: center; }
   .ship-paint { text-align: center; }
   .ship-paint-parts { justify-content: center; }
-  .ship-market-stats { grid-column: 1; grid-row: 3; max-height: none; }
-  .ship-market-list { grid-column: 1; grid-row: 4; }
+  .ship-market-stats { grid-column: 1; grid-row: 2; max-height: none; }
+  .ship-market-list { grid-column: 1; grid-row: 3; }
 }
 
 /* ---- the damage health bar ----

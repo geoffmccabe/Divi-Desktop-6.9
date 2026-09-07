@@ -8,6 +8,7 @@
 
 import { shipCatalog, atTier, SHIP_CLASSES, STAT_ROWS, type ShipStats } from "./shipCatalog";
 import { chipColour, FACTORY, PARTS } from "./shipColours";
+import { readFileSync } from "node:fs";
 
 const out: string[] = [];
 let failures = 0;
@@ -155,6 +156,58 @@ const all = shipCatalog();
   ok("and the dark panelling is the darkest",
      lum(chipColour("hull2", FACTORY)) === Math.min(...chips.map(lum)),
      chips.map((c) => lum(c)).join(", "));
+}
+
+// 7. THE MARKET'S LAYOUT, checked as a tree rather than as a picture.
+//
+//    This has now gone wrong twice in the same way and neither time did
+//    anything fail: the name and the paint shop were placed in one grid cell
+//    and covered each other, and then the entire specs column was accidentally
+//    nested INSIDE the ship's column and rendered on top of the ship. Both
+//    compiled, both type-checked, both looked like a layout bug when they were
+//    a nesting bug.
+//
+//    So the nesting is asserted. The ship's column holds the name, the ring and
+//    the paint shop; the specs are its SIBLING. Items stacked in a flex column
+//    cannot overlap however small the window gets, which is why the fix was to
+//    change the tree rather than to nudge the placement.
+{
+  const srcLines = readFileSync("src/wallet/rebels/ShipMarket.tsx", "utf8").split("\n");
+  const from = srcLines.findIndex((l) => l.includes('className="ship-market"'));
+  ok("the market panel is there", from > 0);
+
+  /* Walk the tags from the START of the panel's own line — slicing at the
+     className instead would cut off its opening tag and put every depth out by
+     one, which is a very convincing way to make this test lie. */
+  const depths = new Map<string, number>();
+  let depth = 0;
+  let balanced = true;
+  for (const line of srcLines.slice(from)) {
+    const tag = /className="(ship-market|ship-market-left|ship-market-head|ship-market-stage|ship-market-ring|ship-paint|ship-market-stats|ship-market-list)"/.exec(line);
+    if (tag && !depths.has(tag[1])) depths.set(tag[1], depth);
+    depth += (line.match(/<div\b/g) ?? []).length - (line.match(/<\/div>/g) ?? []).length;
+    if (depth < 0) balanced = false;
+  }
+  ok("the panel's tags balance", balanced && depth === 0, `ends at ${depth}`);
+
+  const at = (k: string) => depths.get(k) ?? -1;
+  ok("the ship's column is a child of the panel", at("ship-market-left") === at("ship-market") + 1,
+     `${at("ship-market")} -> ${at("ship-market-left")}`);
+  ok("the name, the ring and the paint shop are inside it",
+     at("ship-market-head") === at("ship-market-left") + 1
+     && at("ship-market-stage") === at("ship-market-left") + 1
+     && at("ship-paint") === at("ship-market-left") + 1,
+     `head ${at("ship-market-head")}, stage ${at("ship-market-stage")}, paint ${at("ship-paint")}`);
+
+  /* THE ONE THAT BROKE: the specs must be a sibling of the ship's column, not
+     a child of it. One level too deep and they render in the wrong half of the
+     screen and sit on the ship. */
+  ok("the specs are a SIBLING of it, not inside it",
+     at("ship-market-stats") === at("ship-market-left"),
+     `specs at ${at("ship-market-stats")}, ship column at ${at("ship-market-left")}`);
+  ok("and so is the class chooser",
+     at("ship-market-list") === at("ship-market-left"),
+     `${at("ship-market-list")}`);
 }
 
 console.log(out.join("\n"));
