@@ -108,8 +108,10 @@ export const ENEMY_FIRE_RANGE = 70;
  *  recharge, which is what gives you a breather rather than an endless stream. */
 export const ENEMY_AMMO = 60;
 export const ENEMY_RELOAD = 10;
-/** The player's own shield, on the same hundred-point scale as theirs. */
-export const PLAYER_SHIELD_MAX = 100;
+/* The player's own shield lives in orbitFlight as MAX_SHIELD. It was declared
+   here too and the two had already drifted apart, which is how a test came to
+   measure a hundred-point shield against a game that gives a thousand. One
+   number, one home. */
 export const TOWER_HIT_R = 2.2;
 
 /* ---- torpedoes ----
@@ -583,7 +585,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
     e.fireAt -= dt;
     if (e.fireAt <= 0 && e.ammo > 0 && range < ENEMY_FIRE_RANGE && dot > 0.9) {
-      e.fireAt = 0.55 + Math.random() * 0.7;
+      /* Slower than it was. Four of them at the old rate put up a wall of fire
+         that could not be flown through, whatever the player's shield. */
+      e.fireAt = 1.6 + Math.random() * 1.6;
       e.ammo -= 1;
       if (e.ammo <= 0) e.reload = ENEMY_RELOAD;
       /* Dead on target, every time. Dodging is the player's job, and a shot

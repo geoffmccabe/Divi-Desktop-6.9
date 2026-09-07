@@ -28,11 +28,16 @@ export const DOCK_SECONDS = 2.2;
    rather than flown in circles around it. Braking to a quarter of cruise was
    not enough and docking stayed fiddly. */
 export const PARK = 2.2;
-/** The player's shield, on the same hundred-point scale the fighters use. */
-export const MAX_SHIELD = 100;
+/** The player's shield.
+ *
+ *  Ten times a fighter's, and it needs to be. Four of them firing at perfect
+ *  accuracy land about two hits a second between them, averaging fifty-five
+ *  damage: at a hundred points the player was dead in under a second, which is
+ *  exactly what was happening. */
+export const MAX_SHIELD = 1000;
 /** What flying into the planet or clipping a tower costs. A quarter of a full
  *  shield: enough to matter, not enough to end a run on one clumsy moment. */
-export const CRASH_DAMAGE = 25;
+export const CRASH_DAMAGE = 250;
 export const MAX_AMMO = 60;
 export const MAX_TORPEDOES = 2;
 /* ---- the guard ----

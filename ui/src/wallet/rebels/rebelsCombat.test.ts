@@ -4,6 +4,7 @@
 
 import * as THREE from "three";
 import { R } from "./orbitWorld";
+import { MAX_SHIELD } from "./orbitFlight";
 import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
   fireTorpedo, detonateOldest, clearEvents,
@@ -459,6 +460,49 @@ function run(c: CombatState, frames: number, w = world()) {
      c.tierKills.join(","));
   ok("and the event says which tier it was",
      c.events.find((e) => e.kind === "enemyDown")?.tier === 3);
+}
+
+// 11. How long does a player actually last?
+//
+//     Geoff: "The player's ship is being destroyed within a few seconds every
+//     time." This measures it rather than guessing: four fighters, all in
+//     range, all aligned, firing as fast as the game lets them, against a
+//     player who never dodges and never guards. That is the worst case, and it
+//     should be survivable for a while rather than for a moment.
+{
+  const w = world({ wanted: 0 });
+  const c = createCombat();
+  for (let i = 0; i < 4; i++) {
+    c.enemies.push(fighter(
+      pos.clone().addScaledVector(fwd, 30 + i * 4),
+      { fwd: fwd.clone().negate(), shield: FIGHTER.shieldMax, hull: FIGHTER.hullMax,
+        fireAt: 0.2 * i, weave: 1e9 },
+    ));
+  }
+  let shield = MAX_SHIELD;
+  let seconds = 0;
+  let grace = 0;
+  let hits = 0;
+  for (let i = 0; i < 60 * 120 && shield > 0; i++) {
+    /* Pinned in front of them, so this is a player making no attempt to live. */
+    for (let k = 0; k < c.enemies.length; k++) {
+      c.enemies[k].pos.copy(pos).addScaledVector(fwd, 30 + k * 4);
+      c.enemies[k].fwd.copy(fwd).negate();
+    }
+    stepCombat(c, DT, w);
+    grace = Math.max(0, grace - DT);
+    for (const e of c.events) {
+      if (e.kind !== "playerHit" || grace > 0) continue;
+      shield -= e.damage ?? 25;
+      grace = 0.45;
+      hits++;
+    }
+    clearEvents(c);
+    seconds += DT;
+  }
+  ok("a sitting duck lasts more than a moment", seconds > 8,
+     `died after ${seconds.toFixed(1)}s and ${hits} hits`);
+  ok("but is not immortal either", seconds < 90, `${seconds.toFixed(1)}s`);
 }
 
 console.log(out.join("\n"));

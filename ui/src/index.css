@@ -2042,7 +2042,7 @@ code, .mono { font-family: var(--font-mono); }
 .rs-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .rs-pts { font-weight: 700; color: hsl(var(--rebels-home)); font-size: 14px; }
 .rs-games { width: 66px; text-align: right; opacity: 0.55; font-size: 11px; }
-.rs-note { max-width: 460px; }
+
 
 /* The launch card sits over the live globe, so it must not paint over it. Only
    the text carries a shadow, to stay readable against a bright coastline. */

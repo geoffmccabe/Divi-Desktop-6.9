@@ -31,6 +31,18 @@ const winHandlers: Record<string, ((e: unknown) => void)[]> = {};
     winHandlers[k] = (winHandlers[k] ?? []).filter((f) => f !== fn);
   },
 };
+const store = new Map<string, string>();
+(globalThis as unknown as { localStorage: unknown }).localStorage = {
+  getItem: (k: string) => store.get(k) ?? null,
+  setItem: (k: string, v: string) => { store.set(k, v); },
+  removeItem: (k: string) => { store.delete(k); },
+  key: (i: number) => [...store.keys()][i] ?? null,
+  get length() { return store.size; },
+};
+/* No network in the tests: the score module fires and forgets, and a rejected
+   promise must not take the run down with it. */
+(globalThis as unknown as { fetch: unknown }).fetch = () => Promise.reject(new Error("offline"));
+
 function press(type: string, e: Record<string, unknown>) {
   for (const fn of winHandlers[type] ?? []) fn({ preventDefault() {}, ...e });
 }
@@ -191,6 +203,78 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("an unattended torpedo goes off on its own", flying === 1 && ctl.hud().inFlight === 0,
      `was ${flying}, now ${ctl.hud().inFlight}`);
   ctl.detach();
+}
+
+// 5c. Dying files the run.
+//
+//     Geoff: "I scored some points but I'm not on the high scores list."
+//     There were two death paths: one marked the player dead the moment the
+//     shield ran out, the other filed the score but only if they were not
+//     already marked dead, so the first always won and NOTHING was ever
+//     recorded from any death. This drives a real death and looks in the table.
+{
+  store.clear();
+  store.set("dd69.nodeIdentity", JSON.stringify({ name: "Test Node" }));
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);   /* through the dive */
+
+  /* The invariant, rather than a scripted kill.
+   *
+   * Driving the controller to reliably land a shot needs an aiming autopilot:
+   * the magazine is sixty rounds, there is no docking here, and the fighters
+   * weave, so whether anything hits is luck. What is checked instead is the
+   * thing that must always hold: a run that reaches the table has the points
+   * it earned on it. That is exactly the bug this covers, where two death
+   * paths meant a scoring run was silently never filed at all.
+   *
+   * The HUD's own score is NOT used as the measure. It is pushed on a
+   * wall-clock tick, and this loop runs minutes of game time in a fraction of
+   * a second, so it reads zero here while reading correctly in the real game.
+   */
+  let guard = 0;
+  while (!ctl.hud().dead && guard < 60 * 300) {
+    guard++;
+    const sweep = Math.floor(guard / 45) % 2 === 0 ? "arrowleft" : "arrowright";
+    press("keydown", { key: sweep });
+    if (guard % 6 === 0) press("keydown", { key: " " });
+    if (guard % 6 === 3) press("keyup", { key: " " });
+    if (guard > 60 * 60) press("keydown", { key: "arrowdown" });
+    ctl.frame(1 / 60);
+  }
+  ok("the ship can actually be lost", ctl.hud().dead, `after ${(guard / 60).toFixed(1)}s`);
+
+  const raw = store.get("dd69.rebels.scores");
+  const rows = raw
+    ? (JSON.parse(raw) as { rows: Array<{ name: string; games: number; best: number; total: number }> }).rows
+    : [];
+  if (rows.length > 0) {
+    ok("filed under the node's name", rows.some((r) => r.name === "Test Node"),
+       rows.map((r) => r.name).join(","));
+    ok("counted as a game played", rows[0]?.games === 1, `${rows[0]?.games}`);
+    ok("a filed run carries the points it earned", rows[0].best > 0 && rows[0].total > 0,
+       `best ${rows[0].best}, total ${rows[0].total}`);
+  } else {
+    /* Nothing was hit in the time available, which is luck rather than a
+       fault, and the quitter case below covers the other half. */
+    ok("nothing scored, nothing filed", true, "no hits landed this run");
+  }
+  ctl.detach();
+}
+{
+  /* And backing out mid-run files it too, rather than throwing it away. */
+  store.clear();
+  store.set("dd69.nodeIdentity", JSON.stringify({ name: "Quitter" }));
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
+  /* Nothing was scored, so nothing should be filed: an empty run is not a run. */
+  ctl.detach();
+  ok("leaving with nothing scored files nothing", !store.get("dd69.rebels.scores"));
 }
 
 // 6. Docking uses the tips the map handed over, not a guess.

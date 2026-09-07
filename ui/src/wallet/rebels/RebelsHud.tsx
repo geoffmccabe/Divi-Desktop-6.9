@@ -147,7 +147,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       <div className="orbit-bars">
         <div className="orbit-gauge">
-          <span>SHIELDS {Math.max(0, Math.round(hud.shields))}%</span>
+          <span>SHIELDS {Math.max(0, Math.round((hud.shields / MAX_SHIELD) * 100))}%</span>
           <div className={"orbit-meter" + (hud.shields <= MAX_SHIELD * 0.3 ? " low" : "")}>
             <i style={{ width: pct(hud.shields / MAX_SHIELD) }} />
           </div>

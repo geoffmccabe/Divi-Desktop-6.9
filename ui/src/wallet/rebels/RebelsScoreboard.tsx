@@ -17,14 +17,12 @@ export function RebelsScoreboard({ onClose }: { onClose: () => void }) {
     [tab],
   );
   const [remote, setRemote] = useState<ScoreRow[] | null>(null);
-  const [offline, setOffline] = useState(false);
   useEffect(() => {
     let live = true;
     setRemote(null);
-    setOffline(false);
     fetchTop(tab).then((rows) => {
       if (!live) return;
-      if (rows) setRemote(rows); else setOffline(true);
+      if (rows) setRemote(rows);
     });
     return () => { live = false; };
   }, [tab]);
@@ -59,11 +57,7 @@ export function RebelsScoreboard({ onClose }: { onClose: () => void }) {
         </ol>
       )}
 
-      <p className="orbit-keys rs-note">
-        {offline
-          ? "Showing this wallet's own copy: the network could not be reached."
-          : "One place per player on each table, so nobody can take more than one."}
-      </p>
+
       <button type="button" onClick={onClose}>BACK</button>
     </div>
   );

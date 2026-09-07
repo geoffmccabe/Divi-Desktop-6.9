@@ -171,6 +171,33 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      where they left off rather than at zero every session. */
   let lifetimeTiers: number[] = new Array(TIER_COUNT).fill(0);
 
+  /**
+   * Losing the ship. THE ONLY PLACE that happens.
+   *
+   * There used to be two: one marked the player dead the moment their shield
+   * ran out, and the other filed the score but only if they were not already
+   * marked dead. The first always won, so no run was ever recorded from any
+   * death. Filing and dying are one event and belong in one function.
+   */
+  function die(): void {
+    if (hud.dead) return;
+    bank();
+    setHud({ dead: true, score: 0 });
+    if (typeof document !== "undefined" && document.pointerLockElement === dom) {
+      /* Give the pointer back, or the "launch again" button cannot be clicked. */
+      document.exitPointerLock();
+    }
+  }
+
+  /** File whatever has been earned so far and start the count again. */
+  function bank(): void {
+    if (score > 0 || combat.tierKills.some((n) => n > 0)) {
+      recordScore(score, combat.tierKills.slice());
+      combat.tierKills.fill(0);
+    }
+    score = 0;
+  }
+
   const stick: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false };
   const keys: Record<string, boolean> = {};
 
@@ -480,7 +507,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               const soak = flight.guardFor > 0 ? 1 - GUARD_ABSORB : 1;
               flight.shields -= (ev.damage ?? 25) * soak;
               flight.grace = 0.45;
-              if (flight.shields <= 0) setHud({ dead: true });
+              if (flight.shields <= 0) die();
             }
             fx.boom(ev.at, 1.4, "cold");
           } else if (ev.kind === "enemyDown") {
@@ -509,20 +536,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             fx.boom(ev.at, 0.7, "hot");
           }
         }
-        if (flight.shields <= 0 && !hud.dead) {
-          /* File the run, then wipe it: the score is for one life. */
-          if (score > 0 || combat.tierKills.some((n) => n > 0)) {
-            recordScore(score, combat.tierKills.slice());
-            combat.tierKills.fill(0);
-          }
-          score = 0;
-          setHud({ dead: true, score: 0 });
-          /* Hand the pointer back, or the "launch again" button cannot be
-             clicked. */
-          if (typeof document !== "undefined" && document.pointerLockElement === dom) {
-            document.exitPointerLock();
-          }
-        }
+        if (flight.shields <= 0) die();
 
         /* Keep one model per live fighter, cloning and hiding rather than
            building and destroying. */
@@ -621,6 +635,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     },
 
     detach() {
+      /* Backing out mid-flight files what was earned. Losing a good run to a
+         stray Escape would be worse than the alternative. */
+      if (flying && !hud.dead) bank();
       stopRechargeSound();
       wasDocking = false;
       if (dom) {
