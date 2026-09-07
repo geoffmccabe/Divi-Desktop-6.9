@@ -3,7 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use dd69_supervisor::{applog, bearer, c2pa_read, chaintips, chart, coins, collectibles, collectibles_import, config, config::NodeConfig, escrow, fastsend, marketmaker, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{applog, bearer, c2pa_read, chaintips, chart, coins, collectibles, collectibles_import, config, config::NodeConfig, dmt, escrow, fastsend, marketmaker, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -2490,6 +2490,120 @@ async fn nfd_relay_status() -> RelayStatusDto {
     .unwrap_or(RelayStatusDto { relay_url: String::new(), reachable: false, balance_winc: None })
 }
 
+
+// ── Divi Meta Tokens ──────────────────────────────────────────────────────
+//
+// Every one of these pins `from`: a record's author is the address that funds
+// vin[0], so an ordinary coin selection would attribute the record to a change
+// address holding no tokens. It would then be mined, cost a fee, and be ignored,
+// with nothing said. See crates/supervisor/src/dmt.rs.
+//
+// Amounts cross this boundary as STRINGS. A token with 8 decimals and a large
+// supply exceeds what a JavaScript number holds exactly, and silently rounding
+// somebody's balance is not acceptable.
+
+fn parse_units(amount: &str) -> Result<u64, String> {
+    amount
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| "That amount is not a whole number of the token's smallest unit.".to_string())
+}
+
+#[tauri::command]
+async fn token_create(
+    from: String,
+    premine: String,
+    decimals: u8,
+    fee: Option<f64>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dmt::create_token(&cfg, &from, parse_units(&premine)?, decimals, fee.unwrap_or(0.0001))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn token_send(
+    from: String,
+    token: String,
+    amount: String,
+    to: String,
+    fee: Option<f64>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dmt::send_tokens(&cfg, &from, &token, parse_units(&amount)?, &to, fee.unwrap_or(0.0001))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn token_airdrop(
+    from: String,
+    token: String,
+    payouts: Vec<(String, String)>,
+    fee: Option<f64>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let parsed = payouts
+            .iter()
+            .map(|(addr, amount)| Ok((addr.clone(), parse_units(amount)?)))
+            .collect::<Result<Vec<_>, String>>()?;
+        dmt::airdrop(&cfg, &from, &token, &parsed, fee.unwrap_or(0.0001))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn token_burn(
+    from: String,
+    token: String,
+    amount: String,
+    fee: Option<f64>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dmt::burn_tokens(&cfg, &from, &token, parse_units(&amount)?, fee.unwrap_or(0.0001))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn token_lock_supply(from: String, token: String, fee: Option<f64>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dmt::lock_supply(&cfg, &from, &token, fee.unwrap_or(0.0001))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Reserve a ticker. Returns the txid and the salt, hex encoded.
+///
+/// **The caller must keep the salt.** The reveal cannot be built without it and
+/// it is not recoverable from the chain: that is what makes the commitment a
+/// commitment rather than a public announcement of the name.
+#[tauri::command]
+async fn token_commit_ticker(
+    from: String,
+    ticker: String,
+    fee: Option<f64>,
+) -> Result<(String, String), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let (txid, salt) = dmt::commit_ticker(&cfg, &from, &ticker, fee.unwrap_or(0.0001))?;
+        Ok((txid, salt.iter().map(|b| format!("{b:02x}")).collect::<String>()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         // Community apps load from divi-app://<id>/ so each one gets its own
@@ -2639,7 +2753,13 @@ fn main() {
             nfd_import_open,
             nfd_import_read_item,
             nfd_prepare_funding,
-            nfd_tx_confirmations
+            nfd_tx_confirmations,
+            token_create,
+            token_send,
+            token_airdrop,
+            token_burn,
+            token_lock_supply,
+            token_commit_ticker
         ])
         .build(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9")

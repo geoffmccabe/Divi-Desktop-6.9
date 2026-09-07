@@ -1,5 +1,15 @@
 [workspace]
-members = ["crates/supervisor", "crates/app", "crates/c2pa-helper", "crates/dvxp-core", "crates/name-registry"]
+members = [
+  "crates/supervisor",
+  "crates/app",
+  "crates/c2pa-helper",
+  # Vendored from the chain repo, byte-identical. See scripts/sync-divi-crates.sh.
+  "crates/dvxp-core",
+  "crates/name-registry",
+  "crates/dmt-indexer",
+  "crates/nfd-indexer",
+  "crates/dvxp-scan",
+]
 resolver = "2"
 
 [profile.release]

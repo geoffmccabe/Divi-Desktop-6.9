@@ -67,6 +67,47 @@ export const poeTimestamp = (
   });
 export const poeVerify = (txid: string, hash: string) => invoke<Proof>("poe_verify", { txid, hash });
 
+// ---- Divi Meta Tokens ----
+//
+// `from` is not optional in spirit on any of these. A record's author is the
+// address that funds the transaction, so the caller must pass the address that
+// actually holds the tokens. Funding from anywhere else produces a record that
+// is mined, costs a fee, and is then ignored, with nothing shown to the user.
+//
+// Amounts are STRINGS in the token's smallest unit, never numbers. A token with
+// 8 decimals and a large supply exceeds what a JavaScript number represents
+// exactly, and rounding somebody's balance in transit is not acceptable.
+
+export const tokenCreate = (from: string, premine: string, decimals: number, fee?: number) =>
+  invoke<string>("token_create", { from, premine, decimals, fee });
+
+export const tokenSend = (from: string, token: string, amount: string, to: string, fee?: number) =>
+  invoke<string>("token_send", { from, token, amount, to, fee });
+
+/** One record, many recipients. The Rust side refuses a list too large to fit. */
+export const tokenAirdrop = (
+  from: string,
+  token: string,
+  payouts: [string, string][],
+  fee?: number,
+) => invoke<string>("token_airdrop", { from, token, payouts, fee });
+
+export const tokenBurn = (from: string, token: string, amount: string, fee?: number) =>
+  invoke<string>("token_burn", { from, token, amount, fee });
+
+export const tokenLockSupply = (from: string, token: string, fee?: number) =>
+  invoke<string>("token_lock_supply", { from, token, fee });
+
+/**
+ * Reserve a ticker. Returns [txid, salt].
+ *
+ * **Keep the salt.** The reveal cannot be built without it and it is not
+ * recoverable from the chain: that is exactly what makes the reservation a
+ * commitment rather than a public announcement of the name you want.
+ */
+export const tokenCommitTicker = (from: string, ticker: string, fee?: number) =>
+  invoke<[string, string]>("token_commit_ticker", { from, ticker, fee });
+
 // ── Divi Collectibles (NFD) ──────────────────────────────────────────────────
 export interface NfdMint {
   txid: string;

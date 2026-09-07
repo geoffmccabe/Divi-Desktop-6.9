@@ -11,6 +11,7 @@ pub mod collectibles_import;
 pub mod config;
 pub mod crypto_nfd;
 pub mod dex;
+pub mod dmt;
 pub mod dvxp;
 pub mod escrow;
 pub mod forge;
