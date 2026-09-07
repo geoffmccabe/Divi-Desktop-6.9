@@ -68,6 +68,18 @@ function toArrayBuffer(url: string): Promise<ArrayBuffer> {
 export function resumeAudio(): void {
   const ctx = audioContext();
   if (ctx && ctx.state === "suspended") void ctx.resume();
+  /* AND GIVE A PREVIOUS FAILURE ANOTHER GO.
+     `failed` used to be a one-way latch: anything that went wrong once, at any
+     point, silenced the game for the rest of the session with no way back. The
+     window for that is wider than it looks, because decoding starts at attach,
+     which is not a user gesture and is the moment the webview is least ready.
+     One unlucky start and the whole game is mute until it is restarted, which
+     matches "the game has lost its sound" exactly.
+     This runs from a real click, so it is the right place to try again. */
+  if (failed && ctx) {
+    failed = false;
+    primeGunSound();
+  }
 }
 
 /** Decode every sample once and hold them. */
@@ -91,7 +103,8 @@ export function primeGunSound(): void {
       bounceBuffer = bounce;
     })
     .catch(() => {
-      /* Silence is not worth breaking a game over. */
+      /* Silence is not worth breaking a game over, but it is not permanent
+         either: resumeAudio clears this on the next launch and tries again. */
       failed = true;
     })
     .finally(() => { loading = null; });

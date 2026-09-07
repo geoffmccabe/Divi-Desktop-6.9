@@ -18,7 +18,14 @@ export const R = 100;
 /** Towers are 3 units tall (your own node's is 6), so the floor sits below
  *  them: you fly BETWEEN the towers, not over their tips. */
 export const MIN_ALT = 0.8;
-export const MAX_ALT = 30;
+/** The edge of the sky, as a multiple of the planet's radius.
+ *
+ *  This used to be thirty units, which on a hundred-unit planet is a ceiling
+ *  you can touch in three seconds: Geoff described it exactly, an invisible
+ *  ceiling he could not fly through and no way to get out to space. It is a
+ *  limit rather than no limit only so that pointing at the stars and holding
+ *  boost cannot strand a player an hour from anything worth shooting. */
+export const MAX_ALT = R * 8;
 
 /** Latitude and longitude in degrees to a point on a sphere of this radius. */
 export function llToVec(lat: number, lon: number, radius: number, out = new THREE.Vector3()): THREE.Vector3 {

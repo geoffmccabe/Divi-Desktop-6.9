@@ -6,7 +6,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import "./orbit.css";
-import { MAX_ALT } from "./orbitWorld";
 import { MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS } from "./orbitFlight";
 import { TIERS } from "./rebelsCombat";
 import type { RebelsController, HudState } from "./rebelsController";
@@ -123,7 +122,11 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
     <div className="orbit-hud" ref={wrapRef}>
       <div className="orbit-tl">
         <div className="orbit-big">{kms} <span className="orbit-dim">km/s</span></div>
-        <div className="orbit-row orbit-dim">ALT {Math.round((hud.alt / MAX_ALT) * 100)}%</div>
+        {/* A REAL height, not a percentage of the ceiling. The ceiling used to
+            be thirty units, so a percentage of it meant something. It is now
+            eight planet radii, and ordinary flying would have read as 1%. The
+            same 64km per unit the speed uses. */}
+        <div className="orbit-row orbit-dim">ALT {Math.round(hud.alt * 64).toLocaleString()} <span className="orbit-dim">km</span></div>
       </div>
       <div className="orbit-tr">
         <div className="orbit-row">HOME {hud.homeName}</div>

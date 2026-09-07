@@ -1,11 +1,24 @@
-// Flying over a sphere, docking at towers, and the guns.
+// Flying, docking at towers, and the guns.
 //
-// The model is a plane over a globe rather than a free 6-degree spacecraft.
-// Position is a point on a sphere plus an altitude, and heading is a unit
-// vector tangent to the surface. Steering yaws that heading about local up and
-// climbs or dives the altitude. Two reasons: it cannot tumble, which is what
-// makes a free-flight camera nauseating, and "up" always means away from the
-// planet, so you never lose which way the world is.
+// The ship is a free body: a position anywhere, a heading that points wherever
+// the player points it, and an up vector of its own. Pitch turns the nose and
+// the up together about the wing line; yaw turns the nose about the ship's own
+// up. So a loop works, the stars are reachable, and the ground can be flown
+// into.
+//
+// It was not always like this, and the difference is worth recording because
+// the old model looked reasonable and was quietly wrong. It flew a plane over a
+// globe: position was a point on a sphere plus an altitude between 0.8 and 30,
+// heading was forced tangent to the surface every frame, and up and down were
+// not a direction at all but a throttle on that altitude number. It could not
+// tumble, which was the point. What it also could not do was climb past thirty
+// units, dive into the planet, or loop, and Geoff ran into all three within a
+// minute of flying it: an invisible ceiling, an invisible floor, and no way to
+// point the nose at the sky.
+//
+// Roll is deliberately not a control. With only pitch and yaw the ship cannot
+// end up mysteriously banked, and a loop returns it the right way up by itself,
+// which keeps the free model from becoming the disorienting one.
 
 import * as THREE from "three";
 import { R, MIN_ALT, MAX_ALT } from "./orbitWorld";
@@ -19,7 +32,10 @@ export const YAW_RATE = 1.5;   /* radians per second at full stick */
    tower forever and never touch it. Braking to 4.5 units a second brings the
    turn radius down to about 3, which fits inside the zone. That is why the
    brake is not a luxury control. */
-export const CLIMB_RATE = 11;
+/** How fast the nose comes up, in radians per second at full stick. A shade
+ *  quicker than the yaw, so a loop is a deliberate move rather than a chore:
+ *  at this rate a full loop takes about three and a half seconds. */
+export const PITCH_RATE = 1.8;
 /* Docking, fourth attempt, and the model was wrong rather than the numbers.
    The target was the POINT at the top of the mast. A tower is a spire three or
    six units tall standing on a planet, and a player aiming at the tower they
@@ -64,6 +80,16 @@ export const GUARD_ABSORB = 0.8;
 export interface Flight {
   pos: THREE.Vector3;
   fwd: THREE.Vector3;
+  /** The ship's OWN up, not the planet's.
+   *
+   *  This is what makes free flight work. Pitch turns it along with the nose,
+   *  yaw turns the nose about it, and a loop simply carries both round. The
+   *  model used to derive up from the position every frame, which is another
+   *  way of saying the ship was always level whether the player liked it or
+   *  not. */
+  up: THREE.Vector3;
+  /** Height above the surface. DERIVED from the position now, and reported for
+   *  the gauge rather than steered. */
   alt: number;
   speed: number;
   bank: number;
@@ -119,6 +145,9 @@ export function createFlight(at: THREE.Vector3): Flight {
   return {
     pos: up.clone().multiplyScalar(R + alt),
     fwd,
+    /* Level, pointing away from the planet, which is what launching from a pad
+       means. Everything after this is the player's doing. */
+    up: up.clone().addScaledVector(fwd, -up.dot(fwd)).normalize(),
     alt,
     speed: CRUISE,
     bank: 0,
@@ -165,6 +194,7 @@ export function distanceToTower(p: THREE.Vector3, tip: THREE.Vector3): number {
 }
 
 const _up = new THREE.Vector3();
+const _right = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 
 export interface StepResult {
@@ -235,45 +265,92 @@ export function stepFlight(
   f.speed += (target - f.speed) * Math.min(1, dt * ease);
   if (f.speed < 0.05) f.speed = 0;
 
-  /* ---- steering ---- */
-  _up.copy(f.pos).normalize();
+  /* ---- steering ----
+     THE NOSE POINTS WHERE THE PLAYER POINTS IT. Nothing flattens it, nothing
+     limits it, and there is no altitude to run out of.
+
+     What this replaced, and why it had to go: the old model treated up and down
+     as a THROTTLE ON ALTITUDE rather than as a direction. Pulling back did not
+     raise the nose, it asked for a bigger number between 0.8 and 30, and every
+     frame ended by snapping the ship back onto a sphere of that radius and
+     flattening the heading against the surface. Three consequences, and Geoff
+     hit all three: an invisible ceiling at thirty units, an invisible floor
+     just above the ground, and no way to loop, because the nose was forcibly
+     returned to the horizontal every sixtieth of a second.
+
+     So the ship now carries its own up vector as well as its heading, pitch
+     turns both of them about the wing line, and yaw turns the heading about the
+     ship's own up rather than the planet's. Yaw about the SHIP's up is what
+     makes a turn mean the same thing upside down and halfway through a loop as
+     it does flying level. Roll is not a control, which is deliberate: with only
+     pitch and yaw the ship cannot end up mysteriously banked, and a full loop
+     brings it back the right way up on its own. */
+  _right.crossVectors(f.fwd, f.up);
+  if (_right.lengthSq() < 1e-9) _right.set(1, 0, 0);
+  _right.normalize();
+
+  if (stick.y !== 0) {
+    _q.setFromAxisAngle(_right, stick.y * PITCH_RATE * dt);
+    f.fwd.applyQuaternion(_q);
+    f.up.applyQuaternion(_q);
+  }
   if (stick.x !== 0) {
-    _q.setFromAxisAngle(_up, -stick.x * YAW_RATE * dt);
+    _q.setFromAxisAngle(f.up, -stick.x * YAW_RATE * dt);
     f.fwd.applyQuaternion(_q);
   }
+  /* Kept honest against drift: a few thousand quaternions later the pair would
+     otherwise stop being perpendicular and the ship would slowly shear. */
+  f.fwd.normalize();
+  f.up.addScaledVector(f.fwd, -f.up.dot(f.fwd));
+  if (f.up.lengthSq() < 1e-9) f.up.copy(f.pos).normalize();
+  f.up.normalize();
+
   /* The bank is cosmetic and lags the stick, which is what stops a hard turn
      looking like the model snapping to a new angle. */
   f.bank += (-stick.x * 0.7 - f.bank) * Math.min(1, dt * 4);
 
-  /* ---- climb and dive ----
-     Damage lands on the frame the ship first reaches the floor, not once it is
-     already sitting on it. The first version asked for the altitude to be 0.4
-     units BELOW the floor, which at sixty frames a second it never is, since
-     one frame of descent is 0.18: flying into the planet was completely
-     harmless and the test is what found it. */
-  const wantAlt = f.alt + stick.y * CLIMB_RATE * dt;
-  if (wantAlt < MIN_ALT) {
-    const wasFlying = f.alt > MIN_ALT + 1e-6;
-    if (wasFlying && stick.y < -0.15 && f.speed > CRUISE * 0.6 && f.grace <= 0) {
+  /* ---- travel ----
+     In a straight line along the nose, and that is all. The ship is a free
+     body in space now, so altitude is something that HAPPENS rather than
+     something that is set. */
+  f.pos.addScaledVector(f.fwd, f.speed * dt);
+  f.alt = f.pos.length() - R;
+
+  /* ---- the ground ----
+     Flying into the planet is allowed, and it hurts. It has to be allowed:
+     being invisibly refused was half of what was wrong. What must not happen is
+     tunnelling through, so the ship is set down on the surface and the nose is
+     levelled off, which reads as ploughing in and skidding rather than as
+     hitting a wall. */
+  if (f.alt < MIN_ALT) {
+    const wasFlying = f.alt < MIN_ALT - 1e-6;
+    _up.copy(f.pos).normalize();
+    if (wasFlying && f.speed > CRUISE * 0.4 && f.grace <= 0) {
       f.shields -= CRASH_DAMAGE;
       f.grace = 1.2;
       out.hit = true;
     }
     f.alt = MIN_ALT;
-  } else {
-    f.alt = Math.min(MAX_ALT, wantAlt);
+    f.pos.copy(_up).multiplyScalar(R + MIN_ALT);
+    /* Level the nose onto the surface, or the next frame drives straight back
+       into the ground and the crash repeats for as long as the stick is held. */
+    if (f.fwd.dot(_up) < 0) {
+      f.fwd.addScaledVector(_up, -f.fwd.dot(_up));
+      if (f.fwd.lengthSq() < 1e-8) f.fwd.set(_up.z, _up.x, _up.y);
+      f.fwd.normalize();
+      f.up.copy(_up).addScaledVector(f.fwd, -_up.dot(f.fwd)).normalize();
+    }
   }
 
-  /* ---- travel, then put the ship back on its sphere ----
-     Moving along a straight tangent leaves the sphere, so altitude is restored
-     afterwards and the heading is re-flattened against the NEW local up. Skip
-     that second step and the nose slowly buries itself in the planet. */
-  f.pos.addScaledVector(f.fwd, f.speed * dt);
-  _up.copy(f.pos).normalize();
-  f.pos.copy(_up).multiplyScalar(R + f.alt);
-  f.fwd.addScaledVector(_up, -f.fwd.dot(_up));
-  if (f.fwd.lengthSq() < 1e-8) f.fwd.set(_up.z, _up.x, _up.y);
-  f.fwd.normalize();
+  /* ---- the edge of the sky ----
+     There IS still a ceiling, at eight planet radii rather than thirty units,
+     and it is there so a player who points at the stars and holds boost does
+     not end up a thousand seconds from anything with nothing to shoot. At that
+     distance the planet is a marble; it is space by any reasonable reading. */
+  if (f.alt > MAX_ALT) {
+    f.alt = MAX_ALT;
+    f.pos.normalize().multiplyScalar(R + MAX_ALT);
+  }
 
   /* ---- towers: dock with one, or bounce off it ----
      Measured again after the move, so a clip is judged on where the ship

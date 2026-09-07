@@ -11,7 +11,7 @@ import * as THREE from "three";
 import { R, MIN_ALT, MAX_ALT } from "./orbitWorld";
 import {
   createFlight, stepFlight, distanceToTower, CRUISE, MAX_AMMO, MAX_SHIELD,
-  CRASH_DAMAGE, MAX_GUARDS, MAX_TORPEDOES,
+  MAX_GUARDS, MAX_TORPEDOES,
   DOCK_SECONDS, type Stick,
 } from "./orbitFlight";
 
@@ -50,16 +50,21 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   ok("flies forward at cruise", moved > 25 && moved < 34, `moved ${moved.toFixed(1)} units in 2s`);
 }
 
-// 2. It stays on its sphere. This is the one that silently rots.
+// 2. The frame stays a frame. This is the one that silently rots.
+//
+//    The ship carries a heading and an up of its own now, and they are turned
+//    by quaternions thousands of times a run. Left unchecked they drift out of
+//    perpendicular and stop being unit length, and the ship slowly shears
+//    instead of flying.
 {
   const f = createFlight(pad);
   run(f, 600, stick({ x: 0.6, y: 0.2 }));
-  const radius = f.pos.length();
-  ok("stays on the sphere", Math.abs(radius - (R + f.alt)) < 1e-3,
-     `radius ${radius.toFixed(3)} vs expected ${(R + f.alt).toFixed(3)}`);
-  const up = f.pos.clone().normalize();
-  ok("heading stays tangent", Math.abs(f.fwd.dot(up)) < 1e-6, `dot ${f.fwd.dot(up).toExponential(1)}`);
-  ok("heading stays unit length", Math.abs(f.fwd.length() - 1) < 1e-6);
+  ok("heading stays unit length", Math.abs(f.fwd.length() - 1) < 1e-6, `${f.fwd.length()}`);
+  ok("up stays unit length", Math.abs(f.up.length() - 1) < 1e-6, `${f.up.length()}`);
+  ok("and the two stay perpendicular", Math.abs(f.fwd.dot(f.up)) < 1e-6,
+     `dot ${f.fwd.dot(f.up).toExponential(1)}`);
+  ok("the altitude gauge matches where the ship actually is",
+     Math.abs(f.alt - (f.pos.length() - R)) < 1e-6, `${f.alt} vs ${f.pos.length() - R}`);
 }
 
 // 3. Steering turns, and turning the other way turns the other way.
@@ -77,20 +82,65 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      `${before.angleTo(left.fwd).toFixed(2)} rad`);
 }
 
-// 4. Altitude is clamped at both ends.
+// 4. UP AND DOWN ARE A DIRECTION, not a slider.
+//
+//    Geoff: "something is blocking the upward and downward movement... it seems
+//    to have an invisible ceiling and floor... I can't point the ship away from
+//    the earth and fly into space. So I can't do a loop. Or I can't dive down
+//    and smash into the earth either."
+//
+//    All three came from the same thing: pitch used to set an altitude between
+//    0.8 and 30 units and the heading was flattened onto the surface every
+//    frame. These are the three he could not do.
 {
+  /* Pointing at the stars, and going there.
+     Pull back for most of a second, which at the pitch rate is about eighty
+     degrees, and then simply fly. Holding the stick any longer would carry the
+     nose over the top into a loop, which is the NEXT test and would leave this
+     one pointing somewhere arbitrary. */
   const f = createFlight(pad);
-  run(f, 600, stick({ y: 1 }));
-  ok("cannot climb out of the world", f.alt <= MAX_ALT + 1e-9, `alt ${f.alt.toFixed(2)}`);
+  run(f, 50, stick({ y: 1 }));
+  ok("the nose can be pointed away from the planet",
+     f.fwd.dot(f.pos.clone().normalize()) > 0.9,
+     `dot ${f.fwd.dot(f.pos.clone().normalize()).toFixed(2)}`);
+  run(f, 60 * 5, stick({ boosting: true }));
+  ok("and the old thirty-unit ceiling is gone", f.alt > 100, `alt ${f.alt.toFixed(0)}`);
+
+  /* A LOOP. Held stick, high enough to have room, and the nose must pass
+     through pointing straight up AND straight down. */
+  const l = createFlight(pad);
+  l.pos.normalize().multiplyScalar(R + 300);
+  l.alt = 300;
+  let sawSky = false, sawGround = false;
+  for (let i = 0; i < 60 * 6; i++) {
+    stepFlight(l, DT, stick({ y: 1 }), [], -1);
+    const radial = l.pos.clone().normalize();
+    if (l.fwd.dot(radial) > 0.9) sawSky = true;
+    if (l.fwd.dot(radial) < -0.9) sawGround = true;
+  }
+  ok("a loop goes over the top", sawSky);
+  ok("and comes back down the other side", sawGround);
+  ok("and the ship is intact at the end of it", Number.isFinite(l.pos.length()));
+
+  /* Diving into the ground. It is allowed, it hurts, and holding it there
+     kills you, which is the point of being allowed to do it. */
   const g = createFlight(pad);
-  run(g, 600, stick({ y: -1 }));
-  ok("cannot fly under the surface", g.alt >= MIN_ALT - 1e-9, `alt ${g.alt.toFixed(2)}`);
-  ok("flying into the planet costs shields, not the game", g.shields > 0 && g.shields < MAX_SHIELD,
-     `shields ${g.shields}`);
-  /* Grace has to stop one dive draining the whole shield at sixty frames a
-     second: the ground is touched on every one of them. */
-  ok("one dive costs one hit, not sixty", g.shields === MAX_SHIELD - CRASH_DAMAGE,
-     `shields ${g.shields}`);
+  run(g, 60, stick({ y: -1 }));
+  ok("the ground can be flown into", g.shields < MAX_SHIELD, `shields ${g.shields}`);
+  ok("and it does not tunnel through", g.pos.length() >= R + MIN_ALT - 1e-6,
+     `radius ${g.pos.length().toFixed(2)}`);
+  const h = createFlight(pad);
+  run(h, 60 * 10, stick({ y: -1, boosting: true }));
+  ok("ten seconds of holding it into the planet is fatal", h.shields <= 0, `shields ${h.shields}`);
+
+  /* There is still an edge to the sky, so a player who points up and walks
+     away is not lost for ever. */
+  const s2 = createFlight(pad);
+  run(s2, 50, stick({ y: 1 }));            /* nose up */
+  run(s2, 60 * 60, stick({ boosting: true }));  /* and straight out */
+  ok("space is reached", s2.alt > R * 4, `alt ${s2.alt.toFixed(0)}`);
+  ok("but it still has an edge", Math.abs(s2.alt - MAX_ALT) < 1e-6,
+     `alt ${s2.alt.toFixed(0)} vs ceiling ${MAX_ALT}`);
 }
 
 // 5. Boost is faster and runs out.

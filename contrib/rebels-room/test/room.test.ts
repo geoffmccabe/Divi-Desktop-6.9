@@ -174,8 +174,10 @@ const home: [number, number, number] = [0, 0, R + 8];
   seat.body.pos.set(0, 0, R + 8);
   ws.deliver(JSON.stringify({ t: "tf", p: [0, 0, R * 0.5], f: [0, 1, 0] }));
   ok("under the surface is refused", ws.last("no")?.why === "outside the world", ws.last("no")?.why);
-  ws.deliver(JSON.stringify({ t: "tf", p: [0, 0, R + 500], f: [0, 1, 0] }));
-  ok("and so is deep space", ws.last("no")?.why === "outside the world");
+  /* Well past the edge of the sky, which moved a long way out when the flight
+     model was freed: R+500 is now ordinary space and a legitimate place to be. */
+  ws.deliver(JSON.stringify({ t: "tf", p: [0, 0, R * 40], f: [0, 1, 0] }));
+  ok("and so is deep space", ws.last("no")?.why === "outside the world", ws.last("no")?.why);
   room.stop();
 }
 

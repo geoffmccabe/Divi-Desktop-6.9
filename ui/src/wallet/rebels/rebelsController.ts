@@ -144,6 +144,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const diveFromPos = new THREE.Vector3();
   const diveFromQuat = new THREE.Quaternion();
   const endQuat = new THREE.Quaternion();
+  /** The pose at the moment the tower is reached: looking down at it. The
+   *  landing turn starts here. */
+  const arriveQuat = new THREE.Quaternion();
+  /** How much of the dive is the run in. The rest is the turn onto the pad. */
+  const ARRIVE_AT = 0.74;
   const dirA = new THREE.Vector3();
   const dirB = new THREE.Vector3();
   const dirMix = new THREE.Vector3();
@@ -155,16 +160,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let globeRadius = 100;
   let onEscape: (() => void) | null = null;
 
-  /** Great-circle blend between two directions, so the dive curves round the
-     planet instead of cutting a chord through it. */
-  function slerpDir(a: THREE.Vector3, b: THREE.Vector3, k: number, out: THREE.Vector3) {
-    const dot = Math.max(-1, Math.min(1, a.dot(b)));
-    const omega = Math.acos(dot);
-    if (omega < 1e-4) return out.copy(b);
-    const sin = Math.sin(omega);
-    return out.copy(a).multiplyScalar(Math.sin((1 - k) * omega) / sin)
-      .addScaledVector(b, Math.sin(k * omega) / sin).normalize();
-  }
+  /* The great-circle blend that used to curve the dive round the planet has
+     gone with the dive that needed it. The run in is a straight line at the
+     tower now, because curving round meant the tower was never ahead. */
   /* Near and far get changed so the ship is not clipped at arm's length; the
      map's own values are put back on the way out. */
   let savedNear = 0, savedFar = 0;
@@ -467,23 +465,62 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            flight invisible. */
         if (phase === "dive") {
           diveT = Math.min(1, diveT + dt / DIVE_SECONDS);
-          const k = diveT * diveT * (3 - 2 * diveT);
 
-          s.up.copy(flight.pos).normalize();
+          /* Where the cockpit ends up: level, looking along the heading. */
+          s.up.copy(flight.up);
           s.target.copy(flight.pos).addScaledVector(flight.fwd, 10);
           s.m4.lookAt(flight.pos, s.target, s.up);
           endQuat.setFromRotationMatrix(s.m4);
 
-          dirA.copy(diveFromPos).normalize();
-          dirB.copy(flight.pos).normalize();
-          slerpDir(dirA, dirB, k, dirMix);
-          const rA = diveFromPos.length();
-          const rB = flight.pos.length();
-          /* Altitude on a squarer curve than the ground track: the descent
-             starts gently and finishes fast, which is what a dive feels like. */
-          const rk = k * k * (3 - 2 * k) * 0.35 + k * k * k * 0.65;
-          camera.position.copy(dirMix).multiplyScalar(rA + (rB - rA) * rk);
-          camera.quaternion.slerpQuaternions(diveFromQuat, endQuat, k);
+          /* The tower being flown at. Its tip, not the pad above it, so the
+             view is pinned to the thing the player is arriving at. */
+          const tip = homeIndex >= 0 && homeIndex < tipList.length
+            ? tipList[homeIndex]
+            : dirB.copy(flight.pos).normalize().multiplyScalar(globeRadius);
+
+          if (diveT < ARRIVE_AT) {
+            /* ---- the run in ----
+               STRAIGHT AT THE TOWER, and looking at it the whole way.
+
+               It used to travel the great circle from wherever the map was
+               looking round to the tower's own direction, slerping the camera
+               toward the final level cockpit pose as it went. Both halves of
+               that were wrong from the pilot's seat: curving round the planet
+               meant the tower was never actually ahead, and blending toward a
+               pose that is TANGENT to the surface meant the view swung away
+               from the planet early in the run and arrived sideways. Geoff:
+               "it turns away from the planet, ruining the approach view".
+
+               A straight line and a fixed gaze fix both. */
+            const u = diveT / ARRIVE_AT;
+            /* Decelerating: quick out of orbit, slowing as the tower fills the
+               frame, so the arrival is a settle rather than a stop. */
+            const k = 1 - (1 - u) * (1 - u) * (1 - u);
+            camera.position.lerpVectors(diveFromPos, flight.pos, k);
+
+            /* Up is the planet's here, not the ship's: the horizon should sit
+               level on the way down. Where the ship is nearly overhead the two
+               are almost parallel, so the heading stands in as the hint. */
+            dirA.copy(camera.position).normalize();
+            s.m4.lookAt(camera.position, tip,
+              Math.abs(dirA.dot(dirMix.copy(tip).sub(camera.position).normalize())) > 0.985
+                ? flight.fwd : dirA);
+            arriveQuat.setFromRotationMatrix(s.m4);
+            /* Eased off the map's own framing over the first moment, so the
+               cut from "looking at the globe" to "looking at the tower" is a
+               turn rather than a jump. */
+            camera.quaternion.slerpQuaternions(diveFromQuat, arriveQuat, Math.min(1, u * 3));
+          } else {
+            /* ---- the landing ----
+               Arrived, and now the ninety degrees from looking down at the
+               tower to looking along the surface. Nothing else moves, so it
+               reads as the ship settling onto the pad and levelling off. */
+            const u = (diveT - ARRIVE_AT) / (1 - ARRIVE_AT);
+            const k = u * u * (3 - 2 * u);
+            camera.position.copy(flight.pos);
+            camera.quaternion.slerpQuaternions(arriveQuat, endQuat, k);
+          }
+
           camera.updateMatrixWorld();
           fx.step(dt, camera);
           if (diveT >= 1) phase = "fly";
@@ -497,7 +534,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         nearTower = res.nearTower;
         dockBlock = res.dockBlock;
 
-        s.up.copy(flight.pos).normalize();
+        /* THE SHIP'S OWN UP, not the planet's.
+           Deriving it from the position was what pinned the horizon level: the
+           camera stayed upright through a climb no matter where the nose was
+           pointing, which is exactly the sensation of not being allowed to
+           look up. Now a loop rolls the world over the top, because the ship
+           really is upside down at that moment. */
+        s.up.copy(flight.up);
 
         /* ---- the cockpit ----
            The camera IS the ship. There is no model in the middle of the view

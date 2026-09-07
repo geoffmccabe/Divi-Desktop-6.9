@@ -398,6 +398,11 @@ export class RebelsRoom {
     const p = vec(m.p), f = vec(m.f);
     if (!p || !f || f.lengthSq() < 1e-6) return this.strike(seat, "bad transform");
 
+    /* The world got a great deal taller when the flight model was freed: the
+       ceiling went from thirty units to eight planet radii, so a player really
+       can be out in space. The bound follows it rather than being a number of
+       its own, or honest pilots would start being snapped back the moment they
+       climbed. */
     const alt = p.length();
     if (alt < R + MIN_ALT - 2 || alt > R + MAX_ALT + 2) {
       return this.snapBack(seat, "outside the world");
