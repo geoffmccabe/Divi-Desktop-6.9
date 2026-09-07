@@ -164,7 +164,14 @@ impl IndexStatus {
 /// of irrelevant blocks on every install, which is days of work, so a mainnet
 /// wallet refuses rather than starting something it cannot finish.
 pub fn genesis_height(chain: &str) -> Result<u64, String> {
-    if let Ok(v) = std::env::var("DIVI_DMT_GENESIS") {
+    genesis_height_with(chain, std::env::var("DIVI_DMT_GENESIS").ok().as_deref())
+}
+
+/// The decision itself, with the override passed in rather than read from the
+/// environment, so it is testable without mutating process-global state that
+/// every test running in parallel shares. See `dmt::treasury_address_with`.
+pub fn genesis_height_with(chain: &str, configured: Option<&str>) -> Result<u64, String> {
+    if let Some(v) = configured {
         if let Ok(h) = v.trim().parse::<u64>() {
             return Ok(h);
         }
@@ -350,13 +357,10 @@ mod tests {
 
     #[test]
     fn a_test_chain_starts_at_zero_and_mainnet_refuses_without_a_height() {
-        if std::env::var("DIVI_DMT_GENESIS").is_ok() {
-            return;
-        }
-        assert_eq!(genesis_height("regtest").unwrap(), 0);
-        assert_eq!(genesis_height("test").unwrap(), 0);
+        assert_eq!(genesis_height_with("regtest", None).unwrap(), 0);
+        assert_eq!(genesis_height_with("test", None).unwrap(), 0);
 
-        let main = genesis_height("main");
+        let main = genesis_height_with("main", None);
         assert!(main.is_err(), "mainnet has no start height in this build");
         let why = main.unwrap_err();
         assert!(why.contains("days"), "the refusal should say why, got: {why}");
@@ -364,10 +368,12 @@ mod tests {
     }
 
     #[test]
-    fn an_override_is_honoured() {
-        std::env::set_var("DIVI_DMT_GENESIS", "4131200");
-        assert_eq!(genesis_height("main").unwrap(), 4_131_200);
-        std::env::remove_var("DIVI_DMT_GENESIS");
+    fn an_override_is_honoured_and_nonsense_is_not() {
+        assert_eq!(genesis_height_with("main", Some("4131200")).unwrap(), 4_131_200);
+        assert_eq!(genesis_height_with("main", Some(" 4131200 ")).unwrap(), 4_131_200);
+        // A value that is not a height falls through to the refusal rather than
+        // silently becoming 0, which would start a full-chain scan.
+        assert!(genesis_height_with("main", Some("soon")).is_err());
     }
 
     /// A guard rather than a comment.

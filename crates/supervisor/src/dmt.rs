@@ -73,10 +73,21 @@ pub fn parse_token_id(s: &str) -> Result<TokenId, String> {
 /// controls would satisfy the fee. Returning an error rather than that address
 /// is what stops the wallet participating in it.
 pub fn treasury_address(chain: &str) -> Result<String, String> {
-    if let Ok(v) = std::env::var("DIVI_DMT_TREASURY") {
-        let v = v.trim().to_string();
+    treasury_address_with(chain, std::env::var("DIVI_DMT_TREASURY").ok().as_deref())
+}
+
+/// The decision itself, with the override passed in rather than read from the
+/// environment.
+///
+/// Split out because reading a process-global inside the logic makes it
+/// untestable: Rust runs tests in parallel threads of one process, so a test
+/// that sets the variable changes what every other test sees. That is not a
+/// hypothetical, it is the flaky failure that caught this.
+pub fn treasury_address_with(chain: &str, configured: Option<&str>) -> Result<String, String> {
+    if let Some(v) = configured {
+        let v = v.trim();
         if !v.is_empty() {
-            return Ok(v);
+            return Ok(v.to_string());
         }
     }
     if is_testnet_like(chain) {
@@ -353,29 +364,29 @@ mod tests {
     }
 
     /// A placeholder treasury must never be handed out as if it were real.
+    ///
+    /// Takes the override as an argument rather than setting an environment
+    /// variable, so it cannot interfere with any other test running beside it.
     #[test]
     fn the_treasury_refuses_rather_than_returning_a_placeholder() {
-        // Guarded against a stray environment variable in the test runner.
-        if std::env::var("DIVI_DMT_TREASURY").is_ok() {
-            return;
-        }
-        let mainnet = treasury_address("main");
+        let mainnet = treasury_address_with("main", None);
         assert!(mainnet.is_err(), "mainnet has no treasury set in this build");
         assert!(mainnet.unwrap_err().contains("unrecoverable"));
 
-        let test = treasury_address("regtest");
+        let test = treasury_address_with("regtest", None);
         assert!(test.is_err());
         assert!(test.unwrap_err().contains("DIVI_DMT_TREASURY"));
+
+        // An empty setting is not a setting.
+        assert!(treasury_address_with("regtest", Some("   ")).is_err());
     }
 
     #[test]
-    fn a_configured_test_treasury_is_used() {
-        // Serialised implicitly: this is the only test that sets it.
-        std::env::set_var("DIVI_DMT_TREASURY", "yCsJe6YGB4My3xiQjyUU4dC2Gc7v1H8Cna");
-        assert_eq!(
-            treasury_address("regtest").unwrap(),
-            "yCsJe6YGB4My3xiQjyUU4dC2Gc7v1H8Cna"
-        );
-        std::env::remove_var("DIVI_DMT_TREASURY");
+    fn a_configured_treasury_is_used_on_either_chain() {
+        let addr = "yCsJe6YGB4My3xiQjyUU4dC2Gc7v1H8Cna";
+        assert_eq!(treasury_address_with("regtest", Some(addr)).unwrap(), addr);
+        assert_eq!(treasury_address_with("main", Some(addr)).unwrap(), addr);
+        // Whitespace from a copy and paste should not defeat it.
+        assert_eq!(treasury_address_with("main", Some("  yCsJe6YGB4My3xiQjyUU4dC2Gc7v1H8Cna ")).unwrap(), addr);
     }
 }
