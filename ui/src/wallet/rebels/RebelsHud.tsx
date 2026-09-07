@@ -13,6 +13,7 @@ import { RebelsScoreboard } from "./RebelsScoreboard";
 import { RebelsControls, CONTROLS, DOCKING } from "./RebelsControls";
 import { ShipMarket } from "./ShipMarket";
 import { RebelsHealthBar } from "./RebelsHealthBar";
+import { ShipBadge } from "./ShipBadge";
 
 export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () => void }) {
   const [hud, setHud] = useState<HudState>(() => ctl.hud());
@@ -132,6 +133,11 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         <div className="orbit-row orbit-dim">ALT {Math.round(hud.alt * 64).toLocaleString()} <span className="orbit-dim">km</span></div>
       </div>
       <div className="orbit-tr">
+        {/* Your ship, or — when there is something out there worth naming —
+            that instead. The two share this corner and never overlap: one
+            fades out as the other fades in. */}
+        {hud.launched && <ShipBadge hidden={!!hud.nearby} />}
+
         {/* What you are near, first, because it is the thing that just changed
             and the rest of this corner is standing information. */}
         {hud.nearby && (

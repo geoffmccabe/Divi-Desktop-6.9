@@ -7,6 +7,7 @@
 // Run: sh scripts/run-rebels-market-tests.sh
 
 import { shipCatalog, atTier, SHIP_CLASSES, STAT_ROWS, type ShipStats } from "./shipCatalog";
+import { chipColour, FACTORY, PARTS } from "./shipColours";
 
 const out: string[] = [];
 let failures = 0;
@@ -109,6 +110,51 @@ const all = shipCatalog();
   }
   ok("every number is a real number", bad.length === 0, bad.slice(0, 4).join("; "));
   ok("all ten stats are shown", STAT_ROWS.length === 10, `${STAT_ROWS.length}`);
+}
+
+// 6. The swatch chip has to agree with the ship.
+//
+//    Geoff: "it changes on the ship, but it doesn't change on the swatches by
+//    the names of each of the 5." The chip is a promise about what the hull
+//    will look like, and the shader keeps the pixel's own brightness rather
+//    than replacing it, so a chip that ignores that brightness lies at exactly
+//    the settings a player is most likely to try.
+{
+  const paint = { ...FACTORY };
+  const first = chipColour("hull1", paint);
+  ok("the factory chip is a real colour", /^hsl\(\d+ \d+% \d+%\)$/.test(first), first);
+
+  /* Every slider has to move it. */
+  const hue = chipColour("hull1", { ...paint, hull1: { ...paint.hull1, hue: 12 } });
+  ok("hue moves the chip", hue !== first, `${first} -> ${hue}`);
+  const sat = chipColour("hull1", { ...paint, hull1: { ...paint.hull1, sat: 0 } });
+  ok("saturation moves the chip", sat !== first, `${first} -> ${sat}`);
+  const dim = chipColour("hull1", { ...paint, hull1: { ...paint.hull1, bright: 0.3 } });
+  ok("brightness moves the chip", dim !== first, `${first} -> ${dim}`);
+
+  /* And it has to move the RIGHT way: dimmer is darker, brighter is lighter. */
+  const lum = (c: string) => Number(c.match(/(\d+)%\)$/)?.[1] ?? -1);
+  const bright = chipColour("hull1", { ...paint, hull1: { ...paint.hull1, bright: 2 } });
+  ok("turning brightness down darkens it", lum(dim) < lum(first), `${lum(dim)} vs ${lum(first)}`);
+  ok("and turning it up lightens it", lum(bright) > lum(first), `${lum(bright)} vs ${lum(first)}`);
+
+  /* The five parts do not all start the same, because the swatches they stand
+     for do not: the engine is a bright cyan and the panelling is nearly black.
+     A chip set that ignored that would show five identical squares. */
+  const chips = PARTS.map((p) => chipColour(p.key, FACTORY));
+  ok("the five factory chips are all different", new Set(chips).size === 5, chips.join(" "));
+  /* Compared by SATURATION rather than by lightness. A fully saturated colour
+     sits at 50% lightness by definition, so the cyan engine reads as "darker"
+     than the softer orange on that scale even though it is the most vivid
+     thing on the ship. Lightness is the wrong measure for "which of these
+     stands out", and the first version of this check used it and was wrong. */
+  const satOf = (c: string) => Number(c.match(/(\d+)% \d+%\)$/)?.[1] ?? -1);
+  ok("the engine is the most vivid of them",
+     satOf(chipColour("engine", FACTORY)) === Math.max(...chips.map(satOf)),
+     chips.map((c) => satOf(c)).join(", "));
+  ok("and the dark panelling is the darkest",
+     lum(chipColour("hull2", FACTORY)) === Math.min(...chips.map(lum)),
+     chips.map((c) => lum(c)).join(", "));
 }
 
 console.log(out.join("\n"));

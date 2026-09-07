@@ -70,6 +70,43 @@ export const FACTORY: ShipPaint = {
   engine: { hue: 172, sat: 1, bright: 1 },
 };
 
+/* ---- what each swatch actually looks like ----
+   The chip beside a part's name has to show what that part will BE, and the
+   shader keeps the pixel's own brightness rather than replacing it. So the chip
+   needs the brightness the real swatch has, or a hull painted deep blue would
+   show a chip of pale blue and the two would disagree — which is exactly what
+   Geoff saw: the ship changed and the swatches did not follow it honestly.
+
+   These are the value channels of the actual palette, read off the atlas:
+   blue #4a779a, dark grey #444348, orange #f7ae50, light grey #9d9ca1 and the
+   cyan #00ffdd. */
+const REFERENCE_VALUE: Record<PartKey, number> = {
+  hull1: 0.60,
+  hull2: 0.28,
+  accent: 0.97,
+  highlight: 0.63,
+  engine: 1.0,
+};
+
+/**
+ * The colour to paint a part's chip: the same sum the shader does, in CSS.
+ *
+ * Converted through HSL because that is what CSS speaks and HSV is what the
+ * shader uses; doing it by hand rather than approximating keeps the chip and
+ * the ship in agreement at every slider position, including the extremes where
+ * an approximation would drift.
+ */
+export function chipColour(key: PartKey, paint: ShipPaint): string {
+  const p = paint[key];
+  const v = Math.max(0, Math.min(1, REFERENCE_VALUE[key] * p.bright));
+  const sv = Math.max(0, Math.min(1, p.sat));
+  /* HSV to HSL: the lightness is the value less half the saturation it carries,
+     and the saturation has to be restated against that new lightness. */
+  const l = v * (1 - sv / 2);
+  const sl = l <= 0 || l >= 1 ? 0 : (v - l) / Math.min(l, 1 - l);
+  return `hsl(${Math.round(p.hue)} ${Math.round(sl * 100)}% ${Math.round(l * 100)}%)`;
+}
+
 const KEY = "dd69.rebels.paint";
 
 export function loadPaint(): ShipPaint {

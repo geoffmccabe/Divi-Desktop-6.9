@@ -196,10 +196,19 @@
   color: hsl(var(--rebels-hud) / 0.6);
 }
 
-.ship-market-head {
+/* The left column: the name, then the paint controls under it, stacked.
+   They used to share one grid cell — one anchored to its centre, one to its
+   bottom — which put the sliders directly over the description and made the
+   buttons beneath them unclickable. A flex column cannot do that. */
+.ship-market-left {
   grid-column: 1; grid-row: 1;
-  align-self: center; text-align: right;
+  align-self: center;
+  display: flex; flex-direction: column; align-items: flex-end;
+  gap: 14px;
+  max-height: 100%;
+  overflow-y: auto;
 }
+.ship-market-head { text-align: right; }
 .ship-market-head h2 {
   margin: 0; font-size: 26px; letter-spacing: 0.1em;
   color: hsl(var(--primary));
@@ -235,13 +244,10 @@
 .ship-market-note { margin: 10px 0 0; font-size: 10px; opacity: 0.55; line-height: 1.4; }
 
 /* ---- the paint shop ----
-   Down the left, under the ship's name, because the name and the colours are
-   both "what this thing is" and the stats on the right are "what it does". */
-.ship-paint {
-  grid-column: 1; grid-row: 1;
-  align-self: end; text-align: right;
-  margin-top: 18px;
-}
+   Under the ship's name, in the same column, because the name and the colours
+   are both "what this thing is" where the stats on the right are "what it
+   does". */
+.ship-paint { text-align: right; width: 100%; }
 .ship-paint-parts {
   display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end;
 }
@@ -341,11 +347,15 @@
     overflow-y: auto;
   }
   .ship-market-ring { grid-column: 1; grid-row: 1; width: min(38vh, 82vw); }
-  .ship-market-head { grid-column: 1; grid-row: 2; text-align: center; }
-  .ship-paint { grid-column: 1; grid-row: 3; text-align: center; }
+  .ship-market-left {
+    grid-column: 1; grid-row: 2;
+    align-items: center; text-align: center; overflow: visible; max-height: none;
+  }
+  .ship-market-head { text-align: center; }
+  .ship-paint { text-align: center; }
   .ship-paint-parts { justify-content: center; }
-  .ship-market-stats { grid-column: 1; grid-row: 4; }
-  .ship-market-list { grid-column: 1; grid-row: 5; }
+  .ship-market-stats { grid-column: 1; grid-row: 3; }
+  .ship-market-list { grid-column: 1; grid-row: 4; }
 }
 
 /* ---- the damage health bar ----
@@ -371,4 +381,62 @@
   color: #fff; font-weight: 900; font-size: min(6vw, 56px); line-height: 1;
   letter-spacing: -0.02em; white-space: nowrap;
   text-shadow: 0 2px 6px rgb(0 0 0 / 0.9), 0 0 2px rgb(0 0 0 / 0.9);
+}
+
+/* The reset confirmation. Small, centred over the panel, and deliberately in
+   the way: putting every colour back is not something to do by brushing a
+   button on the way past. */
+.ship-paint-confirm {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 18px 22px; text-align: center;
+  background: hsl(var(--rebels-ocean) / 0.96);
+  border: 1px solid hsl(var(--primary) / 0.6);
+  border-radius: var(--panel-radius);
+  box-shadow: 0 0 40px hsl(var(--primary) / 0.3);
+  backdrop-filter: blur(var(--panel-blur));
+  z-index: 5;
+}
+.ship-paint-confirm p { margin: 0 0 14px; font-size: 12px; letter-spacing: 0.05em; }
+.ship-paint-confirm div { display: flex; gap: 8px; justify-content: center; }
+.ship-paint-confirm button {
+  min-width: 74px; padding: 8px 14px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em;
+  color: hsl(var(--primary-foreground)); background: hsl(var(--primary));
+  border: none; border-radius: calc(var(--panel-radius) * 0.5);
+}
+.ship-paint-confirm button.no {
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.12);
+  border: 1px solid hsl(var(--rebels-hud) / 0.35);
+}
+
+/* ---- your ship, in the corner ----
+   The Market's viewport at a fifth the size: same translucent disc, same ring,
+   same slow turn. It steps aside when a world is near, because the name of
+   what you are flying at is worth more than a reminder of what you are in. */
+.ship-badge {
+  width: 108px; height: 108px;
+  margin: 0 0 10px auto;
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+.ship-badge-away {
+  opacity: 0;
+  /* Shrinks slightly as it goes, so it reads as making way rather than as the
+     renderer having failed. */
+  transform: scale(0.82);
+  pointer-events: none;
+}
+.ship-badge-ring {
+  position: relative; width: 100%; height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 42%,
+    hsl(var(--rebels-ocean) / 0.75) 0%,
+    hsl(var(--rebels-ocean) / 0.42) 62%,
+    transparent 74%);
+  border: 1px solid hsl(var(--rebels-hud) / 0.45);
+  box-shadow:
+    0 0 0 1px hsl(var(--primary) / 0.2),
+    0 0 18px hsl(var(--primary) / 0.28),
+    inset 0 0 22px hsl(var(--primary) / 0.14);
 }

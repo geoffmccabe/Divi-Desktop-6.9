@@ -12,13 +12,24 @@ import { useEffect, useMemo, useState } from "react";
 import { shipCatalog, STAT_ROWS, SHIP_CLASSES, type Ship } from "./shipCatalog";
 import { ShipPreview } from "./ShipPreview";
 import {
-  PARTS, FACTORY, loadPaint, savePaint, type PartKey, type ShipPaint,
+  PARTS, FACTORY, chipColour, loadPaint, savePaint, type PartKey, type ShipPaint,
 } from "./shipColours";
+import { loadShip, saveShip } from "./shipChoice";
+import { saveShip as saveShipRemote } from "./rebelsShips";
 
 export function ShipMarket({ onClose }: { onClose: () => void }) {
   const all = useMemo(() => shipCatalog(), []);
-  const [pick, setPick] = useState(0);
+  /* Opens on the ship the player already flies rather than on the first in the
+     list, so the Market is where their ship is rather than where the catalogue
+     starts. */
+  const [pick, setPick] = useState(() => {
+    const want = loadShip();
+    const i = all.findIndex((s) => s.id === want);
+    return i >= 0 ? i : 0;
+  });
   const ship: Ship = all[pick] ?? all[0];
+  useEffect(() => { saveShip(ship.id); }, [ship.id]);
+
 
   /* The paint. One scheme for the whole fleet rather than one per hull: every
      ship in the pack shares the same five swatches, so a per-ship scheme would
@@ -26,7 +37,16 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
      jumble sale. Kept between sessions. */
   const [paint, setPaint] = useState<ShipPaint>(() => loadPaint());
   const [tuning, setTuning] = useState<PartKey | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
   useEffect(() => { savePaint(paint); }, [paint]);
+
+  /* And to Supabase, so a reinstall or a second machine does not cost anyone
+     their fleet. Debounced, because this fires on every frame of a slider drag
+     and the row only has to end up right, not to be right at every instant. */
+  useEffect(() => {
+    const t = setTimeout(() => { void saveShipRemote(ship.id, ship.tier, paint); }, 900);
+    return () => clearTimeout(t);
+  }, [ship.id, ship.tier, paint]);
 
   const setPart = (key: PartKey, field: "hue" | "sat" | "bright", v: number) =>
     setPaint((p) => ({ ...p, [key]: { ...p[key], [field]: v } }));
@@ -61,11 +81,20 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
           <ShipPreview id={ship.id} paint={paint} />
         </div>
 
-        <div className="ship-market-head">
-          <h2>{ship.name}</h2>
-          <div className="ship-market-tier">TIER {ship.tier}</div>
-          <p className="ship-market-role">{ship.role}</p>
-        </div>
+        {/* ONE COLUMN, STACKED. The name and the paint controls used to be given
+            the same grid cell, one anchored to its centre and one to its
+            bottom, so they sat ON TOP of each other: the sliders covered the
+            description, and the buttons underneath them — Accent and Highlight
+            among them — never saw a click. Geoff: "some buttons like Accent and
+            Highlight don't work." Stacking them in one flex column means
+            opening the sliders simply pushes the name up, which is what he
+            asked for and what should have happened in the first place. */}
+        <div className="ship-market-left">
+          <div className="ship-market-head">
+            <h2>{ship.name}</h2>
+            <div className="ship-market-tier">TIER {ship.tier}</div>
+            <p className="ship-market-role">{ship.role}</p>
+          </div>
 
         <div className="ship-market-stats">
           {STAT_ROWS.map((row) => {
@@ -108,21 +137,16 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
                 onClick={() => setTuning(tuning === part.key ? null : part.key)}
                 title={part.note}
               >
-                <span
-                  className="ship-paint-chip"
-                  style={{
-                    background: `hsl(${paint[part.key].hue} ${Math.round(paint[part.key].sat * 100)}% ${Math.round(Math.min(75, 42 * paint[part.key].bright))}%)`,
-                  }}
-                />
+                <span className="ship-paint-chip" style={{ background: chipColour(part.key, paint) }} />
                 {part.label}
               </button>
             ))}
             <button
               type="button"
               className="ship-paint-reset"
-              onClick={() => { setPaint({ ...FACTORY }); setTuning(null); }}
+              onClick={() => setConfirmReset(true)}
             >
-              FACTORY
+              RESET
             </button>
           </div>
 
@@ -160,6 +184,8 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
           )}
         </div>
 
+        </div>
+
         <div className="ship-market-list">
           {grouped.map(([className, ships]) => (
             <div className="ship-market-class" key={className}>
@@ -183,6 +209,21 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
+
+        {confirmReset && (
+          <div className="ship-paint-confirm">
+            <p>Put every colour back to the factory scheme?</p>
+            <div>
+              <button
+                type="button"
+                onClick={() => { setPaint({ ...FACTORY }); setTuning(null); setConfirmReset(false); }}
+              >
+                YES
+              </button>
+              <button type="button" className="no" onClick={() => setConfirmReset(false)}>NO</button>
+            </div>
+          </div>
+        )}
 
         <button type="button" className="ship-market-close" onClick={onClose}>CLOSE</button>
         <div className="ship-market-count">
