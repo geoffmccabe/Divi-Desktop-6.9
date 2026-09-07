@@ -33,8 +33,13 @@ export interface ScoreRow {
   best: number;
   total: number;
   games: number;
+  /** Seven counts, one per ship tier, from tier one upward. */
+  tierKills: number[];
   at: number;
 }
+
+export const TIER_COUNT = 7;
+const noKills = () => new Array(TIER_COUNT).fill(0) as number[];
 
 interface Table { rows: ScoreRow[] }
 
@@ -96,27 +101,40 @@ export function playerName(): string {
  * no connection. The network call is fire and forget: a leaderboard is not
  * worth interrupting a game over.
  */
-export function recordScore(points: number, name = playerName()): ScoreRow {
-  if (points > 0) {
+export function recordScore(
+  points: number,
+  tierKills: number[] = noKills(),
+  name = playerName(),
+): ScoreRow {
+  const kills = tierKills.reduce((a, b) => a + b, 0);
+  if (points > 0 || kills > 0) {
     fetch(`${SUPABASE_URL}/rest/v1/rpc/rebels_submit`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ p_name: name, p_points: Math.round(points) }),
+      body: JSON.stringify({
+        p_name: name,
+        p_points: Math.round(points),
+        p_tier_kills: tierKills.slice(0, TIER_COUNT).map((n) => Math.max(0, Math.round(n))),
+      }),
     }).catch(() => { /* offline; the local copy still has it */ });
   }
-  return recordLocal(points, name);
+  return recordLocal(points, tierKills, name);
 }
 
-function recordLocal(points: number, name: string): ScoreRow {
+function recordLocal(points: number, tierKills: number[], name: string): ScoreRow {
   const t = read();
   let row = t.rows.find((r) => r.name === name);
   if (!row) {
-    row = { name, best: 0, total: 0, games: 0, at: Date.now() };
+    row = { name, best: 0, total: 0, games: 0, tierKills: noKills(), at: Date.now() };
     t.rows.push(row);
+  }
+  if (!Array.isArray(row.tierKills) || row.tierKills.length !== TIER_COUNT) {
+    row.tierKills = noKills();
   }
   row.best = Math.max(row.best, points);
   row.total += points;
   row.games += 1;
+  for (let i = 0; i < TIER_COUNT; i++) row.tierKills[i] += tierKills[i] ?? 0;
   row.at = Date.now();
 
   /* Trimmed against BOTH tables, so a row that is top-hundred on either one
@@ -148,21 +166,58 @@ export async function fetchTop(by: "best" | "total", limit = KEEP): Promise<Scor
   try {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/rebels_scores` +
-      `?select=name,best,total,games,updated_at&order=${by}.desc&limit=${limit}`,
+      `?select=name,best,total,games,tier_kills,updated_at&order=${by}.desc&limit=${limit}`,
       { headers },
     );
     if (!res.ok) return null;
     const rows = (await res.json()) as Array<{
-      name: string; best: number; total: number; games: number; updated_at: string;
+      name: string; best: number; total: number; games: number;
+      tier_kills: number[] | null; updated_at: string;
     }>;
     return rows.map((r) => ({
       name: r.name,
       best: r.best,
       total: r.total,
       games: r.games,
+      tierKills: Array.isArray(r.tier_kills) && r.tier_kills.length === TIER_COUNT
+        ? r.tier_kills : noKills(),
       at: Date.parse(r.updated_at) || 0,
     }));
   } catch {
     return null;
+  }
+}
+
+/**
+ * This player's own lifetime row, so the tier tallies can start from what they
+ * have already done rather than from zero every time the game opens.
+ *
+ * Falls back to the local copy, which is what an offline session sees.
+ */
+export async function myTotals(name = playerName()): Promise<ScoreRow> {
+  const local = topByTotal(1000).find((r) => r.name === name)
+    ?? { name, best: 0, total: 0, games: 0, tierKills: noKills(), at: 0 };
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/rebels_scores` +
+      `?name_key=eq.${encodeURIComponent(name.toLowerCase())}` +
+      `&select=name,best,total,games,tier_kills,updated_at&limit=1`,
+      { headers },
+    );
+    if (!res.ok) return local;
+    const rows = (await res.json()) as Array<{
+      name: string; best: number; total: number; games: number;
+      tier_kills: number[] | null; updated_at: string;
+    }>;
+    const r = rows[0];
+    if (!r) return local;
+    return {
+      name: r.name, best: r.best, total: r.total, games: r.games,
+      tierKills: Array.isArray(r.tier_kills) && r.tier_kills.length === TIER_COUNT
+        ? r.tier_kills : noKills(),
+      at: Date.parse(r.updated_at) || 0,
+    };
+  } catch {
+    return local;
   }
 }

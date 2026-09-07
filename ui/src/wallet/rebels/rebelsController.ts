@@ -16,11 +16,11 @@ import {
 } from "./orbitFlight";
 import {
   createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest,
-  STAKE_BONUS, STAKE_BONUS_MS,
+  STAKE_BONUS, STAKE_BONUS_MS, TIERS,
   type CombatState,
 } from "./rebelsCombat";
 import { userWonRecently } from "../stakeWin";
-import { recordScore } from "./rebelsScores";
+import { recordScore, myTotals, TIER_COUNT } from "./rebelsScores";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
   type Fx, type ShieldRig,
@@ -54,6 +54,8 @@ export interface HudState {
   /** Points this run. Only damage landed on fighters scores, and never more
    *  than the damage that actually landed. */
   score: number;
+  /** Lifetime kills, one count per tier from tier one upward. */
+  tierKills: number[];
   /** Wreckage in orbit right now. */
   junk: number;
   /** Guns are tripled from a recent stake win. */
@@ -68,7 +70,8 @@ export interface HudState {
 const BLANK: HudState = {
   ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO,
   torpedoes: MAX_TORPEDOES, inFlight: 0, guards: MAX_GUARDS, guarding: false, boost: 1,
-  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, score: 0, junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
+  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, score: 0,
+  tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
 };
 
 /** Fighters are drawn about a unit across, against three-unit towers. */
@@ -99,7 +102,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* One model per fighter in the air, kept in step with the simulation's list
      by index. Built from a single prototype and cloned, so a spawn costs a
      clone rather than a pile of new geometry. */
-  let proto: THREE.Group | null = null;
+  let protos: THREE.Group[] = [];
   const enemyMeshes: THREE.Group[] = [];
   /* One shield rig per fighter model, hanging off it. */
   const enemyShields: ShieldRig[] = [];
@@ -164,6 +167,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      the trigger reads as the trigger not having worked. */
   let lastInFlight = -1;
   let lastRack = -1;
+  /* Lifetime tier kills, seeded from the player's own row so the counters start
+     where they left off rather than at zero every session. */
+  let lifetimeTiers: number[] = new Array(TIER_COUNT).fill(0);
 
   const stick: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false };
   const keys: Record<string, boolean> = {};
@@ -304,7 +310,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         scene.add(fx.group);
         guardShell = makeGuardShell();
         scene.add(guardShell.mesh);
-        proto = makeFighter();
+        /* One prototype per tier, cloned per fighter. Seven models built once
+           costs nothing and means a rare ship is the right colour from the
+           frame it appears. */
+        protos = TIERS.map((t) => makeFighter(t.colour));
         combat = createCombat();
 
         startAt(homeIndex);
@@ -329,6 +338,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           document.addEventListener("pointerlockchange", onLockChange);
         }
 
+        /* What this player has already killed, so the tallies are lifetime and
+           not per session. Offline it falls back to the local copy. */
+        void myTotals().then((row) => {
+          lifetimeTiers = row.tierKills.slice(0, TIER_COUNT);
+          setHud({ tierKills: lifetimeTiers.slice() });
+        });
+
         setHud({
           ready: true,
           broken: null,
@@ -343,7 +359,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     },
 
     frame(dt) {
-      if (!flight || !camera || !fx || !scene || !proto) return;
+      if (!flight || !camera || !fx || !scene || protos.length === 0) return;
       try {
         const s = scratch;
 
@@ -470,6 +486,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           } else if (ev.kind === "enemyDown") {
             fx.boom(ev.at, 3, "hot");
             playShipExplosion();
+            if (ev.tier) {
+              lifetimeTiers[ev.tier - 1] = (lifetimeTiers[ev.tier - 1] ?? 0) + 1;
+              setHud({ tierKills: lifetimeTiers.slice() });
+            }
           } else if (ev.kind === "enemyHit") {
             /* Points are exactly the damage that landed, so a shot into a
                fighter with ten left scores ten and not eighty. */
@@ -491,7 +511,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         }
         if (flight.shields <= 0 && !hud.dead) {
           /* File the run, then wipe it: the score is for one life. */
-          if (score > 0) recordScore(score);
+          if (score > 0 || combat.tierKills.some((n) => n > 0)) {
+            recordScore(score, combat.tierKills.slice());
+            combat.tierKills.fill(0);
+          }
           score = 0;
           setHud({ dead: true, score: 0 });
           /* Hand the pointer back, or the "launch again" button cannot be
@@ -503,12 +526,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         /* Keep one model per live fighter, cloning and hiding rather than
            building and destroying. */
-        while (enemyMeshes.length < combat.enemies.length) {
-          const m = proto.clone(true);
+        /* A model per fighter, and it has to match that fighter's tier, so a
+           slot whose occupant changed tier is rebuilt rather than recoloured. */
+        for (let i = 0; i < combat.enemies.length; i++) {
+          const want = combat.enemies[i].cls.tier;
+          const have = enemyMeshes[i];
+          if (have && have.userData.tier === want) continue;
+          if (have) scene.remove(have);
+          const m = protos[want - 1].clone(true);
+          m.userData.tier = want;
           m.scale.setScalar(ENEMY_SCALE);
           scene.add(m);
-          enemyMeshes.push(m);
-          const rig = makeShieldRig(combat.enemies[0]?.cls.colour ?? 0x66ccff);
+          enemyMeshes[i] = m;
+        }
+        while (enemyShields.length < enemyMeshes.length) {
+          const rig = makeShieldRig(0x66ccff);
           /* Added to the scene rather than to the fighter, so a fighter
              tumbling wildly does not take its own shield bubble and its
              readout spinning with it. */
@@ -531,6 +563,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           m.quaternion.multiply(s.qBank);
 
           rig.group.position.copy(e.pos);
+          rig.setColour(e.cls.colour);
           rig.setLevel(e.shield / e.cls.shieldMax);
           /* Shown for a couple of seconds after a hit, fading out. */
           rig.step(nowS, Math.min(1, e.flash / 0.6));
@@ -623,14 +656,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       fx?.dispose();
       /* The prototype's geometry is shared by every clone, so it is disposed
          once, here, and not per fighter. */
-      proto?.traverse((o) => {
+      for (const proto of protos) proto.traverse((o) => {
         const m = o as THREE.Mesh;
         m.geometry?.dispose();
         const mat = m.material as THREE.Material | THREE.Material[] | undefined;
         if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
         else if (mat) mat.dispose();
       });
-      fx = null; proto = null;
+      fx = null; protos = [];
       combat = createCombat();
       scene = null; camera = null; dom = null; flight = null;
       setHud({ ready: false });

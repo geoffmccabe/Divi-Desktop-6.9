@@ -22,15 +22,57 @@ export const LASER_MAX = 100;
 export const STAKE_BONUS = 3;
 export const STAKE_BONUS_MS = 60_000;
 
-/** A ship class. Only one exists today, but shield capacity and colour live
- *  here so a tougher or differently-coloured ship later is a data change. */
+/** A ship class: everything that differs between the seven tiers. */
 export interface ShipClass {
+  /** 1..7. Also the index into the per-tier kill counts. */
+  tier: number;
+  name: string;
   shieldMax: number;
   hullMax: number;
-  /** Shown on the shield bubble. Room for future ships to differ. */
+  /** Hull and panel colour, and the colour of its shield bubble. */
   colour: number;
+  /** Multiplier on flying speed. */
+  speed: number;
+  /** Relative chance of a spawn being this one, before normalising. */
+  weight: number;
 }
-export const FIGHTER: ShipClass = { shieldMax: 100, hullMax: 100, colour: 0x66ccff };
+
+/* ---- the seven ----
+   Each tier is a fifth as likely as the one before it and thirty points of
+   speed and shield stronger, so the rare ones are rare AND worth being
+   frightened of. Geoff's figures: 80%, 16%, 2% and so on, which is a ratio of
+   a fifth; and 100%, 130%, 160%, 190%, 220%, carried on to seven.
+
+   Worth knowing before this gets tuned: a fifth each time makes tier seven
+   about one spawn in twenty thousand. That is genuinely almost never. The
+   weights are data, so softening it is one edit here. */
+const TIER_COLOURS = [0x9aa3ad, 0x57e06a, 0x4fa8ff, 0xa96bff, 0xff4d4d, 0xf2f6ff, 0xff45d0];
+const TIER_NAMES = ["Grey", "Green", "Blue", "Purple", "Red", "White", "Fuchsia"];
+
+export const TIERS: ShipClass[] = TIER_COLOURS.map((colour, i) => ({
+  tier: i + 1,
+  name: TIER_NAMES[i],
+  shieldMax: 100 + i * 30,
+  hullMax: 100 + i * 30,
+  colour,
+  speed: 1 + i * 0.3,
+  weight: 0.8 * Math.pow(0.2, i),
+}));
+
+/** The commonest one, and what anything unspecified means. */
+export const FIGHTER: ShipClass = TIERS[0];
+
+const TIER_TOTAL = TIERS.reduce((a, t) => a + t.weight, 0);
+
+/** Roll a tier. Weighted, so the rare ones stay rare. */
+export function rollTier(): ShipClass {
+  let r = Math.random() * TIER_TOTAL;
+  for (const t of TIERS) {
+    r -= t.weight;
+    if (r <= 0) return t;
+  }
+  return TIERS[0];
+}
 
 /** Knockback, as an impulse in units per second per point of damage. Taken
  *  literally, "knockback equal to the damage" would fling a fighter a sixth of
@@ -142,6 +184,8 @@ export interface CombatEvent {
   shield?: number;
   /** enemyHit only: damage actually landed, which is what scores. */
   damage?: number;
+  /** enemyDown only: which of the seven it was. */
+  tier?: number;
 }
 
 export interface CombatState {
@@ -151,11 +195,16 @@ export interface CombatState {
   junk: Junk[];
   events: CombatEvent[];
   kills: number;
+  /** Kills this run, one count per tier, indexed from zero. */
+  tierKills: number[];
   spawnAt: number;
 }
 
 export function createCombat(): CombatState {
-  return { bullets: [], torpedoes: [], enemies: [], junk: [], events: [], kills: 0, spawnAt: 2 };
+  return {
+    bullets: [], torpedoes: [], enemies: [], junk: [], events: [],
+    kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
+  };
 }
 
 /** What one laser hit is worth. */
@@ -205,7 +254,8 @@ export function hurtEnemy(
     const i = c.enemies.indexOf(e);
     if (i >= 0) c.enemies.splice(i, 1);
     c.kills++;
-    c.events.push({ kind: "enemyDown", at: e.pos.clone(), power: 3 });
+    c.tierKills[e.cls.tier - 1] += 1;
+    c.events.push({ kind: "enemyDown", at: e.pos.clone(), power: 3, tier: e.cls.tier });
   }
   return applied;
 }
@@ -223,6 +273,12 @@ function breakUp(c: CombatState, e: Enemy): void {
       .add(e.vel)
       .addScaledVector(right, offs[i] * (6 + Math.random() * 8))
       .addScaledVector(up, (Math.random() - 0.3) * 7);
+    /* A piece can come out almost stationary: the knockback from the killing
+       shot points back down the fighter's own line of flight and the two
+       cancel. It then drops straight down instead of orbiting, which is not
+       wreckage, it is a stone. Give every piece a floor. */
+    if (vel.lengthSq() < 1) vel.copy(up).addScaledVector(right, offs[i] || 1);
+    if (vel.length() < 11) vel.setLength(11);
     c.junk.push({
       pos: e.pos.clone().addScaledVector(right, offs[i] * 0.9),
       vel,
@@ -491,7 +547,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       axis.crossVectors(e.fwd, toPlayer);
       if (axis.lengthSq() > 1e-9) {
         axis.normalize();
-        e.fwd.applyAxisAngle(axis, Math.min(off, ENEMY_TURN * dt)).normalize();
+        /* They turn faster too, or a fast one would fly in a straight line
+           past you and never come back. */
+        e.fwd.applyAxisAngle(axis, Math.min(off, ENEMY_TURN * e.cls.speed * dt)).normalize();
       }
     }
 
@@ -502,8 +560,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     e.fwd.applyAxisAngle(up, e.weaveDir * 0.5 * dt).normalize();
     e.roll += (e.weaveDir * 0.8 - e.roll) * Math.min(1, dt * 3);
 
-    /* Break off rather than ram, then come round again. */
-    const speed = range < 8 ? ENEMY_SPEED * 1.35 : ENEMY_SPEED;
+    /* Break off rather than ram, then come round again. Rarer tiers fly
+       faster, which is most of what makes them dangerous. */
+    const speed = (range < 8 ? ENEMY_SPEED * 1.35 : ENEMY_SPEED) * e.cls.speed;
     e.pos.addScaledVector(e.fwd, speed * dt);
     /* Knockback rides on top and bleeds off, so a hit shoves them visibly
        without taking their flying away for long. */
@@ -551,11 +610,12 @@ function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3): Enemy {
     .addScaledVector(up, lift);
   if (pos.length() < R + 3) pos.normalize().multiplyScalar(R + 3);
   const fwd = playerPos.clone().sub(pos).normalize();
+  const cls = rollTier();
   return {
     pos, fwd, roll: 0,
-    cls: FIGHTER,
-    shield: FIGHTER.shieldMax,
-    hull: FIGHTER.hullMax,
+    cls,
+    shield: cls.shieldMax,
+    hull: cls.hullMax,
     vel: new THREE.Vector3(),
     tumble: new THREE.Vector3(),
     spin: new THREE.Vector3(),

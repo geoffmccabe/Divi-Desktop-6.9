@@ -41,14 +41,19 @@ function glowTexture(): THREE.Texture {
  * bright edge lines over it, so it reads as a machine up close and as the
  * familiar silhouette at distance.
  */
-export function makeFighter(): THREE.Group {
+export function makeFighter(colour = 0x9aa3ad): THREE.Group {
   const g = new THREE.Group();
 
-  const hull = new THREE.MeshStandardMaterial({ color: 0x30363f, metalness: 0.65, roughness: 0.42 });
+  /* The tier's colour runs through the whole ship: a dark version on the hull
+     and panels, the bright one on the edge lines, which is what makes a rare
+     one identifiable across a hundred units of sky. */
+  const base = new THREE.Color(colour);
+  const dark = base.clone().multiplyScalar(0.26);
+  const hull = new THREE.MeshStandardMaterial({ color: dark, metalness: 0.65, roughness: 0.42 });
   const panelMat = new THREE.MeshStandardMaterial({
-    color: 0x1e232b, metalness: 0.5, roughness: 0.6, side: THREE.DoubleSide,
+    color: dark.clone().multiplyScalar(0.7), metalness: 0.5, roughness: 0.6, side: THREE.DoubleSide,
   });
-  const edgeMat = new THREE.LineBasicMaterial({ color: 0x8fd8ff, transparent: true, opacity: 0.85 });
+  const edgeMat = new THREE.LineBasicMaterial({ color: base, transparent: true, opacity: 0.9 });
 
   const ball = new THREE.Mesh(new THREE.IcosahedronGeometry(0.36, 1), hull);
   g.add(ball);
@@ -427,6 +432,8 @@ export function createFx(): Fx {
  */
 export interface ShieldRig {
   group: THREE.Group;
+  /** Recoloured when the model is reused for a different tier. */
+  setColour(colour: number): void;
   /** 0..1 of this ship class's maximum. Values above 1 are allowed, for a
    *  future ship with a bigger shield than today's. */
   setLevel(level: number): void;
@@ -496,6 +503,10 @@ export function makeShieldRig(colour = 0x66ccff): ShieldRig {
 
   return {
     group,
+    setColour(c) {
+      mat.color.set(c);
+      skinMat.color.set(c);
+    },
     setLevel(v) {
       level = v;
       const pct = Math.max(0, Math.round(v * 100));

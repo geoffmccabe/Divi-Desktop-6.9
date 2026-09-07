@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import "./orbit.css";
 import { MAX_ALT } from "./orbitWorld";
 import { MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS } from "./orbitFlight";
+import { TIERS } from "./rebelsCombat";
 import type { RebelsController, HudState } from "./rebelsController";
 import { RebelsScoreboard } from "./RebelsScoreboard";
 
@@ -132,6 +133,15 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         <div className="orbit-score">
           <span>SCORE</span>
           <b>{hud.score.toLocaleString()}</b>
+          {/* Lifetime kills by ship tier, rarest last, in each tier's colour. */}
+          <div className="orbit-tiers">
+            {TIERS.map((t, i) => (
+              <div key={t.tier} title={`${t.name} (tier ${t.tier})`}>
+                <i style={{ background: `#${t.colour.toString(16).padStart(6, "0")}` }} />
+                <span>{hud.tierKills[i] ?? 0}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

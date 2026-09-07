@@ -8,7 +8,7 @@ import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
   fireTorpedo, detonateOldest, clearEvents,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
-  FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy,
+  FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   type CombatState, type Enemy,
 } from "./rebelsCombat";
 
@@ -404,6 +404,61 @@ function run(c: CombatState, frames: number, w = world()) {
   c.enemies.push(e);
   hurtEnemy(c, e, 20 * 3, pos);
   ok("a tripled hit takes triple the shield", e.shield === FIGHTER.shieldMax - 60, `shield ${e.shield}`);
+}
+
+// 10. The seven tiers.
+{
+  ok("there are seven of them", TIERS.length === 7, `${TIERS.length}`);
+  ok("each is rarer than the last",
+     TIERS.every((t, i) => i === 0 || t.weight < TIERS[i - 1].weight));
+  ok("each is faster than the last",
+     TIERS.every((t, i) => i === 0 || t.speed > TIERS[i - 1].speed));
+  ok("each has more shield than the last",
+     TIERS.every((t, i) => i === 0 || t.shieldMax > TIERS[i - 1].shieldMax));
+  /* Geoff's figures: 100%, 130%, 160%, 190%, 220%, carried on to seven. */
+  ok("speed goes up thirty points a tier",
+     TIERS.map((t) => Math.round(t.speed * 100)).join(",") === "100,130,160,190,220,250,280",
+     TIERS.map((t) => Math.round(t.speed * 100)).join(","));
+  ok("shields do the same",
+     TIERS.map((t) => t.shieldMax).join(",") === "100,130,160,190,220,250,280");
+
+  /* And the roll actually follows the weights. */
+  const seen = new Array(7).fill(0);
+  const N = 200000;
+  for (let i = 0; i < N; i++) seen[rollTier().tier - 1]++;
+  const total = TIERS.reduce((a, t) => a + t.weight, 0);
+  const want = TIERS.map((t) => (t.weight / total) * N);
+  ok("tier one turns up about four fifths of the time",
+     Math.abs(seen[0] / N - 0.8) < 0.02, `${((seen[0] / N) * 100).toFixed(1)}%`);
+  ok("tier two about a sixth",
+     Math.abs(seen[1] / N - 0.16) < 0.02, `${((seen[1] / N) * 100).toFixed(2)}%`);
+  ok("the rare ones are rare but not impossible",
+     seen[2] > 0 && seen[2] < want[2] * 2, `tier three seen ${seen[2]} of ${N}`);
+  ok("every roll lands on a real tier",
+     seen.reduce((a, b) => a + b, 0) === N);
+}
+{
+  /* A rarer fighter really is tougher: the same shots that finish a grey one
+     leave a red one flying. */
+  const c = createCombat();
+  const grey = fighter(pos.clone(), { cls: TIERS[0], shield: TIERS[0].shieldMax, hull: TIERS[0].hullMax });
+  const red = fighter(pos.clone(), { cls: TIERS[4], shield: TIERS[4].shieldMax, hull: TIERS[4].hullMax });
+  c.enemies.push(grey, red);
+  for (let i = 0; i < 4; i++) { hurtEnemy(c, grey, 50, pos); hurtEnemy(c, red, 50, pos); }
+  ok("two hundred damage finishes a grey one", !c.enemies.includes(grey));
+  ok("but not a red one", c.enemies.includes(red), `hull ${red.hull}`);
+}
+{
+  /* Kills are counted per tier. */
+  const c = createCombat();
+  const blue = fighter(pos.clone(), { cls: TIERS[2], shield: 0, hull: 1 });
+  c.enemies.push(blue);
+  hurtEnemy(c, blue, 10, pos);
+  ok("a kill is counted against its own tier",
+     c.tierKills[2] === 1 && c.tierKills.reduce((a, b) => a + b, 0) === 1,
+     c.tierKills.join(","));
+  ok("and the event says which tier it was",
+     c.events.find((e) => e.kind === "enemyDown")?.tier === 3);
 }
 
 console.log(out.join("\n"));

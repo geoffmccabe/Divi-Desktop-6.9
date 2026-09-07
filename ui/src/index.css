@@ -1999,6 +1999,17 @@ code, .mono { font-family: var(--font-mono); }
 
 .orbit-meter.low > i { background: hsl(var(--destructive)); }
 
+/* Kills by ship tier, under the score. Rarest on the right. */
+.orbit-tiers {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px;
+}
+.orbit-tiers > div { display: flex; align-items: center; gap: 3px; }
+.orbit-tiers i {
+  width: 7px; height: 7px; border-radius: 1px; display: block;
+  box-shadow: 0 0 5px currentColor;
+}
+.orbit-tiers span { font-size: 11px; opacity: 0.85; }
+
 .orbit-buttons { display: flex; gap: 10px; justify-content: center; }
 .orbit-card .orbit-secondary {
   background: transparent;
