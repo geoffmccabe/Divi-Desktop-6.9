@@ -21,7 +21,7 @@ function ok(name: string, cond: boolean, extra = "") {
   out.push(`${cond ? "PASS" : "FAIL"} ${name}${extra ? `  [${extra}]` : ""}`);
 }
 const stick = (o: Partial<Stick> = {}): Stick =>
-  ({ x: 0, y: 0, boosting: false, braking: false, firing: false, ...o });
+  ({ x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, ...o });
 
 const DT = 1 / 60;
 function run(f: ReturnType<typeof createFlight>, frames: number, s: Stick, tips: THREE.Vector3[] = [], home = -1) {

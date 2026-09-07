@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./orbit.css";
 import { MAX_ALT } from "./orbitWorld";
-import { MAX_AMMO, MAX_SHIELD } from "./orbitFlight";
+import { MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES } from "./orbitFlight";
 import type { RebelsController, HudState } from "./rebelsController";
 
 export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () => void }) {
@@ -102,6 +102,9 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           {hud.contacts > 0 ? `${hud.contacts} CONTACT${hud.contacts > 1 ? "S" : ""}` : "no contacts"}
         </div>
         <div className="orbit-row orbit-dim">{hud.kills} down</div>
+        {hud.inFlight > 0 && <div className="orbit-row orbit-torp-live">TORPEDO ARMED</div>}
+        {hud.junk > 0 && <div className="orbit-row orbit-dim">{hud.junk} wreckage</div>}
+        {hud.bonus && <div className="orbit-row orbit-bonus">STAKE WON &middot; TRIPLE DAMAGE</div>}
       </div>
 
       {hud.launched && !hud.dead && !hud.broken && <div className="orbit-cross" ref={crossRef} />}
@@ -117,6 +120,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
             <div><span>HULL</span><i><b style={{ width: pct(hud.shields / MAX_SHIELD) }} /></i></div>
             <div><span>AMMO</span><i><b style={{ width: pct(hud.ammo / MAX_AMMO) }} /></i></div>
             <div><span>BOOST</span><i><b style={{ width: pct(hud.boost) }} /></i></div>
+            <div><span>TORP</span><i><b style={{ width: pct(hud.torpedoes / MAX_TORPEDOES) }} /></i></div>
           </div>
         </div>
       )}
@@ -133,6 +137,14 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         <div className="orbit-gauge">
           <span>AMMO</span>
           <div className="orbit-meter"><i style={{ width: pct(hud.ammo / MAX_AMMO) }} /></div>
+        </div>
+        <div className="orbit-gauge">
+          <span>TORPEDO</span>
+          <div className="orbit-pips">
+            {Array.from({ length: MAX_TORPEDOES }, (_, i) => (
+              <div key={i} className={"orbit-pip orbit-torp" + (i < hud.torpedoes ? " on" : "")} />
+            ))}
+          </div>
         </div>
         <div className="orbit-gauge">
           <span>BOOST</span>
@@ -160,6 +172,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           <p className="orbit-keys">
             POINT TO FLY, OR ARROWS<br />
             CLICK OR SPACE TO FIRE &nbsp;&nbsp; SHIFT BOOST &nbsp;&nbsp; Z BRAKE<br />
+            CTRL+CLICK LAUNCHES A TORPEDO, AGAIN TO DETONATE IT<br />
             FLY UP TO ANY TOWER TO REPAIR AND REARM. YOUR OWN IS TWICE AS FAST.
           </p>
           <button type="button" onClick={() => ctl.launch()} disabled={!hud.ready}>

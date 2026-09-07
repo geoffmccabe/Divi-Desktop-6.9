@@ -1975,6 +1975,10 @@ code, .mono { font-family: var(--font-mono); }
 .netmap-flying canvas { cursor: none; }
 
 .orbit-alert { color: hsl(var(--destructive)); }
+/* Torpedoes get their own violet, matching their blast. */
+.orbit-pip.orbit-torp.on { background: hsl(270 90% 72%); border-color: hsl(270 90% 72%); }
+.orbit-torp-live { color: hsl(270 95% 80%); }
+.orbit-bonus { color: hsl(var(--rebels-home)); font-weight: 700; }
 
 /* The launch card sits over the live globe, so it must not paint over it. Only
    the text carries a shadow, to stay readable against a bright coastline. */

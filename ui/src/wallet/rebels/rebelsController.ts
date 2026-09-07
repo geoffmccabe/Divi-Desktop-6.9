@@ -10,12 +10,20 @@
 import * as THREE from "three";
 import type { GlobeFlight } from "../GlobeMap";
 import {
-  createFlight, stepFlight, MAX_AMMO, MAX_SHIELD,
+  createFlight, stepFlight, MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES,
   type Flight, type Stick,
 } from "./orbitFlight";
-import { createCombat, stepCombat, fireGuns, type CombatState } from "./rebelsCombat";
-import { createFx, makeFighter, type Fx } from "./rebelsFx";
-import { playGunSound, primeGunSound, startRechargeSound, stopRechargeSound } from "./rebelsAudio";
+import {
+  createCombat, stepCombat, fireGuns, fireTorpedo, detonateOldest,
+  STAKE_BONUS, STAKE_BONUS_MS,
+  type CombatState,
+} from "./rebelsCombat";
+import { userWonRecently } from "../stakeWin";
+import { createFx, makeFighter, makeShieldRig, type Fx, type ShieldRig } from "./rebelsFx";
+import {
+  playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
+  playTorpedoSound, playTorpedoBlast,
+} from "./rebelsAudio";
 
 export interface HudState {
   ready: boolean;
@@ -23,6 +31,9 @@ export interface HudState {
   alt: number;
   shields: number;
   ammo: number;
+  /** How many are still in the rack, and how many are out there right now. */
+  torpedoes: number;
+  inFlight: number;
   boost: number;
   dock: number;
   dockName: string;
@@ -32,6 +43,10 @@ export interface HudState {
   /** Fighters in the air right now, and how many you have taken down. */
   contacts: number;
   kills: number;
+  /** Wreckage in orbit right now. */
+  junk: number;
+  /** Guns are tripled from a recent stake win. */
+  bonus: boolean;
   /** Sitting on a pad with the resupply finished. */
   docked: boolean;
   dead: boolean;
@@ -40,8 +55,9 @@ export interface HudState {
 }
 
 const BLANK: HudState = {
-  ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO, boost: 1,
-  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, docked: false, dead: false, launched: false, broken: null,
+  ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO,
+  torpedoes: MAX_TORPEDOES, inFlight: 0, boost: 1,
+  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
 };
 
 /** Fighters are drawn about a unit across, against three-unit towers. */
@@ -74,6 +90,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      clone rather than a pile of new geometry. */
   let proto: THREE.Group | null = null;
   const enemyMeshes: THREE.Group[] = [];
+  /* One shield rig per fighter model, hanging off it. */
+  const enemyShields: ShieldRig[] = [];
 
   let tipList: THREE.Vector3[] = [];
   let ipList: string[] = [];
@@ -120,11 +138,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      map's own values are put back on the way out. */
   let savedNear = 0, savedFar = 0;
   let hudAt = 0;
+  /* Winning a stake on your own node makes your guns hit three times as hard
+     for a minute. The map already tracks the win; this just asks it. */
+  const damageScale = () => (userWonRecently(STAKE_BONUS_MS) ? STAKE_BONUS : 1);
   /* Last frame's docking progress, so the station sound starts and stops on
      the edges rather than being re-triggered sixty times a second. */
   let wasDocking = false;
 
-  const stick: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false };
+  const stick: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false };
   const keys: Record<string, boolean> = {};
 
   const scratch = {
@@ -176,7 +197,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     locked = typeof document !== "undefined" && document.pointerLockElement === dom;
     if (was && !locked && flying) onEscape?.();
   }
-  function onDown(e: PointerEvent) { stick.firing = true; e.preventDefault(); }
+  function onDown(e: PointerEvent) {
+    /* Read control off the event itself. Relying only on the keydown listener
+       loses the very first control-click after the window regains focus, which
+       is exactly when someone reaches for a torpedo. */
+    if (e.ctrlKey || e.metaKey) stick.heavy = true;
+    stick.firing = true;
+    e.preventDefault();
+  }
   function onUp() { stick.firing = false; }
   function applyKeys() {
     let kx = 0, ky = 0;
@@ -187,11 +215,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     if (kx || ky) { stick.x = kx; stick.y = ky; }
     stick.boosting = !!keys.shift;
     stick.braking = !!keys.z;
+    stick.heavy = !!keys.control || !!keys.meta;
   }
   function onKeyDown(e: KeyboardEvent) {
     if (!flying) return;
     const k = e.key.toLowerCase();
-    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "w", "a", "s", "d", "z", "shift"].includes(k)) {
+    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "w", "a", "s", "d", "z", "shift", "control"].includes(k)) {
       e.preventDefault();
     }
     keys[k] = true;
@@ -207,7 +236,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* Losing the window must not leave the throttle open or a key stuck down. */
   function onBlur() {
     for (const k in keys) keys[k] = false;
-    stick.firing = false; stick.boosting = false; stick.braking = false; stick.x = 0; stick.y = 0;
+    stick.firing = false; stick.boosting = false; stick.braking = false;
+    stick.heavy = false; stick.x = 0; stick.y = 0;
   }
 
   function startAt(index: number) {
@@ -330,9 +360,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         }
 
         const live = !hud.dead;
-        const blank: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false };
+        const blank: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false };
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
-        if (res.hit) fx.boom(flight.pos.clone(), 1.2, false);
+        if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
 
         s.up.copy(flight.pos).normalize();
 
@@ -353,6 +383,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            Fired from the edges of the frame at eye level, converging on the
            crosshair, which is why the muzzles come from the camera's frustum
            rather than from a fixed offset. */
+        /* One button does both jobs. If a torpedo is already in the air the
+           press sets it off; otherwise it launches the next one. That is what
+           "control-click again to detonate" means with a single control. */
+        if (res.heavyPress) {
+          const w = {
+            tips: tipList, playerPos: flight.pos, playerFwd: flight.fwd,
+            wanted: 0, damageScale: damageScale(),
+          };
+          if (!detonateOldest(combat, w) && flight.torpedoes > 0) {
+            flight.torpedoes -= 1;
+            fireTorpedo(combat, flight.pos, flight.fwd);
+            playTorpedoSound();
+          }
+        }
+
         if (res.fired) {
           const muzzles = fireGuns(combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect);
           fx.muzzle(muzzles[0]);
@@ -366,6 +411,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           playerPos: flight.pos,
           playerFwd: flight.fwd,
           wanted: live ? 4 : 0,
+          damageScale: damageScale(),
         });
 
         for (const ev of combat.events) {
@@ -375,13 +421,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               flight.grace = 1.1;
               if (flight.shields <= 0) setHud({ dead: true });
             }
-            fx.boom(ev.at, 1.4, false);
+            fx.boom(ev.at, 1.4, "cold");
           } else if (ev.kind === "enemyDown") {
-            fx.boom(ev.at, 3, true);
+            fx.boom(ev.at, 3, "hot");
+          } else if (ev.kind === "enemyHit") {
+            /* A small spark where the shot landed. The bubble does the rest. */
+            fx.boom(ev.at, ev.power, "cold");
+          } else if (ev.kind === "junkGone") {
+            fx.boom(ev.at, ev.power, "hot");
+          } else if (ev.kind === "torpedoBlast") {
+            fx.boom(ev.at, 6, "torpedo");
+            playTorpedoBlast();
           } else if (ev.kind === "towerHit") {
-            fx.boom(ev.at, 2, true);
+            fx.boom(ev.at, 2, "hot");
           } else {
-            fx.boom(ev.at, 0.7, true);
+            fx.boom(ev.at, 0.7, "hot");
           }
         }
         if (flight.shields <= 0 && !hud.dead) {
@@ -400,18 +454,32 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           m.scale.setScalar(ENEMY_SCALE);
           scene.add(m);
           enemyMeshes.push(m);
+          const rig = makeShieldRig(combat.enemies[0]?.cls.colour ?? 0x66ccff);
+          /* Added to the scene rather than to the fighter, so a fighter
+             tumbling wildly does not take its own shield bubble and its
+             readout spinning with it. */
+          scene.add(rig.group);
+          enemyShields.push(rig);
         }
+        const nowS = performance.now() / 1000;
         for (let i = 0; i < enemyMeshes.length; i++) {
           const m = enemyMeshes[i];
+          const rig = enemyShields[i];
           const e = combat.enemies[i];
-          if (!e) { m.visible = false; continue; }
+          if (!e) { m.visible = false; rig.step(nowS, 0); continue; }
           m.visible = true;
           m.position.copy(e.pos);
           s.target.copy(e.pos).addScaledVector(e.fwd, 10);
           s.m4.lookAt(e.pos, s.target, e.pos.clone().normalize());
           m.quaternion.setFromRotationMatrix(s.m4);
-          s.qBank.setFromAxisAngle(s.zAxis, e.roll);
+          /* The tumble from being hit, on top of the bank from manoeuvring. */
+          s.qBank.setFromEuler(new THREE.Euler(e.spin.x, e.spin.y, e.spin.z + e.roll));
           m.quaternion.multiply(s.qBank);
+
+          rig.group.position.copy(e.pos);
+          rig.setLevel(e.shield / e.cls.shieldMax);
+          /* Shown for a couple of seconds after a hit, fading out. */
+          rig.step(nowS, Math.min(1, e.flash / 0.6));
         }
 
         /* The recharging station, on for exactly as long as the resupply. */
@@ -422,6 +490,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         }
 
         fx.drawBullets(combat.bullets);
+        fx.drawTorpedoes(combat.torpedoes);
+        fx.drawJunk(combat.junk);
         fx.step(dt, camera);
 
         const now = performance.now();
@@ -436,8 +506,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             dock: flight.dock,
             dockName: flight.dockedAt >= 0 ? labelFor(ipList[flight.dockedAt] ?? "") : "",
             homeDist: homeIndex >= 0 ? flight.pos.distanceTo(tipList[homeIndex]) : 0,
+            torpedoes: flight.torpedoes,
+            inFlight: combat.torpedoes.length,
             contacts: combat.enemies.length,
             kills: combat.kills,
+            junk: combat.junk.length,
+            bonus: damageScale() > 1,
             docked: flight.dock >= 1,
           });
         }
@@ -470,8 +544,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
       if (scene) {
         for (const m of enemyMeshes) scene.remove(m);
+        for (const r of enemyShields) scene.remove(r.group);
         if (fx) scene.remove(fx.group);
       }
+      for (const r of enemyShields) r.dispose();
+      enemyShields.length = 0;
       enemyMeshes.length = 0;
       fx?.dispose();
       /* The prototype's geometry is shared by every clone, so it is disposed

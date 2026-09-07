@@ -10,10 +10,71 @@ export const BULLET_LIFE = 2.2;
 export const BULLET_R = 0.16;         /* what it hits with */
 export const CONVERGE = 55;           /* where the two guns cross, in units ahead */
 export const ENEMY_R = 1.05;          /* hit radius of a fighter */
+
+/* ---- damage ----
+   A hit is worth somewhere between ten and a hundred, so no two exchanges feel
+   the same and a lucky burst can strip a fighter. Shields soak it first;
+   whatever is left over goes into the hull, so the shot that finally breaks a
+   shield still hurts rather than being wasted. */
+export const LASER_MIN = 10;
+export const LASER_MAX = 100;
+/** Winning a stake on your node makes you hit three times as hard for a minute. */
+export const STAKE_BONUS = 3;
+export const STAKE_BONUS_MS = 60_000;
+
+/** A ship class. Only one exists today, but shield capacity and colour live
+ *  here so a tougher or differently-coloured ship later is a data change. */
+export interface ShipClass {
+  shieldMax: number;
+  hullMax: number;
+  /** Shown on the shield bubble. Room for future ships to differ. */
+  colour: number;
+}
+export const FIGHTER: ShipClass = { shieldMax: 100, hullMax: 100, colour: 0x66ccff };
+
+/** Knockback, as an impulse in units per second per point of damage. Taken
+ *  literally, "knockback equal to the damage" would fling a fighter a sixth of
+ *  the way round the planet; as an impulse it reads as a real thump. */
+export const KNOCK_PER_DAMAGE = 0.26;
+/** Radians per second of tumble per point of damage. Hit one harder, it spins
+ *  faster. */
+export const SPIN_PER_DAMAGE = 0.055;
+/** How long a shield bubble stays visible after a hit. */
+export const SHIELD_SHOW = 2.4;
+
+/* ---- wreckage ----
+   A dead fighter comes apart into its body and its two panels. Each piece is
+   a real object under gravity: given enough sideways speed it orbits, and the
+   drag term makes every orbit decay so the sky cannot silently fill with junk. */
+export const JUNK_MAX = 60;
+export const JUNK_LIFE = 120;
+/** Chosen so a circular orbit just above the towers runs at about twenty units
+ *  a second, which is roughly a fighter's cruising speed. */
+export const GRAVITY_MU = 44_800;
+/* Very low, and it has to be. The planet is a hundred units across and the
+   wreckage orbits about fourteen above it, so losing even three percent of its
+   speed drops the low point of the orbit onto the ground: at the first drag
+   figure a piece was down in twelve seconds, which reads as falling, not
+   orbiting. At this figure it goes round for the best part of a minute and then
+   comes down, which is the thing that was asked for. */
+export const JUNK_DRAG = 0.0008;
+export const JUNK_R = 0.7;
 export const ENEMY_SPEED = 19;
 export const ENEMY_TURN = 1.1;        /* radians per second of chase */
 export const ENEMY_FIRE_RANGE = 70;
 export const TOWER_HIT_R = 2.2;
+
+/* ---- torpedoes ----
+   Two per sortie, replenished only at your own tower. Slow enough to watch, and
+   detonated either by a second control-click or by their own four-second fuse.
+   Five times the damage of a bullet, over an area, which is what makes carrying
+   only two a real decision. */
+export const TORPEDO_MAX = 2;
+export const TORPEDO_SPEED = 52;
+export const TORPEDO_FUSE = 4;
+export const TORPEDO_DAMAGE = 5;
+/** Everything inside this radius takes the hit, not just what it touched. */
+export const TORPEDO_BLAST = 11;
 
 export interface Bullet {
   pos: THREE.Vector3;
@@ -27,30 +88,177 @@ export interface Enemy {
   pos: THREE.Vector3;
   fwd: THREE.Vector3;
   roll: number;
-  hp: number;
+  cls: ShipClass;
+  shield: number;
+  hull: number;
+  /** Knockback, decaying. Sits on top of ordinary flight. */
+  vel: THREE.Vector3;
+  /** Tumble from being hit: axis times radians per second, decaying. */
+  tumble: THREE.Vector3;
+  /** Accumulated rotation from that tumble, so it keeps spinning visually. */
+  spin: THREE.Vector3;
+  /** Seconds left showing the shield bubble. */
+  flash: number;
   fireAt: number;
   /** Seconds left of the little sidestep that stops them flying in a line. */
   weave: number;
   weaveDir: number;
 }
 
+export type JunkKind = "body" | "wingL" | "wingR";
+
+export interface Junk {
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  spin: THREE.Vector3;
+  rot: THREE.Vector3;
+  life: number;
+  kind: JunkKind;
+}
+
+export interface Torpedo {
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  /** Seconds left on the fuse. */
+  life: number;
+}
+
 export interface CombatEvent {
-  kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent";
+  kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
+      | "enemyHit" | "junkGone";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
   power: number;
+  /** enemyHit only: what the shield is down to, 0..1 of its class maximum. */
+  shield?: number;
 }
 
 export interface CombatState {
   bullets: Bullet[];
+  torpedoes: Torpedo[];
   enemies: Enemy[];
+  junk: Junk[];
   events: CombatEvent[];
   kills: number;
   spawnAt: number;
 }
 
 export function createCombat(): CombatState {
-  return { bullets: [], enemies: [], events: [], kills: 0, spawnAt: 2 };
+  return { bullets: [], torpedoes: [], enemies: [], junk: [], events: [], kills: 0, spawnAt: 2 };
+}
+
+/** What one laser hit is worth. */
+export function rollLaserDamage(): number {
+  return LASER_MIN + Math.random() * (LASER_MAX - LASER_MIN);
+}
+
+/**
+ * Put damage into a fighter: shields first, the remainder into the hull.
+ *
+ * Also does the knockback and the tumble, because they are the same event and
+ * splitting them apart is how one of them ends up forgotten at a call site.
+ */
+export function hurtEnemy(
+  c: CombatState,
+  e: Enemy,
+  amount: number,
+  from: THREE.Vector3,
+): boolean {
+  const push = e.pos.clone().sub(from);
+  if (push.lengthSq() < 1e-9) push.copy(e.fwd);
+  push.normalize();
+  e.vel.addScaledVector(push, amount * KNOCK_PER_DAMAGE);
+  /* A random axis, so a fighter tumbles rather than pivoting neatly. */
+  e.tumble.addScaledVector(new THREE.Vector3().randomDirection(), amount * SPIN_PER_DAMAGE);
+  e.flash = SHIELD_SHOW;
+
+  const soaked = Math.min(e.shield, amount);
+  e.shield -= soaked;
+  const through = amount - soaked;
+  /* Once the shield is gone even a single point gets through. */
+  if (through > 0) e.hull -= through;
+
+  c.events.push({
+    kind: "enemyHit", at: e.pos.clone(), power: Math.min(2, 0.4 + amount / 90),
+    shield: e.shield / e.cls.shieldMax,
+  });
+
+  if (e.hull <= 0) {
+    breakUp(c, e);
+    const i = c.enemies.indexOf(e);
+    if (i >= 0) c.enemies.splice(i, 1);
+    c.kills++;
+    c.events.push({ kind: "enemyDown", at: e.pos.clone(), power: 3 });
+    return true;
+  }
+  return false;
+}
+
+/** A dead fighter comes apart into its body and its two panels. */
+function breakUp(c: CombatState, e: Enemy): void {
+  const up = e.pos.clone().normalize();
+  const right = new THREE.Vector3().crossVectors(e.fwd, up).normalize();
+  const kinds: JunkKind[] = ["body", "wingL", "wingR"];
+  const offs = [0, -1, 1];
+  for (let i = 0; i < 3; i++) {
+    /* Each piece leaves with the fighter's own motion plus a shove outward, so
+       the three of them separate instead of travelling as a clump. */
+    const vel = e.fwd.clone().multiplyScalar(ENEMY_SPEED * 0.7)
+      .add(e.vel)
+      .addScaledVector(right, offs[i] * (6 + Math.random() * 8))
+      .addScaledVector(up, (Math.random() - 0.3) * 7);
+    c.junk.push({
+      pos: e.pos.clone().addScaledVector(right, offs[i] * 0.9),
+      vel,
+      spin: new THREE.Vector3().randomDirection().multiplyScalar(1.5 + Math.random() * 5),
+      rot: new THREE.Vector3(Math.random() * 6, Math.random() * 6, Math.random() * 6),
+      life: JUNK_LIFE,
+      kind: kinds[i],
+    });
+  }
+  /* Oldest out first, so a long fight cannot fill the sky. */
+  while (c.junk.length > JUNK_MAX) c.junk.shift();
+}
+
+/** Launched straight down the middle, from between the guns. */
+export function fireTorpedo(c: CombatState, pos: THREE.Vector3, fwd: THREE.Vector3): void {
+  c.torpedoes.push({
+    pos: pos.clone().addScaledVector(fwd, 1.5),
+    vel: fwd.clone().multiplyScalar(TORPEDO_SPEED),
+    life: TORPEDO_FUSE,
+  });
+}
+
+/**
+ * Blow one up where it is, damaging everything inside the blast.
+ *
+ * Area damage rather than a direct hit is the whole point of carrying one: a
+ * bullet has to touch a fighter, a torpedo only has to be near a few.
+ */
+export function detonate(c: CombatState, t: Torpedo, w: CombatWorld): void {
+  c.events.push({ kind: "torpedoBlast", at: t.pos.clone(), power: 6 });
+  for (let i = c.enemies.length - 1; i >= 0; i--) {
+    const e = c.enemies[i];
+    if (e.pos.distanceTo(t.pos) > TORPEDO_BLAST) continue;
+    /* Five lasers' worth, so a torpedo strips a full shield and the hull under
+       it in one go. */
+    hurtEnemy(c, e, LASER_MAX * TORPEDO_DAMAGE, t.pos);
+  }
+  for (const tip of w.tips) {
+    if (tip.distanceTo(t.pos) <= TORPEDO_BLAST) {
+      c.events.push({ kind: "towerHit", at: tip.clone(), power: 2 });
+    }
+  }
+  const i = c.torpedoes.indexOf(t);
+  if (i >= 0) c.torpedoes.splice(i, 1);
+}
+
+/** Set off the one that has been in the air longest. Returns whether there was
+ *  one to set off, which is what tells the caller to launch instead. */
+export function detonateOldest(c: CombatState, w: CombatWorld): boolean {
+  if (c.torpedoes.length === 0) return false;
+  detonate(c, c.torpedoes[0], w);
+  return true;
 }
 
 /**
@@ -124,6 +332,9 @@ export interface CombatWorld {
   playerFwd: THREE.Vector3;
   /** Difficulty, roughly how many fighters should be in the air. */
   wanted: number;
+  /** Multiplies everything the player's guns do. Three for a minute after
+   *  winning a stake on your node. */
+  damageScale: number;
 }
 
 export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
@@ -142,14 +353,14 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
         const e = c.enemies[j];
         if (!segmentHit(from, b.pos, e.pos, ENEMY_R)) continue;
         spent = true;
-        e.hp -= 1;
-        if (e.hp <= 0) {
-          c.events.push({ kind: "enemyDown", at: e.pos.clone(), power: 3 });
-          c.enemies.splice(j, 1);
-          c.kills++;
-        } else {
-          c.events.push({ kind: "bulletSpent", at: b.pos.clone(), power: 0.7 });
-        }
+        hurtEnemy(c, e, rollLaserDamage() * w.damageScale, from);
+      }
+      /* Wreckage is solid: shoot a piece and it goes. */
+      for (let j = c.junk.length - 1; j >= 0 && !spent; j--) {
+        if (!segmentHit(from, b.pos, c.junk[j].pos, JUNK_R)) continue;
+        spent = true;
+        c.events.push({ kind: "junkGone", at: c.junk[j].pos.clone(), power: 1.4 });
+        c.junk.splice(j, 1);
       }
       for (let j = 0; j < w.tips.length && !spent; j++) {
         if (!segmentHit(from, b.pos, w.tips[j], TOWER_HIT_R)) continue;
@@ -170,6 +381,59 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       c.events.push({ kind: "bulletSpent", at: b.pos.clone(), power: 1 });
     }
     if (spent || b.life <= 0) c.bullets.splice(i, 1);
+  }
+
+  /* ---- torpedoes ----
+     They fly on until the fuse runs out or the player sets them off, and they
+     go off against the planet rather than sinking into it. */
+  for (let i = c.torpedoes.length - 1; i >= 0; i--) {
+    const t = c.torpedoes[i];
+    t.pos.addScaledVector(t.vel, dt);
+    t.life -= dt;
+    if (t.life <= 0 || t.pos.length() < R) {
+      detonate(c, t, w);
+    }
+  }
+
+  /* ---- wreckage ----
+     Real orbits: gravity pulls each piece toward the centre, so one thrown
+     sideways fast enough keeps going round, and a slow one falls. The drag term
+     is what guarantees every orbit eventually decays, which is the difference
+     between space junk and a permanent leak. */
+  for (let i = c.junk.length - 1; i >= 0; i--) {
+    const j = c.junk[i];
+    const r2 = j.pos.lengthSq();
+    const r = Math.sqrt(r2);
+    const g = GRAVITY_MU / (r2 * r);
+    j.vel.addScaledVector(j.pos, -g * dt);
+    j.vel.multiplyScalar(1 - Math.min(0.5, JUNK_DRAG * dt));
+    j.pos.addScaledVector(j.vel, dt);
+    j.rot.addScaledVector(j.spin, dt);
+    j.life -= dt;
+
+    /* Down, burned up, or simply old. */
+    if (j.life <= 0 || r < R) {
+      c.events.push({ kind: "junkGone", at: j.pos.clone(), power: r < R ? 1.6 : 0.6 });
+      c.junk.splice(i, 1);
+      continue;
+    }
+
+    /* It is as dangerous as a laser to anything it meets. */
+    let struck = false;
+    for (let k = c.enemies.length - 1; k >= 0 && !struck; k--) {
+      const e = c.enemies[k];
+      if (e.pos.distanceTo(j.pos) > ENEMY_R + JUNK_R) continue;
+      struck = true;
+      hurtEnemy(c, e, rollLaserDamage(), j.pos);
+    }
+    if (!struck && j.pos.distanceTo(w.playerPos) < 1.4 + JUNK_R) {
+      struck = true;
+      c.events.push({ kind: "playerHit", at: j.pos.clone(), power: 1.6 });
+    }
+    if (struck) {
+      c.events.push({ kind: "junkGone", at: j.pos.clone(), power: 1.4 });
+      c.junk.splice(i, 1);
+    }
   }
 
   /* ---- fighters ---- */
@@ -209,6 +473,14 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     /* Break off rather than ram, then come round again. */
     const speed = range < 8 ? ENEMY_SPEED * 1.35 : ENEMY_SPEED;
     e.pos.addScaledVector(e.fwd, speed * dt);
+    /* Knockback rides on top and bleeds off, so a hit shoves them visibly
+       without taking their flying away for long. */
+    e.pos.addScaledVector(e.vel, dt);
+    e.vel.multiplyScalar(1 - Math.min(1, dt * 2.2));
+    /* The tumble from being hit keeps turning them and slowly settles. */
+    e.spin.addScaledVector(e.tumble, dt);
+    e.tumble.multiplyScalar(1 - Math.min(1, dt * 0.9));
+    e.flash = Math.max(0, e.flash - dt);
     /* Never inside the planet. */
     const alt = e.pos.length();
     if (alt < R + 1.5) e.pos.normalize().multiplyScalar(R + 1.5);
@@ -238,5 +510,16 @@ function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3): Enemy {
     .addScaledVector(up, lift);
   if (pos.length() < R + 3) pos.normalize().multiplyScalar(R + 3);
   const fwd = playerPos.clone().sub(pos).normalize();
-  return { pos, fwd, roll: 0, hp: 2, fireAt: 0.8 + Math.random() * 1.4, weave: 1, weaveDir: 1 };
+  return {
+    pos, fwd, roll: 0,
+    cls: FIGHTER,
+    shield: FIGHTER.shieldMax,
+    hull: FIGHTER.hullMax,
+    vel: new THREE.Vector3(),
+    tumble: new THREE.Vector3(),
+    spin: new THREE.Vector3(),
+    flash: 0,
+    fireAt: 0.8 + Math.random() * 1.4,
+    weave: 1, weaveDir: 1,
+  };
 }

@@ -30,6 +30,7 @@ export const DOCK_SECONDS = 2.2;
 export const PARK = 2.2;
 export const MAX_SHIELD = 6;
 export const MAX_AMMO = 60;
+export const MAX_TORPEDOES = 2;
 
 export interface Flight {
   pos: THREE.Vector3;
@@ -40,9 +41,12 @@ export interface Flight {
   boost: number;      /* 0..1 of the boost cells */
   shields: number;
   ammo: number;
+  torpedoes: number;
   dock: number;       /* 0..1 progress into a docking */
   dockedAt: number;   /* index of the tower being docked with, or -1 */
   cooldown: number;
+  /** Trigger state last frame, so a hold is not read as many presses. */
+  heavyWasDown: boolean;
   /** Seconds of invulnerability after a hit, so one scrape is not five. */
   grace: number;
   /** What you arrived with, so the gauges can be seen filling rather than
@@ -60,6 +64,9 @@ export interface Stick {
   boosting: boolean;
   braking: boolean;
   firing: boolean;
+  /** Control held: the trigger launches or sets off a torpedo instead of
+   *  firing the guns. */
+  heavy: boolean;
 }
 
 /** Start on the pad above a tower, pointing north. */
@@ -81,9 +88,11 @@ export function createFlight(at: THREE.Vector3): Flight {
     boost: 1,
     shields: MAX_SHIELD,
     ammo: MAX_AMMO,
+    torpedoes: MAX_TORPEDOES,
     dock: 0,
     dockedAt: -1,
     cooldown: 0,
+    heavyWasDown: false,
     grace: 0,
     dockFrom: null,
     dockHold: 0,
@@ -102,6 +111,10 @@ export interface StepResult {
   /** True on the frame the guns went off. What comes out of them is the combat
    *  module's business; this only decides when. */
   fired: boolean;
+  /** True on the frame the trigger was pulled with control held. Launching or
+   *  detonating is the caller's decision, since only it knows whether one is
+   *  already in the air. */
+  heavyPress: boolean;
 }
 
 export function stepFlight(
@@ -111,7 +124,7 @@ export function stepFlight(
   towerTips: THREE.Vector3[],
   homeIndex: number,
 ): StepResult {
-  const out: StepResult = { hit: false, docked: false, fired: false };
+  const out: StepResult = { hit: false, docked: false, fired: false, heavyPress: false };
   f.grace = Math.max(0, f.grace - dt);
 
   /* ---- how near is the nearest tower ----
@@ -218,6 +231,9 @@ export function stepFlight(
         f.shields = MAX_SHIELD;
         f.ammo = MAX_AMMO;
         f.boost = 1;
+        /* Torpedoes come from your OWN tower and nowhere else, which is what
+           gives home a reason to exist beyond being faster. */
+        if (near === homeIndex) f.torpedoes = MAX_TORPEDOES;
         f.dockHold = 1.1;
         out.docked = true;
       }
@@ -245,13 +261,19 @@ export function stepFlight(
     }
   }
 
-  /* ---- guns ---- */
+  /* ---- guns, or the heavy trigger ----
+     Control held swaps the trigger over entirely, so a torpedo run never sprays
+     bullets at the same time. The heavy press is reported on the EDGE, because
+     the same button both launches one and sets it off. */
   f.cooldown -= dt;
-  if (stick.firing && f.cooldown <= 0 && f.ammo > 0) {
+  if (stick.heavy) {
+    if (stick.firing && !f.heavyWasDown) out.heavyPress = true;
+  } else if (stick.firing && f.cooldown <= 0 && f.ammo > 0) {
     f.cooldown = 0.11;
     f.ammo -= 1;
     out.fired = true;
   }
+  f.heavyWasDown = stick.firing;
 
   return out;
 }

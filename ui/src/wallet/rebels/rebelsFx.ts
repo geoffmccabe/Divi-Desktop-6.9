@@ -12,6 +12,7 @@ const BULLET_CAP = 160;
 const SHARD_CAP = 320;
 const FLASH_CAP = 14;
 const RING_CAP = 10;
+const JUNK_CAP = 64;
 
 /** A soft round blob, drawn once and reused for every flash and glow. */
 function glowTexture(): THREE.Texture {
@@ -92,15 +93,28 @@ export function makeFighter(): THREE.Group {
 }
 
 /* ---------------------------------------------------------------- the show */
-interface Shard { pos: THREE.Vector3; vel: THREE.Vector3; spin: THREE.Vector3; life: number; max: number; size: number; }
+interface Shard {
+  pos: THREE.Vector3; vel: THREE.Vector3; spin: THREE.Vector3;
+  life: number; max: number; size: number;
+  /** Torpedo debris burns violet-white rather than orange. */
+  cold: boolean;
+}
 interface Flash { pos: THREE.Vector3; life: number; max: number; size: number; }
 interface Ring { pos: THREE.Vector3; nrm: THREE.Vector3; life: number; max: number; size: number; }
+
+/** hot = ordinary fire and wreckage. cold = damage taken. torpedo = the big
+ *  one: a different colour, three times the debris and twice the radius. */
+export type BoomStyle = "hot" | "cold" | "torpedo";
 
 export interface Fx {
   group: THREE.Group;
   /** Point the bullet meshes at the live bullet list. */
   drawBullets(bullets: { pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean }[]): void;
-  boom(at: THREE.Vector3, power: number, hot?: boolean): void;
+  boom(at: THREE.Vector3, power: number, style?: BoomStyle): void;
+  /** Torpedoes in flight. There are only ever two, so they get real meshes. */
+  drawTorpedoes(torpedoes: { pos: THREE.Vector3; vel: THREE.Vector3 }[]): void;
+  /** Wreckage in orbit. Instanced, because a long fight makes a lot of it. */
+  drawJunk(junk: { pos: THREE.Vector3; rot: THREE.Vector3; kind: string }[]): void;
   muzzle(at: THREE.Vector3): void;
   step(dt: number, camera: THREE.Camera): void;
   dispose(): void;
@@ -172,6 +186,44 @@ export function createFx(): Fx {
   }
   bin.push(ringGeo, ringMat);
 
+  /* The torpedoes. Only two can ever be in the air, so they are real objects
+     rather than instances: a bright violet core in a soft shell. */
+  const torpedoGeo = new THREE.CapsuleGeometry(0.16, 0.5, 4, 8);
+  torpedoGeo.rotateX(Math.PI / 2);
+  const torpedoCoreMat = new THREE.MeshBasicMaterial({ color: 0xe6d4ff });
+  const torpedoGlowMat = new THREE.MeshBasicMaterial({
+    color: 0xa46bff, transparent: true, opacity: 0.45,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const torpedoMeshes: THREE.Group[] = [];
+  for (let i = 0; i < 4; i++) {
+    const holder = new THREE.Group();
+    holder.add(new THREE.Mesh(torpedoGeo, torpedoCoreMat));
+    const glow = new THREE.Mesh(torpedoGeo, torpedoGlowMat);
+    glow.scale.set(2.4, 2.4, 1.7);
+    holder.add(glow);
+    holder.visible = false;
+    group.add(holder);
+    torpedoMeshes.push(holder);
+  }
+  bin.push(torpedoGeo, torpedoCoreMat, torpedoGlowMat);
+
+  /* Wreckage. Two shapes, both instanced: the cockpit ball, and the panels.
+     They are the fighter's own parts, so a dead one visibly comes apart into
+     the thing it was made of. */
+  const junkBodyGeo = new THREE.IcosahedronGeometry(0.36, 0);
+  const junkWingGeo = new THREE.CylinderGeometry(1.0, 1.0, 0.07, 6);
+  junkWingGeo.rotateZ(Math.PI / 2);
+  const junkMat = new THREE.MeshStandardMaterial({
+    color: 0x2b313a, metalness: 0.6, roughness: 0.55, side: THREE.DoubleSide,
+  });
+  const junkBodies = new THREE.InstancedMesh(junkBodyGeo, junkMat, JUNK_CAP);
+  const junkWings = new THREE.InstancedMesh(junkWingGeo, junkMat, JUNK_CAP);
+  junkBodies.frustumCulled = false; junkWings.frustumCulled = false;
+  junkBodies.count = 0; junkWings.count = 0;
+  group.add(junkBodies, junkWings);
+  bin.push(junkBodyGeo, junkWingGeo, junkMat, junkBodies, junkWings);
+
   /* A light that rides with the camera, so ships and debris close by are lit
      as solid objects. Kept short-range so the planet itself is untouched. */
   const lamp = new THREE.PointLight(0xbfd4ff, 2.2, 90, 1.6);
@@ -183,6 +235,7 @@ export function createFx(): Fx {
   const col = new THREE.Color();
   const zAxis = new THREE.Vector3(0, 0, 1);
   const dir = new THREE.Vector3();
+  const eul = new THREE.Euler();
 
   return {
     group,
@@ -214,26 +267,74 @@ export function createFx(): Fx {
       theirs.halo.instanceMatrix.needsUpdate = true;
     },
 
-    boom(at, power, hot = true) {
-      /* Everything here is half what it first was. Explosions at the old size
-         filled the view and hid the thing you had just shot. */
-      const n = Math.min(SHARD_CAP - shardPool.length, Math.round(8 + power * 11));
+    drawTorpedoes(torpedoes) {
+      for (let i = 0; i < torpedoMeshes.length; i++) {
+        const t = torpedoes[i];
+        const m = torpedoMeshes[i];
+        if (!t) { m.visible = false; continue; }
+        m.visible = true;
+        m.position.copy(t.pos);
+        dir.copy(t.vel).normalize();
+        m.quaternion.setFromUnitVectors(zAxis, dir);
+      }
+    },
+
+    drawJunk(junk) {
+      let nBody = 0, nWing = 0;
+      for (const j of junk) {
+        const wing = j.kind !== "body";
+        const mesh = wing ? junkWings : junkBodies;
+        const i = wing ? nWing : nBody;
+        if (i >= JUNK_CAP) continue;
+        eul.set(j.rot.x, j.rot.y, j.rot.z);
+        q.setFromEuler(eul);
+        scl.setScalar(1);
+        m4.compose(j.pos, q, scl);
+        mesh.setMatrixAt(i, m4);
+        if (wing) nWing++; else nBody++;
+      }
+      junkBodies.count = nBody;
+      junkWings.count = nWing;
+      junkBodies.instanceMatrix.needsUpdate = true;
+      junkWings.instanceMatrix.needsUpdate = true;
+    },
+
+    boom(at, power, style = "hot") {
+      /* Ordinary explosions are half what they first were: at the old size they
+         filled the view and hid the thing you had just shot. A torpedo is the
+         deliberate exception, and gets three times the debris and twice the
+         reach so it reads as something else entirely. */
+      const torp = style === "torpedo";
+      const detail = torp ? 3 : 1;
+      const reach = torp ? 2 : 1;
+      const n = Math.min(SHARD_CAP - shardPool.length, Math.round((8 + power * 11) * detail));
       for (let i = 0; i < n; i++) {
-        const v = new THREE.Vector3().randomDirection().multiplyScalar((1.5 + Math.random() * 5.5) * power);
+        const v = new THREE.Vector3().randomDirection()
+          .multiplyScalar((1.5 + Math.random() * 5.5) * power * reach);
         shardPool.push({
           pos: at.clone(), vel: v,
           spin: new THREE.Vector3().randomDirection().multiplyScalar(6),
-          life: 0.4 + Math.random() * 0.55 * power, max: 1.0, size: (0.025 + Math.random() * 0.06) * power,
+          life: 0.4 + Math.random() * 0.55 * power, max: 1.0,
+          size: (0.025 + Math.random() * 0.06) * power * (torp ? 1.4 : 1),
+          cold: torp,
         });
       }
       const f = flashes.find((x) => x.state === null);
       if (f) {
-        f.state = { pos: at.clone(), life: 0.3 * power, max: 0.3 * power, size: 1.3 * power };
-        (f.sprite.material as THREE.SpriteMaterial).color.set(hot ? 0xffd9a0 : 0x9fd8ff);
+        f.state = {
+          pos: at.clone(), life: 0.3 * power, max: 0.3 * power,
+          size: 1.3 * power * reach,
+        };
+        (f.sprite.material as THREE.SpriteMaterial).color.set(
+          torp ? 0xd7b0ff : style === "hot" ? 0xffd9a0 : 0x9fd8ff);
       }
       const r = rings.find((x) => x.state === null);
       if (r && power > 1.2) {
-        r.state = { pos: at.clone(), nrm: at.clone().normalize(), life: 0.45, max: 0.45, size: 2.5 * power };
+        r.state = {
+          pos: at.clone(), nrm: at.clone().normalize(),
+          life: torp ? 0.7 : 0.45, max: torp ? 0.7 : 0.45, size: 2.5 * power * reach,
+        };
+        (r.mesh.material as THREE.MeshBasicMaterial).color.set(torp ? 0xc79dff : 0xffc76a);
       }
     },
 
@@ -263,8 +364,10 @@ export function createFx(): Fx {
         scl.setScalar(s.size * (0.35 + f));
         m4.compose(s.pos, q, scl);
         shards.setMatrixAt(live, m4);
-        /* Cooling from white through orange to a dull red as it fades. */
-        col.setRGB(1, 0.35 + f * 0.6, 0.12 + f * 0.7).multiplyScalar(0.25 + f);
+        /* Cooling from white through orange to a dull red as it fades, or
+           through violet for torpedo debris. */
+        if (s.cold) col.setRGB(0.6 + f * 0.4, 0.35 + f * 0.5, 1).multiplyScalar(0.3 + f);
+        else col.setRGB(1, 0.35 + f * 0.6, 0.12 + f * 0.7).multiplyScalar(0.25 + f);
         shards.setColorAt(live, col);
         live++;
       }
@@ -305,6 +408,113 @@ export function createFx(): Fx {
       for (const r of rings) (r.mesh.material as THREE.Material).dispose();
       for (const d of bin) d.dispose();
       group.clear();
+    },
+  };
+}
+
+/* ------------------------------------------------------------ shield rig */
+/**
+ * The bubble that flares around a fighter when it is hit, and the number.
+ *
+ * One of these hangs off each fighter's model. The bubble's brightness is the
+ * shield level, so a nearly-broken ship visibly glows less than a fresh one,
+ * and it pulses: the radius by a tenth and the brightness by a fifth, quickly,
+ * so it reads as something being held up rather than a decal.
+ *
+ * The label is drawn to a canvas only when the number changes, which is on a
+ * hit and never per frame.
+ */
+export interface ShieldRig {
+  group: THREE.Group;
+  /** 0..1 of this ship class's maximum. Values above 1 are allowed, for a
+   *  future ship with a bigger shield than today's. */
+  setLevel(level: number): void;
+  /** `seconds` drives the pulse; `strength` fades the whole thing out. */
+  step(seconds: number, strength: number): void;
+  dispose(): void;
+}
+
+export function makeShieldRig(colour = 0x66ccff): ShieldRig {
+  const group = new THREE.Group();
+
+  const geo = new THREE.SphereGeometry(1.55, 24, 18);
+  const mat = new THREE.MeshBasicMaterial({
+    color: colour, transparent: true, opacity: 0, wireframe: true,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const shell = new THREE.Mesh(geo, mat);
+  group.add(shell);
+
+  const skinGeo = new THREE.SphereGeometry(1.5, 20, 14);
+  const skinMat = new THREE.MeshBasicMaterial({
+    color: colour, transparent: true, opacity: 0, side: THREE.BackSide,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const skin = new THREE.Mesh(skinGeo, skinMat);
+  group.add(skin);
+
+  let canvas: HTMLCanvasElement | null = null;
+  let tex: THREE.Texture | null = null;
+  let label: THREE.Sprite | null = null;
+  let labelMat: THREE.SpriteMaterial | null = null;
+  if (typeof document !== "undefined") {
+    canvas = document.createElement("canvas");
+    canvas.width = 256; canvas.height = 96;
+    tex = new THREE.CanvasTexture(canvas);
+    labelMat = new THREE.SpriteMaterial({
+      map: tex, transparent: true, depthWrite: false, depthTest: false,
+    });
+    label = new THREE.Sprite(labelMat);
+    label.scale.set(2.6, 1.0, 1);
+    label.position.y = 2.1;
+    group.add(label);
+  }
+
+  let level = 1;
+  let shown = -1;
+
+  function redraw() {
+    if (!canvas || !tex) return;
+    const x = canvas.getContext("2d");
+    if (!x) return;
+    x.clearRect(0, 0, canvas.width, canvas.height);
+    x.font = "bold 62px ui-monospace, Menlo, monospace";
+    x.textAlign = "center";
+    x.textBaseline = "middle";
+    const pct = Math.max(0, Math.round(level * 100));
+    /* Blue while it is holding, red once it is nearly gone. */
+    x.fillStyle = pct > 33 ? "#9fe4ff" : "#ff8a8a";
+    x.shadowColor = "#000";
+    x.shadowBlur = 12;
+    x.fillText(`${pct}%`, 128, 50);
+    tex.needsUpdate = true;
+  }
+
+  return {
+    group,
+    setLevel(v) {
+      level = v;
+      const pct = Math.max(0, Math.round(v * 100));
+      if (pct !== shown) { shown = pct; redraw(); }
+    },
+    step(seconds, strength) {
+      const on = strength > 0.001;
+      group.visible = on;
+      if (!on) return;
+      /* Radius by a tenth, brightness by a fifth, both fast. */
+      const pulse = Math.sin(seconds * 9);
+      const r = 1 + pulse * 0.1;
+      shell.scale.setScalar(r);
+      skin.scale.setScalar(r * 0.97);
+      const bright = Math.max(0, Math.min(1.4, level)) * (1 + pulse * 0.2) * strength;
+      mat.opacity = 0.55 * bright;
+      skinMat.opacity = 0.16 * bright;
+      if (labelMat) labelMat.opacity = Math.min(1, strength * 1.6);
+    },
+    dispose() {
+      geo.dispose(); mat.dispose();
+      skinGeo.dispose(); skinMat.dispose();
+      tex?.dispose(); labelMat?.dispose();
     },
   };
 }
