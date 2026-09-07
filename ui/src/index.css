@@ -1980,6 +1980,61 @@ code, .mono { font-family: var(--font-mono); }
    backdrop filter rather than a coloured wash, so it reads as the instruments
    glitching rather than as a red screen, and it needs no access to the map's
    own canvas. */
+/* The wave title. Big enough to be unmissable, and it fades rather than cuts. */
+/* The ? panel, down the right-hand side, over the game. */
+.orbit-controls {
+  position: absolute; top: 10px; right: 10px; bottom: 10px;
+  width: min(380px, 42vw);
+  overflow-y: auto;
+  pointer-events: auto;
+  padding: 16px 18px;
+  background: hsl(var(--rebels-ocean) / 0.86);
+  backdrop-filter: blur(var(--panel-blur));
+  border: 1px solid hsl(var(--rebels-hud) / 0.35);
+  border-radius: var(--panel-radius);
+  font-family: var(--font-mono);
+  color: hsl(var(--rebels-hud));
+}
+.orbit-controls h3 {
+  margin: 0 0 8px; font-size: 12px; letter-spacing: 0.18em;
+  color: hsl(var(--primary));
+}
+.orbit-controls h3 + dl { margin: 0 0 18px; }
+.orbit-controls dl { margin: 0; }
+.orbit-controls dl > div { display: grid; gap: 2px; margin-bottom: 10px; }
+.orbit-controls dt { font-size: 11px; letter-spacing: 0.1em; color: hsl(var(--rebels-home)); }
+.orbit-controls dd { margin: 0; font-size: 12px; line-height: 1.45; opacity: 0.88; }
+.orbit-controls button {
+  width: 100%; padding: 8px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em;
+  color: hsl(var(--primary-foreground)); background: hsl(var(--primary));
+  border: none; border-radius: calc(var(--panel-radius) * 0.5);
+}
+
+/* The same list on the launch screen. */
+.orbit-launch-keys {
+  display: grid; gap: 5px; text-align: left;
+  max-width: 560px; margin: 4px auto 0;
+  font-size: 11px; line-height: 1.4;
+}
+.orbit-launch-keys > div { display: grid; grid-template-columns: 150px 1fr; gap: 10px; }
+.orbit-launch-keys b { color: hsl(var(--rebels-home)); font-weight: 600; letter-spacing: 0.08em; }
+.orbit-launch-keys span { opacity: 0.85; }
+
+.orbit-wave {
+  position: absolute; left: 50%; top: 30%;
+  transform: translateX(-50%);
+  font-family: var(--font-heading);
+  font-size: clamp(46px, 11vw, 150px);
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  color: hsl(var(--primary));
+  text-shadow: 0 0 40px hsl(var(--primary) / 0.8), 0 4px 30px hsl(var(--rebels-ocean));
+  transition: opacity 2s linear;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .orbit-invert {
   position: absolute; inset: 0; pointer-events: none;
   -webkit-backdrop-filter: invert(1);

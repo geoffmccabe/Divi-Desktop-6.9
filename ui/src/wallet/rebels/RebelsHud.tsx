@@ -11,6 +11,7 @@ import { MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS } from "./orbitFlight";
 import { TIERS } from "./rebelsCombat";
 import type { RebelsController, HudState } from "./rebelsController";
 import { RebelsScoreboard } from "./RebelsScoreboard";
+import { RebelsControls, CONTROLS, DOCKING } from "./RebelsControls";
 
 export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () => void }) {
   const [hud, setHud] = useState<HudState>(() => ctl.hud());
@@ -23,6 +24,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
      "finding your node" for ever with nothing explaining why. Say so instead. */
   const [slow, setSlow] = useState(false);
   const [scores, setScores] = useState(false);
+  const [help, setHelp] = useState(false);
 
   /* The hit flash: everything behind the cockpit inverts for a tenth of a
      second. Driven by a timestamp rather than a boolean so two hits in quick
@@ -65,6 +67,10 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
     ctl.onEscape(onExit);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") { e.preventDefault(); onExit(); }
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        e.preventDefault();
+        setHelp((v) => !v);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -95,6 +101,19 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
     };
   }, [hud.launched, hud.dead]);
 
+  /* Three seconds held, two fading. Driven off the announcement time so a wave
+     arriving while the last title is still up simply replaces it. */
+  const [waveShown, setWaveShown] = useState(0);
+  const [waveOpacity, setWaveOpacity] = useState(0);
+  useEffect(() => {
+    if (!hud.waveAt || !hud.wave) return;
+    setWaveShown(hud.wave);
+    setWaveOpacity(1);
+    const hold = setTimeout(() => setWaveOpacity(0), 3000);
+    const gone = setTimeout(() => setWaveShown(0), 5000);
+    return () => { clearTimeout(hold); clearTimeout(gone); };
+  }, [hud.waveAt, hud.wave]);
+
   const pct = (v: number) => `${Math.round(Math.max(0, Math.min(1, v)) * 100)}%`;
   /* One globe unit is about 64 km of real Earth, which is what makes this a
      mini-globe rather than a map. */
@@ -112,6 +131,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           {hud.homeDist > 0 ? `${Math.round(hud.homeDist * 64)} km away` : " "}
         </div>
         <div className="orbit-row orbit-dim">{hud.towers} towers</div>
+        {hud.wave > 0 && <div className="orbit-row">WAVE {hud.wave}</div>}
         <div className={"orbit-row" + (hud.contacts > 0 ? " orbit-alert" : " orbit-dim")}>
           {hud.contacts > 0 ? `${hud.contacts} CONTACT${hud.contacts > 1 ? "S" : ""}` : "no contacts"}
         </div>
@@ -122,6 +142,13 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       </div>
 
       {flashing && <div className="orbit-invert" />}
+
+      {/* The wave title: three seconds at full, then two fading out. */}
+      {waveShown > 0 && (
+        <div className="orbit-wave" key={hud.waveAt} style={{ opacity: waveOpacity }}>
+          WAVE {waveShown}
+        </div>
+      )}
 
       {hud.launched && !hud.dead && !hud.broken && <div className="orbit-cross" ref={crossRef} />}
 
@@ -217,18 +244,20 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         </div>
       )}
 
+      {help && <RebelsControls onClose={() => setHelp(false)} />}
+
       {scores && <RebelsScoreboard onClose={() => setScores(false)} />}
 
       {!hud.broken && !hud.launched && !scores && (
         <div className="orbit-card orbit-card-clear">
           <h2>DIVI REBELS</h2>
           <p>{hud.homeName === "no node located" ? "No node of your own found, launching from the network." : `Launching from ${hud.homeName}.`}</p>
-          <p className="orbit-keys">
-            POINT TO FLY, OR ARROWS<br />
-            CLICK OR SPACE TO FIRE &nbsp;&nbsp; SHIFT BOOST &nbsp;&nbsp; Z BRAKE<br />
-            CTRL+CLICK LAUNCHES A TORPEDO, AGAIN TO DETONATE IT<br />
-            FLY UP TO ANY TOWER TO REPAIR AND REARM. YOUR OWN IS TWICE AS FAST.
-          </p>
+          <div className="orbit-launch-keys">
+            {[...CONTROLS, ...DOCKING].map((c) => (
+              <div key={c.keys}><b>{c.keys}</b><span>{c.what}</span></div>
+            ))}
+          </div>
+          <p className="orbit-keys">Press ? at any time for this list.</p>
           <div className="orbit-buttons">
             <button type="button" onClick={() => ctl.launch()} disabled={!hud.ready}>
               {hud.ready ? "LAUNCH" : slow ? "GLOBE NOT READY" : "FINDING YOUR NODE…"}
@@ -252,7 +281,13 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           <p>Recovered to {hud.homeName}.</p>
           <p className="orbit-keys">Run filed. Score resets from here.</p>
           <div className="orbit-buttons">
-            <button type="button" onClick={() => ctl.respawn()}>LAUNCH AGAIN</button>
+            <button
+              type="button"
+              onClick={() => ctl.respawn()}
+              disabled={hud.respawnIn > 0}
+            >
+              {hud.respawnIn > 0 ? `REJOIN IN ${Math.ceil(hud.respawnIn)}` : "LAUNCH AGAIN"}
+            </button>
             <button type="button" className="orbit-secondary" onClick={() => setScores(true)}>
               HIGH SCORES
             </button>

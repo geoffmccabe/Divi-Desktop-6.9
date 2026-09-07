@@ -17,7 +17,7 @@ import {
 import {
   createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest,
   fireMini, miniMuzzle,
-  STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE,
+  STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
   type CombatState,
 } from "./rebelsCombat";
 import { userWonRecently } from "../stakeWin";
@@ -58,6 +58,11 @@ export interface HudState {
   /** Points this run. Only damage landed on fighters scores, and never more
    *  than the damage that actually landed. */
   score: number;
+  /** The wave in progress, and when it was announced. */
+  wave: number;
+  waveAt: number;
+  /** Seconds before the player may launch again, if they must wait. */
+  respawnIn: number;
   /** DIVI collected, ever. Survives being shot down. */
   divi: number;
   /** Lifetime kills, one count per tier from tier one upward. */
@@ -81,6 +86,7 @@ const BLANK: HudState = {
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
+  wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
 };
 
@@ -178,6 +184,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* The torpedo readouts are pushed the moment they change rather than on the
      ten-times-a-second HUD tick: a rack that updates a tenth of a second after
      the trigger reads as the trigger not having worked. */
+  /** How long a player waits before rejoining while others are still flying. */
+  const RESPAWN_WAIT = 10;
+  let respawnAt = 0;
   let nearTower = Infinity;
   let dockBlock: string = "";
   let lastInFlight = -1;
@@ -205,6 +214,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function die(): void {
     if (hud.dead) return;
     bank();
+    /* Alone, losing the ship means every player is down, so the sky is cleared
+       and the whole thing starts again at wave one with no waiting. With others
+       still flying it will instead be a ten second count, which is the room's
+       decision to make rather than this one's. */
+    const everyoneDown = true;
+    if (everyoneDown) {
+      combat.enemies.length = 0;
+      combat.bullets.length = 0;
+      combat.torpedoes.length = 0;
+      combat.wave = null;
+      respawnAt = 0;
+      setHud({ wave: 0, respawnIn: 0 });
+    } else {
+      respawnAt = performance.now() + RESPAWN_WAIT * 1000;
+    }
     setHud({ dead: true, score: 0 });
     if (typeof document !== "undefined" && document.pointerLockElement === dom) {
       /* Give the pointer back, or the "launch again" button cannot be clicked. */
@@ -545,7 +569,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           tips: tipList,
           playerPos: flight.pos,
           playerFwd: flight.fwd,
-          wanted: live ? 4 : 0,
           damageScale: damageScale(),
         });
 
@@ -593,6 +616,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             score += Math.round(ev.damage ?? 0);
             /* A small spark where the shot landed. The bubble does the rest. */
             fx.boom(ev.at, ev.power, "cold");
+          } else if (ev.kind === "waveStart") {
+            /* Shown big for three seconds, then two seconds of fading. */
+            setHud({ wave: ev.wave ?? 0, waveAt: performance.now() });
           } else if (ev.kind === "coin") {
             /* Picked up. Kept for ever, not for this life: earnings survive
                being shot down. */
@@ -708,6 +734,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             docked: flight.dock >= 1,
             nearTower,
             dockBlock,
+            respawnIn: Math.max(0, (respawnAt - performance.now()) / 1000),
           });
         }
       } catch (err) {
@@ -776,6 +803,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     subscribe(fn) { listeners.add(fn); fn(hud); return () => { listeners.delete(fn); }; },
     launch() {
       flying = true;
+      if (!combat.wave) startWave(combat, 1);
       /* This is a real click, which is the only thing a webview will start
          audio from. Decoding began back at attach; this is what lets it be
          heard. */
@@ -804,7 +832,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       setHud({ launched: true, dead: false });
     },
     respawn() {
+      if (respawnAt > performance.now()) return;
       score = 0;
+      if (!combat.wave) startWave(combat, 1);
       startAt(homeIndex);
       flying = true;
       phase = "fly";

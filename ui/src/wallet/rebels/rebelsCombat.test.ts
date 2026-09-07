@@ -8,6 +8,7 @@ import { MAX_SHIELD } from "./orbitFlight";
 import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
   fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
+  startWave, waveSize, WAVE_SECONDS,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
   TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
@@ -36,7 +37,6 @@ const world = (over: Partial<Parameters<typeof stepCombat>[2]> = {}) => ({
   tips: [] as THREE.Vector3[],
   playerPos: pos.clone(),
   playerFwd: fwd.clone(),
-  wanted: 0,
   damageScale: 1,
   ...over,
 });
@@ -48,7 +48,7 @@ function fighter(at: THREE.Vector3, over: Partial<Enemy> = {}): Enemy {
     pos: at.clone(), fwd: fwd.clone().negate(), roll: 0,
     cls: FIGHTER, shield: 1,
     vel: new THREE.Vector3(), tumble: new THREE.Vector3(), spin: new THREE.Vector3(),
-    flash: 0, ammo: 60, reload: 0, fireAt: 1e9, weave: 1e9, weaveDir: 1,
+    flash: 0, ammo: 60, reload: 0, fireAt: 1e9, weave: 1e9, weaveDir: 1, wave: 0,
     ...over,
   };
 }
@@ -163,10 +163,11 @@ function run(c: CombatState, frames: number, w = world()) {
 // 6. Fighters spawn in front, chase, and give up if they get far away.
 {
   const c = createCombat();
-  const w = world({ wanted: 3 });
-  run(c, 60 * 12, w);
+  const w = world();
+  startWave(c, 1);
+  run(c, 60 * 40, w);
   ok("fighters spawn", c.enemies.length > 0, `${c.enemies.length} in the air`);
-  ok("no more than asked for", c.enemies.length <= 3, `${c.enemies.length}`);
+  ok("no more than the wave sends", c.enemies.length <= waveSize(1), `${c.enemies.length}`);
   for (const e of c.enemies) {
     ok("a fighter never ends up inside the planet", e.pos.length() >= R, `radius ${e.pos.length().toFixed(1)}`);
   }
@@ -187,7 +188,8 @@ function run(c: CombatState, frames: number, w = world()) {
 // 7. A long fight leaks nothing.
 {
   const c = createCombat();
-  const w = world({ wanted: 4, tips: [pos.clone().addScaledVector(fwd, 25)] });
+  const w = world({ tips: [pos.clone().addScaledVector(fwd, 25)] });
+  startWave(c, 1);
   let hits = 0;
   for (let i = 0; i < 60 * 90; i++) {
     if (i % 7 === 0) fireGuns(c, pos, fwd, up, FOV, ASPECT);
@@ -196,7 +198,8 @@ function run(c: CombatState, frames: number, w = world()) {
   }
   ok("bullets do not pile up over 90 seconds", c.bullets.length < 120, `${c.bullets.length} alive`);
   ok("nor does wreckage", c.junk.length <= 60, `${c.junk.length} pieces`);
-  ok("fighters stay capped", c.enemies.length <= 4, `${c.enemies.length}`);
+  ok("fighters stay within what the waves have sent",
+     c.enemies.length <= waveSize(1) + waveSize(2), `${c.enemies.length}`);
   /* Shots land. Kills are not asserted any more: a fighter now carries a
      hundred of shield and rarer ones more, so blind fire from a fixed point
      lands hits without finishing anyone, which is the point of shields. */
@@ -478,7 +481,7 @@ function run(c: CombatState, frames: number, w = world()) {
 //     player who never dodges and never guards. That is the worst case, and it
 //     should be survivable for a while rather than for a moment.
 {
-  const w = world({ wanted: 0 });
+  const w = world();
   const c = createCombat();
   for (let i = 0; i < 4; i++) {
     c.enemies.push(fighter(
@@ -693,6 +696,75 @@ function run(c: CombatState, frames: number, w = world()) {
     clearEvents(c);
   }
   ok("a coin nearby comes to the player", collected);
+}
+
+// 15. Waves.
+{
+  ok("the first wave is ten", waveSize(1) === 10);
+  ok("and each is two bigger", waveSize(2) === 12 && waveSize(3) === 14 && waveSize(4) === 16);
+}
+{
+  const c = createCombat();
+  const w = world();
+  startWave(c, 1);
+  ok("starting a wave announces it",
+     c.events.some((e) => e.kind === "waveStart" && e.wave === 1));
+  clearEvents(c);
+  run(c, 60 * 10, w);
+  const early = c.enemies.length;
+  ok("they trickle in rather than arriving together", early > 0 && early < waveSize(1),
+     `${early} after ten seconds`);
+}
+{
+  /* Keeping up with a wave means the next one starts on a clear sky.
+     A wave cannot finish EARLY: its ships are spread across the whole two
+     minutes, so the soonest it can be cleared is when the last one arrives.
+     Keeping up decides what is LEFT OVER, not when the wave ends. */
+  const c = createCombat();
+  const w = world();
+  startWave(c, 1);
+  clearEvents(c);
+  let started = 0;
+  for (let i = 0; i < 60 * (WAVE_SECONDS + 4); i++) {
+    stepCombat(c, DT, w);
+    for (const e of c.events) if (e.kind === "waveStart") started = e.wave ?? started;
+    clearEvents(c);
+    for (const e of [...c.enemies]) hurtEnemy(c, e, 1e6, pos);
+    clearEvents(c);
+  }
+  ok("keeping up gets you to the next wave", started >= 2, `reached wave ${started}`);
+  ok("with nothing left over", c.enemies.length === 0, `${c.enemies.length} left`);
+}
+
+{
+  /* Falling behind lets the next wave arrive on top of the leftovers. */
+  const c = createCombat();
+  const w = world();
+  startWave(c, 1);
+  clearEvents(c);
+  run(c, 60 * (WAVE_SECONDS + 2), w);
+  ok("a wave that runs out of time hands over anyway", (c.wave?.n ?? 0) >= 2, `wave ${c.wave?.n}`);
+  ok("and the ships it sent are still out there", c.enemies.length > 0,
+     `${c.enemies.length} left over`);
+}
+{
+  /* Waves differ in weight, not just in count. */
+  const bias: number[] = [];
+  for (let i = 0; i < 200; i++) {
+    const c = createCombat();
+    startWave(c, 1);
+    bias.push(c.wave!.bias);
+  }
+  ok("some waves are harder than others",
+     Math.max(...bias) > Math.min(...bias) * 2,
+     `bias ${Math.min(...bias).toFixed(2)} to ${Math.max(...bias).toFixed(2)}`);
+  const count = (b: number) => {
+    let rare = 0;
+    for (let i = 0; i < 20000; i++) if (rollTier(b).tier > 1) rare++;
+    return rare;
+  };
+  ok("a harder wave sends more rare ships", count(3) > count(0.5) * 2,
+     `${count(3)} vs ${count(0.5)} of 20000`);
 }
 
 console.log(out.join("\n"));

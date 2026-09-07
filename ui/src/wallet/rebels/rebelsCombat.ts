@@ -75,14 +75,19 @@ export const TIERS: ShipClass[] = TIER_COLOURS.map((colour, i) => ({
 /** The commonest one, and what anything unspecified means. */
 export const FIGHTER: ShipClass = TIERS[0];
 
-const TIER_TOTAL = TIERS.reduce((a, t) => a + t.weight, 0);
-
-/** Roll a tier. Weighted, so the rare ones stay rare. */
-export function rollTier(): ShipClass {
-  let r = Math.random() * TIER_TOTAL;
-  for (const t of TIERS) {
-    r -= t.weight;
-    if (r <= 0) return t;
+/**
+ * Roll a tier. Weighted, so the rare ones stay rare.
+ *
+ * `bias` above one lifts every tier above the first, which is how one wave
+ * comes out harder than another without sending more ships.
+ */
+export function rollTier(bias = 1): ShipClass {
+  const weights = TIERS.map((t, i) => (i === 0 ? t.weight : t.weight * bias));
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < TIERS.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return TIERS[i];
   }
   return TIERS[0];
 }
@@ -226,6 +231,8 @@ export interface Enemy {
   /** Seconds left of the little sidestep that stops them flying in a line. */
   weave: number;
   weaveDir: number;
+  /** Which wave sent it, so a wave can tell when it is finished. */
+  wave: number;
 }
 
 export type JunkKind = "body" | "wingL" | "wingR";
@@ -248,7 +255,7 @@ export interface Torpedo {
 
 export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
-      | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost";
+      | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "waveStart";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
   power: number;
@@ -260,6 +267,56 @@ export interface CombatEvent {
   tier?: number;
   /** coin only: what it was worth. */
   value?: number;
+  /** waveStart only: which wave. */
+  wave?: number;
+}
+
+/* ---- waves ----
+   Ten fighters in the first wave, spread over two minutes, then twelve, then
+   fourteen. A wave ends when everything it sent is dead, OR when its two
+   minutes are up and the next one comes in anyway. That second exit is what
+   builds the sky up: fall behind and the leftovers of one wave are still
+   hunting you when the next arrives.
+
+   Waves are not all the same weight. Each one draws a bias that makes the rare
+   tiers more or less likely, so some are visibly nastier than others without
+   the count changing. */
+export const WAVE_SECONDS = 120;
+export const WAVE_FIRST = 10;
+export const WAVE_STEP = 2;
+
+export interface Wave {
+  n: number;
+  /** Still to send. */
+  toSpawn: number;
+  /** Seconds until the next one arrives. */
+  nextAt: number;
+  /** Seconds left in this wave's window. */
+  timeLeft: number;
+  /** Alive right now out of everything this wave sent. */
+  alive: number;
+  /** How much likelier the rare tiers are in this wave. 1 is ordinary. */
+  bias: number;
+}
+
+export function waveSize(n: number): number {
+  return WAVE_FIRST + (n - 1) * WAVE_STEP;
+}
+
+/** Begin a wave. Bias is rolled here, which is what makes some harder. */
+export function startWave(c: CombatState, n: number): void {
+  const count = waveSize(n);
+  c.wave = {
+    n,
+    toSpawn: count,
+    /* The first arrives almost at once, so a wave starting is something you
+       see rather than something you wait for. */
+    nextAt: 1.5,
+    timeLeft: WAVE_SECONDS,
+    alive: 0,
+    bias: 0.5 + Math.random() * 2.5,
+  };
+  c.events.push({ kind: "waveStart", at: new THREE.Vector3(), power: 1, wave: n });
 }
 
 export interface CombatState {
@@ -270,6 +327,8 @@ export interface CombatState {
   coins: Coin[];
   tracers: Tracer[];
   events: CombatEvent[];
+  /** The wave in progress, or null when nothing is being sent. */
+  wave: Wave | null;
   kills: number;
   /** Kills this run, one count per tier, indexed from zero. */
   tierKills: number[];
@@ -279,6 +338,7 @@ export interface CombatState {
 export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
+    wave: null,
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -587,8 +647,6 @@ export interface CombatWorld {
   tips: THREE.Vector3[];
   playerPos: THREE.Vector3;
   playerFwd: THREE.Vector3;
-  /** Difficulty, roughly how many fighters should be in the air. */
-  wanted: number;
   /** Multiplies everything the player's guns do. Three for a minute after
    *  winning a stake on your node. */
   damageScale: number;
@@ -759,11 +817,31 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
   }
 
-  /* ---- fighters ---- */
-  c.spawnAt -= dt;
-  if (c.enemies.length < w.wanted && c.spawnAt <= 0) {
-    c.spawnAt = 1.6 + Math.random() * 2.4;
-    c.enemies.push(spawnNear(w.playerPos, w.playerFwd));
+  /* ---- waves ----
+     Spawns are spread across the wave's window rather than arriving together,
+     so a wave is a rising tide rather than a wall. */
+  const wave = c.wave;
+  if (wave) {
+    wave.timeLeft -= dt;
+    if (wave.toSpawn > 0) {
+      wave.nextAt -= dt;
+      if (wave.nextAt <= 0) {
+        const e = spawnNear(w.playerPos, w.playerFwd, wave.bias);
+        e.wave = wave.n;
+        c.enemies.push(e);
+        wave.toSpawn -= 1;
+        wave.alive += 1;
+        /* Evenly across whatever is left of the window, with a little jitter so
+           they do not arrive on a metronome. */
+        const spread = Math.max(2, wave.timeLeft) / Math.max(1, wave.toSpawn);
+        wave.nextAt = spread * (0.6 + Math.random() * 0.8);
+      }
+    }
+    wave.alive = c.enemies.filter((e) => e.wave === wave.n).length;
+    /* Over when everything it sent is dead, or when its time is simply up and
+       the next one starts on top of the leftovers. */
+    const cleared = wave.toSpawn === 0 && wave.alive === 0;
+    if (cleared || wave.timeLeft <= 0) startWave(c, wave.n + 1);
   }
 
   const toPlayer = new THREE.Vector3();
@@ -833,7 +911,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
   }
 }
 
-function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3): Enemy {
+function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3, bias = 1): Enemy {
   const up = playerPos.clone().normalize();
   const right = new THREE.Vector3().crossVectors(playerFwd, up).normalize();
   /* Ahead and off to one side, high enough to be seen against the sky rather
@@ -847,7 +925,7 @@ function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3): Enemy {
     .addScaledVector(up, lift);
   if (pos.length() < R + 3) pos.normalize().multiplyScalar(R + 3);
   const fwd = playerPos.clone().sub(pos).normalize();
-  const cls = rollTier();
+  const cls = rollTier(bias);
   return {
     pos, fwd, roll: 0,
     cls,
@@ -860,5 +938,6 @@ function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3): Enemy {
     reload: 0,
     fireAt: 0.8 + Math.random() * 1.4,
     weave: 1, weaveDir: 1,
+    wave: 0,
   };
 }
