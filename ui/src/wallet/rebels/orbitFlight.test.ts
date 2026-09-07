@@ -50,7 +50,9 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const moved = start.distanceTo(f.pos);
   /* Two seconds at cruise is about 32 units of arc; a straight-line chord is a
      little less. Anything near zero means the ship is parked. */
-  ok("flies forward at cruise", moved > 25 && moved < 34, `moved ${moved.toFixed(1)} units in 2s`);
+  /* Cruise is 8 a second since the world was doubled in size by halving the
+     speed and the towers, so two seconds is about sixteen units. */
+  ok("flies forward at cruise", moved > 13 && moved < 18, `moved ${moved.toFixed(1)} units in 2s`);
 }
 
 // 2. The frame stays a frame. This is the one that silently rots.
@@ -127,8 +129,11 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 
   /* Diving into the ground. It is allowed, it hurts, and holding it there
      kills you, which is the point of being allowed to do it. */
+  /* Two seconds rather than one: the ship launches eight units up and now
+     covers eight a second rather than sixteen, so a one-second dive no longer
+     reaches the surface. */
   const g = createFlight(pad);
-  run(g, 60, stick({ y: -1 }));
+  run(g, 120, stick({ y: -1 }));
   ok("the ground can be flown into", g.shields < MAX_SHIELD, `shields ${g.shields}`);
   ok("and it does not tunnel through", g.pos.length() >= R + MIN_ALT - 1e-6,
      `radius ${g.pos.length().toFixed(2)}`);
@@ -166,13 +171,12 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   drag.pos.normalize().multiplyScalar(R + MIN_ALT + 0.1);
   run(drag, 40, stick({ y: -1 }));
   run(drag, 60 * 20, stick({ boosting: true }));
-  /* Costly rather than instantly fatal, and the difference is worth stating.
-     A ship cannot actually plough along a sphere for long without steering: the
-     surface curves away under a nose that is fixed in world space, so it
-     departs on its own. What the scrape removes is the free ride — twenty
-     seconds of it is half the hull, where before it was nothing at all. */
-  ok("and dragging along it costs half the hull",
-     drag.shields < MAX_SHIELD * 0.6 && drag.shields > 0,
+  /* Fatal, given long enough. A slower ship stays in contact for more of the
+     time it spends on the surface, so halving the speeds made this stronger
+     rather than weaker: what the scrape removes is the free ride a ship used to
+     get from ploughing through a planet while the repair healed the one hit it
+     took going in. */
+  ok("and dragging along it is eventually fatal", drag.shields <= 0,
      `${drag.shields.toFixed(0)} of ${MAX_SHIELD} left after twenty seconds`);
 
   /* OPEN SPACE IS FAST, and the towers are not.

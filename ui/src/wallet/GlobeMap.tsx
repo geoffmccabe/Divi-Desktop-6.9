@@ -50,6 +50,19 @@ export interface GlobeFlight {
     selfIp: string | null;
     /** Globe radius in scene units. */
     radius: number;
+    /**
+     * Shrink every tower, and hand back where their tips ended up.
+     *
+     * Called when a game launches. Halving the towers while halving the ship's
+     * speed makes the same Earth feel twice the size, which is cheaper and far
+     * more stable than actually scaling the world: the globe, the map's camera
+     * and every distance in the flight model all stay exactly as they were.
+     *
+     * The tips MOVE when the towers shrink, so they are returned rather than
+     * left for the caller to guess — docking measures to the tower's axis, and
+     * an axis half as tall is a different axis.
+     */
+    scaleTowers(s: number): Map<string, THREE.Vector3>;
     /** The globe's own canvas, which is where the pointer already is. */
     dom: HTMLCanvasElement;
   }): void;
@@ -661,6 +674,16 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         selfIp: selfIp ?? null,
         radius: R,
         dom,
+        scaleTowers(s: number) {
+          for (const [ip, t] of towerByIp) {
+            t.scale.setScalar(s);
+            const p = t.userData.node as { kind: keyof typeof COLORS } | undefined;
+            const built = p?.kind === "self" ? 2 : 1;
+            /* The tip is the top of the mast, so it comes down with it. */
+            tipOf.set(ip, t.position.clone().normalize().multiplyScalar(R + PYR_H * built * s));
+          }
+          return tipOf;
+        },
       });
     };
     const detachFlight = () => {

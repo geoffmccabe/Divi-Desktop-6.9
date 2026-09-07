@@ -150,8 +150,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* One shield rig per fighter model, hanging off it. */
   const enemyShields: ShieldRig[] = [];
   let guardShell: ReturnType<typeof makeGuardShell> | null = null;
+  /** How much of its size a tower keeps once a game is running. */
+  const WORLD_SCALE = 0.5;
   let space: ReturnType<typeof createSpace> | null = null;
   let sky: SkyHandle | null = null;
+  /** The map's own hook for shrinking its towers, held from attach. */
+  let scaleTowers: ((s: number) => Map<string, THREE.Vector3>) | null = null;
 
   /* ---- the ship you can see ----
      Only built once somebody pulls the camera back, because in the cockpit
@@ -648,6 +652,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         /* Real tower tips off the real map. Docking lines up with the towers
            you can actually see, because they ARE those towers. */
+        scaleTowers = api.scaleTowers;
         ipList = [...api.tips.keys()];
         tipList = ipList.map((ip) => api.tips.get(ip)!.clone());
         homeIndex = api.selfIp ? ipList.indexOf(api.selfIp) : -1;
@@ -1245,6 +1250,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (scene) {
         for (const m of enemyMeshes) scene.remove(m);
         for (const r of enemyShields) scene.remove(r.group);
+        /* The map is not ours: its towers go back to full size on the way out. */
+        if (scaleTowers) { scaleTowers(1); scaleTowers = null; }
         if (shipModel && scene) scene.remove(shipModel);
         shipModel = null;
         shipPaint = null;
@@ -1281,6 +1288,22 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     subscribe(fn) { listeners.add(fn); fn(hud); return () => { listeners.delete(fn); }; },
     launch() {
       flying = true;
+      /* ---- THE WORLD GETS BIGGER ----
+         Every tower drops to half its size the moment a game starts, and the
+         ship and the fighters are half as quick to match. The globe does not
+         change at all: the same Earth simply reads as twice the size, which is
+         far cheaper and far more stable than scaling the world, since every
+         distance in the flight model and the map's own camera stay exactly
+         where they were.
+
+         The tips come BACK from the map rather than being guessed at. Docking
+         measures to the tower's axis, and an axis half as tall is a different
+         axis: shrinking the towers without taking the new tips would leave the
+         game docking with masts that are no longer there. */
+      if (scaleTowers) {
+        const tips = scaleTowers(WORLD_SCALE);
+        tipList = ipList.map((ip) => tips.get(ip)?.clone() ?? new THREE.Vector3());
+      }
       if (!combat.wave) startWave(combat, 1);
       /* This is a real click, which is the only thing a webview will start
          audio from. Decoding began back at attach; this is what lets it be

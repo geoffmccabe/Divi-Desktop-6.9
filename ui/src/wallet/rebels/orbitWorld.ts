@@ -74,11 +74,15 @@ export const MAX_ALT = planetDistance(PLANET_COUNT) + planetDiameter(PLANET_COUN
    fighting is completely untouched because the multiplier is exactly 1 out to
    sixty units, which is well above the towers.
 
-   Five times at full stretch, which puts the nearest planet about sixteen
-   seconds away and the furthest just under a minute. Squared rather than
+   Ten times at full stretch, which puts the nearest planet about twenty seconds
+   away and the furthest about a minute. Squared rather than
    linear, so it stays slow around the towers and only really opens up once
    Earth is behind you. */
-const OPEN_SPACE = 5;
+/* Doubled when cruise was halved, so crossing to a planet takes what it always
+   did. The point of halving the speed was to make the space AROUND EARTH feel
+   bigger; making the trip to Morrowain take two minutes instead of one was not
+   part of it. */
+const OPEN_SPACE = 10;
 export function cruiseScale(alt: number): number {
   const t = Math.min(1, Math.max(0, (alt - 60) / 700));
   return 1 + (OPEN_SPACE - 1) * t * t;

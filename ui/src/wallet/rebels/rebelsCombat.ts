@@ -155,7 +155,9 @@ export interface Coin {
   spin: number;
   value: number;
 }
-export const ENEMY_SPEED = 19;
+/* Halved along with the player's, so a dogfight plays exactly as it did while
+   the world around it feels twice the size. */
+export const ENEMY_SPEED = 9.5;
 export const ENEMY_TURN = 1.1;        /* radians per second of chase */
 export const ENEMY_FIRE_RANGE = 70;
 /** They carry the same magazine a player does, then have to break off and

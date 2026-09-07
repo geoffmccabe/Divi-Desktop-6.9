@@ -886,8 +886,10 @@ function run(c: CombatState, frames: number, w = world()) {
 
   const low = chaseSpeed(8);
   const high = chaseSpeed(500);
-  ok("fighters fly at their own pace near the towers", low > 10 && low < 40,
-     `${low.toFixed(0)} units a second`);
+  /* Around cruise, which is 8 since the world was doubled in size by halving
+     the speeds. A fighter is a little quicker, or it could never close. */
+  ok("fighters fly at their own pace near the towers", low > CRUISE && low < CRUISE * 3,
+     `${low.toFixed(1)} units a second against cruise ${CRUISE}`);
   /* Twice, not the full multiplier: a fighter's own height varies as it weaves
      around the player, so the measured figure sits under the ceiling. What is
      asserted below is the property that matters. */

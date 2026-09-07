@@ -77,7 +77,20 @@ function stubGlobe(towers: Array<[string, THREE.Vector3]>) {
   const fire = (k: string, e: Record<string, unknown>) => {
     for (const fn of on[k] ?? []) fn({ preventDefault() {}, ...e });
   };
-  return { scene, camera, dom, listeners, fire, tips: new Map(towers), radius: R };
+  const tips = new Map(towers);
+  /* Launching shrinks the towers and hands back where their tips ended up. The
+     stub does the same arithmetic the map does: half as tall a mast is half as
+     far off the surface. */
+  const scaleTowers = (s: number) => {
+    for (const [ip, tip] of tips) {
+      const height = tip.length() - R;
+      tips.set(ip, tip.clone().normalize().multiplyScalar(R + (height / towerScale) * s));
+    }
+    towerScale = s;
+    return tips;
+  };
+  let towerScale = 1;
+  return { scene, camera, dom, listeners, fire, tips, radius: R, scaleTowers };
 }
 
 /** Tower tips exactly where the real map puts them: R + 3, and R + 6 for your
@@ -628,6 +641,39 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
 
   ok("flying into the planet destroys the ship", ctl.hud().dead, "still alive");
   ctl.detach();
+}
+
+// 12. LAUNCHING MAKES THE WORLD BIGGER.
+//
+//     Every tower drops to half its size and the ship and fighters halve with
+//     them, so the same Earth reads as twice the size. The part worth testing is
+//     not the scale itself but that the game TAKES BACK the new tower tips:
+//     docking measures to a tower's axis, and an axis half as tall is a
+//     different axis, so shrinking without re-reading would leave the game
+//     docking with masts that are no longer there.
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const before = g.tips.get("self-ip")!.length();
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+
+  ok("the towers start full size", Math.abs(before - (R + 6)) < 0.01, `${before.toFixed(1)}`);
+
+  ctl.launch();
+  const after = g.tips.get("self-ip")!.length();
+  ok("launching halves the mast", Math.abs(after - (R + 3)) < 0.01,
+     `${before.toFixed(1)} -> ${after.toFixed(1)}`);
+
+  /* And the ship has to still be able to dock with the shorter one, which is
+     the whole reason the tips are handed back. */
+  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
+  ok("and the game is flying against the new tips", ctl.hud().homeDist < R,
+     `${ctl.hud().homeDist.toFixed(0)} from home`);
+
+  /* The map belongs to the wallet, so leaving puts it back. */
+  ctl.detach();
+  ok("leaving puts the towers back", Math.abs(g.tips.get("self-ip")!.length() - before) < 0.01,
+     `${g.tips.get("self-ip")!.length().toFixed(1)}`);
 }
 
 console.log(out.join("\n"));

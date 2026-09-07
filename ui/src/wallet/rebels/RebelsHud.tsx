@@ -321,7 +321,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
               HIGH SCORES
             </button>
             <button type="button" className="orbit-secondary" onClick={() => setMarket(true)}>
-              SHIP MARKET
+              SPACESHIPS
             </button>
           </div>
           {!hud.ready && slow && (

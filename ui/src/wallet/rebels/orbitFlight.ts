@@ -23,15 +23,23 @@
 import * as THREE from "three";
 import { R, MIN_ALT, MAX_ALT, cruiseScale } from "./orbitWorld";
 
-export const CRUISE = 16;      /* globe units per second, about 1024 km/s of Earth */
-export const BOOST = 38;
+/* ---- HALVED, and the towers with them ----
+   Geoff: "the speed of the player and enemies also reduces by half... this will
+   make the earth feel larger and the playing area just feel bigger."
+
+   Halving the speed and halving the towers is the cheap way to double the size
+   of a world, and it is the right way here: the globe, the map's camera and
+   every distance in the flight model stay exactly as they are, so nothing else
+   has to be re-tuned. Actually scaling the world would move all of it. */
+export const CRUISE = 8;       /* globe units per second, about 512 km/s of Earth */
+export const BOOST = 19;
 export const YAW_RATE = 1.5;   /* radians per second at full stick */
 /** Roll, in radians a second. Quicker than yaw: rolling is how you point a
  *  turn, so it has to happen faster than the turn it is setting up. */
 export const ROLL_RATE = 2.4;
 /** Sideways, in units a second at full deflection. A fraction of cruise: strafe
  *  is for lining up a shot, not for travelling. */
-export const STRAFE_SPEED = 9;
+export const STRAFE_SPEED = 4.5;
 /* Turn radius is speed divided by yaw rate, and it is the number that decides
    whether a tower can be docked with at all. At cruise the ship turns in about
    11 units, wider than the dock zone, so a player who overshoots can circle a
