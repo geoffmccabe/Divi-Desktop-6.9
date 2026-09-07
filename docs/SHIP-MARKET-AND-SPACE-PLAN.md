@@ -87,10 +87,13 @@ WKWebView.
   numbers, each turning on its own axis, loaded when the game first opens
   because they are always in the sky.
 
-### Phase 2 — the rest of the environment.
-Asteroid belts, the six stations, the warp gate and debris fields, scattered
-at fixed positions among the planets. Loaded with the planets, since they are
-scenery too.
+### Phase 2 — the rest of the environment. DONE (69.7.61).
+Six stations, four asteroid fields and the warp gate, on the same lattice as
+the planets but offset half a step so nothing sits inside a world, and spread
+through the depth of the sky rather than piled at one distance. Each is named
+and announces itself like a planet does. Stations are shown at a fifth of their
+true size in the sky, because Station 01 is 565 units across and at full size
+would dwarf the worlds it sits near; the Market shows their real numbers.
 
 ### Phase 3 — names and the approach readout. DONE for the planets (69.7.57).
 Every planet has a name, a type and a distance, and comes up in the top right
@@ -116,8 +119,7 @@ room already use, so a purchased ship becomes a set of numbers handed to
 
 ## Open question for Geoff
 
-The stations are enormous: `SM_Ship_Station_01` is 565 units across, which is
-nearly three Earth diameters at the game's scale. They are in the Market as
-ships, but as scenery they would dwarf the planets. I have assumed they are
-scaled down to about a fifth for the environment and shown at true size in the
-Market, and will say so on screen rather than quietly shrink them.
+Nothing in the Market is buyable. The ask was for the hulls, the turntable and
+the stats, so there are no prices and no currency: inventing an economy is a
+decision rather than a detail. If they should be bought with the DIVI the game
+already pays out, the number that matters is what a starting fighter costs.

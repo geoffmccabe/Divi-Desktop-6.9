@@ -16,14 +16,14 @@
 // something has to draw one.
 
 import * as THREE from "three";
-import { PLANET_COUNT, planetDiameter, planetDistance } from "./orbitWorld";
+import { PLANET_COUNT, EARTH_D, planetDiameter, planetDistance } from "./orbitWorld";
 import { loadModel, unitCopy } from "./spaceAssets";
 
 /** One thing hanging in the sky, and what to say about it. */
 export interface SpaceBody {
   id: string;
   name: string;
-  kind: "planet";
+  kind: "planet" | "station" | "belt" | "gate";
   /** What it is made of, how big, how far. Shown when you get close. */
   detail: string;
   /** Centre, in scene units. */
@@ -77,16 +77,28 @@ const PLANET_KINDS = [
  */
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 
-function directionFor(n: number): THREE.Vector3 {
-  /* A fixed co-prime step round the fourteen, which mixes the order without
-     changing the set of directions. 5 and 14 share no factors, so it visits
-     every one exactly once. */
-  const i = ((n - 1) * 5) % PLANET_COUNT;
+/** A deterministic 0..1 from a number. Scattering a hundred rocks needs some
+ *  randomness and none of it may be Math.random: the field has to be the same
+ *  field every time the game is opened, like everything else out here. */
+function hash(n: number): number {
+  const x = Math.sin(n * 12.9898 + 78.233) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+export function latticeDirection(slot: number, offset = 0): THREE.Vector3 {
+  const i = slot + offset;
   /* Evenly down the axis, avoiding the exact poles. */
   const y = 1 - (2 * (i + 0.5)) / PLANET_COUNT;
   const r = Math.sqrt(Math.max(0, 1 - y * y));
   const theta = GOLDEN_ANGLE * i;
   return new THREE.Vector3(r * Math.cos(theta), y, r * Math.sin(theta));
+}
+
+function directionFor(n: number): THREE.Vector3 {
+  /* A fixed co-prime step round the fourteen, which mixes the order without
+     changing the set of directions. 5 and 14 share no factors, so it visits
+     every slot exactly once. */
+  return latticeDirection(((n - 1) * 5) % PLANET_COUNT);
 }
 
 /* ---- colour ----
@@ -107,6 +119,64 @@ const PLANET_TINTS = [
   0xd45bb5, /* Sepharis     crystalline    */
   0x3f8f4a, /* Yggdral      forest         */
   0x2f6e73, /* Morrowain    shrouded giant */
+];
+
+/* ---- everything that is not a planet ----
+   Stations, asteroid fields and the warp gate. Same rules as the planets: a
+   fixed place, a name, something to say about itself, and it announces itself
+   within three of its own size.
+
+   They are laid out BETWEEN the planets rather than on top of them, on the same
+   golden-angle lattice offset by half a step, so the sky has something in it at
+   every distance instead of fourteen worlds and a lot of nothing. */
+
+/** How much a station is shrunk for the sky.
+ *
+ *  The models are enormous: Station 01 is 565 units across its own bounding
+ *  box, which at this game's scale is nearly three Earth diameters. Shown at
+ *  true size they would dwarf the planets they orbit near and stop reading as
+ *  stations at all. A fifth keeps them unmistakably big without competing with
+ *  a world. The Ship Market shows their real numbers. */
+const STATION_SCALE = 0.2;
+
+interface Furniture {
+  id: string;
+  name: string;
+  kind: "station" | "belt" | "gate";
+  detail: string;
+  /** Which lattice slot, and how many Earth diameters out. */
+  slot: number;
+  distance: number;
+  size: number;
+  /** Belts only: how many rocks, and how wide the field is. */
+  rocks?: number;
+}
+
+const FURNITURE: Furniture[] = [
+  { id: "space_SM_Ship_Station_01", name: "Kestrel Anchorage", kind: "station",
+    detail: "Deep-space anchorage · repair and resupply · crew 6,000", slot: 0, distance: 4.4, size: 565 * STATION_SCALE },
+  { id: "space_SM_Ship_Station_02", name: "Ardent Reach", kind: "station",
+    detail: "Trade platform · open registry · crew 6,600", slot: 3, distance: 7.6, size: 498 * STATION_SCALE },
+  { id: "space_SM_Ship_Station_03", name: "Colm Vantage", kind: "station",
+    detail: "Survey station · long-range sensors · crew 7,300", slot: 6, distance: 10.4, size: 268 * STATION_SCALE },
+  { id: "space_SM_Ship_Station_04", name: "Ninth Gate Keep", kind: "station",
+    detail: "Fortified waypoint · restricted approach · crew 8,000", slot: 9, distance: 13.5, size: 258 * STATION_SCALE },
+  { id: "space_SM_Ship_Station_05", name: "Halvern Spire", kind: "station",
+    detail: "Refinery and yard · hull works · crew 8,800", slot: 11, distance: 15.8, size: 292 * STATION_SCALE },
+  { id: "space_SM_Ship_Station_06", name: "Low Verge", kind: "station",
+    detail: "Relay post · unmanned most of the year · crew 9,700", slot: 13, distance: 17.4, size: 101 * STATION_SCALE },
+
+  { id: "space_SM_Env_Asteroid_01", name: "The Shoals", kind: "belt",
+    detail: "Asteroid field · dense · navigation hazard", slot: 1, distance: 5.6, size: 220, rocks: 90 },
+  { id: "space_SM_Env_Asteroid_03", name: "Bruin Drift", kind: "belt",
+    detail: "Asteroid field · iron-bearing · lightly worked", slot: 5, distance: 9.3, size: 300, rocks: 110 },
+  { id: "space_SM_Env_Asteroid_05", name: "The Long Scatter", kind: "belt",
+    detail: "Asteroid field · strung out · poorly charted", slot: 8, distance: 12.6, size: 420, rocks: 140 },
+  { id: "space_SM_Env_Asteroid_07", name: "Cinder Bank", kind: "belt",
+    detail: "Asteroid field · burnt rock · no claim filed", slot: 12, distance: 16.7, size: 340, rocks: 120 },
+
+  { id: "space_SM_Veh_WarpGate_Outer_01", name: "Threshold Gate", kind: "gate",
+    detail: "Warp gate · destination unset · do not approach under power", slot: 4, distance: 8.2, size: 90 },
 ];
 
 /** Every planet, described. Cheap, synchronous, and has nothing to do with
@@ -136,6 +206,25 @@ export function planetLayout(): Array<Omit<SpaceBody, "object">> {
     });
   }
   return out;
+}
+
+/** Everything that is not a planet, in its place. */
+export function furnitureLayout(): Array<Omit<SpaceBody, "object"> & { rocks?: number; slotSeed: number }> {
+  return FURNITURE.map((f) => ({
+    id: f.id,
+    name: f.name,
+    kind: f.kind,
+    detail: f.detail,
+    /* Half a step round the lattice from the planets, so nothing sits inside
+       a world. */
+    at: latticeDirection(f.slot, 0.5).multiplyScalar(EARTH_D * f.distance),
+    slotSeed: f.slot * 13.7,
+    diameter: f.size,
+    tint: 0xffffff,
+    spin: f.kind === "gate" ? 0.12 : 0.03,
+    axis: new THREE.Vector3(Math.sin(f.slot * 2.1), 1, Math.cos(f.slot * 1.3)).normalize(),
+    rocks: f.rocks,
+  }));
 }
 
 /**
@@ -182,6 +271,49 @@ export function createSpace(): {
         /* One planet that will not load is one planet missing, not a broken
            sky. It keeps its place in the list and its name still shows. */
       });
+  }
+
+  for (const spec of furnitureLayout()) {
+    const holder = new THREE.Group();
+    holder.position.copy(spec.at);
+    group.add(holder);
+    const { rocks, ...rest } = spec;
+    bodies.push({ ...rest, object: holder });
+
+    void loadModel(spec.id)
+      .then((proto) => {
+        if (dead) return;
+        if (rocks) {
+          /* A FIELD, not one big rock. The same model over and over at
+             different sizes and attitudes, spread through a flattened blob:
+             cloning shares the geometry, so a hundred of them cost one. */
+          for (let i = 0; i < rocks; i++) {
+            const rock = unitCopy(proto, { unlit: true });
+            /* Deterministic scatter, so the field is the same field every
+               time, like everything else out here. */
+            const a = hash(i * 3.1 + spec.slotSeed);
+            const b = hash(i * 7.7 + spec.slotSeed);
+            const c = hash(i * 11.3 + spec.slotSeed);
+            const r = spec.diameter * 0.5 * Math.cbrt(a);
+            const theta = b * Math.PI * 2;
+            const phi = Math.acos(2 * c - 1);
+            rock.position.set(
+              r * Math.sin(phi) * Math.cos(theta),
+              /* Flattened, because a belt is a disc rather than a ball. */
+              r * Math.cos(phi) * 0.28,
+              r * Math.sin(phi) * Math.sin(theta),
+            );
+            rock.rotation.set(a * 7, b * 7, c * 7);
+            rock.scale.setScalar(spec.diameter * (0.012 + a * 0.03));
+            holder.add(rock);
+          }
+        } else {
+          const model = unitCopy(proto, { unlit: true });
+          model.scale.setScalar(spec.diameter);
+          holder.add(model);
+        }
+      })
+      .catch(() => { /* one missing station is not a broken sky */ });
   }
 
   return {

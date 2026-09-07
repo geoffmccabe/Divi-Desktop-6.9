@@ -8,7 +8,7 @@
 
 import * as THREE from "three";
 import { R, MAX_ALT, EARTH_D, PLANET_COUNT, planetDiameter, planetDistance } from "./orbitWorld";
-import { planetLayout } from "./spaceEnvironment";
+import { planetLayout, furnitureLayout } from "./spaceEnvironment";
 
 const out: string[] = [];
 let failures = 0;
@@ -159,6 +159,42 @@ function ok(name: string, cond: boolean, extra = "") {
   });
   ok("and none of them is grey", flat.length === 0,
      flat.map((p) => `${p.name} #${p.tint.toString(16)}`).join(", "));
+}
+
+// 4d. The rest of the environment: stations, belts and the gate.
+//
+//     Geoff: "there's also multiple asteroid belts and space stations, so add
+//     all those things somewhere randomly placed somewhere in the environment
+//     I'm describing."
+{
+  const stuff = furnitureLayout();
+  const kinds = new Set(stuff.map((f) => f.kind));
+  ok("there are stations", stuff.filter((f) => f.kind === "station").length === 6,
+     `${stuff.filter((f) => f.kind === "station").length}`);
+  ok("there are several asteroid fields", stuff.filter((f) => f.kind === "belt").length >= 3,
+     `${stuff.filter((f) => f.kind === "belt").length}`);
+  ok("and a warp gate", kinds.has("gate"));
+  ok("every one of them is named", stuff.every((f) => f.name.length > 3 && f.detail.length > 10));
+  ok("and no two share a name", new Set(stuff.map((f) => f.name)).size === stuff.length);
+
+  /* Out among the planets rather than piled at one distance, and inside the
+     sky so they can be flown to. */
+  const ceiling = R + MAX_ALT;
+  ok("all of it is inside the sky",
+     stuff.every((f) => f.at.length() + f.diameter * 3 <= ceiling),
+     stuff.filter((f) => f.at.length() + f.diameter * 3 > ceiling).map((f) => f.name).join(", "));
+  const spread = Math.max(...stuff.map((f) => f.at.length())) - Math.min(...stuff.map((f) => f.at.length()));
+  ok("and it is spread through the depth of it", spread > EARTH_D * 8,
+     `${Math.round(spread)} units between nearest and furthest`);
+
+  /* THE ONE THAT MATTERS: nothing is inside a planet. The furniture sits on
+     the same lattice as the worlds, offset by half a step, and getting that
+     offset wrong would put a station inside Threx. */
+  const worlds = planetLayout();
+  const clashes = stuff.filter((f) =>
+    worlds.some((w) => f.at.distanceTo(w.at) < (w.diameter + f.diameter) / 2));
+  ok("nothing is buried inside a planet", clashes.length === 0,
+     clashes.map((f) => f.name).join(", "));
 }
 
 // 5. The approach ring is three of the body's OWN diameters.
