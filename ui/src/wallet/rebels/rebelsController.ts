@@ -10,7 +10,7 @@
 import * as THREE from "three";
 import type { GlobeFlight } from "../GlobeMap";
 import {
-  createFlight, stepFlight, MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS,
+  createFlight, stepFlight, MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS, MAX_VIEW,
   GUARD_ABSORB, GUARD_SECONDS,
   type Flight, type Stick,
 } from "./orbitFlight";
@@ -25,6 +25,10 @@ import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsS
 import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import { installSky, type SkyHandle } from "./starfield";
+import { loadModel, unitCopy } from "./spaceAssets";
+import { loadShip } from "./shipChoice";
+import { loadPaint, makeRepaintable, type PaintHandle } from "./shipColours";
+import { fitCollider, placeCollider, noseOf, type HitSphere } from "./shipCollider";
 import { pulseHealth } from "./healthPulse";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
@@ -56,6 +60,8 @@ export interface HudState {
   homeName: string;
   homeDist: number;
   towers: number;
+  /** How far the camera sits behind the ship. Zero is the cockpit. */
+  view: number;
   /** Whatever the ship is near enough to name, or null out in open space.
    *  "Near enough" is within three of the thing's own diameters, so a giant
    *  announces itself from further off than a rock does, which is right. */
@@ -93,7 +99,7 @@ const BLANK: HudState = {
   ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO,
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
-  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
+  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
 };
@@ -133,6 +139,23 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let guardShell: ReturnType<typeof makeGuardShell> | null = null;
   let space: ReturnType<typeof createSpace> | null = null;
   let sky: SkyHandle | null = null;
+
+  /* ---- the ship you can see ----
+     Only built once somebody pulls the camera back, because in the cockpit
+     there is nothing to draw and a fighter's worth of geometry for a model
+     nobody looks at is a fighter's worth of geometry wasted. */
+  let shipModel: THREE.Object3D | null = null;
+  let shipPaint: PaintHandle | null = null;
+  let shipHull: HitSphere[] = [];
+  let shipLoading = false;
+  /** How long the hull is in world units, which sets both how far the camera
+   *  pulls back and how big a target the ship is. */
+  const SHIP_LENGTH = 2.6;
+  /** The hull's spheres, placed in the world, reused every frame. */
+  const hullWorld: Array<{ at: THREE.Vector3; r: number }> = [];
+  const shipQuat = new THREE.Quaternion();
+  const shipM4 = new THREE.Matrix4();
+  const zero = new THREE.Vector3();
   /** What the ship is currently close enough to, so the readout only changes
    *  when it actually changes. */
   let nearBody: string = "";
@@ -374,6 +397,52 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
   /* And no context menu in the middle of a dogfight. */
   function onContextMenu(e: Event) { e.preventDefault(); }
+
+  /**
+   * Option and the wheel pulls the camera out of the cockpit.
+   *
+   * Option-qualified on purpose: the wheel on its own belongs to whatever the
+   * player has open, and a game that swallows every scroll is a game that fights
+   * the app it lives in. DreadRoot does the same thing for the same reason.
+   */
+  function onWheel(e: WheelEvent) {
+    if (!flying || !flight) return;
+    if (!e.altKey) return;
+    e.preventDefault();
+    flight.view = Math.max(0, Math.min(MAX_VIEW, flight.view - Math.sign(e.deltaY) * 0.5));
+    if (flight.view > 0) ensureShip();
+    setHud({ view: flight.view });
+  }
+
+  /** The tip of the hull in the world: where the guns and the tube are. */
+  const noseLocal = new THREE.Vector3();
+  function shipNose(f: { pos: THREE.Vector3; fwd: THREE.Vector3 }): THREE.Vector3 {
+    if (shipHull.length === 0) return f.pos.clone().addScaledVector(f.fwd, SHIP_LENGTH * 0.5);
+    noseLocal.copy(noseOf(shipHull)).multiplyScalar(SHIP_LENGTH).applyQuaternion(shipQuat);
+    return f.pos.clone().add(noseLocal);
+  }
+
+  /** Fetch the hull the first time the camera leaves the cockpit. */
+  function ensureShip() {
+    if (shipModel || shipLoading || !scene) return;
+    shipLoading = true;
+    const id = loadShip();
+    void loadModel(id)
+      .then((proto) => {
+        if (!scene) return;
+        const model = unitCopy(proto);
+        model.scale.setScalar(SHIP_LENGTH);
+        shipPaint = makeRepaintable(model);
+        shipPaint.apply(loadPaint());
+        /* Fitted BEFORE the model is scaled into the world, so the spheres are
+           in the hull's own space and can be turned with it. */
+        shipHull = fitCollider(model);
+        shipModel = model;
+        scene.add(model);
+      })
+      .catch(() => { /* no model, no third person: the cockpit still flies */ })
+      .finally(() => { shipLoading = false; });
+  }
   function onUp(e: PointerEvent) {
     if (e.button === 2) { stick.guard = false; return; }
     stick.firing = false;
@@ -484,6 +553,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
         approach = 0;
 
+        dom.addEventListener("wheel", onWheel, { passive: false });
         dom.addEventListener("pointermove", onMove);
         dom.addEventListener("pointerdown", onDown);
         dom.addEventListener("contextmenu", onContextMenu);
@@ -625,6 +695,31 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         nearTower = res.nearTower;
         dockBlock = res.dockBlock;
 
+        /* ---- the ship you can see, and the camera behind it ----
+           The hull sits at the flight position and the CAMERA pulls back from
+           it, rather than the ship being pushed away from a fixed camera: a
+           ship that slid backwards out of its own cockpit would leave its guns
+           and its collider behind it.
+
+           Pulled back along the nose and lifted a little, so the hull sits low
+           in the frame and the crosshair is not behind it. */
+        if (shipModel && flight.view > 0.01) {
+          shipModel.visible = true;
+          shipModel.position.copy(flight.pos);
+          /* Synty hulls face -Z, which is also what lookAt points down, so the
+             model can be oriented straight from the flight frame. */
+          shipM4.lookAt(zero, flight.fwd, flight.up);
+          shipQuat.setFromRotationMatrix(shipM4);
+          shipModel.quaternion.copy(shipQuat);
+
+          /* And the hull becomes what bullets hit, instead of the ball around
+             the camera. */
+          placeCollider(shipHull, flight.pos, shipQuat, SHIP_LENGTH, hullWorld);
+        } else if (shipModel) {
+          shipModel.visible = false;
+          hullWorld.length = 0;
+        }
+
         /* THE SHIP'S OWN UP, not the planet's.
            Deriving it from the position was what pinned the horizon level: the
            camera stayed upright through a climb no matter where the nose was
@@ -655,7 +750,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           camera.quaternion.multiply(s.qBank);
         }
 
+        /* Behind and slightly above, or exactly at the ship in the cockpit. */
         camera.position.copy(flight.pos);
+        if (flight.view > 0.01) {
+          const back = flight.view * SHIP_LENGTH * 1.6 + SHIP_LENGTH * 0.9;
+          camera.position
+            .addScaledVector(flight.fwd, -back)
+            .addScaledVector(flight.up, back * 0.28);
+        }
         camera.updateMatrixWorld();
 
         /* The ears go where the cockpit is, facing the way it faces, so a shot
@@ -708,7 +810,25 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         }
 
         if (res.fired) {
-          const muzzles = fireGuns(combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect);
+          /* ---- where the guns are ----
+             In the cockpit they come from the EDGES of the frame at eye level,
+             which is the arcade convention and the only sensible answer when
+             there is no ship on screen to hang them off.
+
+             In third person there IS one, and fire that appears beside the
+             camera rather than at the hull reads as broken. So the muzzles move
+             to the ship's nose: the two barrels straddle it by a fifth of the
+             hull's length, still converging on the crosshair, so the rounds
+             leave the ship and meet where you are aiming. */
+          let at: [THREE.Vector3, THREE.Vector3] | undefined;
+          if (shipModel && flight.view > 0.01) {
+            const nose = shipNose(flight);
+            const side = new THREE.Vector3().crossVectors(flight.fwd, flight.up)
+              .normalize().multiplyScalar(SHIP_LENGTH * 0.2);
+            at = [nose.clone().add(side), nose.clone().sub(side)];
+          }
+          const muzzles = fireGuns(
+            combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, "", at);
           fx.muzzle(muzzles[0]);
           fx.muzzle(muzzles[1]);
           playGunSound();
@@ -719,6 +839,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           tips: tipList,
           playerPos: flight.pos,
           playerFwd: flight.fwd,
+          /* In third person the HULL is the target, fitted from the model's own
+             geometry. In the cockpit there is nothing on screen to judge a near
+             miss against, so the single radius round the camera is both fairer
+             and cheaper. */
+          players: hullWorld.length > 0
+            ? [{ id: "", pos: flight.pos, fwd: flight.fwd, hull: hullWorld }]
+            : undefined,
           damageScale: damageScale(),
         });
 
@@ -732,7 +859,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           };
           if (!detonateOldest(combat, w) && flight.torpedoes > 0) {
             flight.torpedoes -= 1;
-            fireTorpedo(combat, flight.pos, flight.fwd);
+            /* Out of the tube at the nose, not out of the camera. */
+            fireTorpedo(combat, shipNose(flight), flight.fwd);
             playTorpedoSound();
           }
         }
@@ -918,6 +1046,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       stopRechargeSound();
       wasDocking = false;
       if (dom) {
+        dom.removeEventListener("wheel", onWheel);
         dom.removeEventListener("pointermove", onMove);
         dom.removeEventListener("pointerdown", onDown);
         dom.removeEventListener("contextmenu", onContextMenu);
@@ -942,6 +1071,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (scene) {
         for (const m of enemyMeshes) scene.remove(m);
         for (const r of enemyShields) scene.remove(r.group);
+        if (shipModel && scene) scene.remove(shipModel);
+        shipModel = null;
+        shipPaint = null;
+        shipHull = [];
         sky?.restore();
         sky = null;
         if (space) { scene.remove(space.group); space.dispose(); space = null; }

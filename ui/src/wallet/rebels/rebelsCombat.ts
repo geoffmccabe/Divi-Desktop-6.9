@@ -580,9 +580,20 @@ export function fireGuns(
   fovDeg: number,
   aspect: number,
   owner = "",
+  /**
+   * Where the barrels are, when the caller knows better.
+   *
+   * From the cockpit they are worked out from the camera's frustum, because
+   * there is no ship on screen and fire arriving from the edges of the frame IS
+   * the ship. In third person there is a hull, and fire that appears beside the
+   * camera rather than at its nose reads as broken, so the caller passes the
+   * nose instead. Either way the bullets are made HERE, so tracers, ownership
+   * and lifetimes cannot drift apart between the two.
+   */
+  at?: [THREE.Vector3, THREE.Vector3],
 ): [THREE.Vector3, THREE.Vector3] {
-  const m: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
-  gunMuzzles(pos, fwd, up, fovDeg, aspect, m);
+  const m: [THREE.Vector3, THREE.Vector3] = at ?? [new THREE.Vector3(), new THREE.Vector3()];
+  if (!at) gunMuzzles(pos, fwd, up, fovDeg, aspect, m);
   /* Both barrels are aimed at the same point down the middle, so the two
      streams cross where the crosshair is and anything under it is on the line. */
   const target = new THREE.Vector3().copy(pos).addScaledVector(fwd, CONVERGE);

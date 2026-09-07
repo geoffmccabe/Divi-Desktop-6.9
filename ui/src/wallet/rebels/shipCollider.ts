@@ -60,36 +60,74 @@ export function fitCollider(root: THREE.Object3D): HitSphere[] {
 
   if (points.length === 0) return [];
 
-  /* The longest axis is the one to slice along: it is the length of the ship,
-     and slicing across it would give one fat sphere per wing and nothing down
-     the fuselage. */
   const box = new THREE.Box3().setFromPoints(points);
   const size = new THREE.Vector3();
   const centre = new THREE.Vector3();
   box.getSize(size);
   box.getCenter(centre);
-  const axis: 0 | 1 | 2 = size.x >= size.y && size.x >= size.z ? 0 : size.y >= size.z ? 1 : 2;
+
+  /* ---- which way is "along the ship" ----
+     The longest axis, EXCEPT that on a fighter it is a coin toss: Fighter 01 is
+     13.3 across the wings and 12.9 from nose to tail, and slicing across the
+     wings would give one fat sphere per wingtip and nothing down the fuselage.
+     So a near-tie goes to Z, which is the length axis for every hull in this
+     pack. */
+  const axis: 0 | 1 | 2 = (() => {
+    const longest = Math.max(size.x, size.y, size.z);
+    if (size.z >= longest * 0.85) return 2;
+    return size.x >= size.y && size.x >= size.z ? 0 : size.y >= size.z ? 1 : 2;
+  })();
   const lo = box.min.getComponent(axis);
   const span = Math.max(1e-6, size.getComponent(axis));
 
-  const buckets: THREE.Vector3[][] = Array.from({ length: SLICES }, () => []);
-  for (const p of points) {
-    const t = (p.getComponent(axis) - lo) / span;
-    buckets[Math.min(SLICES - 1, Math.max(0, Math.floor(t * SLICES)))].push(p);
-  }
+  /* ---- a SLIDING window, not disjoint buckets ----
+     Bucketing vertices into slices sounds right and falls over on exactly the
+     shapes this pack is made of. A long flat panel has vertices only at its
+     corners, so the slices in between get nothing and vanish, and a hull that
+     should be seven spheres comes out as three. Each slice therefore takes
+     every vertex within one and a half slice widths of it, so a span with no
+     vertices of its own still gets a sphere sized by the panel running past it.
+     The test caught this; a box fuselage produced three spheres and I would not
+     have noticed on a model that happens to be denser.
 
+     One slice width either side rather than more: a window wide enough to never
+     miss is also wide enough to smear the wings along the fuselage, and a shot
+     that should pass behind a wing would then hit it. */
+  const half = 1.2 / SLICES;
   const out: HitSphere[] = [];
-  for (const bucket of buckets) {
-    if (bucket.length === 0) continue;
+  for (let i = 0; i < SLICES; i++) {
+    const mid = (i + 0.5) / SLICES;
+    const near = points.filter((p) => {
+      const t = (p.getComponent(axis) - lo) / span;
+      return Math.abs(t - mid) <= half;
+    });
+    if (near.length === 0) continue;
+
+    /* Centred on the slice itself along the ship, and on the vertices across
+       it: a sphere for the nose belongs at the nose, not at the average of
+       whatever happened to fall in its window. */
     const c = new THREE.Vector3();
-    for (const p of bucket) c.add(p);
-    c.divideScalar(bucket.length);
+    for (const p of near) c.add(p);
+    c.divideScalar(near.length);
+    c.setComponent(axis, lo + mid * span);
+
+    /* Sized by the CROSS-SECTION at this slice, not by the 3D distance to the
+       furthest vertex in the window. The sphere is already centred on its
+       slice, so a wing vertex a slice away should set the radius by how far out
+       it reaches, not by how far away it is along the ship — measuring the
+       diagonal made every sphere near a wing too big, and then pulling them all
+       in to compensate left a quarter of the wing non-solid. */
     let r = 0;
-    for (const p of bucket) r = Math.max(r, c.distanceTo(p));
-    /* A slice's sphere reaches every vertex in it, which makes the chain a
-       little generous where the hull tapers. Pulled in so a shot just past a
-       wingtip misses rather than clipping an invisible edge. */
-    out.push({ local: c.sub(centre), radius: r * 0.82 });
+    for (const p of near) {
+      const dx = p.x - c.x, dy = p.y - c.y, dz = p.z - c.z;
+      const along = axis === 0 ? dx : axis === 1 ? dy : dz;
+      r = Math.max(r, Math.sqrt(Math.max(0, dx * dx + dy * dy + dz * dz - along * along)));
+    }
+    /* A touch under the true cross-section, so a round that visibly clears the
+       hull clears it. Erring this way is deliberate: a shot that should have
+       missed and hits is unfair, and one that should have hit and misses is
+       merely lucky. */
+    out.push({ local: c.sub(centre), radius: r * 0.9 });
   }
   return out;
 }
@@ -124,11 +162,17 @@ export function colliderBound(fitted: HitSphere[]): number {
   return far;
 }
 
-/** Where the guns and the tubes are, in the model's own space: the front of the
- *  hull on its longest axis, which is the nose of everything in this pack. */
+/**
+ * Where the guns and the tubes are: the front of the hull.
+ *
+ * The END of the chain, whichever axis it was sliced along, and the end with
+ * the SMALLER sphere. A ship tapers to its nose and is widest at its engines,
+ * so the narrower end is the front — which beats assuming a sign on an axis,
+ * since half this pack could be modelled either way round.
+ */
 export function noseOf(fitted: HitSphere[]): THREE.Vector3 {
   if (fitted.length === 0) return new THREE.Vector3();
-  let best = fitted[0];
-  for (const s of fitted) if (s.local.z < best.local.z) best = s;
-  return best.local.clone();
+  const first = fitted[0];
+  const last = fitted[fitted.length - 1];
+  return (first.radius <= last.radius ? first : last).local.clone();
 }

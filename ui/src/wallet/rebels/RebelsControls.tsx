@@ -19,6 +19,7 @@ export const CONTROLS: ControlLine[] = [
   { keys: "HOLD RIGHT CLICK", what: "Shield for 0.5 seconds. Absorbs 80% of a hit. Ten charges." },
   { keys: "T or CTRL + CLICK", what: "Torpedo. Four carried. Press again to detonate, or wait 4 sec." },
   { keys: "SHIFT", what: "Boost." },
+  { keys: "OPTION + WHEEL", what: "Pull the camera out of the cockpit to see your ship, and back in." },
   { keys: "Z", what: "Brake and slow down." },
   { keys: "ESC", what: "Back to the map." },
 ];
