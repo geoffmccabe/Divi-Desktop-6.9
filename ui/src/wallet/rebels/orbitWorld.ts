@@ -18,14 +18,46 @@ export const R = 100;
 /** Towers are 3 units tall (your own node's is 6), so the floor sits below
  *  them: you fly BETWEEN the towers, not over their tips. */
 export const MIN_ALT = 0.8;
-/** The edge of the sky, as a multiple of the planet's radius.
+/* ---- the other worlds ----
+   Geoff's layout, in his words: the first planet is 20% of Earth's diameter
+   and five Earth diameters away, the next is 30% and six diameters, and each
+   one after that is ten percent bigger and one diameter further out. Fourteen
+   of them, which is exactly how many the Synty pack has.
+
+   Written as functions rather than a table because the ceiling below is
+   derived from them. Getting those two out of step is not a subtle bug: it is
+   planets you can see and can never reach. */
+export const PLANET_COUNT = 14;
+/** An Earth diameter, which is the unit Geoff specified everything in. */
+export const EARTH_D = R * 2;
+
+/** How wide planet n is, for n from 1 to 14. 20% of Earth up to 150%. */
+export function planetDiameter(n: number): number {
+  return EARTH_D * (0.1 + 0.1 * n);
+}
+
+/** How far planet n sits from Earth's centre. Five Earth diameters up to 18. */
+export function planetDistance(n: number): number {
+  return EARTH_D * (4 + n);
+}
+
+/** The edge of the sky.
  *
- *  This used to be thirty units, which on a hundred-unit planet is a ceiling
- *  you can touch in three seconds: Geoff described it exactly, an invisible
- *  ceiling he could not fly through and no way to get out to space. It is a
- *  limit rather than no limit only so that pointing at the stars and holding
- *  boost cannot strand a player an hour from anything worth shooting. */
-export const MAX_ALT = R * 8;
+ *  It used to be thirty units, which on a hundred-unit planet is a ceiling you
+ *  can touch in three seconds: Geoff described it exactly, an invisible ceiling
+ *  he could not fly through and no way to get out to space.
+ *
+ *  It is now set from the planets rather than picked, because the outermost one
+ *  is 3,600 units out and a ceiling short of that would mean fourteen worlds
+ *  hanging in the sky that could be looked at and never visited.
+ *
+ *  Three and a half of the outermost planet's own diameters past it, not two:
+ *  the ring where a body announces its name is three diameters, so a smaller
+ *  margin would have left the two outer worlds nameable only from a place the
+ *  ship is not allowed to be. The test found that; the first guess was wrong.
+ *  There is still an edge, so pointing at the stars and walking away cannot
+ *  strand anybody. */
+export const MAX_ALT = planetDistance(PLANET_COUNT) + planetDiameter(PLANET_COUNT) * 3.5 - R;
 
 /** Latitude and longitude in degrees to a point on a sphere of this radius. */
 export function llToVec(lat: number, lon: number, radius: number, out = new THREE.Vector3()): THREE.Vector3 {

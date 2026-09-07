@@ -22,6 +22,8 @@ import {
 } from "./rebelsCombat";
 import { userWonRecently } from "../stakeWin";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
+import { R, MAX_ALT } from "./orbitWorld";
+import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
   type Fx, type ShieldRig,
@@ -52,6 +54,10 @@ export interface HudState {
   homeName: string;
   homeDist: number;
   towers: number;
+  /** Whatever the ship is near enough to name, or null out in open space.
+   *  "Near enough" is within three of the thing's own diameters, so a giant
+   *  announces itself from further off than a rock does, which is right. */
+  nearby: { name: string; detail: string } | null;
   /** Fighters in the air right now, and how many you have taken down. */
   contacts: number;
   kills: number;
@@ -85,7 +91,7 @@ const BLANK: HudState = {
   ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO,
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
-  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
+  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
 };
@@ -123,6 +129,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* One shield rig per fighter model, hanging off it. */
   const enemyShields: ShieldRig[] = [];
   let guardShell: ReturnType<typeof makeGuardShell> | null = null;
+  let space: ReturnType<typeof createSpace> | null = null;
+  /** What the ship is currently close enough to, so the readout only changes
+   *  when it actually changes. */
+  let nearBody: string = "";
 
   let tipList: THREE.Vector3[] = [];
   let ipList: string[] = [];
@@ -373,7 +383,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         savedNear = camera.near;
         savedFar = camera.far;
         camera.near = 0.05;
-        camera.far = Math.max(camera.far, 4000);
+        /* Far enough to SEE the outer planets, which is a good deal further
+           than the old four thousand: the fourteenth sits 3,600 units out and
+           is 300 across, so anything short of this simply does not draw it. */
+        camera.far = Math.max(camera.far, (R + MAX_ALT) * 2.6);
         camera.updateProjectionMatrix();
 
         /* Start decoding the samples now. Waiting for the first trigger pull
@@ -382,6 +395,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         fx = createFx();
         scene.add(fx.group);
+
+        /* The sky. Built here rather than on launch because the planets are
+           always there, and because the first run has to fetch them: starting
+           at attach means they are usually in place by the time anyone has
+           finished reading the launch card. */
+        space = createSpace();
+        scene.add(space.group);
         guardShell = makeGuardShell();
         scene.add(guardShell.mesh);
         /* One prototype per tier, cloned per fighter. Seven models built once
@@ -453,6 +473,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           camera.up.set(0, 1, 0);
           camera.lookAt(0, 0, 0);
           fx.step(dt, camera);
+          /* The worlds turn while the launch card is up, so the sky is alive
+             before anyone has pressed anything. */
+          space?.step(dt);
           return;
         }
 
@@ -523,6 +546,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
           camera.updateMatrixWorld();
           fx.step(dt, camera);
+          space?.step(dt);
           if (diveT >= 1) phase = "fly";
           return;
         }
@@ -579,6 +603,22 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         if (guardShell) {
           guardShell.mesh.position.copy(flight.pos);
           guardShell.step(performance.now() / 1000, Math.min(1, flight.guardFor / (GUARD_SECONDS * 0.6)));
+        }
+
+        /* ---- the sky, and what you are near ----
+           The worlds turn on their own axes whether anyone is watching or not.
+           Coming within three of a body's own diameters names it in the corner;
+           leaving clears it. Compared by name so the HUD is only pushed when the
+           answer actually changes, rather than on every frame you spend near
+           the same planet. */
+        if (space) {
+          space.step(dt);
+          const found: SpaceBody | null = space.near(flight.pos, 3);
+          const name = found?.name ?? "";
+          if (name !== nearBody) {
+            nearBody = name;
+            setHud({ nearby: found ? { name: found.name, detail: found.detail } : null });
+          }
         }
 
         /* ---- guns ----
@@ -828,6 +868,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (scene) {
         for (const m of enemyMeshes) scene.remove(m);
         for (const r of enemyShields) scene.remove(r.group);
+        if (space) { scene.remove(space.group); space.dispose(); space = null; }
         if (fx) scene.remove(fx.group);
       }
       for (const r of enemyShields) r.dispose();

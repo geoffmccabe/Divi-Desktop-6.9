@@ -129,6 +129,14 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         <div className="orbit-row orbit-dim">ALT {Math.round(hud.alt * 64).toLocaleString()} <span className="orbit-dim">km</span></div>
       </div>
       <div className="orbit-tr">
+        {/* What you are near, first, because it is the thing that just changed
+            and the rest of this corner is standing information. */}
+        {hud.nearby && (
+          <div className="orbit-nearby">
+            <div className="orbit-row orbit-nearby-name">{hud.nearby.name}</div>
+            <div className="orbit-row orbit-dim">{hud.nearby.detail}</div>
+          </div>
+        )}
         <div className="orbit-row">HOME {hud.homeName}</div>
         <div className="orbit-row orbit-dim">
           {hud.homeDist > 0 ? `${Math.round(hud.homeDist * 64)} km away` : " "}

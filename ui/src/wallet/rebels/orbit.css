@@ -23,6 +23,20 @@
   text-shadow: 0 0 calc(var(--glow-strength) * 0.4) hsl(var(--glow-color) / 0.7);
 }
 
+/* The name of whatever world you are near. Set apart from the standing
+   readouts below it, because it appears and disappears as you fly and needs to
+   read as an event rather than as another gauge. */
+.orbit-nearby {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid hsl(var(--rebels-hud) / 0.25);
+}
+.orbit-nearby-name {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  color: hsl(var(--primary));
+}
+
 .orbit-tl, .orbit-tr { position: absolute; top: 14px; }
 .orbit-tl { left: 16px; }
 .orbit-tr { right: 16px; text-align: right; }

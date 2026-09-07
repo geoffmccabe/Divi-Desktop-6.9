@@ -135,12 +135,23 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 
   /* There is still an edge to the sky, so a player who points up and walks
      away is not lost for ever. */
+  /* Space is genuinely a place you fly to: nose up, boost, and keep going. */
   const s2 = createFlight(pad);
-  run(s2, 50, stick({ y: 1 }));            /* nose up */
+  run(s2, 50, stick({ y: 1 }));                 /* nose up */
   run(s2, 60 * 60, stick({ boosting: true }));  /* and straight out */
-  ok("space is reached", s2.alt > R * 4, `alt ${s2.alt.toFixed(0)}`);
-  ok("but it still has an edge", Math.abs(s2.alt - MAX_ALT) < 1e-6,
-     `alt ${s2.alt.toFixed(0)} vs ceiling ${MAX_ALT}`);
+  ok("space is reached", s2.alt > R * 8, `alt ${s2.alt.toFixed(0)}`);
+
+  /* And it still has an edge. Tested by putting the ship at the edge and
+     flying at it, rather than by flying there: the boost cells last six
+     seconds and cruise is 16 a second, so reaching 4,550 units under its own
+     steam takes nearly five minutes of simulated time. That would be a test of
+     the throttle, and what is being tested is the clamp. */
+  const s3 = createFlight(pad);
+  s3.pos.normalize().multiplyScalar(R + MAX_ALT - 20);
+  run(s3, 50, stick({ y: 1 }));                 /* nose at the stars */
+  run(s3, 60 * 20, stick({ boosting: true }));
+  ok("but it still has an edge", Math.abs(s3.alt - MAX_ALT) < 1e-6,
+     `alt ${s3.alt.toFixed(0)} vs ceiling ${MAX_ALT}`);
 }
 
 // 5. Boost is faster and runs out.
