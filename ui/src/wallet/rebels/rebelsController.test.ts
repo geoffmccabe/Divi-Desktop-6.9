@@ -396,7 +396,9 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
      the ship into the planet and kills it, and a dead ship cannot demonstrate
      anything about steering. The stick does not care which way it is pushed. */
   for (let i = 0; i < 20; i++) {
-    g.fire("pointermove", { clientX: 400, clientY: 40 });
+    /* Movement, not position: that is what the controller reads now, in both
+       the locked and the unlocked case. */
+    g.fire("pointermove", { movementX: 0, movementY: -30 });
     ctl.frame(1 / 60);
   }
   const turning = ctl.cursor().y;

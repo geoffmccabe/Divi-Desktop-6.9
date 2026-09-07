@@ -89,6 +89,10 @@ export const MAX_TORPEDOES = 4;
    A short, hard shield on the right button. Ten of them, half a second each,
    and only your own tower puts them back, so it is a thing you spend rather
    than a thing you hold. */
+/** How far back the camera may be pulled, in ship lengths. Nought is the
+ *  cockpit; past about six the ship is a speck and the game stops being about
+ *  flying it. */
+export const MAX_VIEW = 6;
 export const MAX_GUARDS = 10;
 export const GUARD_SECONDS = 0.5;
 /** How much of an incoming hit it soaks. */
@@ -142,6 +146,15 @@ export interface Flight {
   /** Sitting on the surface. One impact is charged per touchdown, so sliding
    *  along the ground is free and arriving is not. */
   grounded: boolean;
+  /**
+   * How far the camera sits behind the ship. Zero is the cockpit.
+   *
+   * Held here rather than in the renderer because it changes what the guns do:
+   * from the cockpit they fire from the edges of the frame, and in third person
+   * they fire from the nose of a hull the player can see. A camera setting that
+   * silently changes where your shots come from belongs with the flight model.
+   */
+  view: number;
   /** What you arrived with, so the gauges can be seen filling rather than
    *  snapping to full the instant the bar completes. */
   dockFrom: { shields: number; ammo: number; boost: number } | null;
@@ -200,6 +213,7 @@ export function createFlight(at: THREE.Vector3): Flight {
     grace: 0,
     sinceHit: REPAIR_DELAY,
     grounded: false,
+    view: 0,
     dockFrom: null,
     dockHold: 0,
     /* You launch from your own tower, which means you launch INSIDE its docking

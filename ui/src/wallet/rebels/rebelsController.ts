@@ -335,20 +335,23 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
   function onMove(e: PointerEvent) {
     if (!dom) return;
-    if (locked) {
-      /* Under pointer lock there is no cursor position, only movement, so the
-         crosshair is ours to keep and to clamp. That clamping is the whole
-         reason for the lock: the pointer can no longer wander out of the game
-         and click something that closes it. */
-      const r = dom.getBoundingClientRect();
-      const lo = 0.5 - STICK_REACH, hi = 0.5 + STICK_REACH;
-      cursor.x = Math.max(lo, Math.min(hi, cursor.x + e.movementX / r.width));
-      cursor.y = Math.max(lo, Math.min(hi, cursor.y + e.movementY / r.height));
-    } else {
-      const r = dom.getBoundingClientRect();
-      cursor.x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-      cursor.y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
-    }
+    /* HOW FAR THE MOUSE MOVED, always. Never where it is.
+       There used to be two schemes here: relative accumulation under pointer
+       lock, and the crosshair snapping to the pointer's absolute position when
+       the lock was refused. The self-centring stick suits the first and is
+       flatly incompatible with the second — every mouse move snapped the
+       crosshair to the pointer and every frame dragged it back to the middle,
+       so the two fought each other. That is the shake. And if the mouse happened
+       to be resting above the middle of the canvas, which it is the moment you
+       reach up to the game, the crosshair was pinned high and the ship pitched
+       up until it looped. Geoff: "the controls are shaky, and when I try to go
+       forward, it just starts looping upwards."
+       movementX and movementY are on the event whether or not the lock took, so
+       one scheme serves both and there is nothing left to disagree. */
+    const r = dom.getBoundingClientRect();
+    const lo = 0.5 - STICK_REACH, hi = 0.5 + STICK_REACH;
+    cursor.x = Math.max(lo, Math.min(hi, cursor.x + (e.movementX || 0) / r.width));
+    cursor.y = Math.max(lo, Math.min(hi, cursor.y + (e.movementY || 0) / r.height));
     applyCursor();
   }
 

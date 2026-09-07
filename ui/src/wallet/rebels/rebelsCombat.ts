@@ -688,6 +688,16 @@ export interface PlayerBody {
   /** Guard up right now. Checked HERE rather than by whoever reads the events,
    *  so a client cannot decide for itself that it blocked something. */
   guard?: boolean;
+  /**
+   * The hull's own shape, as a chain of spheres already placed in the world.
+   *
+   * Absent in the cockpit, where there is no visible ship and a single radius
+   * around the camera is both fair and all anyone can judge. Present in third
+   * person, where the player can SEE the hull and expects a round that passes a
+   * wingtip to miss it. Fitted from the model's real geometry — see
+   * shipCollider.ts for why a chain of spheres rather than the triangles.
+   */
+  hull?: Array<{ at: THREE.Vector3; r: number }>;
 }
 
 export interface CombatWorld {
@@ -718,6 +728,21 @@ function roster(w: CombatWorld): PlayerBody[] {
   _solo[0].pos = w.playerPos;
   _solo[0].fwd = w.playerFwd;
   return _solo;
+}
+
+/**
+ * Did this round hit that ship?
+ *
+ * One sphere at the camera when there is no visible hull, and the fitted chain
+ * when there is. Both are a segment test rather than a point test, because a
+ * bullet moves two units in a frame and a ship is one across: checking only
+ * where it ENDED UP would let it pass clean through.
+ */
+function hitsPlayer(from: THREE.Vector3, to: THREE.Vector3, pl: PlayerBody): boolean {
+  const hull = pl.hull;
+  if (!hull || hull.length === 0) return segmentHit(from, to, pl.pos, PLAYER_HIT_R);
+  for (const s of hull) if (segmentHit(from, to, s.at, s.r)) return true;
+  return false;
 }
 
 /** Whoever is closest to a point. Fighters chase them and coins drift to them. */
@@ -785,7 +810,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
          In a room this is the only place a player takes damage, and it is the
          server's copy of this loop that decides it. */
       for (const pl of roster(w)) {
-        if (!segmentHit(from, b.pos, pl.pos, PLAYER_HIT_R)) continue;
+        if (!hitsPlayer(from, b.pos, pl)) continue;
         spent = true;
         c.events.push({
           kind: "playerHit", at: b.pos.clone(), power: 1.4, damage: rollLaserDamage(),
@@ -921,7 +946,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
     for (const pl of roster(w)) {
       if (struck) break;
-      if (j.pos.distanceTo(pl.pos) > 1.4 + JUNK_R) continue;
+      if (!hitsPlayer(j.pos, j.pos, pl) && j.pos.distanceTo(pl.pos) > 1.4 + JUNK_R) continue;
       struck = true;
       c.events.push({
         kind: "playerHit", at: j.pos.clone(), power: 1.6, damage: rollLaserDamage(),
