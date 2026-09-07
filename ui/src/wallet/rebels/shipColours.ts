@@ -35,13 +35,35 @@ import * as THREE from "three";
 
 export type PartKey = "hull1" | "hull2" | "accent" | "highlight" | "engine";
 
+/** A pattern laid over a part's colour. Not a texture: computed from the
+ *  model's own shape, so it scales with the hull and needs no new art. */
+export type Overlay = "none" | "lines" | "hex" | "camo";
+export const OVERLAYS: Overlay[] = ["none", "lines", "hex", "camo"];
+
 export interface PartColour {
   /** 0-360. */
   hue: number;
   /** 0-1. */
   sat: number;
-  /** A multiplier on the pixel's own brightness. 1 is the art as drawn. */
+  /**
+   * A multiplier on the pixel's own brightness. 1 is the art as drawn.
+   *
+   * It runs from 0 to 6, and both ends matter. At 0 the part is BLACK, whatever
+   * else is set. At 6 the DARKEST swatch in the palette clears 1.0, so with
+   * saturation at zero every part can be made pure white. The old range of 0.2
+   * to 2.5 could reach neither, which is what Geoff ran into: "there's no way
+   * to get a black color... I thought it would go to pure white, but that
+   * doesn't happen either."
+   *
+   * Six rather than four because the darkest swatch is not the one you would
+   * guess. The obvious candidate is the dark panelling #444348 at value 0.28,
+   * where four would have been ample; the real floor is the deep panel #2b2f33
+   * at 0.20, and four times that is 0.8, which is a light grey. A test found
+   * that, not an eye.
+   */
   bright: number;
+  /** The pattern over it, if any. */
+  overlay: Overlay;
 }
 
 export interface ShipPaint {
@@ -63,11 +85,11 @@ export const PARTS: Array<{ key: PartKey; label: string; note: string }> = [
 
 /** The art as Synty drew it: every part left exactly where it started. */
 export const FACTORY: ShipPaint = {
-  hull1: { hue: 205, sat: 0.52, bright: 1 },
-  hull2: { hue: 260, sat: 0.07, bright: 1 },
-  accent: { hue: 34, sat: 0.68, bright: 1 },
-  highlight: { hue: 260, sat: 0.04, bright: 1 },
-  engine: { hue: 172, sat: 1, bright: 1 },
+  hull1: { hue: 205, sat: 0.52, bright: 1, overlay: "none" },
+  hull2: { hue: 260, sat: 0.07, bright: 1, overlay: "none" },
+  accent: { hue: 34, sat: 0.68, bright: 1, overlay: "none" },
+  highlight: { hue: 260, sat: 0.04, bright: 1, overlay: "none" },
+  engine: { hue: 172, sat: 1, bright: 1, overlay: "none" },
 };
 
 /* ---- what each swatch actually looks like ----
@@ -120,7 +142,8 @@ export function loadPaint(): ShipPaint {
           out[key] = {
             hue: clamp(p.hue, 0, 360),
             sat: clamp(p.sat, 0, 1),
-            bright: clamp(p.bright, 0.2, 2.5),
+            bright: clamp(p.bright, 0, 6),
+            overlay: OVERLAYS.includes(p.overlay) ? p.overlay : "none",
           };
         }
       }
@@ -223,6 +246,62 @@ const CLASSIFY = /* glsl */`
     d = min(d, 1.0 - d);
     return 1.0 - smoothstep(0.0, width, d);
   }
+
+  /* ---- the overlays ----
+     Computed from the model's OWN SHAPE rather than from a texture, for one
+     hard reason: every ship's UVs occupy a tiny island of the shared atlas —
+     a fighter's are a tenth of it across — so a pattern drawn in UV space would
+     be a couple of texels wide and read as noise. Object space has no such
+     problem, and it costs no art and no download.
+
+     The position is divided by the model's longest side before it arrives, so
+     a stripe is the same width on a 13-unit fighter and a 565-unit station.
+     Without that the same setting would be bold on one and invisible on the
+     other. */
+
+  /* Diagonal stripes down the hull. */
+  float rebelsLines(vec3 p) {
+    float t = (p.x + p.y * 0.6 + p.z * 0.35) * 26.0;
+    return smoothstep(0.42, 0.5, abs(fract(t) - 0.5)) ;
+  }
+
+  /* A hex grid, seen down the ship's length: the classic panel pattern. Built
+     from the standard hexagonal distance, which is the max of three axis
+     projections sixty degrees apart. */
+  float rebelsHex(vec3 p) {
+    vec2 q = p.xz * 15.0;
+    vec2 a = mod(q, vec2(1.0, 1.732)) - vec2(0.5, 0.866);
+    vec2 b = mod(q + vec2(0.5, 0.866), vec2(1.0, 1.732)) - vec2(0.5, 0.866);
+    vec2 g = dot(a, a) < dot(b, b) ? a : b;
+    float d = max(abs(g.x) * 0.866 + abs(g.y) * 0.5, abs(g.y));
+    return smoothstep(0.36, 0.44, d);
+  }
+
+  /* Camouflage: three octaves of value noise, thresholded into blobs. */
+  float rebelsNoise(vec3 p) {
+    vec3 i = floor(p), f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    vec2 e = vec2(0.0, 1.0);
+    float n = 0.0;
+    for (int k = 0; k < 8; k++) {
+      vec3 o = vec3(float(k & 1), float((k >> 1) & 1), float((k >> 2) & 1));
+      float h = fract(sin(dot(i + o, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+      vec3 w = mix(1.0 - f, f, o);
+      n += h * w.x * w.y * w.z;
+    }
+    return n;
+  }
+  float rebelsCamo(vec3 p) {
+    float n = rebelsNoise(p * 7.0) * 0.6 + rebelsNoise(p * 15.0) * 0.3 + rebelsNoise(p * 31.0) * 0.1;
+    return smoothstep(0.46, 0.54, n);
+  }
+
+  float rebelsOverlay(int kind, vec3 p) {
+    if (kind == 1) return rebelsLines(p);
+    if (kind == 2) return rebelsHex(p);
+    if (kind == 3) return rebelsCamo(p);
+    return 0.0;
+  }
 `;
 
 /* ---- the tuning, in ONE place ----
@@ -275,14 +354,23 @@ const RECOLOUR = /* glsl */`
     float dark      = grey * (1.0 - smoothstep(${T.greySplitLo}, ${T.greySplitHi}, v));
 
     vec3 painted = base;
-    #define REBELS_PAINT(mask, hue, sat, bright) \\
-      painted = mix(painted, rebelsRgb(vec3(hue, sat, clamp(v * bright, 0.0, 1.0))), mask);
+    vec3 pp = vRebelsPos;
 
-    REBELS_PAINT(dark,   uPaintHull2H,     uPaintHull2S,     uPaintHull2B)
-    REBELS_PAINT(light,  uPaintHighlightH, uPaintHighlightS, uPaintHighlightB)
-    REBELS_PAINT(blue,   uPaintHull1H,     uPaintHull1S,     uPaintHull1B)
-    REBELS_PAINT(orange, uPaintAccentH,    uPaintAccentS,    uPaintAccentB)
-    REBELS_PAINT(engine, uPaintEngineH,    uPaintEngineS,    uPaintEngineB)
+    /* The overlay DARKENS rather than replacing, so a pattern reads as paint
+       laid over the colour instead of as a second colour fighting it, and a
+       part keeps its identity whatever is drawn on it. */
+    #define REBELS_PAINT(mask, hue, sat, bright, over) \\
+      { \\
+        vec3 c = rebelsRgb(vec3(hue, sat, clamp(v * bright, 0.0, 1.0))); \\
+        c *= 1.0 - 0.45 * rebelsOverlay(int(over + 0.5), pp); \\
+        painted = mix(painted, c, mask); \\
+      }
+
+    REBELS_PAINT(dark,   uPaintHull2H,     uPaintHull2S,     uPaintHull2B,     uPaintHull2O)
+    REBELS_PAINT(light,  uPaintHighlightH, uPaintHighlightS, uPaintHighlightB, uPaintHighlightO)
+    REBELS_PAINT(blue,   uPaintHull1H,     uPaintHull1S,     uPaintHull1B,     uPaintHull1O)
+    REBELS_PAINT(orange, uPaintAccentH,    uPaintAccentS,    uPaintAccentB,    uPaintAccentO)
+    REBELS_PAINT(engine, uPaintEngineH,    uPaintEngineS,    uPaintEngineB,    uPaintEngineO)
 
     diffuseColor.rgb = rebelsToLinear(painted);
   }
@@ -307,6 +395,15 @@ export interface PaintHandle {
 export function makeRepaintable(root: THREE.Object3D): PaintHandle {
   const uniforms: Array<Record<string, { value: number }>> = [];
 
+  /* How big this model is in its own coordinates, so the overlays can be drawn
+     at the same visible scale on every hull. A fighter is 13 units across and a
+     station 565: without this, one stripe setting would be bold on one and
+     invisible on the other. */
+  const box = new THREE.Box3().setFromObject(root);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const span = Math.max(size.x, size.y, size.z, 0.001);
+
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
@@ -317,19 +414,32 @@ export function makeRepaintable(root: THREE.Object3D): PaintHandle {
         own[`uPaint${name}H`] = { value: 0 };
         own[`uPaint${name}S`] = { value: 0 };
         own[`uPaint${name}B`] = { value: 1 };
+        own[`uPaint${name}O`] = { value: 0 };
       }
+      own.uPaintSpan = { value: span };
       uniforms.push(own);
 
+      const index = uniforms.length;
       mat.onBeforeCompile = (shader) => {
         Object.assign(shader.uniforms, own);
+        /* The overlays need to know where on the hull they are, and nothing in
+           the standard shader carries object space through to the fragment. One
+           varying, set from the position attribute and divided by the model's
+           own span, so the pattern is in units of "fraction of this ship". */
+        shader.vertexShader = shader.vertexShader
+          .replace("void main() {", "varying vec3 vRebelsPos;\nuniform float uPaintSpan;\nvoid main() {")
+          .replace("#include <begin_vertex>", "#include <begin_vertex>\n  vRebelsPos = position / uPaintSpan;");
         shader.fragmentShader = shader.fragmentShader
-          .replace("void main() {", `${Object.keys(own).map((k) => `uniform float ${k};`).join("\n")}\n${CLASSIFY}\nvoid main() {`)
+          .replace("void main() {", `varying vec3 vRebelsPos;\n${Object.keys(own).map((k) => `uniform float ${k};`).join("\n")}\n${CLASSIFY}\nvoid main() {`)
           .replace("#include <map_fragment>", `#include <map_fragment>\n${RECOLOUR}`);
       };
       /* Materials are cached by their program key, so two of them with the
-         same settings would share one compiled shader and one set of
-         uniforms. A distinct key per material keeps them apart. */
-      mat.customProgramCacheKey = () => `rebels-paint-${uniforms.length}`;
+         same settings would share one compiled shader AND one set of uniforms,
+         and every ship in the Market would take the last one's colours. A
+         distinct key per material keeps them apart. Captured now rather than
+         read when the function runs, which is after every material is pushed
+         and so would give them all the same number. */
+      mat.customProgramCacheKey = () => `rebels-paint-${index}`;
       mat.needsUpdate = true;
     }
   });
@@ -343,6 +453,7 @@ export function makeRepaintable(root: THREE.Object3D): PaintHandle {
           set[`uPaint${name}H`].value = (p.hue % 360) / 360;
           set[`uPaint${name}S`].value = p.sat;
           set[`uPaint${name}B`].value = p.bright;
+          set[`uPaint${name}O`].value = OVERLAYS.indexOf(p.overlay ?? "none");
         });
       }
     },

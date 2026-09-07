@@ -17,7 +17,7 @@ import * as THREE from "three";
 import { loadModel, unitCopy } from "./spaceAssets";
 import { makeRepaintable, type ShipPaint, type PaintHandle } from "./shipColours";
 
-export function ShipPreview({ id, paint }: { id: string; paint: ShipPaint }) {
+export function ShipPreview({ id, paint, still = false }: { id: string; paint: ShipPaint; still?: boolean }) {
   const host = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
   /* Kept in a ref so moving a slider repaints the ship that is already on
@@ -26,6 +26,8 @@ export function ShipPreview({ id, paint }: { id: string; paint: ShipPaint }) {
   const repaint = useRef<PaintHandle | null>(null);
   const paintRef = useRef(paint);
   paintRef.current = paint;
+  const stillRef = useRef(still);
+  stillRef.current = still;
 
   /* Every render, which is every slider frame. Cheap: it writes ten numbers
      into uniforms that are already compiled into the shader. */
@@ -70,6 +72,56 @@ export function ShipPreview({ id, paint }: { id: string; paint: ShipPaint }) {
     const turntable = new THREE.Group();
     scene.add(turntable);
 
+    /* ---- inspecting it ----
+       Grab and turn, wheel to come in closer. A shop where the thing on the
+       stand cannot be picked up and looked at is a catalogue. The turntable
+       keeps turning on its own until you touch it, then waits: it is showing
+       you the ship, and once you take over it stops showing off. */
+    let spin = 0.45;              /* radians a second, when nobody is driving */
+    let yaw = 0, pitch = 0.1;
+    let dolly = 2.15;             /* how far the camera sits back */
+    let dragging = false;
+    let idle = 0;                 /* seconds since the last touch */
+    let lastX = 0, lastY = 0;
+
+    const onDown = (e: PointerEvent) => {
+      dragging = true;
+      idle = 0;
+      lastX = e.clientX;
+      lastY = e.clientY;
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!dragging) return;
+      yaw += (e.clientX - lastX) * 0.01;
+      /* Stopped short of straight up and straight down, where the view flips
+         over and the ship appears to jump. */
+      pitch = Math.max(-1.2, Math.min(1.2, pitch - (e.clientY - lastY) * 0.01));
+      lastX = e.clientX;
+      lastY = e.clientY;
+      idle = 0;
+    };
+    const onUp = () => { dragging = false; };
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      /* Multiplied rather than added, so a notch means the same proportion of
+         a step whether you are close in or far out. */
+      dolly = Math.max(0.95, Math.min(5, dolly * (1 + Math.sign(e.deltaY) * 0.12)));
+      idle = 0;
+    };
+    const el = renderer.domElement;
+    /* The badge in the cockpit corner is a readout, not a control: it turns and
+       nothing else, or a stray click while flying would be caught by it. */
+    const interactive = !stillRef.current;
+    el.style.cursor = interactive ? "grab" : "default";
+    if (interactive) el.addEventListener("pointerdown", onDown);
+    if (interactive) {
+      el.addEventListener("pointermove", onMove);
+      el.addEventListener("pointerup", onUp);
+      el.addEventListener("pointercancel", onUp);
+      el.addEventListener("wheel", onWheel, { passive: false });
+    }
+
     void loadModel(id)
       .then((proto) => {
         if (stop) return;
@@ -102,9 +154,21 @@ export function ShipPreview({ id, paint }: { id: string; paint: ShipPaint }) {
       const now = performance.now();
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
+
+      idle += dt;
       /* Slow enough to look at. A turntable that whips round reads as a loading
-         spinner rather than as a thing being shown to you. */
-      turntable.rotation.y += dt * 0.45;
+         spinner rather than as a thing being shown to you. It picks up again
+         four seconds after you let go, easing in rather than snapping back to
+         speed. */
+      if (stillRef.current) yaw += dt * spin;
+      else if (!dragging && idle > 4) yaw += dt * spin * Math.min(1, (idle - 4) / 1.5);
+      turntable.rotation.y = yaw;
+      turntable.rotation.x = pitch;
+
+      camera.position.set(0, 0.55 * dolly / 2.15, dolly);
+      camera.lookAt(0, 0, 0);
+
+      if (interactive) el.style.cursor = dragging ? "grabbing" : "grab";
       renderer.render(scene, camera);
       raf = requestAnimationFrame(tick);
     };
@@ -114,6 +178,11 @@ export function ShipPreview({ id, paint }: { id: string; paint: ShipPaint }) {
       stop = true;
       repaint.current = null;
       cancelAnimationFrame(raf);
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onUp);
+      el.removeEventListener("wheel", onWheel);
       ro.disconnect();
       scene.traverse((o) => {
         const m = o as THREE.Mesh;

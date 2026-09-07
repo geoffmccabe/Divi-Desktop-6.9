@@ -12,7 +12,7 @@ import { useEffect, useMemo, useState } from "react";
 import { shipCatalog, STAT_ROWS, SHIP_CLASSES, type Ship } from "./shipCatalog";
 import { ShipPreview } from "./ShipPreview";
 import {
-  PARTS, FACTORY, chipColour, loadPaint, savePaint, type PartKey, type ShipPaint,
+  PARTS, FACTORY, OVERLAYS, chipColour, loadPaint, savePaint, type PartKey, type ShipPaint,
 } from "./shipColours";
 import { loadShip, saveShip } from "./shipChoice";
 import { saveShip as saveShipRemote } from "./rebelsShips";
@@ -77,8 +77,10 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
     <>
       <div className="ship-market-scrim" onClick={onClose} />
       <div className="ship-market">
-        <div className="ship-market-ring">
-          <ShipPreview id={ship.id} paint={paint} />
+        <div className="ship-market-stage">
+          <div className="ship-market-ring">
+            <ShipPreview id={ship.id} paint={paint} />
+          </div>
         </div>
 
         {/* ONE COLUMN, STACKED. The name and the paint controls used to be given
@@ -174,12 +176,33 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
               <label>
                 <span>Brightness</span>
                 <input
-                  type="range" min={20} max={250} step={1}
+                  type="range" min={0} max={600} step={1}
                   value={Math.round(paint[tuning].bright * 100)}
                   onChange={(e) => setPart(tuning, "bright", Number(e.target.value) / 100)}
                 />
                 <b>{Math.round(paint[tuning].bright * 100)}%</b>
               </label>
+              <p className="ship-paint-hint">
+                0% is black. For white, take saturation to 0 and brightness up.
+              </p>
+
+              <div className="ship-paint-overlays">
+                <span>Overlay</span>
+                <div>
+                  {OVERLAYS.map((o) => (
+                    <button
+                      type="button"
+                      key={o}
+                      className={paint[tuning].overlay === o ? "on" : ""}
+                      onClick={() => setPaint((p) => ({
+                        ...p, [tuning]: { ...p[tuning], overlay: o },
+                      }))}
+                    >
+                      {o === "none" ? "PLAIN" : o.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
         </div>

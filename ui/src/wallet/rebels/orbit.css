@@ -156,12 +156,19 @@
   pointer-events: auto;
   cursor: pointer;
 }
+/* SIXTY-FIVE AND THIRTY-FIVE.
+   Three columns used to put the ring in the middle one and the ship's name and
+   paint controls in the first, and at any real window size the ring overflowed
+   its column and sat on top of them. Geoff: "the circle and ship are in the
+   center and they now run on top of the details on the left side."
+   Two columns cannot do that. The ship owns the left 65% and is centred in it;
+   the specs own the right 35% and scroll. */
 .ship-market {
   position: absolute; inset: 0;
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) minmax(320px, 460px) minmax(220px, 1fr);
+  grid-template-columns: 65% 35%;
   grid-template-rows: 1fr auto;
-  align-items: center;
+  align-items: stretch;
   gap: 18px;
   padding: 24px;
   pointer-events: auto;
@@ -169,14 +176,23 @@
   color: hsl(var(--rebels-hud));
 }
 
+/* The ship's own space. The ring is centred in whatever is left after the name
+   above it and the paint controls below, which is what stops the three of them
+   ever reaching for the same pixels. */
+.ship-market-stage {
+  grid-column: 1; grid-row: 1;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 0; min-width: 0;
+}
+
 /* The ring itself. Two rings, actually: a bright hairline and a wide soft
    glow, which is what stops a circle on a dark background looking like a hole
    cut out of it. */
 .ship-market-ring {
-  grid-column: 2; grid-row: 1;
   position: relative;
-  justify-self: center;
-  width: min(46vh, 100%);
+  /* Fifteen percent larger than it was, and bounded by the height as well as
+     the width so it can never grow past its own column again. */
+  width: min(53vh, 92%);
   aspect-ratio: 1;
   border-radius: 50%;
   background:
@@ -200,15 +216,19 @@
    They used to share one grid cell — one anchored to its centre, one to its
    bottom — which put the sliders directly over the description and made the
    buttons beneath them unclickable. A flex column cannot do that. */
+/* The name and the paint controls share the ship's column, above and below it.
+   Absolutely placed so the ring keeps the full height to be centred in, and
+   pointer-events only on the controls themselves, so the empty space around
+   them stays grabbable for turning the ship. */
 .ship-market-left {
   grid-column: 1; grid-row: 1;
-  align-self: center;
-  display: flex; flex-direction: column; align-items: flex-end;
-  gap: 14px;
-  max-height: 100%;
-  overflow-y: auto;
+  display: flex; flex-direction: column; justify-content: space-between;
+  align-items: center;
+  pointer-events: none;
+  z-index: 2;
 }
-.ship-market-head { text-align: right; }
+.ship-market-left > * { pointer-events: auto; }
+.ship-market-head { text-align: center; }
 .ship-market-head h2 {
   margin: 0; font-size: 26px; letter-spacing: 0.1em;
   color: hsl(var(--primary));
@@ -222,7 +242,21 @@
   margin: 12px 0 0; font-size: 12px; line-height: 1.5; opacity: 0.8;
 }
 
-.ship-market-stats { grid-column: 3; grid-row: 1; align-self: center; }
+.ship-market-stats {
+  grid-column: 2; grid-row: 1;
+  align-self: center;
+  /* Scrollable, because ten stats plus a note do not fit a short window and a
+     list you cannot reach the bottom of is worse than no list. */
+  max-height: 100%;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+/* Dark scrollbar: the default is a white slab on a dark panel. */
+.ship-market-stats::-webkit-scrollbar { width: 8px; }
+.ship-market-stats::-webkit-scrollbar-track { background: hsl(var(--rebels-hud) / 0.08); border-radius: 4px; }
+.ship-market-stats::-webkit-scrollbar-thumb {
+  background: hsl(var(--primary) / 0.55); border-radius: 4px;
+}
 .ship-stat {
   display: grid;
   grid-template-columns: 84px 1fr 96px;
@@ -247,9 +281,9 @@
    Under the ship's name, in the same column, because the name and the colours
    are both "what this thing is" where the stats on the right are "what it
    does". */
-.ship-paint { text-align: right; width: 100%; }
+.ship-paint { text-align: center; max-width: 460px; }
 .ship-paint-parts {
-  display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-end;
+  display: flex; flex-wrap: wrap; gap: 5px; justify-content: center;
 }
 .ship-paint-parts button {
   display: inline-flex; align-items: center; gap: 6px;
@@ -342,19 +376,20 @@
 @media (max-width: 900px) {
   .ship-market {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto auto auto;
+    grid-template-rows: auto auto auto auto;
     align-content: start;
     overflow-y: auto;
   }
-  .ship-market-ring { grid-column: 1; grid-row: 1; width: min(38vh, 82vw); }
+  .ship-market-stage { grid-column: 1; grid-row: 1; }
+  .ship-market-ring { width: min(44vh, 82vw); }
   .ship-market-left {
     grid-column: 1; grid-row: 2;
-    align-items: center; text-align: center; overflow: visible; max-height: none;
+    position: static; display: contents;
   }
   .ship-market-head { text-align: center; }
   .ship-paint { text-align: center; }
   .ship-paint-parts { justify-content: center; }
-  .ship-market-stats { grid-column: 1; grid-row: 3; }
+  .ship-market-stats { grid-column: 1; grid-row: 3; max-height: none; }
   .ship-market-list { grid-column: 1; grid-row: 4; }
 }
 
@@ -439,4 +474,62 @@
     0 0 0 1px hsl(var(--primary) / 0.2),
     0 0 18px hsl(var(--primary) / 0.28),
     inset 0 0 22px hsl(var(--primary) / 0.14);
+}
+
+.ship-paint-hint { margin: 2px 0 8px; font-size: 9px; opacity: 0.5; line-height: 1.4; }
+.ship-paint-overlays {
+  display: grid; grid-template-columns: 68px 1fr; align-items: center; gap: 8px;
+  margin-top: 4px; font-size: 10px; letter-spacing: 0.06em;
+}
+.ship-paint-overlays > div { display: flex; gap: 4px; flex-wrap: wrap; }
+.ship-paint-overlays button {
+  padding: 4px 8px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.08em;
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.1);
+  border: 1px solid hsl(var(--rebels-hud) / 0.3);
+  border-radius: calc(var(--panel-radius) * 0.3);
+}
+.ship-paint-overlays button.on {
+  color: hsl(var(--primary-foreground)); background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+}
+
+/* ---- the launch card ----
+   Forty percent for the badge and the name, sixty for the controls. The
+   controls used to run the full width beneath the title, which made the card a
+   wall of small text with a heading balanced on top of it; side by side, the
+   left half says what this is and the right half says how to fly it.
+
+   The black panel behind is there because the card sits over a live globe with
+   towers and connection lines moving under it, and a blurred tint was not
+   enough to lift small text off that. Half-opacity black is. */
+.orbit-launch-top {
+  display: grid;
+  grid-template-columns: 40% 60%;
+  gap: 22px;
+  align-items: center;
+  width: 100%;
+  padding: 18px 20px;
+  box-sizing: border-box;
+  background: rgb(0 0 0 / 0.5);
+  border-radius: var(--panel-radius);
+}
+.orbit-launch-badge { text-align: center; }
+.orbit-launch-badge img {
+  width: min(190px, 60%);
+  height: auto;
+  display: block;
+  margin: 0 auto 6px;
+  /* The art is a sticker on white. A drop shadow separates it from the panel
+     without needing the white cut out of it. */
+  filter: drop-shadow(0 4px 14px rgb(0 0 0 / 0.55));
+}
+.orbit-launch-badge h2 { margin: 0; }
+.orbit-launch-badge p { margin: 6px 0 0; }
+.orbit-launch-top .orbit-launch-keys { margin: 0; max-width: none; }
+
+@media (max-width: 820px) {
+  .orbit-launch-top { grid-template-columns: 1fr; gap: 14px; }
+  .orbit-launch-badge img { width: min(140px, 45%); }
 }

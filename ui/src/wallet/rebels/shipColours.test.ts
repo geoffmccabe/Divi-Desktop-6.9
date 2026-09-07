@@ -167,7 +167,51 @@ const PALETTE: Array<[string, number, keyof Masks]> = [
   ok("the conversion round-trips", worst < 1e-6, worst.toExponential(1));
 }
 
-// 4. The chip beside the name agrees with the ship.
+// 4. Black and white have to be reachable.
+//
+//    Geoff: "when sliding to the minimum I thought it would go to black, but it
+//    doesn't (and in fact there's no way to get a black color) and on the far
+//    right I thought it would go to pure white."
+//
+//    He was right on both counts. Brightness multiplies the pixel's own value,
+//    and the slider used to run 0.2 to 2.5: 0.2 of anything is not black, and
+//    2.5 times the DARKEST swatch in the palette — value 0.28 — is 0.7, which
+//    is not white either. The range is 0 to 4 now, and 4 x 0.28 is 1.12, so
+//    every part clears white with room to spare.
+{
+  /* The darkest thing on the ship, which is the hardest case for white. */
+  const darkest = Math.min(...PALETTE.map(([, c]) => hsv(hex(c))[2]));
+  /* Not the one you would guess: the dark PANELLING is 0.28, but the deep
+     panel #2b2f33 is 0.20, and that is what the top of the slider has to
+     clear. Asserted so the range cannot quietly stop being enough. */
+  ok("the palette's darkest swatch is where we think", Math.abs(darkest - 0.20) < 0.02,
+     darkest.toFixed(2));
+
+  for (const [name, colour] of PALETTE) {
+    const [, , v] = hsv(hex(colour));
+    const black = rgb([0.5, 1, Math.min(1, v * 0)]);
+    ok(`${name} reaches black`, black.every((c) => c === 0), black.join(","));
+  }
+
+  const white = PALETTE.filter(([, colour]) => {
+    const [, , v] = hsv(hex(colour));
+    /* Saturation at zero and brightness at the top of the slider. */
+    const c = rgb([0, 0, Math.min(1, v * 6)]);
+    return !c.every((x) => x > 0.999);
+  });
+  ok("and every swatch reaches pure white", white.length === 0,
+     white.map(([n]) => n).join(", "));
+
+  /* And the old range genuinely could not, or this fix is cosmetic. */
+  const oldWhite = PALETTE.filter(([, colour]) => {
+    const [, , v] = hsv(hex(colour));
+    return Math.min(1, v * 2.5) > 0.999;
+  });
+  ok("where the old range could not", oldWhite.length < PALETTE.length,
+     `${oldWhite.length} of ${PALETTE.length} could`);
+}
+
+// 5. The chip beside the name agrees with the ship.
 {
   const off: string[] = [];
   for (const { key } of PARTS) {

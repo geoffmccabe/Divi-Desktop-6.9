@@ -32,7 +32,7 @@ export function ShipBadge({ hidden }: { hidden: boolean }) {
   return (
     <div className={"ship-badge" + (hidden ? " ship-badge-away" : "")} aria-hidden>
       <div className="ship-badge-ring">
-        <ShipPreview id={ship} paint={paint} />
+        <ShipPreview id={ship} paint={paint} still />
       </div>
     </div>
   );

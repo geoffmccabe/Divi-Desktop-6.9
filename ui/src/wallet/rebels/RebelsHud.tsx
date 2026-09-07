@@ -14,6 +14,7 @@ import { RebelsControls, CONTROLS, DOCKING } from "./RebelsControls";
 import { ShipMarket } from "./ShipMarket";
 import { RebelsHealthBar } from "./RebelsHealthBar";
 import { ShipBadge } from "./ShipBadge";
+import pandaUrl from "../../assets/rebels_panda.webp";
 
 export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () => void }) {
   const [hud, setHud] = useState<HudState>(() => ctl.hud());
@@ -276,14 +277,21 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       {!hud.broken && !hud.launched && !scores && !market && (
         <div className="orbit-card orbit-card-clear">
-          <h2>DIVI REBELS</h2>
-          <p>{hud.homeName === "no node located" ? "No node of your own found, launching from the network." : `Launching from ${hud.homeName}.`}</p>
-          <div className="orbit-launch-keys">
-            {[...CONTROLS, ...DOCKING].map((c) => (
-              <div key={c.keys}><b>{c.keys}</b><span>{c.what}</span></div>
-            ))}
+          {/* Two columns: who this is on the left, how to fly it on the right.
+              The controls used to run the full width under the title, which
+              made the card a wall of text with a heading on top of it. */}
+          <div className="orbit-launch-top">
+            <div className="orbit-launch-badge">
+              <img src={pandaUrl} alt="" />
+              <h2>DIVI REBELS</h2>
+              <p>{hud.homeName === "no node located" ? "No node of your own found, launching from the network." : `Launching from ${hud.homeName}.`}</p>
+            </div>
+            <div className="orbit-launch-keys">
+              {[...CONTROLS, ...DOCKING].map((c) => (
+                <div key={c.keys}><b>{c.keys}</b><span>{c.what}</span></div>
+              ))}
+            </div>
           </div>
-          <p className="orbit-keys">Press ? at any time for this list.</p>
           <div className="orbit-buttons">
             <button type="button" onClick={() => ctl.launch()} disabled={!hud.ready}>
               {hud.ready ? "LAUNCH" : slow ? "GLOBE NOT READY" : "FINDING YOUR NODE…"}
