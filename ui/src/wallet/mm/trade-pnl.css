@@ -1,0 +1,13 @@
+/* Trading history / P&L panel. */
+.tp-panel { width: 100%; }
+.tp-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.tp-sub { margin: 2px 0 12px; }
+.tp-grid { display: flex; flex-direction: column; gap: 7px; }
+.tp-row { display: flex; justify-content: space-between; gap: 16px; font-size: 0.86rem; }
+.tp-row > span:first-child { color: hsl(var(--muted-foreground)); }
+.tp-row > span:last-child { color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; text-align: right; }
+.tp-row em { font-style: normal; color: hsl(var(--muted-foreground)); margin-left: 6px; }
+.tp-total { border-top: 1px solid hsl(var(--border)); margin-top: 5px; padding-top: 9px; font-size: 0.98rem; font-weight: 700; }
+.tp-neg { color: hsl(var(--destructive)); font-weight: 700; }
+.tp-pos { color: hsl(var(--success)); font-weight: 700; }
+.tp-warn { margin-top: 12px; color: hsl(30 100% 62%); }

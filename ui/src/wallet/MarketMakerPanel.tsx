@@ -8,12 +8,13 @@ import "./governance/governance.css";
 import "./multisig/multisig.css";
 import "./marketmaker.css";
 import { useEffect, useState } from "react";
-import { mmTestConnection, type MmBalance } from "./api";
+import { mmTestConnection, mmBook, type MmBalance } from "./api";
 import { fetchExchanges, type Exchange } from "./exchanges";
 import { ExchangeConnect } from "./mm/ExchangeConnect";
 import { MarketMakerControl, type MmLiveConfig } from "./mm/MarketMakerControl";
 import { DepthLadder } from "./mm/DepthLadder";
 import { FundsPanel } from "./mm/FundsPanel";
+import { TradePnlPanel } from "./mm/TradePnlPanel";
 import { DexPanel } from "./mm/DexPanel";
 import { useVenue } from "./mmVenue";
 
@@ -42,6 +43,18 @@ export function MarketMakerPanel() {
   }, [slug, connector, restUrl, symbol]);
   const hasOrders = !!bals?.some((b) => (b.locked ?? 0) > 0);
 
+  // The live mid (DIVI priced in USDT) lets the control value the user's DIVI so it
+  // can tell them their real max liquidity before they try to commit too much.
+  const [mid, setMid] = useState(0);
+  useEffect(() => {
+    if (!slug || !connector || !symbol) { setMid(0); return; }
+    let alive = true;
+    const tick = () => mmBook(slug, connector, restUrl ?? "", symbol).then((b) => { if (alive) setMid(b.mid); }).catch(() => {});
+    tick();
+    const id = setInterval(tick, 12000);
+    return () => { alive = false; clearInterval(id); };
+  }, [slug, connector, restUrl, symbol]);
+
   return (
     <div className="gov mm-panel">
       {mode === "dex" ? (
@@ -49,9 +62,10 @@ export function MarketMakerPanel() {
       ) : (
       <>
       {cfg && <FundsPanel symbol={cfg.symbol} bals={bals} />}
+      {cfg && cfg.ex.connector_type === "nonkyc" && <TradePnlPanel ex={cfg.ex} symbol={cfg.symbol} />}
       {exchanges && exchanges.length > 0 && (
         <div className="mm-two-col">
-          <MarketMakerControl exchanges={exchanges} onConfig={setCfg} hasOrders={hasOrders} />
+          <MarketMakerControl exchanges={exchanges} onConfig={setCfg} hasOrders={hasOrders} bals={bals} mid={mid} />
           {cfg && (
             <DepthLadder ex={cfg.ex} symbol={cfg.symbol} levels={cfg.levels} commit={cfg.commit} protectPct={cfg.protectPct} />
           )}

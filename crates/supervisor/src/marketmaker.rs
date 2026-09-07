@@ -639,6 +639,70 @@ pub fn cancel_all_orders(slug: &str, connector: &str, rest_url: &str, symbol: &s
     Ok(nonkyc_cancel_all(rest_url, &c, &sym))
 }
 
+/// Realized trading result, reconstructed from the exchange's own filled-order
+/// history. This is the source of truth for "where did my money go": the exchange
+/// keeps every fill, so a node holder can always audit their market making.
+pub struct TradePnl {
+    pub fills: usize,
+    pub buys: usize,
+    pub sells: usize,
+    pub divi_bought: f64,
+    pub divi_sold: f64,
+    pub usdt_spent: f64,
+    pub usdt_recv: f64,
+    pub avg_buy: f64,
+    pub avg_sell: f64,
+    pub net_divi: f64,      // bought - sold (inventory change)
+    pub net_usdt: f64,      // received - spent (realized cash flow, pre external fees)
+    pub gross_volume: f64,  // total USDT traded, both sides
+    pub mid: f64,           // current mid, to value leftover inventory
+    pub total_pnl: f64,     // net_usdt + net_divi * mid
+    pub first_ms: i64,
+    pub last_ms: i64,
+}
+
+/// Pull the filled-order history for a pair and total it up. Read-only.
+pub fn trade_history(slug: &str, connector: &str, rest_url: &str, symbol: &str) -> Result<TradePnl, String> {
+    if connector != "nonkyc" {
+        return Err("Trade history is available for NonKYC today.".into());
+    }
+    check_rest_url(connector, rest_url)?;
+    let c = load(slug).ok_or_else(|| "Connect this exchange first.".to_string())?;
+    let url = format!("{}/getorders?symbol={}&status=filled&limit=1000", rest_url.trim_end_matches('/'), enc_symbol(symbol));
+    let v = nonkyc_call(&url, "GET", None, &c)?;
+    let arr = v.as_array().ok_or_else(|| "The exchange reply wasn't a list of orders.".to_string())?;
+
+    let (mut buys, mut sells) = (0usize, 0usize);
+    let (mut divi_bought, mut divi_sold, mut usdt_spent, mut usdt_recv) = (0.0, 0.0, 0.0, 0.0);
+    let (mut first_ms, mut last_ms) = (i64::MAX, 0i64);
+    let fstr = |o: &serde_json::Value, k: &str| o.get(k).and_then(|x| x.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+    for o in arr {
+        let qty = fstr(o, "executedQuantity");
+        let px = fstr(o, "price");
+        if qty <= 0.0 { continue; }
+        let val = qty * px;
+        let t = o.get("lastTradeAt").and_then(|x| x.as_i64()).or_else(|| o.get("createdAt").and_then(|x| x.as_i64())).unwrap_or(0);
+        if t > 0 { first_ms = first_ms.min(t); last_ms = last_ms.max(t); }
+        match o.get("side").and_then(|x| x.as_str()) {
+            Some("buy") => { buys += 1; divi_bought += qty; usdt_spent += val; }
+            Some("sell") => { sells += 1; divi_sold += qty; usdt_recv += val; }
+            _ => {}
+        }
+    }
+    let mid = nonkyc_mid(rest_url, symbol).map(|(_, _, m)| m).unwrap_or(0.0);
+    let net_divi = divi_bought - divi_sold;
+    let net_usdt = usdt_recv - usdt_spent;
+    Ok(TradePnl {
+        fills: buys + sells, buys, sells,
+        divi_bought, divi_sold, usdt_spent, usdt_recv,
+        avg_buy: if divi_bought > 0.0 { usdt_spent / divi_bought } else { 0.0 },
+        avg_sell: if divi_sold > 0.0 { usdt_recv / divi_sold } else { 0.0 },
+        net_divi, net_usdt, gross_volume: usdt_spent + usdt_recv, mid,
+        total_pnl: net_usdt + net_divi * mid,
+        first_ms: if first_ms == i64::MAX { 0 } else { first_ms }, last_ms,
+    })
+}
+
 /// Stop the engine, wait for its fail-safe cancel to finish.
 pub fn stop() -> Result<(), String> {
     let running = ENGINE.lock().map_err(|_| "engine busy".to_string())?.take();
