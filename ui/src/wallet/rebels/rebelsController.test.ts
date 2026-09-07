@@ -390,14 +390,17 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.launch();
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);   /* through the dive */
 
-  /* Shove the mouse to the bottom of the frame, the way a player does when
-     they mean "dive", and then take their hand off it. */
+  /* Shove the mouse to the TOP of the frame, the way a player does when they
+     mean "climb", and then take their hand off it.
+     Up rather than down on purpose: a sustained dive from a launch pad flies
+     the ship into the planet and kills it, and a dead ship cannot demonstrate
+     anything about steering. The stick does not care which way it is pushed. */
   for (let i = 0; i < 20; i++) {
-    g.fire("pointermove", { clientX: 400, clientY: 560 });
+    g.fire("pointermove", { clientX: 400, clientY: 40 });
     ctl.frame(1 / 60);
   }
   const turning = ctl.cursor().y;
-  ok("pushing the mouse down does steer", turning > 0.62, `crosshair at ${turning.toFixed(2)}`);
+  ok("pushing the mouse does steer", turning < 0.38, `crosshair at ${turning.toFixed(2)}`);
 
   /* Hand off the mouse. Within a second the stick must be back at neutral. */
   for (let i = 0; i < 90; i++) ctl.frame(1 / 60);
@@ -408,11 +411,16 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   /* THE ONE THAT MATTERS: the SHIP has to stop turning, not just the
      crosshair. A ship that kept looping would swing its altitude up and down
      for ever; one flying straight changes it in one direction. Sampled over
-     six seconds, which is longer than a loop takes. */
+     six seconds, which is longer than a loop takes.
+     Read off the CAMERA, which is the ship and moves every frame. The HUD's
+     altitude is pushed on a wall-clock tick, and this loop runs six seconds of
+     game time in a few milliseconds, so it reads the launch value throughout
+     and every check against it passes for the wrong reason. */
+  const shipAlt = () => g.camera.position.length() - R;
   const alts: number[] = [];
   for (let s = 0; s < 6; s++) {
     for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
-    alts.push(ctl.hud().alt);
+    alts.push(shipAlt());
   }
   let reversals = 0;
   for (let i = 2; i < alts.length; i++) {
@@ -421,6 +429,24 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   }
   ok("and the ship stops turning too", reversals === 0,
      `${reversals} reversals in ${alts.map((a) => a.toFixed(0)).join(", ")}`);
+
+  /* AND THE KEYBOARD STILL WORKS. Recentring has to reapply the cursor every
+     frame, and the cursor and the keys write to the same stick, so getting the
+     order wrong would silently kill arrow-key steering — a fix for one control
+     that breaks the other. Half a second of stick, then let it fly: holding
+     longer carries the nose over the top into a loop and proves nothing. */
+  /* The mouse push left it climbing hard, so a second of nose-down has to turn
+     that into a descent. A second is about a hundred degrees at the pitch rate,
+     which is well past level from where it is pointing. */
+  const before = shipAlt();
+  press("keydown", { key: "arrowdown" });
+  for (let i = 0; i < 70; i++) ctl.frame(1 / 60);
+  press("keyup", { key: "arrowdown" });
+  const turned = shipAlt();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  const after = shipAlt();
+  ok("a held arrow key still steers", after < turned && turned > before,
+     `${before.toFixed(0)} climbing to ${turned.toFixed(0)}, then falling to ${after.toFixed(0)}`);
   ctl.detach();
 }
 

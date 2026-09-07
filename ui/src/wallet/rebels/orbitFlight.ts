@@ -46,7 +46,23 @@ export const PITCH_RATE = 1.8;
    The window around that line is generous on purpose, and the hard brake stops
    the ship the moment it catches, so arriving fast is not a reason to be
    refused either. */
-export const DOCK_RANGE = 12;
+export const DOCK_RANGE = 34;
+
+/* Why 34 and not 12.
+   Twelve was right for the old model, where the ship followed the curve of the
+   globe at a constant altitude: fly at your tower and you arrived at tower
+   height, so a twelve-unit window round a six-unit mast was a fair target.
+
+   A free-flying ship does not follow the planet. It goes straight, so it climbs
+   away from the surface all by itself — thirty seconds of level flight from a
+   launch pad leaves it hundreds of units up — and by the time it comes back
+   over its own tower it is far above the mast and sails through the old window
+   without touching it. Geoff: "running into my own tower didn't seem to work.
+   I didn't stop and I didn't recharge."
+
+   Thirty-four is a generous target on purpose. It is only ever YOUR tower, it
+   never hurts you, and the whole instruction was that flying into it should
+   just work. */
 /** A full resupply: about two passes of the station sample. */
 export const DOCK_SECONDS = 4;
 /* What the brake slows you to. Nearly a hover, on purpose: at this speed the
@@ -56,18 +72,19 @@ export const DOCK_SECONDS = 4;
 export const PARK = 2.2;
 /** The player's shield.
  *
- *  Ten times a fighter's, and it needs to be. Four of them firing at perfect
- *  accuracy land about two hits a second between them, averaging fifty-five
- *  damage: at a hundred points the player was dead in under a second, which is
- *  exactly what was happening. */
-export const MAX_SHIELD = 1000;
+ *  Twenty times a fighter's. Four of them firing at perfect accuracy land about
+ *  two hits a second between them, averaging fifty-five damage: at a hundred
+ *  points the player died in under a second, which is where this started. A
+ *  thousand bought about twenty seconds, and Geoff asked for double again once
+ *  the ship also had a planet to fly into. */
+export const MAX_SHIELD = 2000;
 /** What flying into the planet or clipping a tower costs. A quarter of a full
  *  shield: enough to matter, not enough to end a run on one clumsy moment. */
 export const CRASH_DAMAGE = 250;
 export const MAX_AMMO = 60;
 import { MINI_AMMO, MINI_INTERVAL } from "./rebelsCombat";
 
-export const MAX_TORPEDOES = 2;
+export const MAX_TORPEDOES = 4;
 /* ---- the guard ----
    A short, hard shield on the right button. Ten of them, half a second each,
    and only your own tower puts them back, so it is a thing you spend rather
@@ -76,6 +93,18 @@ export const MAX_GUARDS = 10;
 export const GUARD_SECONDS = 0.5;
 /** How much of an incoming hit it soaks. */
 export const GUARD_ABSORB = 0.8;
+
+/* ---- repairs, the slow kind ----
+   Minecraft's rule, which is the one Geoff asked for: nothing happens while
+   you are being shot at, and once you are left alone the hull comes back on
+   its own. The delay is what makes it a reward for breaking off rather than a
+   reason to ignore damage, and the rate is deliberately slow enough that going
+   home to your tower is still much the better answer: full from nothing takes
+   the best part of a minute and a half, where the tower does it in four
+   seconds. */
+export const REPAIR_DELAY = 6;
+/** Fraction of a full hull returned per second, once the delay has passed. */
+export const REPAIR_RATE = 0.012;
 
 export interface Flight {
   pos: THREE.Vector3;
@@ -108,6 +137,8 @@ export interface Flight {
   heavyWasDown: boolean;
   /** Seconds of invulnerability after a hit, so one scrape is not five. */
   grace: number;
+  /** Seconds since anything last hurt this ship. Drives the slow repair. */
+  sinceHit: number;
   /** Sitting on the surface. One impact is charged per touchdown, so sliding
    *  along the ground is free and arriving is not. */
   grounded: boolean;
@@ -116,8 +147,9 @@ export interface Flight {
   dockFrom: { shields: number; ammo: number; boost: number } | null;
   /** Seconds left sitting at the pad after a finished resupply. */
   dockHold: number;
-  /** Seconds before a tower will take you again, so leaving actually leaves. */
-  redock: number;
+  /** True while the ship must get clear of its own tower before it may dock
+   *  again. See the note where it is cleared. */
+  mustLeave: boolean;
 }
 
 export interface Stick {
@@ -166,13 +198,14 @@ export function createFlight(at: THREE.Vector3): Flight {
     cooldown: 0,
     heavyWasDown: false,
     grace: 0,
+    sinceHit: REPAIR_DELAY,
     grounded: false,
     dockFrom: null,
     dockHold: 0,
     /* You launch from your own tower, which means you launch INSIDE its docking
        range. Without this the ship docks again on its first frame and the hard
        brake pins it there: launching would stop you leaving. */
-    redock: 3,
+    mustLeave: true,
   };
 }
 
@@ -244,7 +277,7 @@ export interface StepResult {
    *  On screen, because "it does not work" needs to become something a player
    *  can read back. */
   nearTower: number;
-  dockBlock: "" | "no node located" | "cooling down" | "out of range";
+  dockBlock: "" | "no node located" | "fly clear first" | "out of range";
 }
 
 export function stepFlight(
@@ -259,6 +292,14 @@ export function stepFlight(
     nearTower: Infinity, dockBlock: "",
   };
   f.grace = Math.max(0, f.grace - dt);
+
+  /* The slow repair. Counted here and applied here, so every way of taking a
+     hit — a bullet, a tower, the ground — postpones it just by setting
+     sinceHit to zero, and no caller has to remember to. */
+  f.sinceHit += dt;
+  if (f.sinceHit > REPAIR_DELAY && f.shields > 0 && f.shields < MAX_SHIELD) {
+    f.shields = Math.min(MAX_SHIELD, f.shields + MAX_SHIELD * REPAIR_RATE * dt);
+  }
 
   /* ---- how near is the nearest tower ----
      Answered first, because being near one changes what speed the ship wants
@@ -371,6 +412,7 @@ export function stepFlight(
       if (hard > 0.05 && f.grace <= 0) {
         f.shields -= CRASH_DAMAGE * hard;
         f.grace = 1.2;
+        f.sinceHit = 0;
         out.hit = true;
       }
       f.grounded = true;
@@ -420,6 +462,7 @@ export function stepFlight(
   if (near >= 0 && near !== homeIndex && nearDist < 1.6 && !atHome && f.grace <= 0) {
     f.shields -= CRASH_DAMAGE;
     f.grace = 1.2;
+    f.sinceHit = 0;
     out.hit = true;
     /* Shoved away rather than stopped dead, so a clip is a scare not a wall. */
     f.pos.addScaledVector(f.pos.clone().sub(towerTips[near]).normalize(), 2);
@@ -429,11 +472,22 @@ export function stepFlight(
      There is no slowing down to be done and no way to arrive too fast: the
      brake below stops the ship once it has caught. */
   out.nearTower = homeDist;
-  const canDock = atHome && f.redock <= 0;
+
+  /* LEAVING, not waiting.
+     A finished resupply used to start a four second timer, which was fine when
+     the docking window was twelve units across. At thirty-four a pilot who
+     stays near their own tower is inside it more or less permanently, so the
+     timer just meant being caught again every few seconds: dock, fill, sit,
+     release, drift, dock. The rule that actually expresses "you have left" is
+     that you have got clear of the tower, so that is the rule. It also covers
+     launching, which happens from inside the window by definition. */
+  if (f.mustLeave && homeDist > DOCK_RANGE * 1.4) f.mustLeave = false;
+
+  const canDock = atHome && !f.mustLeave;
   if (!canDock) {
     out.dockBlock = homeIndex < 0 ? "no node located"
       : !atHome ? "out of range"
-      : f.redock > 0 ? "cooling down"
+      : f.mustLeave ? "fly clear first"
       : "";
   }
   if (canDock) {
@@ -470,7 +524,7 @@ export function stepFlight(
         f.dock = 0;
         f.dockFrom = null;
         f.dockedAt = -1;
-        f.redock = 4;
+        f.mustLeave = true;
       }
     }
   } else {

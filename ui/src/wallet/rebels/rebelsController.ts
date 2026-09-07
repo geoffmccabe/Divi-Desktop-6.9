@@ -24,6 +24,7 @@ import { userWonRecently } from "../stakeWin";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
+import { pulseHealth } from "./healthPulse";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
   type Fx, type ShieldRig,
@@ -313,12 +314,22 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stick.x = shape(cursor.x * 2 - 1);
     stick.y = -shape(cursor.y * 2 - 1);
   }
-  /** Ease the crosshair back to the middle. Called once a frame while flying. */
+  /**
+   * Ease the crosshair back to the middle, then settle the stick. Once a frame.
+   *
+   * The ORDER matters and is the whole reason this is one function. Recentring
+   * has to reapply the cursor every frame, and the cursor and the keys write to
+   * the same stick, so doing only the cursor would quietly wipe out a held
+   * arrow key on the very next frame and leave the keyboard dead. Keys go last
+   * and win while they are held, which is what a player expects when they reach
+   * for one mid-turn.
+   */
   function centreStick(dt: number) {
     const k = Math.min(1, dt / STICK_RETURN);
     cursor.x += (0.5 - cursor.x) * k;
     cursor.y += (0.5 - cursor.y) * k;
     applyCursor();
+    applyKeys();
   }
   function onMove(e: PointerEvent) {
     if (!dom) return;
@@ -733,6 +744,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               if (guarded) playBounce();
               flight.shields -= (ev.damage ?? 25) * soak;
               flight.grace = 0.45;
+              /* Being shot at postpones the slow repair, same as flying into
+                 something does. */
+              flight.sinceHit = 0;
+              /* The big centred bar, for a second, coloured by how bad it is.
+                 Raised HERE rather than from the HUD's own polling, because a
+                 hit is an event and the bar is the game telling you about it. */
+              pulseHealth(flight.shields, MAX_SHIELD);
               if (flight.shields <= 0) die();
             }
             fx.boom(ev.at, 1.4, "cold");

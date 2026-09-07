@@ -136,11 +136,21 @@ function loadAtlas(url: string): THREE.Texture {
  * have only white and grey". So planets are tinted at the point of use, and the
  * mask supplies the shading rather than the colour.
  */
-function atlasFor(id: string): THREE.Texture {
+function atlasFor(id: string): THREE.Texture | null {
+  /* ROCKS GET NOTHING, and that is the right answer rather than a shrug.
+     Their UVs cover the whole 0-1 square, because each was authored against
+     its own texture, so handing them the shared atlas wraps the ENTIRE sheet
+     round every rock: "each asteroid appears to have the entire texture atlas
+     wrapped onto it." The pack ships no rock texture to use instead. A flat
+     tinted colour is what Synty's low-poly rocks look like anyway, and unlike a
+     wrong texture it cannot be wrong. */
+  if (/Asteroid|Pebble|Rubble|Debris/i.test(id)) return null;
   if (/Planet/i.test(id)) {
     planetAtlas ??= loadAtlas(planetAtlasUrl);
     return planetAtlas;
   }
+  /* Everything else IS an atlas model: a fighter's UVs sit inside u 0.23-0.31,
+     v 0.61-0.77, one small island of the shared sheet. */
   atlas ??= loadAtlas(atlasUrl);
   return atlas;
 }
@@ -211,6 +221,9 @@ function repair(root: THREE.Object3D, id: string): void {
       const std = mat as THREE.MeshStandardMaterial;
       if (!std) continue;
       std.map = tex;
+      /* No texture means the COLOUR is the surface, so it must not be left as
+         the white that a mapped material carries. */
+      if (!tex) std.color = new THREE.Color(0x9a9088);
       /* Synty's atlases are flat colour. Metalness at anything above zero
          turns the whole pack into wet plastic under the game's lighting. */
       std.metalness = 0;

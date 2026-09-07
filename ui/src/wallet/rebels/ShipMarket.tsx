@@ -8,14 +8,28 @@
 // like a viewport with something floating in it, so it is round, centred, and
 // the ship is allowed to overlap its edge.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { shipCatalog, STAT_ROWS, SHIP_CLASSES, type Ship } from "./shipCatalog";
 import { ShipPreview } from "./ShipPreview";
+import {
+  PARTS, FACTORY, loadPaint, savePaint, type PartKey, type ShipPaint,
+} from "./shipColours";
 
 export function ShipMarket({ onClose }: { onClose: () => void }) {
   const all = useMemo(() => shipCatalog(), []);
   const [pick, setPick] = useState(0);
   const ship: Ship = all[pick] ?? all[0];
+
+  /* The paint. One scheme for the whole fleet rather than one per hull: every
+     ship in the pack shares the same five swatches, so a per-ship scheme would
+     be five times the work for the player and would make the fleet look like a
+     jumble sale. Kept between sessions. */
+  const [paint, setPaint] = useState<ShipPaint>(() => loadPaint());
+  const [tuning, setTuning] = useState<PartKey | null>(null);
+  useEffect(() => { savePaint(paint); }, [paint]);
+
+  const setPart = (key: PartKey, field: "hue" | "sat" | "bright", v: number) =>
+    setPaint((p) => ({ ...p, [key]: { ...p[key], [field]: v } }));
 
   /* The best value in the market for each stat, so a bar means something
      across classes rather than only within one. A station's hull is the top of
@@ -44,7 +58,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
       <div className="ship-market-scrim" onClick={onClose} />
       <div className="ship-market">
         <div className="ship-market-ring">
-          <ShipPreview id={ship.id} />
+          <ShipPreview id={ship.id} paint={paint} />
         </div>
 
         <div className="ship-market-head">
@@ -76,6 +90,74 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
           <p className="ship-market-note">
             Signature is the one to read backwards: lower is harder to see.
           </p>
+        </div>
+
+        {/* ---- the paint shop ----
+            Five buttons, three sliders each. Five because that is how many
+            distinct swatches every ship in the pack actually samples: the blue
+            hull, the dark panelling under it, the orange trim, the light edges
+            and the engine glow. Not a guess — the atlas was sampled through a
+            fighter's, a cruiser's and a station's own UVs to find out. */}
+        <div className="ship-paint">
+          <div className="ship-paint-parts">
+            {PARTS.map((part) => (
+              <button
+                type="button"
+                key={part.key}
+                className={tuning === part.key ? "on" : ""}
+                onClick={() => setTuning(tuning === part.key ? null : part.key)}
+                title={part.note}
+              >
+                <span
+                  className="ship-paint-chip"
+                  style={{
+                    background: `hsl(${paint[part.key].hue} ${Math.round(paint[part.key].sat * 100)}% ${Math.round(Math.min(75, 42 * paint[part.key].bright))}%)`,
+                  }}
+                />
+                {part.label}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="ship-paint-reset"
+              onClick={() => { setPaint({ ...FACTORY }); setTuning(null); }}
+            >
+              FACTORY
+            </button>
+          </div>
+
+          {tuning && (
+            <div className="ship-paint-sliders">
+              <p>{PARTS.find((p) => p.key === tuning)?.note}</p>
+              <label>
+                <span>Hue</span>
+                <input
+                  type="range" min={0} max={360} step={1}
+                  value={paint[tuning].hue}
+                  onChange={(e) => setPart(tuning, "hue", Number(e.target.value))}
+                />
+                <b>{Math.round(paint[tuning].hue)}&deg;</b>
+              </label>
+              <label>
+                <span>Saturation</span>
+                <input
+                  type="range" min={0} max={100} step={1}
+                  value={Math.round(paint[tuning].sat * 100)}
+                  onChange={(e) => setPart(tuning, "sat", Number(e.target.value) / 100)}
+                />
+                <b>{Math.round(paint[tuning].sat * 100)}%</b>
+              </label>
+              <label>
+                <span>Brightness</span>
+                <input
+                  type="range" min={20} max={250} step={1}
+                  value={Math.round(paint[tuning].bright * 100)}
+                  onChange={(e) => setPart(tuning, "bright", Number(e.target.value) / 100)}
+                />
+                <b>{Math.round(paint[tuning].bright * 100)}%</b>
+              </label>
+            </div>
+          )}
         </div>
 
         <div className="ship-market-list">

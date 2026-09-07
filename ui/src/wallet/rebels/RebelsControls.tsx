@@ -17,7 +17,7 @@ export const CONTROLS: ControlLine[] = [
   { keys: "LEFT CLICK / SPACE", what: "Main guns. One double shot per press." },
   { keys: "E + CLICK", what: "Mini gun. Twenty a second while held, aimed at the crosshair, 25% damage, uses 1/4 bullet" },
   { keys: "HOLD RIGHT CLICK", what: "Shield for 0.5 seconds. Absorbs 80% of a hit. Ten charges." },
-  { keys: "T or CTRL + CLICK", what: "Torpedo. Two carried. Press again to detonate, or wait 4 sec." },
+  { keys: "T or CTRL + CLICK", what: "Torpedo. Four carried. Press again to detonate, or wait 4 sec." },
   { keys: "SHIFT", what: "Boost." },
   { keys: "Z", what: "Brake and slow down." },
   { keys: "ESC", what: "Back to the map." },

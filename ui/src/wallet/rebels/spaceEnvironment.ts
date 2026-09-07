@@ -287,8 +287,15 @@ export function createSpace(): {
           /* A FIELD, not one big rock. The same model over and over at
              different sizes and attitudes, spread through a flattened blob:
              cloning shares the geometry, so a hundred of them cost one. */
+          /* Rocks are not all one colour. The pack has no rock texture, so the
+             colour is doing all the work and a field of identical browns reads
+             as one object rather than as many. */
+          const ROCK_TINTS = [0x9a9088, 0x857c72, 0xa89a86, 0x736c66, 0xb0a291];
           for (let i = 0; i < rocks; i++) {
-            const rock = unitCopy(proto, { unlit: true });
+            const rock = unitCopy(proto, {
+              unlit: true,
+              tint: ROCK_TINTS[i % ROCK_TINTS.length],
+            });
             /* Deterministic scatter, so the field is the same field every
                time, like everything else out here. */
             const a = hash(i * 3.1 + spec.slotSeed);

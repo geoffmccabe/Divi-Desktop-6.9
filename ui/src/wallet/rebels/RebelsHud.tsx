@@ -12,6 +12,7 @@ import type { RebelsController, HudState } from "./rebelsController";
 import { RebelsScoreboard } from "./RebelsScoreboard";
 import { RebelsControls, CONTROLS, DOCKING } from "./RebelsControls";
 import { ShipMarket } from "./ShipMarket";
+import { RebelsHealthBar } from "./RebelsHealthBar";
 
 export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () => void }) {
   const [hud, setHud] = useState<HudState>(() => ctl.hud());
@@ -258,6 +259,8 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           <p className="orbit-keys">The map itself is unaffected.</p>
         </div>
       )}
+
+      <RebelsHealthBar />
 
       {help && <RebelsControls onClose={() => setHelp(false)} />}
 

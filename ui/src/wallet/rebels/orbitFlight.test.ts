@@ -137,7 +137,11 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   h.pos.normalize().multiplyScalar(R + 120);
   run(h, 55, stick({ y: -1 }));                  /* nose at the planet */
   run(h, 60 * 12, stick({ boosting: true }));    /* and straight in */
-  ok("going straight in at full boost is fatal", h.shields <= 0, `shields ${h.shields.toFixed(0)}`);
+  /* Most of the hull in one go. It used to be outright fatal, and stopped
+     being so when Geoff doubled the hull to two thousand; taking sixty percent
+     of it for flying into a planet is the same lesson at the new scale. */
+  ok("going straight in at full boost costs most of the hull",
+     h.shields < MAX_SHIELD * 0.5, `${h.shields.toFixed(0)} of ${MAX_SHIELD} left`);
 
   const graze = createFlight(pad);
   graze.pos.normalize().multiplyScalar(R + MIN_ALT + 0.2);
@@ -172,6 +176,34 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
     seconds += DT;
   }
   ok("the nearest planet is under a minute away", seconds < 60, `${seconds.toFixed(0)}s`);
+
+  /* ---- the slow repair ----
+     Geoff: "add a Repair factor that's timed like Minecraft in that it's slowly
+     healing again." Nothing while you are being shot at, then it comes back on
+     its own. It has to stay much slower than going home, or the tower stops
+     being worth flying to. */
+  const hurt = createFlight(pad);
+  hurt.pos.normalize().multiplyScalar(R + 400);   /* clear of the ground */
+  hurt.shields = 500;
+  hurt.sinceHit = 0;                              /* just been shot */
+  run(hurt, 60 * 3, stick({}));
+  ok("nothing repairs in the first few seconds", hurt.shields === 500,
+     `${hurt.shields.toFixed(0)}`);
+  run(hurt, 60 * 20, stick({}));
+  ok("then it comes back on its own", hurt.shields > 800, `${hurt.shields.toFixed(0)}`);
+  ok("but slowly enough that the tower is still worth flying to",
+     hurt.shields < MAX_SHIELD, `${hurt.shields.toFixed(0)} of ${MAX_SHIELD} after 23s`);
+
+  /* And being hit stops it dead. */
+  const shot = createFlight(pad);
+  shot.pos.normalize().multiplyScalar(R + 400);
+  shot.shields = 500;
+  shot.sinceHit = 0;
+  for (let i = 0; i < 60 * 20; i++) {
+    stepFlight(shot, DT, stick({}), [], -1);
+    if (i % 120 === 0) shot.sinceHit = 0;          /* shot at every two seconds */
+  }
+  ok("being shot at holds the repair off", shot.shields < 700, `${shot.shields.toFixed(0)}`);
 
   /* There is still an edge to the sky, so a player who points up and walks
      away is not lost for ever. */
@@ -238,9 +270,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 {
   const tip = pad.clone().normalize().multiplyScalar(R + 4.2);
   const f = createFlight(pad);
-  /* These test DOCKING, not launching, so the grace that stops a ship
-     re-docking the instant it leaves its own pad is cleared. */
-  f.redock = 0;
+  f.mustLeave = false;
   f.shields = 2; f.ammo = 5; f.boost = 0.1;
   let docked = 0;
   for (let i = 0; i < Math.ceil(DOCK_SECONDS * 60) + 90; i++) {
@@ -258,7 +288,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      hitting your own tower." Both halves of that are checked here. */
   const tip = pad.clone().normalize().multiplyScalar(R + 6);
   const f = createFlight(pad);
-  f.redock = 0;
+  f.mustLeave = false;
   f.shields = 200;
   f.ammo = 3;
   let slowest = Infinity;
@@ -286,7 +316,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      is exactly as unpleasant as running into anything else. */
   const tip = pad.clone().normalize().multiplyScalar(R + 3);
   const f = createFlight(pad);
-  f.redock = 0;
+  f.mustLeave = false;
   f.shields = 900;
   f.ammo = 3;
   /* Level with the mast. The step re-projects the ship to its own altitude
@@ -308,9 +338,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 //     docking literally unreachable.
 {
   const f = createFlight(pad);
-  /* These test DOCKING, not launching, so the grace that stops a ship
-     re-docking the instant it leaves its own pad is cleared. */
-  f.redock = 0;
+  f.mustLeave = false;
   run(f, 120, stick());
   ok("the brake actually slows the ship", (run(f, 90, stick({ braking: true })), f.speed < 9),
      `speed ${f.speed.toFixed(1)}`);
@@ -322,9 +350,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      whether the ease-off works. */
   const tip = pad.clone().normalize().multiplyScalar(R + 4.2);
   const f = createFlight(pad);
-  /* These test DOCKING, not launching, so the grace that stops a ship
-     re-docking the instant it leaves its own pad is cleared. */
-  f.redock = 0;
+  f.mustLeave = false;
   for (let i = 0; i < 90; i++) {
     f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 3);
     stepFlight(f, DT, stick(), [tip], 0);
@@ -343,9 +369,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const upAt = tip.clone().normalize();
   const beside = new THREE.Vector3(0, 1, 0).cross(upAt).normalize().multiplyScalar(3.6).add(tip);
   const f = createFlight(pad);
-  /* These test DOCKING, not launching, so the grace that stops a ship
-     re-docking the instant it leaves its own pad is cleared. */
-  f.redock = 0;
+  f.mustLeave = false;
   let best = 0;
   for (let i = 0; i < 60 * 14; i++) {
     /* Steer toward the tower each frame: a crude autopilot standing in for a
@@ -406,9 +430,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 {
   const tip = pad.clone().normalize().multiplyScalar(R + 4.2);
   const f = createFlight(pad);
-  /* These test DOCKING, not launching, so the grace that stops a ship
-     re-docking the instant it leaves its own pad is cleared. */
-  f.redock = 0;
+  f.mustLeave = false;
   /* Flown in and held by the tower, which is what an arriving player does. */
   let docked = false;
   let movingWhileDocked = 0;
@@ -511,6 +533,48 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   ok("and an empty rack raises nothing", f.guardFor === 0);
 }
 
+// 8d2. COMING HOME FROM ABOVE.
+//
+//      Geoff, again: "running into my own tower didn't seem to work. I didn't
+//      stop and I didn't recharge, repair, and refuel."
+//
+//      A free-flying ship does not follow the curve of the planet. It goes
+//      straight, so level flight climbs away from the surface on its own and a
+//      pilot coming back to their tower arrives well ABOVE the mast rather than
+//      alongside it. The old twelve-unit window was sized for a ship that flew
+//      at a constant altitude and was simply not there any more.
+{
+  const tip = pad.clone().normalize().multiplyScalar(R + 6);
+  const f = createFlight(pad);
+  f.mustLeave = false;
+  /* Twenty-five units up, nose down at the tower: exactly what returning from
+     a fight looks like now. */
+  f.pos.copy(pad).normalize().multiplyScalar(R + 31);
+  f.fwd.copy(f.pos).normalize().negate();
+  f.up.set(1, 0, 0).addScaledVector(f.fwd, -f.fwd.x).normalize();
+  f.ammo = 3;
+  f.shields = 200;
+
+  ok("the ship really is above the mast",
+     distanceToTower(f.pos, tip) > 12,
+     `${distanceToTower(f.pos, tip).toFixed(0)} from the tower`);
+
+  /* Measured AT the moment it completes. Left running afterwards the ship
+     undocks still pointing at the planet and flies into it, which is correct
+     behaviour and would make this a test of what happens next. */
+  let docks = 0, shieldsOnDock = 0, ammoOnDock = 0;
+  for (let i = 0; i < 60 * 8 && docks === 0; i++) {
+    if (stepFlight(f, DT, stick({}), [tip], 0).docked) {
+      docks++;
+      shieldsOnDock = f.shields;
+      ammoOnDock = f.ammo;
+    }
+  }
+  ok("coming home from above still docks", docks === 1, `${docks} docks`);
+  ok("and it repairs and rearms", shieldsOnDock === MAX_SHIELD && ammoOnDock === MAX_AMMO,
+     `${shieldsOnDock} shields, ${ammoOnDock} rounds`);
+}
+
 // 8e. Docking must not be stolen by the neighbours.
 //
 //     Geoff, a fifth time: "I still am unable to dock with my tower, I just fly
@@ -533,7 +597,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   /* Coming in over the cluster: well inside my own dock zone, but at this
      instant the neighbour's mast is the nearer of the two. */
   const f = createFlight(pad);
-  f.redock = 0;
+  f.mustLeave = false;
   f.pos.copy(home).addScaledVector(side, 1.6);
   ok("the neighbour really is the nearer one",
      distanceToTower(f.pos, neighbour) < distanceToTower(f.pos, home),

@@ -15,10 +15,21 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { loadModel, unitCopy } from "./spaceAssets";
+import { makeRepaintable, type ShipPaint, type PaintHandle } from "./shipColours";
 
-export function ShipPreview({ id }: { id: string }) {
+export function ShipPreview({ id, paint }: { id: string; paint: ShipPaint }) {
   const host = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
+  /* Kept in a ref so moving a slider repaints the ship that is already on
+     screen. Putting it in the effect's dependencies would reload the model on
+     every drag, which is both slow and wrong. */
+  const repaint = useRef<PaintHandle | null>(null);
+  const paintRef = useRef(paint);
+  paintRef.current = paint;
+
+  /* Every render, which is every slider frame. Cheap: it writes ten numbers
+     into uniforms that are already compiled into the shader. */
+  useEffect(() => { repaint.current?.apply(paint); }, [paint]);
 
   useEffect(() => {
     const mount = host.current;
@@ -63,6 +74,8 @@ export function ShipPreview({ id }: { id: string }) {
       .then((proto) => {
         if (stop) return;
         const model = unitCopy(proto);
+        repaint.current = makeRepaintable(model);
+        repaint.current.apply(paintRef.current);
         /* Normalised to one unit across, so every hull from a 13-unit fighter
            to a 565-unit station frames identically. The market shows shape and
            detail; the SIZE is in the stats, where it can be read. */
@@ -99,6 +112,7 @@ export function ShipPreview({ id }: { id: string }) {
 
     return () => {
       stop = true;
+      repaint.current = null;
       cancelAnimationFrame(raf);
       ro.disconnect();
       scene.traverse((o) => {
