@@ -8,10 +8,10 @@
 // Run: sh scripts/run-orbit-tests.sh
 
 import * as THREE from "three";
-import { R, MIN_ALT, MAX_ALT } from "./orbitWorld";
+import { R, MIN_ALT, MAX_ALT, planetDistance } from "./orbitWorld";
 import {
-  createFlight, stepFlight, distanceToTower, CRUISE, MAX_AMMO, MAX_SHIELD,
-  MAX_GUARDS, MAX_TORPEDOES,
+  createFlight, stepFlight, distanceToTower, cruiseScale, CRUISE, MAX_AMMO, MAX_SHIELD,
+  CRASH_DAMAGE, MAX_GUARDS, MAX_TORPEDOES,
   DOCK_SECONDS, type Stick,
 } from "./orbitFlight";
 
@@ -129,9 +129,49 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   ok("the ground can be flown into", g.shields < MAX_SHIELD, `shields ${g.shields}`);
   ok("and it does not tunnel through", g.pos.length() >= R + MIN_ALT - 1e-6,
      `radius ${g.pos.length().toFixed(2)}`);
+  /* THE SIZE OF THE IMPACT IS THE SPEED AND THE ANGLE, and one is charged per
+     touchdown rather than one per frame. So flying straight down at full boost
+     is fatal on its own, and sliding along the ground afterwards is free —
+     which is what stops flying low turning into a shudder of repeated hits. */
   const h = createFlight(pad);
-  run(h, 60 * 10, stick({ y: -1, boosting: true }));
-  ok("ten seconds of holding it into the planet is fatal", h.shields <= 0, `shields ${h.shields}`);
+  h.pos.normalize().multiplyScalar(R + 120);
+  run(h, 55, stick({ y: -1 }));                  /* nose at the planet */
+  run(h, 60 * 12, stick({ boosting: true }));    /* and straight in */
+  ok("going straight in at full boost is fatal", h.shields <= 0, `shields ${h.shields.toFixed(0)}`);
+
+  const graze = createFlight(pad);
+  graze.pos.normalize().multiplyScalar(R + MIN_ALT + 0.2);
+  const beforeGraze = graze.shields;
+  run(graze, 60 * 8, stick({ braking: true }));  /* trundling along the surface */
+  ok("but sliding along it is not", graze.shields > beforeGraze - CRASH_DAMAGE,
+     `${beforeGraze} -> ${graze.shields.toFixed(0)}`);
+
+  /* OPEN SPACE IS FAST, and the towers are not.
+     The planets are 1,000 to 3,600 units out and cruise is 16 a second, so
+     without this they were a minute to four minutes of holding a stick at a dot
+     that barely grew. The multiplier is exactly 1 near the ground, so nothing
+     about a dogfight changes. */
+  const low = createFlight(pad);
+  run(low, 60 * 3, stick({}));
+  ok("speed near the towers is untouched", Math.abs(low.speed - CRUISE) < 0.5,
+     `${low.speed.toFixed(1)} vs cruise ${CRUISE}`);
+  ok("and the scale really is one down there", cruiseScale(8) === 1 && cruiseScale(60) === 1);
+
+  const far = createFlight(pad);
+  far.pos.normalize().multiplyScalar(R + 800);
+  run(far, 60 * 6, stick({}));
+  ok("but out among the planets it is not", far.speed > CRUISE * 4,
+     `${far.speed.toFixed(0)} vs cruise ${CRUISE}`);
+
+  /* The whole point of it: the nearest planet is a reachable flight. */
+  const trip = createFlight(pad);
+  run(trip, 50, stick({ y: 1 }));
+  let seconds = 0;
+  while (trip.pos.length() < planetDistance(1) && seconds < 200) {
+    stepFlight(trip, DT, stick({ boosting: true }), [], -1);
+    seconds += DT;
+  }
+  ok("the nearest planet is under a minute away", seconds < 60, `${seconds.toFixed(0)}s`);
 
   /* There is still an edge to the sky, so a player who points up and walks
      away is not lost for ever. */
@@ -162,7 +202,10 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   run(f, 60 * 8, stick({ boosting: true }));
   ok("boost runs dry", f.boost === 0, `boost ${f.boost.toFixed(2)}`);
   run(f, 120, stick({ boosting: true }));
-  ok("dry boost falls back to cruise, never to a stop", Math.abs(f.speed - CRUISE) < 0.5,
+  /* Against cruise AT THIS ALTITUDE: nine seconds of boost carries the ship a
+     few hundred units up, where open space is already a little faster. */
+  ok("dry boost falls back to cruise, never to a stop",
+     Math.abs(f.speed - CRUISE * cruiseScale(f.alt)) < 0.5,
      `speed ${f.speed.toFixed(1)}`);
 }
 

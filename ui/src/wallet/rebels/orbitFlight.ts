@@ -108,6 +108,9 @@ export interface Flight {
   heavyWasDown: boolean;
   /** Seconds of invulnerability after a hit, so one scrape is not five. */
   grace: number;
+  /** Sitting on the surface. One impact is charged per touchdown, so sliding
+   *  along the ground is free and arriving is not. */
+  grounded: boolean;
   /** What you arrived with, so the gauges can be seen filling rather than
    *  snapping to full the instant the bar completes. */
   dockFrom: { shields: number; ammo: number; boost: number } | null;
@@ -163,6 +166,7 @@ export function createFlight(at: THREE.Vector3): Flight {
     cooldown: 0,
     heavyWasDown: false,
     grace: 0,
+    grounded: false,
     dockFrom: null,
     dockHold: 0,
     /* You launch from your own tower, which means you launch INSIDE its docking
@@ -170,6 +174,31 @@ export function createFlight(at: THREE.Vector3): Flight {
        brake pins it there: launching would stop you leaving. */
     redock: 3,
   };
+}
+
+/* ---- getting anywhere ----
+   Geoff: "I don't seem to be able to get any closer to the planets. They just
+   never get closer even though the Earth gets farther away."
+
+   He was right, and the arithmetic says so. The nearest planet is 1,000 units
+   out. Cruise is 16 a second and the boost cells last six seconds, so reaching
+   it meant a minute of holding a stick at a dot that barely grew; the furthest
+   would have taken nearly four minutes.
+
+   Shrinking the sky was not an option, because the spacing is what was asked
+   for. So the ship goes faster the further it is from Earth instead. Nothing
+   worth dogfighting is out there, so nothing is lost by it, and close-quarters
+   fighting is completely untouched because the multiplier is exactly 1 out to
+   sixty units, which is well above the towers.
+
+   Five times at full stretch, which puts the nearest planet about sixteen
+   seconds away and the furthest just under a minute. Squared rather than
+   linear, so it stays slow around the towers and only really opens up once
+   Earth is behind you. */
+const OPEN_SPACE = 5;
+export function cruiseScale(alt: number): number {
+  const t = Math.min(1, Math.max(0, (alt - 60) / 700));
+  return 1 + (OPEN_SPACE - 1) * t * t;
 }
 
 /**
@@ -250,8 +279,9 @@ export function stepFlight(
      "return to your node to rearm" should feel like. */
   const wantBoost = stick.boosting && f.boost > 0;
   if (wantBoost) f.boost = Math.max(0, f.boost - dt / 6);
-  let target = CRUISE;
-  if (wantBoost) target = BOOST;
+  const openSpace = cruiseScale(f.alt);
+  let target = CRUISE * openSpace;
+  if (wantBoost) target = BOOST * openSpace;
   /* Docked means STOPPED. Not slowed: stopped. Being handed fuel while drifting
      past is not docking, and it was what happened before. */
   else if (f.dock > 0) target = 0;
@@ -323,23 +353,32 @@ export function stepFlight(
      levelled off, which reads as ploughing in and skidding rather than as
      hitting a wall. */
   if (f.alt < MIN_ALT) {
-    const wasFlying = f.alt < MIN_ALT - 1e-6;
     _up.copy(f.pos).normalize();
-    if (wasFlying && f.speed > CRUISE * 0.4 && f.grace <= 0) {
-      f.shields -= CRASH_DAMAGE;
-      f.grace = 1.2;
-      out.hit = true;
+    /* ONE impact per touchdown, and its size is the speed and the angle.
+       Straight down under boost is fatal on its own; a graze at cruise costs
+       little. That is what "smash into the earth" should mean.
+
+       The nose is deliberately NOT levelled. The first version did level it,
+       and it made flying near the ground unbearable: the ship dived, was
+       snapped upright, the player's still-lowered crosshair dived it again, and
+       the whole thing turned into a shudder. Geoff: "it jerks the view up and
+       down, like it's trying to pull me down." Holding a nose-down attitude on
+       the ground now simply slides along it, because clamping the height is a
+       small correction while rewriting the heading is a large one. */
+    if (!f.grounded) {
+      const into = Math.max(0, -f.fwd.dot(_up));       /* 1 is straight down */
+      const hard = (f.speed / CRUISE) * into * 2;
+      if (hard > 0.05 && f.grace <= 0) {
+        f.shields -= CRASH_DAMAGE * hard;
+        f.grace = 1.2;
+        out.hit = true;
+      }
+      f.grounded = true;
     }
     f.alt = MIN_ALT;
     f.pos.copy(_up).multiplyScalar(R + MIN_ALT);
-    /* Level the nose onto the surface, or the next frame drives straight back
-       into the ground and the crash repeats for as long as the stick is held. */
-    if (f.fwd.dot(_up) < 0) {
-      f.fwd.addScaledVector(_up, -f.fwd.dot(_up));
-      if (f.fwd.lengthSq() < 1e-8) f.fwd.set(_up.z, _up.x, _up.y);
-      f.fwd.normalize();
-      f.up.copy(_up).addScaledVector(f.fwd, -_up.dot(f.fwd)).normalize();
-    }
+  } else {
+    f.grounded = false;
   }
 
   /* ---- the edge of the sky ----

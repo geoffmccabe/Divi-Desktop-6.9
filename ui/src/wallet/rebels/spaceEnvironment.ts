@@ -132,7 +132,8 @@ export function createSpace(): {
     void loadModel(spec.id)
       .then((proto) => {
         if (dead) return;
-        const model = unitCopy(proto);
+        /* Unlit: this lives in the map's scene, whose lighting is not ours. */
+        const model = unitCopy(proto, { unlit: true });
         model.scale.setScalar(spec.diameter);
         holder.add(model);
       })

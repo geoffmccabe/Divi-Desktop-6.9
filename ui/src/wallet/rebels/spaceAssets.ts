@@ -211,6 +211,45 @@ function repair(root: THREE.Object3D, id: string): void {
 }
 
 /**
+ * The same model, but lit by nothing.
+ *
+ * The map's scene is not ours and its lighting is not ours either: react-globe
+ * sets an ambient light at an intensity of pi, which is enormous, and under it
+ * a lit material renders as a white shape with the texture washed out of it.
+ * That is what Geoff saw — "they have no textures, they are all just
+ * white/grey" — and no amount of tuning roughness fixes borrowed lighting.
+ *
+ * Synty's art is flat-shaded and baked into its atlas anyway, so it is meant to
+ * be seen unlit: the texture IS the shading. Drawing it unlit means it looks
+ * the same whatever the host scene does, which for scenery living in somebody
+ * else's scene is the only safe answer. The Ship Market keeps lit materials,
+ * because there the lights are ours.
+ */
+function unlit(root: THREE.Object3D): void {
+  const swapped = new Map<THREE.Material, THREE.Material>();
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const one = (mat: THREE.Material) => {
+      let got = swapped.get(mat);
+      if (!got) {
+        const std = mat as THREE.MeshStandardMaterial;
+        got = new THREE.MeshBasicMaterial({
+          map: std.map ?? null,
+          color: 0xffffff,
+          side: THREE.FrontSide,
+          transparent: std.transparent,
+          opacity: std.opacity,
+        });
+        swapped.set(mat, got);
+      }
+      return got;
+    };
+    m.material = Array.isArray(m.material) ? m.material.map(one) : one(m.material);
+  });
+}
+
+/**
  * A copy of a model, normalised so its LONGEST side is exactly one unit and
  * its centre is the origin.
  *
@@ -220,8 +259,12 @@ function repair(root: THREE.Object3D, id: string): void {
  * be written as the size the thing should APPEAR, which is the only way the
  * numbers in the plan stay readable.
  */
-export function unitCopy(proto: THREE.Group): THREE.Group {
+export function unitCopy(proto: THREE.Group, opts: { unlit?: boolean } = {}): THREE.Group {
   const model = proto.clone(true);
+  /* clone() SHARES materials with the prototype, so the swap has to happen on
+     the copy and has to make its own materials, or unlighting one planet would
+     unlight the ship turning in the Market. */
+  if (opts.unlit) unlit(model);
   const box = new THREE.Box3().setFromObject(model);
   const size = new THREE.Vector3();
   const centre = new THREE.Vector3();
