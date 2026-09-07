@@ -26,6 +26,12 @@ import { R, MIN_ALT, MAX_ALT } from "./orbitWorld";
 export const CRUISE = 16;      /* globe units per second, about 1024 km/s of Earth */
 export const BOOST = 38;
 export const YAW_RATE = 1.5;   /* radians per second at full stick */
+/** Roll, in radians a second. Quicker than yaw: rolling is how you point a
+ *  turn, so it has to happen faster than the turn it is setting up. */
+export const ROLL_RATE = 2.4;
+/** Sideways, in units a second at full deflection. A fraction of cruise: strafe
+ *  is for lining up a shot, not for travelling. */
+export const STRAFE_SPEED = 9;
 /* Turn radius is speed divided by yaw rate, and it is the number that decides
    whether a tower can be docked with at all. At cruise the ship turns in about
    11 units, wider than the dock zone, so a player who overshoots can circle a
@@ -70,6 +76,9 @@ export const DOCK_SECONDS = 4;
    rather than flown in circles around it. Braking to a quarter of cruise was
    not enough and docking stayed fiddly. */
 export const PARK = 2.2;
+/** How far the throttle goes below zero. A slow reverse, enough to back away
+ *  from a tower rather than fly a circuit to line up again. */
+export const REVERSE = -0.35;
 /** The player's shield.
  *
  *  Twenty times a fighter's. Four of them firing at perfect accuracy land about
@@ -124,6 +133,17 @@ export interface Flight {
   /** Height above the surface. DERIVED from the position now, and reported for
    *  the gauge rather than steered. */
   alt: number;
+  /**
+   * Where the throttle is set, from -0.35 to 1. It STAYS where it is put.
+   *
+   * A persistent lever rather than hold-to-thrust, which is a deliberate
+   * departure from what I first proposed. Hold-to-thrust is what the arcade
+   * end of the genre does, but the majority — Elite, Star Citizen, Squadrons,
+   * Freelancer, X-Wing — use a lever, it is what makes a dedicated full-stop
+   * key mean anything, and it leaves the game playing exactly as it did for
+   * anyone who never touches W or S, since it starts at full.
+   */
+  throttle: number;
   speed: number;
   bank: number;
   boost: number;      /* 0..1 of the boost cells */
@@ -139,6 +159,7 @@ export interface Flight {
   cooldown: number;
   /** Trigger state last frame, so a hold is not read as many presses. */
   heavyWasDown: boolean;
+  secondaryWasDown: boolean;
   /** Seconds of invulnerability after a hit, so one scrape is not five. */
   grace: number;
   /** Seconds since anything last hurt this ship. Drives the slow repair. */
@@ -166,17 +187,41 @@ export interface Flight {
 }
 
 export interface Stick {
-  x: number;          /* -1 left to +1 right */
-  y: number;          /* -1 dive to +1 climb */
+  x: number;          /* -1 left to +1 right, from the keyboard only */
+  y: number;          /* -1 dive to +1 climb, from the keyboard only */
+  /**
+   * How far the MOUSE moved this frame, in radians of turn.
+   *
+   * Already an angle, not a rate, which is the whole point: the ship turns by
+   * exactly what the mouse did and stops the instant the mouse does. It is
+   * therefore NOT multiplied by dt — the movement already happened over that
+   * frame — and the caller zeroes it once it has been used.
+   *
+   * The old model held a crosshair off centre and read its offset as a turn
+   * RATE, which is the scheme every game that uses it ships a "recentre mouse"
+   * key for. That key is the tell: a stick that can be left deflected with no
+   * way to feel it is a stick that turns your ship while you are not touching
+   * it. It is what Geoff hit three separate times.
+   */
+  lookX: number;
+  lookY: number;
+  /** -1 left to +1 right. Q and E. */
+  roll: number;
+  /** -1 left to +1 right. A and D. Sideways, without turning. */
+  strafe: number;
+  /** W and S, as -1, 0 or +1. Moves the throttle rather than setting a speed. */
+  throttle: number;
+  /** X. Everything to a stop. */
+  fullStop: boolean;
   boosting: boolean;
-  braking: boolean;
   firing: boolean;
-  /** Control held: the trigger launches or sets off a torpedo instead of
-   *  firing the guns. */
-  heavy: boolean;
-  /** Right button: raise the guard. */
+  /** The secondary trigger: the right button. Launches or sets off whatever is
+   *  in the secondary slot. */
+  secondary: boolean;
+  /** F: raise the guard. */
   guard: boolean;
-  /** E held: the trigger fires the mini gun instead of the main guns. */
+  /** True when the selected primary is the mini gun, which runs on while held
+   *  where the main guns are one shot a press. */
   mini: boolean;
 }
 
@@ -197,6 +242,7 @@ export function createFlight(at: THREE.Vector3): Flight {
        means. Everything after this is the player's doing. */
     up: up.clone().addScaledVector(fwd, -up.dot(fwd)).normalize(),
     alt,
+    throttle: 1,
     speed: CRUISE,
     bank: 0,
     boost: 1,
@@ -210,6 +256,7 @@ export function createFlight(at: THREE.Vector3): Flight {
     dockedAt: -1,
     cooldown: 0,
     heavyWasDown: false,
+    secondaryWasDown: false,
     grace: 0,
     sinceHit: REPAIR_DELAY,
     grounded: false,
@@ -325,22 +372,25 @@ export function stepFlight(
     if (d < nearDist) { nearDist = d; near = i; }
   }
 
-  /* ---- speed ----
-     There is no throttle lever, and the first version had no way to slow down
-     at all, which quietly made docking impossible: cruise is 16 and docking
-     needs under 9. Two answers, both of which have to be there. A brake, for
-     when the player wants one. And an automatic ease-off inside a tower's
-     approach, so flying home and stopping is simply what happens, which is what
-     "return to your node to rearm" should feel like. */
+  /* ---- the throttle ----
+     A lever, set with W and S, that stays where it is put. Down through zero
+     into a slow reverse, which is what lets a pilot back off a tower rather
+     than having to fly a circuit to come at it again. X puts it to zero. */
+  if (stick.throttle !== 0) {
+    f.throttle = Math.max(REVERSE, Math.min(1, f.throttle + stick.throttle * dt * 0.9));
+  }
+  if (stick.fullStop) f.throttle = 0;
+
   const wantBoost = stick.boosting && f.boost > 0;
   if (wantBoost) f.boost = Math.max(0, f.boost - dt / 6);
   const openSpace = cruiseScale(f.alt);
-  let target = CRUISE * openSpace;
-  if (wantBoost) target = BOOST * openSpace;
+  /* Boost ignores the lever: it is a button that means "everything you have",
+     and having to remember to push the throttle up first would make it feel
+     broken exactly when it is wanted. */
+  let target = wantBoost ? BOOST * openSpace : CRUISE * openSpace * f.throttle;
   /* Docked means STOPPED. Not slowed: stopped. Being handed fuel while drifting
      past is not docking, and it was what happened before. */
-  else if (f.dock > 0) target = 0;
-  else if (stick.braking) target = PARK;
+  if (f.dock > 0) target = 0;
 
   /* Braking to a halt is quick and docking brakes hardest, because the resupply
      itself only lasts a second or two: at the ordinary rate the ship was still
@@ -348,7 +398,11 @@ export function stepFlight(
      which is what makes arriving somewhere feel like arriving. */
   const ease = f.dock > 0 ? 16 : target < f.speed ? 5 : 2;
   f.speed += (target - f.speed) * Math.min(1, dt * ease);
-  if (f.speed < 0.05) f.speed = 0;
+  /* Snapped to a dead stop only when it is genuinely nearly stopped. The test
+     that clamped anything under 0.05 also clamped every NEGATIVE speed, so
+     reverse eased toward its target and was zeroed on the way — the throttle
+     went below zero and the ship sat still. */
+  if (Math.abs(f.speed) < 0.05) f.speed = 0;
 
   /* ---- steering ----
      THE NOSE POINTS WHERE THE PLAYER POINTS IT. Nothing flattens it, nothing
@@ -374,14 +428,26 @@ export function stepFlight(
   if (_right.lengthSq() < 1e-9) _right.set(1, 0, 0);
   _right.normalize();
 
-  if (stick.y !== 0) {
-    _q.setFromAxisAngle(_right, stick.y * PITCH_RATE * dt);
+  /* Pitch: the keys are a rate over time, the mouse is an angle that already
+     happened. Adding them means a player can use either or both without one
+     overriding the other, which is what the old "keys win while held" rule did
+     and why reaching for an arrow key used to kill the mouse. */
+  const pitch = stick.y * PITCH_RATE * dt - stick.lookY;
+  if (pitch !== 0) {
+    _q.setFromAxisAngle(_right, pitch);
     f.fwd.applyQuaternion(_q);
     f.up.applyQuaternion(_q);
   }
-  if (stick.x !== 0) {
-    _q.setFromAxisAngle(f.up, -stick.x * YAW_RATE * dt);
+  const yaw = -stick.x * YAW_RATE * dt - stick.lookX;
+  if (yaw !== 0) {
+    _q.setFromAxisAngle(f.up, yaw);
     f.fwd.applyQuaternion(_q);
+  }
+  /* Roll turns the ship's UP about its nose and leaves the nose alone, which is
+     exactly what makes it roll rather than turn. */
+  if (stick.roll !== 0) {
+    _q.setFromAxisAngle(f.fwd, -stick.roll * ROLL_RATE * dt);
+    f.up.applyQuaternion(_q);
   }
   /* Kept honest against drift: a few thousand quaternions later the pair would
      otherwise stop being perpendicular and the ship would slowly shear. */
@@ -399,6 +465,13 @@ export function stepFlight(
      body in space now, so altitude is something that HAPPENS rather than
      something that is set. */
   f.pos.addScaledVector(f.fwd, f.speed * dt);
+  /* Sideways, without turning: the wing line, at a fraction of cruise. Scaled
+     with open space like everything else, or strafing would be uselessly slow
+     out among the planets. */
+  if (stick.strafe !== 0) {
+    _right.crossVectors(f.fwd, f.up).normalize();
+    f.pos.addScaledVector(_right, stick.strafe * STRAFE_SPEED * cruiseScale(f.alt) * dt);
+  }
   f.alt = f.pos.length() - R;
 
   /* ---- the ground ----
@@ -422,7 +495,9 @@ export function stepFlight(
        small correction while rewriting the heading is a large one. */
     if (!f.grounded) {
       const into = Math.max(0, -f.fwd.dot(_up));       /* 1 is straight down */
-      const hard = (f.speed / CRUISE) * into * 2;
+      /* Absolute, so backing into something at speed hurts as much as flying
+         into it. */
+      const hard = (Math.abs(f.speed) / CRUISE) * into * 2;
       if (hard > 0.05 && f.grace <= 0) {
         f.shields -= CRASH_DAMAGE * hard;
         f.grace = 1.2;
@@ -555,23 +630,19 @@ export function stepFlight(
     }
   }
 
-  /* ---- guns, or the heavy trigger ----
-     ONE PULL, ONE SHOT. The guns used to run at nine shots a second for as long
-     as the button was down, which fired eighteen overlapping copies of the
-     laser sample every second and came out as a drone rather than as gunfire.
-     Both triggers are now edge-triggered: a click is a shot, and a shot is one
-     double-barrelled bang.
+  /* ---- the two triggers ----
+     Left is the primary, right is the secondary. That pairing is the most
+     universal convention in the genre — Star Citizen, Everspace, Squadrons,
+     FreeSpace 2 and Star Conflict all have it — and it replaces a modifier key
+     nobody else uses: torpedoes were on control-click, which is not a thing any
+     space game does.
 
-     Control held swaps the trigger over entirely, so a torpedo run never sprays
-     bullets at the same time. */
+     ONE PULL, ONE SHOT on the main guns. They used to run at nine shots a
+     second for as long as the button was down, which came out as a drone rather
+     than gunfire. The mini gun is the exception and runs on while held. */
   f.cooldown -= dt;
   const pressed = stick.firing && !f.heavyWasDown;
-  if (stick.heavy) {
-    if (pressed) out.heavyPress = true;
-  } else if (stick.mini) {
-    /* The mini gun is the one gun that DOES run on while the trigger is held,
-       ten a second. A quarter of a round each, so four of them cost one shot of
-       the main guns, and a leftover fraction is still usable here. */
+  if (stick.mini) {
     if (stick.firing && f.cooldown <= 0 && f.ammo >= MINI_AMMO) {
       f.cooldown = MINI_INTERVAL;
       f.ammo -= MINI_AMMO;
@@ -585,6 +656,12 @@ export function stepFlight(
     out.fired = true;
   }
   f.heavyWasDown = stick.firing;
+
+  /* The secondary trigger, edge-triggered: one press is one launch, or one
+     detonation of what is already out there. Holding it does nothing, which is
+     what stops a held button emptying the rack. */
+  if (stick.secondary && !f.secondaryWasDown) out.heavyPress = true;
+  f.secondaryWasDown = stick.secondary;
 
   /* ---- the guard ----
      HELD, not tapped. While the button is down the shield stays up, and it

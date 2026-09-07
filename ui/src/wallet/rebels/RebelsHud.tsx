@@ -13,6 +13,7 @@ import { RebelsScoreboard } from "./RebelsScoreboard";
 import { RebelsControls, CONTROLS, DOCKING } from "./RebelsControls";
 import { ShipMarket } from "./ShipMarket";
 import { RebelsHealthBar } from "./RebelsHealthBar";
+import { PRIMARY, SECONDARY } from "./shipLoadout";
 import { ShipBadge } from "./ShipBadge";
 import pandaUrl from "../../assets/rebels_panda.webp";
 
@@ -132,6 +133,20 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
             eight planet radii, and ordinary flying would have read as 1%. The
             same 64km per unit the speed uses. */}
         <div className="orbit-row orbit-dim">ALT {Math.round(hud.alt * 64).toLocaleString()} <span className="orbit-dim">km</span></div>
+        {/* The throttle lever. Shown as a number because it is a setting the
+            player made and can forget, unlike speed which they can feel. */}
+        <div className="orbit-row orbit-dim">
+          THR {Math.round(hud.throttle * 100)}%
+          {hud.throttle < 0 && <span className="orbit-alert"> REV</span>}
+        </div>
+        {/* What is in each trigger. Two lines, because the whole point of
+            direct selection is knowing what a press will do without trying it. */}
+        <div className="orbit-row orbit-dim orbit-weapons">
+          <b>1-3</b> {PRIMARY[hud.primary]?.name ?? "—"}
+        </div>
+        <div className="orbit-row orbit-dim orbit-weapons">
+          <b>4-6</b> {SECONDARY[hud.secondary]?.name ?? "—"}
+        </div>
       </div>
       <div className="orbit-tr">
         {/* Your ship, or — when there is something out there worth naming —
@@ -265,6 +280,12 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           <p className="orbit-keys">{hud.broken}</p>
           <p className="orbit-keys">The map itself is unaffected.</p>
         </div>
+      )}
+
+      {/* What was just selected, or why it could not be. Two seconds and gone:
+          long enough to read, short enough not to become furniture. */}
+      {hud.note && performance.now() - hud.noteAt < 2000 && (
+        <div className="orbit-note">{hud.note}</div>
       )}
 
       <RebelsHealthBar />

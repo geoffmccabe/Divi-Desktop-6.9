@@ -29,6 +29,9 @@ import { loadModel, unitCopy } from "./spaceAssets";
 import { loadShip } from "./shipChoice";
 import { loadPaint, makeRepaintable, type PaintHandle } from "./shipColours";
 import { fitCollider, placeCollider, noseOf, type HitSphere } from "./shipCollider";
+import {
+  loadLoadout, saveLoadout, weaponAt, type Loadout, type SlotKind,
+} from "./shipLoadout";
 import { pulseHealth } from "./healthPulse";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
@@ -62,6 +65,15 @@ export interface HudState {
   towers: number;
   /** How far the camera sits behind the ship. Zero is the cockpit. */
   view: number;
+  /** Where the throttle lever is, -0.35 to 1. */
+  throttle: number;
+  /** Which weapon is in each trigger, as an index into PRIMARY / SECONDARY. */
+  primary: number;
+  secondary: number;
+  /** A line that appears for a moment: what was just selected, or why it could
+   *  not be. */
+  note: string;
+  noteAt: number;
   /** Whatever the ship is near enough to name, or null out in open space.
    *  "Near enough" is within three of the thing's own diameters, so a giant
    *  announces itself from further off than a rock does, which is right. */
@@ -99,7 +111,8 @@ const BLANK: HudState = {
   ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO,
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
-  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
+  dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, throttle: 1,
+  primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
 };
@@ -279,8 +292,41 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     score = 0;
   }
 
-  const stick: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false, mini: false };
+  const stick: Stick = {
+    x: 0, y: 0, lookX: 0, lookY: 0, roll: 0, strafe: 0, throttle: 0,
+    fullStop: false, boosting: false, firing: false, secondary: false,
+    guard: false, mini: false,
+  };
   const keys: Record<string, boolean> = {};
+
+  /* What is in the two trigger slots. Saved, so a pilot who prefers the mini
+     gun does not have to say so every time they launch. */
+  const weapons: Loadout = loadLoadout();
+
+  /**
+   * Choose a weapon.
+   *
+   * A slot that is not fitted yet SAYS SO rather than quietly doing nothing: a
+   * key that appears dead is indistinguishable from a bug, and there are three
+   * empty slots in this loadout by design.
+   */
+  function selectWeapon(kind: SlotKind, index: number) {
+    const w = weaponAt(kind, index);
+    if (!w) return;
+    if (!w.ready) {
+      setHud({ note: `${w.name}: not yet fitted`, noteAt: performance.now() });
+      return;
+    }
+    weapons[kind] = index;
+    saveLoadout(weapons);
+    applyKeys();
+    setHud({
+      primary: weapons.primary,
+      secondary: weapons.secondary,
+      note: w.name,
+      noteAt: performance.now(),
+    });
+  }
 
   const scratch = {
     up: new THREE.Vector3(),
@@ -298,66 +344,46 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
 
   /* ---------------- input ----------------
-     The pointer is a stick: its offset from the middle of the canvas is the
-     deflection, so the crosshair goes where the hand goes. */
-  /* ---- the crosshair is a SELF-CENTRING STICK ----
 
-     It was not, and that made the game unflyable. The crosshair accumulates
-     mouse movement and clamps at the edges of the frame, and its distance from
-     the middle is a RATE of turn. Move the mouse down and stop, and the
-     crosshair stays below the middle, and the ship keeps pitching down. For
-     ever. Push it to the bottom edge and the ship simply loops, over and over,
-     which is exactly what Geoff saw: "something is fighting my controls and
-     making the screen jerk up and down."
+     THE MOUSE TURNS THE SHIP. It does not hold a crosshair somewhere.
 
-     This was survivable before the flight model was freed, because up and down
-     used to be a throttle on an altitude between 0.8 and 30 units: a pinned
-     crosshair meant "sit on the floor" and nothing worse. Turning pitch into a
-     real direction turned the same input into a permanent command, and there
-     was no way to cancel it except to find the exact middle of a frame you
-     cannot see.
+     There used to be a virtual stick here: the crosshair accumulated mouse
+     movement, its distance from the middle of the frame was read as a turn
+     RATE, and a spring pulled it back to centre. That is the scheme Squadrons,
+     Everspace 2 and Elite ship by default, and it is also the one every single
+     game that ships it also ships a "recentre mouse" key for. The key is the
+     tell. A stick that can be left deflected with no way to feel it is a stick
+     that turns your ship while nobody is touching it, and it is what Geoff hit
+     three separate times: shaky controls, a ship that looped upward on its own,
+     and a nose that would not stay put.
 
-     Two things fix it, and they are what every mouse-flown game does. A
-     DEADZONE, so the middle of the screen means straight ahead rather than
-     nearly straight ahead. And a RETURN, so letting go of the mouse returns
-     the stick to neutral and the ship stops turning. Moving the mouse outruns
-     the return easily, so it costs nothing in responsiveness. */
-  const DEADZONE = 0.07;
-  /** Seconds for the stick to fall back most of the way to the middle. */
-  const STICK_RETURN = 0.45;
-  /** How far from the middle the crosshair may get. Short of the frame edge,
-   *  so full deflection is reachable without the crosshair sticking to the rim
-   *  where nothing the mouse does can move it further. */
-  const STICK_REACH = 0.42;
+     What replaces it is what Descent 3, FreeSpace 2 and Elite's optional
+     Relative Mouse do — and Frontier's own forums call that option "a secret
+     easy mode" and "the biggest skill booster in the game". The mouse turns the
+     ship by exactly how far it moved. Stop moving it and the ship stops. There
+     is no offset to get stuck in, so the whole family of bugs is gone rather
+     than damped.
 
-  function shape(v: number): number {
-    const a = Math.abs(v);
-    if (a <= DEADZONE) return 0;
-    return Math.sign(v) * Math.min(1, (a - DEADZONE) / (STICK_REACH - DEADZONE));
-  }
-  function applyCursor() {
-    stick.x = shape(cursor.x * 2 - 1);
-    stick.y = -shape(cursor.y * 2 - 1);
-  }
+     The crosshair is therefore always the middle of the screen, which is also
+     where the guns already converge. `cursor` stays, fixed at the centre: the
+     HUD draws it and the mini gun aims through it, and both want a point rather
+     than a special case. */
+
   /**
-   * Ease the crosshair back to the middle, then settle the stick. Once a frame.
+   * Relative look: the mouse turns the ship, and the ship stops when it does.
    *
-   * The ORDER matters and is the whole reason this is one function. Recentring
-   * has to reapply the cursor every frame, and the cursor and the keys write to
-   * the same stick, so doing only the cursor would quietly wipe out a held
-   * arrow key on the very next frame and leave the keyboard dead. Keys go last
-   * and win while they are held, which is what a player expects when they reach
-   * for one mid-turn.
+   * No crosshair offset and nothing to spring back from. Accumulated here and
+   * consumed by the flight step, which is why it is added to rather than set:
+   * several pointer events can arrive between two frames and every one of them
+   * moved the mouse.
    */
-  function centreStick(dt: number) {
-    const k = Math.min(1, dt / STICK_RETURN);
-    cursor.x += (0.5 - cursor.x) * k;
-    cursor.y += (0.5 - cursor.y) * k;
-    applyCursor();
-    applyKeys();
-  }
+  const LOOK_PER_PIXEL = 0.0028;
   function onMove(e: PointerEvent) {
     if (!dom) return;
+    if (flying) {
+      stick.lookX += (e.movementX || 0) * LOOK_PER_PIXEL;
+      stick.lookY += (e.movementY || 0) * LOOK_PER_PIXEL;
+    }
     /* HOW FAR THE MOUSE MOVED, always. Never where it is.
        There used to be two schemes here: relative accumulation under pointer
        lock, and the crosshair snapping to the pointer's absolute position when
@@ -371,11 +397,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        forward, it just starts looping upwards."
        movementX and movementY are on the event whether or not the lock took, so
        one scheme serves both and there is nothing left to disagree. */
-    const r = dom.getBoundingClientRect();
-    const lo = 0.5 - STICK_REACH, hi = 0.5 + STICK_REACH;
-    cursor.x = Math.max(lo, Math.min(hi, cursor.x + (e.movementX || 0) / r.width));
-    cursor.y = Math.max(lo, Math.min(hi, cursor.y + (e.movementY || 0) / r.height));
-    applyCursor();
   }
 
   /* Escape releases the lock, which the browser does for us, and that is the
@@ -387,12 +408,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
   function onDown(e: PointerEvent) {
     e.preventDefault();
-    /* Right button is the guard and nothing else. Only the left one shoots. */
-    if (e.button === 2) { stick.guard = true; return; }
+    /* Right button is the SECONDARY weapon. It was the shield, which is the one
+       place in this scheme that was actively at odds with the genre: left
+       primary and right secondary is the most universal convention there is.
+       The shield is on F. */
+    if (e.button === 2) { stick.secondary = true; return; }
     /* Control-click is the torpedo. Read off the event rather than trusting the
        keydown listener, which misses the first one after the window regains
-       focus. */
-    if (e.ctrlKey || e.metaKey) stick.heavy = true;
+       focus. Control-click no longer means anything: the secondary weapon is on
+       the right button, where the genre puts it. */
     stick.firing = true;
   }
   /* And no context menu in the middle of a dogfight. */
@@ -444,45 +468,81 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       .finally(() => { shipLoading = false; });
   }
   function onUp(e: PointerEvent) {
-    if (e.button === 2) { stick.guard = false; return; }
+    if (e.button === 2) { stick.secondary = false; return; }
     stick.firing = false;
   }
+
+  /* ---- THE KEY MAP ----
+     Everspace 2's layout, which is where the genre has settled, checked against
+     the shipped bindings of Elite, Star Citizen, Squadrons, X4, Freelancer and
+     Descent rather than guessed at.
+
+       W / S    throttle up and down, through zero into reverse
+       A / D    strafe
+       Q / E    roll
+       SHIFT    boost
+       X        full stop
+       F        shield
+       1-6      choose a weapon
+       V        cockpit or third person
+
+     Three of these were somewhere else and every one of the three was somewhere
+     no other space game puts it: the brake was on Z (Elite uses Z for flight
+     assist off), the torpedo was on control-click, and the mini gun was on a
+     held E, which is roll everywhere else. The arrow keys still pitch and yaw
+     for anyone who wants them. */
+  const MAPPED = [
+    "w", "a", "s", "d", "q", "e", "x", "f", "v", " ",
+    "1", "2", "3", "4", "5", "6", "shift",
+    "arrowup", "arrowdown", "arrowleft", "arrowright",
+  ];
+
   function applyKeys() {
-    let kx = 0, ky = 0;
-    if (keys.arrowleft || keys.a) kx -= 1;
-    if (keys.arrowright || keys.d) kx += 1;
-    if (keys.arrowup || keys.w) ky += 1;
-    if (keys.arrowdown || keys.s) ky -= 1;
-    if (kx || ky) { stick.x = kx; stick.y = ky; }
+    /* The arrows still fly, for anyone who would rather not use the mouse.
+       ADDED to the mouse rather than overriding it, so reaching for one does
+       not kill the other. */
+    stick.x = (keys.arrowright ? 1 : 0) - (keys.arrowleft ? 1 : 0);
+    stick.y = (keys.arrowup ? 1 : 0) - (keys.arrowdown ? 1 : 0);
+    stick.roll = (keys.e ? 1 : 0) - (keys.q ? 1 : 0);
+    stick.strafe = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+    stick.throttle = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
+    stick.fullStop = !!keys.x;
     stick.boosting = !!keys.shift;
-    stick.braking = !!keys.z;
-    stick.heavy = !!keys.control || !!keys.meta || !!keys.t;
-    stick.mini = !!keys.e;
+    stick.guard = !!keys.f;
+    stick.mini = weapons.primary === 1;
   }
   function onKeyDown(e: KeyboardEvent) {
     if (!flying) return;
     const k = e.key.toLowerCase();
-    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "w", "a", "s", "d", "z", "t", "e", "shift", "control"].includes(k)) {
-      e.preventDefault();
-    }
+    if (MAPPED.includes(k)) e.preventDefault();
     keys[k] = true;
     if (k === " ") stick.firing = true;
-    if (k === "t") { stick.heavy = true; stick.firing = true; }
+    /* 1-3 choose the primary, 4-6 the secondary. DIRECT, not cycled: Elite's
+       fire groups are the most criticised weapon interface in the genre and the
+       standard player workaround is pulling things out of the cycle onto their
+       own keys. Descent bound 1-5 in 1995 and nobody has complained since. */
+    if (k >= "1" && k <= "3") selectWeapon("primary", Number(k) - 1);
+    if (k >= "4" && k <= "6") selectWeapon("secondary", Number(k) - 4);
+    if (k === "v" && flight) {
+      flight.view = flight.view > 0.01 ? 0 : 2;
+      if (flight.view > 0) ensureShip();
+      setHud({ view: flight.view });
+    }
     applyKeys();
   }
   function onKeyUp(e: KeyboardEvent) {
     const k = e.key.toLowerCase();
     keys[k] = false;
     if (k === " ") stick.firing = false;
-    if (k === "t") stick.firing = false;
     applyKeys();
   }
   /* Losing the window must not leave the throttle open or a key stuck down. */
   function onBlur() {
     for (const k in keys) keys[k] = false;
-    stick.firing = false; stick.boosting = false; stick.braking = false;
-    stick.heavy = false; stick.guard = false; stick.mini = false;
-    stick.x = 0; stick.y = 0;
+    stick.firing = false; stick.boosting = false; stick.secondary = false;
+    stick.guard = false; stick.fullStop = false;
+    stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.throttle = 0;
+    stick.lookX = 0; stick.lookY = 0;
   }
 
   function startAt(index: number) {
@@ -684,13 +744,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           return;
         }
 
-        /* The stick falls back to neutral whenever the mouse is not pushing it,
-           so stopping the mouse stops the turn. */
-        if (!hud.dead) centreStick(dt);
-
         const live = !hud.dead;
-        const blank: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false, mini: false };
+        const blank: Stick = {
+          x: 0, y: 0, lookX: 0, lookY: 0, roll: 0, strafe: 0, throttle: 0,
+          fullStop: false, boosting: false, firing: false, secondary: false,
+          guard: false, mini: false,
+        };
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
+        /* CONSUMED. The mouse delta is an angle that has already happened, so
+           it must be spent exactly once: leaving it set would turn the ship
+           again on every later frame, which is the spinning-forever bug in a
+           new costume. */
+        stick.lookX = 0;
+        stick.lookY = 0;
         if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
         nearTower = res.nearTower;
         dockBlock = res.dockBlock;
@@ -853,15 +919,20 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            press sets it off; otherwise it launches the next one. That is what
            "control-click again to detonate" means with a single control. */
         if (res.heavyPress) {
-          const w = {
-            tips: tipList, playerPos: flight.pos, playerFwd: flight.fwd,
-            wanted: 0, damageScale: damageScale(),
-          };
-          if (!detonateOldest(combat, w) && flight.torpedoes > 0) {
-            flight.torpedoes -= 1;
-            /* Out of the tube at the nose, not out of the camera. */
-            fireTorpedo(combat, shipNose(flight), flight.fwd);
-            playTorpedoSound();
+          const slot = weaponAt("secondary", weapons.secondary);
+          if (slot && !slot.ready) {
+            setHud({ note: `${slot.name}: not yet fitted`, noteAt: performance.now() });
+          } else {
+            const w = {
+              tips: tipList, playerPos: flight.pos, playerFwd: flight.fwd,
+              wanted: 0, damageScale: damageScale(),
+            };
+            if (!detonateOldest(combat, w) && flight.torpedoes > 0) {
+              flight.torpedoes -= 1;
+              /* Out of the tube at the nose, not out of the camera. */
+              fireTorpedo(combat, shipNose(flight), flight.fwd);
+              playTorpedoSound();
+            }
           }
         }
 
@@ -1020,6 +1091,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             homeDist: homeIndex >= 0 ? flight.pos.distanceTo(tipList[homeIndex]) : 0,
             torpedoes: flight.torpedoes,
             inFlight: combat.torpedoes.length,
+            throttle: flight.throttle,
             guards: flight.guards,
             guarding: flight.guardFor > 0,
             contacts: combat.enemies.length,
@@ -1127,8 +1199,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
       diveT = 0;
       phase = "dive";
-      cursor.x = 0.5; cursor.y = 0.5;
-      applyCursor();
+      /* Launching starts with nothing on the stick: no leftover mouse delta
+         from lining up the LAUNCH button. */
+      stick.lookX = 0; stick.lookY = 0;
       /* Confine the pointer to the game. Without this a stray click lands on
          the sidebar and the panel unmounts mid-flight. If the webview refuses,
          the game still plays, it just is not fenced in. */

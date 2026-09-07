@@ -21,8 +21,11 @@ function ok(name: string, cond: boolean, extra = "") {
   if (!cond) failures++;
   out.push(`${cond ? "PASS" : "FAIL"} ${name}${extra ? `  [${extra}]` : ""}`);
 }
-const stick = (o: Partial<Stick> = {}): Stick =>
-  ({ x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false, mini: false, ...o });
+const stick = (o: Partial<Stick> = {}): Stick => ({
+  x: 0, y: 0, lookX: 0, lookY: 0, roll: 0, strafe: 0, throttle: 0,
+  fullStop: false, boosting: false, firing: false, secondary: false,
+  guard: false, mini: false, ...o,
+});
 
 const DT = 1 / 60;
 function run(f: ReturnType<typeof createFlight>, frames: number, s: Stick, tips: THREE.Vector3[] = [], home = -1) {
@@ -146,7 +149,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const graze = createFlight(pad);
   graze.pos.normalize().multiplyScalar(R + MIN_ALT + 0.2);
   const beforeGraze = graze.shields;
-  run(graze, 60 * 8, stick({ braking: true }));  /* trundling along the surface */
+  run(graze, 60 * 8, stick({ fullStop: true }));  /* trundling along the surface */
   ok("but sliding along it is not", graze.shields > beforeGraze - CRASH_DAMAGE,
      `${beforeGraze} -> ${graze.shields.toFixed(0)}`);
 
@@ -340,7 +343,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const f = createFlight(pad);
   f.mustLeave = false;
   run(f, 120, stick());
-  ok("the brake actually slows the ship", (run(f, 90, stick({ braking: true })), f.speed < 9),
+  ok("the brake actually slows the ship", (run(f, 90, stick({ fullStop: true })), f.speed < 9),
      `speed ${f.speed.toFixed(1)}`);
 }
 {
@@ -380,7 +383,10 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
     toTower.addScaledVector(up, -toTower.dot(up));
     /* Braking on the run in, which is what the launch card tells the player to
        do and what makes the turn tight enough to come back round. */
-    const braking = range < 30;
+    /* Throttle back on the run in, the way a pilot does. The brake used to be
+       a held key; it is a lever now, so this eases it down rather than pressing
+       something. */
+    const throttle = range < 30 ? -1 : 0;
     /* Descending onto the tower, which is the other half of what a player
        does and what the first version of this autopilot left out: circling
        overhead at cruise altitude never gets close enough. */
@@ -390,9 +396,9 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
       toTower.normalize();
       const turn = Math.sign(new THREE.Vector3().crossVectors(f.fwd, toTower).dot(up));
       const off = f.fwd.angleTo(toTower);
-      stepFlight(f, DT, stick({ x: off > 0.02 ? -turn * Math.min(1, off * 3) : 0, y: climb, braking }), [tip], 0);
+      stepFlight(f, DT, stick({ x: off > 0.02 ? -turn * Math.min(1, off * 3) : 0, y: climb, throttle }), [tip], 0);
     } else {
-      stepFlight(f, DT, stick({ y: climb, braking }), [tip], 0);
+      stepFlight(f, DT, stick({ y: climb, throttle }), [tip], 0);
     }
     best = Math.max(best, f.dock);
     if (best >= 1) break;
@@ -608,6 +614,114 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   ok("and docking still happens", r.docks === 1, `${r.docks} docks`);
   ok("with no crash damage from the neighbour", f.shields >= before,
      `${before} -> ${f.shields}`);
+}
+
+// 8f. THE NEW CONTROLS: relative look, roll, strafe and a throttle lever.
+//
+//     Geoff asked for the scheme the genre has settled on, so these check the
+//     four things that changed rather than the four that did not.
+{
+  /* ---- the mouse is an ANGLE, not a rate ----
+     The old scheme held a crosshair off centre and read its offset as a turn
+     rate, which is why a ship kept turning after the mouse stopped. A mouse
+     delta is a turn that already happened, so it must be applied once and
+     never again — and the caller clears it, which this test does not, so a
+     second step with the same stick would turn twice if the model scaled it by
+     time instead of taking it whole. */
+  const f = createFlight(pad);
+  const before = f.fwd.clone();
+  stepFlight(f, DT, stick({ lookX: 0.4 }), [], -1);
+  const turned = before.angleTo(f.fwd);
+  ok("the mouse turns the ship by what it moved", Math.abs(turned - 0.4) < 0.01,
+     `${turned.toFixed(3)} radians for a 0.4 push`);
+
+  /* And a frame with nothing on the stick turns nothing, which is the whole
+     point: stop the mouse, stop the ship. */
+  const held = f.fwd.clone();
+  for (let i = 0; i < 60; i++) stepFlight(f, DT, stick({}), [], -1);
+  ok("and stops the instant the mouse does", held.angleTo(f.fwd) < 1e-6,
+     `${held.angleTo(f.fwd).toExponential(1)} radians of drift in a second`);
+
+  /* A longer frame must not turn further: the movement happened over the frame
+     that reported it, whatever length that frame was. */
+  const a = createFlight(pad), b = createFlight(pad);
+  stepFlight(a, 1 / 240, stick({ lookY: 0.3 }), [], -1);
+  stepFlight(b, 1 / 15, stick({ lookY: 0.3 }), [], -1);
+  const fa = a.fwd.angleTo(new THREE.Vector3(0, 1, 0).cross(pad).normalize());
+  void fa;
+  ok("and the frame rate does not change how far it turns",
+     Math.abs(a.fwd.angleTo(b.fwd)) < 1e-6, a.fwd.angleTo(b.fwd).toExponential(1));
+}
+
+// 8g. Roll turns the ship without turning where it is pointing.
+{
+  const f = createFlight(pad);
+  const nose = f.fwd.clone();
+  const up = f.up.clone();
+  run(f, 30, stick({ roll: 1 }));
+  ok("roll leaves the nose alone", nose.angleTo(f.fwd) < 1e-6,
+     `${nose.angleTo(f.fwd).toExponential(1)} radians`);
+  ok("and turns the ship's up", up.angleTo(f.up) > 0.5, `${up.angleTo(f.up).toFixed(2)} radians`);
+
+  /* Q and E have to disagree, or one of them is wired wrong. */
+  const l = createFlight(pad), r = createFlight(pad);
+  run(l, 20, stick({ roll: -1 }));
+  run(r, 20, stick({ roll: 1 }));
+  const sign = (g: typeof l) => new THREE.Vector3().crossVectors(up, g.up).dot(g.fwd);
+  ok("and rolling left is not rolling right", Math.sign(sign(l)) === -Math.sign(sign(r)),
+     `${sign(l).toFixed(3)} vs ${sign(r).toFixed(3)}`);
+}
+
+// 8h. Strafe moves the ship sideways without turning it.
+{
+  const f = createFlight(pad);
+  const nose = f.fwd.clone();
+  const start = f.pos.clone();
+  /* Throttle to nothing first, so what is measured is the strafe and not the
+     ship flying forwards at the same time. */
+  f.throttle = 0;
+  run(f, 90, stick({ fullStop: true }));
+  const still = f.pos.clone();
+  run(f, 60, stick({ strafe: 1 }));
+  ok("strafe moves the ship", still.distanceTo(f.pos) > 3,
+     `${still.distanceTo(f.pos).toFixed(1)} units in a second`);
+  ok("and leaves the nose where it was", nose.angleTo(f.fwd) < 1e-6);
+  /* Sideways, not forwards. */
+  const moved = f.pos.clone().sub(still).normalize();
+  ok("and it really is sideways", Math.abs(moved.dot(f.fwd)) < 0.05,
+     `${moved.dot(f.fwd).toFixed(3)} of it was forward`);
+  void start;
+}
+
+// 8i. The throttle is a lever that stays where it is put.
+{
+  const f = createFlight(pad);
+  ok("it starts at full, so the game flies as it did", f.throttle === 1);
+
+  run(f, 60, stick({ throttle: -1 }));
+  const eased = f.throttle;
+  ok("S brings it down", eased < 0.4, eased.toFixed(2));
+  run(f, 120, stick({}));
+  ok("and it STAYS down with nothing held", Math.abs(f.throttle - eased) < 1e-9,
+     `${f.throttle.toFixed(2)}`);
+  ok("and the ship slowed to match", f.speed < CRUISE * 0.5, f.speed.toFixed(1));
+
+  /* Down through zero into reverse, which is how you back off a tower. */
+  run(f, 120, stick({ throttle: -1 }));
+  ok("it goes into reverse", f.throttle < 0, f.throttle.toFixed(2));
+  run(f, 180, stick({}));
+  ok("and the ship actually backs up", f.speed < 0, f.speed.toFixed(1));
+
+  /* X is a full stop. */
+  run(f, 5, stick({ fullStop: true }));
+  ok("X puts the throttle to nothing", f.throttle === 0);
+
+  /* Boost ignores the lever entirely: it is a button that means everything you
+     have, and having to push the throttle up first would feel broken. */
+  const b = createFlight(pad);
+  b.throttle = 0;
+  run(b, 60, stick({ boosting: true }));
+  ok("boost works from a closed throttle", b.speed > CRUISE, b.speed.toFixed(1));
 }
 
 // 9. A long unattended flight does not drift, blow up or leak bolts.

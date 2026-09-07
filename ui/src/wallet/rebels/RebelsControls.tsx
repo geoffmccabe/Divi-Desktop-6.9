@@ -12,15 +12,19 @@ export interface ControlLine {
 }
 
 export const CONTROLS: ControlLine[] = [
-  { keys: "MOUSE", what: "Fly. Push the crosshair off centre to turn; let go and it comes back." },
-  { keys: "ARROWS / WASD", what: "Steer using the traditional keyboard navigation keys." },
-  { keys: "LEFT CLICK / SPACE", what: "Main guns. One double shot per press." },
-  { keys: "E + CLICK", what: "Mini gun. Twenty a second while held, aimed at the crosshair, 25% damage, uses 1/4 bullet" },
-  { keys: "HOLD RIGHT CLICK", what: "Shield for 0.5 seconds. Absorbs 80% of a hit. Ten charges." },
-  { keys: "T or CTRL + CLICK", what: "Torpedo. Four carried. Press again to detonate, or wait 4 sec." },
-  { keys: "SHIFT", what: "Boost." },
-  { keys: "OPTION + WHEEL", what: "Pull the camera out of the cockpit to see your ship, and back in." },
-  { keys: "Z", what: "Brake and slow down." },
+  { keys: "MOUSE", what: "Fly. The ship turns as you move and stops as you stop." },
+  { keys: "W / S", what: "Throttle up and down. Below zero it reverses." },
+  { keys: "A / D", what: "Strafe left and right, without turning." },
+  { keys: "Q / E", what: "Roll left and right." },
+  { keys: "SHIFT", what: "Boost. Ignores the throttle." },
+  { keys: "X", what: "Full stop." },
+  { keys: "LEFT CLICK", what: "Primary weapon." },
+  { keys: "RIGHT CLICK", what: "Secondary weapon. Press again to detonate a torpedo." },
+  { keys: "1 2 3", what: "Choose the primary: pulse laser, mini gun, beam." },
+  { keys: "4 5 6", what: "Choose the secondary: torpedo, mine, bomb." },
+  { keys: "F", what: "Shield. Absorbs 80% of a hit. Ten charges, one every half second held." },
+  { keys: "V", what: "Cockpit or third person. OPTION + WHEEL sets the distance." },
+  { keys: "ARROWS", what: "Steer, for anyone who would rather not use the mouse." },
   { keys: "ESC", what: "Back to the map." },
 ];
 

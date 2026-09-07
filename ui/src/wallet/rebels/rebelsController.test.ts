@@ -181,22 +181,33 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.launch();
   for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);   /* through the dive */
 
+  /* RIGHT BUTTON now, not a key. Left primary and right secondary is the most
+     universal convention in the genre; the torpedo used to be on control-click,
+     which is not a thing any space game does. */
   const before = ctl.hud().torpedoes;
-  press("keydown", { key: "t" });
+  g.fire("pointerdown", { button: 2 });
   ctl.frame(1 / 60);
-  press("keyup", { key: "t" });
+  /* The RELEASE goes to the window, which is where the controller listens
+     for it so that letting go outside the canvas still counts. */
+  press("pointerup", { button: 2 });
   for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
-  ok("the torpedo key launches one", ctl.hud().inFlight === 1 || ctl.hud().torpedoes < before,
+  ok("the right button launches a torpedo", ctl.hud().inFlight === 1 || ctl.hud().torpedoes < before,
      `rack ${before} -> ${ctl.hud().torpedoes}, in flight ${ctl.hud().inFlight}`);
 
   /* And a second press sets it off rather than launching another. */
   const racked = ctl.hud().torpedoes;
-  press("keydown", { key: "t" });
+  g.fire("pointerdown", { button: 2 });
   ctl.frame(1 / 60);
-  press("keyup", { key: "t" });
+  /* The RELEASE goes to the window, which is where the controller listens
+     for it so that letting go outside the canvas still counts. */
+  press("pointerup", { button: 2 });
   for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  /* Both halves, because "the rack did not change" is equally true if the press
+     did nothing at all — which is exactly what was happening while the release
+     was being fired at the wrong element. */
   ok("a second press detonates rather than launching another",
-     ctl.hud().torpedoes === racked, `rack still ${ctl.hud().torpedoes}`);
+     ctl.hud().torpedoes === racked && ctl.hud().inFlight === 0,
+     `rack ${ctl.hud().torpedoes}, in flight ${ctl.hud().inFlight}`);
   ok("and nothing is left in the air", ctl.hud().inFlight === 0, `${ctl.hud().inFlight}`);
   ctl.detach();
 }
@@ -207,9 +218,11 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.attach({ ...g, selfIp: "self-ip" });
   ctl.launch();
   for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);
-  press("keydown", { key: "t" });
+  g.fire("pointerdown", { button: 2 });
   ctl.frame(1 / 60);
-  press("keyup", { key: "t" });
+  /* The RELEASE goes to the window, which is where the controller listens
+     for it so that letting go outside the canvas still counts. */
+  press("pointerup", { button: 2 });
   for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
   const flying = ctl.hud().inFlight;
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
@@ -390,25 +403,30 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.launch();
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);   /* through the dive */
 
-  /* Shove the mouse to the TOP of the frame, the way a player does when they
-     mean "climb", and then take their hand off it.
-     Up rather than down on purpose: a sustained dive from a launch pad flies
-     the ship into the planet and kills it, and a dead ship cannot demonstrate
-     anything about steering. The stick does not care which way it is pushed. */
+  /* Push the mouse up, the way a player does when they mean "climb", then take
+     their hand off it. Up rather than down on purpose: a sustained dive from a
+     launch pad flies the ship into the planet and kills it, and a dead ship
+     cannot demonstrate anything about steering.
+
+     THE SHIP is what is measured, not a crosshair. There is no crosshair offset
+     any more: the mouse turns the ship directly, which is the whole change. */
+  const aim = () => g.camera.getWorldDirection(new THREE.Vector3());
+  const aimBefore = aim();
   for (let i = 0; i < 20; i++) {
-    /* Movement, not position: that is what the controller reads now, in both
-       the locked and the unlocked case. */
     g.fire("pointermove", { movementX: 0, movementY: -30 });
     ctl.frame(1 / 60);
   }
-  const turning = ctl.cursor().y;
-  ok("pushing the mouse does steer", turning < 0.38, `crosshair at ${turning.toFixed(2)}`);
+  const swung = aimBefore.angleTo(aim());
+  ok("pushing the mouse turns the ship", swung > 0.5, `${swung.toFixed(2)} radians`);
 
-  /* Hand off the mouse. Within a second the stick must be back at neutral. */
-  for (let i = 0; i < 90; i++) ctl.frame(1 / 60);
-  const settled = ctl.cursor().y;
-  ok("and letting go returns the stick", Math.abs(settled - 0.5) < 0.06,
-     `crosshair at ${settled.toFixed(3)}`);
+  /* Hand off the mouse. The ship must stop turning AT ONCE — not ease to a
+     stop, not drift on for a second, stop. That is the whole reason for
+     relative look over a stick that springs back. */
+  const held = aim();
+  ctl.frame(1 / 60);
+  const oneFrame = held.angleTo(aim());
+  ok("and it stops the moment the mouse does", oneFrame < 1e-6,
+     `${oneFrame.toExponential(1)} radians on the next frame`);
 
   /* THE ONE THAT MATTERS: the SHIP has to stop turning, not just the
      crosshair. A ship that kept looping would swing its altitude up and down
