@@ -13,38 +13,38 @@ export interface ControlLine {
 
 export const CONTROLS: ControlLine[] = [
   { keys: "MOUSE", what: "Fly. The crosshair goes where you point and the ship follows it." },
-  { keys: "ARROWS / WASD", what: "Fly, if you would rather not chase a hidden cursor." },
-  { keys: "LEFT CLICK / SPACE", what: "Main guns. One double shot per press, full damage." },
-  { keys: "HOLD E + CLICK", what: "Mini gun. Twenty a second while held, aimed at the crosshair, quarter damage, quarter of a round each." },
-  { keys: "HOLD RIGHT CLICK", what: "Shield. Soaks four fifths of a hit. Ten charges, one every half second held." },
-  { keys: "T / CTRL + CLICK", what: "Torpedo. Two carried. Press again to set it off, or it goes after four seconds." },
+  { keys: "ARROWS / WASD", what: "Steer using the traditional keyboard navigation keys." },
+  { keys: "LEFT CLICK / SPACE", what: "Main guns. One double shot per press." },
+  { keys: "E + CLICK", what: "Mini gun. Twenty a second while held, aimed at the crosshair, 25% damage, uses 1/4 bullet" },
+  { keys: "HOLD RIGHT CLICK", what: "Shield for 0.5 seconds. Absorbs 80% of a hit. Ten charges." },
+  { keys: "T or CTRL + CLICK", what: "Torpedo. Two carried. Press again to detonate, or wait 4 sec." },
   { keys: "SHIFT", what: "Boost." },
-  { keys: "Z", what: "Brake. Slows right down, which is how you turn tightly." },
-  { keys: "?", what: "This panel." },
+  { keys: "Z", what: "Brake and slow down." },
   { keys: "ESC", what: "Back to the map." },
 ];
 
 export const DOCKING: ControlLine[] = [
-  { keys: "YOUR OWN TOWER", what: "The red one with the beam going up. Fly straight into it at any speed. It stops you and never damages you." },
-  { keys: "THE RESUPPLY", what: "Four seconds, and it restores everything: hull, ammo, boost, torpedoes and shields." },
-  { keys: "EVERY OTHER TOWER", what: "Not yours. They do not resupply you and flying into one hurts." },
+  { keys: "YOUR TOWER", what: "Fly into your Red Tower with the Beacon to Refuel, Resupply, and Repair" },
+  { keys: "EVERY OTHER TOWER", what: "Crashing into other towers causes damage." },
+  { keys: "?", what: "HELP Panel" },
 ];
 
 export function RebelsControls({ onClose }: { onClose?: () => void }) {
   return (
-    <div className="orbit-controls">
+    <>
+      {/* A plain black wash over the game behind the panel. The panel had a
+          tinted, blurred background of its own and it still read as grey text
+          over a moving starfield: blur softens what is behind a thing, it does
+          not darken it, and the globe is bright. Half-opacity black under the
+          whole panel is what actually makes the words legible. */}
+      <div className="orbit-controls-scrim" onClick={onClose} />
+      <div className="orbit-controls">
       <h3>CONTROLS</h3>
+      {/* One flat list, in the order Geoff wrote it. There used to be a second
+          DOCKING heading, which now has nowhere sensible to go: the tower lines
+          and the HELP line belong to the same run. */}
       <dl>
-        {CONTROLS.map((c) => (
-          <div key={c.keys}>
-            <dt>{c.keys}</dt>
-            <dd>{c.what}</dd>
-          </div>
-        ))}
-      </dl>
-      <h3>DOCKING</h3>
-      <dl>
-        {DOCKING.map((c) => (
+        {[...CONTROLS, ...DOCKING].map((c) => (
           <div key={c.keys}>
             <dt>{c.keys}</dt>
             <dd>{c.what}</dd>
@@ -54,6 +54,7 @@ export function RebelsControls({ onClose }: { onClose?: () => void }) {
       {onClose && (
         <button type="button" onClick={onClose}>CLOSE</button>
       )}
-    </div>
+      </div>
+    </>
   );
 }

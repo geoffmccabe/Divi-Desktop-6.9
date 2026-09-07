@@ -1981,6 +1981,19 @@ code, .mono { font-family: var(--font-mono); }
    glitching rather than as a red screen, and it needs no access to the map's
    own canvas. */
 /* The wave title. Big enough to be unmissable, and it fades rather than cuts. */
+/* The wash behind the ? panel.
+   The panel already had a tinted background and a blur, and the text was still
+   hard to read: a blur softens what is behind something, it does not darken it,
+   and the globe underneath is bright. Half-opacity black across the whole game
+   area is what actually makes it legible. Clicking it closes the panel, which
+   is what everyone tries first. */
+.orbit-controls-scrim {
+  position: absolute; inset: 0;
+  background: rgb(0 0 0 / 0.5);
+  pointer-events: auto;
+  cursor: pointer;
+}
+
 /* The ? panel, down the right-hand side, over the game. */
 .orbit-controls {
   position: absolute; top: 10px; right: 10px; bottom: 10px;
