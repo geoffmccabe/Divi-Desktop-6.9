@@ -185,6 +185,26 @@ function once(buf: AudioBuffer | null, loudness = 1): void {
   src.start();
 }
 
+/**
+ * The mini gun. The same sample as the main guns, half again in pitch, and a
+ * single round rather than a double, so it is the same weapon family and
+ * plainly not the same weapon.
+ */
+export function playMiniSound(): void {
+  const ctx = audioContext();
+  if (!ctx || failed || !buffer) return;
+  const volume = masterVolume();
+  if (!(volume > 0)) return;
+  const src = ctx.createBufferSource();
+  src.buffer = buffer;
+  src.playbackRate.value = 1.5 * wobble();
+  const gain = ctx.createGain();
+  gain.gain.value = volume * 0.85 * wobble();
+  src.connect(gain);
+  gain.connect(ctx.destination);
+  src.start();
+}
+
 /** A torpedo leaving the tube. */
 export function playTorpedoSound(): void {
   once(torpedoBuffer);

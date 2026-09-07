@@ -60,6 +60,7 @@ are versioned 69.7.x.
 | 47 | Watch the GPU cost of all those windows | shared materials, shader LoD |
 | 48 | Seven rarity tiers of enemy ship | `rebelsCombat.ts` `TIERS` |
 | 48b | Per-tier kills kept for ever, per player | `rebels_scores.tier_kills` |
+| 49 | Mini gun on E: aims at the pointer, quarter damage, quarter round | `rebelsCombat.ts` |
 
 ## Next, and in this order
 
@@ -67,7 +68,7 @@ Geoff chose the server (option B) on 2026-Sep-06, with anti-cheat as a
 requirement rather than an afterthought, and the DIVI payout depends on it. So
 these are one piece of work in two halves, and the second cannot ship first.
 
-### 49. Server-authoritative multiplayer, with anti-cheat
+### 50. Server-authoritative multiplayer, with anti-cheat
 
 A Cloudflare Durable Object room. Scoped in `docs/DIVI-REBELS-ORBIT-SPEC.md`.
 The reason it comes first is that everything a player currently reports about
@@ -93,9 +94,9 @@ What "anti-cheat" has to mean here, because it is easy to build the wrong thing:
   `rebels_submit` directly with whatever number it likes. Once the room exists,
   only the room may call it, and the anon key loses that grant.
 
-### 50. Paying out DIVI
+### 51. Paying out DIVI
 
-Settled with Geoff, to be built ON TOP of 49 and not before it:
+Settled with Geoff, to be built ON TOP of 50 and not before it:
 
 * **1000 kills earns 100 DIVI**, so a tenth of a DIVI a kill.
 * **A hundred DIVI minimum to claim.** It may build up; any amount over the

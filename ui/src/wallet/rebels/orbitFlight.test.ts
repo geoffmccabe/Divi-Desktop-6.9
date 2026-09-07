@@ -21,7 +21,7 @@ function ok(name: string, cond: boolean, extra = "") {
   out.push(`${cond ? "PASS" : "FAIL"} ${name}${extra ? `  [${extra}]` : ""}`);
 }
 const stick = (o: Partial<Stick> = {}): Stick =>
-  ({ x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false, ...o });
+  ({ x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false, mini: false, ...o });
 
 const DT = 1 / 60;
 function run(f: ReturnType<typeof createFlight>, frames: number, s: Stick, tips: THREE.Vector3[] = [], home = -1) {
@@ -219,6 +219,44 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   }
   ok("flying to a tower and parking gets you docked", best >= 1,
      `best dock progress ${best.toFixed(2)}, shields ${f.shields}`);
+}
+
+// 8c2. The mini gun.
+{
+  const f = createFlight(pad);
+  const pull = (o: Partial<Stick> = {}) => {
+    let main = 0, mini = 0;
+    for (let i = 0; i < 10; i++) {
+      const r = stepFlight(f, DT, stick({ firing: true, ...o }), [], -1);
+      if (r.fired) main++;
+      if (r.miniFired) mini++;
+    }
+    for (let i = 0; i < 6; i++) stepFlight(f, DT, stick(o), [], -1);
+    return { main, mini };
+  };
+  const a = pull({ mini: true });
+  ok("holding E fires the mini gun and not the main guns",
+     a.mini === 1 && a.main === 0, `main ${a.main}, mini ${a.mini}`);
+  ok("a mini round costs a quarter", Math.abs(f.ammo - (MAX_AMMO - 0.25)) < 1e-9,
+     `ammo ${f.ammo}`);
+
+  /* Four of them is one round of the main guns. */
+  for (let i = 0; i < 3; i++) pull({ mini: true });
+  ok("four mini rounds cost one whole round", Math.abs(f.ammo - (MAX_AMMO - 1)) < 1e-9,
+     `ammo ${f.ammo}`);
+
+  const b = pull();
+  ok("letting go of E goes back to the main guns", b.main === 1 && b.mini === 0);
+
+  /* And the main guns cannot fire on a leftover fraction. */
+  f.ammo = 0.75;
+  const c = pull();
+  ok("the main guns will not fire on part of a round", c.main === 0, `ammo ${f.ammo}`);
+  const d = pull({ mini: true });
+  ok("but the mini gun will", d.mini === 1, `ammo ${f.ammo}`);
+  f.ammo = 0.1;
+  const e2 = pull({ mini: true });
+  ok("and not on less than a quarter", e2.mini === 0, `ammo ${f.ammo}`);
 }
 
 // 8d. The guard: ten of them, half a second each, and only your own tower

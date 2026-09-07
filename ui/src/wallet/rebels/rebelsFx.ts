@@ -114,7 +114,7 @@ export type BoomStyle = "hot" | "cold" | "torpedo";
 export interface Fx {
   group: THREE.Group;
   /** Point the bullet meshes at the live bullet list. */
-  drawBullets(bullets: { pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean }[]): void;
+  drawBullets(bullets: { pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean; mini?: boolean }[]): void;
   boom(at: THREE.Vector3, power: number, style?: BoomStyle): void;
   /** Torpedoes in flight. There are only ever two, so they get real meshes. */
   drawTorpedoes(torpedoes: { pos: THREE.Vector3; vel: THREE.Vector3 }[]): void;
@@ -151,6 +151,9 @@ export function createFx(): Fx {
      whose at a glance in a crowded fight. */
   const mine = { core: makeBolt(0xffd24a, false), halo: makeBolt(0xffa617, true) };
   const theirs = { core: makeBolt(0xc8ff5a, false), halo: makeBolt(0x4bff2e, true) };
+  /* Mini rounds: paler and thinner, so a stream of them is obviously not the
+     main guns. */
+  const small = { core: makeBolt(0xfff4c2, false), halo: makeBolt(0xffd98a, true) };
   bin.push(boltGeo);
 
   /* ---- explosion debris ---- */
@@ -247,30 +250,33 @@ export function createFx(): Fx {
     group,
 
     drawBullets(bullets) {
-      let a = 0, b2 = 0;
+      let a = 0, b2 = 0, c2 = 0;
       for (const b of bullets) {
-        const set = b.hostile ? theirs : mine;
-        const i = b.hostile ? b2 : a;
+        const kind = b.hostile ? 2 : b.mini ? 1 : 0;
+        const set = kind === 2 ? theirs : kind === 1 ? small : mine;
+        const i = kind === 2 ? b2 : kind === 1 ? c2 : a;
         if (i >= BULLET_CAP) continue;
         dir.copy(b.vel).normalize();
         q.setFromUnitVectors(zAxis, dir);
         /* Stretched along its own path, which is what makes a bullet read as
            moving fast rather than as a floating bead. Half the girth it started
            at: the first pass drew tennis balls. */
-        scl.set(0.055, 0.055, 0.31);
+        const k = kind === 1 ? 0.6 : 1;
+        scl.set(0.055 * k, 0.055 * k, 0.31 * k);
         m4.compose(b.pos, q, scl);
         set.core.setMatrixAt(i, m4);
-        scl.set(0.17, 0.17, 0.58);
+        scl.set(0.17 * k, 0.17 * k, 0.58 * k);
         m4.compose(b.pos, q, scl);
         set.halo.setMatrixAt(i, m4);
-        if (b.hostile) b2++; else a++;
+        if (kind === 2) b2++; else if (kind === 1) c2++; else a++;
       }
       mine.core.count = a; mine.halo.count = a;
       theirs.core.count = b2; theirs.halo.count = b2;
-      mine.core.instanceMatrix.needsUpdate = true;
-      mine.halo.instanceMatrix.needsUpdate = true;
-      theirs.core.instanceMatrix.needsUpdate = true;
-      theirs.halo.instanceMatrix.needsUpdate = true;
+      small.core.count = c2; small.halo.count = c2;
+      for (const m of [mine, theirs, small]) {
+        m.core.instanceMatrix.needsUpdate = true;
+        m.halo.instanceMatrix.needsUpdate = true;
+      }
     },
 
     drawTorpedoes(torpedoes) {

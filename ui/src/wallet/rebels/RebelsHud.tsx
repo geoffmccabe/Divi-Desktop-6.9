@@ -153,7 +153,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           </div>
         </div>
         <div className="orbit-gauge">
-          <span>AMMO</span>
+          <span>AMMO {hud.ammo.toFixed(2).replace(/\.00$/, "")}</span>
           <div className="orbit-meter"><i style={{ width: pct(hud.ammo / MAX_AMMO) }} /></div>
         </div>
         <div className="orbit-gauge">

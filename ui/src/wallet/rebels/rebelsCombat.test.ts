@@ -7,7 +7,7 @@ import { R } from "./orbitWorld";
 import { MAX_SHIELD } from "./orbitFlight";
 import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
-  fireTorpedo, detonateOldest, clearEvents,
+  fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   type CombatState, type Enemy,
@@ -510,6 +510,55 @@ function run(c: CombatState, frames: number, w = world()) {
   ok("a sitting duck lasts more than a moment", seconds > 8,
      `died after ${seconds.toFixed(1)}s and ${hits} hits`);
   ok("but is not immortal either", seconds < 90, `${seconds.toFixed(1)}s`);
+}
+
+// 12. The mini gun's own rounds.
+{
+  const m = new THREE.Vector3();
+  miniMuzzle(pos, fwd, up, FOV, ASPECT, m);
+  const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+  ok("the mini gun sits in the top right",
+     m.clone().sub(pos).dot(right) > 0 && m.clone().sub(pos).dot(up) > 0,
+     `right ${m.clone().sub(pos).dot(right).toFixed(2)}, up ${m.clone().sub(pos).dot(up).toFixed(2)}`);
+
+  /* It follows the pointer, not the ship's axis: aimed off to one side, the
+     round has to go that way. */
+  const c = createCombat();
+  const aimDir = fwd.clone().addScaledVector(up, 0.4).normalize();
+  fireMini(c, m, pos, aimDir);
+  ok("it fires one round, not two", c.bullets.length === 1);
+  ok("marked as a mini round", c.bullets[0].mini === true);
+  ok("half again as fast as a normal one",
+     Math.abs(c.bullets[0].vel.length() - BULLET_SPEED * 1.5) < 1e-6,
+     `${c.bullets[0].vel.length().toFixed(1)}`);
+  const target = pos.clone().addScaledVector(aimDir, CONVERGE);
+  const b = c.bullets[0];
+  const t = target.clone().sub(b.pos).dot(b.vel) / b.vel.lengthSq();
+  ok("and it crosses where the pointer is aiming",
+     b.pos.clone().addScaledVector(b.vel, t).distanceTo(target) < 0.01);
+}
+{
+  /* A quarter of the damage. Enough shots to average out the roll. */
+  const w = world();
+  let normal = 0, mini = 0;
+  for (let k = 0; k < 300; k++) {
+    for (const isMini of [false, true]) {
+      const c = createCombat();
+      const e = fighter(pos.clone().addScaledVector(fwd, 30), { shield: 100000 });
+      c.enemies.push(e);
+      c.bullets.push({
+        pos: pos.clone(), vel: fwd.clone().multiplyScalar(BULLET_SPEED * (isMini ? 1.5 : 1)),
+        life: 3, hostile: false, mini: isMini,
+      });
+      const before = e.shield;
+      for (let i = 0; i < 60 && c.bullets.length; i++) stepCombat(c, DT, w);
+      const dealt = before - e.shield;
+      if (isMini) mini += dealt; else normal += dealt;
+    }
+  }
+  const ratio = mini / normal;
+  ok("a mini round does a quarter of the damage", Math.abs(ratio - 0.25) < 0.03,
+     `${(ratio * 100).toFixed(1)}% of a normal round`);
 }
 
 console.log(out.join("\n"));

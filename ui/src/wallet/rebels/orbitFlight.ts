@@ -39,6 +39,8 @@ export const MAX_SHIELD = 1000;
  *  shield: enough to matter, not enough to end a run on one clumsy moment. */
 export const CRASH_DAMAGE = 250;
 export const MAX_AMMO = 60;
+import { MINI_AMMO } from "./rebelsCombat";
+
 export const MAX_TORPEDOES = 2;
 /* ---- the guard ----
    A short, hard shield on the right button. Ten of them, half a second each,
@@ -90,6 +92,8 @@ export interface Stick {
   heavy: boolean;
   /** Right button: raise the guard. */
   guard: boolean;
+  /** E held: the trigger fires the mini gun instead of the main guns. */
+  mini: boolean;
 }
 
 /** Start on the pad above a tower, pointing north. */
@@ -141,6 +145,8 @@ export interface StepResult {
    *  detonating is the caller's decision, since only it knows whether one is
    *  already in the air. */
   heavyPress: boolean;
+  /** True on the frame the mini gun went off. */
+  miniFired: boolean;
 }
 
 export function stepFlight(
@@ -150,7 +156,7 @@ export function stepFlight(
   towerTips: THREE.Vector3[],
   homeIndex: number,
 ): StepResult {
-  const out: StepResult = { hit: false, docked: false, fired: false, heavyPress: false };
+  const out: StepResult = { hit: false, docked: false, fired: false, heavyPress: false, miniFired: false };
   f.grace = Math.max(0, f.grace - dt);
 
   /* ---- how near is the nearest tower ----
@@ -303,8 +309,17 @@ export function stepFlight(
   const pressed = stick.firing && !f.heavyWasDown;
   if (stick.heavy) {
     if (pressed) out.heavyPress = true;
-  } else if (pressed && f.cooldown <= 0 && f.ammo > 0) {
-    /* Just enough to stop a bouncy button reading as two shots. */
+  } else if (stick.mini) {
+    /* A quarter of a round each, so four of them cost one shot of the main
+       guns, and a leftover fraction is still usable here. */
+    if (pressed && f.cooldown <= 0 && f.ammo >= MINI_AMMO) {
+      f.cooldown = 0.05;
+      f.ammo -= MINI_AMMO;
+      out.miniFired = true;
+    }
+  } else if (pressed && f.cooldown <= 0 && f.ammo >= 1) {
+    /* A WHOLE round: the main guns cannot fire on the quarter the mini gun
+       leaves behind. */
     f.cooldown = 0.08;
     f.ammo -= 1;
     out.fired = true;

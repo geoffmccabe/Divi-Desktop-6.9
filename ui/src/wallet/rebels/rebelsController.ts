@@ -16,6 +16,7 @@ import {
 } from "./orbitFlight";
 import {
   createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest,
+  fireMini, miniMuzzle,
   STAKE_BONUS, STAKE_BONUS_MS, TIERS,
   type CombatState,
 } from "./rebelsCombat";
@@ -28,6 +29,7 @@ import {
 import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
+  playMiniSound,
 } from "./rebelsAudio";
 
 export interface HudState {
@@ -198,7 +200,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     score = 0;
   }
 
-  const stick: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false };
+  const stick: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false, mini: false };
   const keys: Record<string, boolean> = {};
 
   const scratch = {
@@ -276,11 +278,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stick.boosting = !!keys.shift;
     stick.braking = !!keys.z;
     stick.heavy = !!keys.control || !!keys.meta || !!keys.t;
+    stick.mini = !!keys.e;
   }
   function onKeyDown(e: KeyboardEvent) {
     if (!flying) return;
     const k = e.key.toLowerCase();
-    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "w", "a", "s", "d", "z", "t", "shift", "control"].includes(k)) {
+    if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "w", "a", "s", "d", "z", "t", "e", "shift", "control"].includes(k)) {
       e.preventDefault();
     }
     keys[k] = true;
@@ -299,7 +302,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function onBlur() {
     for (const k in keys) keys[k] = false;
     stick.firing = false; stick.boosting = false; stick.braking = false;
-    stick.heavy = false; stick.guard = false; stick.x = 0; stick.y = 0;
+    stick.heavy = false; stick.guard = false; stick.mini = false;
+    stick.x = 0; stick.y = 0;
   }
 
   function startAt(index: number) {
@@ -439,7 +443,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         }
 
         const live = !hud.dead;
-        const blank: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false };
+        const blank: Stick = { x: 0, y: 0, boosting: false, braking: false, firing: false, heavy: false, guard: false, mini: false };
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
         if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
 
@@ -468,6 +472,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            Fired from the edges of the frame at eye level, converging on the
            crosshair, which is why the muzzles come from the camera's frustum
            rather than from a fixed offset. */
+        /* The mini gun: one round from the top right, along the line the
+           POINTER is on rather than the ship's own axis. The ray is taken
+           straight from the camera through the crosshair, so what is under the
+           crosshair is what it hits. */
+        if (res.miniFired) {
+          const ndc = new THREE.Vector3(cursor.x * 2 - 1, -(cursor.y * 2 - 1), 0.5);
+          ndc.unproject(camera);
+          const aimDir = ndc.sub(camera.position).normalize();
+          const muzzle = new THREE.Vector3();
+          miniMuzzle(flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, muzzle);
+          fireMini(combat, muzzle, camera.position, aimDir);
+          fx.muzzle(muzzle);
+          playMiniSound();
+        }
+
         if (res.fired) {
           const muzzles = fireGuns(combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect);
           fx.muzzle(muzzles[0]);

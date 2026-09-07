@@ -9,6 +9,15 @@ export const BULLET_SPEED = 120;      /* globe units per second */
 export const BULLET_LIFE = 2.2;
 export const BULLET_R = 0.16;         /* what it hits with */
 export const CONVERGE = 55;           /* where the two guns cross, in units ahead */
+
+/* ---- the mini gun ----
+   A single fast round from the top right of the frame, aimed wherever the
+   pointer is rather than down the ship's own axis. A quarter of the damage and
+   a quarter of a round, so four of them cost what one shot from the main guns
+   costs. */
+export const MINI_DAMAGE = 0.25;
+export const MINI_SPEED_MULT = 1.5;
+export const MINI_AMMO = 0.25;
 export const ENEMY_R = 1.05;          /* hit radius of a fighter */
 
 /* ---- damage ----
@@ -134,6 +143,8 @@ export interface Bullet {
   life: number;
   /** Whose it is. Enemy fire is drawn differently and hurts you, not them. */
   hostile: boolean;
+  /** From the mini gun: quarter damage, drawn smaller. */
+  mini?: boolean;
 }
 
 export interface Enemy {
@@ -379,6 +390,49 @@ export function fireGuns(
   return m;
 }
 
+/**
+ * The mini gun's muzzle: the top right of the frame.
+ *
+ * Same idea as the main guns, from the camera's own frustum, so it sits on the
+ * corner whatever the window size.
+ */
+export function miniMuzzle(
+  pos: THREE.Vector3,
+  fwd: THREE.Vector3,
+  up: THREE.Vector3,
+  fovDeg: number,
+  aspect: number,
+  out: THREE.Vector3,
+): void {
+  const d = 2.2;
+  const halfH = Math.tan((fovDeg * Math.PI) / 360) * d;
+  const halfW = halfH * aspect;
+  const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
+  out.copy(pos)
+    .addScaledVector(fwd, d)
+    .addScaledVector(right, halfW * 0.94)
+    .addScaledVector(up, halfH * 0.86);
+}
+
+/**
+ * Fire the mini gun along a given aim ray.
+ *
+ * `aimFrom` and `aimDir` are the line the POINTER is on, which is not the
+ * ship's axis: that is the whole difference between this and the main guns.
+ * The round leaves the corner and crosses that line, so what is under the
+ * crosshair is what gets hit.
+ */
+export function fireMini(
+  c: CombatState,
+  muzzle: THREE.Vector3,
+  aimFrom: THREE.Vector3,
+  aimDir: THREE.Vector3,
+): void {
+  const target = aimFrom.clone().addScaledVector(aimDir, CONVERGE);
+  const vel = target.sub(muzzle).normalize().multiplyScalar(BULLET_SPEED * MINI_SPEED_MULT);
+  c.bullets.push({ pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true });
+}
+
 export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
   const vel = at.clone().sub(e.pos).normalize().multiplyScalar(BULLET_SPEED * 0.6);
   c.bullets.push({ pos: e.pos.clone().addScaledVector(vel, 0.02), vel, life: BULLET_LIFE * 1.4, hostile: true });
@@ -436,7 +490,8 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
         const e = c.enemies[j];
         if (!segmentHit(from, b.pos, e.pos, ENEMY_R)) continue;
         spent = true;
-        hurtEnemy(c, e, rollLaserDamage() * w.damageScale, from);
+        const scale = (b.mini ? MINI_DAMAGE : 1) * w.damageScale;
+        hurtEnemy(c, e, rollLaserDamage() * scale, from);
       }
       /* Wreckage is solid: shoot a piece and it goes. */
       for (let j = c.junk.length - 1; j >= 0 && !spent; j--) {
