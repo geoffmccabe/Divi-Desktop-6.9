@@ -490,16 +490,49 @@ fn nonkyc_place(rest_url: &str, c: &Creds, symbol: &str, side: &str, price: &str
 }
 
 // Reliable fail-safe: cancel every resting order by id (cancel-all is a no-op).
-fn nonkyc_cancel_all(rest_url: &str, c: &Creds, symbol: &str) -> usize {
+fn nonkyc_cancel_one(rest_url: &str, c: &Creds, id: &str) -> bool {
     let url = format!("{}/cancelorder", rest_url.trim_end_matches('/'));
+    let body = format!("{{\"id\":\"{id}\"}}");
+    nonkyc_call(&url, "POST", Some(&body), c).is_ok()
+}
+
+fn nonkyc_cancel_all(rest_url: &str, c: &Creds, symbol: &str) -> usize {
     let mut n = 0;
     for id in nonkyc_open_ids(rest_url, c, symbol) {
-        let body = format!("{{\"id\":\"{id}\"}}");
-        if nonkyc_call(&url, "POST", Some(&body), c).is_ok() {
+        if nonkyc_cancel_one(rest_url, c, &id) {
             n += 1;
         }
     }
     n
+}
+
+/// A resting order of ours, with the id needed to cancel it and the fields needed
+/// to decide whether it still matches what we want (so we can leave it in place).
+struct RestingOrder {
+    id: String,
+    is_buy: bool,
+    price: f64,
+    qty: f64, // quantity still resting (unfilled)
+}
+
+fn nonkyc_resting_orders(rest_url: &str, c: &Creds, symbol: &str) -> Vec<RestingOrder> {
+    let url = format!("{}/getorders?symbol={}&status=active&limit=200", rest_url.trim_end_matches('/'), enc_symbol(symbol));
+    let mut out = Vec::new();
+    if let Ok(v) = nonkyc_call(&url, "GET", None, c) {
+        if let Some(arr) = v.as_array() {
+            for o in arr {
+                let id = o.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let is_buy = o.get("side").and_then(|x| x.as_str()) == Some("buy");
+                let pf = |k: &str| o.get(k).and_then(|x| x.as_str()).and_then(|s| s.parse::<f64>().ok());
+                let price = pf("price").unwrap_or(0.0);
+                let qty = pf("remainQuantity").or_else(|| pf("quantity")).unwrap_or(0.0);
+                if !id.is_empty() && price > 0.0 && qty > 0.0 {
+                    out.push(RestingOrder { id, is_buy, price, qty });
+                }
+            }
+        }
+    }
+    out
 }
 
 fn sleep_stoppable(stop: &Arc<AtomicBool>, secs: u64) {
@@ -526,9 +559,23 @@ fn run_loop(cfg: MmConfig, stop: Arc<AtomicBool>) {
     let per_side = cfg.commit_usdt / 2.0; // ~half the commit to each side
     let sum_w: f64 = cfg.levels.iter().sum();
 
-    while !stop.load(Ordering::Relaxed) {
-        nonkyc_cancel_all(&cfg.rest_url, &c, &cfg.symbol);
+    // Per-order minimum the exchange accepts, in USDT.
+    const MIN_ORDER: f64 = 1.0;
+    // How far a resting order's price may drift from where we now want it before
+    // we bother repricing it. Below this, we leave it alone. This is what stops
+    // the pointless cancel/replace every cycle: when the market is quiet, nothing
+    // moves out of tolerance, so nothing is cancelled or placed.
+    const PRICE_TOL: f64 = 0.0015; // 0.15%
+    // Likewise for size: small drifts (partial fills, a nudge from the skew) don't
+    // justify tearing an order down and rebuilding it.
+    const QTY_TOL: f64 = 0.25; // 25%
+    // Inventory skew: bias the budget away from whichever coin we're already heavy
+    // in, so the bot stops piling into one side (the thing that bled it before).
+    // Gentle and clamped, so it nudges rather than dumps.
+    const SKEW_GAIN: f64 = 1.0;
+    const SKEW_MAX: f64 = 0.35;
 
+    while !stop.load(Ordering::Relaxed) {
         let (best_bid, best_ask, mid) = match nonkyc_mid(&cfg.rest_url, &cfg.symbol) {
             Ok(m) => m,
             Err(e) => {
@@ -545,54 +592,88 @@ fn run_loop(cfg: MmConfig, stop: Arc<AtomicBool>) {
         let floor = ref_high * (1.0 - cfg.protect_pct / 100.0);
         let ceiling = ref_low * (1.0 + cfg.protect_pct / 100.0);
 
-        // Held is read right after cancel-all above, so it is ~0 here; we report
-        // what we actually place below instead of these held figures.
-        let (qf, _qh, bf, _bh) = nonkyc_two_bals(&cfg.rest_url, &c, &base, &quote);
+        let (qf, qh, bf, bh) = nonkyc_two_bals(&cfg.rest_url, &c, &base, &quote);
+        let quote_total = qf + qh;                 // all USDT
+        let base_value = (bf + bh) * mid;          // all DIVI, valued in USDT
+        // deviation > 0 means too much DIVI: shrink bids, grow asks, and vice versa.
+        let denom = base_value + quote_total;
+        let deviation = if denom > 0.0 { (base_value - quote_total) / denom } else { 0.0 };
+        let skew = (deviation * SKEW_GAIN).clamp(-SKEW_MAX, SKEW_MAX);
+        let bid_budget = per_side * (1.0 - skew);
+        let ask_budget = per_side * (1.0 + skew);
 
-        let mut quote_used = 0.0; // USDT committed to bids
-        let mut ask_notional = 0.0; // USDT-equiv committed to asks
-        let mut base_used = 0.0; // base committed to asks
-        let mut placed = 0usize;
-
+        // 1) Work out the ladder we WANT right now. Weight toward the outer levels
+        //    so a sudden move fills only the small near orders first.
+        let mut desired: Vec<(bool, f64, i64)> = Vec::new(); // (is_buy, price, qty)
         for &sp in &cfg.levels {
-            // Weight the per-side budget toward the OUTER levels - less right at
-            // the price, more deeper - so a sudden move fills only small near
-            // orders first, and never more than the per-side cap.
             let weight = if sum_w > 0.0 { sp / sum_w } else { 1.0 / cfg.levels.len().max(1) as f64 };
-            let level_notional = per_side * weight;
-
-            // BUY level: below mid, never crossing best ask, never below the floor.
             let bid_px = (mid * (1.0 - sp / 100.0)).min(best_ask * 0.9999);
             if bid_px >= floor {
-                let bid_qty = (level_notional / bid_px) as i64;
-                let cost = bid_qty as f64 * bid_px;
-                if bid_qty > 0 && cost >= 1.0 && quote_used + cost <= per_side && qf >= quote_used + cost
-                    && nonkyc_place(&cfg.rest_url, &c, &cfg.symbol, "buy", &fmt_price(bid_px), bid_qty) {
-                    quote_used += cost;
-                    placed += 1;
-                }
+                let qty = (bid_budget * weight / bid_px) as i64;
+                if qty > 0 && qty as f64 * bid_px >= MIN_ORDER { desired.push((true, bid_px, qty)); }
             }
-            // SELL level: above mid, never crossing best bid, never above the ceiling.
             let ask_px = (mid * (1.0 + sp / 100.0)).max(best_bid * 1.0001);
             if ask_px <= ceiling {
-                let ask_qty = (level_notional / ask_px) as i64;
-                let val = ask_qty as f64 * ask_px;
-                if ask_qty > 0 && val >= 1.0 && ask_notional + val <= per_side && bf >= base_used + ask_qty as f64
-                    && nonkyc_place(&cfg.rest_url, &c, &cfg.symbol, "sell", &fmt_price(ask_px), ask_qty) {
-                    ask_notional += val;
-                    base_used += ask_qty as f64;
-                    placed += 1;
-                }
+                let qty = (ask_budget * weight / ask_px) as i64;
+                if qty > 0 && qty as f64 * ask_px >= MIN_ORDER { desired.push((false, ask_px, qty)); }
             }
         }
 
+        // 2) Compare with what's already resting: keep matches, note what to place.
+        let resting = nonkyc_resting_orders(&cfg.rest_url, &c, &cfg.symbol);
+        let mut used = vec![false; resting.len()];
+        let mut committed_quote = 0.0; // USDT tied up in buys
+        let mut committed_base = 0.0;  // DIVI tied up in sells
+        let mut kept = 0usize;
+        let mut to_place: Vec<(bool, f64, i64)> = Vec::new();
+        for &(is_buy, price, qty) in &desired {
+            let mut matched = false;
+            for (i, r) in resting.iter().enumerate() {
+                if used[i] || r.is_buy != is_buy { continue; }
+                if (r.price - price).abs() <= price * PRICE_TOL
+                    && (r.qty - qty as f64).abs() <= (qty as f64) * QTY_TOL {
+                    used[i] = true; matched = true; kept += 1;
+                    if is_buy { committed_quote += r.qty * r.price; } else { committed_base += r.qty; }
+                    break;
+                }
+            }
+            if !matched { to_place.push((is_buy, price, qty)); }
+        }
+
+        // 3) Cancel only the resting orders that no longer fit.
+        let mut cancelled = 0usize;
+        for (i, r) in resting.iter().enumerate() {
+            if !used[i] && nonkyc_cancel_one(&cfg.rest_url, &c, &r.id) { cancelled += 1; }
+        }
+
+        // 4) Place only the missing orders, capped by the free (un-held) balance.
+        let mut quote_free_left = qf;
+        let mut base_free_left = bf;
+        let mut placed_new = 0usize;
+        for &(is_buy, price, qty) in &to_place {
+            if is_buy {
+                let cost = qty as f64 * price;
+                if cost <= quote_free_left
+                    && nonkyc_place(&cfg.rest_url, &c, &cfg.symbol, "buy", &fmt_price(price), qty) {
+                    quote_free_left -= cost; committed_quote += cost; placed_new += 1;
+                }
+            } else if qty as f64 <= base_free_left
+                && nonkyc_place(&cfg.rest_url, &c, &cfg.symbol, "sell", &fmt_price(price), qty) {
+                base_free_left -= qty as f64; committed_base += qty as f64; placed_new += 1;
+            }
+        }
+
+        let live = kept + placed_new;
         cycles += 1;
+        let msg = if cancelled == 0 && placed_new == 0 {
+            format!("steady: {live} orders around {mid:.7}")
+        } else {
+            format!("adjusted (+{placed_new}/-{cancelled}): {live} orders around {mid:.7}")
+        };
         set_status(MmStatus {
-            running: true,
-            message: format!("quoting {placed} orders around {mid:.7}"),
-            mid, open_orders: placed,
-            base_free: (bf - base_used).max(0.0), base_held: base_used,
-            quote_free: (qf - quote_used).max(0.0), quote_held: quote_used,
+            running: true, message: msg, mid, open_orders: live,
+            base_free: ((bf + bh) - committed_base).max(0.0), base_held: committed_base,
+            quote_free: (quote_total - committed_quote).max(0.0), quote_held: committed_quote,
             cycles,
         });
         sleep_stoppable(&stop, cfg.refresh_secs);
