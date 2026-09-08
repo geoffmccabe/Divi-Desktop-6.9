@@ -1472,6 +1472,7 @@ struct ManualOrderDto {
     price: f64,
     qty: f64,
     from_mm: bool,
+    created_ms: i64,
 }
 
 /// The user's currently-open orders on a pair, with ids for the Trade panel.
@@ -1480,7 +1481,7 @@ async fn mm_open_orders(slug: String, connector: String, rest_url: String, symbo
     tauri::async_runtime::spawn_blocking(move || {
         let orders = marketmaker::open_orders(&slug, &connector, &rest_url, &symbol)?;
         Ok::<Vec<ManualOrderDto>, String>(orders.into_iter().map(|o| ManualOrderDto {
-            id: o.id, side: o.side, order_type: o.order_type, price: o.price, qty: o.qty, from_mm: o.from_mm,
+            id: o.id, side: o.side, order_type: o.order_type, price: o.price, qty: o.qty, from_mm: o.from_mm, created_ms: o.created_ms,
         }).collect())
     })
     .await

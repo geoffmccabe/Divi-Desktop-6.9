@@ -5,7 +5,7 @@
 // the Market Maker panels. Running manual orders can compete with the market maker
 // for the same balance, which is expected.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { mmBook, mmOpenOrders, mmPlaceOrder, mmCancelOrder, type MmBook, type BookLevel, type ManualOrder, type MmBalance } from "../api";
 import type { Exchange } from "../exchanges";
 import { FundsPanel } from "./FundsPanel";
@@ -104,6 +104,20 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ex.slug, symbol]);
 
+  // Flash an order when it first appears (just placed), so the eye catches it. Only
+  // brand-new orders flash, not ones already resting when the panel loaded.
+  const seen = useRef<Set<string>>(new Set());
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const now = Date.now();
+    const fresh = orders.filter((o) => !seen.current.has(o.id) && now - o.createdMs < 30000).map((o) => o.id);
+    orders.forEach((o) => seen.current.add(o.id));
+    if (!fresh.length) return;
+    setFlashIds((prev) => new Set([...prev, ...fresh]));
+    const t = setTimeout(() => setFlashIds((prev) => { const n = new Set(prev); fresh.forEach((id) => n.delete(id)); return n; }), 1800);
+    return () => clearTimeout(t);
+  }, [orders]);
+
   const mid = book?.mid ?? 0;
   const bestBid = book?.bestBid ?? mid;
   const bestAsk = book?.bestAsk ?? mid;
@@ -130,8 +144,8 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   const place = async () => {
     setBusy(true); setErr(null); setMsg(null);
     try {
-      const id = await mmPlaceOrder(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol, side, otype, q, otype === "limit" ? p : null);
-      setMsg(`Order placed${id && id !== "ok" ? ` (${id.slice(0, 8)}…)` : ""}.`);
+      await mmPlaceOrder(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol, side, otype, q, otype === "limit" ? p : null);
+      setMsg("Order placed.");
       setQty("");
       refreshOrders();
     } catch (e) { setErr(String(e)); } finally { setBusy(false); }
@@ -149,11 +163,9 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   const { asksToShow, bidsToShow } = useMemo(() => {
     const ga = withCumulative(groupLevels(book?.asks ?? [], group, "sell")); // best ask outward
     const gb = withCumulative(groupLevels(book?.bids ?? [], group, "buy"));  // best bid outward
-    return {
-      asksToShow: (bookFilter === "both" ? ga.slice(0, 8) : ga).slice().reverse(), // highest at top
-      bidsToShow: bookFilter === "both" ? gb.slice(0, 8) : gb,
-    };
-  }, [book, group, bookFilter]);
+    // Show every level; each side is its own scroll box, so both stay compact.
+    return { asksToShow: ga.slice().reverse(), bidsToShow: gb }; // asks highest at top
+  }, [book, group]);
 
   const fillPrice = (pr: number) => { setOtype("limit"); setPrice(fmtP(pr)); };
 
@@ -164,11 +176,12 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
         {ex.connector_type === "nonkyc"
           ? <img className="tr-ex-logo-img" src={nonkycLogo} alt={ex.name} />
           : <div className="tr-ex-logo" aria-hidden="true">{(ex.name || "?").charAt(0).toUpperCase()}</div>}
-        {mmBals && <FundsPanel symbol={symbol} bals={mmBals} />}
-        <div className="tr-price">
-          <span className="tr-price-label">{base} price</span>
-          <span className="tr-price-main">{fmtP(mid)} {quote}</span>
-          <span className="tr-price-usd">{usd(mid)}</span>
+        <div className="tr-headbar">
+          {mmBals && <FundsPanel symbol={symbol} bals={mmBals} />}
+          <div className="tr-price">
+            <span className="tr-price-label">{base} price</span>
+            <span className="tr-price-main">${fmtP(mid)}</span>
+          </div>
         </div>
       </div>
 
@@ -190,19 +203,28 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
                 </select>
               </label>
             </div>
-            <div className={"tr-book" + (bookFilter !== "both" ? " tr-book-scroll" : "")}>
+            <div className="tr-book">
+              {/* Header sits outside the scroll boxes, so it's always visible. */}
               <div className="tr-book-head"><span>Price</span><span>Size ({base})</span><span>Value</span><span>Total {base}</span><span>Total $</span></div>
-              {bookFilter !== "buys" && asksToShow.map((l, i) => (
-                <button key={"a" + i} type="button" className="tr-brow tr-ask" onClick={() => fillPrice(l.price)}>
-                  <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span><span>{fmtQ(l.cumQty)}</span><span>{usd(l.cumUsd)}</span>
-                </button>
-              ))}
+              {bookFilter !== "buys" && (
+                <div className="tr-book-side">
+                  {asksToShow.map((l, i) => (
+                    <button key={"a" + i} type="button" className="tr-brow tr-ask" onClick={() => fillPrice(l.price)}>
+                      <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span><span>{fmtQ(l.cumQty)}</span><span>{usd(l.cumUsd)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="tr-book-mid">mid {fmtP(mid)} <span>({usd(mid)}/{base})</span></div>
-              {bookFilter !== "sells" && bidsToShow.map((l, i) => (
-                <button key={"b" + i} type="button" className="tr-brow tr-bid" onClick={() => fillPrice(l.price)}>
-                  <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span><span>{fmtQ(l.cumQty)}</span><span>{usd(l.cumUsd)}</span>
-                </button>
-              ))}
+              {bookFilter !== "sells" && (
+                <div className="tr-book-side">
+                  {bidsToShow.map((l, i) => (
+                    <button key={"b" + i} type="button" className="tr-brow tr-bid" onClick={() => fillPrice(l.price)}>
+                      <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span><span>{fmtQ(l.cumQty)}</span><span>{usd(l.cumUsd)}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
@@ -217,17 +239,18 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
               <button type="button" className={"tr-seg-btn" + (otype === "market" ? " on" : "")} onClick={() => setOtype("market")}>Market</button>
             </div>
 
-            {otype === "limit" && (
+            <div className={"tr-fields" + (otype === "limit" ? " tr-fields-2" : "")}>
+              {otype === "limit" && (
+                <label className="value-field">
+                  <span className="send-label">Price ({quote})</span>
+                  <input className="wl-input" type="number" min={0} step="any" value={price} placeholder={mid ? fmtP(mid) : "0.0"} onChange={(e) => setPrice(e.target.value)} />
+                </label>
+              )}
               <label className="value-field">
-                <span className="send-label">Price ({quote})</span>
-                <input className="wl-input" type="number" min={0} step="any" value={price} placeholder={mid ? fmtP(mid) : "0.0"} onChange={(e) => setPrice(e.target.value)} />
+                <span className="send-label">Amount ({base}) <em className="tr-usd">{q > 0 ? `= ${usd(q * (effPrice || mid))}` : `= ${usd(0)}`}</em></span>
+                <input className="wl-input" type="number" min={0} step="any" value={qty} placeholder="0" onChange={(e) => setQty(e.target.value)} />
               </label>
-            )}
-
-            <label className="value-field">
-              <span className="send-label">Amount ({base}) <em className="tr-usd">{q > 0 ? `= ${usd(q * (effPrice || mid))}` : `= ${usd(0)}`}</em></span>
-              <input className="wl-input" type="number" min={0} step="any" value={qty} placeholder="0" onChange={(e) => setQty(e.target.value)} />
-            </label>
+            </div>
 
             <div className="tr-summary">
               <div><span>Order value</span><span>
@@ -254,10 +277,11 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
           <p className="wl-note">No open orders on this pair.</p>
         ) : (
           orders.map((o) => (
-            <div key={o.id} className={"tr-order" + (o.fromMm ? " tr-order-mm" : "")}>
+            <div key={o.id} className={"tr-order" + (o.fromMm ? " tr-order-mm" : "") + (flashIds.has(o.id) ? " tr-flash" : "")}>
               <span className={o.side === "buy" ? "tr-buy" : "tr-sell"}>{o.side} {o.orderType}</span>
               <span className="tr-order-detail">{fmtQ(o.qty)} {base} @ {fmtP(o.price)} = {usd(o.qty * o.price)}</span>
-              <button type="button" className="wl-link" disabled={busy} onClick={() => cancel(o.id)}>Cancel</button>
+              {Date.now() - o.createdMs < 3600000 && <span className="tr-new">NEW</span>}
+              <button type="button" className="wl-link tr-cancel" disabled={busy} onClick={() => cancel(o.id)}>Cancel</button>
               {o.fromMm && <span className="tr-mm-tag">Market Maker</span>}
             </div>
           ))
