@@ -313,6 +313,12 @@ export interface PricePoint {
 export const priceHistory = () => invoke<PricePoint[]>("price_history");
 // The full detailed first-run setup log, for the ⌘L copy shortcut. No secrets.
 export const setupLogReport = () => invoke<string>("setup_log_report");
+
+// This install's node identity: a stable id (survives IP changes) + node name.
+export interface NodeIdentity { id: string; name: string; nameSource: string }
+export const nodeIdentity = () => invoke<NodeIdentity>("node_identity");
+export const setNodeName = (name: string, source = "custom") =>
+  invoke<NodeIdentity>("set_node_name", { name, source });
 // Latest DIVI/USD from the shared CMC feed (no per-user key) — used to price PoE.
 export const priceLatest = () => invoke<number | null>("price_latest");
 export interface StaleBlock {

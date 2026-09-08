@@ -1953,3 +1953,24 @@ code, .mono { font-family: var(--font-mono); }
 }
 .pc-tip-price { font-weight: 700; font-size: 0.92rem; color: hsl(var(--foreground)); }
 .pc-tip-date { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
+
+/* Node name box in My Nodes settings. Dark field + fuchsia focus, matching the
+   theme (never a white control on the dark panel). */
+.nodename-box { margin: 6px 0 18px; }
+.nodename-label { display: block; font-size: 0.8rem; font-weight: 600; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
+.nodename-row { display: flex; gap: 8px; align-items: stretch; max-width: 460px; }
+.nodename-input {
+  flex: 1 1 auto; min-width: 0; padding: 8px 12px; border-radius: 8px; font-size: 0.9rem;
+  color: hsl(var(--foreground)); background: hsl(var(--background) / 0.6);
+  border: 1px solid hsl(var(--primary) / 0.35); transition: border-color 0.15s, box-shadow 0.15s;
+}
+.nodename-input::placeholder { color: hsl(var(--muted-foreground) / 0.7); }
+.nodename-input:focus { outline: none; border-color: hsl(var(--primary) / 0.8); box-shadow: 0 0 0 2px hsl(var(--primary) / 0.25); }
+.nodename-save {
+  flex: 0 0 auto; padding: 7px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.16);
+  border: 1px solid hsl(var(--primary) / 0.45); transition: background 0.15s, border-color 0.15s;
+}
+.nodename-save:hover:not(:disabled) { background: hsl(var(--primary) / 0.3); border-color: hsl(var(--primary) / 0.7); }
+.nodename-save:disabled { opacity: 0.5; cursor: default; }
+.nodename-hint { margin-top: 8px; word-break: break-word; }

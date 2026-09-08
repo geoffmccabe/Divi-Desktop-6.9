@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listNodes, setActiveNode, type NodeInfo } from "./api";
+import { listNodes, setActiveNode, nodeIdentity, setNodeName, type NodeInfo } from "./api";
 
 // "My Nodes" settings tab: pick which node the wallet reads. Desktop (this
 // computer's Divi node) is always shown; personal nodes such as DIVI LOVE SCAN
@@ -10,6 +10,12 @@ export function MyNodes() {
   const [active, setActive] = useState("desktop");
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  // This computer's node identity: a stable id + a fun, user-chosen name.
+  const [nodeId, setNodeId] = useState("");
+  const [name, setName] = useState("");
+  const [savedName, setSavedName] = useState("");
+  const [nameBusy, setNameBusy] = useState(false);
+  const [nameNote, setNameNote] = useState("");
 
   const refresh = () =>
     listNodes()
@@ -20,7 +26,32 @@ export function MyNodes() {
       .catch(() => {});
   useEffect(() => {
     refresh();
+    nodeIdentity()
+      .then((i) => {
+        setNodeId(i.id);
+        setName(i.name);
+        setSavedName(i.name);
+      })
+      .catch(() => {});
   }, []);
+
+  const saveName = async () => {
+    if (nameBusy) return;
+    setNameBusy(true);
+    setNameNote("");
+    try {
+      const i = await setNodeName(name.trim(), "custom");
+      setName(i.name);
+      setSavedName(i.name);
+      // Let the map pick up the new name immediately.
+      window.dispatchEvent(new CustomEvent("dd69:nodename", { detail: i }));
+      setNameNote(i.name ? "Saved. Your node will show this name." : "Name cleared.");
+    } catch (e) {
+      setNameNote(String(e));
+    } finally {
+      setNameBusy(false);
+    }
+  };
 
   const choose = async (id: string) => {
     if (id === active || busy) return;
@@ -42,6 +73,38 @@ export function MyNodes() {
   return (
     <section className="set-section">
       <h3 className="set-title">My Nodes</h3>
+
+      {/* This computer's node name — a fun label that rides with a stable id, so
+          your node stays "one node" even when your IP changes as you travel. */}
+      <div className="nodename-box">
+        <label className="nodename-label" htmlFor="nodename-input">Node name</label>
+        <div className="nodename-row">
+          <input
+            id="nodename-input"
+            className="nodename-input"
+            type="text"
+            maxLength={40}
+            placeholder="Name your node (optional, just for fun)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") saveName(); }}
+          />
+          <button
+            type="button"
+            className="nodename-save"
+            disabled={nameBusy || name.trim() === savedName.trim()}
+            onClick={saveName}
+          >
+            {nameBusy ? "Saving…" : "Save"}
+          </button>
+        </div>
+        <p className="set-note nodename-hint">
+          This shows on the network map for your node. It's a nickname, not proof of identity — later you'll be
+          able to use your node's registered Agent name instead.{nodeId ? ` Node id: ${nodeId}` : ""}
+        </p>
+        {nameNote && <p className="set-note mynode-note">{nameNote}</p>}
+      </div>
+
       <p className="set-note">
         Choose which node this wallet reads. Your balance, transactions, and network map all come from the node you select here.
       </p>

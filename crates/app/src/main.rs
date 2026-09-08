@@ -1619,6 +1619,27 @@ async fn setup_log_report() -> String {
         .unwrap_or_else(|_| "setup log unavailable".into())
 }
 
+/// This install's node identity: a stable id (survives IP changes) plus the
+/// user's chosen node name. Read on startup so the map can label the user's own
+/// node and, later, group its many IPs into one.
+#[tauri::command]
+async fn node_identity() -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(dd69_supervisor::identity::to_json)
+        .await
+        .unwrap_or_else(|_| serde_json::json!({ "id": "", "name": "", "nameSource": "custom" }))
+}
+
+/// Set (or clear) this node's name. `source` is "custom" for a typed name, or
+/// "agent" when the name comes from the node's registered Agent identity.
+#[tauri::command]
+async fn set_node_name(name: String, source: Option<String>) -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(move || {
+        dd69_supervisor::identity::set_name(&name, source.as_deref().unwrap_or("custom"))
+    })
+    .await
+    .unwrap_or_else(|_| serde_json::json!({ "id": "", "name": "", "nameSource": "custom" }))
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -2839,6 +2860,8 @@ fn main() {
             restart_node,
             node_logs,
             setup_log_report,
+            node_identity,
+            set_node_name,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,

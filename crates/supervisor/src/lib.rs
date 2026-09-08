@@ -20,6 +20,7 @@ pub mod reveal;
 pub mod fastsend;
 pub mod fees;
 pub mod health;
+pub mod identity;
 pub mod bearer;
 pub mod install;
 pub mod marketmaker;

@@ -602,6 +602,12 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             selfRef.current = m[s.selfIp];
             saveSelfGeo(nodeId, m[s.selfIp]);
             const g0 = m[s.selfIp];
+            // If our public IP just CHANGED (travel / new ISP), the IP we had
+            // stored is still THIS node — mark it ours so it's stripped from the
+            // network list instead of lingering for 90 days as a phantom node at
+            // the old town. addMyIps purges it from the shared store immediately.
+            const prev = loadSelfNode(nodeId);
+            if (prev && prev.ip && prev.ip !== s.selfIp) addMyIps([prev.ip]);
             saveSelfNode(nodeId, { ip: s.selfIp, lat: g0.lat, lon: g0.lon, city: g0.city, country: g0.country });
             addMyIps([s.selfIp]); // our current IP is ours, never a network node
           }
