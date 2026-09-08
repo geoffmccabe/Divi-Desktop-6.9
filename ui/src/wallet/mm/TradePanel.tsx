@@ -5,7 +5,7 @@
 // the Market Maker panels. Running manual orders can compete with the market maker
 // for the same balance, which is expected.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { mmBook, mmOpenOrders, mmPlaceOrder, mmCancelOrder, type MmBook, type BookLevel, type ManualOrder, type MmBalance } from "../api";
 import type { Exchange } from "../exchanges";
 import { FundsPanel } from "./FundsPanel";
@@ -104,6 +104,20 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ex.slug, symbol]);
 
+  // Flash an order when it first appears (just placed), so the eye catches it. Only
+  // brand-new orders flash, not ones already resting when the panel loaded.
+  const seen = useRef<Set<string>>(new Set());
+  const [flashIds, setFlashIds] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    const now = Date.now();
+    const fresh = orders.filter((o) => !seen.current.has(o.id) && now - o.createdMs < 30000).map((o) => o.id);
+    orders.forEach((o) => seen.current.add(o.id));
+    if (!fresh.length) return;
+    setFlashIds((prev) => new Set([...prev, ...fresh]));
+    const t = setTimeout(() => setFlashIds((prev) => { const n = new Set(prev); fresh.forEach((id) => n.delete(id)); return n; }), 1800);
+    return () => clearTimeout(t);
+  }, [orders]);
+
   const mid = book?.mid ?? 0;
   const bestBid = book?.bestBid ?? mid;
   const bestAsk = book?.bestAsk ?? mid;
@@ -130,8 +144,8 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   const place = async () => {
     setBusy(true); setErr(null); setMsg(null);
     try {
-      const id = await mmPlaceOrder(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol, side, otype, q, otype === "limit" ? p : null);
-      setMsg(`Order placed${id && id !== "ok" ? ` (${id.slice(0, 8)}…)` : ""}.`);
+      await mmPlaceOrder(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol, side, otype, q, otype === "limit" ? p : null);
+      setMsg("Order placed.");
       setQty("");
       refreshOrders();
     } catch (e) { setErr(String(e)); } finally { setBusy(false); }
@@ -263,10 +277,11 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
           <p className="wl-note">No open orders on this pair.</p>
         ) : (
           orders.map((o) => (
-            <div key={o.id} className={"tr-order" + (o.fromMm ? " tr-order-mm" : "")}>
+            <div key={o.id} className={"tr-order" + (o.fromMm ? " tr-order-mm" : "") + (flashIds.has(o.id) ? " tr-flash" : "")}>
               <span className={o.side === "buy" ? "tr-buy" : "tr-sell"}>{o.side} {o.orderType}</span>
               <span className="tr-order-detail">{fmtQ(o.qty)} {base} @ {fmtP(o.price)} = {usd(o.qty * o.price)}</span>
-              <button type="button" className="wl-link" disabled={busy} onClick={() => cancel(o.id)}>Cancel</button>
+              {Date.now() - o.createdMs < 3600000 && <span className="tr-new">NEW</span>}
+              <button type="button" className="wl-link tr-cancel" disabled={busy} onClick={() => cancel(o.id)}>Cancel</button>
               {o.fromMm && <span className="tr-mm-tag">Market Maker</span>}
             </div>
           ))

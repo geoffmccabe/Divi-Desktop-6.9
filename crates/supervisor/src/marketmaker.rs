@@ -836,6 +836,7 @@ pub struct ManualOrder {
     pub price: f64,
     pub qty: f64,
     pub from_mm: bool, // placed by the market-maker engine (mm-*) vs a manual trade (tr-*)
+    pub created_ms: i64, // when the exchange recorded the order (epoch ms)
 }
 
 /// The user's currently-open orders on a pair, with ids so the UI can cancel them.
@@ -856,7 +857,8 @@ pub fn open_orders(slug: &str, connector: &str, rest_url: &str, symbol: &str) ->
         let price = pf("price").unwrap_or(0.0);
         let qty = pf("remainQuantity").or_else(|| pf("quantity")).unwrap_or(0.0);
         let from_mm = o.get("userProvidedId").and_then(|x| x.as_str()).unwrap_or("").starts_with("mm-");
-        out.push(ManualOrder { id, side, order_type, price, qty, from_mm });
+        let created_ms = o.get("createdAt").and_then(|x| x.as_i64()).unwrap_or(0);
+        out.push(ManualOrder { id, side, order_type, price, qty, from_mm, created_ms });
     }
     Ok(out)
 }

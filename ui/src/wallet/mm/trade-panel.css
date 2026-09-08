@@ -41,7 +41,7 @@
 .tr-open { margin-top: 18px; }
 .tr-open-head { margin: 0 0 9px; font-size: 0.9rem; }
 .tr-order { display: flex; align-items: center; gap: 14px; padding: 7px 0; border-top: 1px solid hsl(var(--border)); font-size: 0.84rem; }
-.tr-order-detail { flex: 1; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
+.tr-order-detail { flex: none; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
 .tr-buy { color: #26a17b; font-weight: 700; text-transform: capitalize; }
 .tr-sell { color: hsl(0 85% 62%); font-weight: 700; text-transform: capitalize; }
 
@@ -116,3 +116,10 @@
 .tr-fields .value-field { min-width: 0; }
 .tr-fields .wl-input { max-width: none; }
 .tr-price-usd { font-size: 0.85rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+
+/* NEW badge (lasts an hour) sits just right of the amount; Cancel pushes to the far right. */
+.tr-cancel { margin-left: auto; }
+.tr-new { font-size: 0.68rem; font-weight: 800; letter-spacing: 0.05em; color: #fff; background: #26a17b; border-radius: 4px; padding: 1px 6px; }
+/* Flash when an order first arrives. */
+@keyframes tr-flash-kf { 0% { background: #26a17b44; } 100% { background: transparent; } }
+.tr-flash { animation: tr-flash-kf 1.6s ease-out; }
