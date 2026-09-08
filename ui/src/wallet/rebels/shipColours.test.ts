@@ -12,7 +12,10 @@
 //
 // Run: sh scripts/run-rebels-paint-tests.sh
 
-import { TUNING, FACTORY, PARTS, chipColour, type PartKey } from "./shipColours";
+import * as THREE from "three";
+import {
+  TUNING, FACTORY, PARTS, OVERLAYS, chipColour, patternSpan, type PartKey,
+} from "./shipColours";
 
 const out: string[] = [];
 let failures = 0;
@@ -221,6 +224,74 @@ const PALETTE: Array<[string, number, keyof Masks]> = [
     if (Math.abs(chipHue - 320) > 1) off.push(`${key} chip at ${chipHue}`);
   }
   ok("the chip shows the hue that was asked for", off.length === 0, off.join("; "));
+}
+
+// THE OVERLAY SCALE. Geoff: "there are texture buttons for the ships, but none
+// of them work... they aren't adding any lines, camo, or hex grids."
+{
+  /* The patterns are drawn from the model's own coordinates, divided by how big
+     the model is, so a stripe is the same width on a 13-unit fighter and a
+     565-unit station. The divisor was measured with Box3.setFromObject, which
+     walks WORLD matrices -- and by the time a ship reaches the painter it has
+     been through unitCopy, which normalises it to a one-unit box by putting a
+     scale on a wrapper. So the divisor came back as 1 while the shader's
+     `position` attribute, which unitCopy never touches, still ran to seven
+     either side.
+     
+     Dividing by 1 instead of 13.3 made every pattern thirteen times too fine:
+     three hundred and fifty stripes across a hull instead of twenty-six, finer
+     than the screen can draw, so it averaged out to a flat tint and read as the
+     buttons doing nothing at all. */
+  const hull = () => {
+    const g = new THREE.BufferGeometry();
+    /* A fighter-sized lump: 13 units long, 4 across. */
+    const pts: number[] = [];
+    for (const x of [-2, 2]) for (const y of [-0.6, 0.6]) for (const z of [-6.65, 6.65]) pts.push(x, y, z);
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    return new THREE.Mesh(g, new THREE.MeshStandardMaterial());
+  };
+
+  const bare = new THREE.Group();
+  bare.add(hull());
+  ok("the span is the model's own size", Math.abs(patternSpan(bare) - 13.3) < 0.01,
+     `${patternSpan(bare).toFixed(2)}`);
+
+  /* ---- THE REGRESSION ----
+     Wrapped and scaled down the way unitCopy does it. The answer must NOT
+     change, because the shader still sees the unscaled positions. */
+  const inner = new THREE.Group();
+  inner.add(hull());
+  inner.scale.setScalar(1 / 13.3);
+  const wrapped = new THREE.Group();
+  wrapped.add(inner);
+  ok("and a wrapper's scale does not change it",
+     Math.abs(patternSpan(wrapped) - 13.3) < 0.01, `${patternSpan(wrapped).toFixed(2)}`);
+
+  /* Which is exactly what the old way got wrong. */
+  const box = new THREE.Box3().setFromObject(wrapped);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  const oldWay = Math.max(size.x, size.y, size.z);
+  ok("(the old way really did come back as one)", Math.abs(oldWay - 1) < 0.01,
+     `${oldWay.toFixed(3)}, which is ${(13.3 / oldWay).toFixed(1)}x too small`);
+
+  /* A station is forty times a fighter, and must scale with it, or one setting
+     is bold on one hull and invisible on the other. */
+  const big = new THREE.Group();
+  const bigHull = hull();
+  bigHull.geometry.scale(42, 42, 42);
+  big.add(bigHull);
+  ok("a station measures forty times a fighter",
+     Math.abs(patternSpan(big) / patternSpan(bare) - 42) < 0.5,
+     `${(patternSpan(big) / patternSpan(bare)).toFixed(1)}x`);
+
+  ok("nothing to measure is not a crash", patternSpan(new THREE.Group()) === 1);
+
+  /* And the four choices really are four, in the order the shader branches on:
+     none, lines, hex, camo, matching kind 0, 1, 2 and 3. */
+  ok("there are four overlays in shader order",
+     OVERLAYS.join(",") === "none,lines,hex,camo", OVERLAYS.join(","));
+  ok("and none is zero, so a plain ship is plain", OVERLAYS.indexOf("none") === 0);
 }
 
 console.log(out.join("\n"));

@@ -12,7 +12,7 @@ import { R, MIN_ALT, MAX_ALT, planetDistance, cruiseScale } from "./orbitWorld";
 import {
   createFlight, stepFlight, distanceToTower, CRUISE, MAX_AMMO, MAX_SHIELD,
   CRASH_DAMAGE, MAX_GUARDS, MAX_TORPEDOES,
-  DOCK_SECONDS, type Stick,
+  DOCK_SECONDS, DOCK_RANGE, type Stick,
 } from "./orbitFlight";
 
 const out: string[] = [];
@@ -303,7 +303,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   f.shields = 2; f.ammo = 5; f.boost = 0.1;
   let docked = 0;
   for (let i = 0; i < Math.ceil(DOCK_SECONDS * 60) + 90; i++) {
-    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 3);
+    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 1.2);
     const r = stepFlight(f, DT, stick(), [tip], 0);
     if (r.docked) docked++;
   }
@@ -325,7 +325,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
     /* Flat out, straight into it, for the first second only: after that the
        tower has it and forcing the speed again would just be the test fighting
        its own result. */
-    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 2);
+    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 1.2);
     if (i < 60) f.speed = 38;
     stepFlight(f, DT, stick(), [tip], 0);
     if (f.dock > 0.3) slowest = Math.min(slowest, f.speed);
@@ -381,7 +381,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const f = createFlight(pad);
   f.mustLeave = false;
   for (let i = 0; i < 90; i++) {
-    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 3);
+    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 1.2);
     stepFlight(f, DT, stick(), [tip], 0);
   }
   ok("a tower approach eases the ship off by itself", f.speed < 9, `speed ${f.speed.toFixed(1)}`);
@@ -468,7 +468,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   let movingWhileDocked = 0;
   let framesDocked = 0;
   for (let i = 0; i < 60 * 8; i++) {
-    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 3);
+    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 1.2);
     stepFlight(f, DT, stick(), [tip], 0);
     if (f.dock > 0) {
       docked = true;
@@ -481,6 +481,53 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   ok("docking happens at all", docked && f.guards === MAX_GUARDS);
   ok("and the ship is stopped for the whole resupply", movingWhileDocked === 0,
      `still moving on ${movingWhileDocked} of ${framesDocked} docked frames`);
+}
+
+// 8b3. YOU HAVE TO ACTUALLY HIT THE TOWER.
+//
+//      Geoff: "the docking happens far away, very far away from the actual
+//      tower, and so that needs to happen by actually running into the tower."
+//
+//      The range had grown to 34 units around a mast that is 3 units tall and
+//      0.42 across, and half that again once a game launches. That is a target
+//      eighty times wider than the thing it is drawn around, so the ship docked
+//      with the tower still a speck off to one side. This is the assertion that
+//      says the window is a hull's width rather than a postcode.
+{
+  const tip = pad.clone().normalize().multiplyScalar(R + 4.2);
+  const out = tip.clone().normalize();
+  const across = new THREE.Vector3(1, 0, 0).cross(out).normalize();
+
+  const tryFrom = (offset: THREE.Vector3) => {
+    const f = createFlight(pad);
+    f.mustLeave = false;
+    for (let i = 0; i < 60 * 6; i++) {
+      f.pos.copy(tip).add(offset);
+      stepFlight(f, DT, stick(), [tip], 0);
+      if (f.dock > 0) return true;
+    }
+    return false;
+  };
+
+  ok("touching the mast docks", tryFrom(across.clone().multiplyScalar(1.2)));
+  ok("and so does arriving just over the tip", tryFrom(out.clone().multiplyScalar(1.2)));
+
+  /* The distances Geoff was actually docking at. None of them may work. */
+  for (const d of [6, 12, 20, 33]) {
+    ok(`${d} units off the mast does NOT dock`, !tryFrom(across.clone().multiplyScalar(d)));
+  }
+  ok("and neither does sailing over the top", !tryFrom(out.clone().multiplyScalar(10)));
+
+  /* Stated as a number too, because the whole complaint was about the number
+     and a hull is about two and a half units across. */
+  ok("the window is about a hull wide", DOCK_RANGE > 1 && DOCK_RANGE < 4, `${DOCK_RANGE}`);
+}
+
+// 8b4. The magazine.
+{
+  ok("a full load is 120 rounds", MAX_AMMO === 120, `${MAX_AMMO}`);
+  const f = createFlight(pad);
+  ok("and a ship launches with all of them", f.ammo === 120, `${f.ammo}`);
 }
 
 // 8c2. The mini gun.

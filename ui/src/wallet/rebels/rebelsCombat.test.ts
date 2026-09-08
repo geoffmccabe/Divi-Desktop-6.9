@@ -1081,6 +1081,93 @@ function run(c: CombatState, frames: number, w = world()) {
      `${radius.toFixed(0)} units to come round`);
 }
 
+// 14. WHEN A WAVE ARRIVES, and whether it arrives at all.
+{
+  /* Geoff: "each wave is 120 seconds and if there's 10 of them then they should
+     spawn at t=0, t=12, t=24, t=36 etc."
+
+     It used to be a countdown that recomputed the gap from whatever time was
+     left and then multiplied it by a random 0.6 to 1.4. The arrivals drifted,
+     could bunch, could leave a thirty-second hole, and could not be checked
+     against anything. */
+  const c = createCombat();
+  const w = world();
+  startWave(c, 1);
+  const times: number[] = [];
+  let t = 0;
+  let count = c.enemies.length + c.kills;
+  for (let i = 0; i < 60 * 118; i++) {
+    stepCombat(c, DT, w);
+    clearEvents(c);
+    const now = c.enemies.length + c.kills;
+    if (now > count) { times.push(t); count = now; }
+    t += DT;
+  }
+  ok("a first wave is ten", waveSize(1) === 10, `${waveSize(1)}`);
+  ok("and ten of them arrive", times.length === 10, `${times.length}`);
+  ok("the first is immediate", times[0] < 0.05, `t=${times[0]?.toFixed(2)}`);
+
+  /* Every twelve seconds, to within a frame. */
+  const every = WAVE_SECONDS / 10;
+  let worst = 0;
+  for (let i = 0; i < times.length; i++) worst = Math.max(worst, Math.abs(times[i] - i * every));
+  ok("and they come every twelve seconds on the nose", worst < 0.05,
+     `worst drift ${worst.toFixed(3)}s across ${times.join(", ")}`);
+
+  /* Wave two is twelve of them, so ten seconds apart, and the rate has to
+     follow the count rather than being a fixed number. */
+  const c2 = createCombat();
+  startWave(c2, 2);
+  ok("a second wave is twelve", waveSize(2) === 12);
+  ok("and its interval follows the count", Math.abs((c2.wave?.every ?? 0) - WAVE_SECONDS / 12) < 1e-9,
+     `${c2.wave?.every}`);
+}
+
+// 15. AND THEY HAVE TO REACH YOU, WHEREVER YOU ARE FLYING.
+{
+  /* Geoff: "there seem to be few if any enemies chasing and strafing me. I
+     don't know where they are but I don't see them."
+
+     Out among the planets everything moves up to ten times faster: the
+     player's cruise, the fighters' speed, the range they fire from, the range
+     they are given up at. The SPAWN offsets did not, so a fighter still
+     arrived a hundred units ahead, which at that speed is half a second, and
+     it was passed before it had finished turning. Measured at the time:
+     something inside the view 94% of the way round down low, and 24% at
+     altitude. */
+  const HALF = Math.cos(36 * Math.PI / 180);
+  const seenAt = (alt: number) => {
+    const c = createCombat();
+    const at = new THREE.Vector3(0, 0, R + alt);
+    const ahead = new THREE.Vector3(1, 0, 0);
+    const open = cruiseScale(alt);
+    const w2 = world({ playerPos: at, playerFwd: ahead, playerUp: at.clone().normalize() });
+    startWave(c, 1);
+    let inView = 0;
+    const frames = 60 * 150;
+    for (let i = 0; i < frames; i++) {
+      stepCombat(c, DT, w2);
+      clearEvents(c);
+      at.addScaledVector(ahead, CRUISE * open * DT);
+      at.setLength(R + alt);
+      for (const e of c.enemies) {
+        const d = e.pos.clone().sub(at);
+        /* Distances judged in units of how fast things move out here, or the
+           question quietly changes with altitude and answers nothing. */
+        if (d.length() < 150 * open && d.normalize().dot(ahead) > HALF) { inView++; break; }
+      }
+    }
+    return { pct: inView / frames, alive: c.enemies.length };
+  };
+
+  for (const alt of [14, 300, 1200]) {
+    const r = seenAt(alt);
+    ok(`at ${alt} units up, the sky is not empty`, r.pct > 0.5,
+       `${Math.round(r.pct * 100)}% of frames had something in view, ${r.alive} alive`);
+    ok(`and nothing is thrown away at ${alt}`, r.alive >= 10, `${r.alive} alive of 16 sent`);
+  }
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

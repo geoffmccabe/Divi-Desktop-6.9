@@ -376,6 +376,10 @@ export interface Wave {
   toSpawn: number;
   /** Seconds until the next one arrives. */
   nextAt: number;
+  /** Seconds between arrivals. The wave's whole window divided by how many it
+   *  is sending, so a wave of ten over two minutes is one every twelve
+   *  seconds. */
+  every: number;
   /** Seconds left in this wave's window. */
   timeLeft: number;
   /** Alive right now out of everything this wave sent. */
@@ -394,9 +398,18 @@ export function startWave(c: CombatState, n: number): void {
   c.wave = {
     n,
     toSpawn: count,
-    /* The first arrives almost at once, so a wave starting is something you
-       see rather than something you wait for. */
-    nextAt: 1.5,
+    /* ---- ON THE CLOCK ----
+       The first one the instant the wave starts, and then one every window
+       divided by count, exactly. Geoff: "each wave is 120 seconds and if
+       there's 10 of them then they should spawn at t=0, t=12, t=24, t=36 etc."
+
+       It used to be a countdown that recomputed the gap from whatever was left
+       and then multiplied it by a random 0.6 to 1.4, on the theory that a
+       metronome reads as mechanical. It also meant the arrivals drifted, could
+       bunch up or leave a thirty-second hole, and could not be predicted or
+       checked against anything. A stated rate is worth more than a texture. */
+    nextAt: 0,
+    every: WAVE_SECONDS / Math.max(1, count),
     timeLeft: WAVE_SECONDS,
     alive: 0,
     bias: 0.5 + Math.random() * 2.5,
@@ -1195,10 +1208,10 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
         c.enemies.push(e);
         wave.toSpawn -= 1;
         wave.alive += 1;
-        /* Evenly across whatever is left of the window, with a little jitter so
-           they do not arrive on a metronome. */
-        const spread = Math.max(2, wave.timeLeft) / Math.max(1, wave.toSpawn);
-        wave.nextAt = spread * (0.6 + Math.random() * 0.8);
+        /* The next one exactly one interval later. Added to rather than set, so
+           a long frame does not swallow the remainder and let the whole wave
+           drift late. */
+        wave.nextAt += wave.every;
       }
     }
     wave.alive = c.enemies.filter((e) => e.wave === wave.n).length;
@@ -1418,11 +1431,24 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
 function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3, bias = 1): Enemy {
   const up = playerPos.clone().normalize();
   const right = new THREE.Vector3().crossVectors(playerFwd, up).normalize();
-  /* Ahead and off to one side, high enough to be seen against the sky rather
-     than lost against the surface. */
-  const ahead = 70 + Math.random() * 60;
-  const side = (Math.random() - 0.5) * 90;
-  const lift = 6 + Math.random() * 14;
+  /* ---- AS FAR AHEAD AS THE SPEED OUT HERE DESERVES ----
+     Ahead and off to one side, high enough to be seen against the sky rather
+     than lost against the surface. All of it multiplied by the open-space
+     scale, and THAT is the part that was missing.
+
+     Everything else out among the planets already scales: the player's cruise,
+     the fighters' speed, the range they shoot from, the distance at which they
+     are given up on. The spawn offsets did not, so at ten times the speed a
+     fighter still arrived a hundred units ahead, which is half a second away.
+     It was passed before it had finished its turn and then needed most of a
+     minute to come round, and the sky out there was empty. Measured before the
+     fix: something within the view ninety-four percent of the time down low,
+     and twenty-four percent at altitude. Geoff: "there seem to be few if any
+     enemies chasing and strafing me. I don't know where they are." */
+  const open = cruiseScale(playerPos.length() - R);
+  const ahead = (70 + Math.random() * 60) * open;
+  const side = (Math.random() - 0.5) * 90 * open;
+  const lift = (6 + Math.random() * 14) * open;
   const pos = playerPos.clone()
     .addScaledVector(playerFwd, ahead)
     .addScaledVector(right, side)

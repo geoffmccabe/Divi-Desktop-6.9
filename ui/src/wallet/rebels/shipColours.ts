@@ -392,17 +392,52 @@ export interface PaintHandle {
  * Returns a handle rather than taking a fixed colour, because a slider that
  * only takes effect on the next model load is not a slider.
  */
+/**
+ * How big this model is IN THE SPACE THE SHADER SEES, so the overlays come out
+ * the same visible size on every hull.
+ *
+ * That qualifier is the whole function, and getting it wrong is why the
+ * overlays did nothing at all. The obvious version measures the object with
+ * Box3.setFromObject, which walks world matrices — and by the time a ship gets
+ * here it has been through unitCopy, which normalises it to a one-unit box by
+ * putting a scale on a WRAPPER. So the box came back as 1 while the vertex
+ * shader's `position` attribute, which unitCopy never touches, still ran to
+ * about seven either side on a fighter.
+ *
+ * Dividing by 1 instead of by 13.3 made every pattern thirteen times too fine:
+ * three hundred and fifty stripes across a hull instead of twenty-six, which is
+ * finer than the screen can draw, so it averaged out to a flat tint and read as
+ * nothing happening. Geoff: "there are texture buttons for the ships, but none
+ * of them work."
+ *
+ * So this reads the position values themselves. No matrices, no world space,
+ * no scale anywhere: exactly the numbers the shader will divide.
+ */
+export function patternSpan(root: THREE.Object3D): number {
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.geometry) return;
+    const pos = m.geometry.getAttribute("position");
+    if (!pos) return;
+    /* Sampled. A station has tens of thousands of vertices and the answer is
+       an overall size, not a precise hull. */
+    const step = Math.max(1, Math.floor(pos.count / 600));
+    for (let i = 0; i < pos.count; i += step) {
+      box.expandByPoint(v.fromBufferAttribute(pos, i));
+    }
+  });
+  if (box.isEmpty()) return 1;
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  return Math.max(size.x, size.y, size.z, 0.001);
+}
+
 export function makeRepaintable(root: THREE.Object3D): PaintHandle {
   const uniforms: Array<Record<string, { value: number }>> = [];
 
-  /* How big this model is in its own coordinates, so the overlays can be drawn
-     at the same visible scale on every hull. A fighter is 13 units across and a
-     station 565: without this, one stripe setting would be bold on one and
-     invisible on the other. */
-  const box = new THREE.Box3().setFromObject(root);
-  const size = new THREE.Vector3();
-  box.getSize(size);
-  const span = Math.max(size.x, size.y, size.z, 0.001);
+  const span = patternSpan(root);
 
   root.traverse((o) => {
     const m = o as THREE.Mesh;

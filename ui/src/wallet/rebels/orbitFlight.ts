@@ -60,23 +60,29 @@ export const PITCH_RATE = 1.8;
    The window around that line is generous on purpose, and the hard brake stops
    the ship the moment it catches, so arriving fast is not a reason to be
    refused either. */
-export const DOCK_RANGE = 34;
+export const DOCK_RANGE = 2.4;
 
-/* Why 34 and not 12.
-   Twelve was right for the old model, where the ship followed the curve of the
-   globe at a constant altitude: fly at your tower and you arrived at tower
-   height, so a twelve-unit window round a six-unit mast was a fair target.
+/* ---- YOU HAVE TO ACTUALLY HIT IT ----
+   This was 34, and 34 is absurd. The measurement makes it plain: a tower is a
+   cone three units tall and 0.42 across, halved to 1.5 and 0.21 the moment a
+   game launches. A thirty-four unit cylinder around that mast is a target
+   eighty times wider than the thing it is drawn around, so the ship docked
+   while the tower was still a speck somewhere off to one side. Geoff: "the
+   docking happens far away, very far away from the actual tower, and so that
+   needs to happen by actually running into the tower."
 
-   A free-flying ship does not follow the planet. It goes straight, so it climbs
-   away from the surface all by itself — thirty seconds of level flight from a
-   launch pad leaves it hundreds of units up — and by the time it comes back
-   over its own tower it is far above the mast and sails through the old window
-   without touching it. Geoff: "running into my own tower didn't seem to work.
-   I didn't stop and I didn't recharge."
+   How it got there is worth keeping, because the reasoning was sound and the
+   number was not. Twelve suited the old model, where the ship followed the
+   curve of the globe at a fixed height and arriving over your tower meant
+   arriving AT it. Free flight goes straight instead, so the ship climbs away
+   from the surface on its own and sailed over the mast hundreds of units up. I
+   widened the window rather than fixing the height, which cured the symptom by
+   making the target enormous.
 
-   Thirty-four is a generous target on purpose. It is only ever YOUR tower, it
-   never hurts you, and the whole instruction was that flying into it should
-   just work. */
+   Two and a bit units is the honest number: the mast's own radius plus about
+   half a hull, so the ship is visibly touching the tower when it catches. It
+   does mean descending to the pad rather than passing overhead, which is what
+   was asked for. */
 /** A full resupply: about two passes of the station sample. */
 export const DOCK_SECONDS = 4;
 /* What the brake slows you to. Nearly a hover, on purpose: at this speed the
@@ -98,7 +104,7 @@ export const MAX_SHIELD = 2000;
 /** What flying into the planet or clipping a tower costs. A quarter of a full
  *  shield: enough to matter, not enough to end a run on one clumsy moment. */
 export const CRASH_DAMAGE = 250;
-export const MAX_AMMO = 60;
+export const MAX_AMMO = 120;
 import { MINI_AMMO, MINI_INTERVAL } from "./rebelsCombat";
 
 export const MAX_TORPEDOES = 4;
