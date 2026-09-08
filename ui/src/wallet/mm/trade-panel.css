@@ -43,3 +43,43 @@
 .tr-order-detail { flex: 1; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
 .tr-buy { color: hsl(150 70% 45%); font-weight: 700; text-transform: capitalize; }
 .tr-sell { color: hsl(0 85% 62%); font-weight: 700; text-transform: capitalize; }
+
+/* Book controls: side filter (icons) + decimals grouping. */
+.tr-book-wrap { display: flex; flex-direction: column; gap: 8px; }
+.tr-book-ctrls { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tr-filter { display: flex; gap: 0; }
+.tr-filter-btn { display: flex; align-items: center; justify-content: center; padding: 5px 9px; border: 1px solid hsl(var(--border)); background: hsl(220 6% 22%); cursor: pointer; }
+.tr-filter-btn:first-child { border-radius: 7px 0 0 7px; }
+.tr-filter-btn:last-child { border-radius: 0 7px 7px 0; border-left: none; }
+.tr-filter-btn:not(:first-child):not(:last-child) { border-left: none; }
+.tr-filter-btn.on { background: hsl(var(--primary) / 0.55); }
+.tr-decimals { font-size: 0.76rem; color: hsl(var(--muted-foreground)); display: flex; align-items: center; gap: 6px; }
+.tr-decimals-sel { background: hsl(220 6% 22%); color: #fff; border: 1px solid hsl(var(--border)); border-radius: 6px; padding: 3px 6px; font-size: 0.76rem; }
+/* Single-side view scrolls so the whole book is reachable. */
+.tr-book-scroll { max-height: 340px; overflow-y: auto; }
+
+/* Market-maker orders: greyed, with a label to the right of Cancel. */
+.tr-order-mm { opacity: 0.5; }
+.tr-mm-tag { font-size: 0.72rem; font-weight: 700; color: hsl(var(--muted-foreground)); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+
+/* Exchange header + balances summary at the top of the Trade panel. */
+.tr-ex { display: flex; align-items: center; gap: 13px; margin-bottom: 16px; }
+.tr-ex-logo {
+  width: 42px; height: 42px; border-radius: 50%; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  background: hsl(var(--primary)); color: #fff; font-weight: 800; font-size: 1.2rem;
+}
+.tr-ex-meta { display: flex; flex-direction: column; gap: 2px; }
+.tr-ex-name { font-size: 1.1rem; font-weight: 700; color: hsl(var(--foreground)); }
+.tr-ex-pair { font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+
+.tr-bal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+@media (max-width: 620px) { .tr-bal-grid { grid-template-columns: 1fr; } }
+.tr-bal { border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 12px 14px; background: hsl(var(--background) / 0.3); }
+.tr-bal-coin { font-weight: 700; font-size: 0.82rem; letter-spacing: 0.05em; text-transform: uppercase; color: hsl(var(--muted-foreground)); margin-bottom: 8px; }
+.tr-bal-rows { display: flex; flex-direction: column; gap: 5px; }
+.tr-bal-rows > div { display: flex; justify-content: space-between; gap: 12px; font-size: 0.86rem; }
+.tr-bal-rows > div > span:first-child { color: hsl(var(--muted-foreground)); }
+.tr-bal-rows > div > span:last-child { color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; font-weight: 600; }
+.tr-bal-rows em { font-style: normal; color: hsl(var(--muted-foreground)); font-weight: 400; margin-left: 6px; }
+.tr-bal-total { border-top: 1px solid hsl(var(--border)); margin-top: 3px; padding-top: 7px; }

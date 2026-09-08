@@ -6,13 +6,50 @@
 // for the same balance, which is expected.
 
 import { useEffect, useState } from "react";
-import { mmBook, mmOpenOrders, mmPlaceOrder, mmCancelOrder, type MmBook, type ManualOrder } from "../api";
+import { mmBook, mmOpenOrders, mmPlaceOrder, mmCancelOrder, type MmBook, type BookLevel, type ManualOrder } from "../api";
 import type { Exchange } from "../exchanges";
 import "./trade-panel.css";
 
-const fmtP = (n: number) => n.toFixed(7);
+const DP = 7;
+const fmtP = (n: number) => n.toFixed(DP);
 const fmtQ = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 4 });
 const usd = (n: number) => "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Price-grouping steps for the book, same idea as the depth planner's Decimals.
+const GROUPS = [
+  { v: 0.0000001, l: "0.0000001" },
+  { v: 0.000001, l: "0.000001" },
+  { v: 0.00001, l: "0.00001" },
+  { v: 0.0001, l: "0.0001" },
+];
+// Snap a price to its bucket: sells round up, buys round down.
+function groupPrice(price: number, group: number, side: "buy" | "sell"): number {
+  if (group <= 0) return price;
+  const u = price / group;
+  const r = side === "sell" ? Math.ceil(u - 1e-9) : Math.floor(u + 1e-9);
+  return Number((r * group).toFixed(DP));
+}
+// Aggregate raw book levels into grouped buckets, sorted for display.
+function groupLevels(levels: BookLevel[], group: number, side: "buy" | "sell"): BookLevel[] {
+  const m = new Map<number, number>();
+  for (const l of levels) {
+    const p = groupPrice(l.price, group, side);
+    m.set(p, (m.get(p) ?? 0) + l.size);
+  }
+  const out = [...m.entries()].map(([price, size]) => ({ price, size }));
+  out.sort((a, b) => (side === "sell" ? a.price - b.price : b.price - a.price));
+  return out;
+}
+
+// Filter icons: two bars, coloured for which side(s) show.
+const BarsIcon = ({ top, bottom }: { top: string; bottom: string }) => (
+  <svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true">
+    <rect x="1" y="2" width="12" height="4" rx="1" fill={top} />
+    <rect x="1" y="8" width="12" height="4" rx="1" fill={bottom} />
+  </svg>
+);
+const RED = "#e05555";
+const GREEN = "#3ccf6e";
 
 export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   const [book, setBook] = useState<MmBook | null>(null);
@@ -25,6 +62,12 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   const [otype, setOtype] = useState<"limit" | "market">("limit");
   const [qty, setQty] = useState("");
   const [price, setPrice] = useState("");
+  const [group, setGroup] = useState(GROUPS[0].v);            // book price grouping (Decimals)
+  const [bookFilter, setBookFilter] = useState<"both" | "sells" | "buys">("both");
+  // Balances are held as last-known-good: a balance read that momentarily fails
+  // comes back all-zero, and we must NOT flash $0.00 - keep the previous figures
+  // until a real new reading arrives.
+  const [bals, setBals] = useState<{ bf: number; bh: number; qf: number; qh: number } | null>(null);
 
   const [base, quote] = symbol.replace("-", "/").split("/"); // DIVI, USDT
 
@@ -34,7 +77,12 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   useEffect(() => {
     let alive = true;
     const tick = () => {
-      mmBook(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol).then((b) => { if (alive) setBook(b); }).catch(() => {});
+      mmBook(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol).then((b) => {
+        if (!alive) return;
+        if (b.asks.length || b.bids.length) setBook(b); // keep the last book if a read came back empty
+        const total = b.baseFree + b.baseHeld + b.quoteFree + b.quoteHeld;
+        if (total > 0) setBals({ bf: b.baseFree, bh: b.baseHeld, qf: b.quoteFree, qh: b.quoteHeld }); // ignore a transient 0 read
+      }).catch(() => {});
       if (alive) refreshOrders();
     };
     tick();
@@ -48,8 +96,9 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   const p = parseFloat(price) || 0;
   const effPrice = otype === "limit" ? p : mid; // market uses the mid as an estimate
   const estTotal = q * effPrice; // USDT
-  const availQuote = book?.quoteFree ?? 0; // USDT free
-  const availBase = book?.baseFree ?? 0;   // DIVI free
+  const qf = bals?.qf ?? 0, qh = bals?.qh ?? 0, bf = bals?.bf ?? 0, bh = bals?.bh ?? 0;
+  const availQuote = qf; // USDT free
+  const availBase = bf;  // DIVI free
 
   const canPlace = q > 0 && (otype === "market" || p > 0) && !busy && !!book;
 
@@ -69,32 +118,77 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
     catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
 
-  const asks = (book?.asks ?? []).slice(0, 8).slice().reverse(); // highest at top, best ask just above mid
-  const bids = (book?.bids ?? []).slice(0, 8);                     // best bid just below mid
+  const groupedAsks = groupLevels(book?.asks ?? [], group, "sell"); // ascending (lowest first)
+  const groupedBids = groupLevels(book?.bids ?? [], group, "buy");  // descending (highest first)
+  // "both" shows a compact 8 each side; a single-side filter shows ALL levels in a
+  // scroll box so you can scroll to the far end of the book.
+  const asksToShow = (bookFilter === "both" ? groupedAsks.slice(0, 8) : groupedAsks).slice().reverse(); // highest at top
+  const bidsToShow = bookFilter === "both" ? groupedBids.slice(0, 8) : groupedBids;                     // highest first
 
   const fillPrice = (pr: number) => { setOtype("limit"); setPrice(fmtP(pr)); };
 
   return (
     <section className="ts-section trade-panel">
-      <h3 className="ts-head">Trade {base} / {quote}</h3>
+      {/* Exchange header: logo + name, then the balances it's trading with. */}
+      <div className="tr-ex">
+        <div className="tr-ex-logo" aria-hidden="true">{(ex.name || "?").charAt(0).toUpperCase()}</div>
+        <div className="tr-ex-meta">
+          <span className="tr-ex-name">{ex.name}</span>
+          <span className="tr-ex-pair">Trading {base} / {quote}</span>
+        </div>
+      </div>
+
+      <div className="tr-bal-grid">
+        <div className="tr-bal">
+          <div className="tr-bal-coin">{quote}</div>
+          <div className="tr-bal-rows">
+            <div><span>Available</span><span>{usd(qf)}</span></div>
+            <div><span>Allocated</span><span>{usd(qh)}</span></div>
+            <div className="tr-bal-total"><span>Total</span><span>{usd(qf + qh)}</span></div>
+          </div>
+        </div>
+        <div className="tr-bal">
+          <div className="tr-bal-coin">{base}</div>
+          <div className="tr-bal-rows">
+            <div><span>Available</span><span>{fmtQ(bf)} <em>{usd(bf * mid)}</em></span></div>
+            <div><span>Allocated</span><span>{fmtQ(bh)} <em>{usd(bh * mid)}</em></span></div>
+            <div className="tr-bal-total"><span>Total</span><span>{fmtQ(bf + bh)} <em>{usd((bf + bh) * mid)}</em></span></div>
+          </div>
+        </div>
+      </div>
+
       {!book && <p className="wl-note">Reading the live book…</p>}
 
       {book && (
         <div className="tr-grid">
-          {/* Live order book */}
-          <div className="tr-book">
-            <div className="tr-book-head"><span>Price ({quote})</span><span>Size ({base})</span><span>Value</span></div>
-            {asks.map((l, i) => (
-              <button key={"a" + i} type="button" className="tr-brow tr-ask" onClick={() => fillPrice(l.price)}>
-                <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span>
-              </button>
-            ))}
-            <div className="tr-book-mid">mid {fmtP(mid)} <span>({usd(mid)}/{base})</span></div>
-            {bids.map((l, i) => (
-              <button key={"b" + i} type="button" className="tr-brow tr-bid" onClick={() => fillPrice(l.price)}>
-                <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span>
-              </button>
-            ))}
+          {/* Live order book: side filter + decimals grouping, then the book. */}
+          <div className="tr-book-wrap">
+            <div className="tr-book-ctrls">
+              <div className="tr-filter">
+                <button type="button" title="Buys and sells" className={"tr-filter-btn" + (bookFilter === "both" ? " on" : "")} onClick={() => setBookFilter("both")}><BarsIcon top={RED} bottom={GREEN} /></button>
+                <button type="button" title="Sells only" className={"tr-filter-btn" + (bookFilter === "sells" ? " on" : "")} onClick={() => setBookFilter("sells")}><BarsIcon top={RED} bottom={RED} /></button>
+                <button type="button" title="Buys only" className={"tr-filter-btn" + (bookFilter === "buys" ? " on" : "")} onClick={() => setBookFilter("buys")}><BarsIcon top={GREEN} bottom={GREEN} /></button>
+              </div>
+              <label className="tr-decimals">Decimals
+                <select className="tr-decimals-sel" value={group} onChange={(e) => setGroup(Number(e.target.value))}>
+                  {GROUPS.map((g) => <option key={g.l} value={g.v}>{g.l}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className={"tr-book" + (bookFilter !== "both" ? " tr-book-scroll" : "")}>
+              <div className="tr-book-head"><span>Price ({quote})</span><span>Size ({base})</span><span>Value</span></div>
+              {bookFilter !== "buys" && asksToShow.map((l, i) => (
+                <button key={"a" + i} type="button" className="tr-brow tr-ask" onClick={() => fillPrice(l.price)}>
+                  <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span>
+                </button>
+              ))}
+              <div className="tr-book-mid">mid {fmtP(mid)} <span>({usd(mid)}/{base})</span></div>
+              {bookFilter !== "sells" && bidsToShow.map((l, i) => (
+                <button key={"b" + i} type="button" className="tr-brow tr-bid" onClick={() => fillPrice(l.price)}>
+                  <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span>
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Order form */}
@@ -142,10 +236,11 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
           <p className="wl-note">No open orders on this pair.</p>
         ) : (
           orders.map((o) => (
-            <div key={o.id} className="tr-order">
+            <div key={o.id} className={"tr-order" + (o.fromMm ? " tr-order-mm" : "")}>
               <span className={o.side === "buy" ? "tr-buy" : "tr-sell"}>{o.side} {o.orderType}</span>
               <span className="tr-order-detail">{fmtQ(o.qty)} {base} @ {fmtP(o.price)} = {usd(o.qty * o.price)}</span>
               <button type="button" className="wl-link" disabled={busy} onClick={() => cancel(o.id)}>Cancel</button>
+              {o.fromMm && <span className="tr-mm-tag">Market Maker</span>}
             </div>
           ))
         )}
