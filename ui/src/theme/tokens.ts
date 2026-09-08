@@ -151,6 +151,13 @@ export const TOKENS: TokenDef[] = [
   { key: "mapStakeAccent", label: "Stake-winner accent", group: "Maps", type: "color", cssVar: "--map-stake-accent", default: "353 76% 50%" },
   { key: "mapBackground", label: "Globe background", group: "Maps", type: "color", cssVar: "--map-background", default: "216 33% 6%" },
   { key: "mapAtmosphere", label: "Globe atmosphere", group: "Maps", type: "color", cssVar: "--map-atmosphere", default: "211 100% 68%" },
+  // The close-up map. "Detailed" streams a high-resolution night tile for
+  // wherever you are looking and keeps it on this machine; "Classic" is the
+  // single global picture the globe has always used. Both look the same from
+  // orbit by construction: see scripts/build-earth-tiles.py.
+  { key: "mapDetail", label: "Globe surface", group: "Maps", type: "select", cssVar: "--map-detail", default: "detailed", options: [{ label: "Detailed", value: "detailed" }, { label: "Classic", value: "classic" }] },
+  { key: "mapBorders", label: "Country lines", group: "Maps", type: "select", cssVar: "--map-borders", default: "on", options: [{ label: "On", value: "on" }, { label: "Off", value: "off" }] },
+  { key: "mapBorderColor", label: "Country line colour", group: "Maps", type: "color", cssVar: "--map-border", default: "207 90% 54%" },
 
   // Sounds — generated tones (see sound.ts). Values feed the Web Audio engine.
   { key: "soundVolume", label: "Volume", group: "Sounds", type: "range", cssVar: "--sound-volume", default: "0.15", min: 0, max: 0.5, step: 0.05, unit: "" },

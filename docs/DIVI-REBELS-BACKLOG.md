@@ -171,3 +171,45 @@ work" but "what happens when the message is a lie".
 The rendering cannot be tested headlessly: react-globe.gl will not initialise
 under software rendering, so a headless browser shows a black sphere and the map
 never reports ready. Anything visual is first seen in the real app.
+
+## The detailed globe (69.7.81)
+
+The globe's own picture is one 4096 by 2048 image of the whole planet. That is
+6.5 texture pixels per game unit: the ship is seventeen pixels long, one pixel
+is about ten kilometres of real Earth, and at minimum altitude the entire screen
+is roughly eight pixels. Geoff: "close up, flying over its surface, it's a blur
+and ugly, breaking immersion."
+
+**What was built.** NASA's Black Marble at 13500 by 6750, cut into 70 tiles of
+30 degrees, streamed from R2 and kept for good on the machine that fetched them.
+Nothing is bundled; the wallet download does not grow. About 3.2 MB for the
+whole planet, and a player only ever fetches the ground they fly over.
+
+**A tile is not a replacement picture.** The globe's map is a composite: blue
+land-and-bathymetry relief with lights on top, and that blue IS the look of the
+game. NASA's is lights on black with no relief at all, so dropping it in would
+change every colour on the planet. Only the LIGHTS need resolution; the relief
+is smooth and enlarges fine. So a tile is the existing map, enlarged, plus an
+unsharp mask of the NASA lights: the detail the old map was missing and nothing
+else. Shrink a finished tile back down and the old map returns, measured at 3.4
+of 255. From orbit nothing changes at all.
+
+**Country lines.** The globe never had any: they were only ever on the flat map.
+They are now drawn on the globe from the same 279 outlines in worldmap.json, in
+the same theme colour, as real line geometry rather than paint. Painted borders
+would be exactly as blurry as everything else and get worse the closer you fly;
+lines stay one pixel wide at any height.
+
+**Switching back.** Theme, Maps group: "Globe surface" (Detailed / Classic) and
+"Country lines" (On / Off), with a colour for the lines. No new controls.
+
+### Still to do
+
+* **The 500m source.** NASA also publishes Black Marble 2016 at 500 m per pixel,
+  as eight GeoTIFFs totalling 2.4 GB. That is 80,150 pixels around the equator
+  against the current 13,500: 128 texture pixels per game unit instead of 21.5,
+  or twenty times what the globe has today rather than three. This is a DATA
+  SWAP, not new code: re-run scripts/build-earth-tiles.py with a smaller
+  --tile-deg and upload. The download needs `curl -C -`; the largest tiles are
+  truncated by the server without it.
+* Prefetch the neighbouring tile so a fast crossing never waits.

@@ -6,6 +6,8 @@ import diviLogo from "../assets/divi-coin.webp";
 import { pulseTrigger, pulseHsl, pulseActiveUntil, makeLegs, legU, pingDone, type Leg } from "./activityPulse";
 import { useTheme } from "../theme/ThemeProvider";
 import { towerMaterials, tickTowerLights } from "./towerLights";
+import { createDetail, type DetailLayer } from "./globeDetail";
+import { createBorders, type Borders } from "./globeBorders";
 
 // "H S% L%" (this app's HSL-triplet token format) -> a CSS hsl() string that
 // THREE.Color / material `color` params accept directly.
@@ -408,6 +410,12 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
   const mapStakeTower = theme.mapStakeTower ?? "45 93% 47%";
   const mapBackground = theme.mapBackground ?? "216 33% 6%";
   const mapAtmosphere = theme.mapAtmosphere ?? "211 100% 68%";
+  /* The close-up surface, and the outlines over it. Both live in the theme's
+     Maps group rather than in a control of their own, so the detailed map can
+     be turned off again without a new button anywhere. */
+  const mapDetail = theme.mapDetail ?? "detailed";
+  const mapBorders = theme.mapBorders ?? "on";
+  const mapBorderColor = theme.mapBorderColor ?? "207 90% 54%";
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -448,6 +456,43 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
     const scene = g.scene();
     const camera = g.camera();
     const group = new THREE.Group();
+
+    /* ---- the ground, close up ----
+       Two layers over the globe's own picture: the detail tile for wherever
+       the viewer is, and the country outlines. Both are built from getCoords,
+       the same call the towers are placed with, so neither can drift out of
+       register with them. Both are ordinary objects in the scene, so switching
+       the detailed map off is removing one of them rather than undoing a
+       shader. */
+    const coordsAt = (lat: number, lng: number, alt: number) => g.getCoords(lat, lng, alt);
+    /* Anisotropic filtering is what a surface seen at a grazing angle needs,
+       and flying low over the planet is nothing but grazing angles. Nothing
+       was asking for it, on the globe's own map either. */
+    let maxAniso = 1;
+    try { maxAniso = g.renderer().capabilities.getMaxAnisotropy(); } catch { /* no renderer yet */ }
+    const detail: DetailLayer = createDetail(coordsAt, maxAniso);
+    const borders: Borders = createBorders(coordsAt);
+    detail.setEnabled(mapDetail !== "classic");
+    borders.setColour(cssHsl(mapBorderColor), 0.18);
+    borders.object.visible = mapBorders !== "off";
+    scene.add(detail.object);
+    scene.add(borders.object);
+
+    /* And give the globe's OWN picture the same filtering. It is loaded
+       asynchronously by three-globe, so this waits for it rather than assuming
+       it has arrived. */
+    let anisoDone = false;
+    const sharpenGlobe = () => {
+      if (anisoDone) return;
+      scene.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        const mat = mesh.material as THREE.MeshPhongMaterial | undefined;
+        if (!mesh.isMesh || !mat || !mat.map || mat.map.anisotropy === maxAniso) return;
+        mat.map.anisotropy = maxAniso;
+        mat.map.needsUpdate = true;
+        anisoDone = true;
+      });
+    };
 
     // Colors from the active skin. self/peer/net towers and the peer/mesh
     // connection tubes reuse the same "peer" and "network" roles as their
@@ -740,6 +785,17 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
          in this loop keeps running, which is the point: the helix characters,
          the query ripple and the stake-winner coin all carry on animating
          while you fly through them. */
+      /* ---- the ground under whoever is looking ----
+         The camera's own position, turned back into a place on Earth. That is
+         the right question in both views without knowing which one is running:
+         orbiting the map, it is what is centred; flying, it is where the ship
+         is. Altitude comes back in globe radii, which is what decides whether
+         any of this is worth fetching. */
+      sharpenGlobe();
+      const eye = camera.position;
+      const geo = g.toGeoCoords({ x: eye.x, y: eye.y, z: eye.z });
+      detail.update(geo.lat, geo.lng, geo.altitude, dt);
+
       const isFlying = !!flightRef.current;
       if (isFlying !== wasFlying) {
         wasFlying = isFlying;
@@ -886,6 +942,10 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       cancelAnimationFrame(raf);
       detachFlight();
       dom.removeEventListener("pointermove", onMove);
+      scene.remove(detail.object);
+      scene.remove(borders.object);
+      detail.dispose();
+      borders.dispose();
       scene.remove(group);
       group.traverse((o) => {
         const m = o as THREE.Mesh;
@@ -898,7 +958,11 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         else if (mat) drop(mat);
       });
     };
-  }, [sig, ready, mapSelf, mapPeerLink, mapNetworkLink, mapActivityPulse, mapStakeAccent, mapStakeTower]);
+    /* The surface settings are in here so that switching between the detailed
+       map and the classic one rebuilds the scene with the right layers, the
+       same way changing a tower colour already does. */
+  }, [sig, ready, mapSelf, mapPeerLink, mapNetworkLink, mapActivityPulse, mapStakeAccent,
+      mapStakeTower, mapDetail, mapBorders, mapBorderColor]);
 
   return (
     <div className="netmap-globe" ref={wrapRef}>
