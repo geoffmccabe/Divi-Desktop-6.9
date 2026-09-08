@@ -31,9 +31,8 @@ export function TradePnlPanel({ ex, symbol }: { ex: Exchange; symbol: string }) 
   const boughtHighSoldLow = !!p && p.avgBuy > 0 && p.avgSell > 0 && p.avgBuy > p.avgSell;
 
   return (
-    <section className="ts-section tp-panel">
-      <div className="tp-head">
-        <h3 className="ts-head">Trading history (P&amp;L)</h3>
+    <div className="tp-panel">
+      <div className="tp-head tp-head-bare">
         <button type="button" className="wl-link" disabled={loading} onClick={load}>{loading ? "…" : "Refresh"}</button>
       </div>
 
@@ -64,6 +63,6 @@ export function TradePnlPanel({ ex, symbol }: { ex: Exchange; symbol: string }) 
           )}
         </>
       )}
-    </section>
+    </div>
   );
 }
