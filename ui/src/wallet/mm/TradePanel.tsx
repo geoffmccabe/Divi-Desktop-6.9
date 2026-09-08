@@ -5,9 +5,11 @@
 // the Market Maker panels. Running manual orders can compete with the market maker
 // for the same balance, which is expected.
 
-import { useEffect, useState } from "react";
-import { mmBook, mmOpenOrders, mmPlaceOrder, mmCancelOrder, type MmBook, type BookLevel, type ManualOrder } from "../api";
+import { useEffect, useMemo, useState } from "react";
+import { mmBook, mmOpenOrders, mmPlaceOrder, mmCancelOrder, type MmBook, type BookLevel, type ManualOrder, type MmBalance } from "../api";
 import type { Exchange } from "../exchanges";
+import { FundsPanel } from "./FundsPanel";
+import nonkycLogo from "../../assets/nonkyc.webp";
 import "./trade-panel.css";
 
 const DP = 7;
@@ -39,6 +41,17 @@ function groupLevels(levels: BookLevel[], group: number, side: "buy" | "sell"): 
   const out = [...m.entries()].map(([price, size]) => ({ price, size }));
   out.sort((a, b) => (side === "sell" ? a.price - b.price : b.price - a.price));
   return out;
+}
+
+// The exchange rejects any order worth less than this, so we enforce it up front.
+const MIN_ORDER_USDT = 1;
+
+// Attach a running cumulative (DIVI and USD) from the best price outward, so a row
+// answers "to fill up to here, this is how much size and how much money".
+type CumLevel = BookLevel & { cumQty: number; cumUsd: number };
+function withCumulative(levels: BookLevel[]): CumLevel[] {
+  let cq = 0, cu = 0;
+  return levels.map((l) => { cq += l.size; cu += l.price * l.size; return { ...l, cumQty: cq, cumUsd: cu }; });
 }
 
 // Filter icons: two bars, coloured for which side(s) show.
@@ -92,15 +105,27 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   }, [ex.slug, symbol]);
 
   const mid = book?.mid ?? 0;
+  const bestBid = book?.bestBid ?? mid;
+  const bestAsk = book?.bestAsk ?? mid;
   const q = parseFloat(qty) || 0;
   const p = parseFloat(price) || 0;
-  const effPrice = otype === "limit" ? p : mid; // market uses the mid as an estimate
+  // For a market order the fill is at the far side of the spread (buy hits the
+  // best ask, sell hits the best bid), so estimate against that, not the mid.
+  const effPrice = otype === "limit" ? p : (side === "buy" ? bestAsk : bestBid);
   const estTotal = q * effPrice; // USDT
   const qf = bals?.qf ?? 0, qh = bals?.qh ?? 0, bf = bals?.bf ?? 0, bh = bals?.bh ?? 0;
   const availQuote = qf; // USDT free
   const availBase = bf;  // DIVI free
+  // Reuse the existing Funds summary component rather than reinventing it. Held is
+  // last-known-good, so it never flashes zero.
+  const mmBals: MmBalance[] | null = bals
+    ? [{ asset: quote, free: qf, locked: qh }, { asset: base, free: bf, locked: bh }]
+    : null;
 
-  const canPlace = q > 0 && (otype === "market" || p > 0) && !busy && !!book;
+  // The exchange rejects orders worth under 1 USDT, so block it here with a clear
+  // reason instead of letting the order fail at the exchange.
+  const belowMin = q > 0 && effPrice > 0 && estTotal < MIN_ORDER_USDT;
+  const canPlace = q > 0 && (otype === "market" || p > 0) && effPrice > 0 && !belowMin && !busy && !!book;
 
   const place = async () => {
     setBusy(true); setErr(null); setMsg(null);
@@ -118,43 +143,28 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
     catch (e) { setErr(String(e)); } finally { setBusy(false); }
   };
 
-  const groupedAsks = groupLevels(book?.asks ?? [], group, "sell"); // ascending (lowest first)
-  const groupedBids = groupLevels(book?.bids ?? [], group, "buy");  // descending (highest first)
-  // "both" shows a compact 8 each side; a single-side filter shows ALL levels in a
-  // scroll box so you can scroll to the far end of the book.
-  const asksToShow = (bookFilter === "both" ? groupedAsks.slice(0, 8) : groupedAsks).slice().reverse(); // highest at top
-  const bidsToShow = bookFilter === "both" ? groupedBids.slice(0, 8) : groupedBids;                     // highest first
+  // Group, attach the running cumulative from the best price, then choose what to
+  // show. "both" is a compact 8 each side; a single-side filter shows ALL levels in
+  // a scroll box so you can reach the far end of the book.
+  const { asksToShow, bidsToShow } = useMemo(() => {
+    const ga = withCumulative(groupLevels(book?.asks ?? [], group, "sell")); // best ask outward
+    const gb = withCumulative(groupLevels(book?.bids ?? [], group, "buy"));  // best bid outward
+    return {
+      asksToShow: (bookFilter === "both" ? ga.slice(0, 8) : ga).slice().reverse(), // highest at top
+      bidsToShow: bookFilter === "both" ? gb.slice(0, 8) : gb,
+    };
+  }, [book, group, bookFilter]);
 
   const fillPrice = (pr: number) => { setOtype("limit"); setPrice(fmtP(pr)); };
 
   return (
     <section className="ts-section trade-panel">
-      {/* Exchange header: logo + name, then the balances it's trading with. */}
-      <div className="tr-ex">
-        <div className="tr-ex-logo" aria-hidden="true">{(ex.name || "?").charAt(0).toUpperCase()}</div>
-        <div className="tr-ex-meta">
-          <span className="tr-ex-name">{ex.name}</span>
-          <span className="tr-ex-pair">Trading {base} / {quote}</span>
-        </div>
-      </div>
-
-      <div className="tr-bal-grid">
-        <div className="tr-bal">
-          <div className="tr-bal-coin">{quote}</div>
-          <div className="tr-bal-rows">
-            <div><span>Available</span><span>{usd(qf)}</span></div>
-            <div><span>Allocated</span><span>{usd(qh)}</span></div>
-            <div className="tr-bal-total"><span>Total</span><span>{usd(qf + qh)}</span></div>
-          </div>
-        </div>
-        <div className="tr-bal">
-          <div className="tr-bal-coin">{base}</div>
-          <div className="tr-bal-rows">
-            <div><span>Available</span><span>{fmtQ(bf)} <em>{usd(bf * mid)}</em></span></div>
-            <div><span>Allocated</span><span>{fmtQ(bh)} <em>{usd(bh * mid)}</em></span></div>
-            <div className="tr-bal-total"><span>Total</span><span>{fmtQ(bf + bh)} <em>{usd((bf + bh) * mid)}</em></span></div>
-          </div>
-        </div>
+      {/* Exchange logo on the left, the standard Funds summary on the right. */}
+      <div className="tr-topbar">
+        {ex.connector_type === "nonkyc"
+          ? <img className="tr-ex-logo-img" src={nonkycLogo} alt={ex.name} />
+          : <div className="tr-ex-logo" aria-hidden="true">{(ex.name || "?").charAt(0).toUpperCase()}</div>}
+        {mmBals && <FundsPanel symbol={symbol} bals={mmBals} />}
       </div>
 
       {!book && <p className="wl-note">Reading the live book…</p>}
@@ -176,16 +186,16 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
               </label>
             </div>
             <div className={"tr-book" + (bookFilter !== "both" ? " tr-book-scroll" : "")}>
-              <div className="tr-book-head"><span>Price ({quote})</span><span>Size ({base})</span><span>Value</span></div>
+              <div className="tr-book-head"><span>Price</span><span>Size ({base})</span><span>Value</span><span>Total {base}</span><span>Total $</span></div>
               {bookFilter !== "buys" && asksToShow.map((l, i) => (
                 <button key={"a" + i} type="button" className="tr-brow tr-ask" onClick={() => fillPrice(l.price)}>
-                  <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span>
+                  <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span><span>{fmtQ(l.cumQty)}</span><span>{usd(l.cumUsd)}</span>
                 </button>
               ))}
               <div className="tr-book-mid">mid {fmtP(mid)} <span>({usd(mid)}/{base})</span></div>
               {bookFilter !== "sells" && bidsToShow.map((l, i) => (
                 <button key={"b" + i} type="button" className="tr-brow tr-bid" onClick={() => fillPrice(l.price)}>
-                  <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span>
+                  <span>{fmtP(l.price)}</span><span>{fmtQ(l.size)}</span><span>{usd(l.price * l.size)}</span><span>{fmtQ(l.cumQty)}</span><span>{usd(l.cumUsd)}</span>
                 </button>
               ))}
             </div>
@@ -215,7 +225,10 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
             </label>
 
             <div className="tr-summary">
-              <div><span>Order value</span><span>{usd(estTotal)}{otype === "market" ? " (est.)" : ""}</span></div>
+              <div><span>Order value</span><span>
+                {belowMin && <span className="tr-min">(Minimum {usd(MIN_ORDER_USDT)}) </span>}
+                <span className={belowMin ? "tr-min" : ""}>{usd(estTotal)}{otype === "market" ? " (est.)" : ""}</span>
+              </span></div>
               <div><span>Available</span><span>{side === "buy" ? `${usd(availQuote)} ${quote}` : `${fmtQ(availBase)} ${base} (${usd(availBase * mid)})`}</span></div>
             </div>
 
