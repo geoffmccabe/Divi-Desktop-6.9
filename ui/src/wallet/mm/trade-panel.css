@@ -43,3 +43,21 @@
 .tr-order-detail { flex: 1; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
 .tr-buy { color: hsl(150 70% 45%); font-weight: 700; text-transform: capitalize; }
 .tr-sell { color: hsl(0 85% 62%); font-weight: 700; text-transform: capitalize; }
+
+/* Book controls: side filter (icons) + decimals grouping. */
+.tr-book-wrap { display: flex; flex-direction: column; gap: 8px; }
+.tr-book-ctrls { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tr-filter { display: flex; gap: 0; }
+.tr-filter-btn { display: flex; align-items: center; justify-content: center; padding: 5px 9px; border: 1px solid hsl(var(--border)); background: hsl(220 6% 22%); cursor: pointer; }
+.tr-filter-btn:first-child { border-radius: 7px 0 0 7px; }
+.tr-filter-btn:last-child { border-radius: 0 7px 7px 0; border-left: none; }
+.tr-filter-btn:not(:first-child):not(:last-child) { border-left: none; }
+.tr-filter-btn.on { background: hsl(var(--primary) / 0.55); }
+.tr-decimals { font-size: 0.76rem; color: hsl(var(--muted-foreground)); display: flex; align-items: center; gap: 6px; }
+.tr-decimals-sel { background: hsl(220 6% 22%); color: #fff; border: 1px solid hsl(var(--border)); border-radius: 6px; padding: 3px 6px; font-size: 0.76rem; }
+/* Single-side view scrolls so the whole book is reachable. */
+.tr-book-scroll { max-height: 340px; overflow-y: auto; }
+
+/* Market-maker orders: greyed, with a label to the right of Cancel. */
+.tr-order-mm { opacity: 0.5; }
+.tr-mm-tag { font-size: 0.72rem; font-weight: 700; color: hsl(var(--muted-foreground)); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
