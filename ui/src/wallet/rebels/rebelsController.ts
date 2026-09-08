@@ -483,6 +483,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
   function onDown(e: PointerEvent) {
     e.preventDefault();
+    wakeAudio();
     /* Right button is the SECONDARY weapon. It was the shield, which is the one
        place in this scheme that was actively at odds with the genre: left
        primary and right secondary is the most universal convention there is.
@@ -524,6 +525,29 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function zoomStep(view: number, dir: number): number {
     const step = ZOOM_BASE + view * ZOOM_GROWTH;
     return Math.max(0, Math.min(MAX_VIEW, view + dir * step));
+  }
+
+  /* ---- KEEPING THE SOUND ALIVE ----
+     A webview suspends its audio context whenever it feels like it: the window
+     losing focus, the machine sleeping, the app being switched away from. Once
+     suspended it can only be woken from a real user gesture, and resume() from
+     anywhere else is quietly ignored.
+     
+     That used to be done in exactly one place, the click on LAUNCH. So a
+     context that suspended at any point AFTER launching stayed suspended for
+     the rest of the session: the game carried on flying and shooting and
+     exploding in complete silence, with nothing else wrong and nothing to say
+     why. Geoff: "the sound is gone in the game."
+     
+     Every key and every click is a real gesture, so every one of them is now a
+     chance to wake it back up. Throttled to once a second because it runs on
+     input and there is nothing to gain from asking sixty times. */
+  let wokeAt = 0;
+  function wakeAudio() {
+    const now = performance.now();
+    if (now - wokeAt < 1000) return;
+    wokeAt = now;
+    resumeAudio();
   }
 
   function onWheel(e: WheelEvent) {
@@ -678,6 +702,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
   function onKeyDown(e: KeyboardEvent) {
     if (!flying) return;
+    wakeAudio();
     const k = e.key.toLowerCase();
 
     const now = performance.now();

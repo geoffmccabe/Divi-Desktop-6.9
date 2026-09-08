@@ -153,6 +153,46 @@ async function main() {
   ok("it can be started again after stopping", started.length === 2, `${started.length}`);
   A.stopRechargeSound();
 
+  /* ---- A CONTEXT THAT SUSPENDS MID-GAME ----
+     The webview suspends audio whenever the window loses focus or the machine
+     sleeps, and it can only be woken from a real user gesture. That used to be
+     done in one place, the click on LAUNCH, so anything that suspended AFTER
+     launching stayed suspended: the game carried on flying and shooting in
+     silence with nothing else wrong. Geoff: "the sound is gone in the game."
+
+     Waking it has to work from a cold suspend at any moment, not only from a
+     fresh start. */
+  ctx.state = "suspended";
+  A.resumeAudio();
+  ok("a context that suspends mid-game can be woken again",
+     ctx.state === "running", ctx.state);
+
+  /* And it must be free to call on every keystroke, which is what the game now
+     does: waking an already-running context is a no-op, not a restart. */
+  const before = decodeCalls;
+  for (let i = 0; i < 50; i++) A.resumeAudio();
+  ok("waking an already-awake context costs nothing",
+     ctx.state === "running" && decodeCalls === before,
+     `${decodeCalls - before} extra decodes`);
+
+  /* A MUTED THEME IS NOT A BROKEN GAME.
+     The wallet's theme has a Volume slider that writes --sound-volume, and it
+     goes down to zero. Every sound in the game reads it and returns early, so a
+     slider at zero is silence everywhere with nothing else wrong: worth knowing
+     it is a setting rather than a fault, because the two look identical. */
+  let vol = "0";
+  (globalThis as Record<string, unknown>).getComputedStyle = () => ({
+    getPropertyValue: (n: string) => (n === "--sound-volume" ? vol : ""),
+  });
+  const quiet = started.length;
+  A.playGunSound();
+  ok("the theme's volume at zero silences the game", started.length === quiet,
+     `${started.length - quiet} sounds played`);
+  vol = "0.15";
+  A.playGunSound();
+  ok("and turning it back up brings the game back", started.length > quiet,
+     `${started.length - quiet} sounds played`);
+
   console.log(out.join("\n"));
   console.log(`\n${out.length - failures} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);

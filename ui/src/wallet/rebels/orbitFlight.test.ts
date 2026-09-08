@@ -679,13 +679,41 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      `${nose.angleTo(f.fwd).toExponential(1)} radians`);
   ok("and turns the ship's up", up.angleTo(f.up) > 0.5, `${up.angleTo(f.up).toFixed(2)} radians`);
 
-  /* Q and E have to disagree, or one of them is wired wrong. */
-  const l = createFlight(pad), r = createFlight(pad);
-  run(l, 20, stick({ roll: -1 }));
-  run(r, 20, stick({ roll: 1 }));
-  const sign = (g: typeof l) => new THREE.Vector3().crossVectors(up, g.up).dot(g.fwd);
-  ok("and rolling left is not rolling right", Math.sign(sign(l)) === -Math.sign(sign(r)),
-     `${sign(l).toFixed(3)} vs ${sign(r).toFixed(3)}`);
+  /* ---- WHICH WAY ROUND ----
+     Asserting only that Q and E DISAGREE is not enough, and this test used to
+     do exactly that. It passed happily while both keys were the wrong way
+     round. Geoff: "when I click Q it rotates to the right, yet the button is on
+     the left side."
+
+     So the question asked is the one a player asks: which wing goes down. Q is
+     on the left of the keyboard and every game in this genre binds it to a left
+     roll, so Q must drop the LEFT wing.
+
+     Flown genuinely level to ask it: the ship's own up set to the planet's
+     radial, or it starts on its side and "which wing is lower" has no meaning.
+     Getting that wrong is what made the first run of this measurement report
+     both keys rolling the same way. */
+  const level = () => {
+    const g = createFlight(pad);
+    g.pos.set(0, 0, R + 40);
+    g.fwd.set(1, 0, 0);
+    g.up.set(0, 0, 1);
+    return g;
+  };
+  /* How high the right wing sits, against the planet's own up. Screen right is
+     forward cross up, which is the basis three's lookAt builds the camera on. */
+  const rightWing = (g: ReturnType<typeof level>) =>
+    new THREE.Vector3().crossVectors(g.fwd, g.up).normalize().dot(g.pos.clone().normalize());
+
+  const q = level(), e = level();
+  run(q, 30, stick({ roll: -1 }));   /* Q */
+  run(e, 30, stick({ roll: 1 }));    /* E */
+
+  ok("Q drops the LEFT wing", rightWing(q) > 0.2, `right wing at ${rightWing(q).toFixed(3)}`);
+  ok("E drops the RIGHT wing", rightWing(e) < -0.2, `right wing at ${rightWing(e).toFixed(3)}`);
+  ok("and they really are opposites",
+     Math.abs(rightWing(q) + rightWing(e)) < 1e-6,
+     `${rightWing(q).toFixed(3)} vs ${rightWing(e).toFixed(3)}`);
 }
 
 // 8h. Strafe moves the ship sideways without turning it.

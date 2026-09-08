@@ -433,9 +433,17 @@ export function stepFlight(
     f.fwd.applyQuaternion(_q);
   }
   /* Roll turns the ship's UP about its nose and leaves the nose alone, which is
-     exactly what makes it roll rather than turn. */
+     exactly what makes it roll rather than turn.
+
+     ---- WHICH WAY ROUND ----
+     Q drops the LEFT wing, E drops the right. Geoff: "when I click Q it
+     rotates to the right, yet the button is on the left side" — and he was
+     right, it was backwards. Q is on the left of the keyboard and E is on the
+     right, and every game in this genre binds them that way round: Elite,
+     Star Citizen, Descent, and the lean keys in every shooter that has them.
+     The sign here was simply the wrong one. */
   if (stick.roll !== 0) {
-    _q.setFromAxisAngle(f.fwd, -stick.roll * ROLL_RATE * dt);
+    _q.setFromAxisAngle(f.fwd, stick.roll * ROLL_RATE * dt);
     f.up.applyQuaternion(_q);
   }
   /* Kept honest against drift: a few thousand quaternions later the pair would
