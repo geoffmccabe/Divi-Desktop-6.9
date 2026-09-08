@@ -645,8 +645,8 @@ export interface TradePnl {
   netDivi: number; netUsdt: number; grossVolume: number;
   mid: number; totalPnl: number; firstMs: number; lastMs: number;
 }
-export const mmTradeHistory = (slug: string, connector: string, restUrl: string, symbol: string) =>
-  invoke<TradePnl>("mm_trade_history", { slug, connector, restUrl, symbol });
+export const mmTradeHistory = (slug: string, connector: string, restUrl: string, symbol: string, source: "mm" | "manual") =>
+  invoke<TradePnl>("mm_trade_history", { slug, connector, restUrl, symbol, source });
 
 // Manual trading: the user's own buy/sell orders (not the engine's).
 export interface ManualOrder { id: string; side: string; orderType: string; price: number; qty: number; fromMm: boolean; createdMs: number; }

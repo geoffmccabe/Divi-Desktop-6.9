@@ -743,7 +743,11 @@ pub struct TradePnl {
 }
 
 /// Pull the filled-order history for a pair and total it up. Read-only.
-pub fn trade_history(slug: &str, connector: &str, rest_url: &str, symbol: &str) -> Result<TradePnl, String> {
+/// `source` splits the history: "mm" counts only the market-maker's own fills
+/// (mm-* orders); anything else counts only manual/external fills (the user's own
+/// trades, whether placed here or directly on the exchange), so each panel shows
+/// its own trading and never the other's.
+pub fn trade_history(slug: &str, connector: &str, rest_url: &str, symbol: &str, source: &str) -> Result<TradePnl, String> {
     if connector != "nonkyc" {
         return Err("Trade history is available for NonKYC today.".into());
     }
@@ -757,10 +761,13 @@ pub fn trade_history(slug: &str, connector: &str, rest_url: &str, symbol: &str) 
     let (mut divi_bought, mut divi_sold, mut usdt_spent, mut usdt_recv) = (0.0, 0.0, 0.0, 0.0);
     let (mut first_ms, mut last_ms) = (i64::MAX, 0i64);
     let fstr = |o: &serde_json::Value, k: &str| o.get(k).and_then(|x| x.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+    let want_mm = source == "mm";
     for o in arr {
         let qty = fstr(o, "executedQuantity");
         let px = fstr(o, "price");
         if qty <= 0.0 { continue; }
+        let from_mm = o.get("userProvidedId").and_then(|x| x.as_str()).unwrap_or("").starts_with("mm-");
+        if from_mm != want_mm { continue; } // keep only this panel's own trades
         let val = qty * px;
         let t = o.get("lastTradeAt").and_then(|x| x.as_i64()).or_else(|| o.get("createdAt").and_then(|x| x.as_i64())).unwrap_or(0);
         if t > 0 { first_ms = first_ms.min(t); last_ms = last_ms.max(t); }
