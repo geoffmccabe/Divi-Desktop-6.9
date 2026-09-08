@@ -107,3 +107,10 @@
 @media (max-width: 720px) {
   .ip-panel { width: 260px; flex-basis: 260px; }
 }
+
+/* Diagnostics footer: always-reachable "copy setup log" for support. */
+.ip-foot {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid hsl(var(--border));
+  display: flex; flex-direction: column; gap: 4px;
+}
+.ip-foot-hint { font-size: 0.72rem; color: hsl(var(--muted-foreground)); line-height: 1.3; }

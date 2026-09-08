@@ -1609,6 +1609,16 @@ async fn node_logs() -> NodeLogsDto {
     .unwrap_or(NodeLogsDto { node_log: String::new(), app_log: Vec::new() })
 }
 
+/// The full, detailed first-run setup log as one copy-pasteable block, for the
+/// ⌘L "copy setup log" shortcut. Read-only; contains no secrets (never the
+/// wallet password, seed phrase, keys, or the node's rpcpassword).
+#[tauri::command]
+async fn setup_log_report() -> String {
+    tauri::async_runtime::spawn_blocking(dd69_supervisor::setuplog::report)
+        .await
+        .unwrap_or_else(|_| "setup log unavailable".into())
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -2697,7 +2707,12 @@ fn main() {
         // origin and its own content policy. See crates/app/src/community.rs for
         // why inline frame content would not work here.
         .register_uri_scheme_protocol(community::SCHEME, community::handle)
-        .setup(|_app| {
+        .setup(|app| {
+            // Stamp the detailed setup log with this build's version and open a
+            // fresh setup-log session (environment, disk, folder) BEFORE bring-up,
+            // so ⌘L always has a complete, persistent record for diagnosis.
+            dd69_supervisor::setuplog::set_app_version(&app.package_info().version.to_string());
+            dd69_supervisor::setuplog::start_session();
             // First-launch bring-up: create the config, download and verify
             // divid69, and start the node — in the background so the window opens
             // immediately and the UI shows sync progress via node_status.
@@ -2823,6 +2838,7 @@ fn main() {
             mm_book,
             restart_node,
             node_logs,
+            setup_log_report,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,

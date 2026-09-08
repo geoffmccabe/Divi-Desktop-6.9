@@ -15,6 +15,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { setupInfo, nodeStatus, type SetupInfo, type NodeStatus } from "../../bridge";
+import { copySetupLog } from "../SetupLogHotkey";
 import "./install-panel.css";
 
 export type SetupMethod = "snapshot" | "nodes" | "reuse" | null;
@@ -52,6 +53,7 @@ export function InstallPanel({
   const [installing, setInstalling] = useState(false);
   const [status, setStatus] = useState<NodeStatus | null>(null);
   const [sim, setSim] = useState<Sim>({ pct: 0, blocks: 0, peers: 0, stage: simStage(0), done: false });
+  const [copied, setCopied] = useState(false);
   const onStateRef = useRef(onStateChange);
   onStateRef.current = onStateChange;
 
@@ -236,6 +238,22 @@ export function InstallPanel({
           whenever others store data through you.
         </p>
       </section>
+
+      {/* ============ Diagnostics footer ============ */}
+      <footer className="ip-foot">
+        <button
+          type="button"
+          className="ip-link"
+          onClick={async () => {
+            const ok = await copySetupLog();
+            setCopied(ok);
+            window.setTimeout(() => setCopied(false), 3000);
+          }}
+        >
+          {copied ? "✓ Setup log copied" : "Copy setup log (⌘L)"}
+        </button>
+        <span className="ip-foot-hint">Having trouble? Copy this and send it over — it has no private keys.</span>
+      </footer>
     </aside>
   );
 }

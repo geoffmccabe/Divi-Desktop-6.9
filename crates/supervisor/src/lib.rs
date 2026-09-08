@@ -27,6 +27,7 @@ pub mod mempool;
 pub mod multisig;
 pub mod security;
 pub mod setup;
+pub mod setuplog;
 pub mod nfd_record;
 pub mod nfd_storage;
 pub mod process;

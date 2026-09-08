@@ -150,32 +150,71 @@ fn sha256_hex(bytes: &[u8]) -> String {
 /// what is happening; a first run downloads a couple of megabytes and the user
 /// should not be staring at a frozen window.
 pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
+    use crate::setuplog;
     let dir = managed_dir().ok_or("no home directory")?;
     let target = dir.join("divid69");
     if is_installed() {
+        setuplog::log(format!(
+            "node software: already installed (version {DIVID69_VERSION}) at {} — skipping download",
+            target.display()
+        ));
         return Ok(target);
     }
-    let art = artifact()
-        .ok_or("no divid69 build is published for this platform yet")?;
+    let art = match artifact() {
+        Some(a) => a,
+        None => {
+            setuplog::log(format!(
+                "node software: NO build published for this platform ({} {}). This platform cannot \
+                 run a managed node yet.",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            ));
+            return Err("no divid69 build is published for this platform yet".into());
+        }
+    };
     if art.sha256.starts_with("PENDING_") {
+        setuplog::log(format!(
+            "node software: build for this platform ({} {}) is PENDING (no published binary / \
+             checksum yet) — cannot install a node here.",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ));
         return Err("no divid69 build is published for this platform yet".into());
     }
 
     let url = format!("{BASE_URL}/{}", art.file);
+    setuplog::log(format!("node software: downloading {url}"));
+    setuplog::log(format!("node software: expected checksum {}", art.sha256));
+    let t0 = std::time::Instant::now();
     progress("Downloading node software…");
     let resp = ureq::get(&url)
         .timeout(std::time::Duration::from_secs(120))
         .call()
-        .map_err(|e| format!("could not download the node software: {e}"))?;
+        .map_err(|e| {
+            setuplog::log(format!("node software: DOWNLOAD FAILED — {e}"));
+            format!("could not download the node software: {e}")
+        })?;
     let mut bytes: Vec<u8> = Vec::with_capacity(4 << 20);
     resp.into_reader()
         .take(64 << 20) // a sane ceiling; the real archive is a few MB
         .read_to_end(&mut bytes)
-        .map_err(|e| format!("download was interrupted: {e}"))?;
+        .map_err(|e| {
+            setuplog::log(format!("node software: DOWNLOAD INTERRUPTED — {e}"));
+            format!("download was interrupted: {e}")
+        })?;
+    setuplog::log(format!(
+        "node software: downloaded {} bytes in {:.1}s",
+        bytes.len(),
+        t0.elapsed().as_secs_f64()
+    ));
 
     progress("Verifying…");
     let got = sha256_hex(&bytes);
     if got != art.sha256 {
+        setuplog::log(format!(
+            "node software: CHECKSUM MISMATCH — expected {}, got {}. Nothing installed.",
+            art.sha256, got
+        ));
         // Not a warning. A daemon that does not match the pinned hash is not
         // ours, and it would be handed the user's wallet.
         return Err(format!(
@@ -185,6 +224,7 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
         ));
     }
 
+    setuplog::log("node software: checksum verified OK");
     progress("Installing…");
     // Unpack beside the target and swap in, so an interrupted extraction never
     // leaves a partial binary at the path the supervisor will try to launch.
@@ -200,8 +240,12 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
         .arg("-C")
         .arg(&staging)
         .status()
-        .map_err(|e| format!("could not unpack the node software: {e}"))?;
+        .map_err(|e| {
+            setuplog::log(format!("node software: could not run tar to unpack — {e}"));
+            format!("could not unpack the node software: {e}")
+        })?;
     if !status.success() {
+        setuplog::log("node software: UNPACK FAILED (tar returned an error)");
         return Err("the node software archive could not be unpacked".into());
     }
     let _ = std::fs::remove_file(&archive);
@@ -209,8 +253,10 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
     let [daemon_name, cli_name] = managed_names();
     let unpacked = staging.join(daemon_name);
     if !unpacked.is_file() {
+        setuplog::log(format!("node software: archive did not contain {daemon_name}"));
         return Err("the archive did not contain divid69".into());
     }
+    setuplog::log("node software: unpacked OK");
     make_executable(&unpacked)?;
     if let Ok(cli) = std::fs::metadata(staging.join(cli_name)) {
         let _ = cli; // present in our archives; ignore if a future one omits it
@@ -233,14 +279,28 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
     // the user never sees a dialog for a file they never opened themselves.
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("xattr")
+        let out = std::process::Command::new("xattr")
             .args(["-dr", "com.apple.quarantine"])
             .arg(&dir)
             .status();
+        match out {
+            Ok(s) if s.success() => setuplog::log("node software: cleared macOS quarantine flag"),
+            Ok(s) => setuplog::log(format!(
+                "node software: quarantine-clear returned {s} (Gatekeeper may still block launch)"
+            )),
+            Err(e) => setuplog::log(format!("node software: could not run xattr to clear quarantine — {e}")),
+        }
     }
 
     std::fs::write(dir.join(format!(".installed-{DIVID69_VERSION}")), art.sha256)
-        .map_err(|e| format!("cannot record the install: {e}"))?;
+        .map_err(|e| {
+            setuplog::log(format!("node software: could not record the install stamp — {e}"));
+            format!("cannot record the install: {e}")
+        })?;
+    setuplog::log(format!(
+        "node software: install complete (version {DIVID69_VERSION}) at {}",
+        target.display()
+    ));
     progress("Node software ready.");
     Ok(target)
 }
@@ -305,10 +365,14 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                 }
                 let _ = std::fs::write(&conf, fixed);
                 restrict_to_owner(&conf);
+                crate::setuplog::log("node settings: repaired existing divi.conf (updated one or more of: rpcallowip removed, addressindex, rpcthreads)");
+            } else {
+                crate::setuplog::log("node settings: existing divi.conf is already correct");
             }
         }
         return Ok(datadir);
     }
+    crate::setuplog::log(format!("node settings: creating a new divi.conf in {}", datadir.display()));
     std::fs::create_dir_all(&datadir)
         .map_err(|e| format!("cannot create {}: {e}", datadir.display()))?;
 
@@ -354,6 +418,10 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
     }
     std::fs::write(&conf, body).map_err(|e| format!("cannot write divi.conf: {e}"))?;
     restrict_to_owner(&conf);
+    crate::setuplog::log(format!(
+        "node settings: new divi.conf written (credentials generated; {} seed peers seeded)",
+        SEED_PEERS.len()
+    ));
     Ok(datadir)
 }
 
@@ -418,12 +486,16 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
     use crate::config::NodeConfig;
     use crate::process;
     use crate::rpc::RpcClient;
+    use crate::setuplog;
     use std::time::Duration;
+
+    setuplog::log("bringup: first-run sequence starting");
 
     // Test rig: when pointed at an external node (e.g. a regtest node via
     // DIVI_DATADIR), skip all node install/start so the app never touches the
     // mainnet datadir. Set DD69_SKIP_BRINGUP=1.
     if std::env::var("DD69_SKIP_BRINGUP").is_ok() {
+        setuplog::log("bringup: skipped (DD69_SKIP_BRINGUP is set)");
         progress("bringup skipped (DD69_SKIP_BRINGUP)");
         return Ok(0);
     }
@@ -431,6 +503,7 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
     // If a remote node is already selected and reachable, respect that choice.
     if let Ok(cfg) = NodeConfig::load() {
         if cfg.remote {
+            setuplog::log("bringup: a remote node is selected — not starting a local node");
             return Err("using a remote node; not starting a local one".into());
         }
     }
@@ -446,19 +519,38 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
     // whenever a stale 2.0 config still existed on the machine.)
     let datadir = crate::config::dd69_datadir();
     let conf = datadir.join("divi.conf");
+    let blocks_present = datadir.join("blocks").is_dir();
     if conf.is_file() {
         let ours = std::fs::read_to_string(&conf)
             .map(|t| t.contains("Written by DD69"))
             .unwrap_or(false);
+        setuplog::log(format!(
+            "bringup: existing divi.conf found in node folder (written by DD69: {ours}; \
+             blockchain data present: {blocks_present})"
+        ));
         if !ours {
+            setuplog::log(
+                "bringup: this node folder belongs to another Divi installation — leaving it \
+                 untouched and not starting our node",
+            );
             return Err(
                 "an existing Divi installation owns this datadir; leaving it untouched".into(),
             );
         }
+    } else {
+        setuplog::log(format!(
+            "bringup: no divi.conf yet — treating as a FRESH install (blockchain data present: \
+             {blocks_present})"
+        ));
     }
 
     progress("Preparing your node…");
-    ensure_local_node_conf()?;
+    setuplog::log("bringup: preparing node settings (divi.conf)…");
+    ensure_local_node_conf().map_err(|e| {
+        setuplog::log(format!("bringup: FAILED to write node settings — {e}"));
+        e
+    })?;
+    setuplog::log("bringup: node settings ready");
 
     // A first sync writes the whole chain — about 9 GB today and growing. If
     // the disk can't hold it, refuse up front instead of filling their drive
@@ -468,18 +560,31 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
     let need_gb: u64 = if fresh { 15 } else { 3 };
     if let Some(free) = free_bytes(&datadir) {
         let free_gb = free / (1 << 30);
+        setuplog::log(format!(
+            "bringup: disk check — {free_gb} GB free, {need_gb} GB needed ({})",
+            if fresh { "fresh sync" } else { "already have chain data" }
+        ));
         if free_gb < need_gb {
+            setuplog::log("bringup: NOT ENOUGH DISK — stopping before any download");
             return Err(format!(
                 "not enough free disk space to run a node: {free_gb} GB free, \
                  at least {need_gb} GB needed. Nothing was downloaded."
             ));
         }
+    } else {
+        setuplog::log("bringup: disk check — could not read free space (continuing)");
     }
 
-    let divid = ensure_divid69(&progress)?;
+    let divid = ensure_divid69(&progress).map_err(|e| {
+        setuplog::log(format!("bringup: node software not available — {e}"));
+        e
+    })?;
 
     // Reload now that the conf exists, so we have real RPC credentials.
-    let cfg = NodeConfig::load().map_err(|e| format!("could not read the node settings: {e}"))?;
+    let cfg = NodeConfig::load().map_err(|e| {
+        setuplog::log(format!("bringup: could not read node settings — {e}"));
+        format!("could not read the node settings: {e}")
+    })?;
     let rpc = RpcClient::new(&cfg);
 
     // Prefer our freshly installed divid69, falling back to whatever find_divid
@@ -487,8 +592,13 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
     let bin = if divid.is_file() {
         divid
     } else {
-        process::find_divid(None)?
+        setuplog::log("bringup: managed node binary missing — searching the system for one");
+        process::find_divid(None).map_err(|e| {
+            setuplog::log(format!("bringup: no node program found anywhere — {e}"));
+            e
+        })?
     };
+    setuplog::log(format!("bringup: launching node program at {}", bin.display()));
 
     progress("Starting the node…");
     let report = process::start_with_recovery(
@@ -497,7 +607,24 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
         &rpc,
         Duration::from_secs(180),
         Duration::from_secs(1800),
-    )?;
+    )
+    .map_err(|e| {
+        setuplog::log(format!("bringup: NODE FAILED TO START — {e}"));
+        e
+    })?;
+    match &report.repaired_with {
+        Some(what) => setuplog::log(format!(
+            "bringup: node running (pid {}), after repair: {what}",
+            report.pid
+        )),
+        None => setuplog::log(format!("bringup: node running (pid {})", report.pid)),
+    }
+    // Record the first peer count so a 'never connected' case is unambiguous in
+    // the log: did the node come up but find zero peers, or fail to come up?
+    if let Ok(v) = rpc.call("getconnectioncount", serde_json::json!([])) {
+        setuplog::log(format!("bringup: peers connected so far: {v}"));
+    }
+    setuplog::log("bringup: first-run sequence finished OK");
     progress("Node is running.");
     Ok(report.pid)
 }

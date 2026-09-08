@@ -130,11 +130,19 @@ fn spawn_once(
     timeout: Duration,
     extra_args: &[&str],
 ) -> Spawn {
+    let attempt = if extra_args.is_empty() {
+        "normal start".to_string()
+    } else {
+        format!("start with {}", extra_args.join(" "))
+    };
     if let Some(pid) = daemon_pid(datadir) {
+        crate::setuplog::log(format!("node launch: already running (pid {pid}) — reusing it"));
         return Spawn::Running(pid);
     }
+    crate::setuplog::log(format!("node launch: {attempt} — {}", divid.display()));
     let spawn_log_path = datadir.join("dd69-spawn.log");
     let Ok(spawn_log) = std::fs::File::create(&spawn_log_path) else {
+        crate::setuplog::log(format!("node launch: cannot write in {}", datadir.display()));
         return Spawn::Failed(format!("cannot write in {}", datadir.display()));
     };
     let Ok(spawn_log_err) = spawn_log.try_clone() else {
@@ -154,15 +162,24 @@ fn spawn_once(
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    if cmd.stdout(spawn_log).stderr(spawn_log_err).spawn().is_err() {
-        return Spawn::Failed(format!("could not launch {}", divid.display()));
+    if let Err(e) = cmd.stdout(spawn_log).stderr(spawn_log_err).spawn() {
+        // The OS refused to start the process at all — the classic cases are a
+        // missing/blocked binary (macOS Gatekeeper) or a permissions problem.
+        crate::setuplog::log(format!(
+            "node launch: OPERATING SYSTEM REFUSED to start the node — {e} ({})",
+            divid.display()
+        ));
+        return Spawn::Failed(format!("could not launch {}: {e}", divid.display()));
     }
 
     let started = Instant::now();
     loop {
         if rpc.call("getblockcount", serde_json::json!([])).is_ok() {
             return match daemon_pid(datadir) {
-                Some(pid) => Spawn::Running(pid),
+                Some(pid) => {
+                    crate::setuplog::log(format!("node launch: node answered — running (pid {pid})"));
+                    Spawn::Running(pid)
+                }
                 None => Spawn::Failed("node answered RPC but wrote no pid file".into()),
             };
         }
@@ -171,6 +188,7 @@ fn spawn_once(
             let said = std::fs::read_to_string(&spawn_log_path).unwrap_or_default();
             if let Some(line) = said.lines().find(|l| l.contains("Error:")) {
                 let msg = line.trim().to_string();
+                crate::setuplog::log(format!("node launch: node reported an error and exited — {msg}"));
                 if REINDEX_REQUIRED_MARKERS.iter().any(|m| msg.contains(m)) {
                     return Spawn::ReindexRequired(msg);
                 }
@@ -178,6 +196,20 @@ fn spawn_once(
                     return Spawn::Corruption(msg);
                 }
                 return Spawn::Failed(msg);
+            }
+            // No "Error:" line but the process is gone — capture whatever it did
+            // say (e.g. a bare "Killed: 9" from Gatekeeper leaves nothing here,
+            // which is itself the tell).
+            if !said.trim().is_empty() {
+                crate::setuplog::log(format!(
+                    "node launch: node exited early. Its output: {}",
+                    said.trim().lines().rev().take(3).collect::<Vec<_>>().join(" | ")
+                ));
+            } else {
+                crate::setuplog::log(
+                    "node launch: node process vanished with NO output — on macOS this is the \
+                     signature of Gatekeeper killing an unsigned binary (Killed: 9)",
+                );
             }
         }
         if started.elapsed() >= timeout {
@@ -189,6 +221,10 @@ fn spawn_once(
                 .unwrap_or("no output")
                 .trim()
                 .to_string();
+            crate::setuplog::log(format!(
+                "node launch: TIMED OUT after {}s waiting for the node to answer (its last words: {hint})",
+                timeout.as_secs()
+            ));
             return Spawn::Failed(format!(
                 "node did not become ready within {}s (its last words: {})",
                 timeout.as_secs(),
