@@ -1141,7 +1141,7 @@ function run(c: CombatState, frames: number, w = world()) {
     const at = new THREE.Vector3(0, 0, R + alt);
     const ahead = new THREE.Vector3(1, 0, 0);
     const open = cruiseScale(alt);
-    const w2 = world({ playerPos: at, playerFwd: ahead, playerUp: at.clone().normalize() });
+    const w2 = world({ playerPos: at, playerFwd: ahead });
     startWave(c, 1);
     let inView = 0;
     const frames = 60 * 150;
