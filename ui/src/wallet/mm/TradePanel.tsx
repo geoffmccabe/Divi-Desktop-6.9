@@ -62,7 +62,7 @@ const BarsIcon = ({ top, bottom }: { top: string; bottom: string }) => (
   </svg>
 );
 const RED = "#e05555";
-const GREEN = "#3ccf6e";
+const GREEN = "#26a17b"; // the USDT/Tether green, used for every green in this panel
 
 export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   const [book, setBook] = useState<MmBook | null>(null);
@@ -165,6 +165,11 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
           ? <img className="tr-ex-logo-img" src={nonkycLogo} alt={ex.name} />
           : <div className="tr-ex-logo" aria-hidden="true">{(ex.name || "?").charAt(0).toUpperCase()}</div>}
         {mmBals && <FundsPanel symbol={symbol} bals={mmBals} />}
+        <div className="tr-price">
+          <span className="tr-price-label">{base} price</span>
+          <span className="tr-price-main">{fmtP(mid)} {quote}</span>
+          <span className="tr-price-usd">{usd(mid)}</span>
+        </div>
       </div>
 
       {!book && <p className="wl-note">Reading the live book…</p>}
