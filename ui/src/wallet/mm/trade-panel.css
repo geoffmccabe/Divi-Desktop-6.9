@@ -7,12 +7,12 @@
 .tr-book { display: flex; flex-direction: column; border: 1px solid hsl(var(--border)); border-radius: 8px; overflow: hidden; background: hsl(var(--background) / 0.3); }
 .tr-book-head, .tr-brow { display: grid; grid-template-columns: 1.1fr 0.95fr 0.85fr 0.95fr 0.85fr; gap: 6px; padding: 5px 10px; font-size: 0.72rem; font-variant-numeric: tabular-nums; }
 .tr-book-head span:not(:first-child), .tr-brow span:not(:first-child) { text-align: right; }
-.tr-book-head { color: hsl(var(--muted-foreground)); border-bottom: 1px solid hsl(var(--border)); font-size: 0.72rem; }
+.tr-book-head { color: hsl(var(--muted-foreground)); border-bottom: 1px solid hsl(var(--border)); font-size: 0.72rem; position: sticky; top: 0; z-index: 1; background: hsl(var(--background)); }
 .tr-brow { border: none; background: none; cursor: pointer; text-align: left; color: hsl(var(--foreground)); width: 100%; }
 .tr-brow span:first-child { text-align: left; }
 .tr-brow:hover { background: hsl(var(--primary) / 0.12); }
 .tr-ask span:first-child { color: hsl(0 85% 62%); }
-.tr-bid span:first-child { color: hsl(150 70% 45%); }
+.tr-bid span:first-child { color: #26a17b; }
 .tr-book-mid { padding: 7px 11px; font-weight: 700; font-variant-numeric: tabular-nums; background: hsl(var(--primary) / 0.14); border-top: 1px solid hsl(var(--border)); border-bottom: 1px solid hsl(var(--border)); }
 .tr-book-mid span { color: hsl(var(--muted-foreground)); font-weight: 400; font-size: 0.8rem; }
 
@@ -23,7 +23,7 @@
 .tr-seg-btn:first-child { border-radius: 8px 0 0 8px; }
 .tr-seg-btn:last-child { border-radius: 0 8px 8px 0; border-left: none; }
 .tr-seg-btn.on { background: hsl(var(--primary)); }
-.tr-seg-buy.on { background: hsl(150 65% 38%); }
+.tr-seg-buy.on { background: #26a17b; }
 .tr-seg-sell.on { background: hsl(0 72% 52%); }
 .tr-usd { font-style: normal; color: hsl(var(--muted-foreground)); margin-left: 8px; font-variant-numeric: tabular-nums; }
 .tr-summary { display: flex; flex-direction: column; gap: 5px; padding: 9px 11px; border: 1px solid hsl(var(--border)); border-radius: 8px; background: hsl(var(--background) / 0.3); }
@@ -31,18 +31,18 @@
 .tr-summary > div > span:first-child { color: hsl(var(--muted-foreground)); }
 .tr-summary > div > span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
 .tr-place { width: 100%; color: #fff; font-weight: 700; }
-.tr-place-buy { background: hsl(150 65% 38%); }
-.tr-place-sell { background: hsl(0 72% 52%); }
+.tr-place.tr-place-buy { background: #26a17b; }
+.tr-place.tr-place-sell { background: hsl(0 72% 52%); }
 .tr-place:disabled { opacity: 0.5; cursor: not-allowed; }
 .tr-note { font-size: 0.74rem; color: hsl(var(--muted-foreground)); margin: 0; }
-.tr-ok { color: hsl(150 70% 45%); }
+.tr-ok { color: #26a17b; }
 
 /* Open orders */
 .tr-open { margin-top: 18px; }
 .tr-open-head { margin: 0 0 9px; font-size: 0.9rem; }
 .tr-order { display: flex; align-items: center; gap: 14px; padding: 7px 0; border-top: 1px solid hsl(var(--border)); font-size: 0.84rem; }
 .tr-order-detail { flex: 1; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
-.tr-buy { color: hsl(150 70% 45%); font-weight: 700; text-transform: capitalize; }
+.tr-buy { color: #26a17b; font-weight: 700; text-transform: capitalize; }
 .tr-sell { color: hsl(0 85% 62%); font-weight: 700; text-transform: capitalize; }
 
 /* Book controls: side filter (icons) + decimals grouping. */
@@ -57,7 +57,7 @@
 .tr-decimals { font-size: 0.76rem; color: hsl(var(--muted-foreground)); display: flex; align-items: center; gap: 6px; }
 .tr-decimals-sel { background: hsl(220 6% 22%); color: #fff; border: 1px solid hsl(var(--border)); border-radius: 6px; padding: 3px 6px; font-size: 0.76rem; }
 /* Single-side view scrolls so the whole book is reachable. */
-.tr-book-scroll { max-height: 340px; overflow-y: auto; }
+.tr-book-scroll { max-height: 340px; overflow-y: auto; overscroll-behavior: contain; }
 
 /* Market-maker orders: greyed, with a label to the right of Cancel. */
 .tr-order-mm { opacity: 0.5; }
@@ -91,3 +91,16 @@
 .tr-topbar .funds-panel { flex: 1; min-width: 260px; margin: 0; }
 /* Below-minimum warning on the Order value row. */
 .tr-min { color: hsl(var(--destructive)); font-weight: 700; }
+
+/* Direct children span the full content width, so the section's 22px side padding
+   is symmetric and the column gap (22px) matches that padding. Without this the
+   flex-start section shrink-wraps them and the right side looks tighter. */
+.trade-panel > * { width: 100%; box-sizing: border-box; }
+
+/* Pricing sub-panel: dark grey, right-aligned so its right edge lines up with the
+   Buy/Sell buttons in the form column below it. */
+.tr-price { flex: none; margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; text-align: right; gap: 2px;
+  background: hsl(220 8% 18%); border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 10px 15px; }
+.tr-price-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--muted-foreground)); }
+.tr-price-main { font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
+.tr-price-usd { font-size: 0.85rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
