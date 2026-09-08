@@ -130,9 +130,7 @@ export function MarketMakerControl({ exchanges, onConfig, hasOrders, bals, mid }
   };
 
   return (
-    <section className="ts-section">
-      <h3 className="ts-head">Run Market Maker</h3>
-
+    <>
       {connectedExchanges.length === 0 ? (
         <p className="wl-note gov-wide">Connect an exchange at the bottom of this page first, then you can run it here.</p>
       ) : (
@@ -228,6 +226,6 @@ export function MarketMakerControl({ exchanges, onConfig, hasOrders, bals, mid }
           )}
         </div>
       )}
-    </section>
+    </>
   );
 }

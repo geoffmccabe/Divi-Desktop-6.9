@@ -11,3 +11,7 @@
 .tp-neg { color: hsl(var(--destructive)); font-weight: 700; }
 .tp-pos { color: hsl(var(--success)); font-weight: 700; }
 .tp-warn { margin-top: 12px; color: hsl(30 100% 62%); }
+
+/* When the panel title is provided by a Collapsible wrapper, the header row just
+   holds the Refresh control, right-aligned. */
+.tp-head-bare { justify-content: flex-end; }

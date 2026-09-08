@@ -1441,6 +1441,51 @@ async fn mm_trade_history(slug: String, connector: String, rest_url: String, sym
     .map_err(|_| "internal error".to_string())?
 }
 
+/// Place a manual buy/sell (the user's own order, not the engine's). Market or
+/// limit; quantity is always in the base coin. Returns the new order id.
+#[tauri::command]
+async fn mm_place_order(slug: String, connector: String, rest_url: String, symbol: String,
+                        side: String, order_type: String, quantity: f64, price: Option<f64>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        marketmaker::place_order(&slug, &connector, &rest_url, &symbol, &side, &order_type, quantity, price)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Cancel one of the user's orders by id.
+#[tauri::command]
+async fn mm_cancel_order(slug: String, connector: String, rest_url: String, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        marketmaker::cancel_order(&slug, &connector, &rest_url, &id)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManualOrderDto {
+    id: String,
+    side: String,
+    order_type: String,
+    price: f64,
+    qty: f64,
+}
+
+/// The user's currently-open orders on a pair, with ids for the Trade panel.
+#[tauri::command]
+async fn mm_open_orders(slug: String, connector: String, rest_url: String, symbol: String) -> Result<Vec<ManualOrderDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let orders = marketmaker::open_orders(&slug, &connector, &rest_url, &symbol)?;
+        Ok::<Vec<ManualOrderDto>, String>(orders.into_iter().map(|o| ManualOrderDto {
+            id: o.id, side: o.side, order_type: o.order_type, price: o.price, qty: o.qty,
+        }).collect())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DexPoolDto {
@@ -2655,6 +2700,9 @@ fn main() {
             mm_cancel_all,
             dex_pool,
             mm_trade_history,
+            mm_place_order,
+            mm_cancel_order,
+            mm_open_orders,
             mm_status,
             mm_book,
             restart_node,

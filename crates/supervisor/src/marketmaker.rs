@@ -784,6 +784,81 @@ pub fn trade_history(slug: &str, connector: &str, rest_url: &str, symbol: &str) 
     })
 }
 
+// Plain-decimal quantity (no scientific notation, trailing zeros trimmed), for
+// the manual trade order body.
+fn fmt_qty(q: f64) -> String {
+    let s = format!("{q:.8}");
+    let t = s.trim_end_matches('0').trim_end_matches('.');
+    if t.is_empty() { "0".to_string() } else { t.to_string() }
+}
+
+/// Place a manual order (the user's own buy/sell, not the engine's). Market or
+/// limit. Quantity is always in the base coin (DIVI). Returns the new order id.
+/// The user drives this from the Trade panel; errors from the exchange (balance,
+/// minimum size, bad price) are surfaced verbatim so nothing fails silently.
+pub fn place_order(slug: &str, connector: &str, rest_url: &str, symbol: &str,
+                   side: &str, order_type: &str, quantity: f64, price: Option<f64>) -> Result<String, String> {
+    if connector != "nonkyc" { return Err("Trading is available for NonKYC today.".into()); }
+    check_rest_url(connector, rest_url)?;
+    if side != "buy" && side != "sell" { return Err("Side must be buy or sell.".into()); }
+    if order_type != "limit" && order_type != "market" { return Err("Order type must be limit or market.".into()); }
+    if !(quantity > 0.0) { return Err("Enter a quantity greater than zero.".into()); }
+    let c = load(slug).ok_or_else(|| "Connect this exchange first.".to_string())?;
+    let sym = symbol.replace('-', "/");
+    let url = format!("{}/createorder", rest_url.trim_end_matches('/'));
+    let qty = fmt_qty(quantity);
+    let body = if order_type == "limit" {
+        let p = price.ok_or_else(|| "A limit order needs a price.".to_string())?;
+        if !(p > 0.0) { return Err("Enter a price greater than zero.".into()); }
+        format!("{{\"userProvidedId\":\"tr-{}\",\"symbol\":\"{}\",\"side\":\"{}\",\"type\":\"limit\",\"quantity\":\"{}\",\"price\":\"{}\",\"strictValidate\":false}}",
+            now_ms(), sym, side, qty, fmt_price(p))
+    } else {
+        format!("{{\"userProvidedId\":\"tr-{}\",\"symbol\":\"{}\",\"side\":\"{}\",\"type\":\"market\",\"quantity\":\"{}\",\"strictValidate\":false}}",
+            now_ms(), sym, side, qty)
+    };
+    let v = nonkyc_call(&url, "POST", Some(&body), &c)?;
+    Ok(v.get("id").and_then(|x| x.as_str()).unwrap_or("ok").to_string())
+}
+
+/// Cancel one of the user's orders by id.
+pub fn cancel_order(slug: &str, connector: &str, rest_url: &str, id: &str) -> Result<(), String> {
+    if connector != "nonkyc" { return Err("Cancelling is available for NonKYC today.".into()); }
+    check_rest_url(connector, rest_url)?;
+    let c = load(slug).ok_or_else(|| "Connect this exchange first.".to_string())?;
+    if nonkyc_cancel_one(rest_url, &c, id) { Ok(()) } else { Err("The exchange did not cancel that order.".into()) }
+}
+
+/// One of the user's resting orders, for the Trade panel's open-orders list.
+pub struct ManualOrder {
+    pub id: String,
+    pub side: String,
+    pub order_type: String,
+    pub price: f64,
+    pub qty: f64,
+}
+
+/// The user's currently-open orders on a pair, with ids so the UI can cancel them.
+pub fn open_orders(slug: &str, connector: &str, rest_url: &str, symbol: &str) -> Result<Vec<ManualOrder>, String> {
+    if connector != "nonkyc" { return Err("Available for NonKYC today.".into()); }
+    check_rest_url(connector, rest_url)?;
+    let c = load(slug).ok_or_else(|| "Connect this exchange first.".to_string())?;
+    let url = format!("{}/getorders?symbol={}&status=active&limit=200", rest_url.trim_end_matches('/'), enc_symbol(symbol));
+    let v = nonkyc_call(&url, "GET", None, &c)?;
+    let arr = v.as_array().ok_or_else(|| "The exchange reply wasn't a list of orders.".to_string())?;
+    let mut out = Vec::new();
+    for o in arr {
+        let id = o.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        if id.is_empty() { continue; }
+        let side = o.get("side").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let order_type = o.get("type").and_then(|x| x.as_str()).unwrap_or("limit").to_string();
+        let pf = |k: &str| o.get(k).and_then(|x| x.as_str()).and_then(|s| s.parse::<f64>().ok());
+        let price = pf("price").unwrap_or(0.0);
+        let qty = pf("remainQuantity").or_else(|| pf("quantity")).unwrap_or(0.0);
+        out.push(ManualOrder { id, side, order_type, price, qty });
+    }
+    Ok(out)
+}
+
 /// Stop the engine, wait for its fail-safe cancel to finish.
 pub fn stop() -> Result<(), String> {
     let running = ENGINE.lock().map_err(|_| "engine busy".to_string())?.take();

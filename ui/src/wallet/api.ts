@@ -648,6 +648,17 @@ export interface TradePnl {
 export const mmTradeHistory = (slug: string, connector: string, restUrl: string, symbol: string) =>
   invoke<TradePnl>("mm_trade_history", { slug, connector, restUrl, symbol });
 
+// Manual trading: the user's own buy/sell orders (not the engine's).
+export interface ManualOrder { id: string; side: string; orderType: string; price: number; qty: number; }
+export const mmPlaceOrder = (
+  slug: string, connector: string, restUrl: string, symbol: string,
+  side: "buy" | "sell", orderType: "limit" | "market", quantity: number, price: number | null,
+) => invoke<string>("mm_place_order", { slug, connector, restUrl, symbol, side, orderType, quantity, price });
+export const mmCancelOrder = (slug: string, connector: string, restUrl: string, id: string) =>
+  invoke<void>("mm_cancel_order", { slug, connector, restUrl, id });
+export const mmOpenOrders = (slug: string, connector: string, restUrl: string, symbol: string) =>
+  invoke<ManualOrder[]>("mm_open_orders", { slug, connector, restUrl, symbol });
+
 // DEX (Uniswap V2 eDIVI/WETH on Ethereum): live pool reserves + on-chain ETH/USD.
 // Read-only; used by the DEX tab to price swaps. Swapping (wallet) is a later phase.
 export interface DexPool {

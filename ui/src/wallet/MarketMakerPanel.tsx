@@ -15,6 +15,8 @@ import { MarketMakerControl, type MmLiveConfig } from "./mm/MarketMakerControl";
 import { DepthLadder } from "./mm/DepthLadder";
 import { FundsPanel } from "./mm/FundsPanel";
 import { TradePnlPanel } from "./mm/TradePnlPanel";
+import { TradePanel } from "./mm/TradePanel";
+import { Collapsible } from "./mm/Collapsible";
 import { DexPanel } from "./mm/DexPanel";
 import { useVenue } from "./mmVenue";
 
@@ -62,14 +64,25 @@ export function MarketMakerPanel() {
       ) : (
       <>
       {cfg && <FundsPanel symbol={cfg.symbol} bals={bals} />}
-      {cfg && cfg.ex.connector_type === "nonkyc" && <TradePnlPanel ex={cfg.ex} symbol={cfg.symbol} />}
       {exchanges && exchanges.length > 0 && (
         <div className="mm-two-col">
-          <MarketMakerControl exchanges={exchanges} onConfig={setCfg} hasOrders={hasOrders} bals={bals} mid={mid} />
+          <Collapsible title="Run Market Maker" defaultOpen>
+            <MarketMakerControl exchanges={exchanges} onConfig={setCfg} hasOrders={hasOrders} bals={bals} mid={mid} />
+          </Collapsible>
           {cfg && (
             <DepthLadder ex={cfg.ex} symbol={cfg.symbol} levels={cfg.levels} commit={cfg.commit} protectPct={cfg.protectPct} />
           )}
         </div>
+      )}
+
+      {/* Manual trade panel: full width, directly below Run Market Maker. */}
+      {cfg && cfg.ex.connector_type === "nonkyc" && <TradePanel ex={cfg.ex} symbol={cfg.symbol} />}
+
+      {/* Trade history, just above "What it is", collapsible and open by default. */}
+      {cfg && cfg.ex.connector_type === "nonkyc" && (
+        <Collapsible title="Trading history (P&L)" defaultOpen>
+          <TradePnlPanel ex={cfg.ex} symbol={cfg.symbol} />
+        </Collapsible>
       )}
 
       <section className="ts-section">
