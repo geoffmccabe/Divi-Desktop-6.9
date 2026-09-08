@@ -92,6 +92,8 @@ export const ICONS: Record<string, string> = {
   marketmaker: svg(
     "<path d='M6 3v4'/><path d='M6 14v7'/><rect x='3.5' y='7' width='5' height='7' rx='1'/><path d='M17 3v6'/><path d='M17 16v5'/><rect x='14.5' y='9' width='5' height='7' rx='1'/>"
   ),
+  // Two arrows swapping = buying and selling (trading).
+  trading: svg("<path d='M7 4v13'/><path d='M4 7l3-3 3 3'/><path d='M17 20V7'/><path d='M14 17l3 3 3-3'/>"),
 };
 
 // Set the default icon vars on :root. A skin later overrides any --icon-<name>.

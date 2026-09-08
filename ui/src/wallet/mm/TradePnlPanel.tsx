@@ -13,20 +13,20 @@ const px = (n: number) => "$" + n.toLocaleString(undefined, { maximumFractionDig
 const num = (n: number) => Math.round(n).toLocaleString();
 const when = (ms: number) => (ms > 0 ? new Date(ms).toLocaleDateString() : "-");
 
-export function TradePnlPanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
+export function TradePnlPanel({ ex, symbol, source }: { ex: Exchange; symbol: string; source: "mm" | "manual" }) {
   const [p, setP] = useState<TradePnl | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const load = () => {
     setLoading(true); setErr(null);
-    mmTradeHistory(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol)
+    mmTradeHistory(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol, source)
       .then((r) => { setP(r); setErr(null); })
       .catch((e) => setErr(String(e)))
       .finally(() => setLoading(false));
   };
   // Load once when the pair is known; refresh is manual (it's a heavier call).
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [ex.slug, symbol]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [ex.slug, symbol, source]);
 
   const boughtHighSoldLow = !!p && p.avgBuy > 0 && p.avgSell > 0 && p.avgBuy > p.avgSell;
 
@@ -56,9 +56,8 @@ export function TradePnlPanel({ ex, symbol }: { ex: Exchange; symbol: string }) 
 
           {boughtHighSoldLow && (
             <p className="wl-note tp-warn">
-              Your average buy ({px(p.avgBuy)}) is higher than your average sell ({px(p.avgSell)}): the bot bought higher
-              than it sold, which is what a falling or choppy market does to a simple maker. That gap, not fees or anything
-              leaving your account, is where the money went.
+              Your average buy ({px(p.avgBuy)}) is higher than your average sell ({px(p.avgSell)}), so these trades sold
+              for less than they cost. That gap, not fees or anything leaving your account, is where the money went.
             </p>
           )}
         </>

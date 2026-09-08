@@ -1425,9 +1425,9 @@ struct TradePnlDto {
 /// Realized market-making P&L, reconstructed from the exchange's own filled-order
 /// history. This is how a node holder audits where their money went. Read-only.
 #[tauri::command]
-async fn mm_trade_history(slug: String, connector: String, rest_url: String, symbol: String) -> Result<TradePnlDto, String> {
+async fn mm_trade_history(slug: String, connector: String, rest_url: String, symbol: String, source: String) -> Result<TradePnlDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let p = marketmaker::trade_history(&slug, &connector, &rest_url, &symbol)?;
+        let p = marketmaker::trade_history(&slug, &connector, &rest_url, &symbol, &source)?;
         Ok::<TradePnlDto, String>(TradePnlDto {
             fills: p.fills, buys: p.buys, sells: p.sells,
             divi_bought: p.divi_bought, divi_sold: p.divi_sold,

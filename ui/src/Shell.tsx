@@ -19,6 +19,7 @@ import { TimestampPanel } from "./wallet/TimestampPanel";
 import { CollectiblesPanel } from "./wallet/CollectiblesPanel";
 import { TokensPanel } from "./wallet/TokensPanel";
 import { MarketMakerPanel } from "./wallet/MarketMakerPanel";
+import { TradingPanel } from "./wallet/TradingPanel";
 import { HraPanel } from "./wallet/HraPanel";
 import { GovernancePreview } from "./wallet/governance/GovernancePreview";
 import { MultisigPanel } from "./wallet/multisig/MultisigPanel";
@@ -38,6 +39,7 @@ const VIEWS: Record<string, ComponentType> = {
   timestamp: TimestampPanel,
   collectibles: CollectiblesPanel,
   tokens: TokensPanel,
+  trading: TradingPanel,
   marketmaker: MarketMakerPanel,
   governance: GovernancePreview,
   multisig: MultisigPanel,

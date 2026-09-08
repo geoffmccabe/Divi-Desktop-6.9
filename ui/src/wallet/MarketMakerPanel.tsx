@@ -15,7 +15,6 @@ import { MarketMakerControl, type MmLiveConfig } from "./mm/MarketMakerControl";
 import { DepthLadder } from "./mm/DepthLadder";
 import { FundsPanel } from "./mm/FundsPanel";
 import { TradePnlPanel } from "./mm/TradePnlPanel";
-import { TradePanel } from "./mm/TradePanel";
 import { Collapsible } from "./mm/Collapsible";
 import { DexPanel } from "./mm/DexPanel";
 import { useVenue } from "./mmVenue";
@@ -75,13 +74,11 @@ export function MarketMakerPanel() {
         </div>
       )}
 
-      {/* Manual trade panel: full width, directly below Run Market Maker. */}
-      {cfg && cfg.ex.connector_type === "nonkyc" && <TradePanel ex={cfg.ex} symbol={cfg.symbol} />}
-
-      {/* Trade history, just above "What it is", collapsible and open by default. */}
+      {/* Market-maker history (only the engine's own trades), just above "What it
+          is", collapsible and open by default. Manual trading lives on its own page. */}
       {cfg && cfg.ex.connector_type === "nonkyc" && (
-        <Collapsible title="Trading history (P&L)" defaultOpen>
-          <TradePnlPanel ex={cfg.ex} symbol={cfg.symbol} />
+        <Collapsible title="Market maker history (P&L)" defaultOpen>
+          <TradePnlPanel ex={cfg.ex} symbol={cfg.symbol} source="mm" />
         </Collapsible>
       )}
 
