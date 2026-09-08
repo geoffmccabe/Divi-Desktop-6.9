@@ -56,8 +56,10 @@
 .tr-filter-btn.on { background: hsl(var(--primary) / 0.55); }
 .tr-decimals { font-size: 0.76rem; color: hsl(var(--muted-foreground)); display: flex; align-items: center; gap: 6px; }
 .tr-decimals-sel { background: hsl(220 6% 22%); color: #fff; border: 1px solid hsl(var(--border)); border-radius: 6px; padding: 3px 6px; font-size: 0.76rem; }
-/* Single-side view scrolls so the whole book is reachable. */
-.tr-book-scroll { max-height: 340px; overflow-y: auto; overscroll-behavior: contain; }
+/* Each side of the book is its own scroll box (in every mode), so both stay
+   compact and the fixed header above them is always visible. overscroll-contain
+   stops a scroll from chaining out to the page when you reach the end. */
+.tr-book-side { max-height: 210px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 
 /* Market-maker orders: greyed, with a label to the right of Cancel. */
 .tr-order-mm { opacity: 0.5; }
@@ -85,10 +87,14 @@
 .tr-bal-rows em { font-style: normal; color: hsl(var(--muted-foreground)); font-weight: 400; margin-left: 6px; }
 .tr-bal-total { border-top: 1px solid hsl(var(--border)); margin-top: 3px; padding-top: 7px; }
 
-/* Top bar: exchange logo on the left, reused Funds summary on the right. */
-.tr-topbar { display: flex; align-items: center; gap: 18px; margin-bottom: 18px; flex-wrap: wrap; }
-.tr-ex-logo-img { height: 40px; width: auto; flex: none; object-fit: contain; }
-.tr-topbar .funds-panel { flex: 1; min-width: 260px; margin: 0; }
+/* Top bar: exchange logo on the left, then one grey sub-panel holding the balances
+   (left) and the DIVI price (far right). */
+.tr-topbar { display: flex; align-items: stretch; gap: 18px; margin-bottom: 18px; flex-wrap: wrap; }
+.tr-ex-logo-img { height: 40px; width: auto; flex: none; object-fit: contain; align-self: center; }
+.tr-headbar { flex: 1; min-width: 300px; display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  background: hsl(220 8% 18%); border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 12px 16px; }
+/* Balances live inside the grey panel now, so they drop their own box styling. */
+.tr-headbar .funds-panel { flex: 1; margin: 0; background: transparent; border: none; padding: 0; }
 /* Below-minimum warning on the Order value row. */
 .tr-min { color: hsl(var(--destructive)); font-weight: 700; }
 
@@ -97,10 +103,16 @@
    flex-start section shrink-wraps them and the right side looks tighter. */
 .trade-panel > * { width: 100%; box-sizing: border-box; }
 
-/* Pricing sub-panel: dark grey, right-aligned so its right edge lines up with the
-   Buy/Sell buttons in the form column below it. */
-.tr-price { flex: none; margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; text-align: right; gap: 2px;
-  background: hsl(220 8% 18%); border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 10px 15px; }
+/* DIVI price: far right inside the grey header panel (no box of its own). */
+.tr-price { flex: none; display: flex; flex-direction: column; align-items: flex-end; text-align: right; gap: 3px; }
 .tr-price-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--muted-foreground)); }
-.tr-price-main { font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
+.tr-price-main { font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; color: hsl(var(--foreground)); }
+
+/* Price + Amount side by side; Amount is the right column so its right edge lines
+   up with the toggles / summary / button that span the full form width. */
+.tr-fields { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.tr-fields-2 { grid-template-columns: 1fr 1fr; }
+/* Fill the cell (no 460px cap) so the Amount box reaches the form's right edge. */
+.tr-fields .value-field { min-width: 0; }
+.tr-fields .wl-input { max-width: none; }
 .tr-price-usd { font-size: 0.85rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
