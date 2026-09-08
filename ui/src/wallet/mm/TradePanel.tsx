@@ -64,6 +64,10 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   const [price, setPrice] = useState("");
   const [group, setGroup] = useState(GROUPS[0].v);            // book price grouping (Decimals)
   const [bookFilter, setBookFilter] = useState<"both" | "sells" | "buys">("both");
+  // Balances are held as last-known-good: a balance read that momentarily fails
+  // comes back all-zero, and we must NOT flash $0.00 - keep the previous figures
+  // until a real new reading arrives.
+  const [bals, setBals] = useState<{ bf: number; bh: number; qf: number; qh: number } | null>(null);
 
   const [base, quote] = symbol.replace("-", "/").split("/"); // DIVI, USDT
 
@@ -73,7 +77,12 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   useEffect(() => {
     let alive = true;
     const tick = () => {
-      mmBook(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol).then((b) => { if (alive) setBook(b); }).catch(() => {});
+      mmBook(ex.slug, ex.connector_type, ex.rest_url ?? "", symbol).then((b) => {
+        if (!alive) return;
+        if (b.asks.length || b.bids.length) setBook(b); // keep the last book if a read came back empty
+        const total = b.baseFree + b.baseHeld + b.quoteFree + b.quoteHeld;
+        if (total > 0) setBals({ bf: b.baseFree, bh: b.baseHeld, qf: b.quoteFree, qh: b.quoteHeld }); // ignore a transient 0 read
+      }).catch(() => {});
       if (alive) refreshOrders();
     };
     tick();
@@ -87,8 +96,9 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
   const p = parseFloat(price) || 0;
   const effPrice = otype === "limit" ? p : mid; // market uses the mid as an estimate
   const estTotal = q * effPrice; // USDT
-  const availQuote = book?.quoteFree ?? 0; // USDT free
-  const availBase = book?.baseFree ?? 0;   // DIVI free
+  const qf = bals?.qf ?? 0, qh = bals?.qh ?? 0, bf = bals?.bf ?? 0, bh = bals?.bh ?? 0;
+  const availQuote = qf; // USDT free
+  const availBase = bf;  // DIVI free
 
   const canPlace = q > 0 && (otype === "market" || p > 0) && !busy && !!book;
 
@@ -119,7 +129,34 @@ export function TradePanel({ ex, symbol }: { ex: Exchange; symbol: string }) {
 
   return (
     <section className="ts-section trade-panel">
-      <h3 className="ts-head">Trade {base} / {quote}</h3>
+      {/* Exchange header: logo + name, then the balances it's trading with. */}
+      <div className="tr-ex">
+        <div className="tr-ex-logo" aria-hidden="true">{(ex.name || "?").charAt(0).toUpperCase()}</div>
+        <div className="tr-ex-meta">
+          <span className="tr-ex-name">{ex.name}</span>
+          <span className="tr-ex-pair">Trading {base} / {quote}</span>
+        </div>
+      </div>
+
+      <div className="tr-bal-grid">
+        <div className="tr-bal">
+          <div className="tr-bal-coin">{quote}</div>
+          <div className="tr-bal-rows">
+            <div><span>Available</span><span>{usd(qf)}</span></div>
+            <div><span>Allocated</span><span>{usd(qh)}</span></div>
+            <div className="tr-bal-total"><span>Total</span><span>{usd(qf + qh)}</span></div>
+          </div>
+        </div>
+        <div className="tr-bal">
+          <div className="tr-bal-coin">{base}</div>
+          <div className="tr-bal-rows">
+            <div><span>Available</span><span>{fmtQ(bf)} <em>{usd(bf * mid)}</em></span></div>
+            <div><span>Allocated</span><span>{fmtQ(bh)} <em>{usd(bh * mid)}</em></span></div>
+            <div className="tr-bal-total"><span>Total</span><span>{fmtQ(bf + bh)} <em>{usd((bf + bh) * mid)}</em></span></div>
+          </div>
+        </div>
+      </div>
+
       {!book && <p className="wl-note">Reading the live book…</p>}
 
       {book && (
