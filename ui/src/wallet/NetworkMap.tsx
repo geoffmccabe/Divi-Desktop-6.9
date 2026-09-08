@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { networkPeers, probePeers, listNodes, type Peer, type Geo } from "./api";
+import { networkPeers, probePeers, listNodes, nodeIdentity, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, addMyIps, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
@@ -335,6 +335,17 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   useEffect(() => {
     setupInfo().then((s) => { if (s.needsSetup) setSetupOpen(true); }).catch(() => {});
   }, []);
+  // This install's node name → shown on the self marker. Reloads instantly when
+  // the user changes it in Settings (dd69:nodename), no restart needed.
+  useEffect(() => {
+    nodeIdentity().then((i) => { nodeNameRef.current = i.name || ""; }).catch(() => {});
+    const onName = (e: Event) => {
+      const d = (e as CustomEvent).detail as { name?: string } | undefined;
+      nodeNameRef.current = d?.name ?? "";
+    };
+    window.addEventListener("dd69:nodename", onName);
+    return () => window.removeEventListener("dd69:nodename", onName);
+  }, []);
   // The snapshot server sits behind Cloudflare, so its public IP geolocates to a
   // Cloudflare edge (Canada), NOT the real origin. So we hard-set the true origin
   // location: the fasthosts node in London. (If the server ever moves, update
@@ -408,6 +419,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   const selfRef = useRef<Geo | null>(null);
   const nodeListRef = useRef<string[]>([]); // all of the user's configured node ids
   const myNodeIpsRef = useRef<Set<string>>(new Set()); // the user's own nodes — always shown, never probed off
+  const nodeNameRef = useRef<string>(""); // this install's chosen node name (shown on the self marker)
   const instantRevealRef = useRef(false); // true right after a (re)mount: show peers settled, no green
   const revealed = useRef<Map<string, number>>(new Map()); // ip -> first-seen ms
   const baseRef = useRef<HTMLCanvasElement | null>(null);
@@ -1398,7 +1410,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           x: selfXY[0],
           y: selfXY[1],
           title: "Your node",
-          lines: [selfG.ip, [selfG.city, selfG.country].filter(Boolean).join(", "), selfG.isp || ""].filter(Boolean),
+          // Show the chosen node name (if any) as the first line, above the IP.
+          lines: [nodeNameRef.current ? `“${nodeNameRef.current}”` : "", selfG.ip, [selfG.city, selfG.country].filter(Boolean).join(", "), selfG.isp || ""].filter(Boolean),
           won: USER_IS_WINNER,
         });
       }
