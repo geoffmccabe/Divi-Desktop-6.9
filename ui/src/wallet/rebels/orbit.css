@@ -1,0 +1,561 @@
+/* Divi Rebels: Orbit mode.
+   Every colour, radius and blur comes from a theme token so the game skins with
+   the rest of the wallet. The only literals here are layout numbers. */
+
+.orbit {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  border-radius: var(--panel-radius);
+  overflow: hidden;
+  background: hsl(var(--rebels-ocean));
+}
+
+.orbit-canvas { display: block; width: 100%; height: 100%; cursor: none; }
+
+.orbit-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  color: hsl(var(--rebels-hud));
+  text-shadow: 0 0 calc(var(--glow-strength) * 0.4) hsl(var(--glow-color) / 0.7);
+}
+
+/* The name of whatever world you are near. Set apart from the standing
+   readouts below it, because it appears and disappears as you fly and needs to
+   read as an event rather than as another gauge. */
+.orbit-nearby {
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid hsl(var(--rebels-hud) / 0.25);
+}
+.orbit-nearby-name {
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  color: hsl(var(--primary));
+}
+
+.orbit-tl, .orbit-tr { position: absolute; top: 14px; }
+.orbit-tl { left: 16px; }
+.orbit-tr { right: 16px; text-align: right; }
+.orbit-row { font-size: 12px; letter-spacing: 0.06em; line-height: 1.7; }
+.orbit-big { font-size: 22px; font-weight: 700; letter-spacing: 0.02em; }
+.orbit-dim { opacity: 0.62; }
+
+/* Bars, bottom centre. */
+.orbit-bars {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 22px;
+  align-items: flex-end;
+}
+.orbit-gauge { text-align: center; }
+.orbit-gauge > span {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  opacity: 0.7;
+  margin-bottom: 5px;
+}
+.orbit-pips { display: flex; gap: 4px; }
+.orbit-pip {
+  width: 17px; height: 8px;
+  border: 1px solid hsl(var(--rebels-hud) / 0.5);
+  border-radius: 2px;
+}
+.orbit-pip.on { background: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+.orbit-pip.low.on { background: hsl(var(--destructive)); border-color: hsl(var(--destructive)); }
+.orbit-meter {
+  width: 118px; height: 8px;
+  border: 1px solid hsl(var(--rebels-hud) / 0.5);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.orbit-meter > i { display: block; height: 100%; background: hsl(var(--accent)); }
+.orbit-meter.boost > i { background: hsl(var(--rebels-home)); }
+
+/* The crosshair is the stick position, so it has to be visible at all times. */
+.orbit-cross {
+  position: absolute;
+  width: 46px; height: 46px;
+  margin: -23px 0 0 -23px;
+  border: 1.5px solid hsl(var(--primary));
+  border-radius: 50%;
+  opacity: 0.85;
+}
+.orbit-cross::before, .orbit-cross::after {
+  content: ""; position: absolute; background: hsl(var(--rebels-ship));
+}
+.orbit-cross::before { left: 50%; top: 18px; width: 1.5px; height: 10px; margin-left: -0.75px; }
+.orbit-cross::after { top: 50%; left: 18px; height: 1.5px; width: 10px; margin-top: -0.75px; }
+
+.orbit-dock {
+  position: absolute;
+  left: 50%; top: 62%;
+  transform: translateX(-50%);
+  text-align: center;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+}
+.orbit-dockbar {
+  width: 190px; height: 5px; margin: 7px auto 0;
+  border: 1px solid hsl(var(--rebels-home) / 0.6);
+  border-radius: 3px; overflow: hidden;
+}
+.orbit-dockbar > i { display: block; height: 100%; background: hsl(var(--rebels-home)); }
+
+/* Launch card and the destroyed card share a look. */
+.orbit-card {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  gap: 10px;
+  pointer-events: auto;
+  background: hsl(var(--rebels-ocean) / 0.72);
+  backdrop-filter: blur(var(--panel-blur));
+}
+.orbit-card h2 {
+  font-family: var(--font-heading);
+  font-size: 30px;
+  letter-spacing: 0.1em;
+  margin: 0;
+  color: hsl(var(--primary));
+}
+.orbit-card p { margin: 0; font-size: 13px; color: hsl(var(--rebels-hud)); }
+.orbit-card .orbit-keys { font-size: 12px; opacity: 0.66; line-height: 1.9; }
+.orbit-card button {
+  justify-self: center;
+  margin-top: 8px;
+  padding: 10px 26px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  border: none;
+  border-radius: calc(var(--panel-radius) * 0.6);
+  cursor: pointer;
+}
+.orbit-card button:hover { filter: brightness(1.12); }
+
+/* ---- the Ship Market ----
+   A round viewport in the middle of the screen with a hull turning in it. The
+   game's other panels are rectangles down an edge because that is what a
+   cockpit readout is; this one is meant to read as looking THROUGH something,
+   so it is circular, centred, and the ship is allowed to overlap its rim. */
+.ship-market-scrim {
+  position: absolute; inset: 0;
+  background: rgb(0 0 0 / 0.72);
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* THIRTY-FIVE AND SIXTY-FIVE, in that order.
+   The specs own the LEFT 35% and scroll; the ship owns the RIGHT 65% and is
+   centred in it. */
+.ship-market {
+  position: absolute; inset: 0;
+  display: grid;
+  grid-template-columns: 35% 65%;
+  grid-template-rows: 1fr auto;
+  align-items: stretch;
+  gap: 18px;
+  padding: 24px;
+  pointer-events: auto;
+  font-family: var(--font-mono);
+  color: hsl(var(--rebels-hud));
+}
+
+/* The ship's own column: name, ring, paint shop, stacked. The ring takes
+   whatever height the other two leave, which is what stops the three of them
+   ever reaching for the same pixels — not placement, but the fact that items in
+   a flex column cannot occupy the same space. */
+.ship-market-ship {
+  grid-column: 2; grid-row: 1;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 10px;
+  min-height: 0; min-width: 0;
+}
+.ship-market-stage {
+  flex: 1 1 auto;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 0; width: 100%;
+}
+
+/* The ring itself. Two rings, actually: a bright hairline and a wide soft
+   glow, which is what stops a circle on a dark background looking like a hole
+   cut out of it. */
+.ship-market-ring {
+  position: relative;
+  /* Bounded by the height of the space it is given as well as by the width, so
+     it can never grow past its own column. */
+  height: 100%;
+  aspect-ratio: 1;
+  max-width: 92%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 42%, hsl(var(--rebels-ocean) / 0.92) 0%, hsl(var(--rebels-ocean) / 0.55) 62%, transparent 72%);
+  border: 1px solid hsl(var(--rebels-hud) / 0.55);
+  box-shadow:
+    0 0 0 1px hsl(var(--primary) / 0.25),
+    0 0 42px hsl(var(--primary) / 0.35),
+    inset 0 0 60px hsl(var(--primary) / 0.18);
+  backdrop-filter: blur(var(--panel-blur));
+}
+.ship-preview { position: absolute; inset: -8%; }
+.ship-preview-note {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 11px; letter-spacing: 0.2em;
+  color: hsl(var(--rebels-hud) / 0.6);
+}
+
+/* The left column: the name, then the paint controls under it, stacked.
+   They used to share one grid cell — one anchored to its centre, one to its
+   bottom — which put the sliders directly over the description and made the
+   buttons beneath them unclickable. A flex column cannot do that. */
+.ship-market-head { text-align: center; flex: 0 0 auto; }
+.ship-paint { flex: 0 0 auto; }
+.ship-market-head h2 {
+  margin: 0; font-size: 26px; letter-spacing: 0.1em;
+  color: hsl(var(--primary));
+}
+.ship-market-tier {
+  font-size: 11px; letter-spacing: 0.24em;
+  color: hsl(var(--rebels-home));
+  margin-top: 2px;
+}
+.ship-market-role {
+  margin: 12px 0 0; font-size: 12px; line-height: 1.5; opacity: 0.8;
+}
+
+/* The left column: the specs, and the paint shop under them. Stacked, so the
+   two cannot reach for the same pixels whatever the window does. */
+.ship-market-side {
+  grid-column: 1; grid-row: 1;
+  display: flex; flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+}
+.ship-market-stats {
+  /* Scrollable, because ten stats plus a note do not fit a short window and a
+     list you cannot reach the bottom of is worse than no list. The paint shop
+     below it keeps its own height; only the specs give way. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+/* Dark scrollbar: the default is a white slab on a dark panel. */
+.ship-market-stats::-webkit-scrollbar { width: 8px; }
+.ship-market-stats::-webkit-scrollbar-track { background: hsl(var(--rebels-hud) / 0.08); border-radius: 4px; }
+.ship-market-stats::-webkit-scrollbar-thumb {
+  background: hsl(var(--primary) / 0.55); border-radius: 4px;
+}
+.ship-stat {
+  display: grid;
+  grid-template-columns: 84px 1fr 96px;
+  align-items: center; gap: 8px;
+  font-size: 11px; margin-bottom: 6px;
+}
+.ship-stat-label { letter-spacing: 0.08em; opacity: 0.75; }
+.ship-stat-bar {
+  height: 5px; border-radius: 3px;
+  background: hsl(var(--rebels-hud) / 0.16);
+  overflow: hidden;
+}
+.ship-stat-bar > i {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, hsl(var(--rebels-home)), hsl(var(--primary)));
+}
+.ship-stat-value { text-align: right; letter-spacing: 0.04em; }
+.ship-stat-value em { font-style: normal; opacity: 0.5; }
+.ship-market-note { margin: 10px 0 0; font-size: 10px; opacity: 0.55; line-height: 1.4; }
+
+/* ---- the paint shop ----
+   Under the ship's name, in the same column, because the name and the colours
+   are both "what this thing is" where the stats on the right are "what it
+   does". */
+.ship-paint {
+  flex: 0 0 auto;
+  text-align: left;
+  padding-top: 12px;
+  border-top: 1px solid hsl(var(--rebels-hud) / 0.2);
+}
+.ship-paint-parts {
+  display: flex; flex-wrap: wrap; gap: 5px; justify-content: flex-start;
+}
+.ship-paint-parts button {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 9px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.1);
+  border: 1px solid hsl(var(--rebels-hud) / 0.3);
+  border-radius: calc(var(--panel-radius) * 0.35);
+}
+.ship-paint-parts button.on {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.18);
+}
+.ship-paint-chip {
+  width: 12px; height: 12px; border-radius: 2px;
+  border: 1px solid hsl(var(--rebels-hud) / 0.4);
+}
+.ship-paint-reset { opacity: 0.7; }
+
+.ship-paint-sliders {
+  margin-top: 10px; text-align: left;
+  padding: 10px 12px;
+  background: hsl(var(--rebels-ocean) / 0.7);
+  border: 1px solid hsl(var(--rebels-hud) / 0.25);
+  border-radius: calc(var(--panel-radius) * 0.6);
+}
+.ship-paint-sliders p { margin: 0 0 8px; font-size: 10px; opacity: 0.65; line-height: 1.4; }
+.ship-paint-sliders label {
+  display: grid; grid-template-columns: 68px 1fr 44px;
+  align-items: center; gap: 8px;
+  font-size: 10px; letter-spacing: 0.06em; margin-bottom: 5px;
+}
+.ship-paint-sliders b { text-align: right; font-weight: 400; opacity: 0.8; }
+/* Dark controls on a dark panel: a default range input is a white slab and
+   reads as a hole in the HUD. */
+.ship-paint-sliders input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  height: 4px; border-radius: 2px;
+  background: hsl(var(--rebels-hud) / 0.2);
+}
+.ship-paint-sliders input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: hsl(var(--primary));
+  border: 1px solid hsl(var(--rebels-ocean));
+  cursor: pointer;
+}
+
+/* The chooser: one row per class, one square per tier in it. */
+.ship-market-list {
+  grid-column: 1 / -1; grid-row: 2;
+  display: flex; flex-wrap: wrap; justify-content: center; gap: 14px 22px;
+  padding-top: 10px;
+  border-top: 1px solid hsl(var(--rebels-hud) / 0.2);
+}
+.ship-market-class h3 {
+  margin: 0 0 5px; font-size: 10px; letter-spacing: 0.14em;
+  opacity: 0.7; font-weight: 400; text-align: center;
+}
+.ship-market-tiers { display: flex; gap: 4px; justify-content: center; }
+.ship-market-tiers button {
+  /* 15% smaller than they were, and the number inside them deliberately is
+     not: the digit is what you read, the square is only what you hit. */
+  width: 22px; height: 22px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11px;
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.1);
+  border: 1px solid hsl(var(--rebels-hud) / 0.3);
+  border-radius: calc(var(--panel-radius) * 0.35);
+}
+.ship-market-tiers button.on {
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+}
+
+.ship-market-close {
+  position: absolute; top: 18px; right: 18px;
+  padding: 7px 16px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em;
+  color: hsl(var(--primary-foreground)); background: hsl(var(--primary));
+  border: none; border-radius: calc(var(--panel-radius) * 0.5);
+}
+.ship-market-count {
+  position: absolute; bottom: 8px; left: 0; right: 0;
+  text-align: center; font-size: 10px; letter-spacing: 0.12em; opacity: 0.45;
+}
+
+/* Narrow: the ring keeps the middle and the text stacks under it, rather than
+   three columns each too thin to read. */
+@media (max-width: 900px) {
+  .ship-market {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto auto;
+    align-content: start;
+    overflow-y: auto;
+  }
+  .ship-market-ship { grid-column: 1; grid-row: 1; }
+  .ship-market-ring { height: auto; width: min(44vh, 82vw); }
+  .ship-market-head { text-align: center; }
+  .ship-paint { text-align: center; }
+  .ship-paint-parts { justify-content: center; }
+  .ship-market-side { grid-column: 1; grid-row: 2; min-height: 0; }
+  .ship-market-stats { max-height: none; overflow: visible; }
+  .ship-paint { text-align: center; }
+  .ship-paint-parts { justify-content: center; }
+  .ship-market-list { grid-column: 1; grid-row: 3; }
+}
+
+/* ---- the damage health bar ----
+   DreadRoot's, copied so that taking a hit reads the same way in both games:
+   centred, three quarters down, a third of the screen wide, thick black frame,
+   and a big percentage to the right of it. */
+.rebels-healthbar {
+  position: absolute; top: 75%; left: 0; right: 0;
+  transform: translateY(-50%);
+  display: flex; justify-content: center; align-items: center; gap: 20px;
+  pointer-events: none;
+  z-index: 70;
+}
+.rebels-healthbar-frame {
+  width: 33.33%; height: 64px; box-sizing: border-box;
+  border: 20px solid rgb(0 0 0 / 0.6);
+  background: rgb(0 0 0 / 0.6);
+  overflow: hidden;
+  border-radius: var(--panel-radius);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.35);
+}
+.rebels-healthbar-pct {
+  color: #fff; font-weight: 900; font-size: min(6vw, 56px); line-height: 1;
+  letter-spacing: -0.02em; white-space: nowrap;
+  text-shadow: 0 2px 6px rgb(0 0 0 / 0.9), 0 0 2px rgb(0 0 0 / 0.9);
+}
+
+/* The reset confirmation. Small, centred over the panel, and deliberately in
+   the way: putting every colour back is not something to do by brushing a
+   button on the way past. */
+.ship-paint-confirm {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 18px 22px; text-align: center;
+  background: hsl(var(--rebels-ocean) / 0.96);
+  border: 1px solid hsl(var(--primary) / 0.6);
+  border-radius: var(--panel-radius);
+  box-shadow: 0 0 40px hsl(var(--primary) / 0.3);
+  backdrop-filter: blur(var(--panel-blur));
+  z-index: 5;
+}
+.ship-paint-confirm p { margin: 0 0 14px; font-size: 12px; letter-spacing: 0.05em; }
+.ship-paint-confirm div { display: flex; gap: 8px; justify-content: center; }
+.ship-paint-confirm button {
+  min-width: 74px; padding: 8px 14px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em;
+  color: hsl(var(--primary-foreground)); background: hsl(var(--primary));
+  border: none; border-radius: calc(var(--panel-radius) * 0.5);
+}
+.ship-paint-confirm button.no {
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.12);
+  border: 1px solid hsl(var(--rebels-hud) / 0.35);
+}
+
+/* ---- your ship, in the corner ----
+   The Market's viewport at a fifth the size: same translucent disc, same ring,
+   same slow turn. It steps aside when a world is near, because the name of
+   what you are flying at is worth more than a reminder of what you are in. */
+.ship-badge {
+  width: 108px; height: 108px;
+  margin: 0 0 10px auto;
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+.ship-badge-away {
+  opacity: 0;
+  /* Shrinks slightly as it goes, so it reads as making way rather than as the
+     renderer having failed. */
+  transform: scale(0.82);
+  pointer-events: none;
+}
+.ship-badge-ring {
+  position: relative; width: 100%; height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 42%,
+    hsl(var(--rebels-ocean) / 0.75) 0%,
+    hsl(var(--rebels-ocean) / 0.42) 62%,
+    transparent 74%);
+  border: 1px solid hsl(var(--rebels-hud) / 0.45);
+  box-shadow:
+    0 0 0 1px hsl(var(--primary) / 0.2),
+    0 0 18px hsl(var(--primary) / 0.28),
+    inset 0 0 22px hsl(var(--primary) / 0.14);
+}
+
+.ship-paint-hint { margin: 2px 0 8px; font-size: 9px; opacity: 0.5; line-height: 1.4; }
+.ship-paint-overlays {
+  display: grid; grid-template-columns: 68px 1fr; align-items: center; gap: 8px;
+  margin-top: 4px; font-size: 10px; letter-spacing: 0.06em;
+}
+.ship-paint-overlays > div { display: flex; gap: 4px; flex-wrap: wrap; }
+.ship-paint-overlays button {
+  padding: 4px 8px; cursor: pointer;
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.08em;
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.1);
+  border: 1px solid hsl(var(--rebels-hud) / 0.3);
+  border-radius: calc(var(--panel-radius) * 0.3);
+}
+.ship-paint-overlays button.on {
+  color: hsl(var(--primary-foreground)); background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+}
+
+/* ---- the launch card ----
+   Forty percent for the badge and the name, sixty for the controls. The
+   controls used to run the full width beneath the title, which made the card a
+   wall of small text with a heading balanced on top of it; side by side, the
+   left half says what this is and the right half says how to fly it.
+
+   The black panel behind is there because the card sits over a live globe with
+   towers and connection lines moving under it, and a blurred tint was not
+   enough to lift small text off that. Half-opacity black is. */
+.orbit-launch-top {
+  display: grid;
+  grid-template-columns: 40% 60%;
+  gap: 22px;
+  align-items: center;
+  width: 100%;
+  padding: 18px 20px;
+  box-sizing: border-box;
+  background: rgb(0 0 0 / 0.5);
+  border-radius: var(--panel-radius);
+}
+.orbit-launch-badge { text-align: center; }
+.orbit-launch-badge img {
+  width: min(190px, 60%);
+  height: auto;
+  display: block;
+  margin: 0 auto 6px;
+  /* The art is a sticker on white. A drop shadow separates it from the panel
+     without needing the white cut out of it. */
+  filter: drop-shadow(0 4px 14px rgb(0 0 0 / 0.55));
+}
+.orbit-launch-badge h2 { margin: 0; }
+.orbit-launch-badge p { margin: 6px 0 0; }
+.orbit-launch-top .orbit-launch-keys { margin: 0; max-width: none; }
+
+@media (max-width: 820px) {
+  .orbit-launch-top { grid-template-columns: 1fr; gap: 14px; }
+  .orbit-launch-badge img { width: min(140px, 45%); }
+}
+
+/* The weapon in each trigger, in the corner readout. */
+.orbit-weapons b {
+  font-weight: 400;
+  color: hsl(var(--rebels-home));
+  letter-spacing: 0.1em;
+  margin-right: 4px;
+}
+
+/* What was just selected. Centred, brief, and out of the way of everything
+   else: it is an acknowledgement, not a readout. */
+.orbit-note {
+  position: absolute; left: 0; right: 0; top: 62%;
+  text-align: center;
+  font-family: var(--font-mono); font-size: 14px; letter-spacing: 0.16em;
+  color: hsl(var(--primary));
+  text-shadow: 0 2px 8px rgb(0 0 0 / 0.9);
+  pointer-events: none;
+}

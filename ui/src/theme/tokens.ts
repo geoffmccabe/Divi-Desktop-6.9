@@ -140,16 +140,24 @@ export const TOKENS: TokenDef[] = [
   // (the flat map's previous --primary/--info/--warning-driven look, and the
   // globe's previous hardcoded hex) so switching this on changes nothing until
   // a skin creator actually touches these.
-  { key: "mapSelf", label: "Your node", group: "Maps", type: "color", cssVar: "--map-self", default: "45 93% 47%" },
+  { key: "mapSelf", label: "Your node", group: "Maps", type: "color", cssVar: "--map-self", default: "0 85% 55%" },
   { key: "mapPeerLink", label: "Peer connections", group: "Maps", type: "color", cssVar: "--map-peer-link", default: "280 80% 60%" },
   { key: "mapNetworkLink", label: "Network connections", group: "Maps", type: "color", cssVar: "--map-network-link", default: "207 90% 54%" },
   { key: "mapOfflineNode", label: "Remembered/offline nodes", group: "Maps", type: "color", cssVar: "--map-offline", default: "215 14% 58%" },
   { key: "mapDiscoveryPulse", label: "Discovery pulse", group: "Maps", type: "color", cssVar: "--map-discovery-pulse", default: "145 80% 50%" },
   { key: "mapActivityPulse", label: "Activity pulse", group: "Maps", type: "color", cssVar: "--map-activity-pulse", default: "45 100% 55%" },
   { key: "mapNewNode", label: "New node highlight", group: "Maps", type: "color", cssVar: "--map-new-node", default: "177 85% 58%" },
+  { key: "mapStakeTower", label: "Stake-winner tower", group: "Maps", type: "color", cssVar: "--map-stake-tower", default: "45 93% 47%" },
   { key: "mapStakeAccent", label: "Stake-winner accent", group: "Maps", type: "color", cssVar: "--map-stake-accent", default: "353 76% 50%" },
   { key: "mapBackground", label: "Globe background", group: "Maps", type: "color", cssVar: "--map-background", default: "216 33% 6%" },
   { key: "mapAtmosphere", label: "Globe atmosphere", group: "Maps", type: "color", cssVar: "--map-atmosphere", default: "211 100% 68%" },
+  // The close-up map. "Detailed" streams a high-resolution night tile for
+  // wherever you are looking and keeps it on this machine; "Classic" is the
+  // single global picture the globe has always used. Both look the same from
+  // orbit by construction: see scripts/build-earth-tiles.py.
+  { key: "mapDetail", label: "Globe surface", group: "Maps", type: "select", cssVar: "--map-detail", default: "detailed", options: [{ label: "Detailed", value: "detailed" }, { label: "Classic", value: "classic" }] },
+  { key: "mapBorders", label: "Country lines", group: "Maps", type: "select", cssVar: "--map-borders", default: "on", options: [{ label: "On", value: "on" }, { label: "Off", value: "off" }] },
+  { key: "mapBorderColor", label: "Country line colour", group: "Maps", type: "color", cssVar: "--map-border", default: "207 90% 54%" },
 
   // Sounds — generated tones (see sound.ts). Values feed the Web Audio engine.
   { key: "soundVolume", label: "Volume", group: "Sounds", type: "range", cssVar: "--sound-volume", default: "0.15", min: 0, max: 0.5, step: 0.05, unit: "" },
@@ -176,7 +184,23 @@ export const TOKENS: TokenDef[] = [
   { key: "purchaseModalWidth", label: "Purchase window width", group: "Apps & Builder", type: "range", cssVar: "--purchase-modal-width", default: "560px", min: 380, max: 820, step: 10, unit: "px" },
   { key: "purchaseMascotSize", label: "Mascot size", group: "Apps & Builder", type: "range", cssVar: "--purchase-mascot-size", default: "150px", min: 0, max: 260, step: 10, unit: "px" },
 
+  // Divi Rebels (Orbit mode) — the planet, its towers and the cockpit.
+  //
+  // Its own group because the game is a surface nobody else shares: a skin that
+  // makes the wallet mint green should be able to make the planet mint green
+  // too, without dragging the Send panel along with it. Everything structural
+  // (panel corners, blur, glow) is reused from the groups above rather than
+  // duplicated here.
+  { key: "rebelsOcean", label: "Space & sea", group: "Divi Rebels", type: "color", cssVar: "--rebels-ocean", default: "250 40% 4%" },
+  { key: "rebelsLand", label: "Coastlines", group: "Divi Rebels", type: "color", cssVar: "--rebels-land", default: "168 70% 61%" },
+  { key: "rebelsGrid", label: "Lat/long grid", group: "Divi Rebels", type: "color", cssVar: "--rebels-grid", default: "252 53% 26%" },
+  { key: "rebelsLink", label: "Node links", group: "Divi Rebels", type: "color", cssVar: "--rebels-link", default: "255 100% 71%" },
+  { key: "rebelsHome", label: "Your node", group: "Divi Rebels", type: "color", cssVar: "--rebels-home", default: "45 100% 64%" },
+  { key: "rebelsShip", label: "Your ship", group: "Divi Rebels", type: "color", cssVar: "--rebels-ship", default: "276 100% 88%" },
+  { key: "rebelsBolt", label: "Gunfire", group: "Divi Rebels", type: "color", cssVar: "--rebels-bolt", default: "276 100% 74%" },
+  { key: "rebelsHud", label: "Cockpit readouts", group: "Divi Rebels", type: "color", cssVar: "--rebels-hud", default: "260 70% 75%" },
+
   ...ICON_TOKENS,
 ];
 
-export const TOKEN_GROUPS = ["Colors", "Typography", "Panel", "Sub-panels", "Maps", "Icons", "Sounds", "Apps & Builder"];
+export const TOKEN_GROUPS = ["Colors", "Typography", "Panel", "Sub-panels", "Maps", "Icons", "Sounds", "Apps & Builder", "Divi Rebels"];

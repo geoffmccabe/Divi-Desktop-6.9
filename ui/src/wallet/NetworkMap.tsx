@@ -4,6 +4,8 @@ import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, addMyIps, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
 import { BlockChainViz } from "./BlockChainViz";
+import { createRebels, type RebelsController } from "./rebels/rebelsController";
+import { RebelsHud } from "./rebels/RebelsHud";
 import { PrimerLove } from "./PrimerLove";
 import { usePrimer } from "./primerStore";
 import { FastestNodes, type FastCandidate } from "./FastestNodes";
@@ -370,6 +372,12 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   const [blockDim, setBlockDim] = useState(false); // eye toggle dims the blockstream
+  // Divi Rebels flies the globe you are already looking at. Not a copy of it:
+  // the controller is handed THIS scene, THESE towers and THESE links through
+  // GlobeMap's flight hook, and only adds a ship. Everything carries on
+  // animating while you fly through it.
+  const [rebels, setRebels] = useState<RebelsController | null>(null);
+  const playing = rebels !== null;
   // FLAT vs GLOBE view. When GLOBE is on, the 2D canvas loop pauses (see draw())
   // and the WebGL globe renders the same nodes/arcs on top.
   const [globe, setGlobe] = useState(false);
@@ -1638,6 +1646,21 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [snap, geos]);
 
+  // What to call a tower. Same sources the map's own tooltips use, so the
+  // cockpit and the tooltip never disagree about where you are.
+  const labelForIp = (ip: string): string => {
+    if (!ip) return "";
+    const self = selfRef.current;
+    if (self && self.ip === ip) {
+      return [self.city, self.country].filter(Boolean).join(", ") || ip;
+    }
+    const g = geos[ip];
+    const kp = knownRef.current[ip];
+    const city = g?.city ?? kp?.city;
+    const country = g?.country ?? kp?.country;
+    return [city, country].filter(Boolean).join(", ") || ip;
+  };
+
   // The SAME nodes/arcs the flat map shows, shaped for the globe: self + peers +
   // the 30-day known network as points, and an arc from our node to each peer.
   const globeData = useMemo(() => {
@@ -1688,8 +1711,21 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
         </div>
         <div className="netmap-tools">
+          {globe && (
+            <button
+              type="button"
+              className={"netmap-play" + (playing ? " on" : "")}
+              onClick={() => setRebels((cur) => {
+                if (cur) { cur.dispose(); return null; }
+                return createRebels(labelForIp);
+              })}
+              title={playing ? "Leave Divi Rebels" : "Play Divi Rebels"}
+            >
+              <Icon name="tie" size={15} />
+            </button>
+          )}
           <div className="netmap-viewtoggle" role="group" aria-label="Map view">
-            <button type="button" className={globe ? "" : "on"} onClick={() => setGlobe(false)}>
+            <button type="button" className={globe ? "" : "on"} onClick={() => { setGlobe(false); setRebels((c) => { c?.dispose(); return null; }); }}>
               Flat
             </button>
             <button type="button" className={globe ? "on" : ""} onClick={() => setGlobe(true)}>
@@ -1718,7 +1754,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           />
         )}
       <div
-        className="netmap-canvas-wrap"
+        className={"netmap-canvas-wrap" + (playing ? " netmap-flying" : "")}
         ref={wrapRef}
         onMouseDown={() => {
           // Clicking the map (outside any panel/menu, which stop propagation)
@@ -1734,6 +1770,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             arcs={globeData.arcs}
             center={globeData.center}
             getWinnerIp={() => (userWonRecently() ? selfRef.current?.ip ?? null : winnerRef.current)}
+            flight={rebels}
           />
         )}
         {/* Hamburger menu (top-right): opens one overlay panel at a time. */}
@@ -1746,22 +1783,31 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             <button type="button" onClick={() => { setSetupOpen(true); setMenuOpen(false); }}>Set up wallet</button>
           </div>
         )}
+        {rebels && (
+          <div className="netmap-game" onMouseDown={(e) => e.stopPropagation()}>
+            <RebelsHud ctl={rebels} onExit={() => setRebels((c) => { c?.dispose(); return null; })} />
+          </div>
+        )}
         {panel === "country" && <NodesByCountry data={nodesByCountry} />}
         {panel === "speed" && <FastestNodes getNodes={fastCandidates} origin={activeNode} />}
         {panel === "mempool" && <Mempool />}
         {panel === "newest" && <NewestNodesPanel onHighlight={(ip) => (highlightIpRef.current = ip)} />}
-        {/* Blockstream visibility toggle (eye). Closed => dim to 10%. */}
-        <button
+        {/* Blockstream visibility toggle (eye). Closed => dim to 10%. Both it
+            and the stream itself are hidden while flying: the game needs the
+            whole window and the stream sits right where the ship does. */}
+        {!playing && <button
           type="button"
           className="netmap-eye"
           onClick={() => setBlockDim((v) => !v)}
           title={blockDim ? "Show blockstream" : "Hide blockstream"}
         >
           <Icon name={blockDim ? "eyeOff" : "eye"} size={10} />
-        </button>
-        <div className="bv-dim" style={{ opacity: blockDim ? 0.1 : 1 }}>
-          {primer.active ? <PrimerLove /> : <BlockChainViz />}
-        </div>
+        </button>}
+        {!playing && (
+          <div className="bv-dim" style={{ opacity: blockDim ? 0.1 : 1 }}>
+            {primer.active ? <PrimerLove /> : <BlockChainViz />}
+          </div>
+        )}
         {hover && (
           <div
             className={"netmap-tip" + (hover.tone === "blue" ? " netmap-tip-blue" : "")}

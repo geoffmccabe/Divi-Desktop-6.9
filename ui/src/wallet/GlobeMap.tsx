@@ -5,6 +5,9 @@ import earthNight from "../assets/earth-night.jpg";
 import diviLogo from "../assets/divi-coin.webp";
 import { pulseTrigger, pulseHsl, pulseActiveUntil, makeLegs, legU, pingDone, type Leg } from "./activityPulse";
 import { useTheme } from "../theme/ThemeProvider";
+import { towerMaterials, tickTowerLights } from "./towerLights";
+import { createDetail, type DetailLayer } from "./globeDetail";
+import { createBorders, type Borders } from "./globeBorders";
 
 // "H S% L%" (this app's HSL-triplet token format) -> a CSS hsl() string that
 // THREE.Color / material `color` params accept directly.
@@ -29,6 +32,48 @@ export interface GlobePoint {
   city?: string;
   country?: string;
 }
+/**
+ * How Divi Rebels flies THIS globe.
+ *
+ * The game does not build a planet of its own. It borrows this one: the same
+ * earth, the same node towers, the same double-helix links with hex characters
+ * running along them. All it wants is the camera, the scene to put a ship in,
+ * and where the tower tips are. Anything else would be a second, worse copy of
+ * a map that already exists.
+ */
+export interface GlobeFlight {
+  /** Handed the live scene once it is built, and again if it is rebuilt. */
+  attach(api: {
+    scene: THREE.Scene;
+    camera: THREE.PerspectiveCamera;
+    /** Tip of every tower, keyed by node ip: what you dock with. */
+    tips: Map<string, THREE.Vector3>;
+    /** Which ip is this wallet's own node, if it is on the map. */
+    selfIp: string | null;
+    /** Globe radius in scene units. */
+    radius: number;
+    /**
+     * Shrink every tower, and hand back where their tips ended up.
+     *
+     * Called when a game launches. Halving the towers while halving the ship's
+     * speed makes the same Earth feel twice the size, which is cheaper and far
+     * more stable than actually scaling the world: the globe, the map's camera
+     * and every distance in the flight model all stay exactly as they were.
+     *
+     * The tips MOVE when the towers shrink, so they are returned rather than
+     * left for the caller to guess — docking measures to the tower's axis, and
+     * an axis half as tall is a different axis.
+     */
+    scaleTowers(s: number): Map<string, THREE.Vector3>;
+    /** The globe's own canvas, which is where the pointer already is. */
+    dom: HTMLCanvasElement;
+  }): void;
+  /** Every frame while flying. Move the camera here. */
+  frame(dt: number): void;
+  /** Flying stopped, or the scene is being torn down. */
+  detach(): void;
+}
+
 export interface GlobeArc {
   startLat: number;
   startLng: number;
@@ -105,16 +150,60 @@ const FRAG = `
   }
 `;
 
+/**
+ * The beam that marks your own node.
+ *
+ * Straight up, away from the centre of the planet, five tower-heights tall, and
+ * fading from full at the mast to nothing at the top. It exists so a player can
+ * find home from across the world without hunting for one red spire among two
+ * hundred grey ones.
+ *
+ * Built from vertex colours on an open cylinder with additive blending: the
+ * fade IS the colour going to black, which costs nothing and needs no texture.
+ */
+function makeHomeBeacon(colour: THREE.ColorRepresentation, height: number): THREE.Mesh {
+  const len = height * 5;
+  const geo = new THREE.CylinderGeometry(BASE * 0.42, BASE * 0.18, len, 10, 1, true);
+  /* Its own origin sits at its middle, so it is shifted up to start at the
+     mast rather than half way down the tower. */
+  geo.translate(0, len / 2, 0);
+
+  const pos = geo.getAttribute("position");
+  const col = new Float32Array(pos.count * 3);
+  const c = new THREE.Color(colour);
+  for (let i = 0; i < pos.count; i++) {
+    /* Full at the bottom, nothing at the top, linear across the five heights. */
+    const k = 1 - Math.min(1, Math.max(0, pos.getY(i) / len));
+    col[i * 3] = c.r * k;
+    col[i * 3 + 1] = c.g * k;
+    col[i * 3 + 2] = c.b * k;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+
+  const mat = new THREE.MeshBasicMaterial({
+    vertexColors: true, transparent: true, opacity: 0.5,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  return new THREE.Mesh(geo, mat);
+}
+
 function makeTower(color: THREE.ColorRepresentation, scale = 1): THREE.Group {
   const h = PYR_H * scale;
-  const mat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.5, roughness: 0.5, metalness: 0.2 });
+  /* Shared materials, one pair per colour, carrying the window shader. See
+     towerLights.ts for why this is not a texture and not a per-tower anything. */
+  const { spire, beacon } = towerMaterials(color, h, PYR_CIRC * scale, SPH_R * scale);
   const cone = new THREE.ConeGeometry(PYR_CIRC * scale, h, 4);
   cone.translate(0, h / 2, 0);
-  const sph = new THREE.SphereGeometry(SPH_R * scale, 16, 12);
-  sph.translate(0, h, 0);
+  /* The sphere is POSITIONED at the tip rather than having the offset baked
+     into its geometry, so its local coordinates stay centred on itself. The
+     spinning windows are wrapped using those coordinates and would smear if
+     the origin sat down at the tower's foot. */
+  const sph = new THREE.SphereGeometry(SPH_R * scale, 20, 14);
   const g = new THREE.Group();
-  g.add(new THREE.Mesh(cone, mat));
-  g.add(new THREE.Mesh(sph, mat));
+  g.add(new THREE.Mesh(cone, spire));
+  const tip = new THREE.Mesh(sph, beacon);
+  tip.position.y = h;
+  g.add(tip);
   return g;
 }
 
@@ -282,7 +371,7 @@ interface Stream {
 }
 interface Glyph { s: number; strand: number; base: number; }
 
-export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null; getWinnerIp?: () => string | null }) {
+export function GlobeMap({ points, center, getWinnerIp, flight }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null; getWinnerIp?: () => string | null; flight?: GlobeFlight | null }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [size, setSize] = useState({ w: 600, h: 400 });
@@ -293,6 +382,11 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
   const centerRef = useRef(center);
   centerRef.current = center;
   const userMovedRef = useRef(false);
+  /* Held in a ref, not a dependency: starting or leaving the game must not
+     rebuild every tower and helix on the planet. */
+  const flightRef = useRef<GlobeFlight | null | undefined>(flight);
+  flightRef.current = flight;
+  const attachedRef = useRef<GlobeFlight | null>(null);
   // Rebuild the scene only when the set of nodes changes, not on every 10s poll
   // (rebuilding all the helix tubes each poll would hitch).
   const sig = useMemo(() => points.map((p) => `${p.ip}:${p.kind}`).sort().join("|"), [points]);
@@ -310,8 +404,18 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
   const mapNetworkLink = theme.mapNetworkLink ?? "207 90% 54%";
   const mapActivityPulse = theme.mapActivityPulse ?? "45 100% 55%";
   const mapStakeAccent = theme.mapStakeAccent ?? "353 76% 50%";
+  /* The winner's tower has its own gold. It used to borrow the "your node"
+     colour, so once your own tower went red the winner would have gone red with
+     it and the two would be confusable again, just the other way round. */
+  const mapStakeTower = theme.mapStakeTower ?? "45 93% 47%";
   const mapBackground = theme.mapBackground ?? "216 33% 6%";
   const mapAtmosphere = theme.mapAtmosphere ?? "211 100% 68%";
+  /* The close-up surface, and the outlines over it. Both live in the theme's
+     Maps group rather than in a control of their own, so the detailed map can
+     be turned off again without a new button anywhere. */
+  const mapDetail = theme.mapDetail ?? "detailed";
+  const mapBorders = theme.mapBorders ?? "on";
+  const mapBorderColor = theme.mapBorderColor ?? "207 90% 54%";
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -352,6 +456,43 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
     const scene = g.scene();
     const camera = g.camera();
     const group = new THREE.Group();
+
+    /* ---- the ground, close up ----
+       Two layers over the globe's own picture: the detail tile for wherever
+       the viewer is, and the country outlines. Both are built from getCoords,
+       the same call the towers are placed with, so neither can drift out of
+       register with them. Both are ordinary objects in the scene, so switching
+       the detailed map off is removing one of them rather than undoing a
+       shader. */
+    const coordsAt = (lat: number, lng: number, alt: number) => g.getCoords(lat, lng, alt);
+    /* Anisotropic filtering is what a surface seen at a grazing angle needs,
+       and flying low over the planet is nothing but grazing angles. Nothing
+       was asking for it, on the globe's own map either. */
+    let maxAniso = 1;
+    try { maxAniso = g.renderer().capabilities.getMaxAnisotropy(); } catch { /* no renderer yet */ }
+    const detail: DetailLayer = createDetail(coordsAt, maxAniso);
+    const borders: Borders = createBorders(coordsAt);
+    detail.setEnabled(mapDetail !== "classic");
+    borders.setColour(cssHsl(mapBorderColor), 0.18);
+    borders.object.visible = mapBorders !== "off";
+    scene.add(detail.object);
+    scene.add(borders.object);
+
+    /* And give the globe's OWN picture the same filtering. It is loaded
+       asynchronously by three-globe, so this waits for it rather than assuming
+       it has arrived. */
+    let anisoDone = false;
+    const sharpenGlobe = () => {
+      if (anisoDone) return;
+      scene.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        const mat = mesh.material as THREE.MeshPhongMaterial | undefined;
+        if (!mesh.isMesh || !mat || !mat.map || mat.map.anisotropy === maxAniso) return;
+        mat.map.anisotropy = maxAniso;
+        mat.map.needsUpdate = true;
+        anisoDone = true;
+      });
+    };
 
     // Colors from the active skin. self/peer/net towers and the peer/mesh
     // connection tubes reuse the same "peer" and "network" roles as their
@@ -395,6 +536,8 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
         const d2 = base.clone().add(east.multiplyScalar(offs[i][0])).add(north.multiplyScalar(offs[i][1])).normalize();
         const scale = p.kind === "self" ? 2 : 1; // your node is twice the size
         const t = makeTower(COLORS[p.kind], scale);
+        /* Only yours gets a beam. Two hundred of them would be a forest. */
+        if (p.kind === "self") t.add(makeHomeBeacon(COLORS.self, PYR_H * scale));
         t.position.copy(d2.clone().multiplyScalar(R));
         t.quaternion.setFromUnitVectors(UP, d2);
         t.userData.node = p; // for hover
@@ -561,6 +704,39 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
 
     scene.add(group);
 
+    /* Hand the live scene to the game, if one is running. These are the REAL
+       tower tips off the real map, so docking lines up with the towers you can
+       see rather than with a second set built from the same numbers. */
+    const attachFlight = () => {
+      const f = flightRef.current;
+      if (!f || attachedRef.current === f) return;
+      if (attachedRef.current) attachedRef.current.detach();
+      attachedRef.current = f;
+      f.attach({
+        scene,
+        camera: camera as THREE.PerspectiveCamera,
+        tips: tipOf,
+        selfIp: selfIp ?? null,
+        radius: R,
+        dom,
+        scaleTowers(s: number) {
+          for (const [ip, t] of towerByIp) {
+            t.scale.setScalar(s);
+            const p = t.userData.node as { kind: keyof typeof COLORS } | undefined;
+            const built = p?.kind === "self" ? 2 : 1;
+            /* The tip is the top of the mast, so it comes down with it. */
+            tipOf.set(ip, t.position.clone().normalize().multiplyScalar(R + PYR_H * built * s));
+          }
+          return tipOf;
+        },
+      });
+    };
+    const detachFlight = () => {
+      if (!attachedRef.current) return;
+      attachedRef.current.detach();
+      attachedRef.current = null;
+    };
+
     // Hover tooltips: raycast the towers on pointer move. A hit farther from the
     // camera than the globe centre is on the back side (occluded) — ignore it.
     const raycaster = new THREE.Raycaster();
@@ -589,7 +765,7 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
 
     // Stake-winner coin: a spinning Divi coin on a 2x gold pyramid, moved onto
     // whichever tower currently holds the (placeholder) winner.
-    const { deco: winnerDeco, pivot: coinPivot, glow: winnerGlow, particles: winnerParticles } = makeWinnerDeco(selfCss, cssHsl(mapStakeAccent));
+    const { deco: winnerDeco, pivot: coinPivot, glow: winnerGlow, particles: winnerParticles } = makeWinnerDeco(cssHsl(mapStakeTower), cssHsl(mapStakeAccent));
     group.add(winnerDeco);
     let curWinner: string | null = null;
 
@@ -597,10 +773,42 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
     let last = performance.now();
     let goldOn = false; // was the gold ripple painting last frame (to restore once)
     let lastTrig = 0; // last pulse trigger seen (to hand out fresh legs)
+    const controls = g.controls() as unknown as { enabled: boolean; autoRotate: boolean; update: () => void };
+    let wasFlying = false;
     const animate = () => {
       const now = performance.now();
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
+
+      /* The game owns the camera while it runs. Orbit controls have to be off
+         or they fight it back to their own target every frame. Everything else
+         in this loop keeps running, which is the point: the helix characters,
+         the query ripple and the stake-winner coin all carry on animating
+         while you fly through them. */
+      /* ---- the ground under whoever is looking ----
+         The camera's own position, turned back into a place on Earth. That is
+         the right question in both views without knowing which one is running:
+         orbiting the map, it is what is centred; flying, it is where the ship
+         is. Altitude comes back in globe radii, which is what decides whether
+         any of this is worth fetching. */
+      sharpenGlobe();
+      const eye = camera.position;
+      const geo = g.toGeoCoords({ x: eye.x, y: eye.y, z: eye.z });
+      detail.update(geo.lat, geo.lng, geo.altitude, dt);
+
+      const isFlying = !!flightRef.current;
+      if (isFlying !== wasFlying) {
+        wasFlying = isFlying;
+        if (isFlying) { attachFlight(); controls.enabled = false; controls.autoRotate = false; }
+        else { detachFlight(); controls.enabled = true; }
+      }
+      if (isFlying) {
+        attachFlight();
+        flightRef.current!.frame(dt);
+      }
+
+      tickTowerLights(now / 1000);
+
       const cam = camera.position;
 
       // Move / show the winner coin when the winning node changes.
@@ -732,17 +940,29 @@ export function GlobeMap({ points, center, getWinnerIp }: { points: GlobePoint[]
 
     return () => {
       cancelAnimationFrame(raf);
+      detachFlight();
       dom.removeEventListener("pointermove", onMove);
+      scene.remove(detail.object);
+      scene.remove(borders.object);
+      detail.dispose();
+      borders.dispose();
       scene.remove(group);
       group.traverse((o) => {
         const m = o as THREE.Mesh;
         if (m.geometry) m.geometry.dispose();
         const mat = m.material as THREE.Material | THREE.Material[] | undefined;
-        if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-        else if (mat) mat.dispose();
+        /* Shared tower materials outlive any one scene build. Disposing one
+           here would blank every tower the next time the map is opened. */
+        const drop = (x: THREE.Material) => { if (!x.userData?.shared) x.dispose(); };
+        if (Array.isArray(mat)) mat.forEach(drop);
+        else if (mat) drop(mat);
       });
     };
-  }, [sig, ready, mapSelf, mapPeerLink, mapNetworkLink, mapActivityPulse, mapStakeAccent]);
+    /* The surface settings are in here so that switching between the detailed
+       map and the classic one rebuilds the scene with the right layers, the
+       same way changing a tower colour already does. */
+  }, [sig, ready, mapSelf, mapPeerLink, mapNetworkLink, mapActivityPulse, mapStakeAccent,
+      mapStakeTower, mapDetail, mapBorders, mapBorderColor]);
 
   return (
     <div className="netmap-globe" ref={wrapRef}>

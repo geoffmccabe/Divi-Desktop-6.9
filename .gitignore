@@ -14,3 +14,6 @@ scripts/run-scanner.sh
 # version bumper). They are build noise and clutter another agent's git status.
 __pycache__/
 *.pyc
+
+# wrangler's local simulated R2/KV, created by `wrangler r2 object` without --remote
+.wrangler/
