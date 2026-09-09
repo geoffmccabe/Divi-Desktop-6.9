@@ -17,6 +17,8 @@ import {
 import { loadShip, saveShip } from "./shipChoice";
 import { WeaponStore } from "./WeaponStore";
 import { TestFire } from "./TestFire";
+import { ItemStore } from "./ItemStore";
+import { PointsPanel } from "./PointsPanel";
 import type { WeaponSpec } from "./weaponCatalog";
 import { saveShip as saveShipRemote } from "./rebelsShips";
 
@@ -43,7 +45,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
   const [confirmReset, setConfirmReset] = useState(false);
   /* Ships, Weapons, Items. A bar rather than three panels, because they are
      three views of ONE ship: the hull stays on the right whichever is open. */
-  const [tab, setTab] = useState<"ships" | "weapons" | "items">("ships");
+  const [tab, setTab] = useState<"ships" | "weapons" | "items" | "points">("ships");
   /* Which weapon the TEST button is holding down, if any. */
   const [testing, setTestingRaw] = useState<WeaponSpec | null>(null);
   const setTesting = (spec: WeaponSpec, down: boolean) =>
@@ -134,7 +136,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
         <div className="ship-market-side">
           {/* Above the stats, as asked. */}
           <div className="ship-market-tabs">
-            {(["ships", "weapons", "items"] as const).map((t) => (
+            {(["ships", "weapons", "items", "points"] as const).map((t) => (
               <button
                 type="button"
                 key={t}
@@ -147,12 +149,8 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
           </div>
 
           {tab === "weapons" && <WeaponStore ship={ship.id} onTest={setTesting} />}
-          {tab === "items" && (
-            <p className="ship-market-note">
-              Nothing to fit yet. This is where hull upgrades and consumables
-              will live.
-            </p>
-          )}
+          {tab === "items" && <ItemStore ship={ship.id} />}
+          {tab === "points" && <PointsPanel />}
 
           {tab === "ships" && <>
           <div className="ship-market-stats">

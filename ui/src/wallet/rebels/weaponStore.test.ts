@@ -212,6 +212,61 @@ async function main() {
     };
   }
 
+
+  /* ------------------------------------------------------------- the gear */
+  {
+    const I = await import("./itemCatalog");
+    const F = await import("./orbitFlight");
+    A.resetArmouryForTests();
+    const ship = "space_SM_Ship_Fighter_01";
+
+    ok("six items", I.ITEMS.length === 6, `${I.ITEMS.length}`);
+    ok("three torpedo tiers and three magazines",
+       I.ITEMS.filter((x) => x.kind === "torpedo").length === 3
+       && I.ITEMS.filter((x) => x.kind === "mag").length === 3);
+    /* Geoff's prices: a thousand, two, then four. */
+    ok("priced 1000, 2000, 4000",
+       I.ITEMS.filter((x) => x.kind === "torpedo").map((x) => x.points).join(",") === "1000,2000,4000"
+       && I.ITEMS.filter((x) => x.kind === "mag").map((x) => x.points).join(",") === "1000,2000,4000");
+    ok("magazines are +30, +60 and +90 percent",
+       I.ITEMS.filter((x) => x.kind === "mag").map((x) => Math.round(x.amount * 100)).join(",") === "30,60,90");
+
+    /* ---- TIERS REPLACE, THEY DO NOT STACK ----
+       Someone who worked up from +1 to +3 has three extra tubes, not six.
+       Reading the best owned rather than summing means an upgrade never has to
+       remember to take the old one away. */
+    ok("a fresh hull carries the standard load",
+       I.torpedoBonus(A.owned(ship)) === 0 && I.magBonus(A.owned(ship)) === 0);
+
+    A.earnPoints(100_000);
+    ok("the first tier can be bought", A.buyWithPoints(ship, "torp1").ok);
+    ok("and gives one more tube", I.torpedoBonus(A.owned(ship)) === 1);
+    ok("the third cannot be skipped", !A.buyWithPoints(ship, "torp3").ok);
+    ok("second bought", A.buyWithPoints(ship, "torp2").ok);
+    ok("third bought", A.buyWithPoints(ship, "torp3").ok);
+    ok("owning all three is three more, not six",
+       I.torpedoBonus(A.owned(ship)) === 3, `${I.torpedoBonus(A.owned(ship))}`);
+
+    A.buyWithPoints(ship, "mag1");
+    A.buyWithPoints(ship, "mag2");
+    ok("and two magazines is sixty percent, not ninety",
+       Math.abs(I.magBonus(A.owned(ship)) - 0.6) < 1e-9, `${I.magBonus(A.owned(ship))}`);
+
+    /* ---- AND THE SHIP ACTUALLY CARRIES IT ---- */
+    const plain = F.createFlight(new THREE.Vector3(0, 0, R + 8));
+    const kitted = F.createFlight(new THREE.Vector3(0, 0, R + 8), {
+      torpedoes: I.torpedoBonus(A.owned(ship)), magazine: I.magBonus(A.owned(ship)),
+    });
+    ok("a kitted ship launches with more tubes",
+       kitted.torpedoes === plain.torpedoes + 3, `${plain.torpedoes} -> ${kitted.torpedoes}`);
+    ok("and a bigger magazine",
+       kitted.ammo === Math.round(plain.ammo * 1.6), `${plain.ammo} -> ${kitted.ammo}`);
+
+    /* Gear follows the hull, like the guns. */
+    ok("another hull has none of it",
+       I.torpedoBonus(A.owned("space_SM_Ship_Stealth_02")) === 0);
+  }
+
   console.log(out.join("\n"));
   console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);

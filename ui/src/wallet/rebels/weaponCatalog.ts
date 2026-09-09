@@ -117,7 +117,7 @@ const beamTier = (
  */
 export const WEAPONS: WeaponSpec[] = [
   {
-    key: "pulse", slot: 1, name: "Pulse Laser",
+    key: "pulse", slot: 1, name: "Pulse Gun",
     note: "Twin barrels, one shot a press.", kind: "pulse",
     points: 0, needs: null, damage: 1,
   },

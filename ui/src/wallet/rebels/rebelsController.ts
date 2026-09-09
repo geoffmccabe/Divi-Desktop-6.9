@@ -40,7 +40,9 @@ import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
-import { hasWeapon, earnPoints, spendable } from "./rebelsArmoury";
+import {
+  hasWeapon, earnPoints, spendable, extraTorpedoes, extraMagazine,
+} from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
   type Fx, type ShieldRig,
@@ -861,7 +863,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     const at = index >= 0 && tipList[index]
       ? tipList[index].clone()
       : new THREE.Vector3(0, 0, 106);
-    flight = createFlight(at);
+    /* What this hull carries beyond the standard, from the store. Read at the
+       moment of launch so a purchase made between sorties is felt on the next
+       one without the panel having to be reopened. */
+    flight = createFlight(at, {
+      torpedoes: extraTorpedoes(loadShip()),
+      magazine: extraMagazine(loadShip()),
+    });
     setHud({ dead: false });
   }
 

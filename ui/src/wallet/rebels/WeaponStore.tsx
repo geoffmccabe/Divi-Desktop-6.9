@@ -70,8 +70,18 @@ export function WeaponStore({ ship, onTest }: {
     setNote(r.ok ? `${spec.name} fitted` : `${spec.name}: ${r.why}`);
   };
 
+  /* ---- A FRAGMENT, NOT A WRAPPER ----
+     The specs list on the Ships tab scrolls perfectly and always has. The only
+     structural difference here was that the armoury put its scrolling list one
+     level DEEPER: side column -> store -> list, where the specs go side column
+     -> list. Every level of a flex chain has to be told it may shrink, and one
+     link in that chain being wrong is invisible in the CSS and total in effect.
+     
+     Rather than work out which link, the difference is removed: these are now
+     direct children of the side column, exactly as the specs are, and the list
+     carries the same rules as the thing that already works. */
   return (
-    <div className="wpn-store">
+    <>
       <div className="wpn-purse">
         <span>POINTS</span><b>{Math.floor(points).toLocaleString()}</b>
         <em>one for each DIVI you bring home</em>
@@ -153,6 +163,6 @@ export function WeaponStore({ ship, onTest }: {
       <p className="wpn-note">
         {note || `${mine.length} of ${WEAPONS.length} fitted. Weapons stay with this hull.`}
       </p>
-    </div>
+    </>
   );
 }

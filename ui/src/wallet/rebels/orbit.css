@@ -574,7 +574,7 @@
    three screens: the hull stays on the right whichever is open, which is why
    this is a bar in the left column and not a set of panels. */
 .ship-market-tabs {
-  display: grid; grid-template-columns: repeat(3, 1fr);
+  display: grid; grid-template-columns: repeat(4, 1fr);
   gap: 6px; margin-bottom: 12px;
 }
 .ship-market-tabs button {
@@ -602,16 +602,16 @@
    list's own overflow therefore never had anything to overflow: the scrollbar
    simply never appeared. The specs list above it has had exactly this pair of
    lines all along, which is why THAT one scrolls. */
-.wpn-store {
-  display: flex; flex-direction: column; gap: 10px;
-  flex: 1 1 auto; min-height: 0;
-}
+/* The armoury has no wrapper of its own: its parts are direct children of the
+   side column, exactly as the specs list is, so the flex chain that scrolls is
+   the same one that already works on the Ships tab. See WeaponStore. */
 .wpn-purse {
   display: flex; align-items: baseline; gap: 8px;
   /* Fixed height, so the list below is what gives way when the window is
      short. A header that shrinks takes the space the scroll was supposed to
      get. */
   flex: 0 0 auto;
+  margin-bottom: -4px;
   padding: 8px 10px;
   background: hsl(var(--rebels-hud) / 0.06);
   border: 1px solid hsl(var(--rebels-hud) / 0.16);
@@ -676,6 +676,49 @@
 .wpn-test:hover { color: hsl(var(--rebels-hud)); border-color: hsl(var(--rebels-hud) / 0.7); }
 .wpn-test:active { background: hsl(var(--rebels-hud) / 0.2); }
 
+/* ---- points and cashing out ---- */
+.pts-block {
+  flex: 0 0 auto;
+  padding: 11px 12px;
+  background: hsl(var(--rebels-hud) / 0.05);
+  border: 1px solid hsl(var(--rebels-hud) / 0.14);
+  border-radius: 5px;
+}
+.pts-block h4 {
+  margin: 0 0 5px; font-size: 10px; letter-spacing: 0.11em; font-weight: 600;
+}
+.pts-block p { margin: 0 0 9px; font-size: 10.5px; opacity: 0.55; }
+.pts-row { display: flex; gap: 5px; margin-bottom: 9px; flex-wrap: wrap; }
+.pts-row button {
+  flex: 1 1 auto; padding: 6px 4px;
+  font: 600 10px/1 var(--font-mono);
+  color: hsl(var(--rebels-hud) / 0.6);
+  background: hsl(var(--rebels-hud) / 0.06);
+  border: 1px solid hsl(var(--rebels-hud) / 0.16);
+  border-radius: 4px; cursor: pointer;
+}
+.pts-row button.on {
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.18);
+  border-color: hsl(var(--rebels-hud) / 0.5);
+}
+.pts-quote {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-bottom: 9px;
+}
+.pts-quote b { font-size: 14px; color: var(--rebels-points, #7fe3a0); }
+.pts-quote span { font-size: 10.5px; opacity: 0.6; }
+.pts-go {
+  width: 100%; padding: 8px;
+  font: 600 10.5px/1 var(--font-mono); letter-spacing: 0.08em;
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.16);
+  border: 1px solid hsl(var(--rebels-hud) / 0.45);
+  border-radius: 4px; cursor: pointer;
+}
+.pts-go:disabled { opacity: 0.4; cursor: not-allowed; }
+.pts-small { display: block; margin-top: 6px; font-size: 9.5px; font-style: normal; opacity: 0.5; }
+
 /* ---- a weapon going off in the shop ---- */
 .test-fire {
   position: absolute; inset: 0;
@@ -683,13 +726,30 @@
   pointer-events: none; z-index: 3;
 }
 .test-beam {
-  /* From the nose upward, which is where the ship is pointing in flight mode. */
+  /* From the nose upward, which is where the ship is pointing in flight mode.
+     The shape itself is a clip path set on the element: see TestFire. A rounded
+     rectangle is a cylinder however it is coloured. */
+  position: absolute;
+  bottom: 46%;
   height: 46%;
-  align-self: flex-start;
-  border-radius: 40% 40% 6px 6px;
-  filter: blur(0.4px);
+  filter: blur(0.5px);
   mix-blend-mode: screen;
   animation: test-beam-throb 0.25s ease-in-out infinite alternate;
+}
+
+/* ---- rounds, for the guns that fire them ---- */
+.test-shot {
+  position: absolute;
+  width: 7px; height: 20px;
+  border-radius: 4px;
+  background: linear-gradient(to top, #ffb347, #fff3c4);
+  box-shadow: 0 0 8px #ffb347cc;
+  mix-blend-mode: screen;
+}
+.test-shot-mini {
+  width: 4px; height: 12px;
+  background: linear-gradient(to top, #ffe6a8, #ffffff);
+  box-shadow: 0 0 6px #ffe6a8aa;
 }
 @keyframes test-beam-throb { from { opacity: 0.72; } to { opacity: 1; } }
 .test-secs {

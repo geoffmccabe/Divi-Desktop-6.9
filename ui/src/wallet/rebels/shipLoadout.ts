@@ -39,7 +39,7 @@ export interface Weapon {
 /** 1, 2, 3. Energy, and effectively unlimited: they draw on the magazine that
  *  a tower refills. */
 export const PRIMARY: Weapon[] = [
-  { key: "pulse", name: "Pulse Laser", note: "Twin barrels, one shot a press.", ready: true },
+  { key: "pulse", name: "Pulse Gun", note: "Twin barrels, one shot a press.", ready: true },
   { key: "mini", name: "Mini Gun", note: "Twenty a second while held, quarter damage.", ready: true },
   { key: "beam", name: "Beam", note: "Not yet fitted.", ready: false },
 ];
