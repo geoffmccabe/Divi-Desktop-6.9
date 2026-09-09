@@ -1,3 +1,4 @@
+import mascot from "../assets/red_panda_exchange_small.webp";
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "../Icon";
@@ -315,10 +316,11 @@ export function PurchaseWithDivi({
             {footnote && stage !== "done" && <p className="pd-foot">{footnote}</p>}
           </div>
 
-          {/* Mascot goes here. Placeholder until the Red Panda artwork exists;
-              the space is reserved now so the layout does not shift later. */}
+          {/* The Red Panda at the exchange desk. Square, from the sticker pack,
+              re-encoded small since the whole app is one inlined file and a
+              third of a megabyte of mascot would be paid for on every start. */}
           <div className="pd-mascot" aria-hidden="true">
-            <span className="pd-mascot-note">Red Panda</span>
+            <img src={mascot} alt="" draggable={false} />
           </div>
         </div>
 

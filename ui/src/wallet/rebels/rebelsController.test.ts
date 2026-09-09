@@ -14,6 +14,8 @@ import * as THREE from "three";
 import { createRebels } from "./rebelsController";
 import { MAX_SHIELD, MAX_AMMO } from "./orbitFlight";
 import { R } from "./orbitWorld";
+import { grant } from "./rebelsArmoury";
+import { loadShip } from "./shipChoice";
 
 /* The controller listens on window for key-up and focus loss. Node has no
    window, so stand one up; `document` is deliberately left undefined so the
@@ -572,6 +574,17 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("slot 1 is the pulse laser and costs a whole round", Math.abs(one - 1) < 0.01,
      `${one} spent`);
 
+  /* ---- A GUN HAS TO BE OWNED ----
+     Slot 2 is the mini gun, and it now costs a thousand points. An unbought
+     gun refuses the key and says where to get it, which is the whole reason
+     the store exists. */
+  press("keydown", { key: "2" });
+  press("keyup", { key: "2" });
+  ok("an unbought gun refuses the key", /SPACESHIPS/.test(ctl.hud().note), ctl.hud().note);
+  ok("and leaves the pulse laser armed", ctl.hud().primary === 0, `${ctl.hud().primary}`);
+
+  /* Buy it, the way the store does. */
+  grant(loadShip(), "mini");
   press("keydown", { key: "2" });
   press("keyup", { key: "2" });
   const mini = spend(30);
@@ -593,9 +606,16 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const chosen = ctl.hud().primary;
   press("keydown", { key: "3" });
   press("keyup", { key: "3" });
-  ok("an unfitted slot says so", /not yet fitted/.test(ctl.hud().note), ctl.hud().note);
+  ok("an unbought slot says where to buy it", /SPACESHIPS/.test(ctl.hud().note), ctl.hud().note);
   ok("and does not change the weapon", ctl.hud().primary === chosen,
      `${chosen} -> ${ctl.hud().primary}`);
+
+  /* And all six numbers now walk the one line of guns, rather than 1-3 being
+     the primary and 4-6 the secondary. */
+  grant(loadShip(), "beam1");
+  press("keydown", { key: "3" });
+  press("keyup", { key: "3" });
+  ok("a bought beam arms on its own number", ctl.hud().primary === 2, `${ctl.hud().primary}`);
 
   /* THE WHEEL MUST NOT SHOOT. Geoff: "clicking the mousewheel fires bullets and
      I don't want it to do that, we should have that reserved for something

@@ -25,8 +25,20 @@ const FLASH_FOR = 0.32;
 const DRONE_CAP = 144;
 /** Their rounds. One per drone per thirty seconds, but they last a while. */
 const ORB_CAP = 96;
-/** A tenth of the fighter's hull ball across, as asked. */
-const COIN_RADIUS = 0.031;
+/**
+ * How big a coin is drawn.
+ *
+ * It was a tenth of a fighter's hull ball, which is six hundredths of a unit
+ * across: a red speck. That was fine while it was only a thing to fly into, and
+ * hopeless the moment it had to carry a logo somebody could read. Geoff: "make
+ * sure the logo is readable."
+ *
+ * At a third of a unit it is about a quarter of a ship's length, which is a
+ * coin you can see from a boost away and identify from close up. It changes
+ * nothing about catching one: the pickup radius is 2.2 units and lives in the
+ * simulation, not here.
+ */
+const COIN_RADIUS = 0.33;
 /* Warm gold going out, green coming back, pale for the mini gun: the same
    language the rounds themselves use. */
 const MINE_TRAIL = [1.0, 0.78, 0.25] as const;
@@ -151,6 +163,12 @@ export interface Fx {
   }[], now: number): void;
   /** Their fire: red energy spheres, pulsing in size and brightness. */
   drawOrbs(orbs: { pos: THREE.Vector3; phase?: number }[], now: number): void;
+  /** Beams, lit for half a second each. A cone rather than a line, because
+   *  that is what they hit. */
+  drawBeams(beams: Array<{
+    pos: THREE.Vector3; fwd: THREE.Vector3; life: number;
+    half: number; reach: number; colour: number;
+  }>, maxLife: number): void;
   /** The lines rounds leave behind them. */
   drawTracers(tracers: {
     from: THREE.Vector3; to: THREE.Vector3; life: number; hostile: boolean; mini: boolean; live: boolean;
@@ -246,6 +264,39 @@ export function createFx(): Fx {
   orbGlow.renderOrder = 2;
   bin.push(orbGeo, orbCoreMat, orbGlowMat, orbCore, orbGlow);
 
+  /* ---- beams ----
+     A cone, drawn as it is aimed: the same shape the damage is worked out in,
+     so what a player sees is what the beam actually covers. A cylinder would
+     be prettier and would lie about the edges.
+
+     Built pointing down -Z with its tip at the origin, so placing one is a
+     look-at and a scale rather than any arithmetic at the call site. Additive
+     and unlit, because a beam is light rather than a thing. */
+  const beamGeo = new THREE.ConeGeometry(1, 1, 24, 1, true);
+  /* Cone geometry stands on its base pointing +Y. Turned to point down -Z and
+     shifted so the TIP is at the origin, which is where the ship is. */
+  beamGeo.translate(0, -0.5, 0);
+  beamGeo.rotateX(-Math.PI / 2);
+  const beamMats: THREE.MeshBasicMaterial[] = [];
+  const beamMeshes: THREE.Mesh[] = [];
+  for (let i = 0; i < 8; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(beamGeo, mat);
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 2;
+    group.add(mesh);
+    beamMats.push(mat);
+    beamMeshes.push(mesh);
+    /* The geometry is shared and disposed once below; only the material is
+       this mesh's own. */
+    bin.push(mat);
+  }
+  bin.push(beamGeo);
+
   /* ---- explosion debris ---- */
   const shardGeo = new THREE.TetrahedronGeometry(1, 0);
   const shardMat = new THREE.MeshBasicMaterial({ vertexColors: true });
@@ -324,16 +375,47 @@ export function createFx(): Fx {
      onto the sphere six times, one to a face. */
   /* No document means the headless tests, where a texture loader reaches for an
      Image that is not there. The coins are still there, just plain. */
+  /* ---- WHY THE LOGO WAS INVISIBLE ----
+     The artwork is a WHITE D on a red disc. The material multiplied the whole
+     texture by red, and white times red is red, so the D was being erased by
+     the tint that was supposed to make the coin look like a coin. Geoff: "I
+     don't see the Divi D logo in them so nobody will know what they are."
+
+     So the colour is left alone and the artwork carries it, which is what the
+     artwork was for. The transparent corners of the disc are filled with the
+     same red first: at three across and two down the tiles meet, and an
+     unfilled corner is a hole in the coin rather than a gap between logos. */
   const coinTex = typeof document === "undefined" ? null : (() => {
-    const t = new THREE.TextureLoader().load(diviLogo);
+    const size = 256;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    const t = new THREE.CanvasTexture(canvas);
+    if (ctx) {
+      ctx.fillStyle = "#e8253f";
+      ctx.fillRect(0, 0, size, size);
+      const img = new Image();
+      img.onload = () => {
+        /* Inset a little so each D sits ON the red rather than running to the
+           edge and touching the one on the next face. */
+        const pad = size * 0.06;
+        ctx.drawImage(img, pad, pad, size - pad * 2, size - pad * 2);
+        t.needsUpdate = true;
+      };
+      img.src = diviLogo;
+    }
     t.wrapS = THREE.RepeatWrapping;
     t.wrapT = THREE.RepeatWrapping;
+    /* Six of them: three round the equator and two from pole to pole, so
+       whichever way a coin is spinning there is always one facing you. */
     t.repeat.set(3, 2);
     t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
     return t;
   })();
-  const coinGeo = new THREE.SphereGeometry(COIN_RADIUS, 12, 10);
-  const coinMat = new THREE.MeshBasicMaterial({ map: coinTex, color: 0xff4d4d });
+  const coinGeo = new THREE.SphereGeometry(COIN_RADIUS, 20, 14);
+  /* White, so the artwork's own colours survive. See above. */
+  const coinMat = new THREE.MeshBasicMaterial({ map: coinTex, color: 0xffffff });
   const coinMesh = new THREE.InstancedMesh(coinGeo, coinMat, COIN_CAP);
   coinMesh.frustumCulled = false;
   coinMesh.count = 0;
@@ -511,6 +593,30 @@ export function createFx(): Fx {
       orbCore.instanceMatrix.needsUpdate = true;
       orbGlow.instanceMatrix.needsUpdate = true;
       if (orbGlow.instanceColor) orbGlow.instanceColor.needsUpdate = true;
+    },
+
+    drawBeams(beams, maxLife) {
+      for (let i = 0; i < beamMeshes.length; i++) {
+        const b = beams[i];
+        const mesh = beamMeshes[i];
+        if (!b) { mesh.visible = false; continue; }
+        mesh.visible = true;
+        mesh.position.copy(b.pos);
+        dir.copy(b.fwd).normalize();
+        /* The cone points down -Z, which is where a quaternion built from the
+           z axis puts it. */
+        mesh.quaternion.setFromUnitVectors(zAxis, dir.negate());
+        /* The radius at the far end is what the half-angle actually subtends,
+           so the drawn edge is the edge that does damage. */
+        const rad = Math.tan(b.half) * b.reach;
+        mesh.scale.set(rad, rad, b.reach);
+        /* Brightest at the instant it fires and fading over its half second,
+           which is what makes a held trigger read as a pulsing beam rather
+           than a solid bar. */
+        const k = Math.max(0, Math.min(1, b.life / Math.max(0.001, maxLife)));
+        beamMats[i].color.setHex(b.colour);
+        beamMats[i].opacity = 0.14 + 0.4 * k;
+      }
     },
 
     drawTorpedoes(torpedoes) {

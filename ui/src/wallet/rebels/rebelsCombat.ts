@@ -4,6 +4,7 @@
 
 import * as THREE from "three";
 import { R, cruiseScale } from "./orbitWorld";
+import { BEAM_SECONDS, type WeaponSpec } from "./weaponCatalog";
 import {
   droneClass, newGroup, newFleetId, stepFlock, reslot, slotOffsets,
   FLEET_SIZE, DRONE_CAP, DRONE_R, DRONE_RELOAD, DRONE_BULLET_SPEED, DRONE_FIRE_RANGE,
@@ -146,13 +147,53 @@ export const JUNK_R = 0.7;
 export const COIN_VALUE = 0.02;
 /** Five a kill, which is a tenth of a DIVI: exactly the rate the payout uses. */
 export const COIN_PER_KILL = 5;
-export const COIN_MU = 60_000;
+/**
+ * The fastest a coin may ever travel.
+ *
+ * Eighty percent of a boosting ship, as asked. Written out rather than imported
+ * from the flight model, because orbitFlight already imports from this file and
+ * closing that loop is how a bundle ends up reading a constant before it is
+ * initialised: a white screen that typechecks perfectly. The test asserts the
+ * two against each other instead, so they cannot drift apart quietly.
+ *
+ * A hard limit as well as a gentler orbit. Gravity alone keeps to it at the
+ * height coins are thrown to, but a coin flung clear by a dying fighter, or
+ * dragged along by the magnet, can pick up more than that; and a coin quicker
+ * than the ship is not a reward, it is a tease.
+ */
+export const COIN_TOP = 15.2;
+
+/**
+ * How hard the planet pulls on a coin.
+ *
+ * Chosen from the speed a coin is allowed to reach rather than the other way
+ * round. A body in a circular orbit at radius r travels at sqrt(mu/r), so
+ * wanting a particular speed at the height coins actually sit fixes mu:
+ *
+ *   mu = v^2 * r  =  COIN_ORBIT^2 * (R + 14)
+ *
+ * It used to be sixty thousand, which at that height is twenty-three units a
+ * second against a player who cruises at eight and boosts to nineteen. The
+ * coins were simply faster than the ship. Geoff: "they seem to move too fast
+ * and I can't catch up to them."
+ *
+ * The orbit is deliberately set UNDER the ceiling rather than at it. Sitting a
+ * coin exactly at its own speed limit means the smallest nudge — and the throw
+ * already carries a few percent of scatter — takes it over, gets it clamped,
+ * and the clamp is energy removed from an orbit. Coins tuned that way came out
+ * of the sky and were in the planet inside two minutes, which the test caught.
+ * Eighty-two percent leaves the ceiling for what it is for: coins flung clear
+ * by a dying fighter, or dragged along by the magnet.
+ */
+export const COIN_ORBIT = COIN_TOP * 0.82;
+export const COIN_MU = Math.round(COIN_ORBIT * COIN_ORBIT * (R + 14));
 /** Radius of the sphere itself: a tenth of the fighter's hull ball. */
 export const COIN_R = 0.031;
 /** How close counts as collected, and how close before it starts coming to you. */
 export const COIN_PICKUP = 2.2;
 export const COIN_MAGNET = 11;
 export const COIN_MAX = 400;
+
 
 export interface Coin {
   pos: THREE.Vector3;
@@ -200,9 +241,40 @@ export const TORPEDO_BLAST = 11;
    itself is gone, then fades. This is not decoration: it is how a player works
    out that they are being shot at from behind or from the side, and where the
    shooter must be, in a game where the view only faces one way. */
-/** How long before impact the cockpit calls out an incoming round. Half a
- *  second is enough to reach for the right button and not enough to ignore. */
-export const WARN_LEAD = 0.5;
+/**
+ * How far ahead of impact the cockpit starts calling a round, and how close
+ * that round has to be for it to count as near.
+ *
+ * BOTH, because either alone is useless here. Fighters aim EXACTLY at the
+ * player: enemyFire takes the vector to the ship and normalises it, so every
+ * round in the game leaves its barrel on a perfect collision course. "Is
+ * anything on course to hit me" is therefore not a rare event, it is the
+ * ordinary state of being shot at, and asking it over a two second window
+ * measured 43% of frames warning with barely half a round in the air. Geoff:
+ * "the warning sound is going off far too much, it's almost continual."
+ *
+ * So the question is imminence rather than intent. A round is called when it is
+ * both about to arrive AND already close, and it stops being called the instant
+ * it is neither: the test runs every frame against where the ship is NOW, so
+ * flying out of the line silences it immediately, which is what was asked for.
+ */
+export const WARN_LEAD = 0.6;
+/**
+ * And no round further away than this is "near", whatever its trajectory.
+ *
+ * Thirty-four units, which at the speed a fighter's round travels is about
+ * four tenths of a second out. That is the gate that actually bites: the first
+ * attempt at this used a hundred and thirty, and since a round only covers
+ * seventy-nine units inside the time window, it never excluded anything at all.
+ *
+ * Measured over four minutes of a real wave, against the version that was
+ * reported: frames with the alarm sounding fall from 53% to 30%, and the pips
+ * actually heard from 2.0 a second to 0.9. And it costs nothing, which is the
+ * part worth knowing: every single round that went on to hit was still
+ * announced, 278 out of 278. The alarm was not being useful for the other
+ * seventy percent of the time, it was just being loud.
+ */
+export const WARN_RANGE = 34;
 /** What a round has to come within to count as on course. */
 export const PLAYER_HIT_R = 1.4;
 
@@ -244,9 +316,6 @@ export interface Bullet {
   phase?: number;
   /** The line this round is drawing behind it. */
   tracer?: Tracer;
-  /** The cockpit has already called this one out. Once each, or a stream of
-   *  fire would be one long tone. */
-  warned?: boolean;
 }
 
 export interface Enemy {
@@ -424,6 +493,9 @@ export interface CombatState {
   junk: Junk[];
   coins: Coin[];
   tracers: Tracer[];
+  /** Beams currently lit. Drawn, not travelling: the damage was done when they
+   *  were fired. */
+  beams: BeamShot[];
   events: CombatEvent[];
   /** The wave in progress, or null when nothing is being sent. */
   wave: Wave | null;
@@ -438,6 +510,7 @@ export interface CombatState {
 export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
+    beams: [],
     wave: null, flocks: [],
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
@@ -760,8 +833,81 @@ export function fireMini(
   addTracer(c, b);
 }
 
+/* ---- how good a shot each tier is ----
+   Geoff: "adding some randomness to their aim, and the T7 is right on target
+   by only 0.3% off." One figure per tier, tier one first. The figure is a
+   fraction of the RANGE: a tier-one fighter thirty units out can miss by up to
+   0.9 of a unit in any direction, which against a hull about a unit and a
+   half across is a shot that lands roughly two times in three. Tier seven at
+   the same range is off by nine hundredths of a unit, which is a hit.
+
+   Geoff's list had eight figures for seven tiers, so the two in the middle
+   (0.7 and 0.5) became one. The shape is his: a steady tightening, and the
+   top tier nearly perfect.
+
+   ---- WHY THERE IS A SCALE ON IT ----
+   Taken raw, as a fraction of the range, the figures do not do what they are
+   for. The hull is 1.4 units across at the widest and fighters open fire from
+   twenty to seventy units, so three percent of thirty units is 0.9 of a unit:
+   a tier-one fighter that could not miss a stationary ship up close, which is
+   exactly the "always on target" this replaces. Geoff said to scale them if
+   they did not make sense, so they are multiplied by three. Tier one then
+   misses a still ship about half the time at thirty units and most of the
+   time at seventy; tier seven is still off by under a third of a unit at
+   thirty, which is a hit, so it stays what he asked for: right on target.
+
+   Fighters and drones share the table, since both have seven tiers. */
+export const AIM_ERROR = [0.03, 0.025, 0.02, 0.015, 0.01, 0.006, 0.003];
+export const AIM_SPREAD = 3;
+
+export function aimErrorFor(tier: number): number {
+  return AIM_ERROR[Math.max(0, Math.min(AIM_ERROR.length - 1, Math.round(tier) - 1))] * AIM_SPREAD;
+}
+
+const _scatterDir = new THREE.Vector3();
+const _scatterAny = new THREE.Vector3();
+const _scatterOff = new THREE.Vector3();
+
+/**
+ * Where a gun with this much error actually points.
+ *
+ * The true target is pushed sideways, at a random angle round the line of
+ * fire, by a random distance up to `err` times the range. Sideways only: an
+ * error ALONG the line would change nothing about where the round passes the
+ * target, which is what a miss is. `rnd` is injectable so a test can ask for
+ * the worst case and the best.
+ */
+export function scatterAim(
+  from: THREE.Vector3,
+  at: THREE.Vector3,
+  err: number,
+  rnd: () => number = Math.random,
+): THREE.Vector3 {
+  const out = at.clone();
+  if (!(err > 0)) return out;
+  const dir = _scatterDir.copy(at).sub(from);
+  const range = dir.length();
+  if (range < 1e-6) return out;
+  dir.divideScalar(range);
+  /* A direction that is not the line of fire, to cross with. */
+  _scatterAny.set(1, 0, 0);
+  if (Math.abs(dir.x) > 0.9) _scatterAny.set(0, 1, 0);
+  const side = _scatterOff.crossVectors(dir, _scatterAny).normalize();
+  const angle = rnd() * Math.PI * 2;
+  const miss = rnd() * err * range;
+  /* Rotate `side` about `dir` by `angle`, then scale. Rodrigues, with the
+     cross term only, since side is already perpendicular to dir. */
+  const cosA = Math.cos(angle), sinA = Math.sin(angle);
+  const up = _scatterAny.crossVectors(dir, side);
+  out.x += (side.x * cosA + up.x * sinA) * miss;
+  out.y += (side.y * cosA + up.y * sinA) * miss;
+  out.z += (side.z * cosA + up.z * sinA) * miss;
+  return out;
+}
+
 export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
-  const vel = at.clone().sub(e.pos).normalize().multiplyScalar(BULLET_SPEED * 0.6);
+  const aim = scatterAim(e.pos, at, aimErrorFor(e.cls.tier));
+  const vel = aim.sub(e.pos).normalize().multiplyScalar(BULLET_SPEED * 0.6);
   const b: Bullet = {
     pos: e.pos.clone().addScaledVector(vel, 0.02), vel, life: BULLET_LIFE * 1.4, hostile: true,
   };
@@ -778,7 +924,8 @@ export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
    and a bit between them, so a fleet overhead is a steady patter of fire from
    all directions, but no single sphere can ever pin you. */
 export function droneFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
-  const vel = at.clone().sub(e.pos).normalize()
+  const aim = scatterAim(e.pos, at, aimErrorFor(e.cls.tier));
+  const vel = aim.sub(e.pos).normalize()
     .multiplyScalar(BULLET_SPEED * DRONE_BULLET_SPEED);
   const b: Bullet = {
     pos: e.pos.clone().addScaledVector(vel, 0.02), vel,
@@ -877,6 +1024,78 @@ export function spawnFleet(
   return made;
 }
 
+/* ---- the beam ----
+   Not a round. Nothing travels: everything inside a narrow cone in front of
+   the ship takes the damage at the instant it is fired, and the cone is drawn
+   for half a second so it reads as a beam that stayed on.
+
+   That is why it is here and not with the bullets. A beam that fired a very
+   fast round would still be a round: it would miss things it passed through,
+   it would arrive late at range, and it could not hit two fighters at once. */
+
+/** Everything a beam needs to know about itself, taken from the catalogue so
+ *  a new tier is a row rather than a branch. */
+export interface BeamShot {
+  /** Where it came from and which way it points. */
+  pos: THREE.Vector3;
+  fwd: THREE.Vector3;
+  /** Seconds left of it being drawn. */
+  life: number;
+  /** Half the cone's full angle, in radians: what a dot product is compared
+   *  against. */
+  half: number;
+  reach: number;
+  colour: number;
+  owner?: string;
+}
+
+export const BEAM_MAX = 8;
+
+/**
+ * Fire a beam, and hurt everything in the cone.
+ *
+ * Damage is the pulse laser's roll times the tier's multiplier, so a beam is
+ * worth what the catalogue says it is worth and nothing here decides that.
+ *
+ * EVERYTHING in the cone, not the first thing. A cone that stopped at whatever
+ * it touched first would be a bullet with extra steps; the reason to carry a
+ * beam is that it cuts through a formation.
+ */
+export function fireBeam(
+  c: CombatState,
+  spec: WeaponSpec,
+  pos: THREE.Vector3,
+  fwd: THREE.Vector3,
+  owner = "",
+  damageScale = 1,
+): BeamShot {
+  const half = ((spec.cone ?? 2) * Math.PI) / 360;   /* full degrees to half radians */
+  const reach = spec.reach ?? 90;
+  const cos = Math.cos(half);
+  const shot: BeamShot = {
+    pos: pos.clone(), fwd: fwd.clone().normalize(),
+    life: BEAM_SECONDS, half, reach, colour: spec.colour ?? 0xffd83a, owner,
+  };
+  c.beams.push(shot);
+  while (c.beams.length > BEAM_MAX) c.beams.shift();
+
+  const rel = new THREE.Vector3();
+  for (let i = c.enemies.length - 1; i >= 0; i--) {
+    const e = c.enemies[i];
+    rel.copy(e.pos).sub(shot.pos);
+    const range = rel.length();
+    if (range > reach || range < 1e-6) continue;
+    /* Inside the cone, generously: a fighter is a real size, so being a hair
+       outside the line at forty units should still count. The allowance is the
+       body's own angular size at that range. */
+    const slack = Math.atan2(e.drone ? DRONE_R : ENEMY_R, range);
+    if (rel.divideScalar(range).dot(shot.fwd) < Math.cos(half + slack)) continue;
+    void cos;
+    hurtEnemy(c, e, rollLaserDamage() * spec.damage * damageScale, shot.pos, owner);
+  }
+  return shot;
+}
+
 /** Start a round's trail. Called wherever a bullet is created. */
 function addTracer(c: CombatState, b: Bullet): void {
   const t: Tracer = {
@@ -893,13 +1112,23 @@ function addTracer(c: CombatState, b: Bullet): void {
 /** Closest approach of a moving point to a target over one step. Bullets travel
  *  two units a frame and fighters are one across, so testing only the endpoints
  *  would let shots pass straight through. */
+/* Scratch for segmentHit. It is called once per bullet per enemy per frame,
+   which at a full sky is several thousand times, and it used to allocate three
+   vectors on every call. That is tens of thousands of short-lived objects a
+   frame, and the garbage collector pausing to sweep them is exactly the kind
+   of hitch that reads as the game stuttering for no reason. */
+const _warnRel = new THREE.Vector3();
+const _segAb = new THREE.Vector3();
+const _segRel = new THREE.Vector3();
+const _segAt = new THREE.Vector3();
+
 function segmentHit(from: THREE.Vector3, to: THREE.Vector3, target: THREE.Vector3, radius: number): boolean {
-  const ab = to.clone().sub(from);
-  const len2 = ab.lengthSq();
+  _segAb.copy(to).sub(from);
+  const len2 = _segAb.lengthSq();
   if (len2 < 1e-12) return from.distanceTo(target) < radius;
-  let t = target.clone().sub(from).dot(ab) / len2;
+  let t = _segRel.copy(target).sub(from).dot(_segAb) / len2;
   t = Math.max(0, Math.min(1, t));
-  return from.clone().addScaledVector(ab, t).distanceTo(target) < radius;
+  return _segAt.copy(from).addScaledVector(_segAb, t).distanceTo(target) < radius;
 }
 
 /** One flyable ship in the fight, as far as the simulation cares. */
@@ -993,6 +1222,10 @@ function nearestPlayer(w: CombatWorld, to: THREE.Vector3): PlayerBody {
 /** Scratch for the per-group head count. Module level so a frame allocates no
  *  map of its own. */
 const headCount = new Map<number, number>();
+const _drones: Array<Enemy & { group: number; slot: number }> = [];
+/** Time to impact of the nearest round on course, per ship, this frame. Module
+ *  level so a frame allocates no map of its own. */
+const threat = new Map<string, number>();
 
 export function clearEvents(c: CombatState): void {
   c.events.length = 0;
@@ -1049,23 +1282,39 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
 
     /* Is this one going to hit? A straight ray against the player: where in
-       the round's next half second does it come closest, and is that close
-       enough to matter. The player's own motion is left out because a round
-       travels four times faster than the ship, so it barely changes the answer
-       and including it would mean calling out shots a turn has already dealt
-       with. Once per round, or a stream of fire becomes one long tone. */
-    if (!spent && b.hostile && !b.warned) {
+       the round's next couple of seconds does it come closest, and is that
+       close enough to matter. The player's own motion is left out because a
+       round travels four times faster than the ship, so it barely changes the
+       answer and including it would mean calling out shots a turn has already
+       dealt with.
+
+       ---- HOW CLOSE, NOT JUST THAT IT IS COMING ----
+       This used to fire once per round, at a fixed volume, half a second out.
+       One pip cannot tell you anything about distance, and half a second is not
+       long enough to say anything in. Geoff: "make the warning alarm start
+       lower volume and rise in volume as the bullet approaches which helps to
+       get the sense of how close it is."
+
+       So the nearest threat is tracked rather than each round being announced,
+       and how near it is comes out as the loudness. Only the closest one
+       matters: the loudest pip is the only one anybody would hear anyway, and
+       announcing each round separately is what made a stream of fire into one
+       smeared tone. */
+    if (!spent && b.hostile) {
       const speed2 = b.vel.lengthSq();
       if (speed2 > 1e-9) {
         for (const pl of roster(w)) {
-          const rel = pl.pos.clone().sub(b.pos);
+          const rel = _warnRel.copy(pl.pos).sub(b.pos);
+          /* Near enough to matter at all, before any trajectory is worked out.
+             A round that will hit in a second and a half from two hundred units
+             away is not something to sound an alarm about; it is something that
+             has not happened yet. */
+          if (rel.lengthSq() > WARN_RANGE * WARN_RANGE) continue;
           const t = Math.max(0, Math.min(WARN_LEAD, rel.dot(b.vel) / speed2));
           const miss = rel.addScaledVector(b.vel, -t).length();
           if (miss < PLAYER_HIT_R && t > 0 && t <= WARN_LEAD) {
-            b.warned = true;
-            /* Only the ship it is aimed at hears it. Everybody's warnings going
-               off in everybody's cockpit would be one long tone. */
-            c.events.push({ kind: "incoming", at: b.pos.clone(), power: 1, who: pl.id });
+            const was = threat.get(pl.id);
+            if (was === undefined || t < was) threat.set(pl.id, t);
             break;
           }
         }
@@ -1125,6 +1374,10 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       const pull = (1 - range / COIN_MAGNET) ** 2 * 140;
       k.vel.addScaledVector(toPlayer.normalize(), pull * dt);
     }
+
+    /* Never faster than a ship can chase. See COIN_TOP. */
+    const fast = k.vel.length();
+    if (fast > COIN_TOP) k.vel.multiplyScalar(COIN_TOP / fast);
 
     k.pos.addScaledVector(k.vel, dt);
     k.spin += dt * 2.2;
@@ -1187,6 +1440,13 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
   }
 
+  /* Beams are lit for half a second and then gone. Nothing moves; the damage
+     was done at the instant they were fired. */
+  for (let i = c.beams.length - 1; i >= 0; i--) {
+    c.beams[i].life -= dt;
+    if (c.beams[i].life <= 0) c.beams.splice(i, 1);
+  }
+
   /* ---- waves ----
      Spawns are spread across the wave's window rather than arriving together,
      so a wave is a rising tide rather than a wall. */
@@ -1220,6 +1480,20 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     const cleared = wave.toSpawn === 0 && wave.alive === 0;
     if (cleared || wave.timeLeft <= 0) startWave(c, wave.n + 1);
   }
+
+  /* ---- the closest round on course, per ship ----
+     Gathered over the whole bullet pass above and reported once here, so a wall
+     of fire is one rising alarm rather than forty overlapping ones. `power` is
+     how near it is: nought as it comes into range, one as it arrives. */
+  for (const [who, t] of threat) {
+    c.events.push({
+      kind: "incoming",
+      at: nearestPlayer(w, w.playerPos).pos.clone(),
+      power: Math.max(0, Math.min(1, 1 - t / WARN_LEAD)),
+      who,
+    });
+  }
+  threat.clear();
 
   const toPlayer = new THREE.Vector3();
   const axis = new THREE.Vector3();
@@ -1365,8 +1639,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       e.fireAt = 1.6 + Math.random() * 1.6;
       e.ammo -= 1;
       if (e.ammo <= 0) e.reload = ENEMY_RELOAD;
-      /* Dead on target, every time. Dodging is the player's job, and a shot
-         that misses by design would make that meaningless. */
+      /* Aimed at the player and then scattered by the tier's error, inside
+         enemyFire. It used to be dead on every time, which made the warning
+         tone a constant and a dogfight a shield-count. */
       enemyFire(c, e, prey.pos);
     }
 
@@ -1381,7 +1656,11 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
      above this point has already had its say about damage, wreckage and
      collisions; all that is left is where they go. */
   if (c.flocks.length) {
-    const drones = c.enemies.filter((e) => e.drone) as (Enemy & { group: number; slot: number })[];
+    /* Into a reused array rather than a fresh one from filter(): this runs
+       every frame and the list can be a hundred long. */
+    _drones.length = 0;
+    for (const e of c.enemies) if (e.drone) _drones.push(e as Enemy & { group: number; slot: number });
+    const drones = _drones;
     stepFlock(c.flocks, drones, dt, { playerPos: w.playerPos, scale: cruiseScale });
 
     for (let i = drones.length - 1; i >= 0; i--) {

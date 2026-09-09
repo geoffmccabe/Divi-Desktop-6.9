@@ -165,7 +165,9 @@ export function Shell() {
             </div>
           )}
           <div className="view-body" data-view={view}>
-            {view === "network" ? (
+            {view === "divirebels" ? (
+              <NetworkMap onReturn={() => setView("overview")} autoplay />
+            ) : view === "network" ? (
               <NetworkMap onReturn={() => setView("overview")} />
             ) : view === "charts" ? (
               <PriceChart onReturn={() => setView("overview")} />

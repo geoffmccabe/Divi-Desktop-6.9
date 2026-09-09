@@ -181,8 +181,8 @@ export const TOKENS: TokenDef[] = [
   { key: "appCardMin", label: "Card width", group: "Apps & Builder", type: "range", cssVar: "--app-card-min", default: "240px", min: 160, max: 420, step: 10, unit: "px" },
   { key: "appCardGlow", label: "Card glow on hover", group: "Apps & Builder", type: "range", cssVar: "--app-card-glow", default: "1", min: 0, max: 1, step: 0.05, unit: "", displayPercent: true },
   // The Purchase with Divi window, which is shared by anything sold in the app.
-  { key: "purchaseModalWidth", label: "Purchase window width", group: "Apps & Builder", type: "range", cssVar: "--purchase-modal-width", default: "560px", min: 380, max: 820, step: 10, unit: "px" },
-  { key: "purchaseMascotSize", label: "Mascot size", group: "Apps & Builder", type: "range", cssVar: "--purchase-mascot-size", default: "150px", min: 0, max: 260, step: 10, unit: "px" },
+  { key: "purchaseModalWidth", label: "Purchase window width", group: "Apps & Builder", type: "range", cssVar: "--purchase-modal-width", default: "660px", min: 380, max: 900, step: 10, unit: "px" },
+  { key: "purchaseMascotSize", label: "Mascot size", group: "Apps & Builder", type: "range", cssVar: "--purchase-mascot-size", default: "220px", min: 0, max: 320, step: 10, unit: "px" },
 
   // Divi Rebels (Orbit mode) — the planet, its towers and the cockpit.
   //

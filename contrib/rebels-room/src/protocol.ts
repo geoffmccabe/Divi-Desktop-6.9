@@ -23,7 +23,24 @@ export interface JoinIn {
   name: string;
   /** Where their tower is, so the room can place them. */
   home: Vec;
+  /** Which hull they fly, and how it is painted, so everyone else sees the
+   *  ship this player actually built rather than a stand-in. Carried on the
+   *  wire because it is the difference between a room full of people and a
+   *  room full of identical grey arrows. */
+  ship?: string;
+  paint?: PaintWire;
 }
+
+/**
+ * A paint scheme, small enough to send.
+ *
+ * Five parts, each a hue, a saturation, a brightness and an overlay, in the
+ * order the cockpit keeps them. An array rather than an object because it is
+ * sent for every player in a room and `{"hull1":{"hue":205,...}}` is mostly
+ * punctuation.
+ */
+export type PaintPart = [hue: number, sat: number, bright: number, overlay: number];
+export type PaintWire = [PaintPart, PaintPart, PaintPart, PaintPart, PaintPart];
 
 export interface TransformIn {
   t: "tf";
@@ -44,7 +61,16 @@ export interface FireIn {
 
 export interface DetonateIn { t: "det" }
 
-export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn;
+/** Cash out: pay what this account has banked to a DIVI address. */
+export interface ClaimIn {
+  t: "claim";
+  to: string;
+}
+
+/** Ask for the purse again. Sent when the player opens the points panel. */
+export interface PurseIn { t: "purse" }
+
+export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn;
 
 /* ---- room to cockpit ---- */
 
@@ -106,7 +132,47 @@ export interface DeniedOut {
   p?: Vec;
 }
 
-export type ServerMessage = WelcomeOut | StateOut | EventOut | YouOut | DeniedOut;
+/**
+ * Who is in the room.
+ *
+ * Sent when somebody joins or leaves rather than every tick: a name and a paint
+ * scheme change about once a session, and putting them in the twenty-times-a-
+ * second state message would be sending the same forty bytes per player four
+ * thousand times a minute to say nothing.
+ */
+export interface RosterOut {
+  t: "who";
+  players: Array<{
+    id: string;
+    /** What to show above their ship. */
+    name: string;
+    node: string;
+    ship: string;
+    paint?: PaintWire;
+  }>;
+}
+
+/**
+ * The account, as the ledger has it. Sent on join, on request, and after a
+ * claim. `why` carries the refusal when a claim was not accepted.
+ */
+export interface PurseOut {
+  t: "purse";
+  /** Banked and not yet paid, whole DIVI. */
+  divi: number;
+  /** What a claim would pay right now: zero under the minimum. */
+  claimable: number;
+  /** Paid out, ever. */
+  paid: number;
+  /** A cash-out waiting for the treasury, if there is one. */
+  pending: { to: string; amount: number; at: number } | null;
+  /** How the last one ended. */
+  last: { to: string; amount: number; txid?: string; error?: string; at: number } | null;
+  why?: string;
+}
+
+export type ServerMessage =
+  WelcomeOut | StateOut | EventOut | YouOut | DeniedOut | RosterOut | PurseOut;
 
 /** Shorten a float for the wire. A tenth of a unit is six metres on this globe. */
 export const r1 = (n: number): number => Math.round(n * 10) / 10;

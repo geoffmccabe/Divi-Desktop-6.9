@@ -4,13 +4,14 @@
 
 import * as THREE from "three";
 import { R, cruiseScale } from "./orbitWorld";
-import { MAX_SHIELD, CRUISE } from "./orbitFlight";
+import { MAX_SHIELD, CRUISE, BOOST } from "./orbitFlight";
 import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
+  AIM_ERROR, AIM_SPREAD, aimErrorFor, scatterAim, PLAYER_HIT_R,
   fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
   startWave, waveSize, WAVE_SECONDS,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
-  TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL,
+  TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, COIN_TOP, COIN_MU,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   type CombatState, type Enemy,
   ENEMY_SPEED,
@@ -157,6 +158,10 @@ function run(c: CombatState, frames: number, w = world()) {
 {
   const c = createCombat();
   const e: Enemy = fighter(pos.clone().addScaledVector(fwd, 30));
+  /* A top-tier gunner, so the shot is a sure thing: this test is about what a
+     round that ARRIVES does, and a tier-one round now misses half the time
+     at this range by design (see AIM_ERROR). */
+  e.cls = { ...e.cls, tier: 7 };
   c.enemies.push(e);
   enemyFire(c, e, pos);
   ok("enemy fire is marked hostile", c.bullets[0].hostile);
@@ -733,10 +738,13 @@ function run(c: CombatState, frames: number, w = world()) {
   c.enemies.push(e);
   hurtEnemy(c, e, 50, pos);
   const speeds = c.coins.map((k) => k.vel.length());
+  /* Against the REAL speeds rather than numbers typed in once. Both of these
+     read 16 and 30 until the world was halved and the ship slowed to match,
+     after which they were asserting against a game that no longer existed. */
   ok("coins move slower than a boosting player can fly",
-     Math.max(...speeds) < 30, `fastest ${Math.max(...speeds).toFixed(1)} u/s`);
+     Math.max(...speeds) < BOOST, `fastest ${Math.max(...speeds).toFixed(1)} of ${BOOST}`);
   ok("but faster than the player cruises, so they take chasing",
-     Math.min(...speeds) > 16, `slowest ${Math.min(...speeds).toFixed(1)} u/s`);
+     Math.min(...speeds) > CRUISE, `slowest ${Math.min(...speeds).toFixed(1)} of ${CRUISE}`);
 }
 {
   /* They have to STAY up. A coin that falls in ten seconds is not a pickup, it
@@ -861,37 +869,89 @@ function run(c: CombatState, frames: number, w = world()) {
      `${count(3)} vs ${count(0.5)} of 20000`);
 }
 
-// 16. Calling out a round that is going to hit.
+// 16. Calling out a round that is going to hit, and HOW CLOSE IT IS.
+//
+//     Geoff: "make the warning alarm start lower volume and rise in volume as
+//     the bullet approaches which helps to get the sense of how close it is."
+//
+//     It used to call each round once, at a fixed strength, half a second out.
+//     One pip cannot say anything about distance. The alarm is now continuous
+//     while a round is on course, and its strength is the distance.
 {
-  /* Dead on line, and close enough that it lands inside half a second. */
   const c = createCombat();
   const w = world();
-  const away = pos.clone().addScaledVector(fwd, 25);
-  c.bullets.push({
-    pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
-    life: 3, hostile: true,
-  });
-  const seen = run(c, 30, w);
-  ok("a round on course is called out", seen.includes("incoming"), seen.join(",") || "nothing");
-  ok("and only once", seen.filter((k) => k === "incoming").length === 1,
-     `${seen.filter((k) => k === "incoming").length} times`);
-}
-{
-  /* Far enough away that it is more than half a second out: no call yet. */
-  const c = createCombat();
-  const w = world();
-  const away = pos.clone().addScaledVector(fwd, 200);
+  /* Dead on line and well out, so the whole approach can be watched. */
+  const away = pos.clone().addScaledVector(fwd, 140);
   c.bullets.push({
     pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
     life: 6, hostile: true,
+  });
+
+  const powers: number[] = [];
+  for (let i = 0; i < 130; i++) {
+    stepCombat(c, DT, w);
+    for (const e of c.events) if (e.kind === "incoming") powers.push(e.power);
+    clearEvents(c);
+  }
+
+  ok("a round on course is called out", powers.length > 0, `${powers.length} calls`);
+  ok("and it keeps calling as the round closes", powers.length > 20,
+     `${powers.length} calls over the approach`);
+
+  /* THE POINT: it starts quiet and ends loud. It no longer starts at nothing,
+     because the alarm is not raised at all until a round is genuinely near:
+     see WARN_RANGE. It begins a fifth of the way up and climbs from there,
+     which through the volume curve is still a threefold rise. */
+  ok("it starts quiet", powers[0] < 0.3, `${powers[0]?.toFixed(3)}`);
+  ok("and finishes loud", powers[powers.length - 1] > 0.85,
+     `${powers[powers.length - 1]?.toFixed(3)}`);
+
+  /* And rises the whole way rather than wandering: every step forward, within
+     a frame's worth of rounding. */
+  let drops = 0;
+  for (let i = 1; i < powers.length; i++) if (powers[i] < powers[i - 1] - 1e-6) drops++;
+  ok("rising the whole way in", drops === 0, `${drops} of ${powers.length} went backwards`);
+}
+{
+  /* ---- A WALL OF FIRE IS ONE ALARM ----
+     Forty rounds on course must not be forty alarms in the same frame. Only
+     the nearest is reported, because the loudest pip is the only one anybody
+     would hear and overlapping copies of one tone are the smeared noise that
+     got reported the first time round. */
+  const c = createCombat();
+  const w = world();
+  /* All inside the range at which a round counts as near, or the gate would
+     be what silenced them rather than the one-alarm rule under test. */
+  for (let i = 0; i < 40; i++) {
+    c.bullets.push({
+      pos: pos.clone().addScaledVector(fwd, 6 + i * 0.6),
+      vel: fwd.clone().negate().multiplyScalar(70), life: 6, hostile: true,
+    });
+  }
+  stepCombat(c, DT, w);
+  const calls = c.events.filter((e) => e.kind === "incoming");
+  ok("forty rounds raise one alarm, not forty", calls.length === 1, `${calls.length}`);
+  /* And it is the NEAREST one that sets the level. */
+  ok("and it is the closest of them that sets the level",
+     calls[0] && calls[0].power > 0.5, `${calls[0]?.power.toFixed(3)}`);
+}
+{
+  /* Far enough away to be outside the window: no call yet. */
+  const c = createCombat();
+  const w = world();
+  const away = pos.clone().addScaledVector(fwd, 300);
+  c.bullets.push({
+    pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
+    life: 8, hostile: true,
   });
   stepCombat(c, DT, w);
   ok("a round still seconds away is not called out yet",
      !c.events.some((e) => e.kind === "incoming"));
   clearEvents(c);
-  /* Let it close, and then it is. */
-  const seen = run(c, 60 * 3, w);
-  ok("but it is once it is half a second out", seen.includes("incoming"));
+  /* Let it close, and then it is. Four hundred units at seventy a second is
+     nearly six seconds out, and the window is WARN_LEAD wide. */
+  const seen = run(c, Math.round(60 * (300 / 70 + 0.5)), w);
+  ok("but it is once it comes inside the window", seen.includes("incoming"));
 }
 {
   /* One that will miss is never called out, however close it passes. */
@@ -1168,6 +1228,124 @@ function run(c: CombatState, frames: number, w = world()) {
   }
 }
 
+// 17. A COIN YOU CAN ACTUALLY CATCH.
+{
+  /* Geoff: "for the red Divi balls, they seem to move too fast and I can't
+     catch up to them. Make their maximum velocity 80% of the player."
+
+     They orbited at sqrt(mu/r), and at sixty thousand that is twenty-three
+     units a second at the height they sit, against a ship that cruises at
+     eight and boosts to nineteen. The coins were faster than the ship. */
+  ok("the cap really is eighty percent of a boosting ship",
+     Math.abs(COIN_TOP - BOOST * 0.8) < 1e-9, `${COIN_TOP} vs ${(BOOST * 0.8).toFixed(2)}`);
+
+  /* And that number is written out in the combat file rather than imported,
+     because orbitFlight already imports from it and closing that loop reads a
+     constant before it exists: a white screen that typechecks. This is the
+     assertion that keeps the two copies honest. */
+
+  /* The orbit itself is now gentle enough, which is the part that matters most
+     because it is where a coin spends its life. */
+  const orbital = Math.sqrt(COIN_MU / (R + 14));
+  ok("a coin in its orbit is slower than a boosting ship", orbital <= BOOST,
+     `${orbital.toFixed(1)} u/s against ${BOOST}`);
+
+  /* And the hard limit holds however a coin got its speed: thrown clear by a
+     dying fighter, or dragged by the magnet on the way in. */
+  const c = createCombat();
+  const w = world();
+  let worst = 0;
+  for (let n = 0; n < 40; n++) {
+    c.coins.push({
+      pos: pos.clone().add(new THREE.Vector3().randomDirection().multiplyScalar(30 + n)),
+      /* Absurd, on purpose: nothing may leave this loop still going this fast. */
+      vel: new THREE.Vector3().randomDirection().multiplyScalar(400),
+      spin: 0, value: COIN_VALUE,
+    });
+  }
+  for (let i = 0; i < 60 * 20; i++) {
+    stepCombat(c, DT, w);
+    clearEvents(c);
+    for (const k of c.coins) worst = Math.max(worst, k.vel.length());
+  }
+  ok("no coin ever outruns the cap", worst <= COIN_TOP + 1e-6,
+     `fastest was ${worst.toFixed(2)} against a cap of ${COIN_TOP}`);
+  ok("and a boosting ship can always run one down", worst < BOOST,
+     `${worst.toFixed(2)} vs ${BOOST}`);
+}
+
 console.log(out.join("\n"));
+/* ---- enemy aim error, by tier ----
+   Geoff: "adding some randomness to their aim ... T7 is right on target by
+   only 0.3% off." */
+{
+  ok("seven figures for seven tiers", AIM_ERROR.length === 7, `${AIM_ERROR.length}`);
+  ok("tier one is three percent", AIM_ERROR[0] === 0.03);
+  ok("tier seven is 0.3 percent", AIM_ERROR[6] === 0.003);
+  let tightening = true;
+  for (let i = 1; i < AIM_ERROR.length; i++) if (!(AIM_ERROR[i] < AIM_ERROR[i - 1])) tightening = false;
+  ok("every tier shoots straighter than the one below", tightening, AIM_ERROR.join(","));
+  ok("the figures are scaled by three, for the reason in the source", AIM_SPREAD === 3);
+  ok("tier lookups clamp at both ends", Math.abs(aimErrorFor(0) - 0.09) < 1e-12
+     && Math.abs(aimErrorFor(99) - 0.009) < 1e-12 && Math.abs(aimErrorFor(4) - 0.045) < 1e-12,
+     `${aimErrorFor(0)} ${aimErrorFor(99)} ${aimErrorFor(4)}`);
+
+  const from = new THREE.Vector3(0, 0, R + 10);
+  const at = new THREE.Vector3(30, 0, R + 10);        /* thirty units away, along x */
+  const dead = scatterAim(from, at, 0.03, () => 0);
+  ok("the best roll is dead on", dead.distanceTo(at) < 1e-9, `${dead.distanceTo(at)}`);
+  const worst = scatterAim(from, at, 0.03, () => 1);
+  ok("the worst roll at three percent and thirty units is 0.9 off",
+     Math.abs(worst.distanceTo(at) - 0.9) < 1e-6, `${worst.distanceTo(at)}`);
+  ok("and the miss is sideways, not along the line of fire",
+     Math.abs(worst.x - at.x) < 1e-6, `${worst.x - at.x}`);
+  const t1 = scatterAim(from, at, aimErrorFor(1), () => 1);
+  ok("as flown, tier one at thirty units can be 2.7 off", Math.abs(t1.distanceTo(at) - 2.7) < 1e-6,
+     `${t1.distanceTo(at)}`);
+  ok("which is outside the hull, so a tier-one round can miss", 2.7 > PLAYER_HIT_R);
+  const t7 = scatterAim(from, at, aimErrorFor(7), () => 1);
+  ok("tier seven at the same range is off by 0.27 at worst", Math.abs(t7.distanceTo(at) - 0.27) < 1e-6,
+     `${t7.distanceTo(at)}`);
+  ok("which is well inside the hull, so it hits", 0.27 < PLAYER_HIT_R);
+
+  /* Round the clock: the angle roll spreads the miss in every direction. */
+  const seen = new Set<string>();
+  for (let i = 0; i < 8; i++) {
+    const p = scatterAim(from, at, 0.03, (() => { let n = 0; return () => (n++ === 0 ? i / 8 : 1); })());
+    seen.add(`${Math.sign(Math.round(p.y * 100))},${Math.sign(Math.round((p.z - at.z) * 100))}`);
+  }
+  ok("misses land all round the target, not on one side", seen.size >= 4, [...seen].join(" "));
+  ok("no error means the target itself", scatterAim(from, at, 0).equals(at));
+  ok("and the target passed in is never written to", at.x === 30 && at.y === 0);
+
+  /* Fired for real: a tier-one round is no longer guaranteed to pass through
+     the aim point, a tier-seven one as good as is. */
+  let missesT1 = 0, missesT7 = 0;
+  for (let i = 0; i < 400; i++) {
+    for (const [tier, count] of [[1, 0], [7, 1]] as const) {
+      const c = createCombat();
+      const e = {
+        pos: from.clone(), fwd: new THREE.Vector3(1, 0, 0), roll: 0,
+        cls: { tier, name: "", shieldMax: 100, colour: 0, speed: 1, weight: 0 },
+        shield: 100, vel: new THREE.Vector3(), tumble: new THREE.Vector3(), spin: new THREE.Vector3(),
+        flash: 0, ammo: 9, reload: 0, fireAt: 0, weave: 0, weaveDir: 1, mode: "in" as const,
+        breakAt: 0, rejoinAt: 0, escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
+      };
+      enemyFire(c, e as never, at);
+      const b = c.bullets[0];
+      /* Where the round passes x = 30. */
+      const t = (at.x - b.pos.x) / b.vel.x;
+      const y = b.pos.y + b.vel.y * t, z = b.pos.z + b.vel.z * t;
+      const off = Math.hypot(y - at.y, z - at.z);
+      if (off > PLAYER_HIT_R) { if (count === 0) missesT1++; else missesT7++; }
+    }
+  }
+  /* Half the time, give or take: the miss distance is uniform up to 2.7 and
+     the hull is 1.4, so a hit is 1.4 in 2.7. Wide bounds, since it is random. */
+  ok("a tier-one fighter misses a still ship at thirty units about half the time",
+     missesT1 > 120 && missesT1 < 280, `${missesT1}/400`);
+  ok("a tier-seven fighter does not miss a still ship", missesT7 === 0, `${missesT7}/400`);
+}
+
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

@@ -17,6 +17,8 @@ import torpedoBlastUrl from "../../assets/torpedo_explosion_v1.mp3";
 import shipBlastUrl from "../../assets/spaceship_explosion_v1.mp3";
 import warnUrl from "../../assets/warning_bullet_approach.mp3";
 import bounceUrl from "../../assets/bullet_bounce.mp3";
+import boostUrl from "../../assets/jet_boots_1.mp3";
+import beamUrl from "../../assets/beam_v1.mp3";
 import { audioContext, masterVolume } from "../../sound";
 
 /** How far speed, pitch and volume may wander, either way. */
@@ -32,7 +34,13 @@ let torpedoBlastBuffer: AudioBuffer | null = null;
 let shipBlastBuffer: AudioBuffer | null = null;
 let warnBuffer: AudioBuffer | null = null;
 let bounceBuffer: AudioBuffer | null = null;
+let boostBuffer: AudioBuffer | null = null;
+let beamBuffer: AudioBuffer | null = null;
 let loading: Promise<void> | null = null;
+/** When the current attempt began, so one that never finishes cannot latch. */
+let loadingSince = 0;
+/** How long a decode is given before it is treated as having failed. */
+const LOAD_PATIENCE = 6000;
 let failed = false;
 
 /** The recharging loop, while it is running. */
@@ -84,16 +92,29 @@ export function resumeAudio(): void {
 
 /** Decode every sample once and hold them. */
 export function primeGunSound(): void {
-  if (loading || failed || (buffer && rechargeBuffer && torpedoBuffer
-      && torpedoBlastBuffer && shipBlastBuffer && warnBuffer && bounceBuffer)) return;
+  /* ---- THE LATCH THAT COULD NEVER BE RELEASED ----
+     `loading` is here so two callers do not decode everything twice. It was
+     also a way to silence the game for ever: decodeAudioData on a WebKit
+     context that is not running does not always reject, it can simply never
+     settle, and a promise that never settles leaves this flag set for the rest
+     of the session. Every later attempt then returned on this line and the
+     game was mute with nothing wrong that could be seen or reported.
+     A start that has not finished within a few seconds is a start that failed,
+     so it stops counting and the next request may try again. */
+  if (loading && Date.now() - loadingSince < LOAD_PATIENCE) return;
+  if (failed || (buffer && rechargeBuffer && torpedoBuffer
+      && torpedoBlastBuffer && shipBlastBuffer && warnBuffer && bounceBuffer
+      && boostBuffer && beamBuffer)) return;
   const ctx = audioContext();
   if (!ctx) { failed = true; return; }
+  loadingSince = Date.now();
   const load = (url: string) => toArrayBuffer(url).then((raw) => ctx.decodeAudioData(raw));
   loading = Promise.all([
     load(laserUrl), load(rechargeUrl), load(torpedoUrl),
     load(torpedoBlastUrl), load(shipBlastUrl), load(warnUrl), load(bounceUrl),
+    load(boostUrl), load(beamUrl),
   ])
-    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast, warn, bounce]) => {
+    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast, warn, bounce, boost, beam]) => {
       buffer = gun;
       rechargeBuffer = recharge;
       torpedoBuffer = torpedo;
@@ -101,6 +122,8 @@ export function primeGunSound(): void {
       shipBlastBuffer = shipBlast;
       warnBuffer = warn;
       bounceBuffer = bounce;
+      boostBuffer = boost;
+      beamBuffer = beam;
     })
     .catch(() => {
       /* Silence is not worth breaking a game over, but it is not permanent
@@ -108,6 +131,50 @@ export function primeGunSound(): void {
       failed = true;
     })
     .finally(() => { loading = null; });
+}
+
+/**
+ * Test hook: forget everything and start again.
+ *
+ * Here for one assertion that cannot be made any other way, and it is worth
+ * making: that a decode which never finishes stops blocking every later one.
+ * That exact latch silenced the game for a whole session at a time.
+ */
+export function resetAudioForTests(): void {
+  buffer = rechargeBuffer = torpedoBuffer = null;
+  torpedoBlastBuffer = shipBlastBuffer = warnBuffer = bounceBuffer = null;
+  boostBuffer = beamBuffer = null;
+  loading = null;
+  loadingSince = 0;
+  failed = false;
+}
+
+/**
+ * What the sound is actually doing, for the diagnostic the game writes out.
+ *
+ * This exists because "the game has no sound" has now been reported three
+ * times and guessed at twice, from the outside, with no way to tell a
+ * suspended context from a failed decode from a muted theme. They look
+ * identical and they are not the same bug.
+ */
+export function audioState(): Record<string, unknown> {
+  let state = "none";
+  try {
+    const ctx = audioContext();
+    state = ctx ? ctx.state : "null";
+  } catch (e) {
+    state = `threw:${(e as Error).message}`;
+  }
+  return {
+    ctx: state,
+    failed,
+    loading: !!loading,
+    loadingFor: loading ? Date.now() - loadingSince : 0,
+    buffers: [buffer, rechargeBuffer, torpedoBuffer, torpedoBlastBuffer,
+      shipBlastBuffer, warnBuffer, bounceBuffer, boostBuffer,
+      beamBuffer].filter(Boolean).length,
+    volume: (() => { try { return masterVolume(); } catch { return -1; } })(),
+  };
 }
 
 /** A number within WOBBLE either side of one. */
@@ -335,18 +402,145 @@ export function playTorpedoBlast(): void {
  * Half the natural level, as asked: it is a cue to reach for the right button,
  * not an air-raid siren, and in a busy fight several are in the air at once.
  */
-export function playIncomingWarning(): void {
-  /* One at a time. Four fighters firing at once raise four warnings inside a
-     few frames, and four copies of the same tone laid over each other with
-     random offsets is the smeared, detuned noise that got reported. A quarter
-     second between them keeps it a series of pips. */
+/**
+ * The quietest and loudest the alarm gets, as a fraction of the master volume.
+ *
+ * Halved from where it started. Geoff: "reduce the warning sound by 50% volume,
+ * it's too loud and annoying." Not silent at the far end even so: a warning you
+ * cannot hear is not one, and the whole point of the rise is that the quiet end
+ * is audible enough to be the bottom of a scale.
+ */
+export const WARN_MIN = 0.08;
+export const WARN_MAX = 0.475;
+/** Seconds between pips, far away and close in. */
+export const WARN_GAP_FAR = 0.65;
+export const WARN_GAP_NEAR = 0.2;
+
+/**
+ * A round is coming, and `near` says how near: nought as it comes into range,
+ * one as it arrives.
+ *
+ * It gets louder AND quicker as it closes. Geoff asked for the loudness, which
+ * is the part that carries the distance; the quickening is what gives the
+ * loudness somewhere to happen, because a pip every third of a second all the
+ * way in would only be six of them and the rise would be too coarse to read.
+ *
+ * One at a time, whatever is being fired. Four fighters shooting at once used
+ * to raise four warnings within a few frames, and four copies of one tone laid
+ * over each other with random offsets is the smeared, detuned noise that got
+ * reported. The gap keeps it a series of pips rather than a chord.
+ */
+export function playIncomingWarning(near = 1): void {
   const ctx = audioContext();
   const now = ctx ? ctx.currentTime : 0;
-  if (now - lastWarnAt < 0.25) return;
+  const k = Math.max(0, Math.min(1, near));
+  const gap = WARN_GAP_FAR + (WARN_GAP_NEAR - WARN_GAP_FAR) * k;
+  if (now - lastWarnAt < gap) return;
   lastWarnAt = now;
-  once(warnBuffer, 0.5, false);
+  once(warnBuffer, WARN_MIN + (WARN_MAX - WARN_MIN) * k, false);
 }
 let lastWarnAt = -1;
+
+/* ---- the boost ----
+   DreadRoot's jet boots, which is the same thing happening: a person or a ship
+   throwing itself forward on a burst of thrust. Reusing it rather than finding
+   a new one is deliberate; the two games share a world and a rocket ought to
+   sound like the same rocket. */
+let boostNode: AudioBufferSourceNode | null = null;
+let boostGain: GainNode | null = null;
+
+/**
+ * Start the thrust, and keep it going.
+ *
+ * Looped, because a boost is held rather than pressed: the sample is under a
+ * second and a boost can run for six. Eased in for the same reason the resupply
+ * loop is, which is that a looping sample snapped on at full level clicks.
+ * Calling this twice is harmless.
+ */
+export function startBoostSound(): void {
+  const ctx = audioContext();
+  if (!ctx || failed || boostNode || !boostBuffer) return;
+  const volume = masterVolume();
+  if (!(volume > 0)) return;
+  const src = ctx.createBufferSource();
+  src.buffer = boostBuffer;
+  src.loop = true;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(volume * 0.9, ctx.currentTime + 0.06);
+  src.connect(gain);
+  gain.connect(ctx.destination);
+  src.start();
+  boostNode = src;
+  boostGain = gain;
+}
+
+/** Off the throttle, out of boost, docked, dead, or gone. Faded rather than
+ *  cut, or letting go of shift clicks. */
+export function stopBoostSound(): void {
+  const ctx = audioContext();
+  const node = boostNode;
+  const gain = boostGain;
+  boostNode = null;
+  boostGain = null;
+  if (!node) return;
+  if (!ctx || !gain) { try { node.stop(); } catch { /* already stopped */ } return; }
+  const now = ctx.currentTime;
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+  try { node.stop(now + 0.2); } catch { /* already stopped */ }
+}
+
+/* ---- the beam ----
+   One sound for the whole burst rather than one per half-second pulse.
+
+   The beam does its damage in half-second steps, and a naive reading would
+   restart the sample on each of them: five seconds of held trigger would be ten
+   overlapping copies of the same noise starting a beat apart, which is the
+   smeared mess the warning tone once was. So it is started once and simply
+   allowed to run for as long as the trigger is held, up to the five seconds
+   that is also the length of the sample. */
+let beamNode: AudioBufferSourceNode | null = null;
+let beamGain: GainNode | null = null;
+
+/** Begin, or carry on. Calling it every frame while the trigger is down is the
+ *  intended use and costs nothing after the first. */
+export function startBeamSound(): void {
+  const ctx = audioContext();
+  if (!ctx || failed || beamNode || !beamBuffer) return;
+  const volume = masterVolume();
+  if (!(volume > 0)) return;
+  const src = ctx.createBufferSource();
+  src.buffer = beamBuffer;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(volume, ctx.currentTime);
+  src.connect(gain);
+  gain.connect(ctx.destination);
+  src.start();
+  /* If it runs to the end on its own, forget it, or the next press would think
+     one was already playing and stay silent. */
+  src.onended = () => { if (beamNode === src) { beamNode = null; beamGain = null; } };
+  beamNode = src;
+  beamGain = gain;
+}
+
+/** Trigger released, or the five seconds are up. Faded, because a beam that
+ *  stops dead sounds like a fault rather than a release. */
+export function stopBeamSound(): void {
+  const ctx = audioContext();
+  const node = beamNode;
+  const gain = beamGain;
+  beamNode = null;
+  beamGain = null;
+  if (!node) return;
+  if (!ctx || !gain) { try { node.stop(); } catch { /* already done */ } return; }
+  const now = ctx.currentTime;
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+  try { node.stop(now + 0.18); } catch { /* already done */ }
+}
 
 /** A round turned away by the guard. The reward for having reacted. */
 export function playBounce(): void {

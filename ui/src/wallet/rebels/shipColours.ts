@@ -379,7 +379,7 @@ const RECOLOUR = /* glsl */`
 const UNIFORM_NAMES = [
   "Hull1", "Hull2", "Accent", "Highlight", "Engine",
 ] as const;
-const PART_ORDER: PartKey[] = ["hull1", "hull2", "accent", "highlight", "engine"];
+export const PART_ORDER: PartKey[] = ["hull1", "hull2", "accent", "highlight", "engine"];
 
 /** A live handle: change the paint and the model repaints without reloading. */
 export interface PaintHandle {

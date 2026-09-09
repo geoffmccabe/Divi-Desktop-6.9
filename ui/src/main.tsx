@@ -4,12 +4,20 @@ import App from "./App";
 import SetupLogHotkey from "./wallet/SetupLogHotkey";
 import { applyIcons } from "./icons";
 import { installClickSound } from "./sound";
+import { prefetchMusic } from "./wallet/rebels/rebelsMusic";
 import "./index.css";
 
 // Install the default icon CSS vars before first paint (a skin overrides them).
 applyIcons();
 // Instant click tone on any button (waveform/pitch come from the skin).
 installClickSound();
+// Put Divi Rebels' opening theme on this machine now rather than when the game
+// is opened. A megabyte, fetched once, kept for good: a room of twenty players
+// all opening the game at the same moment would otherwise all pull it at that
+// moment, and the theme is supposed to start the instant the panel appears,
+// which it cannot do if that is when the download begins. Nothing is decoded
+// and no sound is made here; it is only put on disk.
+prefetchMusic();
 
 function showFatal(msg: string) {
   // Build the DOM, don't interpolate into innerHTML. `msg` is an error stack

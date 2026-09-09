@@ -1,0 +1,11 @@
+[Unit]
+Description=Divi Rebels payout (pays cash-out requests from the treasury wallet)
+After=network-online.target divid.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/divi-scan.env
+EnvironmentFile=/etc/divi-rebels-payout.env
+ExecStart=/usr/bin/python3 /usr/local/bin/divi-rebels-payout.py
+StateDirectory=divi-rebels

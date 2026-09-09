@@ -6,7 +6,7 @@
 //
 // Run: sh scripts/run-rebels-ledger-tests.sh
 
-import { RebelsLedger, MIN_CLAIM } from "../src/ledger";
+import { RebelsLedger, MIN_CLAIM, ADDRESS } from "../src/ledger";
 
 const out: string[] = [];
 let failures = 0;
@@ -23,6 +23,7 @@ function newLedger() {
     storage: {
       async get(k: string) { return map.get(k); },
       async put(k: string, v: unknown) { map.set(k, v); },
+      async delete(k: string) { return map.delete(k); },
       async list({ prefix }: { prefix: string }) {
         const m = new Map<string, unknown>();
         for (const [k, v] of map) if (k.startsWith(prefix)) m.set(k, v);
@@ -170,6 +171,109 @@ async function main() {
   }
 
   console.log(out.join("\n"));
+  /* ---------------------------------------------------- cashing out ----
+     The player's half (over the binding) and London's half (with the secret),
+     in the order they happen. */
+  const GOOD = "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt";
+  const GET_INTERNAL = (path: string) => new Request(`https://ledger/${path}`);
+  {
+    ok("the treasury address passes the shape check", ADDRESS.test(GOOD));
+    ok("a short one does not", !ADDRESS.test("D8tjq"));
+    ok("a zero in it does not (base58 has no zero)", !ADDRESS.test("D0tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt"));
+    ok("an ethereum one does not", !ADDRESS.test("0x1234567890abcdef1234567890abcdef12345678"));
+  }
+  {
+    const { led } = newLedger();
+    await led.fetch(internal("credit", { node: "c1", name: "Claimer", kills: 1500, divi: 150 }));
+
+    /* Reading and asking are BINDING-ONLY, like credit. */
+    const outsideRead = await led.fetch(get("purse?node=c1"));
+    ok("a purse cannot be read off the internet, even with the secret", outsideRead.status === 404, `${outsideRead.status}`);
+    const outsideAsk = await led.fetch(post("request", { node: "c1", to: GOOD }));
+    ok("nor a cash-out requested from there", outsideAsk.status === 404, `${outsideAsk.status}`);
+
+    const purse = await j(await led.fetch(GET_INTERNAL("purse?node=c1")));
+    ok("a room can read the purse", purse.divi === 150 && purse.claimable === 150 && purse.pending === null,
+       JSON.stringify(purse));
+
+    const bad = await j(await led.fetch(internal("request", { node: "c1", to: "not-an-address" })));
+    ok("a bad address is refused with a reason", typeof bad.why === "string" && bad.pending === null, `${bad.why}`);
+
+    const asked = await j(await led.fetch(internal("request", { node: "c1", to: GOOD })));
+    ok("a good one is written down", !asked.why && (asked.pending as any)?.to === GOOD
+       && (asked.pending as any)?.amount === 150, JSON.stringify(asked));
+    const again = await j(await led.fetch(internal("request", { node: "c1", to: GOOD })));
+    ok("a second one waits for the first", typeof again.why === "string", `${again.why}`);
+
+    /* London's round. */
+    const noAuth = await led.fetch(get("pending", {}));
+    ok("the pending list needs the secret", noAuth.status === 401, `${noAuth.status}`);
+    const pending = await j(await led.fetch(get("pending")));
+    const rows = pending.rows as any[];
+    ok("London sees it", rows.length === 1 && rows[0].node === "c1" && rows[0].to === GOOD && rows[0].amount === 150,
+       JSON.stringify(rows));
+
+    const res = await j(await led.fetch(post("reserve", { node: "c1", ref: "r-1" })));
+    ok("reserving hands London the claimed address", res.ok === true && res.to === GOOD && res.amount === 150,
+       JSON.stringify(res));
+    const mid = await j(await led.fetch(GET_INTERNAL("purse?node=c1")));
+    ok("mid-send the purse still shows the money, as pending", mid.divi === 150
+       && (mid.pending as any)?.amount === 150 && mid.claimable === 0, JSON.stringify(mid));
+    const pend2 = await j(await led.fetch(get("pending")));
+    ok("and it is not offered to London twice", (pend2.rows as any[]).length === 0);
+
+    const conf = await j(await led.fetch(post("confirm", { node: "c1", ref: "r-1", txid: "tx-abc" })));
+    ok("confirming pays it", conf.ok === true && conf.paid === 150, JSON.stringify(conf));
+    const after = await j(await led.fetch(GET_INTERNAL("purse?node=c1")));
+    ok("the request is closed and the receipt is there", after.pending === null
+       && (after.last as any)?.txid === "tx-abc" && (after.last as any)?.amount === 150
+       && (after.last as any)?.to === GOOD && after.divi === 0 && after.paid === 150,
+       JSON.stringify(after));
+  }
+  {
+    /* A send that FAILS: released, and the request survives for next round. */
+    const { led } = newLedger();
+    await led.fetch(internal("credit", { node: "c2", divi: 200, kills: 2000 }));
+    await led.fetch(internal("request", { node: "c2", to: GOOD }));
+    const res = await j(await led.fetch(post("reserve", { node: "c2", ref: "r-2" })));
+    ok("reserved", res.ok === true);
+    await led.fetch(post("release", { node: "c2", ref: "r-2" }));
+    const p = await j(await led.fetch(GET_INTERNAL("purse?node=c2")));
+    ok("released: the balance is back and the request still waits",
+       p.divi === 200 && p.claimable === 200 && (p.pending as any)?.to === GOOD, JSON.stringify(p));
+    const rows = (await j(await led.fetch(get("pending")))).rows as any[];
+    ok("so London finds it again", rows.length === 1);
+
+    /* A send London will NEVER make: dropped with a reason. */
+    const res2 = await j(await led.fetch(post("reserve", { node: "c2", ref: "r-3" })));
+    await led.fetch(post("release", { node: "c2", ref: res2.ref, drop: "the node says that address is not valid" }));
+    const p2 = await j(await led.fetch(GET_INTERNAL("purse?node=c2")));
+    ok("dropped: balance back, request gone, reason shown", p2.divi === 200 && p2.pending === null
+       && String((p2.last as any)?.error).includes("not valid"), JSON.stringify(p2));
+  }
+  {
+    /* Rejected before anything was reserved (the address failed London's check). */
+    const { led } = newLedger();
+    await led.fetch(internal("credit", { node: "c3", divi: 120, kills: 1200 }));
+    await led.fetch(internal("request", { node: "c3", to: GOOD }));
+    const rj = await j(await led.fetch(post("reject", { node: "c3", why: "not a valid address" })));
+    ok("rejecting drops the request", rj.ok === true);
+    const p = await j(await led.fetch(GET_INTERNAL("purse?node=c3")));
+    ok("with the money untouched and the reason shown", p.divi === 120 && p.pending === null
+       && (p.last as any)?.error === "not a valid address", JSON.stringify(p));
+    const rj2 = await j(await led.fetch(post("reject", { node: "c3", why: "again" })));
+    ok("rejecting nothing is nothing", rj2.ok === false);
+  }
+  {
+    /* Under the minimum: asked, refused, nothing written. */
+    const { led } = newLedger();
+    await led.fetch(internal("credit", { node: "c4", divi: MIN_CLAIM - 1, kills: 990 }));
+    const r = await j(await led.fetch(internal("request", { node: "c4", to: GOOD })));
+    ok("under the minimum is refused", String(r.why).includes(`${MIN_CLAIM}`) && r.pending === null, `${r.why}`);
+    const rows = (await j(await led.fetch(get("pending")))).rows as any[];
+    ok("and London never hears of it", rows.length === 0);
+  }
+
   console.log(`\n${out.length - failures} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);
 }

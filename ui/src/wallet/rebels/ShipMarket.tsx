@@ -15,6 +15,11 @@ import {
   PARTS, FACTORY, OVERLAYS, chipColour, loadPaint, savePaint, type PartKey, type ShipPaint,
 } from "./shipColours";
 import { loadShip, saveShip } from "./shipChoice";
+import { WeaponStore } from "./WeaponStore";
+import { TestFire } from "./TestFire";
+import { ItemStore } from "./ItemStore";
+import { PointsPanel } from "./PointsPanel";
+import type { WeaponSpec } from "./weaponCatalog";
 import { saveShip as saveShipRemote } from "./rebelsShips";
 
 export function ShipMarket({ onClose }: { onClose: () => void }) {
@@ -38,6 +43,13 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
   const [paint, setPaint] = useState<ShipPaint>(() => loadPaint());
   const [tuning, setTuning] = useState<PartKey | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  /* Ships, Weapons, Items. A bar rather than three panels, because they are
+     three views of ONE ship: the hull stays on the right whichever is open. */
+  const [tab, setTab] = useState<"ships" | "weapons" | "items" | "points">("ships");
+  /* Which weapon the TEST button is holding down, if any. */
+  const [testing, setTestingRaw] = useState<WeaponSpec | null>(null);
+  const setTesting = (spec: WeaponSpec, down: boolean) =>
+    setTestingRaw(down ? spec : null);
   useEffect(() => { savePaint(paint); }, [paint]);
 
   /* And to Supabase, so a reinstall or a second machine does not cost anyone
@@ -101,8 +113,15 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
           </div>
 
           <div className="ship-market-stage">
+            {/* What the TEST button is firing, drawn over the ship. */}
+            <TestFire spec={testing} />
             <div className="ship-market-ring">
-              <ShipPreview id={ship.id} paint={paint} />
+              <ShipPreview
+                id={ship.id}
+                paint={paint}
+                /* On the armoury tabs the ship is being FLOWN, not browsed. */
+                mode={tab === "ships" ? "turntable" : "flight"}
+              />
             </div>
           </div>
 
@@ -115,6 +134,25 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
             column cannot land on top of each other, and this panel has already
             had two goes at proving that placement alone will not stop them. */}
         <div className="ship-market-side">
+          {/* Above the stats, as asked. */}
+          <div className="ship-market-tabs">
+            {(["ships", "weapons", "items", "points"] as const).map((t) => (
+              <button
+                type="button"
+                key={t}
+                className={tab === t ? "on" : ""}
+                onClick={() => { setTestingRaw(null); setTab(t); }}
+              >
+                {t.toUpperCase()}
+              </button>
+            ))}
+          </div>
+
+          {tab === "weapons" && <WeaponStore ship={ship.id} onTest={setTesting} />}
+          {tab === "items" && <ItemStore ship={ship.id} />}
+          {tab === "points" && <PointsPanel />}
+
+          {tab === "ships" && <>
           <div className="ship-market-stats">
             {STAT_ROWS.map((row) => {
               const v = Number(ship.stats[row.key]) || 0;
@@ -225,10 +263,14 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
               </div>
             )}
           </div>
+          </>}
 
         </div>
 
-        <div className="ship-market-list">
+        {/* Only on the Ships tab. The row of hulls along the bottom is how you
+            CHOOSE a ship, so it has nothing to say while the armoury is open,
+            and it was taking a strip of a short window to say it. */}
+        {tab === "ships" && <div className="ship-market-list">
           {grouped.map(([className, ships]) => (
             <div className="ship-market-class" key={className}>
               <h3>{className}</h3>
@@ -250,7 +292,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
               </div>
             </div>
           ))}
-        </div>
+        </div>}
 
         {confirmReset && (
           <div className="ship-paint-confirm">

@@ -15,13 +15,13 @@ import {
   type Flight, type Stick,
 } from "./orbitFlight";
 import {
-  createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest,
+  createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles, fireBeam,
   fireMini, miniMuzzle, spawnFleet,
   STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
   type CombatState,
 } from "./rebelsCombat";
 import { userWonRecently } from "../stakeWin";
-import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
+import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT, playerName } from "./rebelsScores";
 import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import { installSky, skyTexture, type SkyHandle } from "./starfield";
@@ -36,6 +36,14 @@ import {
 } from "./shipLoadout";
 import { pulseHealth } from "./healthPulse";
 import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
+import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
+import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
+import { createPeers, type Peers } from "./rebelsPeers";
+import { PART_ORDER } from "./shipColours";
+import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
+import {
+  hasWeapon, earnPoints, spendable, extraTorpedoes, extraMagazine,
+} from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
   type Fx, type ShieldRig,
@@ -43,8 +51,13 @@ import {
 import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
-  playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce,
+  playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce, audioState,
+  startBoostSound, stopBoostSound,
 } from "./rebelsAudio";
+import {
+  primeMusic, playOpening, playGameplay, musicOnDeath, stopMusic, tickMusic,
+  pumpMusic, musicState,
+} from "./rebelsMusic";
 
 export interface HudState {
   ready: boolean;
@@ -68,6 +81,19 @@ export interface HudState {
   towers: number;
   /** How far the camera sits behind the ship. Zero is the cockpit. */
   view: number;
+  /** Whether this ship is in a shared world, and how many others are in it. */
+  room: string;
+  crew: number;
+  /* ---- the frame readout ----
+     Frames per second as the screen actually gets them, and how much of each
+     frame the game's own work (fly, fight, sound, and the drawing it asks
+     for) costs in milliseconds. Both smoothed, so the numbers can be read.
+     The gap between the two is the map's rendering, which is the thing the
+     FPS plan goes after next. */
+  fps: number;
+  simMs: number;
+  /** Points left to spend on guns. One is earned for each DIVI brought home. */
+  points: number;
   /** Where the throttle lever is, -0.35 to 1. */
   throttle: number;
   /** Which weapon is in each trigger, as an index into PRIMARY / SECONDARY. */
@@ -115,6 +141,7 @@ const BLANK: HudState = {
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, throttle: 1,
+  room: "off", crew: 0, points: 0, fps: 0, simMs: 0,
   primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
@@ -149,6 +176,34 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      by index. Built from a single prototype and cloned, so a spawn costs a
      clone rather than a pile of new geometry. */
   let protos: THREE.Group[] = [];
+  /* ---- the room ----
+     Null when flying alone, which is still a perfectly good way to play. While
+     it is live the ROOM owns the fight: the fighters, every round in the air,
+     the coins and all the gauges come off the wire and the local simulation is
+     not stepped at all. That is what makes two people see the same fight
+     rather than two private ones. */
+  let room: Room | null = null;
+  let peers: Peers | null = null;
+  let roomStatus: RoomStatus = "off";
+
+  /* See the black box in frame(). */
+  /* Seconds until the beam may fire again, which is also how long it stays
+     lit. See weaponCatalog. */
+  let beamAt = 0;
+  let wasThrusting = false;
+  /* Scratch lists for the instanced draws, so a frame allocates none. */
+  const droneList: typeof combat.enemies = [];
+  const orbList: typeof combat.bullets = [];
+  let selfIp = "";
+  let frameError = "";
+  let frameErrors = 0;
+  let diagAt = 0;
+  /* Smoothed frame figures, and a clock for pushing them to the HUD: four
+     times a second, since a number that changes sixty times a second cannot
+     be read and re-rendering the HUD every frame would itself cost frames. */
+  let fpsAvg = 0;
+  let simAvg = 0;
+  let readoutAt = 0;
   const enemyMeshes: THREE.Group[] = [];
   /* One shield rig per fighter model, hanging off it. */
   const enemyShields: ShieldRig[] = [];
@@ -296,6 +351,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function die(): void {
     if (hud.dead) return;
     bank();
+    /* The flying theme goes over five seconds and the menu theme comes back
+       after it. See rebelsMusic for why after rather than across. */
+    musicOnDeath();
     /* Alone, losing the ship means every player is down, so the sky is cleared
        and the whole thing starts again at wave one with no waiting. With others
        still flying it will instead be a ten second count, which is the room's
@@ -348,7 +406,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function selectWeapon(kind: SlotKind, index: number) {
     const w = weaponAt(kind, index);
     if (!w) return;
-    if (!w.ready) {
+    /* ---- OWNED, NOT "READY" ----
+       Whether a gun can be selected is now a question about this player's
+       purchases rather than about whether the game has been written yet. A gun
+       nobody has bought says where to get it, because a key that appears to do
+       nothing is indistinguishable from a bug. */
+    if (kind === "primary") {
+      const spec = weaponInSlot(index + 1);
+      if (spec && !hasWeapon(loadShip(), spec.key)) {
+        setHud({
+          note: `${spec.name}: buy it in SPACESHIPS`,
+          noteAt: performance.now(),
+        });
+        return;
+      }
+    } else if (!w.ready) {
       setHud({ note: `${w.name}: not yet fitted`, noteAt: performance.now() });
       return;
     }
@@ -548,6 +620,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     if (now - wokeAt < 1000) return;
     wokeAt = now;
     resumeAudio();
+    /* The same gesture that wakes the sound is the one that lets the music
+       start, so it is asked here rather than being left to wonder. */
+    pumpMusic();
   }
 
   function onWheel(e: WheelEvent) {
@@ -731,8 +806,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        fire groups are the most criticised weapon interface in the genre and the
        standard player workaround is pulling things out of the cycle onto their
        own keys. Descent bound 1-5 in 1995 and nobody has complained since. */
-    if (k >= "1" && k <= "3") selectWeapon("primary", Number(k) - 1);
-    if (k >= "4" && k <= "6") selectWeapon("secondary", Number(k) - 4);
+    /* ---- ONE LINE OF SIX ----
+       The keys used to be 1-3 for the primary and 4-6 for the secondary. The
+       six guns are now a single upgrade path, so all six numbers pick along it
+       and the secondary stays where the genre puts it: the right button. */
+    if (k >= "1" && k <= "6") selectWeapon("primary", Number(k) - 1);
     if (k === "v" && flight) {
       flight.view = flight.view > 0.01 ? 0 : 2;
       if (flight.view > 0) ensureShip();
@@ -755,112 +833,73 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stick.aimX = 0; stick.aimY = 0;
   }
 
+  /**
+   * Join the shared world.
+   *
+   * Everyone lands in the same room, because the ask was for people to be able
+   * to play together and not for them to be sorted first. Failing to connect is
+   * not an error and does not stop anything: the game carries on exactly as it
+   * did, flying its own fight, and the room client keeps trying quietly in the
+   * background. A game that refused to start because a server was down would be
+   * a worse game than one that was briefly alone.
+   */
+  function connectRoom(): void {
+    if (room) return;
+    const home = homeIndex >= 0 && tipList[homeIndex]
+      ? tipList[homeIndex].clone()
+      : new THREE.Vector3(0, 0, R);
+    const paint = loadPaint();
+    room = joinRoom({
+      node: selfIp || playerName(),
+      name: playerName(),
+      home,
+      ship: loadShip(),
+      /* Flattened in the order the shader keeps the parts, which is the order
+         the other end puts them back in. */
+      paint: PART_ORDER.map((k) => [
+        paint[k].hue, paint[k].sat, paint[k].bright,
+        ["none", "lines", "hex", "camo"].indexOf(paint[k].overlay ?? "none"),
+      ]),
+      onStatus: (s) => { roomStatus = s; setHud({ room: s }); setBankStatus(s); },
+      onPurse: (p) => setBankPurse(p),
+    });
+    /* The points panel cashes out through this and through nothing else. */
+    const r = room;
+    setBankActor({ claim: (to) => r.claim(to), refresh: () => r.askPurse() });
+    if (!peers && scene) {
+      peers = createPeers();
+      scene.add(peers.group);
+    }
+  }
+
+  function leaveRoom(): void {
+    room?.close();
+    room = null;
+    roomStatus = "off";
+    setBankActor(null);
+    setBankStatus("off");
+    if (peers && scene) scene.remove(peers.group);
+    peers?.dispose();
+    peers = null;
+  }
+
   function startAt(index: number) {
     const at = index >= 0 && tipList[index]
       ? tipList[index].clone()
       : new THREE.Vector3(0, 0, 106);
-    flight = createFlight(at);
+    /* What this hull carries beyond the standard, from the store. Read at the
+       moment of launch so a purchase made between sorties is felt on the next
+       one without the panel having to be reopened. */
+    flight = createFlight(at, {
+      torpedoes: extraTorpedoes(loadShip()),
+      magazine: extraMagazine(loadShip()),
+    });
     setHud({ dead: false });
   }
 
-  return {
-    attach(api) {
-      try {
-        scene = api.scene;
-        camera = api.camera;
-        dom = api.dom;
-
-        /* Real tower tips off the real map. Docking lines up with the towers
-           you can actually see, because they ARE those towers. */
-        scaleTowers = api.scaleTowers;
-        ipList = [...api.tips.keys()];
-        tipList = ipList.map((ip) => api.tips.get(ip)!.clone());
-        homeIndex = api.selfIp ? ipList.indexOf(api.selfIp) : -1;
-
-        savedNear = camera.near;
-        savedFar = camera.far;
-        camera.near = 0.05;
-        /* Far enough to SEE the outer planets, which is a good deal further
-           than the old four thousand: the fourteenth sits 3,600 units out and
-           is 300 across, so anything short of this simply does not draw it. */
-        camera.far = Math.max(camera.far, (R + MAX_ALT) * 2.6);
-        camera.updateProjectionMatrix();
-
-        /* Start decoding the samples now. Waiting for the first trigger pull
-           meant the opening shots of a fight were silent. */
-        primeGunSound();
-
-        fx = createFx();
-        scene.add(fx.group);
-
-        /* The sky. Built here rather than on launch because the planets are
-           always there, and because the first run has to fetch them: starting
-           at attach means they are usually in place by the time anyone has
-           finished reading the launch card. */
-        space = createSpace();
-        scene.add(space.group);
-
-        /* And the stars behind all of it. The scene belongs to the Node Map,
-           which is used outside the game, so whatever background it had is
-           handed back on the way out — the same courtesy the camera's near and
-           far planes get. */
-        sky = installSky(scene);
-        guardShell = makeGuardShell();
-        scene.add(guardShell.mesh);
-        /* One prototype per tier, cloned per fighter. Seven models built once
-           costs nothing and means a rare ship is the right colour from the
-           frame it appears. */
-        protos = TIERS.map((t) => makeFighter(t.colour));
-        combat = createCombat();
-
-        startAt(homeIndex);
-
-        /* Where the globe exactly fills the height of the frame. Slightly
-           inside it, so it fills rather than floats. */
-        const half = (camera.fov * Math.PI) / 360;
-        globeRadius = api.radius;
-        approachTo = (api.radius / Math.sin(half)) * 0.92;
-        approachFrom.copy(camera.position);
-        if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
-        approach = 0;
-
-        dom.addEventListener("wheel", onWheel, { passive: false });
-        dom.addEventListener("pointerleave", onLeave);
-        dom.addEventListener("pointermove", onMove);
-        dom.addEventListener("pointerdown", onDown);
-        dom.addEventListener("contextmenu", onContextMenu);
-        window.addEventListener("pointerup", onUp);
-        window.addEventListener("keydown", onKeyDown);
-        window.addEventListener("keyup", onKeyUp);
-        window.addEventListener("blur", onBlur);
-        if (typeof document !== "undefined") {
-          document.addEventListener("pointerlockchange", onLockChange);
-        }
-
-        /* What this player has already killed, so the tallies are lifetime and
-           not per session. Offline it falls back to the local copy. */
-        divi = totalDivi();
-        setHud({ divi });
-
-        void myTotals().then((row) => {
-          lifetimeTiers = row.tierKills.slice(0, TIER_COUNT);
-          setHud({ tierKills: lifetimeTiers.slice() });
-        });
-
-        setHud({
-          ready: true,
-          broken: null,
-          towers: tipList.length,
-          homeName: homeIndex >= 0 ? labelFor(ipList[homeIndex]) : "no node located",
-        });
-      } catch (err) {
-        /* Never throw out of here. This runs inside the map's own effect, and
-           an exception would take the Node Map down with it. */
-        setHud({ broken: err instanceof Error ? err.message : "the game could not start", ready: false });
-      }
-    },
-
-    frame(dt) {
+  /* The whole of a frame. A plain function rather than a method so the
+     wrapper in frame() can call it inside a try. */
+  function runFrame(dt: number) {
       if (!flight || !camera || !fx || !scene || protos.length === 0) return;
       try {
         const s = scratch;
@@ -1090,6 +1129,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           }
         }
 
+        /* Whether the fight belongs to a room. Worked out before the guns,
+           because it decides whether a trigger pull is a shot or a request. */
+        const inRoom = !!room && room.status() === "live";
+
         /* ---- guns ----
            Fired from the edges of the frame at eye level, converging on the
            crosshair, which is why the muzzles come from the camera's frustum
@@ -1115,9 +1158,34 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
                the main guns already do. */
             shipModel && flight.view > 0.01 ? shipNose(flight) : undefined,
           );
-          fireMini(combat, muzzle, camera.position, aimDir);
+          /* ---- WHO PULLS THE TRIGGER ----
+             In a room the shot is a REQUEST, not a fact: the room decides
+             whether this ship had a round left, whether it may fire yet, and
+             what it hits. Firing locally as well would put a round in the air
+             that nobody else can see and that scores nothing. */
+          if (inRoom && room) room.fire("mini", muzzle, flight.fwd, aimDir);
+          else fireMini(combat, muzzle, camera.position, aimDir);
           fx.muzzle(muzzle);
           playMiniSound();
+        }
+
+        /* ---- the beam ----
+           Not a round: everything in a narrow cone takes the damage at the
+           instant it fires, and the cone stays lit for half a second. Held
+           down, it simply fires again as soon as it is ready, which is the
+           same half second, so a held trigger reads as one continuous beam. */
+        const armed = weaponInSlot(weapons.primary + 1);
+        if (armed?.kind === "beam") {
+          beamAt -= dt;
+          if (stick.firing && beamAt <= 0 && flight.ammo >= 1) {
+            beamAt = BEAM_SECONDS;
+            flight.ammo -= 1;
+            const from = shipNose(flight);
+            if (inRoom && room) room.fire("main", from, flight.fwd);
+            else fireBeam(combat, armed, from, flight.fwd, "", damageScale());
+            fx.muzzle(from);
+            playGunSound();
+          }
         }
 
         if (res.fired) {
@@ -1138,15 +1206,95 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               .normalize().multiplyScalar(SHIP_LENGTH * 0.2);
             at = [nose.clone().add(side), nose.clone().sub(side)];
           }
-          const muzzles = fireGuns(
-            combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, "", at);
+          /* ---- WHO PULLS THE TRIGGER ----
+             In a room the shot is a REQUEST, not a fact: the room decides
+             whether this ship had rounds left, whether it may fire yet, and
+             what it hits. Firing locally as well would put rounds in the air
+             that nobody else can see and that score nothing. The muzzles are
+             still worked out here, because the flash is a local thing that
+             should happen the instant the trigger goes down. */
+          let muzzles: [THREE.Vector3, THREE.Vector3];
+          if (at) {
+            muzzles = at;
+          } else {
+            muzzles = [new THREE.Vector3(), new THREE.Vector3()];
+            gunMuzzles(flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, muzzles);
+          }
+          if (inRoom && room) room.fire("main", flight.pos, flight.fwd);
+          else fireGuns(combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, "", at);
           fx.muzzle(muzzles[0]);
           fx.muzzle(muzzles[1]);
           playGunSound();
         }
 
-        /* ---- fighters and their fire ---- */
-        stepCombat(combat, dt, {
+        /* ---- WHOSE FIGHT IS IT ----
+           In a room, the room's. It simulates the fighters, every round in the
+           air and the coins for everybody at once, and the cockpit's job is to
+           draw that rather than to run a second private copy of it. Two players
+           each stepping their own simulation would be two people in the same
+           sky shooting at different enemies, which is not multiplayer, it is
+           two games with a chat window.
+
+           Flying stays here either way. A ship that waited for a round trip
+           before it turned would feel broken however good the connection was,
+           so the stick still moves the ship at once and the position is
+           reported afterwards for everyone else to see. */
+        if (inRoom && room) {
+          room.step(dt);
+          room.report(flight.pos, flight.fwd, flight.guardFor > 0);
+
+          /* The room's fight, put where the drawing already looks for it. */
+          combat.enemies.length = 0;
+          for (const e of room.enemies) {
+            combat.enemies.push({
+              pos: e.pos, fwd: e.fwd, roll: 0,
+              cls: TIERS[Math.max(0, Math.min(TIERS.length - 1, e.tier - 1))],
+              shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
+              spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
+              weave: 0, weaveDir: 1, mode: "in", breakAt: 0, rejoinAt: 0,
+              escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
+            });
+          }
+          combat.bullets.length = 0;
+          for (const b of room.bullets) {
+            combat.bullets.push({ pos: b.pos, vel: b.vel, life: 1, hostile: b.hostile, mini: b.mini });
+          }
+          combat.coins.length = 0;
+          for (const k of room.coins) {
+            combat.coins.push({ pos: k.pos, vel: new THREE.Vector3(), spin: 0, value: 0 });
+          }
+          combat.events.push(...room.takeEvents().map((e) => ({
+            kind: e.kind as never, at: e.at, power: e.power, who: e.who,
+            tier: e.tier, shield: e.shield, damage: e.damage, wave: e.wave,
+            guarded: e.guarded,
+          })));
+
+          /* ---- ANTI-CHEAT: THE GAUGES ARE THE ROOM'S ----
+             Shield, ammo, torpedoes, guards, score and DIVI are all overwritten
+             from the wire while connected. A cockpit that decided its own score
+             is a cockpit that could be edited into deciding a better one, and
+             the whole reason the room exists is that it settles those numbers
+             where nobody can reach them. */
+          const g = room.gauges;
+          if (g) {
+            flight.shields = g.shield;
+            flight.ammo = g.ammo;
+            flight.torpedoes = g.torps;
+            flight.guards = g.guards;
+            score = g.score;
+            divi = g.divi;
+          }
+          /* Once. others() builds a fresh array each call. */
+          const crew = room.others();
+          if (peers) peers.draw(crew, camera);
+          setHud({ crew: crew.length + 1 });
+        } else if (peers) {
+          peers.draw([], camera);
+        }
+
+        /* ---- fighters and their fire ----
+           Only when nobody else is running them. */
+        if (!inRoom) stepCombat(combat, dt, {
           tips: tipList,
           playerPos: flight.pos,
           playerFwd: flight.fwd,
@@ -1183,7 +1331,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         for (const ev of combat.events) {
           if (ev.kind === "incoming") {
-            playIncomingWarning();
+            /* The event carries how near the round is, which is what the alarm
+               turns into loudness. */
+            playIncomingWarning(ev.power);
           } else if (ev.kind === "playerHit") {
             if (flight.grace <= 0) {
               /* Tell the cockpit to flash, and knock the view off centre in
@@ -1230,7 +1380,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
                being shot down. */
             divi += ev.value ?? 0;
             addDivi(ev.value ?? 0);
-            setHud({ divi });
+            /* One point for each DIVI brought home, which is what buys guns. */
+            setHud({ divi, points: earnPoints(ev.value ?? 0) });
           } else if (ev.kind === "enemyShot") {
             playShotAt(ev.at.x, ev.at.y, ev.at.z, 0.7);
           } else if (ev.kind === "junkGone") {
@@ -1296,6 +1447,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           rig.step(nowS, Math.min(1, e.flash / 0.6));
         }
 
+        /* ---- the thrust ----
+           Follows what the ship is DOING rather than what the key is doing.
+           Holding shift with an empty boost tank, or while docked, or after
+           being shot down, all move the ship not at all, and a roar with no
+           acceleration behind it is worse than silence. */
+        const thrusting = stick.boosting && flight.boost > 0
+          && flight.dock <= 0 && !hud.dead;
+        if (thrusting !== wasThrusting) {
+          wasThrusting = thrusting;
+          if (thrusting) startBoostSound(); else stopBoostSound();
+        }
+
         /* The recharging station, on for exactly as long as the resupply. */
         const docking = flight.dock > 0;
         if (docking !== wasDocking) {
@@ -1313,10 +1476,16 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         clearEvents(combat);
 
         fx.drawBullets(combat.bullets);
+        fx.drawBeams(combat.beams, BEAM_SECONDS);
         /* The swarm and its fire. Both are instanced, so the cost of drawing a
            hundred and forty spheres is the cost of drawing one. */
-        fx.drawDrones(combat.enemies.filter((e) => e.drone), nowS);
-        fx.drawOrbs(combat.bullets.filter((b) => b.orb), nowS);
+        /* Reused lists rather than two fresh arrays from filter() a frame. */
+        droneList.length = 0;
+        for (const e of combat.enemies) if (e.drone) droneList.push(e);
+        orbList.length = 0;
+        for (const b of combat.bullets) if (b.orb) orbList.push(b);
+        fx.drawDrones(droneList, nowS);
+        fx.drawOrbs(orbList, nowS);
         fx.drawTorpedoes(combat.torpedoes);
         fx.drawJunk(combat.junk);
         fx.drawTracers(combat.tracers, TRACER_LIFE);
@@ -1361,9 +1530,191 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         setHud({ broken: err instanceof Error ? err.message : "the game stopped", ready: false });
         flight = null;
       }
+    }
+
+  return {
+    attach(api) {
+      /* ---- FIRST, AND ON ITS OWN ----
+         Before the ship models, before the map tiles, before anything else the
+         game will want off the wire. Geoff: "it should be the first thing that
+         the player hears because it's lazy-loaded from Cloudflare before
+         anything else." Opening the panel is a click, so the audio is allowed
+         to start; if the download is still in flight it begins the moment it
+         lands. */
+      primeMusic();
+      playOpening(1.6);
+      setHud({ points: spendable() });
+      try {
+        scene = api.scene;
+        camera = api.camera;
+        dom = api.dom;
+
+        /* Real tower tips off the real map. Docking lines up with the towers
+           you can actually see, because they ARE those towers. */
+        scaleTowers = api.scaleTowers;
+        ipList = [...api.tips.keys()];
+        tipList = ipList.map((ip) => api.tips.get(ip)!.clone());
+        selfIp = api.selfIp ?? "";
+        homeIndex = api.selfIp ? ipList.indexOf(api.selfIp) : -1;
+
+        savedNear = camera.near;
+        savedFar = camera.far;
+        camera.near = 0.05;
+        /* Far enough to SEE the outer planets, which is a good deal further
+           than the old four thousand: the fourteenth sits 3,600 units out and
+           is 300 across, so anything short of this simply does not draw it. */
+        camera.far = Math.max(camera.far, (R + MAX_ALT) * 2.6);
+        camera.updateProjectionMatrix();
+
+        /* Start decoding the samples now. Waiting for the first trigger pull
+           meant the opening shots of a fight were silent. */
+        primeGunSound();
+
+        fx = createFx();
+        scene.add(fx.group);
+
+        /* The sky. Built here rather than on launch because the planets are
+           always there, and because the first run has to fetch them: starting
+           at attach means they are usually in place by the time anyone has
+           finished reading the launch card. */
+        space = createSpace();
+        scene.add(space.group);
+
+        /* And the stars behind all of it. The scene belongs to the Node Map,
+           which is used outside the game, so whatever background it had is
+           handed back on the way out — the same courtesy the camera's near and
+           far planes get. */
+        sky = installSky(scene);
+        guardShell = makeGuardShell();
+        scene.add(guardShell.mesh);
+        /* One prototype per tier, cloned per fighter. Seven models built once
+           costs nothing and means a rare ship is the right colour from the
+           frame it appears. */
+        protos = TIERS.map((t) => makeFighter(t.colour));
+        combat = createCombat();
+
+        startAt(homeIndex);
+
+        /* Where the globe exactly fills the height of the frame. Slightly
+           inside it, so it fills rather than floats. */
+        const half = (camera.fov * Math.PI) / 360;
+        globeRadius = api.radius;
+        approachTo = (api.radius / Math.sin(half)) * 0.92;
+        approachFrom.copy(camera.position);
+        if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
+        approach = 0;
+
+        dom.addEventListener("wheel", onWheel, { passive: false });
+        dom.addEventListener("pointerleave", onLeave);
+        dom.addEventListener("pointermove", onMove);
+        dom.addEventListener("pointerdown", onDown);
+        dom.addEventListener("contextmenu", onContextMenu);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("keydown", onKeyDown);
+        window.addEventListener("keyup", onKeyUp);
+        window.addEventListener("blur", onBlur);
+        if (typeof document !== "undefined") {
+          document.addEventListener("pointerlockchange", onLockChange);
+        }
+
+        /* What this player has already killed, so the tallies are lifetime and
+           not per session. Offline it falls back to the local copy. */
+        divi = totalDivi();
+        setHud({ divi });
+
+        void myTotals().then((row) => {
+          lifetimeTiers = row.tierKills.slice(0, TIER_COUNT);
+          setHud({ tierKills: lifetimeTiers.slice() });
+        });
+
+        setHud({
+          ready: true,
+          broken: null,
+          towers: tipList.length,
+          homeName: homeIndex >= 0 ? labelFor(ipList[homeIndex]) : "no node located",
+        });
+      } catch (err) {
+        /* Never throw out of here. This runs inside the map's own effect, and
+           an exception would take the Node Map down with it. */
+        setHud({ broken: err instanceof Error ? err.message : "the game could not start", ready: false });
+      }
     },
 
+    /* ---- THE BLACK BOX ----
+       Two faults have now been reported three times between them, guessed at
+       twice from the outside, and both are invisible: a game with no sound and
+       a game with no enemies look exactly like a game that is working, from
+       here. So it writes down what it is actually doing, once every couple of
+       seconds, where it can be read back off disk afterwards.
+
+       localStorage rather than the console, because a webview's console goes
+       nowhere anybody can reach, and rather than the HUD, because this is for
+       diagnosis and not for the player. It is one small key, overwritten in
+       place, so it costs nothing and grows into nothing. */
+    frame(dt) {
+      const t0 = performance.now();
+      try {
+        runFrame(dt);
+      } catch (err) {
+        /* ---- AND IT NO LONGER LOSES THE REST OF THE FRAME IN SILENCE ----
+           Everything in a frame runs in one long sequence: fly, shoot, step the
+           fight, play what happened, then draw it. An exception anywhere in
+           that used to skip every remaining step without a word, and because
+           the map owns the render loop the world carried on drawing regardless.
+           A throw just before the sounds and the enemy models would look
+           EXACTLY like the two things being reported: still flying, still
+           rendering, no noise and nothing to fight. */
+        frameError = `${(err as Error).message}`;
+        frameErrors++;
+      }
+      tickMusic();
+      /* The readout. An exponential average with a short memory: a spike is
+         seen, a steady state is steady. */
+      if (dt > 0) {
+        const k = 0.1;
+        fpsAvg += ((1 / dt) - fpsAvg) * k;
+        simAvg += ((performance.now() - t0) - simAvg) * k;
+      }
+      readoutAt -= dt;
+      if (readoutAt <= 0) {
+        readoutAt = 0.25;
+        setHud({ fps: Math.round(fpsAvg), simMs: Math.round(simAvg * 10) / 10 });
+      }
+      diagAt -= dt;
+      if (diagAt <= 0) {
+        diagAt = 2;
+        try {
+          localStorage.setItem("dd69.rebels.diag", JSON.stringify({
+            at: new Date().toISOString(),
+            phase,
+            /* Whether the ship is currently lost matters as much as the phase:
+               a dead player has no wave and no enemies by design, and without
+               this a perfectly normal death reads exactly like a game that has
+               stopped spawning. */
+            dead: hud.dead,
+            room: roomStatus,
+            crew: room ? room.others().length + 1 : 0,
+            respawnIn: respawnAt > performance.now()
+              ? Math.round((respawnAt - performance.now()) / 1000) : 0,
+            audio: audioState(),
+            music: musicState(),
+            enemies: combat.enemies.length,
+            fighters: combat.enemies.filter((e) => !e.drone).length,
+            wave: combat.wave ? { n: combat.wave.n, toSpawn: combat.wave.toSpawn, left: Math.round(combat.wave.timeLeft) } : null,
+            meshes: enemyMeshes.length,
+            protos: protos.length,
+            visible: enemyMeshes.filter((m) => m.visible).length,
+            alt: flight ? Math.round(flight.pos.length() - R) : null,
+            frameError,
+            frameErrors,
+          }));
+        } catch { /* storage full or blocked; the game does not care */ }
+      }
+    },
     detach() {
+      stopMusic();
+      stopBoostSound();
+      leaveRoom();
       /* Backing out mid-flight files what was earned. Losing a good run to a
          stray Escape would be worse than the alternative. */
       if (flying && !hud.dead) bank();
@@ -1456,6 +1807,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          heard. */
       resumeAudio();
       primeGunSound();
+      playGameplay();
+      connectRoom();
       startAt(homeIndex);
       if (camera) {
         diveFromPos.copy(camera.position);
@@ -1484,6 +1837,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (respawnAt > performance.now()) return;
       score = 0;
       if (!combat.wave) startWave(combat, 1);
+      playGameplay();
       startAt(homeIndex);
       flying = true;
       phase = "fly";

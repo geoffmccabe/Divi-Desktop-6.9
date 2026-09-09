@@ -40,12 +40,18 @@ const storage = {
 };
 const fakeState = { storage } as never;
 const credits: any[] = [];
+const requests: any[] = [];
 const fakeEnv = {
   ROOM: null,
   LEDGER: {
     idFromName: () => "id",
     get: () => ({
-      fetch: async (_u: string, init: { body: string }) => {
+      fetch: async (u: string, init?: { body: string }) => {
+        /* A purse read, or a cash-out request: answered with a blank purse. */
+        if (!init?.body || String(u).includes("/request")) {
+          if (init?.body) requests.push(JSON.parse(init.body));
+          return Response.json({ divi: 0, claimable: 0, paid: 0, pending: null, last: null });
+        }
         credits.push(JSON.parse(init.body));
         return new Response("{}");
       },
@@ -274,5 +280,46 @@ const home: [number, number, number] = [0, 0, R + 8];
 }
 
 console.log(out.join("\n"));
+// N. Cashing out: the account is the CONNECTING address, never the typed node.
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  room.seat(ws as never, "203.0.113.7");
+  const id = ws.last("hi").id as string;
+  ws.deliver(JSON.stringify({ t: "join", node: "somebody-elses-node", name: "Liar", home: [0, 0, R] }));
+  const seat = room.seats.get(id);
+  ok("the seat's account is the socket's address", seat.account === "203.0.113.7", seat.account);
+  ok("the typed node is kept for display only", seat.node === "somebody-elses-node");
+  await new Promise((r) => setTimeout(r, 0));
+  ok("a purse is sent on join", !!ws.last("purse"), JSON.stringify(ws.last("purse")));
+
+  requests.length = 0;
+  credits.length = 0;
+  seat.kills = 3; seat.divi = 0.3; seat.score = 30;
+  ws.deliver(JSON.stringify({ t: "claim", to: "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt" }));
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  ok("a claim banks the run first", credits.length === 1 && credits[0].node === "203.0.113.7"
+     && credits[0].kills === 3, JSON.stringify(credits));
+  ok("then asks the ledger under the socket's address, not the typed one",
+     requests.length === 1 && requests[0].node === "203.0.113.7"
+     && requests[0].to === "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt", JSON.stringify(requests));
+  ok("and the answer reaches the cockpit", ws.all("purse").length >= 2);
+
+  ws.deliver(JSON.stringify({ t: "claim", to: "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt" }));
+  await new Promise((r) => setTimeout(r, 0));
+  ok("a second claim inside five seconds is ignored", requests.length === 1);
+  ok("none of that is a strike", seat.strikes === 0, `${seat.strikes}`);
+  room.stop();
+}
+{
+  /* No connecting address at all (a test, a local run): the declared node stands in. */
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "10.0.0.5");
+  ok("without a connecting address the declared node is the account", seat.account === "10.0.0.5", seat.account);
+  room.stop();
+}
+
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

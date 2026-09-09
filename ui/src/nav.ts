@@ -28,5 +28,8 @@ export const NAV: NavItem[] = [
   // the whole sidebar wider or truncate.
   { id: "hra", label: "Human Readable\nAddresses", icon: "hra" },
   { id: "addressbook", label: "Address Book", icon: "addressbook" },
+  /* Straight into the cockpit: the map in globe view with the game started,
+     rather than the map and then a button. */
+  { id: "divirebels", label: "Divi Rebels Game", icon: "divirebels" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];

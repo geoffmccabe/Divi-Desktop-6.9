@@ -239,6 +239,26 @@ export function totalDivi(): number {
   }
 }
 
+/**
+ * Take DIVI back off the balance, for something bought with it.
+ *
+ * Never below nothing, and it returns what was actually taken so a caller
+ * cannot hand out more than was paid for. Deliberately separate from addDivi
+ * with a negative number: the one that removes money should have to be called
+ * on purpose.
+ */
+export function spendDivi(amount: number): number {
+  if (!(amount > 0)) return 0;
+  const have = totalDivi();
+  const take = Math.min(have, amount);
+  try {
+    localStorage.setItem(DIVI_KEY, (have - take).toFixed(4));
+  } catch {
+    /* storage blocked; the number is still right for this session */
+  }
+  return take;
+}
+
 export function addDivi(amount: number): number {
   if (!(amount > 0)) return totalDivi();
   const next = totalDivi() + amount;

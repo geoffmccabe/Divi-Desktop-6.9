@@ -39,6 +39,11 @@ export default {
          checks for one rule is not belt and braces on something cosmetic — the
          thing on the other side of it is a treasury. */
       if (url.pathname === "/ledger/credit") return new Response("not found", { status: 404 });
+      /* The player's half of a cash-out is the same kind of thing: a room
+         vouches for WHICH account, and only a room can. */
+      if (url.pathname === "/ledger/purse" || url.pathname === "/ledger/request") {
+        return new Response("not found", { status: 404 });
+      }
       const id = env.LEDGER.idFromName("v1");
       return env.LEDGER.get(id).fetch(req);
     }

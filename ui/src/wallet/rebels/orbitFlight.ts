@@ -194,6 +194,9 @@ export interface Flight {
    * silently changes where your shots come from belongs with the flight model.
    */
   view: number;
+  /** What this hull carries beyond the standard, from things bought in the
+   *  store: more tubes, a bigger magazine. */
+  extras: Extras;
   /** What you arrived with, so the gauges can be seen filling rather than
    *  snapping to full the instant the bar completes. */
   dockFrom: { shields: number; ammo: number; boost: number } | null;
@@ -245,7 +248,34 @@ export interface Stick {
 }
 
 /** Start on the pad above a tower, pointing north. */
-export function createFlight(at: THREE.Vector3): Flight {
+/**
+ * What this ship carries beyond the standard, from things bought in the store.
+ *
+ * Passed IN rather than read from the armoury here, and that is deliberate: the
+ * flight model is pure arithmetic with no idea that a shop exists, which is
+ * what lets the whole of it run headless in a test. A number arriving from
+ * outside keeps it that way.
+ */
+export interface Extras {
+  /** More torpedo tubes. */
+  torpedoes: number;
+  /** A bigger magazine, as a fraction of the standard. */
+  magazine: number;
+}
+
+export const NO_EXTRAS: Extras = { torpedoes: 0, magazine: 0 };
+
+/** The magazine this ship actually carries. */
+export function ammoFor(extras: Extras = NO_EXTRAS): number {
+  return Math.round(MAX_AMMO * (1 + Math.max(0, extras.magazine)));
+}
+
+/** And the rack. */
+export function torpedoesFor(extras: Extras = NO_EXTRAS): number {
+  return MAX_TORPEDOES + Math.max(0, Math.round(extras.torpedoes));
+}
+
+export function createFlight(at: THREE.Vector3, extras: Extras = NO_EXTRAS): Flight {
   const up = at.clone().normalize();
   /* Any tangent will do for an initial heading. North is the one that reads as
      deliberate rather than arbitrary. */
@@ -266,8 +296,9 @@ export function createFlight(at: THREE.Vector3): Flight {
     bank: 0,
     boost: 1,
     shields: MAX_SHIELD,
-    ammo: MAX_AMMO,
-    torpedoes: MAX_TORPEDOES,
+    ammo: ammoFor(extras),
+    torpedoes: torpedoesFor(extras),
+    extras,
     guards: MAX_GUARDS,
     guardFor: 0,
     guardWasDown: false,
@@ -612,14 +643,14 @@ export function stepFlight(
        can be watched climbing. That IS the docking graphic. */
     const from = f.dockFrom ?? { shields: f.shields, ammo: f.ammo, boost: f.boost };
     f.shields = Math.max(f.shields, from.shields + (MAX_SHIELD - from.shields) * f.dock);
-    f.ammo = Math.max(f.ammo, Math.round(from.ammo + (MAX_AMMO - from.ammo) * f.dock));
+    f.ammo = Math.max(f.ammo, Math.round(from.ammo + (ammoFor(f.extras) - from.ammo) * f.dock));
     f.boost = Math.max(f.boost, from.boost + (1 - from.boost) * f.dock);
     if (f.dock >= 1) {
       if (was < 1) {
         f.shields = MAX_SHIELD;
-        f.ammo = MAX_AMMO;
+        f.ammo = ammoFor(f.extras);
         f.boost = 1;
-        f.torpedoes = MAX_TORPEDOES;
+        f.torpedoes = torpedoesFor(f.extras);
         f.guards = MAX_GUARDS;
         f.dockHold = 1.1;
         out.docked = true;
