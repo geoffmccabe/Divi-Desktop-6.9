@@ -4,6 +4,7 @@
 
 import * as THREE from "three";
 import { R, cruiseScale } from "./orbitWorld";
+import { BEAM_SECONDS, type WeaponSpec } from "./weaponCatalog";
 import {
   droneClass, newGroup, newFleetId, stepFlock, reslot, slotOffsets,
   FLEET_SIZE, DRONE_CAP, DRONE_R, DRONE_RELOAD, DRONE_BULLET_SPEED, DRONE_FIRE_RANGE,
@@ -468,6 +469,9 @@ export interface CombatState {
   junk: Junk[];
   coins: Coin[];
   tracers: Tracer[];
+  /** Beams currently lit. Drawn, not travelling: the damage was done when they
+   *  were fired. */
+  beams: BeamShot[];
   events: CombatEvent[];
   /** The wave in progress, or null when nothing is being sent. */
   wave: Wave | null;
@@ -482,6 +486,7 @@ export interface CombatState {
 export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
+    beams: [],
     wave: null, flocks: [],
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
@@ -921,6 +926,78 @@ export function spawnFleet(
   return made;
 }
 
+/* ---- the beam ----
+   Not a round. Nothing travels: everything inside a narrow cone in front of
+   the ship takes the damage at the instant it is fired, and the cone is drawn
+   for half a second so it reads as a beam that stayed on.
+
+   That is why it is here and not with the bullets. A beam that fired a very
+   fast round would still be a round: it would miss things it passed through,
+   it would arrive late at range, and it could not hit two fighters at once. */
+
+/** Everything a beam needs to know about itself, taken from the catalogue so
+ *  a new tier is a row rather than a branch. */
+export interface BeamShot {
+  /** Where it came from and which way it points. */
+  pos: THREE.Vector3;
+  fwd: THREE.Vector3;
+  /** Seconds left of it being drawn. */
+  life: number;
+  /** Half the cone's full angle, in radians: what a dot product is compared
+   *  against. */
+  half: number;
+  reach: number;
+  colour: number;
+  owner?: string;
+}
+
+export const BEAM_MAX = 8;
+
+/**
+ * Fire a beam, and hurt everything in the cone.
+ *
+ * Damage is the pulse laser's roll times the tier's multiplier, so a beam is
+ * worth what the catalogue says it is worth and nothing here decides that.
+ *
+ * EVERYTHING in the cone, not the first thing. A cone that stopped at whatever
+ * it touched first would be a bullet with extra steps; the reason to carry a
+ * beam is that it cuts through a formation.
+ */
+export function fireBeam(
+  c: CombatState,
+  spec: WeaponSpec,
+  pos: THREE.Vector3,
+  fwd: THREE.Vector3,
+  owner = "",
+  damageScale = 1,
+): BeamShot {
+  const half = ((spec.cone ?? 2) * Math.PI) / 360;   /* full degrees to half radians */
+  const reach = spec.reach ?? 90;
+  const cos = Math.cos(half);
+  const shot: BeamShot = {
+    pos: pos.clone(), fwd: fwd.clone().normalize(),
+    life: BEAM_SECONDS, half, reach, colour: spec.colour ?? 0xffd83a, owner,
+  };
+  c.beams.push(shot);
+  while (c.beams.length > BEAM_MAX) c.beams.shift();
+
+  const rel = new THREE.Vector3();
+  for (let i = c.enemies.length - 1; i >= 0; i--) {
+    const e = c.enemies[i];
+    rel.copy(e.pos).sub(shot.pos);
+    const range = rel.length();
+    if (range > reach || range < 1e-6) continue;
+    /* Inside the cone, generously: a fighter is a real size, so being a hair
+       outside the line at forty units should still count. The allowance is the
+       body's own angular size at that range. */
+    const slack = Math.atan2(e.drone ? DRONE_R : ENEMY_R, range);
+    if (rel.divideScalar(range).dot(shot.fwd) < Math.cos(half + slack)) continue;
+    void cos;
+    hurtEnemy(c, e, rollLaserDamage() * spec.damage * damageScale, shot.pos, owner);
+  }
+  return shot;
+}
+
 /** Start a round's trail. Called wherever a bullet is created. */
 function addTracer(c: CombatState, b: Bullet): void {
   const t: Tracer = {
@@ -1247,6 +1324,13 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       c.events.push({ kind: "junkGone", at: j.pos.clone(), power: 1.4 });
       c.junk.splice(i, 1);
     }
+  }
+
+  /* Beams are lit for half a second and then gone. Nothing moves; the damage
+     was done at the instant they were fired. */
+  for (let i = c.beams.length - 1; i >= 0; i--) {
+    c.beams[i].life -= dt;
+    if (c.beams[i].life <= 0) c.beams.splice(i, 1);
   }
 
   /* ---- waves ----

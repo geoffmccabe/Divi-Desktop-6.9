@@ -15,7 +15,7 @@ import {
   type Flight, type Stick,
 } from "./orbitFlight";
 import {
-  createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles,
+  createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles, fireBeam,
   fireMini, miniMuzzle, spawnFleet,
   STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
   type CombatState,
@@ -39,6 +39,8 @@ import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
+import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
+import { hasWeapon, earnPoints, spendable } from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
   type Fx, type ShieldRig,
@@ -78,6 +80,8 @@ export interface HudState {
   /** Whether this ship is in a shared world, and how many others are in it. */
   room: string;
   crew: number;
+  /** Points left to spend on guns. One is earned for each DIVI brought home. */
+  points: number;
   /** Where the throttle lever is, -0.35 to 1. */
   throttle: number;
   /** Which weapon is in each trigger, as an index into PRIMARY / SECONDARY. */
@@ -125,7 +129,7 @@ const BLANK: HudState = {
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, throttle: 1,
-  room: "off", crew: 0,
+  room: "off", crew: 0, points: 0,
   primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
@@ -171,6 +175,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let roomStatus: RoomStatus = "off";
 
   /* See the black box in frame(). */
+  /* Seconds until the beam may fire again, which is also how long it stays
+     lit. See weaponCatalog. */
+  let beamAt = 0;
   let selfIp = "";
   let frameError = "";
   let frameErrors = 0;
@@ -377,7 +384,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function selectWeapon(kind: SlotKind, index: number) {
     const w = weaponAt(kind, index);
     if (!w) return;
-    if (!w.ready) {
+    /* ---- OWNED, NOT "READY" ----
+       Whether a gun can be selected is now a question about this player's
+       purchases rather than about whether the game has been written yet. A gun
+       nobody has bought says where to get it, because a key that appears to do
+       nothing is indistinguishable from a bug. */
+    if (kind === "primary") {
+      const spec = weaponInSlot(index + 1);
+      if (spec && !hasWeapon(loadShip(), spec.key)) {
+        setHud({
+          note: `${spec.name}: buy it in SPACESHIPS`,
+          noteAt: performance.now(),
+        });
+        return;
+      }
+    } else if (!w.ready) {
       setHud({ note: `${w.name}: not yet fitted`, noteAt: performance.now() });
       return;
     }
@@ -763,8 +784,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        fire groups are the most criticised weapon interface in the genre and the
        standard player workaround is pulling things out of the cycle onto their
        own keys. Descent bound 1-5 in 1995 and nobody has complained since. */
-    if (k >= "1" && k <= "3") selectWeapon("primary", Number(k) - 1);
-    if (k >= "4" && k <= "6") selectWeapon("secondary", Number(k) - 4);
+    /* ---- ONE LINE OF SIX ----
+       The keys used to be 1-3 for the primary and 4-6 for the secondary. The
+       six guns are now a single upgrade path, so all six numbers pick along it
+       and the secondary stays where the genre puts it: the right button. */
+    if (k >= "1" && k <= "6") selectWeapon("primary", Number(k) - 1);
     if (k === "v" && flight) {
       flight.view = flight.view > 0.01 ? 0 : 2;
       if (flight.view > 0) ensureShip();
@@ -1111,6 +1135,25 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           playMiniSound();
         }
 
+        /* ---- the beam ----
+           Not a round: everything in a narrow cone takes the damage at the
+           instant it fires, and the cone stays lit for half a second. Held
+           down, it simply fires again as soon as it is ready, which is the
+           same half second, so a held trigger reads as one continuous beam. */
+        const armed = weaponInSlot(weapons.primary + 1);
+        if (armed?.kind === "beam") {
+          beamAt -= dt;
+          if (stick.firing && beamAt <= 0 && flight.ammo >= 1) {
+            beamAt = BEAM_SECONDS;
+            flight.ammo -= 1;
+            const from = shipNose(flight);
+            if (inRoom && room) room.fire("main", from, flight.fwd);
+            else fireBeam(combat, armed, from, flight.fwd, "", damageScale());
+            fx.muzzle(from);
+            playGunSound();
+          }
+        }
+
         if (res.fired) {
           /* ---- where the guns are ----
              In the cockpit they come from the EDGES of the frame at eye level,
@@ -1301,7 +1344,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
                being shot down. */
             divi += ev.value ?? 0;
             addDivi(ev.value ?? 0);
-            setHud({ divi });
+            /* One point for each DIVI brought home, which is what buys guns. */
+            setHud({ divi, points: earnPoints(ev.value ?? 0) });
           } else if (ev.kind === "enemyShot") {
             playShotAt(ev.at.x, ev.at.y, ev.at.z, 0.7);
           } else if (ev.kind === "junkGone") {
@@ -1384,6 +1428,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         clearEvents(combat);
 
         fx.drawBullets(combat.bullets);
+        fx.drawBeams(combat.beams, BEAM_SECONDS);
         /* The swarm and its fire. Both are instanced, so the cost of drawing a
            hundred and forty spheres is the cost of drawing one. */
         fx.drawDrones(combat.enemies.filter((e) => e.drone), nowS);
@@ -1445,6 +1490,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          lands. */
       primeMusic();
       playOpening(1.6);
+      setHud({ points: spendable() });
       try {
         scene = api.scene;
         camera = api.camera;

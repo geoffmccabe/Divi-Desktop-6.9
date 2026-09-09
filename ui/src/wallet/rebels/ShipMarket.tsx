@@ -15,6 +15,7 @@ import {
   PARTS, FACTORY, OVERLAYS, chipColour, loadPaint, savePaint, type PartKey, type ShipPaint,
 } from "./shipColours";
 import { loadShip, saveShip } from "./shipChoice";
+import { WeaponStore } from "./WeaponStore";
 import { saveShip as saveShipRemote } from "./rebelsShips";
 
 export function ShipMarket({ onClose }: { onClose: () => void }) {
@@ -38,6 +39,9 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
   const [paint, setPaint] = useState<ShipPaint>(() => loadPaint());
   const [tuning, setTuning] = useState<PartKey | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  /* Ships, Weapons, Items. A bar rather than three panels, because they are
+     three views of ONE ship: the hull stays on the right whichever is open. */
+  const [tab, setTab] = useState<"ships" | "weapons" | "items">("ships");
   useEffect(() => { savePaint(paint); }, [paint]);
 
   /* And to Supabase, so a reinstall or a second machine does not cost anyone
@@ -115,6 +119,29 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
             column cannot land on top of each other, and this panel has already
             had two goes at proving that placement alone will not stop them. */}
         <div className="ship-market-side">
+          {/* Above the stats, as asked. */}
+          <div className="ship-market-tabs">
+            {(["ships", "weapons", "items"] as const).map((t) => (
+              <button
+                type="button"
+                key={t}
+                className={tab === t ? "on" : ""}
+                onClick={() => setTab(t)}
+              >
+                {t.toUpperCase()}
+              </button>
+            ))}
+          </div>
+
+          {tab === "weapons" && <WeaponStore ship={ship.id} />}
+          {tab === "items" && (
+            <p className="ship-market-note">
+              Nothing to fit yet. This is where hull upgrades and consumables
+              will live.
+            </p>
+          )}
+
+          {tab === "ships" && <>
           <div className="ship-market-stats">
             {STAT_ROWS.map((row) => {
               const v = Number(ship.stats[row.key]) || 0;
@@ -225,6 +252,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
               </div>
             )}
           </div>
+          </>}
 
         </div>
 

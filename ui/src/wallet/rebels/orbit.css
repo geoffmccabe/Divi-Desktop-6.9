@@ -559,3 +559,88 @@
   text-shadow: 0 2px 8px rgb(0 0 0 / 0.9);
   pointer-events: none;
 }
+
+/* ---- the store's tabs ----
+   Ships, Weapons, Items, above the stats. Three views of one ship rather than
+   three screens: the hull stays on the right whichever is open, which is why
+   this is a bar in the left column and not a set of panels. */
+.ship-market-tabs {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 6px; margin-bottom: 12px;
+}
+.ship-market-tabs button {
+  padding: 8px 4px;
+  font: 600 11px/1 var(--font-mono);
+  letter-spacing: 0.09em;
+  color: hsl(var(--rebels-hud) / 0.55);
+  background: hsl(var(--rebels-hud) / 0.06);
+  border: 1px solid hsl(var(--rebels-hud) / 0.16);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.ship-market-tabs button:hover { color: hsl(var(--rebels-hud) / 0.85); }
+.ship-market-tabs button.on {
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.16);
+  border-color: hsl(var(--rebels-hud) / 0.45);
+}
+
+/* ---- the armoury ---- */
+.wpn-store { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.wpn-purse {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 8px 10px;
+  background: hsl(var(--rebels-hud) / 0.06);
+  border: 1px solid hsl(var(--rebels-hud) / 0.16);
+  border-radius: 5px;
+}
+.wpn-purse span { font-size: 10px; letter-spacing: 0.09em; opacity: 0.6; }
+.wpn-purse b { font-size: 17px; color: var(--rebels-points, #7fe3a0); }
+.wpn-purse em { margin-left: auto; font-size: 10px; font-style: normal; opacity: 0.45; }
+
+.wpn-list { display: flex; flex-direction: column; gap: 5px; overflow-y: auto; min-height: 0; }
+.wpn-row {
+  display: grid;
+  grid-template-columns: 18px 10px 1fr auto auto;
+  align-items: center; gap: 8px;
+  padding: 8px 9px;
+  background: hsl(var(--rebels-hud) / 0.04);
+  border: 1px solid hsl(var(--rebels-hud) / 0.12);
+  border-radius: 5px;
+}
+/* Owned reads as fitted, not as sold: a fitted gun is the good state. */
+.wpn-row.on { border-color: hsl(var(--rebels-hud) / 0.4); background: hsl(var(--rebels-hud) / 0.1); }
+/* And a locked one is dimmed rather than hidden, so the line ahead is visible. */
+.wpn-row.locked { opacity: 0.42; }
+
+.wpn-slot { font-size: 12px; opacity: 0.5; text-align: center; }
+.wpn-swatch { width: 8px; height: 22px; border-radius: 2px; background: hsl(var(--rebels-hud) / 0.25); }
+.wpn-what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wpn-what b { font-size: 12px; }
+.wpn-what em { font-size: 10px; font-style: normal; opacity: 0.5; }
+.wpn-cost { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.wpn-cost b { font-size: 12px; color: var(--rebels-points, #7fe3a0); }
+.wpn-cost em { font-size: 9.5px; font-style: normal; opacity: 0.5; white-space: nowrap; }
+.wpn-have { font-size: 10px; letter-spacing: 0.08em; opacity: 0.75; }
+
+.wpn-act { min-width: 74px; display: flex; justify-content: flex-end; }
+.wpn-act button {
+  padding: 6px 12px;
+  font: 600 11px/1 var(--font-mono); letter-spacing: 0.08em;
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.16);
+  border: 1px solid hsl(var(--rebels-hud) / 0.5);
+  border-radius: 4px; cursor: pointer;
+}
+.wpn-act button:hover { background: hsl(var(--rebels-hud) / 0.28); }
+.wpn-short { font-size: 10px; opacity: 0.55; white-space: nowrap; }
+.wpn-locked {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 1px;
+  font-size: 10px; letter-spacing: 0.05em; text-align: right;
+}
+.wpn-locked em { font-style: normal; opacity: 0.55; font-size: 9px; }
+.wpn-note { font-size: 10.5px; opacity: 0.55; margin: 0; }
+
+/* Points in the cockpit: under the DIVI, and a different colour, because they
+   are a different currency that happens to be earned at the same rate. */
+.orbit-points { color: var(--rebels-points, #7fe3a0); }

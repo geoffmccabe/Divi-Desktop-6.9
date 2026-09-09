@@ -248,3 +248,40 @@ webview makes no sound at all until the player has clicked something.
 * More flying tracks. The file is named gameplay1 for that reason; picking
   between several is a list and a random index.
 * A music level of its own in the theme, if 75% of the effects volume is wrong.
+
+## Weapons and the armoury (69.9.0)
+
+Six primary guns as a single upgrade path, each needing the one before it, all
+of them data in weaponCatalog.ts. Adding a tier is adding a row: nothing about
+a weapon's damage, reach, colour, price or prerequisite is written into the
+firing code. That matters because the plan is ships that can be bought, sold
+and traded with their weapons attached, and a weapon that is a row can travel
+with a ship while a weapon that is an `if` cannot.
+
+Prices are Geoff's: 1000, 4000, 15,000, 50,000 and 200,000 points, and the same
+number is the DIVI price at the wallet's own rate of a thousand points to the
+dollar. So a gun costs fewer DIVI as DIVI is worth more. No CoinMarketCap price
+means no DIVI figure shown at all, per the standing rule, because this is a
+button that spends real money.
+
+The beam is a cone, not a fast round: everything inside it takes damage at the
+instant it fires, so it cuts through a formation rather than stopping at the
+first thing it touches. Two to five degrees across, lit for half a second, and
+firing again as soon as it is ready so a held trigger reads as continuous.
+
+Points are NOT the wallet's points. The wallet sells points for DIVI for its own
+features; these are earned by playing, one for each DIVI brought home, and kept
+in a separate place so neither can spend the other. Earnings and spending are
+two numbers rather than one balance, so a purchase never erases a career total.
+
+Ownership is per hull from the start, though nothing lets a player own two ships
+yet: retrofitting that later would mean migrating everybody's purchases.
+
+### Still to do
+
+* **Paying in DIVI.** The price is shown and the ownership path exists
+  (`grant()`), but the button is not wired: it moves real value into the
+  treasury and wants the same confirmation flow the wallet's other spends use.
+* Items tab is a placeholder. Nothing was specified for it yet.
+* Secondary weapons (mine, bomb) are still frames.
+* Selling a ship with its guns, once there is more than one ship.

@@ -207,6 +207,11 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         <div className="orbit-score">
           <span>DIVI EARNED</span>
           <b className="orbit-divi">{hud.divi.toFixed(2)}</b>
+          {/* Points, under the DIVI and in their own colour, because they are a
+              different currency that happens to be earned at the same rate: one
+              point for each DIVI brought home, and points are what buy guns. */}
+          <span>POINTS</span>
+          <b className="orbit-points">{Math.floor(hud.points).toLocaleString()}</b>
           <span>SCORE</span>
           <b>{hud.score.toLocaleString()}</b>
           {/* Lifetime kills by ship tier, rarest last, in each tier's colour. */}

@@ -163,6 +163,12 @@ export interface Fx {
   }[], now: number): void;
   /** Their fire: red energy spheres, pulsing in size and brightness. */
   drawOrbs(orbs: { pos: THREE.Vector3; phase?: number }[], now: number): void;
+  /** Beams, lit for half a second each. A cone rather than a line, because
+   *  that is what they hit. */
+  drawBeams(beams: Array<{
+    pos: THREE.Vector3; fwd: THREE.Vector3; life: number;
+    half: number; reach: number; colour: number;
+  }>, maxLife: number): void;
   /** The lines rounds leave behind them. */
   drawTracers(tracers: {
     from: THREE.Vector3; to: THREE.Vector3; life: number; hostile: boolean; mini: boolean; live: boolean;
@@ -257,6 +263,39 @@ export function createFx(): Fx {
   orbGlow.instanceColor.setUsage(THREE.DynamicDrawUsage);
   orbGlow.renderOrder = 2;
   bin.push(orbGeo, orbCoreMat, orbGlowMat, orbCore, orbGlow);
+
+  /* ---- beams ----
+     A cone, drawn as it is aimed: the same shape the damage is worked out in,
+     so what a player sees is what the beam actually covers. A cylinder would
+     be prettier and would lie about the edges.
+
+     Built pointing down -Z with its tip at the origin, so placing one is a
+     look-at and a scale rather than any arithmetic at the call site. Additive
+     and unlit, because a beam is light rather than a thing. */
+  const beamGeo = new THREE.ConeGeometry(1, 1, 24, 1, true);
+  /* Cone geometry stands on its base pointing +Y. Turned to point down -Z and
+     shifted so the TIP is at the origin, which is where the ship is. */
+  beamGeo.translate(0, -0.5, 0);
+  beamGeo.rotateX(-Math.PI / 2);
+  const beamMats: THREE.MeshBasicMaterial[] = [];
+  const beamMeshes: THREE.Mesh[] = [];
+  for (let i = 0; i < 8; i++) {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0.5,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(beamGeo, mat);
+    mesh.visible = false;
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 2;
+    group.add(mesh);
+    beamMats.push(mat);
+    beamMeshes.push(mesh);
+    /* The geometry is shared and disposed once below; only the material is
+       this mesh's own. */
+    bin.push(mat);
+  }
+  bin.push(beamGeo);
 
   /* ---- explosion debris ---- */
   const shardGeo = new THREE.TetrahedronGeometry(1, 0);
@@ -554,6 +593,30 @@ export function createFx(): Fx {
       orbCore.instanceMatrix.needsUpdate = true;
       orbGlow.instanceMatrix.needsUpdate = true;
       if (orbGlow.instanceColor) orbGlow.instanceColor.needsUpdate = true;
+    },
+
+    drawBeams(beams, maxLife) {
+      for (let i = 0; i < beamMeshes.length; i++) {
+        const b = beams[i];
+        const mesh = beamMeshes[i];
+        if (!b) { mesh.visible = false; continue; }
+        mesh.visible = true;
+        mesh.position.copy(b.pos);
+        dir.copy(b.fwd).normalize();
+        /* The cone points down -Z, which is where a quaternion built from the
+           z axis puts it. */
+        mesh.quaternion.setFromUnitVectors(zAxis, dir.negate());
+        /* The radius at the far end is what the half-angle actually subtends,
+           so the drawn edge is the edge that does damage. */
+        const rad = Math.tan(b.half) * b.reach;
+        mesh.scale.set(rad, rad, b.reach);
+        /* Brightest at the instant it fires and fading over its half second,
+           which is what makes a held trigger read as a pulsing beam rather
+           than a solid bar. */
+        const k = Math.max(0, Math.min(1, b.life / Math.max(0.001, maxLife)));
+        beamMats[i].color.setHex(b.colour);
+        beamMats[i].opacity = 0.14 + 0.4 * k;
+      }
     },
 
     drawTorpedoes(torpedoes) {
