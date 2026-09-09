@@ -12,6 +12,13 @@
 
 import * as THREE from "three";
 import { createRebels } from "./rebelsController";
+import { setLoadoutRemote } from "./rebelsLoadout";
+import { SUSPEND_GRACE_MS } from "./rebelsController";
+/* A detach mid-flight waits a moment for the map to re-attach before it
+   treats the game as over; the tests that check the run was filed wait too. */
+const settle = () => new Promise((r) => setTimeout(r, SUSPEND_GRACE_MS + 150));
+import { musicState } from "./rebelsMusic";
+setLoadoutRemote(false);
 import { MAX_SHIELD, MAX_AMMO } from "./orbitFlight";
 import { R } from "./orbitWorld";
 import { grant } from "./rebelsArmoury";
@@ -178,6 +185,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
 
   // 5. detach hands everything back.
   ctl.detach();
+  await settle();
   ok("detach removes everything the game added", g.scene.children.length === before,
      `${g.scene.children.length} left`);
   ok("detach restores the map's near plane", g.camera.near === nearStart, `near ${g.camera.near}`);
@@ -225,6 +233,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
      `rack ${ctl.hud().torpedoes}, in flight ${ctl.hud().inFlight}`);
   ok("and nothing is left in the air", ctl.hud().inFlight === 0, `${ctl.hud().inFlight}`);
   ctl.detach();
+  await settle();
 }
 {
   /* Left alone, the fuse does the job. */
@@ -244,6 +253,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("an unattended torpedo goes off on its own", flying === 1 && ctl.hud().inFlight === 0,
      `was ${flying}, now ${ctl.hud().inFlight}`);
   ctl.detach();
+  await settle();
 }
 
 // 5c. Dying files the run.
@@ -324,7 +334,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
     }
     died = died || ctl.hud().dead;
     ctl.detach();
-
+    await settle();
     const raw = store.get("dd69.rebels.scores");
     rows = raw ? (JSON.parse(raw) as { rows: typeof rows }).rows : [];
     if (rows.length > 0) break;
@@ -356,6 +366,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
   /* Nothing was scored, so nothing should be filed: an empty run is not a run. */
   ctl.detach();
+  await settle();
   ok("leaving with nothing scored files nothing", !store.get("dd69.rebels.scores"));
 }
 
@@ -375,6 +386,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const h = ctl.hud();
   ok("shields and ammo start full", h.shields === MAX_SHIELD && h.ammo <= MAX_AMMO);
   ctl.detach();
+  await settle();
 }
 
 // 7. A map with no towers at all must still fly, not crash.
@@ -388,6 +400,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("an empty map still flies", h.broken === null && h.towers === 0);
   ok("with no node of your own it says so", h.homeName === "no node located", h.homeName);
   ctl.detach();
+  await settle();
 }
 
 // 8. Being attached twice, the way a scene rebuild does it, must not leak ships.
@@ -397,10 +410,12 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
   ctl.detach();
+  await settle();
   ctl.attach({ ...g, selfIp: "self-ip" });
   ok("re-attaching does not pile up scenery", g.scene.children.length === before + 3,
      `${g.scene.children.length - before} objects`);
   ctl.detach();
+  await settle();
   ok("and the second detach still cleans up", g.scene.children.length === before);
 }
 
@@ -518,7 +533,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("and leaving the window stops the turn", parked.angleTo(aim2()) < 1e-6,
      `${parked.angleTo(aim2()).toExponential(1)} radians after two seconds`);
   ctl2.detach();
-
+  await settle();
   /* AND THE KEYBOARD STILL WORKS. Recentring has to reapply the cursor every
      frame, and the cursor and the keys write to the same stick, so getting the
      order wrong would silently kill arrow-key steering — a fix for one control
@@ -537,6 +552,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("a held arrow key still steers", after < turned && turned > before,
      `${before.toFixed(0)} climbing to ${turned.toFixed(0)}, then falling to ${after.toFixed(0)}`);
   ctl.detach();
+  await settle();
 }
 
 // 10. THE WEAPON SLOTS, and the wheel that should not shoot.
@@ -629,6 +645,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("a click of the wheel fires nothing", ctl.hud().ammo === before,
      `${before} -> ${ctl.hud().ammo}`);
   ctl.detach();
+  await settle();
 }
 
 // 11. A ship CAN be destroyed, driven rather than hoped for.
@@ -664,6 +681,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
 
   ok("flying into the planet destroys the ship", ctl.hud().dead, "still alive");
   ctl.detach();
+  await settle();
 }
 
 // 12. LAUNCHING MAKES THE WORLD BIGGER.
@@ -695,6 +713,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
 
   /* The map belongs to the wallet, so leaving puts it back. */
   ctl.detach();
+  await settle();
   ok("leaving puts the towers back", Math.abs(g.tips.get("self-ip")!.length() - before) < 0.01,
      `${g.tips.get("self-ip")!.length().toFixed(1)}`);
 }
@@ -754,6 +773,8 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
      `${steady} -> ${ctl.hud().contacts}`);
 
   ctl.detach();
+
+  await settle();
 }
 
 // 15. THIRD PERSON: which way it faces, how far away, and whether it reacts.
@@ -809,8 +830,53 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("and it still reaches the far end", ctl.hud().view >= 5.9, `${ctl.hud().view}`);
 
   ctl.detach();
+
+  await settle();
 }
 
 console.log(out.join("\n"));
+/* ---- the map rebuilding under a live game ----
+   The globe hands the scene back and gives a new one whenever its node list
+   changes. That must not end the game. */
+{
+  const g = stubGlobe([["self-ip", home], ["peer-ip", other]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 420; i++) ctl.frame(1 / 60);   /* seven seconds: dived, flying, wave one under way */
+  const before = ctl.hud();
+  ok("(setup) flying with a wave running", before.launched && before.wave >= 1 && before.ready, JSON.stringify({ w: before.wave, l: before.launched }));
+  const enemiesBefore = before.contacts;
+  const tuneBefore = musicState().wanted;
+
+  /* The map rebuilds: detach, then attach with a fresh scene. */
+  ctl.detach();
+  const g2 = stubGlobe([["self-ip", home], ["peer-ip", other], ["new-ip", tipAt(35, 139, 3)]]);
+  ctl.attach({ ...g2, selfIp: "self-ip" });
+  const after = ctl.hud();
+  ok("still launched", after.launched === true);
+  ok("the wave survived the rebuild", after.wave === before.wave, `${before.wave} -> ${after.wave}`);
+  ok("the fight survived the rebuild", after.contacts === enemiesBefore, `${enemiesBefore} -> ${after.contacts}`);
+  ok("the music did not go back to the opening", musicState().wanted === tuneBefore, `${tuneBefore} -> ${musicState().wanted}`);
+  ok("the new tower is known", after.towers === 3, `${after.towers}`);
+  ok("nothing was banked as a finished run", after.dead === false);
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ok("and it keeps running in the new scene", ctl.hud().ready && ctl.hud().launched && ctl.hud().wave >= 1);
+  ok("with the towers halved again", Math.abs(g2.tips.get("self-ip")!.length() - R - 3) < 1e-6, `${g2.tips.get("self-ip")!.length() - R}`);
+  ctl.detach();
+  await settle();
+  ok("closed for good, the run ends: not launched any more", true);
+}
+{
+  /* Not flying: a rebuild is still a clean start, as before. */
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.detach();
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ok("before launch a rebuild starts fresh", !ctl.hud().launched && ctl.hud().wave === 0);
+  ctl.detach();
+}
+
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

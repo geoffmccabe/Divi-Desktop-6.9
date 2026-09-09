@@ -38,6 +38,7 @@ import { pulseHealth } from "./healthPulse";
 import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
+import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
 import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
@@ -150,6 +151,11 @@ const BLANK: HudState = {
 /** Fighters are drawn about a unit across, against three-unit towers. */
 const ENEMY_SCALE = 0.85;
 
+/** How long a detached game waits for the map to hand it a new scene before
+ *  concluding the panel has closed. The rebuild re-attaches in the same tick;
+ *  this is only slack for a slow machine. */
+export const SUSPEND_GRACE_MS = 400;
+
 export interface RebelsController extends GlobeFlight {
   cursor(): { x: number; y: number };
   /** Called when the player presses Escape, which the browser signals by
@@ -204,6 +210,38 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let fpsAvg = 0;
   let simAvg = 0;
   let readoutAt = 0;
+  /* ---- THE MAP REBUILDS ITSELF UNDER THE GAME ----
+     The globe tears its whole scene down and builds it again whenever its
+     node list changes (a node arriving or leaving, which the map polls for
+     every ten seconds) or a map setting changes. Each time it does, it hands
+     the game back its scene (detach) and then a new one (attach). This used
+     to be treated as the game ENDING and STARTING: the run was banked, the
+     room left, the fight thrown away, the opening music put back on; and
+     from the cockpit it looked like the enemies had simply stopped coming.
+     Geoff played a whole session to make a video and met nobody.
+
+     So a detach mid-flight is a suspension, not an end: the fight, the
+     flight, the room and the music are kept, only the scene objects are
+     released, and the next attach puts them back into the new scene. */
+  let suspended = false;
+  /* The map re-attaches within the same tick when it rebuilds, so a detach
+     that is NOT followed by an attach almost at once was the panel closing,
+     and then the run is over for real: banked, the room left, the music
+     stopped. Nothing else can tell the two apart at detach time. */
+  let endAt: ReturnType<typeof setTimeout> | null = null;
+  let stopLoadoutWatch: (() => void) | null = null;
+
+  /** The run has ended for real (the panel closed mid-flight). */
+  function endSuspended(): void {
+    endAt = null;
+    if (!suspended) return;
+    suspended = false;
+    stopMusic();
+    leaveRoom();
+    if (flying && !hud.dead) bank();
+    combat = createCombat();
+    flight = null;
+  }
   const enemyMeshes: THREE.Group[] = [];
   /* One shield rig per fighter model, hanging off it. */
   const enemyShields: ShieldRig[] = [];
@@ -1541,9 +1579,16 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          anything else." Opening the panel is a click, so the audio is allowed
          to start; if the download is still in flight it begins the moment it
          lands. */
+      if (endAt) { clearTimeout(endAt); endAt = null; }
       primeMusic();
-      playOpening(1.6);
+      if (!suspended) playOpening(1.6);
       setHud({ points: spendable() });
+      /* What the account has, folded in: a reinstall or a second machine gets
+         its guns back. Then every change goes up. */
+      if (!stopLoadoutWatch) {
+        stopLoadoutWatch = watchLoadout();
+        void loadLoadoutRemote().then((moved) => { if (moved) setHud({ points: spendable() }); });
+      }
       try {
         scene = api.scene;
         camera = api.camera;
@@ -1591,18 +1636,31 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            costs nothing and means a rare ship is the right colour from the
            frame it appears. */
         protos = TIERS.map((t) => makeFighter(t.colour));
-        combat = createCombat();
-
-        startAt(homeIndex);
+        if (suspended) {
+          /* Back into the new scene with the fight and the flight as they
+             were. The towers were halved at launch and this is a fresh set at
+             full size, so they are halved again and the tips re-read. */
+          if (scaleTowers && hud.launched) {
+            const tips = scaleTowers(WORLD_SCALE);
+            tipList = ipList.map((ip) => tips.get(ip)?.clone() ?? new THREE.Vector3());
+          }
+          if (peers) scene.add(peers.group);
+          suspended = false;
+        } else {
+          combat = createCombat();
+          startAt(homeIndex);
+        }
 
         /* Where the globe exactly fills the height of the frame. Slightly
            inside it, so it fills rather than floats. */
         const half = (camera.fov * Math.PI) / 360;
         globeRadius = api.radius;
         approachTo = (api.radius / Math.sin(half)) * 0.92;
-        approachFrom.copy(camera.position);
-        if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
-        approach = 0;
+        if (phase === "approach") {
+          approachFrom.copy(camera.position);
+          if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
+          approach = 0;
+        }
 
         dom.addEventListener("wheel", onWheel, { passive: false });
         dom.addEventListener("pointerleave", onLeave);
@@ -1712,12 +1770,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
     },
     detach() {
-      stopMusic();
+      suspended = flying && !hud.dead && hud.launched;
+      if (suspended) {
+        if (endAt) clearTimeout(endAt);
+        endAt = setTimeout(endSuspended, SUSPEND_GRACE_MS);
+      } else {
+        stopMusic();
+        leaveRoom();
+      }
       stopBoostSound();
-      leaveRoom();
       /* Backing out mid-flight files what was earned. Losing a good run to a
          stray Escape would be worse than the alternative. */
-      if (flying && !hud.dead) bank();
+      if (flying && !hud.dead && !suspended) bank();
       stopRechargeSound();
       wasDocking = false;
       if (dom) {
@@ -1741,6 +1805,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         camera.far = savedFar;
         camera.updateProjectionMatrix();
       }
+      if (scene && peers) scene.remove(peers.group);
       if (scene && guardShell) scene.remove(guardShell.mesh);
       guardShell?.dispose();
       guardShell = null;
@@ -1772,8 +1837,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         else if (mat) mat.dispose();
       });
       fx = null; protos = [];
-      combat = createCombat();
-      scene = null; camera = null; dom = null; flight = null;
+      if (!suspended) {
+        combat = createCombat();
+        flight = null;
+      }
+      scene = null; camera = null; dom = null;
       setHud({ ready: false });
     },
 
@@ -1844,6 +1912,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       try { dom?.requestPointerLock?.(); } catch { /* not supported here */ }
       setHud({ launched: true });
     },
-    dispose() { listeners.clear(); },
+    dispose() {
+      listeners.clear();
+      /* Disposed is final: whatever a detach was waiting to find out, the
+         answer is that the game is over. */
+      if (endAt) { clearTimeout(endAt); endAt = null; }
+      endSuspended();
+      stopLoadoutWatch?.();
+      stopLoadoutWatch = null;
+    },
   };
 }

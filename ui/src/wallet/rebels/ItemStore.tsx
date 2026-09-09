@@ -3,7 +3,7 @@
 // Deliberately the same rows, the same prices in points and DIVI, and the same
 // tier rule as the armoury, because from the player's side there is no
 // difference between buying a beam and buying a bigger magazine. Both are
-// saved for, both stay with the hull, both can only be bought in order.
+// saved for, both are the player's on every hull, both can only be bought in order.
 
 import { useEffect, useState } from "react";
 import { ITEMS, itemUpgradeLabel, type ItemSpec } from "./itemCatalog";
@@ -90,7 +90,7 @@ export function ItemStore({ ship }: { ship: string }) {
       </div>
 
       <p className="wpn-note">
-        {note || `${mine.filter((k) => ITEMS.some((i) => i.key === k)).length} of ${ITEMS.length} fitted. Gear stays with this hull.`}
+        {note || `${mine.filter((k) => ITEMS.some((i) => i.key === k)).length} of ${ITEMS.length} fitted. Yours on every hull.`}
       </p>
     </>
   );

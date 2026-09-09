@@ -21,6 +21,8 @@ function getCtx(): AudioContext | null {
 }
 
 function cssVar(name: string, fallback: string): string {
+  /* No document, or a document with no styles (tests): the fallback. */
+  if (typeof document === "undefined" || typeof getComputedStyle !== "function") return fallback;
   const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return v || fallback;
 }

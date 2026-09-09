@@ -161,7 +161,7 @@ export function WeaponStore({ ship, onTest }: {
       </div>
 
       <p className="wpn-note">
-        {note || `${mine.length} of ${WEAPONS.length} fitted. Weapons stay with this hull.`}
+        {note || `${mine.length} of ${WEAPONS.length} fitted. Yours on every hull.`}
       </p>
     </>
   );

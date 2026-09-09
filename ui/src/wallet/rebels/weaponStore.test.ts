@@ -164,13 +164,13 @@ async function main() {
     ok("and costs nothing", A.spendable() === before, `${A.spendable()}`);
     ok("nor does a gun that does not exist", !A.buyWithPoints(ship, "deathray").ok);
 
-    /* ---- OWNERSHIP FOLLOWS THE HULL ----
-       Nothing lets a player own two ships yet, but the plan is that they will
-       and that a ship can be sold with its guns on it. */
+    /* ---- OWNERSHIP IS THE PLAYER'S, ON EVERY HULL ----
+       It followed the hull once. Geoff bought the minigun with Fighter 03 on
+       the market screen, flew Fighter 05, and was told to go and buy it. */
     const other = "space_SM_Ship_Stealth_02";
-    ok("another hull does not inherit the first one's guns",
-       !A.hasWeapon(other, "mini"), A.owned(other).join(","));
-    ok("but it does have its own pulse laser", A.hasWeapon(other, "pulse"));
+    ok("another hull carries the same guns", A.hasWeapon(other, "mini"), A.owned(other).join(","));
+    ok("and the pulse laser", A.hasWeapon(other, "pulse"));
+    ok("asking with no hull at all is the same answer", A.hasWeapon("", "mini") && A.owned().includes("mini"));
   }
 
   /* ------------------------------------------------- what a beam actually hits */
@@ -263,9 +263,9 @@ async function main() {
     ok("and a bigger magazine",
        kitted.ammo === Math.round(plain.ammo * 1.6), `${plain.ammo} -> ${kitted.ammo}`);
 
-    /* Gear follows the hull, like the guns. */
-    ok("another hull has none of it",
-       I.torpedoBonus(A.owned("space_SM_Ship_Stealth_02")) === 0);
+    /* Gear is the player's too. */
+    ok("another hull has the same gear",
+       I.torpedoBonus(A.owned("space_SM_Ship_Stealth_02")) === 3);
   }
 
 
@@ -359,6 +359,44 @@ async function main() {
     ok("no points, no record", A.creditPurchase("ghi789", 1000, 0) === false && A.purchases().length === 2);
     A.resetArmouryForTests();
     ok("reset wipes the record too", A.purchases().length === 0);
+  }
+
+  /* ------------------------------------ the old per-hull save, and the account */
+  {
+    /* Exactly what was on Geoff's machine: the minigun on Fighter 03, flying 05. */
+    A.resetArmouryForTests();
+    localStorage.setItem("dd69.rebels.owned", JSON.stringify({ space_SM_Ship_Fighter_03: ["mini"] }));
+    ok("a gun bought on one hull is there on the one being flown",
+       A.hasWeapon("space_SM_Ship_Fighter_05", "mini"), A.owned("space_SM_Ship_Fighter_05").join(","));
+    ok("and the save is rewritten in the new shape",
+       localStorage.getItem("dd69.rebels.owned") === JSON.stringify({ "*": ["mini"] }),
+       localStorage.getItem("dd69.rebels.owned") ?? "");
+    /* Two hulls with different gear: the player gets both. */
+    localStorage.setItem("dd69.rebels.owned", JSON.stringify({ a: ["mini", "torp1"], b: ["beam1"] }));
+    ok("several hulls fold into one set", A.owned().sort().join(",") === "beam1,mini,pulse,torp1", A.owned().sort().join(","));
+
+    /* ---- merging the account's copy ----
+       Counters only rise, sets only grow, so nothing stale can take anything. */
+    A.resetArmouryForTests();
+    A.earnPoints(500);
+    A.buyWithPoints("x", "mini");          /* earned 500, spent 1000? no: mini costs 1000 */
+    ok("(setup) not enough for the minigun yet", !A.hasWeapon("x", "mini"));
+    const snap = A.loadoutSnapshot();
+    ok("a snapshot carries the counters and the set", snap.earned === 500 && snap.spent === 0 && snap.owned.length === 0);
+
+    ok("a richer remote copy raises the counters",
+       A.mergeLoadout({ earned: 2000, spent: 1000, owned: ["mini"], purchases: [] })
+       && A.purse().earned === 2000 && A.purse().spent === 1000, JSON.stringify(A.purse()));
+    ok("and brings its guns", A.hasWeapon("x", "mini"));
+    ok("a poorer remote copy changes nothing",
+       !A.mergeLoadout({ earned: 100, spent: 50, owned: [], purchases: [] })
+       && A.purse().earned === 2000 && A.purse().spent === 1000);
+    ok("junk in the remote set is ignored", !A.mergeLoadout({ owned: ["deathray", 7 as never] }));
+    ok("remote purchases arrive once", A.mergeLoadout({ purchases: [{ txid: "t1", divi: 1, points: 1, at: "" }] })
+       && A.purchases().length === 1
+       && !A.mergeLoadout({ purchases: [{ txid: "t1", divi: 1, points: 1, at: "" }] })
+       && A.purchases().length === 1);
+    ok("spendable is earned minus spent after a merge", A.spendable() === 1000, `${A.spendable()}`);
   }
 
   console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);

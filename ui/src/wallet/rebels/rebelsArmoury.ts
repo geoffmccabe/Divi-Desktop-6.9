@@ -62,9 +62,9 @@ export function spendable(p = purse()): number {
   return Math.max(0, p.earned - p.spent);
 }
 
-function writePurse(p: Purse): void {
+function writePurse(p: Purse, announce = true): void {
   try { localStorage.setItem(POINTS_KEY, JSON.stringify(p)); } catch { /* storage full */ }
-  try { window.dispatchEvent(new Event(CHANGED)); } catch { /* not a browser */ }
+  if (announce) changed();
 }
 
 /**
@@ -85,21 +85,45 @@ export function earnPoints(divi: number): number {
 
 /* ---- what is owned ---- */
 
+/* ---- WHOSE GUNS THEY ARE ----
+   The player's, on every hull. They used to belong to the hull they were
+   bought on, keyed by ship id, and Geoff bought the minigun while the market
+   was showing Fighter 03 and then flew Fighter 05, and the game told him to
+   go and buy it. A purchase that can be lost by looking at a different ship
+   is a trap, so ownership is one set for the account, and the ship id every
+   caller still passes is ignored.
+
+   The old per-hull save is folded in on first read: whatever any hull had,
+   the player has. Nothing anyone paid for is lost by the change. */
+const ALL = "*";
 type OwnedMap = Record<string, string[]>;
 
-function readOwned(): OwnedMap {
+function readOwned(): string[] {
+  let map: OwnedMap = {};
   try {
     const v = JSON.parse(localStorage.getItem(OWNED_KEY) || "null");
-    if (v && typeof v === "object" && !Array.isArray(v)) return v as OwnedMap;
+    if (v && typeof v === "object" && !Array.isArray(v)) map = v as OwnedMap;
   } catch {
     /* nothing saved yet */
   }
-  return {};
+  const keys = Object.keys(map);
+  if (keys.length === 1 && keys[0] === ALL) return map[ALL] ?? [];
+  /* Migrate: union of every hull's list, saved back under the one key. */
+  const all = new Set<string>();
+  for (const k of keys) for (const w of map[k] ?? []) all.add(w);
+  if (keys.length > 0) writeOwned([...all]);
+  return [...all];
 }
 
-/** Every weapon this hull carries, including the ones it came with. */
-export function owned(ship: string): string[] {
-  const mine = readOwned()[ship] ?? [];
+function writeOwned(list: string[]): void {
+  try { localStorage.setItem(OWNED_KEY, JSON.stringify({ [ALL]: list })); } catch { /* full */ }
+}
+
+/** Every weapon and item the player owns, including the ones a ship comes
+ *  with. The ship id is accepted for the callers that still pass one and
+ *  ignored: see above. */
+export function owned(_ship?: string): string[] {
+  const mine = readOwned();
   /* The starting weapon is never stored, so it can never be lost and never has
      to be granted: it is simply what a ship is. */
   return [...new Set([...STARTING_WEAPONS, ...mine])];
@@ -154,13 +178,64 @@ export function buyWithPoints(ship: string, key: string): BuyResult {
  * the two ways of paying cannot be confused for one another, and so the one
  * that moves real value has to be called on purpose.
  */
-export function grant(ship: string, key: string): void {
-  const all = readOwned();
-  const mine = new Set(all[ship] ?? []);
+export function grant(_ship: string, key: string): void {
+  const mine = new Set(readOwned());
   mine.add(key);
-  all[ship] = [...mine];
-  try { localStorage.setItem(OWNED_KEY, JSON.stringify(all)); } catch { /* full */ }
+  writeOwned([...mine]);
+  changed();
+}
+
+function changed(): void {
   try { window.dispatchEvent(new Event(CHANGED)); } catch { /* not a browser */ }
+}
+
+/* ---- saving to the account ----
+   What the remote copy needs, and how a remote copy is folded back in. Both
+   counters only rise and both sets only grow, so merging two copies in either
+   order gives the same answer and a stale one cannot undo a purchase. */
+
+export interface Loadout {
+  earned: number;
+  spent: number;
+  owned: string[];
+  purchases: Purchase[];
+}
+
+export function loadoutSnapshot(): Loadout {
+  const p = purse();
+  return { earned: p.earned, spent: p.spent, owned: readOwned(), purchases: purchases() };
+}
+
+/** Fold a copy from the account into this machine. True if anything moved. */
+export function mergeLoadout(remote: Partial<Loadout>): boolean {
+  let moved = false;
+  const p = purse();
+  const earned = Number(remote.earned);
+  const spent = Number(remote.spent);
+  if (Number.isFinite(earned) && earned > p.earned) { p.earned = earned; moved = true; }
+  if (Number.isFinite(spent) && spent > p.spent) { p.spent = spent; moved = true; }
+  if (moved) writePurse(p, false);
+
+  const mine = new Set(readOwned());
+  for (const k of Array.isArray(remote.owned) ? remote.owned : []) {
+    if (typeof k === "string" && k && specByKey(k) && !mine.has(k)) { mine.add(k); moved = true; }
+  }
+  if (moved) writeOwned([...mine]);
+
+  const have = purchases();
+  const seen = new Set(have.map((x) => x.txid));
+  for (const r of Array.isArray(remote.purchases) ? remote.purchases : []) {
+    const x = r as Partial<Purchase>;
+    if (!x || typeof x.txid !== "string" || !x.txid || seen.has(x.txid)) continue;
+    have.push({ txid: x.txid, divi: Number(x.divi) || 0, points: Number(x.points) || 0, at: String(x.at ?? "") });
+    seen.add(x.txid);
+    moved = true;
+  }
+  if (moved) {
+    try { localStorage.setItem(PURCHASES_KEY, JSON.stringify(have)); } catch { /* full */ }
+    changed();
+  }
+  return moved;
 }
 
 /** Fired whenever points or ownership move, so the store and the HUD can
