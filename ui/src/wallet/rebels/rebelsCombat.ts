@@ -1046,6 +1046,8 @@ export interface BeamShot {
   half: number;
   reach: number;
   colour: number;
+  /** Which weapon, so a room can name it on the wire. */
+  key: string;
   owner?: string;
 }
 
@@ -1074,7 +1076,7 @@ export function fireBeam(
   const cos = Math.cos(half);
   const shot: BeamShot = {
     pos: pos.clone(), fwd: fwd.clone().normalize(),
-    life: BEAM_SECONDS, half, reach, colour: spec.colour ?? 0xffd83a, owner,
+    life: BEAM_SECONDS, half, reach, colour: spec.colour ?? 0xffd83a, key: spec.key, owner,
   };
   c.beams.push(shot);
   while (c.beams.length > BEAM_MAX) c.beams.shift();

@@ -43,7 +43,7 @@ import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
 import {
-  hasWeapon, earnPoints, spendable, extraTorpedoes, extraMagazine,
+  hasWeapon, owned, earnPoints, spendable, extraTorpedoes, extraMagazine,
 } from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
@@ -93,6 +93,9 @@ export interface HudState {
      FPS plan goes after next. */
   fps: number;
   simMs: number;
+  /** Draw calls the renderer made last frame, and its pixel ratio. */
+  drawCalls: number;
+  pixelRatio: number;
   /** Points left to spend on guns. One is earned for each DIVI brought home. */
   points: number;
   /** Where the throttle lever is, -0.35 to 1. */
@@ -142,7 +145,7 @@ const BLANK: HudState = {
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, throttle: 1,
-  room: "off", crew: 0, points: 0, fps: 0, simMs: 0,
+  room: "off", crew: 0, points: 0, fps: 0, simMs: 0, drawCalls: 0, pixelRatio: 0,
   primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
@@ -210,6 +213,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let fpsAvg = 0;
   let simAvg = 0;
   let readoutAt = 0;
+  let stats: (() => { calls: number; triangles: number; ratio: number }) | null = null;
   /* ---- THE MAP REBUILDS ITSELF UNDER THE GAME ----
      The globe tears its whole scene down and builds it again whenever its
      node list changes (a node arriving or leaving, which the map polls for
@@ -892,6 +896,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       name: playerName(),
       home,
       ship: loadShip(),
+      /* What this ship carries, so the room arms it the same way the solo
+         game does: the minigun, the beams, the extra tubes and magazine. */
+      gear: owned(loadShip()).filter((k) => k !== "pulse"),
       /* Flattened in the order the shader keeps the parts, which is the order
          the other end puts them back in. */
       paint: PART_ORDER.map((k) => [
@@ -1219,7 +1226,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             beamAt = BEAM_SECONDS;
             flight.ammo -= 1;
             const from = shipNose(flight);
-            if (inRoom && room) room.fire("main", from, flight.fwd);
+            if (inRoom && room) room.fire("beam", from, flight.fwd, undefined, armed.key);
             else fireBeam(combat, armed, from, flight.fwd, "", damageScale());
             fx.muzzle(from);
             playGunSound();
@@ -1297,6 +1304,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           for (const b of room.bullets) {
             combat.bullets.push({ pos: b.pos, vel: b.vel, life: 1, hostile: b.hostile, mini: b.mini });
           }
+          /* Beams too: yours and everyone else's, drawn from the room's list
+             so a beam is seen by the whole room and hits what the room says. */
+          combat.beams.length = 0;
+          for (const b of room.beams) combat.beams.push(b);
           combat.coins.length = 0;
           for (const k of room.coins) {
             combat.coins.push({ pos: k.pos, vel: new THREE.Vector3(), spin: 0, value: 0 });
@@ -1593,6 +1604,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         scene = api.scene;
         camera = api.camera;
         dom = api.dom;
+        stats = api.stats ?? null;
 
         /* Real tower tips off the real map. Docking lines up with the towers
            you can actually see, because they ARE those towers. */
@@ -1736,7 +1748,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       readoutAt -= dt;
       if (readoutAt <= 0) {
         readoutAt = 0.25;
-        setHud({ fps: Math.round(fpsAvg), simMs: Math.round(simAvg * 10) / 10 });
+        const st = stats?.();
+        setHud({
+          fps: Math.round(fpsAvg), simMs: Math.round(simAvg * 10) / 10,
+          ...(st ? { drawCalls: st.calls, pixelRatio: st.ratio } : {}),
+        });
       }
       diagAt -= dt;
       if (diagAt <= 0) {
@@ -1765,6 +1781,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             alt: flight ? Math.round(flight.pos.length() - R) : null,
             frameError,
             frameErrors,
+            drawCalls: hud.drawCalls,
+            pixelRatio: hud.pixelRatio,
           }));
         } catch { /* storage full or blocked; the game does not care */ }
       }

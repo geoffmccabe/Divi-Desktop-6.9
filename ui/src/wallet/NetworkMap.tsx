@@ -378,6 +378,14 @@ export function NetworkMap({ onReturn, autoplay = false }: {
      safe to make it before the globe has drawn a frame. */
   useEffect(() => {
     if (!autoplay) return;
+    /* The sidebar's "Divi Rebels Game" and the plain "Network Map" are the
+       same component in the same place, so React keeps the instance when the
+       user goes from one to the other, and a map that was flat STAYS flat:
+       the initial state above only counts on a fresh mount. Seen in a
+       browser copy: the game's card over the flat map, saying the globe was
+       not ready, because there was no globe. So the globe is asked for here
+       as well, every time autoplay is switched on. */
+    setGlobe(true);
     setRebels((cur) => cur ?? createRebels(labelForIp));
     // The label function is stable for the life of the map.
     // eslint-disable-next-line react-hooks/exhaustive-deps

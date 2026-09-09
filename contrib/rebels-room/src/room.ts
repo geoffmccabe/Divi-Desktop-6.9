@@ -28,7 +28,7 @@
 
 import * as THREE from "three";
 import {
-  createCombat, stepCombat, clearEvents, startWave,
+  createCombat, stepCombat, clearEvents, startWave, fireBeam,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE,
   type CombatState, type CombatWorld, type PlayerBody,
@@ -38,6 +38,9 @@ import {
   BOOST,
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
+import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
+import { ITEMS, torpedoBonus, magBonus } from "../../../ui/src/wallet/rebels/itemCatalog";
+import { ammoFor, torpedoesFor } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
   type PaintWire, type PaintPart,
@@ -78,6 +81,18 @@ interface Seat {
   account: string;
   /** When the last cash-out was asked for, so the ledger is not hammered. */
   lastClaim: number;
+  /* ---- what they bought ----
+     Weapon and item keys, declared on join. The room takes them at the
+     client's word, which is the same trust the scores and the paint get and
+     is stated here so nobody mistakes it for a check: a client that lies
+     about owning a beam gets a beam. The honest fix is the same as for
+     points, a purchase record the server can read, and it is not built. What
+     the room DOES do is refuse a weapon that was not declared, so the fight
+     everyone sees is at least the fight each client said it was bringing. */
+  gear: Set<string>;
+  ammoMax: number;
+  torpsMax: number;
+  lastBeam: number;
   name: string;
   /** Which hull they fly and how it is painted, so the room can tell everyone
    *  else what this player looks like. Paint, not gameplay: see onJoin. */
@@ -177,6 +192,7 @@ export class RebelsRoom {
     const seat: Seat = {
       id, ws, node: "", name: "", ship: "", paint: undefined,
       account: from, lastClaim: -99,
+      gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, lastBeam: -99,
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
       shield: MAX_SHIELD, ammo: MAX_AMMO, torps: MAX_TORPEDOES,
@@ -336,8 +352,8 @@ export class RebelsRoom {
   private revive(s: Seat): void {
     s.dead = false;
     s.shield = MAX_SHIELD;
-    s.ammo = MAX_AMMO;
-    s.torps = MAX_TORPEDOES;
+    s.ammo = s.ammoMax;
+    s.torps = s.torpsMax;
     s.guards = MAX_GUARDS;
     /* Back on your own pad, which is where a launch happens. */
     s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
@@ -416,6 +432,17 @@ export class RebelsRoom {
     seat.ship = /^space_SM_Ship_[A-Za-z0-9_]{1,60}$/.test(String(m.ship ?? ""))
       ? String(m.ship) : "";
     seat.paint = cleanPaint(m.paint);
+    /* Gear: known keys only, bounded, and the magazine and rack sized from
+       the items in it exactly as the solo game sizes them. */
+    seat.gear = new Set(
+      (Array.isArray(m.gear) ? m.gear : []).slice(0, 32)
+        .filter((k): k is string => typeof k === "string" && (!!weaponByKey(k) || ITEMS.some((i) => i.key === k))),
+    );
+    const extras = { torpedoes: torpedoBonus([...seat.gear]), magazine: magBonus([...seat.gear]) };
+    seat.ammoMax = ammoFor(extras);
+    seat.torpsMax = torpedoesFor(extras);
+    seat.ammo = seat.ammoMax;
+    seat.torps = seat.torpsMax;
     seat.home.copy(home).normalize().multiplyScalar(R);
     seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 8);
     seat.joined = true;
@@ -551,6 +578,7 @@ export class RebelsRoom {
       const up = from.clone().normalize();
       fireGuns(this.combat, from, f, up, 70, 1.6, seat.id);
     } else if (m.k === "mini") {
+      if (!seat.gear.has("mini")) return this.send(seat, { t: "no", why: "no minigun on this ship" });
       if (this.now - seat.lastMini < MINI_INTERVAL * 0.9) return;
       if (seat.ammo < MINI_AMMO) return;
       seat.lastMini = this.now;
@@ -572,6 +600,17 @@ export class RebelsRoom {
       seat.lastTorp = this.now;
       seat.torps -= 1;
       fireTorpedo(this.combat, from, f, seat.id);
+    } else if (m.k === "beam") {
+      /* The beam the client named, if it declared it. Same burst length and
+         cost as the solo game, so a beam in company is the beam alone. */
+      const spec = typeof m.w === "string" ? weaponByKey(m.w) : null;
+      if (!spec || spec.kind !== "beam") return this.strike(seat, "unknown weapon");
+      if (!seat.gear.has(spec.key)) return this.send(seat, { t: "no", why: `no ${spec.name} on this ship` });
+      if (this.now - seat.lastBeam < BEAM_SECONDS * 0.9) return;
+      if (seat.ammo < BEAM_AMMO) return;
+      seat.lastBeam = this.now;
+      seat.ammo -= BEAM_AMMO;
+      fireBeam(this.combat, spec, from, f, seat.id);
     } else {
       return this.strike(seat, "unknown weapon");
     }
@@ -659,6 +698,13 @@ export class RebelsRoom {
         b.hostile ? 1 : 0, b.mini ? 1 : 0,
       ]),
       C: c.coins.map((k) => [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)]),
+      ...(c.beams.length ? {
+        M: c.beams.map((b) => [
+          r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
+          Math.round(b.fwd.x * 1000) / 1000, Math.round(b.fwd.y * 1000) / 1000, Math.round(b.fwd.z * 1000) / 1000,
+          b.key, r1(b.life),
+        ]),
+      } : {}),
     };
     const wire = JSON.stringify(state);
     for (const s of this.seats.values()) {

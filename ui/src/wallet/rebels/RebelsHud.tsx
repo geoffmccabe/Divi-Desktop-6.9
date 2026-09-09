@@ -151,7 +151,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
             for flying by. */}
         {hud.fps > 0 && (
           <div className="orbit-row orbit-dim orbit-frame">
-            {hud.fps} FPS <span className="orbit-dim">{hud.simMs.toFixed(1)}ms game</span>
+            {hud.fps} FPS <span className="orbit-dim">{hud.simMs.toFixed(1)}ms game{hud.drawCalls > 0 ? ` · ${hud.drawCalls} draws` : ""}{hud.pixelRatio > 0 ? ` · ${hud.pixelRatio}x` : ""}</span>
           </div>
         )}
       </div>

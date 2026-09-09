@@ -67,6 +67,8 @@ export interface GlobeFlight {
     scaleTowers(s: number): Map<string, THREE.Vector3>;
     /** The globe's own canvas, which is where the pointer already is. */
     dom: HTMLCanvasElement;
+    /** What the renderer did last frame, for the game's readout. */
+    stats?: () => { calls: number; triangles: number; ratio: number };
   }): void;
   /** Every frame while flying. Move the camera here. */
   frame(dt: number): void;
@@ -82,6 +84,8 @@ export interface GlobeArc {
 }
 
 const R = 100;
+/** The renderer's pixel ratio while the game has the globe. See attachFlight. */
+const GAME_PIXEL_RATIO = 1;
 
 // Node Tower geometry — ALL dimensions 50% of the original (base, height, tip
 // sphere), which also halves the packed-cluster diameter.
@@ -387,6 +391,8 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
   const flightRef = useRef<GlobeFlight | null | undefined>(flight);
   flightRef.current = flight;
   const attachedRef = useRef<GlobeFlight | null>(null);
+  /* The map's own pixel ratio, kept while the game runs at one. */
+  const ratioRef = useRef(0);
   // Rebuild the scene only when the set of nodes changes, not on every 10s poll
   // (rebuilding all the helix tubes each poll would hitch).
   const sig = useMemo(() => points.map((p) => `${p.ip}:${p.kind}`).sort().join("|"), [points]);
@@ -712,7 +718,24 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       if (!f || attachedRef.current === f) return;
       if (attachedRef.current) attachedRef.current.detach();
       attachedRef.current = f;
+      /* ---- HALF THE PIXELS, OR A QUARTER ----
+         The globe library renders at the display's own pixel ratio, capped at
+         two, which on a Retina screen is FOUR times the pixels of the frame
+         you see. That is fine for a map that redraws when you drag it and
+         ruinous for a game that redraws sixty times a second with additive
+         glow over most of the frame: fill is the cost, and fill is pixels.
+         The game runs at one, and the map gets its ratio back when the game
+         lets go. An earlier audit said the ratio was already one; it read the
+         three.js default and not the library's. */
+      const renderer = g.renderer();
+      ratioRef.current = renderer.getPixelRatio();
+      renderer.setPixelRatio(GAME_PIXEL_RATIO);
       f.attach({
+        stats: () => ({
+          calls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          ratio: renderer.getPixelRatio(),
+        }),
         scene,
         camera: camera as THREE.PerspectiveCamera,
         tips: tipOf,
@@ -735,6 +758,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       if (!attachedRef.current) return;
       attachedRef.current.detach();
       attachedRef.current = null;
+      if (ratioRef.current > 0) { g.renderer().setPixelRatio(ratioRef.current); ratioRef.current = 0; }
     };
 
     // Hover tooltips: raycast the towers on pointer move. A hit farther from the
@@ -743,6 +767,10 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
     const dom = g.renderer().domElement as HTMLCanvasElement;
     const ndc = new THREE.Vector2();
     const onMove = (e: PointerEvent) => {
+      /* Flying, the pointer is the gun sight and moves every frame, and a
+         raycast through every tower on every one of those moves was paid for
+         nothing: there are no tooltips in the cockpit. */
+      if (flightRef.current) return;
       const rect = dom.getBoundingClientRect();
       const mx = e.clientX - rect.left, my = e.clientY - rect.top;
       ndc.set((mx / rect.width) * 2 - 1, -(my / rect.height) * 2 + 1);

@@ -22,6 +22,7 @@
 // makes two players see the SAME fight rather than two private ones.
 
 import * as THREE from "three";
+import { weaponByKey } from "./weaponCatalog";
 
 /** Everything the cockpit needs to know about somebody else in the room. */
 export interface RoomPlayer {
@@ -105,7 +106,9 @@ export interface Room {
   takeEvents(): RoomEvent[];
   /** Say where this ship is. Rate-limited inside. */
   report(pos: THREE.Vector3, fwd: THREE.Vector3, guard: boolean): void;
-  fire(kind: "main" | "mini" | "torp", pos: THREE.Vector3, fwd: THREE.Vector3, aim?: THREE.Vector3): void;
+  fire(kind: "main" | "mini" | "torp" | "beam", pos: THREE.Vector3, fwd: THREE.Vector3, aim?: THREE.Vector3, weapon?: string): void;
+  /** Beams in the air, as the room sees them. Overwritten every tick. */
+  beams: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; life: number; half: number; reach: number; colour: number; key: string }>;
   detonate(): void;
   /** Ask to be paid what is banked, to this address. The answer comes back
    *  as a purse, with `why` set if it was refused. */
@@ -145,6 +148,8 @@ interface Opts {
   home: THREE.Vector3;
   ship: string;
   paint?: number[][];
+  /** Weapon and item keys the player owns, so the room can arm the ship. */
+  gear?: string[];
   /** Told when the connection comes up or goes down, for the cockpit's own
    *  display. */
   onStatus?: (s: RoomStatus) => void;
@@ -171,6 +176,7 @@ export function joinRoom(opts: Opts): Room {
     enemies: [],
     bullets: [],
     coins: [],
+    beams: [],
     wave: 0,
     gauges: null,
     takeEvents() { const out = events.slice(); events.length = 0; return out; },
@@ -180,8 +186,11 @@ export function joinRoom(opts: Opts): Room {
       sinceReport = 0;
       send({ t: "tf", p: xyz(pos), f: xyz(fwd), ...(guard ? { g: 1 as const } : {}) });
     },
-    fire(kind, pos, fwd, aim) {
-      send({ t: "fire", k: kind, p: xyz(pos), f: xyz(fwd), ...(aim ? { a: xyz(aim) } : {}) });
+    fire(kind, pos, fwd, aim, weapon) {
+      send({
+        t: "fire", k: kind, p: xyz(pos), f: xyz(fwd),
+        ...(aim ? { a: xyz(aim) } : {}), ...(weapon ? { w: weapon } : {}),
+      });
     },
     detonate() { send({ t: "det" }); },
     claim(to) { send({ t: "claim", to }); },
@@ -242,6 +251,7 @@ export function joinRoom(opts: Opts): Room {
         home: xyz(opts.home),
         ship: opts.ship,
         ...(opts.paint ? { paint: opts.paint } : {}),
+        ...(opts.gear ? { gear: opts.gear } : {}),
       });
     };
     sock.onmessage = (ev) => {
@@ -254,6 +264,7 @@ export function joinRoom(opts: Opts): Room {
       room.enemies.length = 0;
       room.bullets.length = 0;
       room.coins.length = 0;
+      room.beams.length = 0;
       room.gauges = null;
       if (!closed) backoff();
     };
@@ -334,6 +345,18 @@ export function joinRoom(opts: Opts): Room {
         room.coins = ((m.C ?? []) as number[][]).map((k) => ({
           pos: new THREE.Vector3(k[0], k[1], k[2]),
         }));
+        room.beams = ((m.M ?? []) as Array<[number, number, number, number, number, number, string, number]>).map((b) => {
+          const spec = weaponByKey(String(b[6]));
+          return {
+            pos: new THREE.Vector3(b[0], b[1], b[2]),
+            fwd: new THREE.Vector3(b[3], b[4], b[5]),
+            life: Number(b[7]) || 0,
+            half: ((spec?.cone ?? 2) * Math.PI) / 360,
+            reach: spec?.reach ?? 90,
+            colour: spec?.colour ?? 0xffd83a,
+            key: String(b[6]),
+          };
+        });
         return;
       }
 

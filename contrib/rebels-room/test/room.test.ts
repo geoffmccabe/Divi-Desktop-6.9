@@ -10,7 +10,7 @@
 import * as THREE from "three";
 import { RebelsRoom } from "../src/room";
 import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
-import { MAX_AMMO, MAX_SHIELD, BOOST } from "../../../ui/src/wallet/rebels/orbitFlight";
+import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES } from "../../../ui/src/wallet/rebels/orbitFlight";
 
 const out: string[] = [];
 let failures = 0;
@@ -318,6 +318,68 @@ console.log(out.join("\n"));
   const ws = new FakeSocket();
   const seat = join(room, ws, "10.0.0.5");
   ok("without a connecting address the declared node is the account", seat.account === "10.0.0.5", seat.account);
+  room.stop();
+}
+
+// Gear: what a ship declared is what it can fire, and its magazine is sized by it.
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  room.seat(ws as never);
+  const id = ws.last("hi").id as string;
+  ws.deliver(JSON.stringify({ t: "join", node: "g1", name: "Geared", home: [0, 0, R],
+    gear: ["mini", "beam1", "beam2", "mag2", "torp1", "deathray", 7, "pulse"] }));
+  const seat = room.seats.get(id);
+  ok("unknown gear is dropped, known gear kept",
+     [...seat.gear].sort().join(",") === "beam1,beam2,mag2,mini,pulse,torp1", [...seat.gear].sort().join(","));
+  ok("the magazine is sixty percent bigger with mag2", seat.ammoMax === Math.round(MAX_AMMO * 1.6), `${seat.ammoMax}`);
+  ok("and there is one more torpedo with torp1", seat.torpsMax === MAX_TORPEDOES + 1, `${seat.torpsMax}`);
+  ok("and it starts full", seat.ammo === seat.ammoMax && seat.torps === seat.torpsMax);
+
+  const p = seat.body.pos.toArray(), f = seat.body.fwd.toArray();
+  room.now = 10;
+  ws.deliver(JSON.stringify({ t: "fire", k: "beam", p, f, w: "beam2" }));
+  ok("a declared beam fires", room.combat.beams.length === 1 && room.combat.beams[0].key === "beam2",
+     `${room.combat.beams.length}`);
+  ok("and costs a round", seat.ammo === seat.ammoMax - 1, `${seat.ammo}`);
+  ws.deliver(JSON.stringify({ t: "fire", k: "beam", p, f, w: "beam2" }));
+  ok("not twice inside its burst", room.combat.beams.length === 1);
+  room.now = 11;
+  ws.deliver(JSON.stringify({ t: "fire", k: "beam", p, f, w: "beam3" }));
+  ok("a beam that was not declared is refused, with a reason",
+     room.combat.beams.length === 1 && String(ws.last("no")?.why).includes("no "), ws.last("no")?.why);
+  ok("and is not a strike", seat.strikes === 0);
+  ws.deliver(JSON.stringify({ t: "fire", k: "beam", p, f, w: "mini" }));
+  ok("naming a non-beam as a beam is a strike", seat.strikes === 1, `${seat.strikes}`);
+
+  /* The wire carries the beam so everyone sees it. */
+  room.broadcastState();
+  const st = ws.last("s");
+  ok("beams go out in the state message", Array.isArray(st.M) && st.M.length === 1 && st.M[0][6] === "beam2",
+     JSON.stringify(st.M));
+
+  /* Revive refills to the sized maximum, not the stock one. */
+  seat.ammo = 0; seat.torps = 0;
+  room.revive(seat);
+  ok("revived to the sized magazine", seat.ammo === seat.ammoMax && seat.torps === seat.torpsMax);
+  room.stop();
+}
+{
+  /* No gear declared: stock ship, and the minigun is refused. */
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "g2");
+  ok("stock magazine without items", seat.ammoMax === MAX_AMMO && seat.torpsMax === MAX_TORPEDOES);
+  const p = seat.body.pos.toArray(), f = seat.body.fwd.toArray();
+  room.now = 5;
+  const before = room.combat.bullets.length;
+  ws.deliver(JSON.stringify({ t: "fire", k: "mini", p, f }));
+  ok("the minigun is refused without it", room.combat.bullets.length === before
+     && String(ws.last("no")?.why).includes("minigun"), ws.last("no")?.why);
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p, f }));
+  ok("the pulse gun always fires", room.combat.bullets.length > before);
+  const st0 = (room.broadcastState(), ws.last("s"));
+  ok("no beams, no M key on the wire", !("M" in st0), Object.keys(st0).join(","));
   room.stop();
 }
 
