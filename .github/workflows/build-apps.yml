@@ -59,6 +59,24 @@ jobs:
           fi
         shell: bash
 
+      # Cache the crate downloads AND the compiled dependency artifacts so each
+      # build recompiles only OUR code, not the whole dependency tree — that
+      # recompile was most of the ~5-7 min release build. First-party actions/cache
+      # (not a third-party action) given this project's supply-chain history. Keyed
+      # per-OS + Cargo.lock; the restore-key falls back to the newest cache when the
+      # lock changes, so a dependency bump only recompiles what actually changed.
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ matrix.os }}-
+
       # Linux needs the webview + build libraries the desktop shell links against.
       - name: Linux system deps
         if: matrix.os == 'ubuntu-22.04'
