@@ -145,6 +145,15 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         {hud.launched && !hud.dead && Number.isFinite(hud.nearTower) && (
           <div className="orbit-row orbit-dim">TOWER {hud.nearTower.toFixed(1)}u</div>
         )}
+        {/* The frame readout. Frames per second as delivered, and the game's
+            own share of each frame in milliseconds; what is left of the frame
+            is the map drawing itself. Small and dim: it is for tuning, not
+            for flying by. */}
+        {hud.fps > 0 && (
+          <div className="orbit-row orbit-dim orbit-frame">
+            {hud.fps} FPS <span className="orbit-dim">{hud.simMs.toFixed(1)}ms game</span>
+          </div>
+        )}
       </div>
       <div className="orbit-tr">
         {/* Your ship, or — when there is something out there worth naming —

@@ -7,6 +7,7 @@ import { R, cruiseScale } from "./orbitWorld";
 import { MAX_SHIELD, CRUISE, BOOST } from "./orbitFlight";
 import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
+  AIM_ERROR, AIM_SPREAD, aimErrorFor, scatterAim, PLAYER_HIT_R,
   fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
   startWave, waveSize, WAVE_SECONDS,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
@@ -157,6 +158,10 @@ function run(c: CombatState, frames: number, w = world()) {
 {
   const c = createCombat();
   const e: Enemy = fighter(pos.clone().addScaledVector(fwd, 30));
+  /* A top-tier gunner, so the shot is a sure thing: this test is about what a
+     round that ARRIVES does, and a tier-one round now misses half the time
+     at this range by design (see AIM_ERROR). */
+  e.cls = { ...e.cls, tier: 7 };
   c.enemies.push(e);
   enemyFire(c, e, pos);
   ok("enemy fire is marked hostile", c.bullets[0].hostile);
@@ -1270,5 +1275,77 @@ function run(c: CombatState, frames: number, w = world()) {
 }
 
 console.log(out.join("\n"));
+/* ---- enemy aim error, by tier ----
+   Geoff: "adding some randomness to their aim ... T7 is right on target by
+   only 0.3% off." */
+{
+  ok("seven figures for seven tiers", AIM_ERROR.length === 7, `${AIM_ERROR.length}`);
+  ok("tier one is three percent", AIM_ERROR[0] === 0.03);
+  ok("tier seven is 0.3 percent", AIM_ERROR[6] === 0.003);
+  let tightening = true;
+  for (let i = 1; i < AIM_ERROR.length; i++) if (!(AIM_ERROR[i] < AIM_ERROR[i - 1])) tightening = false;
+  ok("every tier shoots straighter than the one below", tightening, AIM_ERROR.join(","));
+  ok("the figures are scaled by three, for the reason in the source", AIM_SPREAD === 3);
+  ok("tier lookups clamp at both ends", Math.abs(aimErrorFor(0) - 0.09) < 1e-12
+     && Math.abs(aimErrorFor(99) - 0.009) < 1e-12 && Math.abs(aimErrorFor(4) - 0.045) < 1e-12,
+     `${aimErrorFor(0)} ${aimErrorFor(99)} ${aimErrorFor(4)}`);
+
+  const from = new THREE.Vector3(0, 0, R + 10);
+  const at = new THREE.Vector3(30, 0, R + 10);        /* thirty units away, along x */
+  const dead = scatterAim(from, at, 0.03, () => 0);
+  ok("the best roll is dead on", dead.distanceTo(at) < 1e-9, `${dead.distanceTo(at)}`);
+  const worst = scatterAim(from, at, 0.03, () => 1);
+  ok("the worst roll at three percent and thirty units is 0.9 off",
+     Math.abs(worst.distanceTo(at) - 0.9) < 1e-6, `${worst.distanceTo(at)}`);
+  ok("and the miss is sideways, not along the line of fire",
+     Math.abs(worst.x - at.x) < 1e-6, `${worst.x - at.x}`);
+  const t1 = scatterAim(from, at, aimErrorFor(1), () => 1);
+  ok("as flown, tier one at thirty units can be 2.7 off", Math.abs(t1.distanceTo(at) - 2.7) < 1e-6,
+     `${t1.distanceTo(at)}`);
+  ok("which is outside the hull, so a tier-one round can miss", 2.7 > PLAYER_HIT_R);
+  const t7 = scatterAim(from, at, aimErrorFor(7), () => 1);
+  ok("tier seven at the same range is off by 0.27 at worst", Math.abs(t7.distanceTo(at) - 0.27) < 1e-6,
+     `${t7.distanceTo(at)}`);
+  ok("which is well inside the hull, so it hits", 0.27 < PLAYER_HIT_R);
+
+  /* Round the clock: the angle roll spreads the miss in every direction. */
+  const seen = new Set<string>();
+  for (let i = 0; i < 8; i++) {
+    const p = scatterAim(from, at, 0.03, (() => { let n = 0; return () => (n++ === 0 ? i / 8 : 1); })());
+    seen.add(`${Math.sign(Math.round(p.y * 100))},${Math.sign(Math.round((p.z - at.z) * 100))}`);
+  }
+  ok("misses land all round the target, not on one side", seen.size >= 4, [...seen].join(" "));
+  ok("no error means the target itself", scatterAim(from, at, 0).equals(at));
+  ok("and the target passed in is never written to", at.x === 30 && at.y === 0);
+
+  /* Fired for real: a tier-one round is no longer guaranteed to pass through
+     the aim point, a tier-seven one as good as is. */
+  let missesT1 = 0, missesT7 = 0;
+  for (let i = 0; i < 400; i++) {
+    for (const [tier, count] of [[1, 0], [7, 1]] as const) {
+      const c = createCombat();
+      const e = {
+        pos: from.clone(), fwd: new THREE.Vector3(1, 0, 0), roll: 0,
+        cls: { tier, name: "", shieldMax: 100, colour: 0, speed: 1, weight: 0 },
+        shield: 100, vel: new THREE.Vector3(), tumble: new THREE.Vector3(), spin: new THREE.Vector3(),
+        flash: 0, ammo: 9, reload: 0, fireAt: 0, weave: 0, weaveDir: 1, mode: "in" as const,
+        breakAt: 0, rejoinAt: 0, escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
+      };
+      enemyFire(c, e as never, at);
+      const b = c.bullets[0];
+      /* Where the round passes x = 30. */
+      const t = (at.x - b.pos.x) / b.vel.x;
+      const y = b.pos.y + b.vel.y * t, z = b.pos.z + b.vel.z * t;
+      const off = Math.hypot(y - at.y, z - at.z);
+      if (off > PLAYER_HIT_R) { if (count === 0) missesT1++; else missesT7++; }
+    }
+  }
+  /* Half the time, give or take: the miss distance is uniform up to 2.7 and
+     the hull is 1.4, so a hit is 1.4 in 2.7. Wide bounds, since it is random. */
+  ok("a tier-one fighter misses a still ship at thirty units about half the time",
+     missesT1 > 120 && missesT1 < 280, `${missesT1}/400`);
+  ok("a tier-seven fighter does not miss a still ship", missesT7 === 0, `${missesT7}/400`);
+}
+
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

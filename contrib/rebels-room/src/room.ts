@@ -66,6 +66,18 @@ interface Seat {
   id: string;
   ws: WebSocket;
   node: string;
+  /* ---- WHO GETS PAID ----
+     The ledger account. It is the address the socket connected FROM, as
+     Cloudflare saw it, and not the node string the client sent: that string is
+     typed by the client and a client can type anything. Money is attached to
+     this, so it has to be something the client cannot choose. A node's public
+     address is the one thing about it nobody else can present.
+
+     The cost is honest: two players behind one home router share an account,
+     and a VPN moves yours. Both are stated in the panel. */
+  account: string;
+  /** When the last cash-out was asked for, so the ledger is not hammered. */
+  lastClaim: number;
   name: string;
   /** Which hull they fly and how it is painted, so the room can tell everyone
    *  else what this player looks like. Paint, not gameplay: see onJoin. */
@@ -154,16 +166,17 @@ export class RebelsRoom {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     server.accept();
-    this.seat(server);
+    this.seat(server, req.headers.get("CF-Connecting-IP") ?? "");
     return new Response(null, { status: 101, webSocket: client });
   }
 
   /* ---- seats ---- */
 
-  private seat(ws: WebSocket): void {
+  private seat(ws: WebSocket, from = ""): void {
     const id = `s${this.nextSeat++}`;
     const seat: Seat = {
       id, ws, node: "", name: "", ship: "", paint: undefined,
+      account: from, lastClaim: -99,
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
       shield: MAX_SHIELD, ammo: MAX_AMMO, torps: MAX_TORPEDOES,
@@ -336,14 +349,14 @@ export class RebelsRoom {
      a player may fly in several over a week and the payout is one running
      total. The room is the only thing that ever writes to it. */
   private async bank(s: Seat): Promise<void> {
-    if (!s.node || (s.kills === 0 && s.divi === 0 && s.score === 0)) return;
+    if (!(s.account || s.node) || (s.kills === 0 && s.divi === 0 && s.score === 0)) return;
     const kills = s.kills, divi = s.divi, score = s.score;
     s.kills = 0; s.divi = 0; s.score = 0;
     try {
       const id = this.env.LEDGER.idFromName("v1");
       await this.env.LEDGER.get(id).fetch("https://ledger/credit", {
         method: "POST",
-        body: JSON.stringify({ node: s.node, name: s.name, kills, divi, score }),
+        body: JSON.stringify({ node: s.account || s.node, name: s.name, kills, divi, score }),
       });
     } catch {
       /* Put it back rather than lose it: the next flush will carry it. */
@@ -366,6 +379,16 @@ export class RebelsRoom {
       case "tf": return this.onTransform(seat, msg);
       case "fire": return this.onFire(seat, msg);
       case "det": return this.onDetonate(seat);
+      case "claim": { void this.onClaim(seat, msg); return; }
+      case "purse": {
+        /* Rate-limited the same way: a panel that polls is fine, a loop that
+           hammers the ledger is not. */
+        const now = this.now;
+        if (now - seat.lastClaim < 2) return;
+        seat.lastClaim = now;
+        void this.sendPurse(seat);
+        return;
+      }
       default: return this.strike(seat, "unknown message");
     }
   }
@@ -379,6 +402,9 @@ export class RebelsRoom {
     if (!home) return this.strike(seat, "bad home");
     seat.node = m.node.slice(0, 80);
     seat.name = String(m.name ?? "").slice(0, 40) || "Unnamed node";
+    /* No connecting address (a local run, a test) falls back to the declared
+       one. Live, through Cloudflare, there always is one. */
+    if (!seat.account) seat.account = seat.node;
     /* ---- what they look like ----
        Taken on trust, because it is paint: the worst a lie here can do is make
        somebody's ship the wrong colour on somebody else's screen. It is still
@@ -396,6 +422,50 @@ export class RebelsRoom {
     this.refreshRoster();
     this.sendYou(seat);
     this.sendRoster();
+    void this.sendPurse(seat);
+  }
+
+  /* ---- cashing out ----
+     The room does two things and only two: it says WHICH account (the seat's
+     connecting address, above), and it banks the current run first so the
+     kills of the last five minutes count. The ledger decides everything else,
+     and London does the paying. */
+  private async onClaim(seat: Seat, m: Extract<ClientMessage, { t: "claim" }>): Promise<void> {
+    if (!seat.joined) return;
+    const now = this.now;
+    if (now - seat.lastClaim < 5) return;
+    seat.lastClaim = now;
+    const to = typeof m.to === "string" ? m.to.slice(0, 40) : "";
+    await this.bank(seat);
+    try {
+      const id = this.env.LEDGER.idFromName("v1");
+      const r = await this.env.LEDGER.get(id).fetch("https://ledger/request", {
+        method: "POST",
+        body: JSON.stringify({ node: seat.account, to }),
+      });
+      const purse = await r.json() as Record<string, unknown>;
+      this.send(seat, { t: "purse", ...(purse as object) } as ServerMessage);
+    } catch {
+      this.send(seat, {
+        t: "purse", divi: 0, claimable: 0, paid: 0, pending: null, last: null,
+        why: "the ledger did not answer; try again in a moment",
+      });
+    }
+  }
+
+  private async sendPurse(seat: Seat): Promise<void> {
+    if (!seat.joined) return;
+    try {
+      const id = this.env.LEDGER.idFromName("v1");
+      const r = await this.env.LEDGER.get(id).fetch(
+        `https://ledger/purse?node=${encodeURIComponent(seat.account)}`,
+      );
+      const purse = await r.json() as Record<string, unknown>;
+      if (typeof purse.divi !== "number") return;
+      this.send(seat, { t: "purse", ...(purse as object) } as ServerMessage);
+    } catch {
+      /* Nothing to show yet. The panel asks again when it opens. */
+    }
   }
 
   /**
@@ -487,8 +557,14 @@ export class RebelsRoom {
       seat.ammo -= MINI_AMMO;
       const aim = vec(m.a) ?? f;
       const up = from.clone().normalize();
+      const right = new THREE.Vector3().crossVectors(f, up).normalize();
       const muzzle = new THREE.Vector3();
-      miniMuzzle(from, f, up, 70, 1.6, muzzle);
+      /* The helper measures the corner in a camera frame; the room has no
+         camera, so the ship's own frame stands in. It was being called with
+         the OLD argument list after the corner was moved into camera space,
+         which put a number where a vector goes and threw on every mini-gun
+         message the room received. */
+      miniMuzzle(from, f, right, up, 70, 1.6, muzzle);
       fireMini(this.combat, muzzle, from, aim.normalize(), seat.id);
     } else if (m.k === "torp") {
       if (this.now - seat.lastTorp < 0.5) return;

@@ -76,6 +76,19 @@ export interface RoomEvent {
 
 export type RoomStatus = "off" | "connecting" | "live" | "retrying" | "refused";
 
+/** The account as the ledger has it. See PurseOut in the room's protocol. */
+export interface Purse {
+  divi: number;
+  claimable: number;
+  paid: number;
+  pending: { to: string; amount: number; at: number } | null;
+  last: { to: string; amount: number; txid?: string; error?: string; at: number } | null;
+  /** Why the last claim was refused, when it was. */
+  why?: string;
+  /** When this arrived, by the cockpit's clock. */
+  at: number;
+}
+
 export interface Room {
   status(): RoomStatus;
   /** This cockpit's own seat, once the room has given it one. */
@@ -94,6 +107,13 @@ export interface Room {
   report(pos: THREE.Vector3, fwd: THREE.Vector3, guard: boolean): void;
   fire(kind: "main" | "mini" | "torp", pos: THREE.Vector3, fwd: THREE.Vector3, aim?: THREE.Vector3): void;
   detonate(): void;
+  /** Ask to be paid what is banked, to this address. The answer comes back
+   *  as a purse, with `why` set if it was refused. */
+  claim(to: string): void;
+  /** Ask for the purse again. */
+  askPurse(): void;
+  /** The last purse the room sent, if any. */
+  purse: Purse | null;
   /** Advance the interpolation between ticks. */
   step(dt: number): void;
   close(): void;
@@ -128,6 +148,8 @@ interface Opts {
   /** Told when the connection comes up or goes down, for the cockpit's own
    *  display. */
   onStatus?: (s: RoomStatus) => void;
+  /** Told whenever the ledger's view of this account arrives. */
+  onPurse?: (p: Purse) => void;
 }
 
 export function joinRoom(opts: Opts): Room {
@@ -162,6 +184,9 @@ export function joinRoom(opts: Opts): Room {
       send({ t: "fire", k: kind, p: xyz(pos), f: xyz(fwd), ...(aim ? { a: xyz(aim) } : {}) });
     },
     detonate() { send({ t: "det" }); },
+    claim(to) { send({ t: "claim", to }); },
+    askPurse() { send({ t: "purse" }); },
+    purse: null,
     step(dt) {
       sinceReport += dt;
       /* Fill in between ticks. The room speaks twenty times a second and the
@@ -344,6 +369,31 @@ export function joinRoom(opts: Opts): Room {
         }
         /* A long stall must not deliver a thousand bangs at once. */
         while (events.length > 60) events.shift();
+        return;
+      }
+
+      case "purse": {
+        const pending = m.pending && typeof m.pending === "object" ? m.pending as Record<string, unknown> : null;
+        const last = m.last && typeof m.last === "object" ? m.last as Record<string, unknown> : null;
+        const purse: Purse = {
+          divi: Number(m.divi) || 0,
+          claimable: Number(m.claimable) || 0,
+          paid: Number(m.paid) || 0,
+          pending: pending
+            ? { to: String(pending.to ?? ""), amount: Number(pending.amount) || 0, at: Number(pending.at) || 0 }
+            : null,
+          last: last
+            ? {
+              to: String(last.to ?? ""), amount: Number(last.amount) || 0, at: Number(last.at) || 0,
+              ...(last.txid ? { txid: String(last.txid) } : {}),
+              ...(last.error ? { error: String(last.error) } : {}),
+            }
+            : null,
+          ...(typeof m.why === "string" && m.why ? { why: m.why } : {}),
+          at: performance.now(),
+        };
+        room.purse = purse;
+        opts.onPurse?.(purse);
         return;
       }
 

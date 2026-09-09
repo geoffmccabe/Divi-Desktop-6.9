@@ -809,3 +809,7 @@
 }
 .pts-custom input:focus { border-color: hsl(var(--rebels-hud) / 0.55); }
 .pts-custom input::placeholder { color: hsl(var(--rebels-hud) / 0.35); }
+
+/* The frame readout, bottom of the top-left block. */
+.orbit-frame { font-size: 10px; letter-spacing: 0.06em; opacity: 0.55; }
+.pts-custom input:disabled { opacity: 0.5; }

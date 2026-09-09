@@ -37,6 +37,7 @@ import {
 import { pulseHealth } from "./healthPulse";
 import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
+import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
 import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
@@ -83,6 +84,14 @@ export interface HudState {
   /** Whether this ship is in a shared world, and how many others are in it. */
   room: string;
   crew: number;
+  /* ---- the frame readout ----
+     Frames per second as the screen actually gets them, and how much of each
+     frame the game's own work (fly, fight, sound, and the drawing it asks
+     for) costs in milliseconds. Both smoothed, so the numbers can be read.
+     The gap between the two is the map's rendering, which is the thing the
+     FPS plan goes after next. */
+  fps: number;
+  simMs: number;
   /** Points left to spend on guns. One is earned for each DIVI brought home. */
   points: number;
   /** Where the throttle lever is, -0.35 to 1. */
@@ -132,7 +141,7 @@ const BLANK: HudState = {
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, throttle: 1,
-  room: "off", crew: 0, points: 0,
+  room: "off", crew: 0, points: 0, fps: 0, simMs: 0,
   primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
@@ -189,6 +198,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let frameError = "";
   let frameErrors = 0;
   let diagAt = 0;
+  /* Smoothed frame figures, and a clock for pushing them to the HUD: four
+     times a second, since a number that changes sixty times a second cannot
+     be read and re-rendering the HUD every frame would itself cost frames. */
+  let fpsAvg = 0;
+  let simAvg = 0;
+  let readoutAt = 0;
   const enemyMeshes: THREE.Group[] = [];
   /* One shield rig per fighter model, hanging off it. */
   const enemyShields: ShieldRig[] = [];
@@ -845,8 +860,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         paint[k].hue, paint[k].sat, paint[k].bright,
         ["none", "lines", "hex", "camo"].indexOf(paint[k].overlay ?? "none"),
       ]),
-      onStatus: (s) => { roomStatus = s; setHud({ room: s }); },
+      onStatus: (s) => { roomStatus = s; setHud({ room: s }); setBankStatus(s); },
+      onPurse: (p) => setBankPurse(p),
     });
+    /* The points panel cashes out through this and through nothing else. */
+    const r = room;
+    setBankActor({ claim: (to) => r.claim(to), refresh: () => r.askPurse() });
     if (!peers && scene) {
       peers = createPeers();
       scene.add(peers.group);
@@ -857,6 +876,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     room?.close();
     room = null;
     roomStatus = "off";
+    setBankActor(null);
+    setBankStatus("off");
     if (peers && scene) scene.remove(peers.group);
     peers?.dispose();
     peers = null;
@@ -1631,6 +1652,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        diagnosis and not for the player. It is one small key, overwritten in
        place, so it costs nothing and grows into nothing. */
     frame(dt) {
+      const t0 = performance.now();
       try {
         runFrame(dt);
       } catch (err) {
@@ -1646,6 +1668,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         frameErrors++;
       }
       tickMusic();
+      /* The readout. An exponential average with a short memory: a spike is
+         seen, a steady state is steady. */
+      if (dt > 0) {
+        const k = 0.1;
+        fpsAvg += ((1 / dt) - fpsAvg) * k;
+        simAvg += ((performance.now() - t0) - simAvg) * k;
+      }
+      readoutAt -= dt;
+      if (readoutAt <= 0) {
+        readoutAt = 0.25;
+        setHud({ fps: Math.round(fpsAvg), simMs: Math.round(simAvg * 10) / 10 });
+      }
       diagAt -= dt;
       if (diagAt <= 0) {
         diagAt = 2;

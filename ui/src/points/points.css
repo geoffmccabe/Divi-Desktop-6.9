@@ -61,20 +61,22 @@
 
 .pd-main { min-width: 0; }
 
-/* ---- the mascot's place, held open before the artwork exists ---- */
+/* ---- the mascot ----
+   Square, because the artwork is. The column is the mascot-size token wide
+   and the picture fills it, so the token is the one knob. */
 .pd-mascot {
   position: sticky; top: 0;
   display: grid; place-items: center;
-  aspect-ratio: 3 / 4;
-  border: 1px dashed hsl(var(--foreground) / 0.22);
+  aspect-ratio: 1 / 1;
   border-radius: var(--app-card-radius);
-  background: hsl(var(--foreground) / 0.03);
+  overflow: hidden;
 }
-.pd-mascot-note {
-  font-size: 0.72rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: hsl(var(--foreground) / 0.35);
+.pd-mascot img {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 /* ---- choosing ---- */

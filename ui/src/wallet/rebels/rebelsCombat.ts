@@ -833,8 +833,81 @@ export function fireMini(
   addTracer(c, b);
 }
 
+/* ---- how good a shot each tier is ----
+   Geoff: "adding some randomness to their aim, and the T7 is right on target
+   by only 0.3% off." One figure per tier, tier one first. The figure is a
+   fraction of the RANGE: a tier-one fighter thirty units out can miss by up to
+   0.9 of a unit in any direction, which against a hull about a unit and a
+   half across is a shot that lands roughly two times in three. Tier seven at
+   the same range is off by nine hundredths of a unit, which is a hit.
+
+   Geoff's list had eight figures for seven tiers, so the two in the middle
+   (0.7 and 0.5) became one. The shape is his: a steady tightening, and the
+   top tier nearly perfect.
+
+   ---- WHY THERE IS A SCALE ON IT ----
+   Taken raw, as a fraction of the range, the figures do not do what they are
+   for. The hull is 1.4 units across at the widest and fighters open fire from
+   twenty to seventy units, so three percent of thirty units is 0.9 of a unit:
+   a tier-one fighter that could not miss a stationary ship up close, which is
+   exactly the "always on target" this replaces. Geoff said to scale them if
+   they did not make sense, so they are multiplied by three. Tier one then
+   misses a still ship about half the time at thirty units and most of the
+   time at seventy; tier seven is still off by under a third of a unit at
+   thirty, which is a hit, so it stays what he asked for: right on target.
+
+   Fighters and drones share the table, since both have seven tiers. */
+export const AIM_ERROR = [0.03, 0.025, 0.02, 0.015, 0.01, 0.006, 0.003];
+export const AIM_SPREAD = 3;
+
+export function aimErrorFor(tier: number): number {
+  return AIM_ERROR[Math.max(0, Math.min(AIM_ERROR.length - 1, Math.round(tier) - 1))] * AIM_SPREAD;
+}
+
+const _scatterDir = new THREE.Vector3();
+const _scatterAny = new THREE.Vector3();
+const _scatterOff = new THREE.Vector3();
+
+/**
+ * Where a gun with this much error actually points.
+ *
+ * The true target is pushed sideways, at a random angle round the line of
+ * fire, by a random distance up to `err` times the range. Sideways only: an
+ * error ALONG the line would change nothing about where the round passes the
+ * target, which is what a miss is. `rnd` is injectable so a test can ask for
+ * the worst case and the best.
+ */
+export function scatterAim(
+  from: THREE.Vector3,
+  at: THREE.Vector3,
+  err: number,
+  rnd: () => number = Math.random,
+): THREE.Vector3 {
+  const out = at.clone();
+  if (!(err > 0)) return out;
+  const dir = _scatterDir.copy(at).sub(from);
+  const range = dir.length();
+  if (range < 1e-6) return out;
+  dir.divideScalar(range);
+  /* A direction that is not the line of fire, to cross with. */
+  _scatterAny.set(1, 0, 0);
+  if (Math.abs(dir.x) > 0.9) _scatterAny.set(0, 1, 0);
+  const side = _scatterOff.crossVectors(dir, _scatterAny).normalize();
+  const angle = rnd() * Math.PI * 2;
+  const miss = rnd() * err * range;
+  /* Rotate `side` about `dir` by `angle`, then scale. Rodrigues, with the
+     cross term only, since side is already perpendicular to dir. */
+  const cosA = Math.cos(angle), sinA = Math.sin(angle);
+  const up = _scatterAny.crossVectors(dir, side);
+  out.x += (side.x * cosA + up.x * sinA) * miss;
+  out.y += (side.y * cosA + up.y * sinA) * miss;
+  out.z += (side.z * cosA + up.z * sinA) * miss;
+  return out;
+}
+
 export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
-  const vel = at.clone().sub(e.pos).normalize().multiplyScalar(BULLET_SPEED * 0.6);
+  const aim = scatterAim(e.pos, at, aimErrorFor(e.cls.tier));
+  const vel = aim.sub(e.pos).normalize().multiplyScalar(BULLET_SPEED * 0.6);
   const b: Bullet = {
     pos: e.pos.clone().addScaledVector(vel, 0.02), vel, life: BULLET_LIFE * 1.4, hostile: true,
   };
@@ -851,7 +924,8 @@ export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
    and a bit between them, so a fleet overhead is a steady patter of fire from
    all directions, but no single sphere can ever pin you. */
 export function droneFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
-  const vel = at.clone().sub(e.pos).normalize()
+  const aim = scatterAim(e.pos, at, aimErrorFor(e.cls.tier));
+  const vel = aim.sub(e.pos).normalize()
     .multiplyScalar(BULLET_SPEED * DRONE_BULLET_SPEED);
   const b: Bullet = {
     pos: e.pos.clone().addScaledVector(vel, 0.02), vel,
@@ -1565,8 +1639,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       e.fireAt = 1.6 + Math.random() * 1.6;
       e.ammo -= 1;
       if (e.ammo <= 0) e.reload = ENEMY_RELOAD;
-      /* Dead on target, every time. Dodging is the player's job, and a shot
-         that misses by design would make that meaningless. */
+      /* Aimed at the player and then scattered by the tier's error, inside
+         enemyFire. It used to be dead on every time, which made the warning
+         tone a constant and a dogfight a shield-count. */
       enemyFire(c, e, prey.pos);
     }
 

@@ -61,7 +61,16 @@ export interface FireIn {
 
 export interface DetonateIn { t: "det" }
 
-export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn;
+/** Cash out: pay what this account has banked to a DIVI address. */
+export interface ClaimIn {
+  t: "claim";
+  to: string;
+}
+
+/** Ask for the purse again. Sent when the player opens the points panel. */
+export interface PurseIn { t: "purse" }
+
+export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn;
 
 /* ---- room to cockpit ---- */
 
@@ -143,8 +152,27 @@ export interface RosterOut {
   }>;
 }
 
+/**
+ * The account, as the ledger has it. Sent on join, on request, and after a
+ * claim. `why` carries the refusal when a claim was not accepted.
+ */
+export interface PurseOut {
+  t: "purse";
+  /** Banked and not yet paid, whole DIVI. */
+  divi: number;
+  /** What a claim would pay right now: zero under the minimum. */
+  claimable: number;
+  /** Paid out, ever. */
+  paid: number;
+  /** A cash-out waiting for the treasury, if there is one. */
+  pending: { to: string; amount: number; at: number } | null;
+  /** How the last one ended. */
+  last: { to: string; amount: number; txid?: string; error?: string; at: number } | null;
+  why?: string;
+}
+
 export type ServerMessage =
-  WelcomeOut | StateOut | EventOut | YouOut | DeniedOut | RosterOut;
+  WelcomeOut | StateOut | EventOut | YouOut | DeniedOut | RosterOut | PurseOut;
 
 /** Shorten a float for the wire. A tenth of a unit is six metres on this globe. */
 export const r1 = (n: number): number => Math.round(n * 10) / 10;

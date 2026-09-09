@@ -13,11 +13,12 @@
 //     send. The points that arrive in return are a local balance for now, so
 //     this side trusts the broadcast; see creditPurchase for what that means.
 //   * Converting only moves numbers the ledger already holds.
-//   * Cashing out is NOT connected. The room's ledger tracks what is owed and
-//     enforces the hundred DIVI minimum, but the service that actually signs
-//     and broadcasts a payout does not exist yet. So the button says so rather
-//     than pretending: a disabled control with a reason is honest, and one that
-//     silently does nothing is not.
+//   * Cashing out is real, and it is the LEDGER's money: what was won in the
+//     shared room, banked under the address the cockpit connected from. The
+//     room writes the request down, the treasury node in London finds it on
+//     its next round and sends the coins, and the receipt comes back here.
+//     DIVI picked up flying alone is local and cannot be cashed out; it can be
+//     converted. The panel says which is which.
 
 import { useEffect, useState } from "react";
 import {
@@ -25,6 +26,8 @@ import {
 } from "./rebelsArmoury";
 import { totalDivi } from "./rebelsScores";
 import { fetchPrices } from "../value";
+import { bankView, subscribeBank, claimDivi, refreshBank, type BankView } from "./rebelsBank";
+import { validateAddress, walletAddresses } from "../api";
 import {
   BUY_TIERS, bonusFor, pointsForPurchase, TREASURY_ADDRESS,
 } from "./weaponCatalog";
@@ -93,7 +96,7 @@ export function PointsPanel() {
       <div className="wpn-list">
         {tab === "buy" && <BuyBlock usd={usd} onBought={refresh} />}
         {tab === "convert" && <ConvertBlock usd={usd} divi={divi} onDone={refresh} />}
-        {tab === "cashout" && <CashOutBlock usd={usd} divi={divi} />}
+        {tab === "cashout" && <CashOutBlock usd={usd} localDivi={divi} />}
       </div>
 
       <p className="wpn-note">
@@ -277,27 +280,114 @@ function ConvertBlock({ usd, divi, onDone }: { usd: number | null; divi: number;
   );
 }
 
-/* ---- CASH OUT ---- */
-function CashOutBlock({ usd, divi }: { usd: number | null; divi: number }) {
-  const canClaim = divi >= MIN_CLAIM;
+/* ---- CASH OUT ----
+   The ledger's figures, a destination, and a button. The address is checked
+   twice: for shape here, and properly by the treasury node before a coin
+   moves. Nothing about the amount is decided on this side. */
+function CashOutBlock({ usd, localDivi }: { usd: number | null; localDivi: number }) {
+  const [bank, setBank] = useState<BankView>(() => bankView());
+  const [to, setTo] = useState("");
+  const [checking, setChecking] = useState(false);
+  const [note, setNote] = useState("");
+
+  useEffect(() => subscribeBank(setBank), []);
+
+  /* Fresh figures when the tab opens, and every few seconds while a payout is
+     on its way, so the receipt shows up without a reopen. */
+  useEffect(() => {
+    refreshBank();
+    const t = setInterval(() => { if (bankView().purse?.pending) refreshBank(); }, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  /* The wallet's own main address, offered as the default. A player who wants
+     it elsewhere types elsewhere. */
+  useEffect(() => {
+    let alive = true;
+    void walletAddresses().then((list) => {
+      if (!alive || to) return;
+      const main = list.find((a) => a.isMain) ?? list[0];
+      if (main) setTo(main.address);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const live = bank.status === "live";
+  const purse = bank.purse;
+  const pending = purse?.pending ?? null;
+  const last = purse?.last ?? null;
+  const claimable = purse?.claimable ?? 0;
+  const canClaim = live && !pending && claimable >= MIN_CLAIM && to.length > 0 && !checking;
+
+  const cashOut = async () => {
+    setNote("");
+    setChecking(true);
+    try {
+      const good = await validateAddress(to).catch(() => false);
+      if (!good) { setNote("That is not a valid DIVI address."); return; }
+      if (!claimDivi(to)) { setNote("Not connected to the room."); return; }
+      setNote("Asked. The treasury pays on its next round, usually within a couple of minutes.");
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const short = (a: string) => a.length > 14 ? `${a.slice(0, 7)}…${a.slice(-5)}` : a;
+
   return (
     <div className="pts-block">
       <h4>CASH OUT DIVI</h4>
-      <p>What you have won in orbit, sent to a DIVI address.</p>
+      <p>
+        DIVI won in the shared room, sent to a DIVI address. Paid by the Divi
+        Rebels treasury to the address below.
+      </p>
       <div className="pts-quote">
-        <b>{divi.toFixed(2)} DIVI</b>
+        <b>{live ? `${(purse?.divi ?? 0).toLocaleString()} DIVI` : "not connected"}</b>
         <span>
-          {usd && usd > 0 ? `$${(divi * usd).toFixed(2)}` : "DIVI price unavailable"}
+          {!live
+            ? "join the room to see what is banked"
+            : usd && usd > 0
+              ? `$${((purse?.divi ?? 0) * usd).toFixed(2)} banked, ${(purse?.paid ?? 0).toLocaleString()} paid out so far`
+              : `${(purse?.paid ?? 0).toLocaleString()} paid out so far`}
         </span>
       </div>
-      <button type="button" className="pts-go" disabled={!canClaim}>
-        {canClaim ? "CASH OUT" : `${MIN_CLAIM} DIVI MINIMUM`}
+      <div className="pts-custom">
+        <input
+          type="text"
+          spellCheck={false}
+          placeholder="DIVI address to pay"
+          value={to}
+          disabled={!!pending}
+          onChange={(e) => setTo(e.target.value.trim())}
+        />
+      </div>
+      <button type="button" className="pts-go" disabled={!canClaim} onClick={() => void cashOut()}>
+        {!live
+          ? "NOT CONNECTED"
+          : pending
+            ? "PAYMENT ON ITS WAY"
+            : claimable >= MIN_CLAIM
+              ? `CASH OUT ${claimable.toLocaleString()} DIVI`
+              : `${MIN_CLAIM} DIVI MINIMUM`}
       </button>
       <em className="pts-small">
-        {canClaim
-          ? "The payout service is not connected yet: the ledger is holding this for you."
-          : `You have ${divi.toFixed(2)}. Bring home ${(MIN_CLAIM - divi).toFixed(2)} more.`}
+        {note
+          || purse?.why
+          || (pending
+            ? `${pending.amount.toLocaleString()} DIVI to ${short(pending.to)} is waiting for the treasury.`
+            : last?.txid
+              ? `Last: ${last.amount.toLocaleString()} DIVI paid to ${short(last.to)}, tx ${short(last.txid)}.`
+              : last?.error
+                ? `Last cash out was not paid: ${last.error}`
+                : live && claimable < MIN_CLAIM
+                  ? `${(purse?.divi ?? 0).toLocaleString()} banked. ${Math.max(0, MIN_CLAIM - (purse?.divi ?? 0)).toLocaleString()} more to reach the minimum.`
+                  : "Your account is the address you connect from. Two players on one router share one.")}
       </em>
+      {localDivi > 0 && (
+        <em className="pts-small">
+          {localDivi.toFixed(2)} DIVI from flying alone is not cashable; convert it to points instead.
+        </em>
+      )}
     </div>
   );
 }
