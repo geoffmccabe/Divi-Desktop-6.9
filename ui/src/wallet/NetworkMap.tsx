@@ -534,10 +534,14 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       }
     }
 
-    // Recently-seen nodes are presumed alive → show them settled/online (blue)
-    // right away instead of the green "probing" default, so opening the map isn't
-    // a green sweep. The background probe still verifies them quietly.
-    for (const ip of Object.keys(knownRef.current)) probeRef.current.set(ip, "online");
+    // Remembered nodes start as DIM GHOSTS (grey), NOT pre-lit as online. The
+    // map must show what the node is actually experiencing right now, not a
+    // memory of the network: a node only lights up once it's genuinely a live
+    // peer (pink) or the app has just verified it's reachable (blue). Until then
+    // it's a faint "seen before, not confirmed now" dot. This is what makes the
+    // wake-up honest — an isolated node looks isolated, then the network comes
+    // alive around it as it actually connects and verifies.
+    for (const ip of Object.keys(knownRef.current)) probeRef.current.set(ip, "offline");
 
     const ips = Object.keys(knownRef.current);
     if (ips.length) {
@@ -570,12 +574,16 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           const idx = Math.floor(((nowW / 60000) % s.peers.length + s.peers.length) % s.peers.length);
           winnerRef.current = s.peers[idx].ip;
         }
-        // Once well-connected (20+ peers), (re)ping the 30-day known nodes to see
-        // which are still active — first at 20 peers, then every 60s. Each wave
-        // flips nodes back to "probing" (a green wave) before settling to blue
-        // (active) or dropping off the map (dead).
+        // As soon as the node has ANY live peer, start (re)pinging the remembered
+        // network to see which nodes are actually reachable right now — the first
+        // pass ~8s after opening (so the wake-up "comes alive" quickly), then every
+        // 60s. Each wave flips a ghost to "probing" (a green checking-pulse) before
+        // it settles to blue (verified reachable), pink (a real peer) or fades out
+        // (dead). This is the visible sense of the node reaching out and learning
+        // the network, in step with what it's actually doing.
         const nowMs = performance.now();
-        if (s.peers.length >= 20 && nowMs - lastProbe.current > 60000) {
+        const probeGap = firstProbeDone.current ? 60000 : 8000;
+        if (s.peers.length >= 1 && nowMs - lastProbe.current > probeGap) {
           lastProbe.current = nowMs;
           const kips = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
           if (kips.length) {
@@ -1675,7 +1683,8 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         </button>
         <div className="netmap-legend">
           <span className="nm-item"><span className="nm-dot nm-out" /> Active Peers</span>
-          <span className="nm-item"><span className="nm-dot nm-in" /> Full Network</span>
+          <span className="nm-item"><span className="nm-dot nm-in" /> Reachable now</span>
+          <span className="nm-item"><span className="nm-dot nm-ghost" /> Seen before</span>
           <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
         </div>
         <div className="netmap-tools">

@@ -1026,6 +1026,7 @@ code, .mono { font-family: var(--font-mono); }
 .nm-out { background: hsl(var(--primary)); } /* Active Peers — matches connection arcs */
 .nm-in { background: hsl(210 85% 62%); } /* Full Network — matches the blue background mesh */
 .nm-self { background: hsl(var(--warning)); }
+.nm-ghost { background: hsl(var(--map-offline)); opacity: 0.55; } /* Seen before — remembered, not confirmed connected right now */
 /* Row below the topbar: optional install panel (left) + the map (right, flex:1).
    When no panel is open the map fills the whole row unchanged. */
 .netmap-body { flex: 1; display: flex; flex-direction: row; min-height: 0; gap: 12px; }
