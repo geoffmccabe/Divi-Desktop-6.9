@@ -23,6 +23,7 @@ interface Started { rate: number; gain: number; panned: boolean }
 const started: Started[] = [];
 let decodeCalls = 0;
 let decodeShouldFail = false;
+let decodeShouldHang = false;
 
 class FakeParam { constructor(public value = 0) {} setValueAtTime(v: number) { this.value = v; } cancelScheduledValues() {} exponentialRampToValueAtTime() {} }
 class FakeCtx {
@@ -54,6 +55,7 @@ class FakeCtx {
   createPanner() { return { panningModel: "", distanceModel: "", refDistance: 0, maxDistance: 0, rolloffFactor: 0, positionX: { value: 0 }, positionY: { value: 0 }, positionZ: { value: 0 }, connect() { return this; } }; }
   decodeAudioData(_raw: ArrayBuffer) {
     decodeCalls++;
+    if (decodeShouldHang) return new Promise<AudioBuffer>(() => { /* never */ });
     return decodeShouldFail
       ? Promise.reject(new Error("bad sample"))
       : Promise.resolve({ duration: 1, sampleRate: 48000 } as unknown as AudioBuffer);
@@ -192,6 +194,68 @@ async function main() {
   A.playGunSound();
   ok("and turning it back up brings the game back", started.length > quiet,
      `${started.length - quiet} sounds played`);
+
+  /* ---- A DECODE THAT NEVER FINISHES ----
+     The guard against decoding everything twice was also a way to silence the
+     game permanently. decodeAudioData on a WebKit context that is not running
+     does not reliably reject; it can simply never settle, and a promise that
+     never settles left the "already loading" flag set for the rest of the
+     session. Every later attempt returned on that line, so the game stayed mute
+     with nothing to see and nothing to report. Three rounds of this were spent
+     guessing from the outside.
+
+     A start that has not finished within the patience window has failed, and
+     the next request is allowed to try again. */
+  {
+    const realNow = Date.now;
+    let clock = realNow();
+    Date.now = () => clock;
+
+    /* Wipe what is loaded so a fresh attempt is possible, then hang it. */
+    /* The samples are data URIs, so decoding starts a microtask later rather
+       than on this line. Counting without letting the queue drain reads zero
+       every time and proves nothing. */
+    const settle = () => new Promise((r) => setTimeout(r, 10));
+
+    A.resetAudioForTests();
+    decodeShouldHang = true;
+    A.primeGunSound();
+    await settle();
+    const hung = decodeCalls;
+    ok("a hung start does begin decoding", hung > 0, `${hung} decodes`);
+
+    A.primeGunSound();
+    await settle();
+    ok("a second call does not decode everything twice",
+       decodeCalls === hung, `${decodeCalls - hung} extra`);
+
+    /* Still hung a second later: it is allowed to be slow. */
+    clock += 1000;
+    A.primeGunSound();
+    await settle();
+    ok("and a slow start is left alone", decodeCalls === hung, `${decodeCalls - hung} extra`);
+
+    /* But not for ever. */
+    clock += 30_000;
+    A.primeGunSound();
+    await settle();
+    ok("a decode that never finishes stops blocking every later one",
+       decodeCalls > hung, `${decodeCalls - hung} retries after 30s`);
+
+    Date.now = realNow;
+    decodeShouldHang = false;
+  }
+
+  /* And the state is readable, which is the whole point: a suspended context,
+     a failed decode and a muted theme are three different faults that look
+     exactly alike from outside. */
+  {
+    const st = A.audioState();
+    ok("the sound reports what it is doing",
+       typeof st.ctx === "string" && typeof st.failed === "boolean"
+       && typeof st.buffers === "number" && typeof st.volume === "number",
+       JSON.stringify(st));
+  }
 
   console.log(out.join("\n"));
   console.log(`\n${out.length - failures} passed, ${failures} failed`);

@@ -33,6 +33,10 @@ let shipBlastBuffer: AudioBuffer | null = null;
 let warnBuffer: AudioBuffer | null = null;
 let bounceBuffer: AudioBuffer | null = null;
 let loading: Promise<void> | null = null;
+/** When the current attempt began, so one that never finishes cannot latch. */
+let loadingSince = 0;
+/** How long a decode is given before it is treated as having failed. */
+const LOAD_PATIENCE = 6000;
 let failed = false;
 
 /** The recharging loop, while it is running. */
@@ -84,10 +88,21 @@ export function resumeAudio(): void {
 
 /** Decode every sample once and hold them. */
 export function primeGunSound(): void {
-  if (loading || failed || (buffer && rechargeBuffer && torpedoBuffer
+  /* ---- THE LATCH THAT COULD NEVER BE RELEASED ----
+     `loading` is here so two callers do not decode everything twice. It was
+     also a way to silence the game for ever: decodeAudioData on a WebKit
+     context that is not running does not always reject, it can simply never
+     settle, and a promise that never settles leaves this flag set for the rest
+     of the session. Every later attempt then returned on this line and the
+     game was mute with nothing wrong that could be seen or reported.
+     A start that has not finished within a few seconds is a start that failed,
+     so it stops counting and the next request may try again. */
+  if (loading && Date.now() - loadingSince < LOAD_PATIENCE) return;
+  if (failed || (buffer && rechargeBuffer && torpedoBuffer
       && torpedoBlastBuffer && shipBlastBuffer && warnBuffer && bounceBuffer)) return;
   const ctx = audioContext();
   if (!ctx) { failed = true; return; }
+  loadingSince = Date.now();
   const load = (url: string) => toArrayBuffer(url).then((raw) => ctx.decodeAudioData(raw));
   loading = Promise.all([
     load(laserUrl), load(rechargeUrl), load(torpedoUrl),
@@ -108,6 +123,48 @@ export function primeGunSound(): void {
       failed = true;
     })
     .finally(() => { loading = null; });
+}
+
+/**
+ * Test hook: forget everything and start again.
+ *
+ * Here for one assertion that cannot be made any other way, and it is worth
+ * making: that a decode which never finishes stops blocking every later one.
+ * That exact latch silenced the game for a whole session at a time.
+ */
+export function resetAudioForTests(): void {
+  buffer = rechargeBuffer = torpedoBuffer = null;
+  torpedoBlastBuffer = shipBlastBuffer = warnBuffer = bounceBuffer = null;
+  loading = null;
+  loadingSince = 0;
+  failed = false;
+}
+
+/**
+ * What the sound is actually doing, for the diagnostic the game writes out.
+ *
+ * This exists because "the game has no sound" has now been reported three
+ * times and guessed at twice, from the outside, with no way to tell a
+ * suspended context from a failed decode from a muted theme. They look
+ * identical and they are not the same bug.
+ */
+export function audioState(): Record<string, unknown> {
+  let state = "none";
+  try {
+    const ctx = audioContext();
+    state = ctx ? ctx.state : "null";
+  } catch (e) {
+    state = `threw:${(e as Error).message}`;
+  }
+  return {
+    ctx: state,
+    failed,
+    loading: !!loading,
+    loadingFor: loading ? Date.now() - loadingSince : 0,
+    buffers: [buffer, rechargeBuffer, torpedoBuffer, torpedoBlastBuffer,
+      shipBlastBuffer, warnBuffer, bounceBuffer].filter(Boolean).length,
+    volume: (() => { try { return masterVolume(); } catch { return -1; } })(),
+  };
 }
 
 /** A number within WOBBLE either side of one. */

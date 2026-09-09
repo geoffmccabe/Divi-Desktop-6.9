@@ -43,7 +43,7 @@ import {
 import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
-  playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce,
+  playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce, audioState,
 } from "./rebelsAudio";
 
 export interface HudState {
@@ -149,6 +149,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      by index. Built from a single prototype and cloned, so a spawn costs a
      clone rather than a pile of new geometry. */
   let protos: THREE.Group[] = [];
+  /* See the black box in frame(). */
+  let frameError = "";
+  let frameErrors = 0;
+  let diagAt = 0;
   const enemyMeshes: THREE.Group[] = [];
   /* One shield rig per fighter model, hanging off it. */
   const enemyShields: ShieldRig[] = [];
@@ -763,104 +767,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     setHud({ dead: false });
   }
 
-  return {
-    attach(api) {
-      try {
-        scene = api.scene;
-        camera = api.camera;
-        dom = api.dom;
-
-        /* Real tower tips off the real map. Docking lines up with the towers
-           you can actually see, because they ARE those towers. */
-        scaleTowers = api.scaleTowers;
-        ipList = [...api.tips.keys()];
-        tipList = ipList.map((ip) => api.tips.get(ip)!.clone());
-        homeIndex = api.selfIp ? ipList.indexOf(api.selfIp) : -1;
-
-        savedNear = camera.near;
-        savedFar = camera.far;
-        camera.near = 0.05;
-        /* Far enough to SEE the outer planets, which is a good deal further
-           than the old four thousand: the fourteenth sits 3,600 units out and
-           is 300 across, so anything short of this simply does not draw it. */
-        camera.far = Math.max(camera.far, (R + MAX_ALT) * 2.6);
-        camera.updateProjectionMatrix();
-
-        /* Start decoding the samples now. Waiting for the first trigger pull
-           meant the opening shots of a fight were silent. */
-        primeGunSound();
-
-        fx = createFx();
-        scene.add(fx.group);
-
-        /* The sky. Built here rather than on launch because the planets are
-           always there, and because the first run has to fetch them: starting
-           at attach means they are usually in place by the time anyone has
-           finished reading the launch card. */
-        space = createSpace();
-        scene.add(space.group);
-
-        /* And the stars behind all of it. The scene belongs to the Node Map,
-           which is used outside the game, so whatever background it had is
-           handed back on the way out — the same courtesy the camera's near and
-           far planes get. */
-        sky = installSky(scene);
-        guardShell = makeGuardShell();
-        scene.add(guardShell.mesh);
-        /* One prototype per tier, cloned per fighter. Seven models built once
-           costs nothing and means a rare ship is the right colour from the
-           frame it appears. */
-        protos = TIERS.map((t) => makeFighter(t.colour));
-        combat = createCombat();
-
-        startAt(homeIndex);
-
-        /* Where the globe exactly fills the height of the frame. Slightly
-           inside it, so it fills rather than floats. */
-        const half = (camera.fov * Math.PI) / 360;
-        globeRadius = api.radius;
-        approachTo = (api.radius / Math.sin(half)) * 0.92;
-        approachFrom.copy(camera.position);
-        if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
-        approach = 0;
-
-        dom.addEventListener("wheel", onWheel, { passive: false });
-        dom.addEventListener("pointerleave", onLeave);
-        dom.addEventListener("pointermove", onMove);
-        dom.addEventListener("pointerdown", onDown);
-        dom.addEventListener("contextmenu", onContextMenu);
-        window.addEventListener("pointerup", onUp);
-        window.addEventListener("keydown", onKeyDown);
-        window.addEventListener("keyup", onKeyUp);
-        window.addEventListener("blur", onBlur);
-        if (typeof document !== "undefined") {
-          document.addEventListener("pointerlockchange", onLockChange);
-        }
-
-        /* What this player has already killed, so the tallies are lifetime and
-           not per session. Offline it falls back to the local copy. */
-        divi = totalDivi();
-        setHud({ divi });
-
-        void myTotals().then((row) => {
-          lifetimeTiers = row.tierKills.slice(0, TIER_COUNT);
-          setHud({ tierKills: lifetimeTiers.slice() });
-        });
-
-        setHud({
-          ready: true,
-          broken: null,
-          towers: tipList.length,
-          homeName: homeIndex >= 0 ? labelFor(ipList[homeIndex]) : "no node located",
-        });
-      } catch (err) {
-        /* Never throw out of here. This runs inside the map's own effect, and
-           an exception would take the Node Map down with it. */
-        setHud({ broken: err instanceof Error ? err.message : "the game could not start", ready: false });
-      }
-    },
-
-    frame(dt) {
+  /* The whole of a frame. A plain function rather than a method so the
+     wrapper in frame() can call it inside a try. */
+  function runFrame(dt: number) {
       if (!flight || !camera || !fx || !scene || protos.length === 0) return;
       try {
         const s = scratch;
@@ -1361,8 +1270,152 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         setHud({ broken: err instanceof Error ? err.message : "the game stopped", ready: false });
         flight = null;
       }
+    }
+
+  return {
+    attach(api) {
+      try {
+        scene = api.scene;
+        camera = api.camera;
+        dom = api.dom;
+
+        /* Real tower tips off the real map. Docking lines up with the towers
+           you can actually see, because they ARE those towers. */
+        scaleTowers = api.scaleTowers;
+        ipList = [...api.tips.keys()];
+        tipList = ipList.map((ip) => api.tips.get(ip)!.clone());
+        homeIndex = api.selfIp ? ipList.indexOf(api.selfIp) : -1;
+
+        savedNear = camera.near;
+        savedFar = camera.far;
+        camera.near = 0.05;
+        /* Far enough to SEE the outer planets, which is a good deal further
+           than the old four thousand: the fourteenth sits 3,600 units out and
+           is 300 across, so anything short of this simply does not draw it. */
+        camera.far = Math.max(camera.far, (R + MAX_ALT) * 2.6);
+        camera.updateProjectionMatrix();
+
+        /* Start decoding the samples now. Waiting for the first trigger pull
+           meant the opening shots of a fight were silent. */
+        primeGunSound();
+
+        fx = createFx();
+        scene.add(fx.group);
+
+        /* The sky. Built here rather than on launch because the planets are
+           always there, and because the first run has to fetch them: starting
+           at attach means they are usually in place by the time anyone has
+           finished reading the launch card. */
+        space = createSpace();
+        scene.add(space.group);
+
+        /* And the stars behind all of it. The scene belongs to the Node Map,
+           which is used outside the game, so whatever background it had is
+           handed back on the way out — the same courtesy the camera's near and
+           far planes get. */
+        sky = installSky(scene);
+        guardShell = makeGuardShell();
+        scene.add(guardShell.mesh);
+        /* One prototype per tier, cloned per fighter. Seven models built once
+           costs nothing and means a rare ship is the right colour from the
+           frame it appears. */
+        protos = TIERS.map((t) => makeFighter(t.colour));
+        combat = createCombat();
+
+        startAt(homeIndex);
+
+        /* Where the globe exactly fills the height of the frame. Slightly
+           inside it, so it fills rather than floats. */
+        const half = (camera.fov * Math.PI) / 360;
+        globeRadius = api.radius;
+        approachTo = (api.radius / Math.sin(half)) * 0.92;
+        approachFrom.copy(camera.position);
+        if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
+        approach = 0;
+
+        dom.addEventListener("wheel", onWheel, { passive: false });
+        dom.addEventListener("pointerleave", onLeave);
+        dom.addEventListener("pointermove", onMove);
+        dom.addEventListener("pointerdown", onDown);
+        dom.addEventListener("contextmenu", onContextMenu);
+        window.addEventListener("pointerup", onUp);
+        window.addEventListener("keydown", onKeyDown);
+        window.addEventListener("keyup", onKeyUp);
+        window.addEventListener("blur", onBlur);
+        if (typeof document !== "undefined") {
+          document.addEventListener("pointerlockchange", onLockChange);
+        }
+
+        /* What this player has already killed, so the tallies are lifetime and
+           not per session. Offline it falls back to the local copy. */
+        divi = totalDivi();
+        setHud({ divi });
+
+        void myTotals().then((row) => {
+          lifetimeTiers = row.tierKills.slice(0, TIER_COUNT);
+          setHud({ tierKills: lifetimeTiers.slice() });
+        });
+
+        setHud({
+          ready: true,
+          broken: null,
+          towers: tipList.length,
+          homeName: homeIndex >= 0 ? labelFor(ipList[homeIndex]) : "no node located",
+        });
+      } catch (err) {
+        /* Never throw out of here. This runs inside the map's own effect, and
+           an exception would take the Node Map down with it. */
+        setHud({ broken: err instanceof Error ? err.message : "the game could not start", ready: false });
+      }
     },
 
+    /* ---- THE BLACK BOX ----
+       Two faults have now been reported three times between them, guessed at
+       twice from the outside, and both are invisible: a game with no sound and
+       a game with no enemies look exactly like a game that is working, from
+       here. So it writes down what it is actually doing, once every couple of
+       seconds, where it can be read back off disk afterwards.
+
+       localStorage rather than the console, because a webview's console goes
+       nowhere anybody can reach, and rather than the HUD, because this is for
+       diagnosis and not for the player. It is one small key, overwritten in
+       place, so it costs nothing and grows into nothing. */
+    frame(dt) {
+      try {
+        runFrame(dt);
+      } catch (err) {
+        /* ---- AND IT NO LONGER LOSES THE REST OF THE FRAME IN SILENCE ----
+           Everything in a frame runs in one long sequence: fly, shoot, step the
+           fight, play what happened, then draw it. An exception anywhere in
+           that used to skip every remaining step without a word, and because
+           the map owns the render loop the world carried on drawing regardless.
+           A throw just before the sounds and the enemy models would look
+           EXACTLY like the two things being reported: still flying, still
+           rendering, no noise and nothing to fight. */
+        frameError = `${(err as Error).message}`;
+        frameErrors++;
+      }
+      diagAt -= dt;
+      if (diagAt <= 0) {
+        diagAt = 2;
+        try {
+          localStorage.setItem("dd69.rebels.diag", JSON.stringify({
+            at: new Date().toISOString(),
+            phase,
+            audio: audioState(),
+            enemies: combat.enemies.length,
+            fighters: combat.enemies.filter((e) => !e.drone).length,
+            wave: combat.wave ? { n: combat.wave.n, toSpawn: combat.wave.toSpawn, left: Math.round(combat.wave.timeLeft) } : null,
+            meshes: enemyMeshes.length,
+            protos: protos.length,
+            visible: enemyMeshes.filter((m) => m.visible).length,
+            alt: flight ? Math.round(flight.pos.length() - R) : null,
+            frameError,
+            frameErrors,
+          }));
+        } catch { /* storage full or blocked; the game does not care */ }
+      }
+    },
     detach() {
       /* Backing out mid-flight files what was earned. Losing a good run to a
          stray Escape would be worse than the alternative. */
