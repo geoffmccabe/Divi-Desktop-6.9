@@ -242,15 +242,39 @@ export const TORPEDO_BLAST = 11;
    out that they are being shot at from behind or from the side, and where the
    shooter must be, in a game where the view only faces one way. */
 /**
- * How far ahead of impact the cockpit starts calling a round.
+ * How far ahead of impact the cockpit starts calling a round, and how close
+ * that round has to be for it to count as near.
  *
- * Half a second was enough to reach for the right button and not enough to say
- * anything IN. A warning that rises as a round closes needs a run-up: at a
- * quarter of a second between pips, two and a bit seconds is eight or nine of
- * them getting louder, which is a shape a player can read. Half a second was
- * two pips, and two pips is a fact rather than a distance.
+ * BOTH, because either alone is useless here. Fighters aim EXACTLY at the
+ * player: enemyFire takes the vector to the ship and normalises it, so every
+ * round in the game leaves its barrel on a perfect collision course. "Is
+ * anything on course to hit me" is therefore not a rare event, it is the
+ * ordinary state of being shot at, and asking it over a two second window
+ * measured 43% of frames warning with barely half a round in the air. Geoff:
+ * "the warning sound is going off far too much, it's almost continual."
+ *
+ * So the question is imminence rather than intent. A round is called when it is
+ * both about to arrive AND already close, and it stops being called the instant
+ * it is neither: the test runs every frame against where the ship is NOW, so
+ * flying out of the line silences it immediately, which is what was asked for.
  */
-export const WARN_LEAD = 2.2;
+export const WARN_LEAD = 0.6;
+/**
+ * And no round further away than this is "near", whatever its trajectory.
+ *
+ * Thirty-four units, which at the speed a fighter's round travels is about
+ * four tenths of a second out. That is the gate that actually bites: the first
+ * attempt at this used a hundred and thirty, and since a round only covers
+ * seventy-nine units inside the time window, it never excluded anything at all.
+ *
+ * Measured over four minutes of a real wave, against the version that was
+ * reported: frames with the alarm sounding fall from 53% to 30%, and the pips
+ * actually heard from 2.0 a second to 0.9. And it costs nothing, which is the
+ * part worth knowing: every single round that went on to hit was still
+ * announced, 278 out of 278. The alarm was not being useful for the other
+ * seventy percent of the time, it was just being loud.
+ */
+export const WARN_RANGE = 34;
 /** What a round has to come within to count as on course. */
 export const PLAYER_HIT_R = 1.4;
 
@@ -1196,6 +1220,11 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       if (speed2 > 1e-9) {
         for (const pl of roster(w)) {
           const rel = pl.pos.clone().sub(b.pos);
+          /* Near enough to matter at all, before any trajectory is worked out.
+             A round that will hit in a second and a half from two hundred units
+             away is not something to sound an alarm about; it is something that
+             has not happened yet. */
+          if (rel.lengthSq() > WARN_RANGE * WARN_RANGE) continue;
           const t = Math.max(0, Math.min(WARN_LEAD, rel.dot(b.vel) / speed2));
           const miss = rel.addScaledVector(b.vel, -t).length();
           if (miss < PLAYER_HIT_R && t > 0 && t <= WARN_LEAD) {

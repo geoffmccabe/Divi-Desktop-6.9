@@ -79,7 +79,7 @@ async function main() {
   // 1. Priming decodes every sample the game has.
   A.primeGunSound();
   await new Promise((r) => setTimeout(r, 50));
-  ok("every sample is decoded", decodeCalls === 7, `${decodeCalls} decoded`);
+  ok("every sample is decoded", decodeCalls === 8, `${decodeCalls} decoded`);
 
   // 2. The guns are a DOUBLE shot, and neither barrel is identical.
   started.length = 0;

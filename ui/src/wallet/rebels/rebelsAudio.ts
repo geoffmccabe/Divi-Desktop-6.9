@@ -17,6 +17,7 @@ import torpedoBlastUrl from "../../assets/torpedo_explosion_v1.mp3";
 import shipBlastUrl from "../../assets/spaceship_explosion_v1.mp3";
 import warnUrl from "../../assets/warning_bullet_approach.mp3";
 import bounceUrl from "../../assets/bullet_bounce.mp3";
+import boostUrl from "../../assets/jet_boots_1.mp3";
 import { audioContext, masterVolume } from "../../sound";
 
 /** How far speed, pitch and volume may wander, either way. */
@@ -32,6 +33,7 @@ let torpedoBlastBuffer: AudioBuffer | null = null;
 let shipBlastBuffer: AudioBuffer | null = null;
 let warnBuffer: AudioBuffer | null = null;
 let bounceBuffer: AudioBuffer | null = null;
+let boostBuffer: AudioBuffer | null = null;
 let loading: Promise<void> | null = null;
 /** When the current attempt began, so one that never finishes cannot latch. */
 let loadingSince = 0;
@@ -99,7 +101,8 @@ export function primeGunSound(): void {
      so it stops counting and the next request may try again. */
   if (loading && Date.now() - loadingSince < LOAD_PATIENCE) return;
   if (failed || (buffer && rechargeBuffer && torpedoBuffer
-      && torpedoBlastBuffer && shipBlastBuffer && warnBuffer && bounceBuffer)) return;
+      && torpedoBlastBuffer && shipBlastBuffer && warnBuffer && bounceBuffer
+      && boostBuffer)) return;
   const ctx = audioContext();
   if (!ctx) { failed = true; return; }
   loadingSince = Date.now();
@@ -107,8 +110,9 @@ export function primeGunSound(): void {
   loading = Promise.all([
     load(laserUrl), load(rechargeUrl), load(torpedoUrl),
     load(torpedoBlastUrl), load(shipBlastUrl), load(warnUrl), load(bounceUrl),
+    load(boostUrl),
   ])
-    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast, warn, bounce]) => {
+    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast, warn, bounce, boost]) => {
       buffer = gun;
       rechargeBuffer = recharge;
       torpedoBuffer = torpedo;
@@ -116,6 +120,7 @@ export function primeGunSound(): void {
       shipBlastBuffer = shipBlast;
       warnBuffer = warn;
       bounceBuffer = bounce;
+      boostBuffer = boost;
     })
     .catch(() => {
       /* Silence is not worth breaking a game over, but it is not permanent
@@ -135,6 +140,7 @@ export function primeGunSound(): void {
 export function resetAudioForTests(): void {
   buffer = rechargeBuffer = torpedoBuffer = null;
   torpedoBlastBuffer = shipBlastBuffer = warnBuffer = bounceBuffer = null;
+  boostBuffer = null;
   loading = null;
   loadingSince = 0;
   failed = false;
@@ -162,7 +168,7 @@ export function audioState(): Record<string, unknown> {
     loading: !!loading,
     loadingFor: loading ? Date.now() - loadingSince : 0,
     buffers: [buffer, rechargeBuffer, torpedoBuffer, torpedoBlastBuffer,
-      shipBlastBuffer, warnBuffer, bounceBuffer].filter(Boolean).length,
+      shipBlastBuffer, warnBuffer, bounceBuffer, boostBuffer].filter(Boolean).length,
     volume: (() => { try { return masterVolume(); } catch { return -1; } })(),
   };
 }
@@ -403,8 +409,8 @@ export function playTorpedoBlast(): void {
 export const WARN_MIN = 0.08;
 export const WARN_MAX = 0.475;
 /** Seconds between pips, far away and close in. */
-export const WARN_GAP_FAR = 0.34;
-export const WARN_GAP_NEAR = 0.13;
+export const WARN_GAP_FAR = 0.65;
+export const WARN_GAP_NEAR = 0.2;
 
 /**
  * A round is coming, and `near` says how near: nought as it comes into range,
@@ -430,6 +436,57 @@ export function playIncomingWarning(near = 1): void {
   once(warnBuffer, WARN_MIN + (WARN_MAX - WARN_MIN) * k, false);
 }
 let lastWarnAt = -1;
+
+/* ---- the boost ----
+   DreadRoot's jet boots, which is the same thing happening: a person or a ship
+   throwing itself forward on a burst of thrust. Reusing it rather than finding
+   a new one is deliberate; the two games share a world and a rocket ought to
+   sound like the same rocket. */
+let boostNode: AudioBufferSourceNode | null = null;
+let boostGain: GainNode | null = null;
+
+/**
+ * Start the thrust, and keep it going.
+ *
+ * Looped, because a boost is held rather than pressed: the sample is under a
+ * second and a boost can run for six. Eased in for the same reason the resupply
+ * loop is, which is that a looping sample snapped on at full level clicks.
+ * Calling this twice is harmless.
+ */
+export function startBoostSound(): void {
+  const ctx = audioContext();
+  if (!ctx || failed || boostNode || !boostBuffer) return;
+  const volume = masterVolume();
+  if (!(volume > 0)) return;
+  const src = ctx.createBufferSource();
+  src.buffer = boostBuffer;
+  src.loop = true;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(volume * 0.9, ctx.currentTime + 0.06);
+  src.connect(gain);
+  gain.connect(ctx.destination);
+  src.start();
+  boostNode = src;
+  boostGain = gain;
+}
+
+/** Off the throttle, out of boost, docked, dead, or gone. Faded rather than
+ *  cut, or letting go of shift clicks. */
+export function stopBoostSound(): void {
+  const ctx = audioContext();
+  const node = boostNode;
+  const gain = boostGain;
+  boostNode = null;
+  boostGain = null;
+  if (!node) return;
+  if (!ctx || !gain) { try { node.stop(); } catch { /* already stopped */ } return; }
+  const now = ctx.currentTime;
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+  try { node.stop(now + 0.2); } catch { /* already stopped */ }
+}
 
 /** A round turned away by the guard. The reward for having reacted. */
 export function playBounce(): void {

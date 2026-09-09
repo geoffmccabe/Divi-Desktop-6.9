@@ -49,6 +49,7 @@ import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
   playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce, audioState,
+  startBoostSound, stopBoostSound,
 } from "./rebelsAudio";
 import {
   primeMusic, playOpening, playGameplay, musicOnDeath, stopMusic, tickMusic,
@@ -178,6 +179,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* Seconds until the beam may fire again, which is also how long it stays
      lit. See weaponCatalog. */
   let beamAt = 0;
+  let wasThrusting = false;
   let selfIp = "";
   let frameError = "";
   let frameErrors = 0;
@@ -1411,6 +1413,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           rig.step(nowS, Math.min(1, e.flash / 0.6));
         }
 
+        /* ---- the thrust ----
+           Follows what the ship is DOING rather than what the key is doing.
+           Holding shift with an empty boost tank, or while docked, or after
+           being shot down, all move the ship not at all, and a roar with no
+           acceleration behind it is worse than silence. */
+        const thrusting = stick.boosting && flight.boost > 0
+          && flight.dock <= 0 && !hud.dead;
+        if (thrusting !== wasThrusting) {
+          wasThrusting = thrusting;
+          if (thrusting) startBoostSound(); else stopBoostSound();
+        }
+
         /* The recharging station, on for exactly as long as the resupply. */
         const docking = flight.dock > 0;
         if (docking !== wasDocking) {
@@ -1647,6 +1661,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     },
     detach() {
       stopMusic();
+      stopBoostSound();
       leaveRoom();
       /* Backing out mid-flight files what was earned. Losing a good run to a
          stray Escape would be worse than the alternative. */

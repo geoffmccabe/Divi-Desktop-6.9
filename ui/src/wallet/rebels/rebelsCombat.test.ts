@@ -893,8 +893,11 @@ function run(c: CombatState, frames: number, w = world()) {
   ok("and it keeps calling as the round closes", powers.length > 20,
      `${powers.length} calls over the approach`);
 
-  /* THE POINT: it starts quiet and ends loud. */
-  ok("it starts quiet", powers[0] < 0.15, `${powers[0]?.toFixed(3)}`);
+  /* THE POINT: it starts quiet and ends loud. It no longer starts at nothing,
+     because the alarm is not raised at all until a round is genuinely near:
+     see WARN_RANGE. It begins a fifth of the way up and climbs from there,
+     which through the volume curve is still a threefold rise. */
+  ok("it starts quiet", powers[0] < 0.3, `${powers[0]?.toFixed(3)}`);
   ok("and finishes loud", powers[powers.length - 1] > 0.85,
      `${powers[powers.length - 1]?.toFixed(3)}`);
 
@@ -912,9 +915,11 @@ function run(c: CombatState, frames: number, w = world()) {
      got reported the first time round. */
   const c = createCombat();
   const w = world();
+  /* All inside the range at which a round counts as near, or the gate would
+     be what silenced them rather than the one-alarm rule under test. */
   for (let i = 0; i < 40; i++) {
     c.bullets.push({
-      pos: pos.clone().addScaledVector(fwd, 60 + i * 2),
+      pos: pos.clone().addScaledVector(fwd, 6 + i * 0.6),
       vel: fwd.clone().negate().multiplyScalar(70), life: 6, hostile: true,
     });
   }
@@ -929,7 +934,7 @@ function run(c: CombatState, frames: number, w = world()) {
   /* Far enough away to be outside the window: no call yet. */
   const c = createCombat();
   const w = world();
-  const away = pos.clone().addScaledVector(fwd, 400);
+  const away = pos.clone().addScaledVector(fwd, 300);
   c.bullets.push({
     pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
     life: 8, hostile: true,
@@ -940,7 +945,7 @@ function run(c: CombatState, frames: number, w = world()) {
   clearEvents(c);
   /* Let it close, and then it is. Four hundred units at seventy a second is
      nearly six seconds out, and the window is WARN_LEAD wide. */
-  const seen = run(c, Math.round(60 * (400 / 70 - WARN_LEAD + 0.5)), w);
+  const seen = run(c, Math.round(60 * (300 / 70 + 0.5)), w);
   ok("but it is once it comes inside the window", seen.includes("incoming"));
 }
 {
