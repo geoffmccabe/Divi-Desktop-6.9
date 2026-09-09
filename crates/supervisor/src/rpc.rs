@@ -1,8 +1,55 @@
 use crate::config::NodeConfig;
 use base64::Engine;
 use serde_json::{json, Value};
-use std::sync::OnceLock;
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;
+
+/// Hard cap on how many RPC calls the app has in flight at the node AT ONCE.
+///
+/// The node dedicates one worker thread per RPC connection and its pool is 16.
+/// On startup every panel and background task fires its query at the same
+/// instant; without a cap, that burst opens more connections than the node has
+/// threads, so the node's RPC saturates and even a trivial call queues behind
+/// the flood until it hits the read timeout. The visible symptom is a ~1 minute
+/// "dead" network map (and no block stream) around a node that is in fact
+/// healthy and fully connected — the app was starving its own view of the node.
+///
+/// Ten keeps the node comfortably responsive with headroom to spare, and it is
+/// a ceiling, not a target: normal traffic sits far below it. Calls that would
+/// exceed it wait a moment for a permit instead of piling onto the node.
+const MAX_INFLIGHT_RPC: usize = 10;
+
+/// Counting semaphore (count, condvar). std has no Semaphore; a Mutex+Condvar is
+/// the standard shape and the critical sections here are only the tiny
+/// increment/decrement — never the HTTP call itself — so a slow request holds a
+/// permit but never the lock.
+fn rpc_gate() -> &'static (Mutex<usize>, Condvar) {
+    static GATE: OnceLock<(Mutex<usize>, Condvar)> = OnceLock::new();
+    GATE.get_or_init(|| (Mutex::new(0), Condvar::new()))
+}
+
+/// RAII permit: acquired before an RPC round-trip, released on drop (including
+/// on panic/unwind), so the in-flight count can never leak.
+struct RpcPermit;
+impl RpcPermit {
+    fn acquire() -> RpcPermit {
+        let (lock, cv) = rpc_gate();
+        let mut n = lock.lock().unwrap_or_else(|e| e.into_inner());
+        while *n >= MAX_INFLIGHT_RPC {
+            n = cv.wait(n).unwrap_or_else(|e| e.into_inner());
+        }
+        *n += 1;
+        RpcPermit
+    }
+}
+impl Drop for RpcPermit {
+    fn drop(&mut self) {
+        let (lock, cv) = rpc_gate();
+        let mut n = lock.lock().unwrap_or_else(|e| e.into_inner());
+        *n = n.saturating_sub(1);
+        cv.notify_one();
+    }
+}
 
 /// One shared, connection-pooling agent for the whole app. The legacy node's RPC
 /// server drops connections under churn (a new socket per call overwhelms its
@@ -58,6 +105,11 @@ impl RpcClient {
     // or Err only on a transport/parse failure.
     fn send(&self, method: &str, params: Value) -> Result<Value, String> {
         let body = json!({"jsonrpc": "1.0", "id": "dd69", "method": method, "params": params});
+        // Never let the app open more concurrent RPC calls than the node can
+        // serve (see MAX_INFLIGHT_RPC): a startup burst would otherwise saturate
+        // the node's thread pool and stall the map + block stream for ~a minute.
+        // Held only for the duration of this round-trip, released on drop.
+        let _permit = RpcPermit::acquire();
         // Reuse a pooled keep-alive connection (see shared_agent). The 30s read
         // timeout tolerates the node's bursty spells; these run off the UI thread
         // (spawn_blocking) so waiting never freezes anything.
