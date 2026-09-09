@@ -267,6 +267,50 @@ async function main() {
        I.torpedoBonus(A.owned("space_SM_Ship_Stealth_02")) === 0);
   }
 
+
+  /* --------------------------------------------- turning DIVI into points */
+  {
+    const S = await import("./rebelsScores");
+    A.resetArmouryForTests();
+    /* Wipe the DIVI too, so this starts from nothing. */
+    S.spendDivi(1e12);
+    S.addDivi(500);
+    ok("starts with five hundred DIVI and no points",
+       S.totalDivi() === 500 && A.spendable() === 0);
+
+    /* Geoff: "1000 points for $1 if Divi price is $0.001". */
+    const r = A.convertDiviToPoints(200, 0.001);
+    ok("at a tenth of a cent, a DIVI is a point", r.ok && Math.abs(r.points - 200) < 1e-9,
+       JSON.stringify(r));
+    ok("and the DIVI is gone", S.totalDivi() === 300, `${S.totalDivi()}`);
+    ok("and the points are there", Math.abs(A.spendable() - 200) < 1e-9, `${A.spendable()}`);
+
+    /* "each point can be worth more if the value of Divi goes up" */
+    const r2 = A.convertDiviToPoints(100, 0.01);
+    ok("at a cent, a DIVI is ten points", r2.ok && Math.abs(r2.points - 1000) < 1e-9,
+       JSON.stringify(r2));
+
+    /* ---- NEVER MORE THAN IS HELD ----
+       Two hundred left. Asking for a thousand takes the two hundred and pays
+       for exactly that, not for a thousand. */
+    const r3 = A.convertDiviToPoints(1000, 0.001);
+    ok("cannot convert more DIVI than is held",
+       r3.ok && Math.abs(r3.divi - 200) < 1e-9 && Math.abs(r3.points - 200) < 1e-9,
+       JSON.stringify(r3));
+    ok("and the balance is now empty", S.totalDivi() === 0, `${S.totalDivi()}`);
+    ok("so converting again does nothing",
+       !A.convertDiviToPoints(10, 0.001).ok && A.spendable() === 200 + 1000 + 200);
+
+    /* ---- NO PRICE, NO CONVERSION ----
+       A rate this app made up would be someone's winnings valued at a number
+       nobody agreed to. */
+    S.addDivi(50);
+    for (const bad of [null, 0, NaN, -1]) {
+      const r4 = A.convertDiviToPoints(50, bad as number);
+      ok(`no conversion at a price of ${bad}`, !r4.ok && S.totalDivi() === 50, JSON.stringify(r4));
+    }
+  }
+
   console.log(out.join("\n"));
   console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);

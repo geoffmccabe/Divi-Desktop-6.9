@@ -19,6 +19,8 @@
 
 import { STARTING_WEAPONS, weaponByKey, type WeaponSpec } from "./weaponCatalog";
 import { itemByKey, torpedoBonus, magBonus, type ItemSpec } from "./itemCatalog";
+import { USD_PER_POINT } from "./weaponCatalog";
+import { spendDivi } from "./rebelsScores";
 
 /** Anything that can be bought. Guns and gear are the same transaction. */
 export type Buyable = WeaponSpec | ItemSpec;
@@ -168,6 +170,46 @@ export const CHANGED = "dd69-rebels-armoury";
 export function subscribeArmoury(fn: () => void): () => void {
   window.addEventListener(CHANGED, fn);
   return () => window.removeEventListener(CHANGED, fn);
+}
+
+/**
+ * Turn DIVI won in the game into points.
+ *
+ * The rate is the wallet's own: a thousand points to the dollar, so what a
+ * DIVI is worth in points depends on what DIVI is worth. Geoff: "1000 points
+ * for $1 if Divi price is $0.001 so each point can be worth more if the value
+ * of Divi goes up."
+ *
+ * NO BLOCKCHAIN IS INVOLVED, and it is worth being exact about why. The DIVI
+ * won in orbit has not been paid out: it is money the treasury owes and is
+ * holding. Converting it cancels part of that debt in exchange for points, so
+ * nothing has to move on a chain and nothing can fail halfway. Cashing OUT is
+ * the transaction, and it is a different button.
+ *
+ * Refuses rather than guesses when there is no price, because a rate this app
+ * made up would be someone's winnings valued at a number nobody agreed to.
+ */
+export function convertDiviToPoints(divi: number, diviUsd: number | null): {
+  ok: boolean; why?: string; divi: number; points: number;
+} {
+  if (!diviUsd || !Number.isFinite(diviUsd) || diviUsd <= 0) {
+    return { ok: false, why: "no DIVI price", divi: 0, points: 0 };
+  }
+  if (!(divi > 0)) return { ok: false, why: "nothing to convert", divi: 0, points: 0 };
+  const took = spendDivi(divi);
+  if (took <= 0) return { ok: false, why: "not enough DIVI", divi: 0, points: 0 };
+  const points = (took * diviUsd) / USD_PER_POINT;
+  const p = purse();
+  p.earned += points;
+  writePurse(p);
+  return { ok: true, divi: took, points };
+}
+
+/** What a given amount of DIVI is worth in points right now, or null with no
+ *  price to work from. */
+export function pointsForDivi(divi: number, diviUsd: number | null): number | null {
+  if (!diviUsd || !Number.isFinite(diviUsd) || diviUsd <= 0) return null;
+  return (Math.max(0, divi) * diviUsd) / USD_PER_POINT;
 }
 
 /* ---- what the gear actually does ----

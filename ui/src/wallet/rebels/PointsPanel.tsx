@@ -17,9 +17,8 @@
 //     silently does nothing is not.
 
 import { useEffect, useState } from "react";
-import { purse, spendable } from "./rebelsArmoury";
+import { purse, spendable, convertDiviToPoints, pointsForDivi } from "./rebelsArmoury";
 import { totalDivi } from "./rebelsScores";
-import { USD_PER_POINT } from "./weaponCatalog";
 import { fetchPrices } from "../value";
 
 /**
@@ -35,7 +34,9 @@ export function PointsPanel() {
   const [p, setP] = useState(() => purse());
   const [divi, setDivi] = useState(() => totalDivi());
   const [usd, setUsd] = useState<number | null>(null);
-  const [want, setWant] = useState(1000);
+  /* How much DIVI to turn into points, as a fraction of what is held. */
+  const [share, setShare] = useState(0.25);
+  const [note, setNote] = useState("");
 
   useEffect(() => {
     const t = setInterval(() => { setP(purse()); setDivi(totalDivi()); }, 1500);
@@ -47,10 +48,22 @@ export function PointsPanel() {
     return () => { alive = false; };
   }, []);
 
-  /* A point is a tenth of a cent, so what it costs in DIVI is a question about
-     what DIVI is worth. No price, no number: see weaponCatalog. */
-  const diviFor = usd && usd > 0 ? (want * USD_PER_POINT) / usd : null;
+  /* A point is a tenth of a cent, so what a DIVI is worth in points is a
+     question about what DIVI is worth. No price, no number: see weaponCatalog. */
+  const spendDiviAmt = Math.floor(divi * share * 100) / 100;
+  const gain = pointsForDivi(spendDiviAmt, usd);
   const canClaim = divi >= MIN_CLAIM;
+
+  const convert = () => {
+    const r = convertDiviToPoints(spendDiviAmt, usd);
+    if (r.ok) {
+      setNote(`${r.divi.toFixed(2)} DIVI became ${Math.floor(r.points).toLocaleString()} points`);
+    } else {
+      setNote(`Could not convert: ${r.why}`);
+    }
+    setP(purse());
+    setDivi(totalDivi());
+  };
 
   return (
     <>
@@ -60,42 +73,47 @@ export function PointsPanel() {
       </div>
 
       <div className="wpn-list">
-        {/* ---- points in ---- */}
+        {/* ---- points in ----
+            Turning DIVI won in orbit into points. No chain is touched: that
+            DIVI has not been paid out, it is money the treasury is holding, and
+            converting it cancels part of the debt in exchange for points. See
+            convertDiviToPoints for why that is the honest way to do it. */}
         <div className="pts-block">
-          <h4>BUY POINTS</h4>
+          <h4>CONVERT DIVI TO POINTS</h4>
           <p>
-            Flying earns a point for every DIVI you bring home. This is the
-            short cut.
+            Flying already earns a point for every DIVI. This spends the DIVI
+            itself for more, at {(1000).toLocaleString()} points to the dollar.
           </p>
           <div className="pts-row">
-            {[1000, 5000, 25000, 100000].map((n) => (
+            {[0.1, 0.25, 0.5, 1].map((f) => (
               <button
                 type="button"
-                key={n}
-                className={want === n ? "on" : ""}
-                onClick={() => setWant(n)}
+                key={f}
+                className={share === f ? "on" : ""}
+                onClick={() => setShare(f)}
               >
-                {n.toLocaleString()}
+                {f === 1 ? "ALL" : `${Math.round(f * 100)}%`}
               </button>
             ))}
           </div>
           <div className="pts-quote">
-            <b>{want.toLocaleString()} points</b>
+            <b>{spendDiviAmt.toFixed(2)} DIVI</b>
             <span>
-              {diviFor === null
+              {gain === null
                 ? "DIVI price unavailable"
-                : `${Math.round(diviFor).toLocaleString()} DIVI · $${(want * USD_PER_POINT).toFixed(2)}`}
+                : `becomes ${Math.floor(gain).toLocaleString()} points`}
             </span>
           </div>
-          {/* The wallet already has a built purchase flow with a confirmation
-              step, an address and a transaction to watch. This must go through
-              it rather than growing a second one that spends money. */}
-          <button type="button" className="pts-go" disabled>
-            BUY IN THE WALLET&apos;S POINTS PANEL
+          <button
+            type="button"
+            className="pts-go"
+            disabled={gain === null || spendDiviAmt <= 0}
+            onClick={convert}
+          >
+            {gain === null ? "NO DIVI PRICE" : spendDiviAmt <= 0 ? "NOTHING TO CONVERT" : "CONVERT"}
           </button>
           <em className="pts-small">
-            Not wired to this panel yet. The wallet&apos;s own Points screen does
-            this today.
+            {note || "Points buy guns and gear. Converted DIVI cannot be cashed out."}
           </em>
         </div>
 
