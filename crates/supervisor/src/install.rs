@@ -76,13 +76,12 @@ fn artifact() -> Option<Artifact> {
     });
 
     // Windows x86_64: packaged the same way (.tar.gz, which Windows 10+ extracts
-    // with its built-in tar). The checksum is PENDING until the divid69.exe build
-    // is published; ensure_divid69 fails cleanly with a clear message until the
-    // real hash is pinned here.
+    // with its built-in tar). Built by build-daemons.yml (mingw cross-compile via
+    // the in-tree depends system) and published to scan.divi.love/downloads.
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     return Some(Artifact {
         file: "divid69-windows-x86_64.tar.gz",
-        sha256: "PENDING_WINDOWS_BUILD",
+        sha256: "700834e81a94d67b0ac8d1339a49bcb0065460adeea3f0b441cb5554444ee010",
     });
 
     #[cfg(not(any(
