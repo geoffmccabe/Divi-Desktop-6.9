@@ -10,7 +10,7 @@ import {
   fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
   startWave, waveSize, WAVE_SECONDS,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
-  TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, WARN_LEAD, COIN_TOP, COIN_MU,
+  TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, COIN_TOP, COIN_MU,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   type CombatState, type Enemy,
   ENEMY_SPEED,
