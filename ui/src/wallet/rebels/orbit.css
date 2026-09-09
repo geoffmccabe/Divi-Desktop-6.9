@@ -186,6 +186,9 @@
   flex: 1 1 auto;
   display: flex; align-items: center; justify-content: center;
   min-height: 0; width: 100%;
+  /* The test beam is drawn over the ship, so this is what it is positioned
+     against. */
+  position: relative;
 }
 
 /* The ring itself. Two rings, actually: a bright hairline and a wide soft
@@ -242,6 +245,12 @@
   display: flex; flex-direction: column;
   gap: 14px;
   min-height: 0;
+  /* And it may not grow past its row. min-height:0 lets a grid item shrink but
+     does not stop its CONTENT overflowing it, so a tall list simply spilled out
+     of the bottom of the panel and was unreachable: no scrollbar, because from
+     the box's point of view nothing had overflowed. This is what makes the
+     inner list do the scrolling instead. */
+  overflow: hidden;
 }
 .ship-market-stats {
   /* Scrollable, because ten stats plus a note do not fit a short window and a
@@ -616,6 +625,9 @@
   display: flex; flex-direction: column; gap: 5px;
   flex: 1 1 auto; min-height: 0;
   overflow-y: auto;
+  /* Keeps the wheel here rather than letting it fall through to the globe
+     behind once the list reaches its end. */
+  overscroll-behavior: contain;
   padding-right: 6px;
 }
 /* The same dark bar the specs use. A default scrollbar is a white slab on a
@@ -628,7 +640,7 @@
 .wpn-row { flex: 0 0 auto; }
 .wpn-row {
   display: grid;
-  grid-template-columns: 18px 10px 1fr auto auto;
+  grid-template-columns: 18px 10px 1fr auto auto auto;
   align-items: center; gap: 8px;
   padding: 8px 9px;
   background: hsl(var(--rebels-hud) / 0.04);
@@ -651,6 +663,39 @@
 .wpn-have { font-size: 10px; letter-spacing: 0.08em; opacity: 0.75; }
 
 .wpn-act { min-width: 74px; display: flex; justify-content: flex-end; }
+/* TEST sits to the right of the price and left of the buy action, so the eye
+   goes name, cost, try it, buy it. */
+.wpn-test {
+  padding: 6px 9px;
+  font: 600 10px/1 var(--font-mono); letter-spacing: 0.08em;
+  color: hsl(var(--rebels-hud) / 0.8);
+  background: transparent;
+  border: 1px solid hsl(var(--rebels-hud) / 0.3);
+  border-radius: 4px; cursor: pointer;
+}
+.wpn-test:hover { color: hsl(var(--rebels-hud)); border-color: hsl(var(--rebels-hud) / 0.7); }
+.wpn-test:active { background: hsl(var(--rebels-hud) / 0.2); }
+
+/* ---- a weapon going off in the shop ---- */
+.test-fire {
+  position: absolute; inset: 0;
+  display: flex; align-items: flex-start; justify-content: center;
+  pointer-events: none; z-index: 3;
+}
+.test-beam {
+  /* From the nose upward, which is where the ship is pointing in flight mode. */
+  height: 46%;
+  align-self: flex-start;
+  border-radius: 40% 40% 6px 6px;
+  filter: blur(0.4px);
+  mix-blend-mode: screen;
+  animation: test-beam-throb 0.25s ease-in-out infinite alternate;
+}
+@keyframes test-beam-throb { from { opacity: 0.72; } to { opacity: 1; } }
+.test-secs {
+  position: absolute; bottom: 6px;
+  font-size: 10px; letter-spacing: 0.08em; opacity: 0.7;
+}
 .wpn-act button {
   padding: 6px 12px;
   font: 600 11px/1 var(--font-mono); letter-spacing: 0.08em;

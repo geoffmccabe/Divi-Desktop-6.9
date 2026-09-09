@@ -17,7 +17,27 @@ import * as THREE from "three";
 import { loadModel, unitCopy } from "./spaceAssets";
 import { makeRepaintable, type ShipPaint, type PaintHandle } from "./shipColours";
 
-export function ShipPreview({ id, paint, still = false }: { id: string; paint: ShipPaint; still?: boolean }) {
+/** How far the hull leans toward the pointer, in radians. About ten degrees:
+ *  enough to feel alive, little enough that it stays square to its own guns. */
+const TILT = 0.175;
+/** And how far it is tipped toward the camera, so you see a little of its back
+ *  the way you would from a cockpit behind it. */
+const OVERHEAD = 0.16;
+
+/**
+ * How the ship is shown.
+ *
+ * `turntable` is the shop: it turns slowly and you can grab it and spin it.
+ * `flight` is the armoury: it points away from you at a slight overhead angle,
+ * as though you were flying it, and tilts a little to follow the pointer. It
+ * does not turn, because you are not looking AT it, you are looking PAST it at
+ * what its guns are about to do.
+ */
+export type PreviewMode = "turntable" | "flight";
+
+export function ShipPreview({ id, paint, still = false, mode = "turntable" }: {
+  id: string; paint: ShipPaint; still?: boolean; mode?: PreviewMode;
+}) {
   const host = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
   /* Kept in a ref so moving a slider repaints the ship that is already on
@@ -28,6 +48,8 @@ export function ShipPreview({ id, paint, still = false }: { id: string; paint: S
   paintRef.current = paint;
   const stillRef = useRef(still);
   stillRef.current = still;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
 
   /* Every render, which is every slider frame. Cheap: it writes ten numbers
      into uniforms that are already compiled into the shader. */
@@ -148,6 +170,18 @@ export function ShipPreview({ id, paint, still = false }: { id: string; paint: S
     const ro = new ResizeObserver(resize);
     ro.observe(mount);
 
+    /* Where the pointer is, as -1 to 1 across the panel. Read from the whole
+       window rather than from this canvas, because the thing being followed is
+       the player's attention and that is mostly over the weapon list on the
+       left, not over the ship. */
+    let aimX = 0, aimY = 0;
+    let tiltX = 0, tiltY = 0;
+    const onAim = (e: PointerEvent) => {
+      aimX = (e.clientX / Math.max(1, window.innerWidth)) * 2 - 1;
+      aimY = (e.clientY / Math.max(1, window.innerHeight)) * 2 - 1;
+    };
+    window.addEventListener("pointermove", onAim);
+
     let last = performance.now();
     const tick = () => {
       if (stop) return;
@@ -156,17 +190,33 @@ export function ShipPreview({ id, paint, still = false }: { id: string; paint: S
       last = now;
 
       idle += dt;
-      /* Slow enough to look at. A turntable that whips round reads as a loading
-         spinner rather than as a thing being shown to you. It picks up again
-         four seconds after you let go, easing in rather than snapping back to
-         speed. */
-      if (stillRef.current) yaw += dt * spin;
-      else if (!dragging && idle > 4) yaw += dt * spin * Math.min(1, (idle - 4) / 1.5);
-      turntable.rotation.y = yaw;
-      turntable.rotation.x = pitch;
 
-      camera.position.set(0, 0.55 * dolly / 2.15, dolly);
-      camera.lookAt(0, 0, 0);
+      if (modeRef.current === "flight") {
+        /* ---- FLYING IT, NOT LOOKING AT IT ----
+           Nose away from the camera and a little below it, which is the view
+           from just behind and above a ship you are flying. It does not turn.
+           Instead it banks and pitches a few degrees toward the pointer, eased
+           rather than snapped, which is enough to feel alive and little enough
+           that the hull stays square to the guns being tested. */
+        const want = TILT * Math.max(-1, Math.min(1, aimX));
+        const wantP = TILT * Math.max(-1, Math.min(1, aimY));
+        tiltY += (want - tiltY) * Math.min(1, dt * 6);
+        tiltX += (wantP - tiltX) * Math.min(1, dt * 6);
+        /* Half a turn, so the nose points away rather than at the camera. */
+        turntable.rotation.set(OVERHEAD + tiltX, Math.PI + tiltY, -tiltY * 0.8);
+        camera.position.set(0, 0.42 * dolly / 2.15, dolly);
+        camera.lookAt(0, -0.06, 0);
+      } else {
+        /* Slow enough to look at. A turntable that whips round reads as a
+           loading spinner rather than as a thing being shown to you. It picks
+           up again four seconds after you let go, easing in rather than
+           snapping back to speed. */
+        if (stillRef.current) yaw += dt * spin;
+        else if (!dragging && idle > 4) yaw += dt * spin * Math.min(1, (idle - 4) / 1.5);
+        turntable.rotation.set(pitch, yaw, 0);
+        camera.position.set(0, 0.55 * dolly / 2.15, dolly);
+        camera.lookAt(0, 0, 0);
+      }
 
       if (interactive) el.style.cursor = dragging ? "grabbing" : "grab";
       renderer.render(scene, camera);
@@ -183,6 +233,7 @@ export function ShipPreview({ id, paint, still = false }: { id: string; paint: S
       el.removeEventListener("pointerup", onUp);
       el.removeEventListener("pointercancel", onUp);
       el.removeEventListener("wheel", onWheel);
+      window.removeEventListener("pointermove", onAim);
       ro.disconnect();
       scene.traverse((o) => {
         const m = o as THREE.Mesh;

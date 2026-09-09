@@ -8,7 +8,7 @@ export {};
 import * as THREE from "three";
 import { R } from "./orbitWorld";
 import {
-  WEAPONS, weaponByKey, weaponInSlot, tierOf, priceInDivi,
+  WEAPONS, weaponByKey, weaponInSlot, upgradeLabel, priceInDivi,
   USD_PER_POINT, BEAM_SECONDS, STARTING_WEAPONS,
 } from "./weaponCatalog";
 
@@ -61,7 +61,7 @@ async function main() {
     for (let i = 1; i < WEAPONS.length; i++) {
       ok(`slot ${i + 1} needs the one before it`, WEAPONS[i].needs === WEAPONS[i - 1].key,
          `${WEAPONS[i].needs}`);
-      ok(`slot ${i + 1} is tier ${i + 1}`, tierOf(WEAPONS[i]) === i + 1, `${tierOf(WEAPONS[i])}`);
+
     }
   }
 
@@ -82,6 +82,17 @@ async function main() {
        beams.map((b) => b.colour!.toString(16)).join(",") === "ffd83a,5cf05c,54a8ff,b46bff",
        beams.map((b) => b.colour!.toString(16)).join(","));
     ok("and it stays on for half a second", BEAM_SECONDS === 0.5, `${BEAM_SECONDS}`);
+
+    /* ---- TIERS COUNT WITHIN A KIND ----
+       Geoff: "#3 is Tier 1. #4 is Tier 2 Upgrade etc." The store used to count
+       steps along the whole line and called the first beam Tier 3, which read
+       as though the pulse laser and the mini gun were lesser beams. */
+    ok("the first beam is Tier 1, not Tier 3",
+       upgradeLabel(beams[0]) === "Tier 1", upgradeLabel(beams[0]));
+    ok("and the rest are upgrades of it",
+       beams.slice(1).map((b) => upgradeLabel(b)).join(" / ")
+       === "Tier 2 Upgrade / Tier 3 Upgrade / Tier 4 Upgrade",
+       beams.slice(1).map((b) => upgradeLabel(b)).join(" / "));
   }
 
   /* ------------------------------------------------------ what it costs in DIVI */

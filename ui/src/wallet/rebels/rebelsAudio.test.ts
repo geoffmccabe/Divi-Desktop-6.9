@@ -22,6 +22,9 @@ function ok(name: string, cond: boolean, extra = "") {
 interface Started { rate: number; gain: number; panned: boolean }
 const started: Started[] = [];
 let decodeCalls = 0;
+/** How many sounds the game carries. One assertion's worth of counting, so a
+ *  new sound does not look like a regression. */
+const SAMPLES = 9;
 let decodeShouldFail = false;
 let decodeShouldHang = false;
 
@@ -79,7 +82,9 @@ async function main() {
   // 1. Priming decodes every sample the game has.
   A.primeGunSound();
   await new Promise((r) => setTimeout(r, 50));
-  ok("every sample is decoded", decodeCalls === 8, `${decodeCalls} decoded`);
+  /* Counted rather than typed, so adding a sound does not fail a test that was
+   only ever asserting "all of them". */
+  ok("every sample is decoded", decodeCalls === SAMPLES, `${decodeCalls} of ${SAMPLES}`);
 
   // 2. The guns are a DOUBLE shot, and neither barrel is identical.
   started.length = 0;
@@ -222,7 +227,7 @@ async function main() {
     A.primeGunSound();
     await settle();
     const hung = decodeCalls;
-    ok("a hung start does begin decoding", hung > 0, `${hung} decodes`);
+    ok("a hung start does begin decoding", hung === SAMPLES, `${hung} decodes`);
 
     A.primeGunSound();
     await settle();
@@ -240,7 +245,7 @@ async function main() {
     A.primeGunSound();
     await settle();
     ok("a decode that never finishes stops blocking every later one",
-       decodeCalls > hung, `${decodeCalls - hung} retries after 30s`);
+       decodeCalls === hung + SAMPLES, `${decodeCalls - hung} retries after 30s`);
 
     Date.now = realNow;
     decodeShouldHang = false;

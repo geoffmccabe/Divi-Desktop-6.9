@@ -14,7 +14,7 @@
 
 import { useEffect, useState } from "react";
 import {
-  WEAPONS, tierOf, priceInDivi, type WeaponSpec,
+  WEAPONS, upgradeLabel, priceInDivi, type WeaponSpec,
 } from "./weaponCatalog";
 import {
   owned, hasWeapon, spendable, blockedBecause, buyWithPoints, subscribeArmoury,
@@ -36,7 +36,11 @@ function standingOf(ship: string, spec: WeaponSpec, points: number): Standing {
   return { state: "poor", short: spec.points - points };
 }
 
-export function WeaponStore({ ship }: { ship: string }) {
+export function WeaponStore({ ship, onTest }: {
+  ship: string;
+  /** Fire this weapon on the ship in the preview. */
+  onTest?: (spec: WeaponSpec, down: boolean) => void;
+}) {
   const [points, setPoints] = useState(() => spendable());
   const [mine, setMine] = useState<string[]>(() => owned(ship));
   const [diviUsd, setDiviUsd] = useState<number | null>(null);
@@ -77,7 +81,7 @@ export function WeaponStore({ ship }: { ship: string }) {
         {WEAPONS.map((spec) => {
           const st = standingOf(ship, spec, points);
           const divi = priceInDivi(spec.points, diviUsd);
-          const tier = tierOf(spec);
+
           return (
             <div
               key={spec.key}
@@ -107,6 +111,25 @@ export function WeaponStore({ ship }: { ship: string }) {
                 )}
               </div>
 
+              {/* ---- TEST ----
+                  Held rather than clicked, because a beam is a held weapon:
+                  tapping it shows half a second and tells you nothing about
+                  what five seconds of it looks like. Pointer capture, so
+                  letting go anywhere on the screen still stops it rather than
+                  leaving it stuck on. */}
+              <button
+                type="button"
+                className="wpn-test"
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  onTest?.(spec, true);
+                }}
+                onPointerUp={() => onTest?.(spec, false)}
+                onPointerCancel={() => onTest?.(spec, false)}
+              >
+                TEST
+              </button>
+
               <div className="wpn-act">
                 {st.state === "buy" && (
                   <button type="button" onClick={() => buy(spec)}>BUY</button>
@@ -119,7 +142,7 @@ export function WeaponStore({ ship }: { ship: string }) {
                 {/* The whole point of showing a locked gun: say what is in the
                     way, by name, rather than only that it is out of reach. */}
                 {st.state === "locked" && (
-                  <span className="wpn-locked">Tier {tier} Upgrade<em>needs {st.needs}</em></span>
+                  <span className="wpn-locked">{upgradeLabel(spec)}<em>needs {st.needs}</em></span>
                 )}
               </div>
             </div>

@@ -57,6 +57,15 @@ export interface WeaponSpec {
   reach?: number;
   /** The colour of the beam, and of its swatch in the store. */
   colour?: number;
+  /**
+   * Which tier of its own kind this is, counting from one.
+   *
+   * NOT its place in the whole line. The first beam is slot three and is
+   * Tier 1; the store used to call it Tier 3 because it counted the pulse laser
+   * and the mini gun as tiers of the same thing, which they are not. Geoff:
+   * "#3 is Tier 1. #4 is Tier 2 Upgrade etc."
+   */
+  tier?: number;
 }
 
 /** How long a beam stays lit, and how often it does its damage while held. One
@@ -65,6 +74,15 @@ export interface WeaponSpec {
 export const BEAM_SECONDS = 0.5;
 /** What a beam reaches at its first tier, before the per-tier extension. */
 export const BEAM_REACH = 90;
+/**
+ * The longest a beam may be held on, in seconds.
+ *
+ * Geoff: "the beam cannot be used for more than 5 seconds." Which is also the
+ * length of the sample, so the sound and the limit are the same length by
+ * design rather than by coincidence: the beam stops when its own noise runs
+ * out.
+ */
+export const BEAM_MAX_HOLD = 5;
 /** Each tier above the first reaches twenty percent further than the first. */
 export const BEAM_REACH_STEP = 0.2;
 /** And costs one round from the magazine per half second, the same as a pulse
@@ -83,6 +101,7 @@ const beamTier = (
   needs,
   /* 130, 160, 190, 220 percent: thirty points more each time. */
   damage: 1 + n * 0.3,
+  tier: n,
   /* Two, three, four and five degrees. */
   cone: 1 + n,
   reach: BEAM_REACH * (1 + (n - 1) * BEAM_REACH_STEP),
@@ -125,18 +144,21 @@ export function weaponInSlot(slot: number): WeaponSpec | null {
 export const STARTING_WEAPONS: string[] = WEAPONS.filter((w) => w.points === 0).map((w) => w.key);
 
 /**
- * How far along the line a weapon is, counting from one.
+ * What the store calls a weapon that cannot be bought yet.
  *
- * Used for the store's "Tier N Upgrade" label, which exists so a player can see
- * at a glance that a thing is not merely expensive but is waiting on something
- * else. Geoff: "it should say 'Tier 2 Upgrade' so it's clear that they need the
- * lower tier first."
+ * "Tier 2 Upgrade" and so on, counting tiers of the SAME weapon rather than
+ * steps along the whole line: the first beam is Tier 1 even though it sits in
+ * slot three, because the pulse laser and the mini gun are different guns and
+ * not lesser beams. The first of a kind has nothing to upgrade FROM, so it is
+ * labelled by its tier alone.
+ *
+ * The label exists so a player can see that a thing is not merely expensive but
+ * is waiting on something else. Geoff: "it should say 'Tier 2 Upgrade' so it's
+ * clear that they need the lower tier first."
  */
-export function tierOf(spec: WeaponSpec): number {
-  let n = 1;
-  let at: WeaponSpec | null = spec;
-  while (at?.needs) { n += 1; at = weaponByKey(at.needs); }
-  return n;
+export function upgradeLabel(spec: WeaponSpec): string {
+  if (!spec.tier) return "Locked";
+  return spec.tier === 1 ? "Tier 1" : `Tier ${spec.tier} Upgrade`;
 }
 
 /**

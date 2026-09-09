@@ -18,6 +18,7 @@ import shipBlastUrl from "../../assets/spaceship_explosion_v1.mp3";
 import warnUrl from "../../assets/warning_bullet_approach.mp3";
 import bounceUrl from "../../assets/bullet_bounce.mp3";
 import boostUrl from "../../assets/jet_boots_1.mp3";
+import beamUrl from "../../assets/beam_v1.mp3";
 import { audioContext, masterVolume } from "../../sound";
 
 /** How far speed, pitch and volume may wander, either way. */
@@ -34,6 +35,7 @@ let shipBlastBuffer: AudioBuffer | null = null;
 let warnBuffer: AudioBuffer | null = null;
 let bounceBuffer: AudioBuffer | null = null;
 let boostBuffer: AudioBuffer | null = null;
+let beamBuffer: AudioBuffer | null = null;
 let loading: Promise<void> | null = null;
 /** When the current attempt began, so one that never finishes cannot latch. */
 let loadingSince = 0;
@@ -102,7 +104,7 @@ export function primeGunSound(): void {
   if (loading && Date.now() - loadingSince < LOAD_PATIENCE) return;
   if (failed || (buffer && rechargeBuffer && torpedoBuffer
       && torpedoBlastBuffer && shipBlastBuffer && warnBuffer && bounceBuffer
-      && boostBuffer)) return;
+      && boostBuffer && beamBuffer)) return;
   const ctx = audioContext();
   if (!ctx) { failed = true; return; }
   loadingSince = Date.now();
@@ -110,9 +112,9 @@ export function primeGunSound(): void {
   loading = Promise.all([
     load(laserUrl), load(rechargeUrl), load(torpedoUrl),
     load(torpedoBlastUrl), load(shipBlastUrl), load(warnUrl), load(bounceUrl),
-    load(boostUrl),
+    load(boostUrl), load(beamUrl),
   ])
-    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast, warn, bounce, boost]) => {
+    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast, warn, bounce, boost, beam]) => {
       buffer = gun;
       rechargeBuffer = recharge;
       torpedoBuffer = torpedo;
@@ -121,6 +123,7 @@ export function primeGunSound(): void {
       warnBuffer = warn;
       bounceBuffer = bounce;
       boostBuffer = boost;
+      beamBuffer = beam;
     })
     .catch(() => {
       /* Silence is not worth breaking a game over, but it is not permanent
@@ -140,7 +143,7 @@ export function primeGunSound(): void {
 export function resetAudioForTests(): void {
   buffer = rechargeBuffer = torpedoBuffer = null;
   torpedoBlastBuffer = shipBlastBuffer = warnBuffer = bounceBuffer = null;
-  boostBuffer = null;
+  boostBuffer = beamBuffer = null;
   loading = null;
   loadingSince = 0;
   failed = false;
@@ -168,7 +171,8 @@ export function audioState(): Record<string, unknown> {
     loading: !!loading,
     loadingFor: loading ? Date.now() - loadingSince : 0,
     buffers: [buffer, rechargeBuffer, torpedoBuffer, torpedoBlastBuffer,
-      shipBlastBuffer, warnBuffer, bounceBuffer, boostBuffer].filter(Boolean).length,
+      shipBlastBuffer, warnBuffer, bounceBuffer, boostBuffer,
+      beamBuffer].filter(Boolean).length,
     volume: (() => { try { return masterVolume(); } catch { return -1; } })(),
   };
 }
@@ -486,6 +490,56 @@ export function stopBoostSound(): void {
   gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), now);
   gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
   try { node.stop(now + 0.2); } catch { /* already stopped */ }
+}
+
+/* ---- the beam ----
+   One sound for the whole burst rather than one per half-second pulse.
+
+   The beam does its damage in half-second steps, and a naive reading would
+   restart the sample on each of them: five seconds of held trigger would be ten
+   overlapping copies of the same noise starting a beat apart, which is the
+   smeared mess the warning tone once was. So it is started once and simply
+   allowed to run for as long as the trigger is held, up to the five seconds
+   that is also the length of the sample. */
+let beamNode: AudioBufferSourceNode | null = null;
+let beamGain: GainNode | null = null;
+
+/** Begin, or carry on. Calling it every frame while the trigger is down is the
+ *  intended use and costs nothing after the first. */
+export function startBeamSound(): void {
+  const ctx = audioContext();
+  if (!ctx || failed || beamNode || !beamBuffer) return;
+  const volume = masterVolume();
+  if (!(volume > 0)) return;
+  const src = ctx.createBufferSource();
+  src.buffer = beamBuffer;
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(volume, ctx.currentTime);
+  src.connect(gain);
+  gain.connect(ctx.destination);
+  src.start();
+  /* If it runs to the end on its own, forget it, or the next press would think
+     one was already playing and stay silent. */
+  src.onended = () => { if (beamNode === src) { beamNode = null; beamGain = null; } };
+  beamNode = src;
+  beamGain = gain;
+}
+
+/** Trigger released, or the five seconds are up. Faded, because a beam that
+ *  stops dead sounds like a fault rather than a release. */
+export function stopBeamSound(): void {
+  const ctx = audioContext();
+  const node = beamNode;
+  const gain = beamGain;
+  beamNode = null;
+  beamGain = null;
+  if (!node) return;
+  if (!ctx || !gain) { try { node.stop(); } catch { /* already done */ } return; }
+  const now = ctx.currentTime;
+  gain.gain.cancelScheduledValues(now);
+  gain.gain.setValueAtTime(Math.max(0.0001, gain.gain.value), now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+  try { node.stop(now + 0.18); } catch { /* already done */ }
 }
 
 /** A round turned away by the guard. The reward for having reacted. */
