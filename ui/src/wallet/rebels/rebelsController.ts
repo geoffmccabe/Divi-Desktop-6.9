@@ -182,6 +182,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      lit. See weaponCatalog. */
   let beamAt = 0;
   let wasThrusting = false;
+  /* Scratch lists for the instanced draws, so a frame allocates none. */
+  const droneList: typeof combat.enemies = [];
+  const orbList: typeof combat.bullets = [];
   let selfIp = "";
   let frameError = "";
   let frameErrors = 0;
@@ -1260,8 +1263,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             score = g.score;
             divi = g.divi;
           }
-          if (peers) peers.draw(room.others(), camera);
-          setHud({ crew: room.others().length + 1 });
+          /* Once. others() builds a fresh array each call. */
+          const crew = room.others();
+          if (peers) peers.draw(crew, camera);
+          setHud({ crew: crew.length + 1 });
         } else if (peers) {
           peers.draw([], camera);
         }
@@ -1453,8 +1458,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         fx.drawBeams(combat.beams, BEAM_SECONDS);
         /* The swarm and its fire. Both are instanced, so the cost of drawing a
            hundred and forty spheres is the cost of drawing one. */
-        fx.drawDrones(combat.enemies.filter((e) => e.drone), nowS);
-        fx.drawOrbs(combat.bullets.filter((b) => b.orb), nowS);
+        /* Reused lists rather than two fresh arrays from filter() a frame. */
+        droneList.length = 0;
+        for (const e of combat.enemies) if (e.drone) droneList.push(e);
+        orbList.length = 0;
+        for (const b of combat.bullets) if (b.orb) orbList.push(b);
+        fx.drawDrones(droneList, nowS);
+        fx.drawOrbs(orbList, nowS);
         fx.drawTorpedoes(combat.torpedoes);
         fx.drawJunk(combat.junk);
         fx.drawTracers(combat.tracers, TRACER_LIFE);

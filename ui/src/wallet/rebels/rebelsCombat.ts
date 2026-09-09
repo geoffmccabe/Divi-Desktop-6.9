@@ -1038,13 +1038,23 @@ function addTracer(c: CombatState, b: Bullet): void {
 /** Closest approach of a moving point to a target over one step. Bullets travel
  *  two units a frame and fighters are one across, so testing only the endpoints
  *  would let shots pass straight through. */
+/* Scratch for segmentHit. It is called once per bullet per enemy per frame,
+   which at a full sky is several thousand times, and it used to allocate three
+   vectors on every call. That is tens of thousands of short-lived objects a
+   frame, and the garbage collector pausing to sweep them is exactly the kind
+   of hitch that reads as the game stuttering for no reason. */
+const _warnRel = new THREE.Vector3();
+const _segAb = new THREE.Vector3();
+const _segRel = new THREE.Vector3();
+const _segAt = new THREE.Vector3();
+
 function segmentHit(from: THREE.Vector3, to: THREE.Vector3, target: THREE.Vector3, radius: number): boolean {
-  const ab = to.clone().sub(from);
-  const len2 = ab.lengthSq();
+  _segAb.copy(to).sub(from);
+  const len2 = _segAb.lengthSq();
   if (len2 < 1e-12) return from.distanceTo(target) < radius;
-  let t = target.clone().sub(from).dot(ab) / len2;
+  let t = _segRel.copy(target).sub(from).dot(_segAb) / len2;
   t = Math.max(0, Math.min(1, t));
-  return from.clone().addScaledVector(ab, t).distanceTo(target) < radius;
+  return _segAt.copy(from).addScaledVector(_segAb, t).distanceTo(target) < radius;
 }
 
 /** One flyable ship in the fight, as far as the simulation cares. */
@@ -1138,6 +1148,7 @@ function nearestPlayer(w: CombatWorld, to: THREE.Vector3): PlayerBody {
 /** Scratch for the per-group head count. Module level so a frame allocates no
  *  map of its own. */
 const headCount = new Map<number, number>();
+const _drones: Array<Enemy & { group: number; slot: number }> = [];
 /** Time to impact of the nearest round on course, per ship, this frame. Module
  *  level so a frame allocates no map of its own. */
 const threat = new Map<string, number>();
@@ -1219,7 +1230,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       const speed2 = b.vel.lengthSq();
       if (speed2 > 1e-9) {
         for (const pl of roster(w)) {
-          const rel = pl.pos.clone().sub(b.pos);
+          const rel = _warnRel.copy(pl.pos).sub(b.pos);
           /* Near enough to matter at all, before any trajectory is worked out.
              A round that will hit in a second and a half from two hundred units
              away is not something to sound an alarm about; it is something that
@@ -1570,7 +1581,11 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
      above this point has already had its say about damage, wreckage and
      collisions; all that is left is where they go. */
   if (c.flocks.length) {
-    const drones = c.enemies.filter((e) => e.drone) as (Enemy & { group: number; slot: number })[];
+    /* Into a reused array rather than a fresh one from filter(): this runs
+       every frame and the list can be a hundred long. */
+    _drones.length = 0;
+    for (const e of c.enemies) if (e.drone) _drones.push(e as Enemy & { group: number; slot: number });
+    const drones = _drones;
     stepFlock(c.flocks, drones, dt, { playerPos: w.playerPos, scale: cruiseScale });
 
     for (let i = drones.length - 1; i >= 0; i--) {
