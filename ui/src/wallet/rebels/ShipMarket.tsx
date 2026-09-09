@@ -256,7 +256,10 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
 
         </div>
 
-        <div className="ship-market-list">
+        {/* Only on the Ships tab. The row of hulls along the bottom is how you
+            CHOOSE a ship, so it has nothing to say while the armoury is open,
+            and it was taking a strip of a short window to say it. */}
+        {tab === "ships" && <div className="ship-market-list">
           {grouped.map(([className, ships]) => (
             <div className="ship-market-class" key={className}>
               <h3>{className}</h3>
@@ -278,7 +281,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
               </div>
             </div>
           ))}
-        </div>
+        </div>}
 
         {confirmReset && (
           <div className="ship-paint-confirm">
