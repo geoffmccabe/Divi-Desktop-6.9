@@ -392,16 +392,36 @@ export function playTorpedoBlast(): void {
  * Half the natural level, as asked: it is a cue to reach for the right button,
  * not an air-raid siren, and in a busy fight several are in the air at once.
  */
-export function playIncomingWarning(): void {
-  /* One at a time. Four fighters firing at once raise four warnings inside a
-     few frames, and four copies of the same tone laid over each other with
-     random offsets is the smeared, detuned noise that got reported. A quarter
-     second between them keeps it a series of pips. */
+/** The quietest and loudest the alarm gets, as a fraction of the master
+ *  volume. Not silent at the far end: a warning you cannot hear is not one. */
+export const WARN_MIN = 0.16;
+export const WARN_MAX = 0.95;
+/** Seconds between pips, far away and close in. */
+export const WARN_GAP_FAR = 0.34;
+export const WARN_GAP_NEAR = 0.13;
+
+/**
+ * A round is coming, and `near` says how near: nought as it comes into range,
+ * one as it arrives.
+ *
+ * It gets louder AND quicker as it closes. Geoff asked for the loudness, which
+ * is the part that carries the distance; the quickening is what gives the
+ * loudness somewhere to happen, because a pip every third of a second all the
+ * way in would only be six of them and the rise would be too coarse to read.
+ *
+ * One at a time, whatever is being fired. Four fighters shooting at once used
+ * to raise four warnings within a few frames, and four copies of one tone laid
+ * over each other with random offsets is the smeared, detuned noise that got
+ * reported. The gap keeps it a series of pips rather than a chord.
+ */
+export function playIncomingWarning(near = 1): void {
   const ctx = audioContext();
   const now = ctx ? ctx.currentTime : 0;
-  if (now - lastWarnAt < 0.25) return;
+  const k = Math.max(0, Math.min(1, near));
+  const gap = WARN_GAP_FAR + (WARN_GAP_NEAR - WARN_GAP_FAR) * k;
+  if (now - lastWarnAt < gap) return;
   lastWarnAt = now;
-  once(warnBuffer, 0.5, false);
+  once(warnBuffer, WARN_MIN + (WARN_MAX - WARN_MIN) * k, false);
 }
 let lastWarnAt = -1;
 

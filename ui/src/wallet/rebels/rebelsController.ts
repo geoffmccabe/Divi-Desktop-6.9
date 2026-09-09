@@ -1102,7 +1102,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         for (const ev of combat.events) {
           if (ev.kind === "incoming") {
-            playIncomingWarning();
+            /* The event carries how near the round is, which is what the alarm
+               turns into loudness. */
+            playIncomingWarning(ev.power);
           } else if (ev.kind === "playerHit") {
             if (flight.grace <= 0) {
               /* Tell the cockpit to flash, and knock the view off centre in
@@ -1422,6 +1424,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           localStorage.setItem("dd69.rebels.diag", JSON.stringify({
             at: new Date().toISOString(),
             phase,
+            /* Whether the ship is currently lost matters as much as the phase:
+               a dead player has no wave and no enemies by design, and without
+               this a perfectly normal death reads exactly like a game that has
+               stopped spawning. */
+            dead: hud.dead,
+            respawnIn: respawnAt > performance.now()
+              ? Math.round((respawnAt - performance.now()) / 1000) : 0,
             audio: audioState(),
             music: musicState(),
             enemies: combat.enemies.length,

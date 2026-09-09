@@ -10,7 +10,7 @@ import {
   fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
   startWave, waveSize, WAVE_SECONDS,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
-  TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL,
+  TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, WARN_LEAD,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   type CombatState, type Enemy,
   ENEMY_SPEED,
@@ -861,37 +861,84 @@ function run(c: CombatState, frames: number, w = world()) {
      `${count(3)} vs ${count(0.5)} of 20000`);
 }
 
-// 16. Calling out a round that is going to hit.
+// 16. Calling out a round that is going to hit, and HOW CLOSE IT IS.
+//
+//     Geoff: "make the warning alarm start lower volume and rise in volume as
+//     the bullet approaches which helps to get the sense of how close it is."
+//
+//     It used to call each round once, at a fixed strength, half a second out.
+//     One pip cannot say anything about distance. The alarm is now continuous
+//     while a round is on course, and its strength is the distance.
 {
-  /* Dead on line, and close enough that it lands inside half a second. */
   const c = createCombat();
   const w = world();
-  const away = pos.clone().addScaledVector(fwd, 25);
-  c.bullets.push({
-    pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
-    life: 3, hostile: true,
-  });
-  const seen = run(c, 30, w);
-  ok("a round on course is called out", seen.includes("incoming"), seen.join(",") || "nothing");
-  ok("and only once", seen.filter((k) => k === "incoming").length === 1,
-     `${seen.filter((k) => k === "incoming").length} times`);
-}
-{
-  /* Far enough away that it is more than half a second out: no call yet. */
-  const c = createCombat();
-  const w = world();
-  const away = pos.clone().addScaledVector(fwd, 200);
+  /* Dead on line and well out, so the whole approach can be watched. */
+  const away = pos.clone().addScaledVector(fwd, 140);
   c.bullets.push({
     pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
     life: 6, hostile: true,
+  });
+
+  const powers: number[] = [];
+  for (let i = 0; i < 130; i++) {
+    stepCombat(c, DT, w);
+    for (const e of c.events) if (e.kind === "incoming") powers.push(e.power);
+    clearEvents(c);
+  }
+
+  ok("a round on course is called out", powers.length > 0, `${powers.length} calls`);
+  ok("and it keeps calling as the round closes", powers.length > 20,
+     `${powers.length} calls over the approach`);
+
+  /* THE POINT: it starts quiet and ends loud. */
+  ok("it starts quiet", powers[0] < 0.15, `${powers[0]?.toFixed(3)}`);
+  ok("and finishes loud", powers[powers.length - 1] > 0.85,
+     `${powers[powers.length - 1]?.toFixed(3)}`);
+
+  /* And rises the whole way rather than wandering: every step forward, within
+     a frame's worth of rounding. */
+  let drops = 0;
+  for (let i = 1; i < powers.length; i++) if (powers[i] < powers[i - 1] - 1e-6) drops++;
+  ok("rising the whole way in", drops === 0, `${drops} of ${powers.length} went backwards`);
+}
+{
+  /* ---- A WALL OF FIRE IS ONE ALARM ----
+     Forty rounds on course must not be forty alarms in the same frame. Only
+     the nearest is reported, because the loudest pip is the only one anybody
+     would hear and overlapping copies of one tone are the smeared noise that
+     got reported the first time round. */
+  const c = createCombat();
+  const w = world();
+  for (let i = 0; i < 40; i++) {
+    c.bullets.push({
+      pos: pos.clone().addScaledVector(fwd, 60 + i * 2),
+      vel: fwd.clone().negate().multiplyScalar(70), life: 6, hostile: true,
+    });
+  }
+  stepCombat(c, DT, w);
+  const calls = c.events.filter((e) => e.kind === "incoming");
+  ok("forty rounds raise one alarm, not forty", calls.length === 1, `${calls.length}`);
+  /* And it is the NEAREST one that sets the level. */
+  ok("and it is the closest of them that sets the level",
+     calls[0] && calls[0].power > 0.5, `${calls[0]?.power.toFixed(3)}`);
+}
+{
+  /* Far enough away to be outside the window: no call yet. */
+  const c = createCombat();
+  const w = world();
+  const away = pos.clone().addScaledVector(fwd, 400);
+  c.bullets.push({
+    pos: away.clone(), vel: fwd.clone().negate().multiplyScalar(70),
+    life: 8, hostile: true,
   });
   stepCombat(c, DT, w);
   ok("a round still seconds away is not called out yet",
      !c.events.some((e) => e.kind === "incoming"));
   clearEvents(c);
-  /* Let it close, and then it is. */
-  const seen = run(c, 60 * 3, w);
-  ok("but it is once it is half a second out", seen.includes("incoming"));
+  /* Let it close, and then it is. Four hundred units at seventy a second is
+     nearly six seconds out, and the window is WARN_LEAD wide. */
+  const seen = run(c, Math.round(60 * (400 / 70 - WARN_LEAD + 0.5)), w);
+  ok("but it is once it comes inside the window", seen.includes("incoming"));
 }
 {
   /* One that will miss is never called out, however close it passes. */

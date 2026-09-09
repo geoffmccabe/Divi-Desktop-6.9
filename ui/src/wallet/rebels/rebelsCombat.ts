@@ -200,9 +200,16 @@ export const TORPEDO_BLAST = 11;
    itself is gone, then fades. This is not decoration: it is how a player works
    out that they are being shot at from behind or from the side, and where the
    shooter must be, in a game where the view only faces one way. */
-/** How long before impact the cockpit calls out an incoming round. Half a
- *  second is enough to reach for the right button and not enough to ignore. */
-export const WARN_LEAD = 0.5;
+/**
+ * How far ahead of impact the cockpit starts calling a round.
+ *
+ * Half a second was enough to reach for the right button and not enough to say
+ * anything IN. A warning that rises as a round closes needs a run-up: at a
+ * quarter of a second between pips, two and a bit seconds is eight or nine of
+ * them getting louder, which is a shape a player can read. Half a second was
+ * two pips, and two pips is a fact rather than a distance.
+ */
+export const WARN_LEAD = 2.2;
 /** What a round has to come within to count as on course. */
 export const PLAYER_HIT_R = 1.4;
 
@@ -244,9 +251,6 @@ export interface Bullet {
   phase?: number;
   /** The line this round is drawing behind it. */
   tracer?: Tracer;
-  /** The cockpit has already called this one out. Once each, or a stream of
-   *  fire would be one long tone. */
-  warned?: boolean;
 }
 
 export interface Enemy {
@@ -993,6 +997,9 @@ function nearestPlayer(w: CombatWorld, to: THREE.Vector3): PlayerBody {
 /** Scratch for the per-group head count. Module level so a frame allocates no
  *  map of its own. */
 const headCount = new Map<number, number>();
+/** Time to impact of the nearest round on course, per ship, this frame. Module
+ *  level so a frame allocates no map of its own. */
+const threat = new Map<string, number>();
 
 export function clearEvents(c: CombatState): void {
   c.events.length = 0;
@@ -1049,12 +1056,25 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
 
     /* Is this one going to hit? A straight ray against the player: where in
-       the round's next half second does it come closest, and is that close
-       enough to matter. The player's own motion is left out because a round
-       travels four times faster than the ship, so it barely changes the answer
-       and including it would mean calling out shots a turn has already dealt
-       with. Once per round, or a stream of fire becomes one long tone. */
-    if (!spent && b.hostile && !b.warned) {
+       the round's next couple of seconds does it come closest, and is that
+       close enough to matter. The player's own motion is left out because a
+       round travels four times faster than the ship, so it barely changes the
+       answer and including it would mean calling out shots a turn has already
+       dealt with.
+
+       ---- HOW CLOSE, NOT JUST THAT IT IS COMING ----
+       This used to fire once per round, at a fixed volume, half a second out.
+       One pip cannot tell you anything about distance, and half a second is not
+       long enough to say anything in. Geoff: "make the warning alarm start
+       lower volume and rise in volume as the bullet approaches which helps to
+       get the sense of how close it is."
+
+       So the nearest threat is tracked rather than each round being announced,
+       and how near it is comes out as the loudness. Only the closest one
+       matters: the loudest pip is the only one anybody would hear anyway, and
+       announcing each round separately is what made a stream of fire into one
+       smeared tone. */
+    if (!spent && b.hostile) {
       const speed2 = b.vel.lengthSq();
       if (speed2 > 1e-9) {
         for (const pl of roster(w)) {
@@ -1062,10 +1082,8 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
           const t = Math.max(0, Math.min(WARN_LEAD, rel.dot(b.vel) / speed2));
           const miss = rel.addScaledVector(b.vel, -t).length();
           if (miss < PLAYER_HIT_R && t > 0 && t <= WARN_LEAD) {
-            b.warned = true;
-            /* Only the ship it is aimed at hears it. Everybody's warnings going
-               off in everybody's cockpit would be one long tone. */
-            c.events.push({ kind: "incoming", at: b.pos.clone(), power: 1, who: pl.id });
+            const was = threat.get(pl.id);
+            if (was === undefined || t < was) threat.set(pl.id, t);
             break;
           }
         }
@@ -1220,6 +1238,20 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     const cleared = wave.toSpawn === 0 && wave.alive === 0;
     if (cleared || wave.timeLeft <= 0) startWave(c, wave.n + 1);
   }
+
+  /* ---- the closest round on course, per ship ----
+     Gathered over the whole bullet pass above and reported once here, so a wall
+     of fire is one rising alarm rather than forty overlapping ones. `power` is
+     how near it is: nought as it comes into range, one as it arrives. */
+  for (const [who, t] of threat) {
+    c.events.push({
+      kind: "incoming",
+      at: nearestPlayer(w, w.playerPos).pos.clone(),
+      power: Math.max(0, Math.min(1, 1 - t / WARN_LEAD)),
+      who,
+    });
+  }
+  threat.clear();
 
   const toPlayer = new THREE.Vector3();
   const axis = new THREE.Vector3();
