@@ -23,7 +23,24 @@ export interface JoinIn {
   name: string;
   /** Where their tower is, so the room can place them. */
   home: Vec;
+  /** Which hull they fly, and how it is painted, so everyone else sees the
+   *  ship this player actually built rather than a stand-in. Carried on the
+   *  wire because it is the difference between a room full of people and a
+   *  room full of identical grey arrows. */
+  ship?: string;
+  paint?: PaintWire;
 }
+
+/**
+ * A paint scheme, small enough to send.
+ *
+ * Five parts, each a hue, a saturation, a brightness and an overlay, in the
+ * order the cockpit keeps them. An array rather than an object because it is
+ * sent for every player in a room and `{"hull1":{"hue":205,...}}` is mostly
+ * punctuation.
+ */
+export type PaintPart = [hue: number, sat: number, bright: number, overlay: number];
+export type PaintWire = [PaintPart, PaintPart, PaintPart, PaintPart, PaintPart];
 
 export interface TransformIn {
   t: "tf";
@@ -106,7 +123,28 @@ export interface DeniedOut {
   p?: Vec;
 }
 
-export type ServerMessage = WelcomeOut | StateOut | EventOut | YouOut | DeniedOut;
+/**
+ * Who is in the room.
+ *
+ * Sent when somebody joins or leaves rather than every tick: a name and a paint
+ * scheme change about once a session, and putting them in the twenty-times-a-
+ * second state message would be sending the same forty bytes per player four
+ * thousand times a minute to say nothing.
+ */
+export interface RosterOut {
+  t: "who";
+  players: Array<{
+    id: string;
+    /** What to show above their ship. */
+    name: string;
+    node: string;
+    ship: string;
+    paint?: PaintWire;
+  }>;
+}
+
+export type ServerMessage =
+  WelcomeOut | StateOut | EventOut | YouOut | DeniedOut | RosterOut;
 
 /** Shorten a float for the wire. A tenth of a unit is six metres on this globe. */
 export const r1 = (n: number): number => Math.round(n * 10) / 10;

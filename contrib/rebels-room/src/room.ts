@@ -38,7 +38,10 @@ import {
   BOOST,
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
-import { r1, type ClientMessage, type ServerMessage, type Vec } from "./protocol";
+import {
+  r1, type ClientMessage, type ServerMessage, type Vec,
+  type PaintWire, type PaintPart,
+} from "./protocol";
 
 /** Twenty ticks a second. Fast enough for dogfighting, cheap enough to run
  *  dozens of rooms; the cockpit interpolates between them. */
@@ -64,6 +67,10 @@ interface Seat {
   ws: WebSocket;
   node: string;
   name: string;
+  /** Which hull they fly and how it is painted, so the room can tell everyone
+   *  else what this player looks like. Paint, not gameplay: see onJoin. */
+  ship: string;
+  paint?: PaintWire;
   home: THREE.Vector3;
   body: PlayerBody;
 
@@ -156,7 +163,7 @@ export class RebelsRoom {
   private seat(ws: WebSocket): void {
     const id = `s${this.nextSeat++}`;
     const seat: Seat = {
-      id, ws, node: "", name: "",
+      id, ws, node: "", name: "", ship: "", paint: undefined,
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
       shield: MAX_SHIELD, ammo: MAX_AMMO, torps: MAX_TORPEDOES,
@@ -183,6 +190,7 @@ export class RebelsRoom {
        keep yours out of the ledger's sight. */
     void this.bank(seat);
     this.refreshRoster();
+    this.sendRoster();
     if (this.seats.size === 0) this.stop();
   }
 
@@ -371,11 +379,23 @@ export class RebelsRoom {
     if (!home) return this.strike(seat, "bad home");
     seat.node = m.node.slice(0, 80);
     seat.name = String(m.name ?? "").slice(0, 40) || "Unnamed node";
+    /* ---- what they look like ----
+       Taken on trust, because it is paint: the worst a lie here can do is make
+       somebody's ship the wrong colour on somebody else's screen. It is still
+       BOUNDED, because it is echoed to every other player in the room and an
+       unbounded string from one client repeated to twenty is how one bad
+       client becomes everyone's problem. The model id is checked against the
+       shape real ones have rather than a list, so the room does not need
+       updating every time the pack grows. */
+    seat.ship = /^space_SM_Ship_[A-Za-z0-9_]{1,60}$/.test(String(m.ship ?? ""))
+      ? String(m.ship) : "";
+    seat.paint = cleanPaint(m.paint);
     seat.home.copy(home).normalize().multiplyScalar(R);
     seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 8);
     seat.joined = true;
     this.refreshRoster();
     this.sendYou(seat);
+    this.sendRoster();
   }
 
   /**
@@ -509,6 +529,24 @@ export class RebelsRoom {
     try { seat.ws.send(JSON.stringify(msg)); } catch { this.leave(seat); }
   }
 
+  /**
+   * Who is here, sent when that changes rather than every tick.
+   *
+   * A name and a paint scheme change about once a session. Putting them in the
+   * twenty-times-a-second state message would be sending the same forty bytes
+   * per player four thousand times a minute to say nothing at all.
+   */
+  private sendRoster(): void {
+    const players = [...this.seats.values()].filter((s) => s.joined).map((s) => ({
+      id: s.id, name: s.name, node: s.node, ship: s.ship,
+      ...(s.paint ? { paint: s.paint } : {}),
+    }));
+    const wire = JSON.stringify({ t: "who", players });
+    for (const s of this.seats.values()) {
+      try { s.ws.send(wire); } catch { this.leave(s); }
+    }
+  }
+
   private sendYou(seat: Seat): void {
     this.send(seat, {
       t: "you",
@@ -569,6 +607,33 @@ export class RebelsRoom {
 
 /** A vector off the wire, or null if it is not one. Every number that arrives
  *  from a client goes through here. */
+/**
+ * A paint scheme off the wire, made safe.
+ *
+ * Every number clamped into its own range and the shape checked exactly, since
+ * this is echoed from one client to every other one. A hue of Infinity or a
+ * hundred-element array from one bad cockpit must not become twenty broken
+ * ships. Anything that is not exactly right is dropped rather than repaired:
+ * the factory scheme is a perfectly good fallback and guessing at what a
+ * malformed message meant is how a validator becomes a bug.
+ */
+function cleanPaint(raw: unknown): PaintWire | undefined {
+  if (!Array.isArray(raw) || raw.length !== 5) return undefined;
+  const out: PaintPart[] = [];
+  for (const part of raw) {
+    if (!Array.isArray(part) || part.length !== 4) return undefined;
+    const n = part.map((x) => (typeof x === "number" && Number.isFinite(x) ? x : NaN));
+    if (n.some(Number.isNaN)) return undefined;
+    out.push([
+      ((n[0] % 360) + 360) % 360,
+      Math.max(0, Math.min(1, n[1])),
+      Math.max(0, Math.min(6, n[2])),
+      Math.max(0, Math.min(3, Math.round(n[3]))),
+    ]);
+  }
+  return out as PaintWire;
+}
+
 function vec(v: unknown): THREE.Vector3 | null {
   if (!Array.isArray(v) || v.length !== 3) return null;
   const [x, y, z] = v;
