@@ -392,10 +392,16 @@ export function playTorpedoBlast(): void {
  * Half the natural level, as asked: it is a cue to reach for the right button,
  * not an air-raid siren, and in a busy fight several are in the air at once.
  */
-/** The quietest and loudest the alarm gets, as a fraction of the master
- *  volume. Not silent at the far end: a warning you cannot hear is not one. */
-export const WARN_MIN = 0.16;
-export const WARN_MAX = 0.95;
+/**
+ * The quietest and loudest the alarm gets, as a fraction of the master volume.
+ *
+ * Halved from where it started. Geoff: "reduce the warning sound by 50% volume,
+ * it's too loud and annoying." Not silent at the far end even so: a warning you
+ * cannot hear is not one, and the whole point of the rise is that the quiet end
+ * is audible enough to be the bottom of a scale.
+ */
+export const WARN_MIN = 0.08;
+export const WARN_MAX = 0.475;
 /** Seconds between pips, far away and close in. */
 export const WARN_GAP_FAR = 0.34;
 export const WARN_GAP_NEAR = 0.13;

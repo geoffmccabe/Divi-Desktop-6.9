@@ -13,7 +13,6 @@ import { RebelsScoreboard } from "./RebelsScoreboard";
 import { RebelsControls, CONTROLS, DOCKING } from "./RebelsControls";
 import { ShipMarket } from "./ShipMarket";
 import { RebelsHealthBar } from "./RebelsHealthBar";
-import { PRIMARY, SECONDARY } from "./shipLoadout";
 import { ShipBadge } from "./ShipBadge";
 import pandaUrl from "../../assets/rebels_panda.webp";
 
@@ -139,14 +138,13 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           THR {Math.round(hud.throttle * 100)}%
           {hud.throttle < 0 && <span className="orbit-alert"> REV</span>}
         </div>
-        {/* What is in each trigger. Two lines, because the whole point of
-            direct selection is knowing what a press will do without trying it. */}
-        <div className="orbit-row orbit-dim orbit-weapons">
-          <b>1-3</b> {PRIMARY[hud.primary]?.name ?? "—"}
-        </div>
-        <div className="orbit-row orbit-dim orbit-weapons">
-          <b>4-6</b> {SECONDARY[hud.secondary]?.name ?? "—"}
-        </div>
+        {/* How far the nearest tower is. It used to sit in the middle of the
+            screen, under the crosshair, which is the one place a flying game
+            cannot afford to put standing information: it is where the player
+            is looking at the thing they are trying to hit. */}
+        {hud.launched && !hud.dead && Number.isFinite(hud.nearTower) && (
+          <div className="orbit-row orbit-dim">TOWER {hud.nearTower.toFixed(1)}u</div>
+        )}
       </div>
       <div className="orbit-tr">
         {/* Your ship, or — when there is something out there worth naming —
@@ -187,18 +185,6 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       )}
 
       {hud.launched && !hud.dead && !hud.broken && <div className="orbit-cross" ref={crossRef} />}
-
-      {/* Close to a tower but not docking: say why. A player who cannot tell
-          the difference between "not close enough" and "too fast" cannot fix
-          either of them. */}
-      {hud.launched && !hud.dead && hud.dock === 0 && (
-        <div className="orbit-dock orbit-dock-hint">
-          {Number.isFinite(hud.nearTower)
-            ? `TOWER ${hud.nearTower.toFixed(1)}u · ${Math.round(hud.speed * 64)} km/s`
-            : "NO TOWERS ON THIS MAP"}
-          {hud.dockBlock ? ` · ${hud.dockBlock.toUpperCase()}` : " · DOCKING"}
-        </div>
-      )}
 
       {hud.launched && hud.dock > 0 && (
         <div className="orbit-dock">

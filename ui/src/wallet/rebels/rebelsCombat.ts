@@ -146,13 +146,53 @@ export const JUNK_R = 0.7;
 export const COIN_VALUE = 0.02;
 /** Five a kill, which is a tenth of a DIVI: exactly the rate the payout uses. */
 export const COIN_PER_KILL = 5;
-export const COIN_MU = 60_000;
+/**
+ * The fastest a coin may ever travel.
+ *
+ * Eighty percent of a boosting ship, as asked. Written out rather than imported
+ * from the flight model, because orbitFlight already imports from this file and
+ * closing that loop is how a bundle ends up reading a constant before it is
+ * initialised: a white screen that typechecks perfectly. The test asserts the
+ * two against each other instead, so they cannot drift apart quietly.
+ *
+ * A hard limit as well as a gentler orbit. Gravity alone keeps to it at the
+ * height coins are thrown to, but a coin flung clear by a dying fighter, or
+ * dragged along by the magnet, can pick up more than that; and a coin quicker
+ * than the ship is not a reward, it is a tease.
+ */
+export const COIN_TOP = 15.2;
+
+/**
+ * How hard the planet pulls on a coin.
+ *
+ * Chosen from the speed a coin is allowed to reach rather than the other way
+ * round. A body in a circular orbit at radius r travels at sqrt(mu/r), so
+ * wanting a particular speed at the height coins actually sit fixes mu:
+ *
+ *   mu = v^2 * r  =  COIN_ORBIT^2 * (R + 14)
+ *
+ * It used to be sixty thousand, which at that height is twenty-three units a
+ * second against a player who cruises at eight and boosts to nineteen. The
+ * coins were simply faster than the ship. Geoff: "they seem to move too fast
+ * and I can't catch up to them."
+ *
+ * The orbit is deliberately set UNDER the ceiling rather than at it. Sitting a
+ * coin exactly at its own speed limit means the smallest nudge — and the throw
+ * already carries a few percent of scatter — takes it over, gets it clamped,
+ * and the clamp is energy removed from an orbit. Coins tuned that way came out
+ * of the sky and were in the planet inside two minutes, which the test caught.
+ * Eighty-two percent leaves the ceiling for what it is for: coins flung clear
+ * by a dying fighter, or dragged along by the magnet.
+ */
+export const COIN_ORBIT = COIN_TOP * 0.82;
+export const COIN_MU = Math.round(COIN_ORBIT * COIN_ORBIT * (R + 14));
 /** Radius of the sphere itself: a tenth of the fighter's hull ball. */
 export const COIN_R = 0.031;
 /** How close counts as collected, and how close before it starts coming to you. */
 export const COIN_PICKUP = 2.2;
 export const COIN_MAGNET = 11;
 export const COIN_MAX = 400;
+
 
 export interface Coin {
   pos: THREE.Vector3;
@@ -1143,6 +1183,10 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       const pull = (1 - range / COIN_MAGNET) ** 2 * 140;
       k.vel.addScaledVector(toPlayer.normalize(), pull * dt);
     }
+
+    /* Never faster than a ship can chase. See COIN_TOP. */
+    const fast = k.vel.length();
+    if (fast > COIN_TOP) k.vel.multiplyScalar(COIN_TOP / fast);
 
     k.pos.addScaledVector(k.vel, dt);
     k.spin += dt * 2.2;

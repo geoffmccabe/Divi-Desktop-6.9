@@ -4,13 +4,13 @@
 
 import * as THREE from "three";
 import { R, cruiseScale } from "./orbitWorld";
-import { MAX_SHIELD, CRUISE } from "./orbitFlight";
+import { MAX_SHIELD, CRUISE, BOOST } from "./orbitFlight";
 import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
   fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
   startWave, waveSize, WAVE_SECONDS,
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
-  TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, WARN_LEAD,
+  TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, WARN_LEAD, COIN_TOP, COIN_MU,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   type CombatState, type Enemy,
   ENEMY_SPEED,
@@ -733,10 +733,13 @@ function run(c: CombatState, frames: number, w = world()) {
   c.enemies.push(e);
   hurtEnemy(c, e, 50, pos);
   const speeds = c.coins.map((k) => k.vel.length());
+  /* Against the REAL speeds rather than numbers typed in once. Both of these
+     read 16 and 30 until the world was halved and the ship slowed to match,
+     after which they were asserting against a game that no longer existed. */
   ok("coins move slower than a boosting player can fly",
-     Math.max(...speeds) < 30, `fastest ${Math.max(...speeds).toFixed(1)} u/s`);
+     Math.max(...speeds) < BOOST, `fastest ${Math.max(...speeds).toFixed(1)} of ${BOOST}`);
   ok("but faster than the player cruises, so they take chasing",
-     Math.min(...speeds) > 16, `slowest ${Math.min(...speeds).toFixed(1)} u/s`);
+     Math.min(...speeds) > CRUISE, `slowest ${Math.min(...speeds).toFixed(1)} of ${CRUISE}`);
 }
 {
   /* They have to STAY up. A coin that falls in ten seconds is not a pickup, it
@@ -1213,6 +1216,52 @@ function run(c: CombatState, frames: number, w = world()) {
        `${Math.round(r.pct * 100)}% of frames had something in view, ${r.alive} alive`);
     ok(`and nothing is thrown away at ${alt}`, r.alive >= 10, `${r.alive} alive of 16 sent`);
   }
+}
+
+// 17. A COIN YOU CAN ACTUALLY CATCH.
+{
+  /* Geoff: "for the red Divi balls, they seem to move too fast and I can't
+     catch up to them. Make their maximum velocity 80% of the player."
+
+     They orbited at sqrt(mu/r), and at sixty thousand that is twenty-three
+     units a second at the height they sit, against a ship that cruises at
+     eight and boosts to nineteen. The coins were faster than the ship. */
+  ok("the cap really is eighty percent of a boosting ship",
+     Math.abs(COIN_TOP - BOOST * 0.8) < 1e-9, `${COIN_TOP} vs ${(BOOST * 0.8).toFixed(2)}`);
+
+  /* And that number is written out in the combat file rather than imported,
+     because orbitFlight already imports from it and closing that loop reads a
+     constant before it exists: a white screen that typechecks. This is the
+     assertion that keeps the two copies honest. */
+
+  /* The orbit itself is now gentle enough, which is the part that matters most
+     because it is where a coin spends its life. */
+  const orbital = Math.sqrt(COIN_MU / (R + 14));
+  ok("a coin in its orbit is slower than a boosting ship", orbital <= BOOST,
+     `${orbital.toFixed(1)} u/s against ${BOOST}`);
+
+  /* And the hard limit holds however a coin got its speed: thrown clear by a
+     dying fighter, or dragged by the magnet on the way in. */
+  const c = createCombat();
+  const w = world();
+  let worst = 0;
+  for (let n = 0; n < 40; n++) {
+    c.coins.push({
+      pos: pos.clone().add(new THREE.Vector3().randomDirection().multiplyScalar(30 + n)),
+      /* Absurd, on purpose: nothing may leave this loop still going this fast. */
+      vel: new THREE.Vector3().randomDirection().multiplyScalar(400),
+      spin: 0, value: COIN_VALUE,
+    });
+  }
+  for (let i = 0; i < 60 * 20; i++) {
+    stepCombat(c, DT, w);
+    clearEvents(c);
+    for (const k of c.coins) worst = Math.max(worst, k.vel.length());
+  }
+  ok("no coin ever outruns the cap", worst <= COIN_TOP + 1e-6,
+     `fastest was ${worst.toFixed(2)} against a cap of ${COIN_TOP}`);
+  ok("and a boosting ship can always run one down", worst < BOOST,
+     `${worst.toFixed(2)} vs ${BOOST}`);
 }
 
 console.log(out.join("\n"));

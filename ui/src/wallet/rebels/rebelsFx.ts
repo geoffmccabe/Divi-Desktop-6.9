@@ -25,8 +25,20 @@ const FLASH_FOR = 0.32;
 const DRONE_CAP = 144;
 /** Their rounds. One per drone per thirty seconds, but they last a while. */
 const ORB_CAP = 96;
-/** A tenth of the fighter's hull ball across, as asked. */
-const COIN_RADIUS = 0.031;
+/**
+ * How big a coin is drawn.
+ *
+ * It was a tenth of a fighter's hull ball, which is six hundredths of a unit
+ * across: a red speck. That was fine while it was only a thing to fly into, and
+ * hopeless the moment it had to carry a logo somebody could read. Geoff: "make
+ * sure the logo is readable."
+ *
+ * At a third of a unit it is about a quarter of a ship's length, which is a
+ * coin you can see from a boost away and identify from close up. It changes
+ * nothing about catching one: the pickup radius is 2.2 units and lives in the
+ * simulation, not here.
+ */
+const COIN_RADIUS = 0.33;
 /* Warm gold going out, green coming back, pale for the mini gun: the same
    language the rounds themselves use. */
 const MINE_TRAIL = [1.0, 0.78, 0.25] as const;
@@ -324,16 +336,47 @@ export function createFx(): Fx {
      onto the sphere six times, one to a face. */
   /* No document means the headless tests, where a texture loader reaches for an
      Image that is not there. The coins are still there, just plain. */
+  /* ---- WHY THE LOGO WAS INVISIBLE ----
+     The artwork is a WHITE D on a red disc. The material multiplied the whole
+     texture by red, and white times red is red, so the D was being erased by
+     the tint that was supposed to make the coin look like a coin. Geoff: "I
+     don't see the Divi D logo in them so nobody will know what they are."
+
+     So the colour is left alone and the artwork carries it, which is what the
+     artwork was for. The transparent corners of the disc are filled with the
+     same red first: at three across and two down the tiles meet, and an
+     unfilled corner is a hole in the coin rather than a gap between logos. */
   const coinTex = typeof document === "undefined" ? null : (() => {
-    const t = new THREE.TextureLoader().load(diviLogo);
+    const size = 256;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext("2d");
+    const t = new THREE.CanvasTexture(canvas);
+    if (ctx) {
+      ctx.fillStyle = "#e8253f";
+      ctx.fillRect(0, 0, size, size);
+      const img = new Image();
+      img.onload = () => {
+        /* Inset a little so each D sits ON the red rather than running to the
+           edge and touching the one on the next face. */
+        const pad = size * 0.06;
+        ctx.drawImage(img, pad, pad, size - pad * 2, size - pad * 2);
+        t.needsUpdate = true;
+      };
+      img.src = diviLogo;
+    }
     t.wrapS = THREE.RepeatWrapping;
     t.wrapT = THREE.RepeatWrapping;
+    /* Six of them: three round the equator and two from pole to pole, so
+       whichever way a coin is spinning there is always one facing you. */
     t.repeat.set(3, 2);
     t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 8;
     return t;
   })();
-  const coinGeo = new THREE.SphereGeometry(COIN_RADIUS, 12, 10);
-  const coinMat = new THREE.MeshBasicMaterial({ map: coinTex, color: 0xff4d4d });
+  const coinGeo = new THREE.SphereGeometry(COIN_RADIUS, 20, 14);
+  /* White, so the artwork's own colours survive. See above. */
+  const coinMat = new THREE.MeshBasicMaterial({ map: coinTex, color: 0xffffff });
   const coinMesh = new THREE.InstancedMesh(coinGeo, coinMat, COIN_CAP);
   coinMesh.frustumCulled = false;
   coinMesh.count = 0;
