@@ -45,6 +45,10 @@ import {
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
   playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce, audioState,
 } from "./rebelsAudio";
+import {
+  primeMusic, playOpening, playGameplay, musicOnDeath, stopMusic, tickMusic,
+  pumpMusic, musicState,
+} from "./rebelsMusic";
 
 export interface HudState {
   ready: boolean;
@@ -300,6 +304,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function die(): void {
     if (hud.dead) return;
     bank();
+    /* The flying theme goes over five seconds and the menu theme comes back
+       after it. See rebelsMusic for why after rather than across. */
+    musicOnDeath();
     /* Alone, losing the ship means every player is down, so the sky is cleared
        and the whole thing starts again at wave one with no waiting. With others
        still flying it will instead be a ten second count, which is the room's
@@ -552,6 +559,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     if (now - wokeAt < 1000) return;
     wokeAt = now;
     resumeAudio();
+    /* The same gesture that wakes the sound is the one that lets the music
+       start, so it is asked here rather than being left to wonder. */
+    pumpMusic();
   }
 
   function onWheel(e: WheelEvent) {
@@ -1274,6 +1284,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
   return {
     attach(api) {
+      /* ---- FIRST, AND ON ITS OWN ----
+         Before the ship models, before the map tiles, before anything else the
+         game will want off the wire. Geoff: "it should be the first thing that
+         the player hears because it's lazy-loaded from Cloudflare before
+         anything else." Opening the panel is a click, so the audio is allowed
+         to start; if the download is still in flight it begins the moment it
+         lands. */
+      primeMusic();
+      playOpening(1.6);
       try {
         scene = api.scene;
         camera = api.camera;
@@ -1395,6 +1414,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         frameError = `${(err as Error).message}`;
         frameErrors++;
       }
+      tickMusic();
       diagAt -= dt;
       if (diagAt <= 0) {
         diagAt = 2;
@@ -1403,6 +1423,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             at: new Date().toISOString(),
             phase,
             audio: audioState(),
+            music: musicState(),
             enemies: combat.enemies.length,
             fighters: combat.enemies.filter((e) => !e.drone).length,
             wave: combat.wave ? { n: combat.wave.n, toSpawn: combat.wave.toSpawn, left: Math.round(combat.wave.timeLeft) } : null,
@@ -1417,6 +1438,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
     },
     detach() {
+      stopMusic();
       /* Backing out mid-flight files what was earned. Losing a good run to a
          stray Escape would be worse than the alternative. */
       if (flying && !hud.dead) bank();
@@ -1509,6 +1531,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          heard. */
       resumeAudio();
       primeGunSound();
+      playGameplay();
       startAt(homeIndex);
       if (camera) {
         diveFromPos.copy(camera.position);
@@ -1537,6 +1560,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (respawnAt > performance.now()) return;
       score = 0;
       if (!combat.wave) startWave(combat, 1);
+      playGameplay();
       startAt(homeIndex);
       flying = true;
       phase = "fly";

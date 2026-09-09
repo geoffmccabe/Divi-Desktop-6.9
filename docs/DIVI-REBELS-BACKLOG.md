@@ -213,3 +213,38 @@ lines stay one pixel wide at any height.
   --tile-deg and upload. The download needs `curl -C -`; the largest tiles are
   truncated by the server without it.
 * Prefetch the neighbouring tile so a fast crossing never waits.
+
+## Music (69.7.84)
+
+Two themes, both streamed from R2 and kept for good on the machine that fetched
+them. A megabyte each; bundling them would put two megabytes of music into every
+download of DD69 whether or not anybody ever opens the game.
+
+**When each one is fetched.** The opening theme comes down when the WALLET
+starts, not when the game opens. Geoff: "this is a multiplayer game. It makes
+more sense to have the music lazy-load once the DD69 app is loaded, so it
+doesn't have to be streamed at once to 20+ people." Two reasons and both are
+good: a room all opening the game at once would otherwise all pull it at once,
+and a theme that is supposed to start the instant the panel appears cannot do
+that if the download begins then. The flying theme is fetched when the panel
+opens, while the welcome screen is being read.
+
+Downloading and decoding are therefore separate: downloading needs no audio
+system at all and wants to happen as early as possible; decoding needs a context
+and is only worth doing when a theme is about to be heard.
+
+**What plays when.** Opening on the welcome screen and after a death; the flying
+theme on repeat while flying. On death the flying theme fades over five seconds
+and the opening theme comes back after it rather than across it.
+
+**Waiting, not failing.** Nothing plays anything directly: callers say what
+SHOULD be playing and the module works out when that becomes possible. Two
+things stop a theme starting and neither is the caller's to fix, and both are
+true exactly when the panel opens: the track may still be downloading, and a
+webview makes no sound at all until the player has clicked something.
+
+### Still to do
+
+* More flying tracks. The file is named gameplay1 for that reason; picking
+  between several is a list and a random index.
+* A music level of its own in the theme, if 75% of the effects volume is wrong.
