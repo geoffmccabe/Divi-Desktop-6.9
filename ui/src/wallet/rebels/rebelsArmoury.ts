@@ -212,6 +212,57 @@ export function pointsForDivi(divi: number, diviUsd: number | null): number | nu
   return (Math.max(0, divi) * diviUsd) / USD_PER_POINT;
 }
 
+/* ---- buying points with real DIVI ----
+   The transaction itself is the wallet's: PurchaseWithDivi signs and
+   broadcasts it to the treasury and hands back a transaction id. This is only
+   the bookkeeping on this side. */
+
+const PURCHASES_KEY = "dd69.rebels.purchases";
+
+export interface Purchase {
+  txid: string;
+  divi: number;
+  points: number;
+  at: string;
+}
+
+export function purchases(): Purchase[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(PURCHASES_KEY) || "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Record a paid-for purchase and add its points. ONCE per transaction.
+ *
+ * The purchase modal asks "has it settled?" every couple of seconds until told
+ * yes, and each ask arrives here. Crediting on every ask would pay the points
+ * out again and again for as long as the window stayed open, so the
+ * transaction id is the key: seen it before, nothing more happens.
+ *
+ * WHAT THIS DOES NOT DO, stated because it is a rule of this project: it does
+ * not verify the transaction against the chain. Points here are a local
+ * balance and a local balance can be edited, so a verification step would
+ * guard a door in a wall that is not there yet. The DIVI genuinely moves to
+ * the treasury regardless. When points move server-side, the ledger should
+ * confirm the payment the way the builder's points already are: by asking the
+ * chain what reached the address, never by trusting a txid from the buyer.
+ */
+export function creditPurchase(txid: string, divi: number, points: number): boolean {
+  if (!txid || !(points > 0)) return false;
+  const all = purchases();
+  if (all.some((x) => x.txid === txid)) return false;
+  all.push({ txid, divi, points, at: new Date().toISOString() });
+  try { localStorage.setItem(PURCHASES_KEY, JSON.stringify(all)); } catch { /* full */ }
+  const p = purse();
+  p.earned += points;
+  writePurse(p);
+  return true;
+}
+
 /* ---- what the gear actually does ----
    Read through here rather than by any code that knows a particular key, so a
    fourth tier of anything stays a row in a catalogue. */
@@ -231,5 +282,6 @@ export function resetArmouryForTests(): void {
   try {
     localStorage.removeItem(POINTS_KEY);
     localStorage.removeItem(OWNED_KEY);
+    localStorage.removeItem(PURCHASES_KEY);
   } catch { /* nothing to clear */ }
 }

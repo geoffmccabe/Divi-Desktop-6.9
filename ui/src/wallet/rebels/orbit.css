@@ -776,3 +776,36 @@
 /* Points in the cockpit: under the DIVI, and a different colour, because they
    are a different currency that happens to be earned at the same rate. */
 .orbit-points { color: var(--rebels-points, #7fe3a0); }
+
+/* ---- the points panel's own tabs: buy, convert, cash out ---- */
+.pts-tabs {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 5px; margin-bottom: 10px; flex: 0 0 auto;
+}
+.pts-tabs button {
+  padding: 7px 3px;
+  font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  color: hsl(var(--rebels-hud) / 0.55);
+  background: hsl(var(--rebels-hud) / 0.06);
+  border: 1px solid hsl(var(--rebels-hud) / 0.16);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.pts-tabs button:hover { color: hsl(var(--rebels-hud) / 0.85); }
+.pts-tabs button.on {
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.16);
+  border-color: hsl(var(--rebels-hud) / 0.45);
+}
+.pts-custom { margin-bottom: 9px; }
+.pts-custom input {
+  width: 100%; box-sizing: border-box; padding: 7px 8px;
+  font: 600 11px/1 var(--font-mono);
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-hud) / 0.06);
+  border: 1px solid hsl(var(--rebels-hud) / 0.2);
+  border-radius: 4px; outline: none;
+}
+.pts-custom input:focus { border-color: hsl(var(--rebels-hud) / 0.55); }
+.pts-custom input::placeholder { color: hsl(var(--rebels-hud) / 0.35); }

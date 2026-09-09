@@ -10,6 +10,7 @@ import { R } from "./orbitWorld";
 import {
   WEAPONS, weaponByKey, weaponInSlot, upgradeLabel, priceInDivi,
   USD_PER_POINT, BEAM_SECONDS, STARTING_WEAPONS,
+  BUY_TIERS, bonusFor, pointsForPurchase, TREASURY_ADDRESS,
 } from "./weaponCatalog";
 
 const out: string[] = [];
@@ -312,6 +313,54 @@ async function main() {
   }
 
   console.log(out.join("\n"));
+  /* ------------------------------------------ buying points with real DIVI */
+  {
+    /* Geoff: "buttons for 1000, 2000, 5000, 10,000 DIVI ... a little discount
+       of 2%, 5%, 10% if they spend more at once, they get extra points." */
+    ok("four set amounts", BUY_TIERS.map((t) => t.divi).join(",") === "1000,2000,5000,10000",
+       BUY_TIERS.map((t) => t.divi).join(","));
+    ok("with bonuses of nothing, two, five and ten percent",
+       BUY_TIERS.map((t) => t.bonus).join(",") === "0,0.02,0.05,0.1",
+       BUY_TIERS.map((t) => t.bonus).join(","));
+    ok("money goes to the treasury, a real DIVI address",
+       /^D[1-9A-HJ-NP-Za-km-z]{33}$/.test(TREASURY_ADDRESS), TREASURY_ADDRESS);
+
+    /* A typed amount earns whatever tier it clears. */
+    ok("a custom 999 gets no bonus", bonusFor(999) === 0);
+    ok("a custom 2000 gets two percent", bonusFor(2000) === 0.02);
+    ok("a custom 4999 still gets two percent", bonusFor(4999) === 0.02);
+    ok("a custom 7500 gets five percent", bonusFor(7500) === 0.05);
+    ok("a custom million gets ten percent, no more", bonusFor(1_000_000) === 0.10);
+
+    /* Bonus is EXTRA POINTS, not fewer DIVI. */
+    ok("a thousand DIVI at a tenth of a cent is a thousand points",
+       Math.abs(pointsForPurchase(1000, 0.001)! - 1000) < 1e-9, `${pointsForPurchase(1000, 0.001)}`);
+    ok("ten thousand DIVI is eleven thousand points",
+       Math.abs(pointsForPurchase(10000, 0.001)! - 11000) < 1e-9, `${pointsForPurchase(10000, 0.001)}`);
+    ok("and the price moves the answer",
+       Math.abs(pointsForPurchase(1000, 0.01)! - 10000) < 1e-9, `${pointsForPurchase(1000, 0.01)}`);
+    for (const bad of [null, 0, -1, NaN, Infinity]) {
+      ok(`no purchase quote without a DIVI price (${bad})`,
+         pointsForPurchase(1000, bad as number) === null);
+    }
+    ok("no quote for nothing", pointsForPurchase(0, 0.001) === null);
+
+    /* ---- credited ONCE per transaction ----
+       The modal polls; every poll lands in creditPurchase. */
+    A.resetArmouryForTests();
+    ok("first report of a txid pays", A.creditPurchase("abc123", 1000, 1000) === true);
+    ok("and the points are there", Math.abs(A.spendable() - 1000) < 1e-9, `${A.spendable()}`);
+    ok("second report of the same txid pays nothing", A.creditPurchase("abc123", 1000, 1000) === false);
+    ok("and the balance did not move", Math.abs(A.spendable() - 1000) < 1e-9, `${A.spendable()}`);
+    ok("a different txid pays again", A.creditPurchase("def456", 2000, 2040) === true);
+    ok("to three thousand and forty", Math.abs(A.spendable() - 3040) < 1e-9, `${A.spendable()}`);
+    ok("the record keeps both", A.purchases().length === 2, `${A.purchases().length}`);
+    ok("no txid, no points", A.creditPurchase("", 1000, 1000) === false);
+    ok("no points, no record", A.creditPurchase("ghi789", 1000, 0) === false && A.purchases().length === 2);
+    A.resetArmouryForTests();
+    ok("reset wipes the record too", A.purchases().length === 0);
+  }
+
   console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);
 }

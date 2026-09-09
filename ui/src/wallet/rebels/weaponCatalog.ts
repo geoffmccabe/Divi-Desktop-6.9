@@ -184,3 +184,48 @@ export function priceInDivi(points: number, diviUsd: number | null): number | nu
   if (!diviUsd || !Number.isFinite(diviUsd) || diviUsd <= 0) return null;
   return (points * USD_PER_POINT) / diviUsd;
 }
+
+
+/* ---- buying points with DIVI from the wallet ----
+   Real money to the treasury. Geoff: "buttons for 1000, 2000, 5000, 10,000
+   DIVI and also can enter a custom amount. Each of the above gives a little
+   discount of 2%, 5%, 10% if they spend more at once, they get extra points."
+
+   The discount is paid as EXTRA POINTS rather than as fewer DIVI, which is
+   what was asked and is also the better shape: the DIVI amount stays a round
+   number a person chose, and the reward is visible as a bigger figure on the
+   points side. */
+
+/** Where the money goes. A child address of the London node, the same one the
+ *  builder's points are paid to, so all income lands in one place. */
+export const TREASURY_ADDRESS = "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt";
+
+export interface BuyTier {
+  divi: number;
+  /** Extra points as a fraction: 0.02 is two percent more. */
+  bonus: number;
+}
+
+export const BUY_TIERS: BuyTier[] = [
+  { divi: 1_000, bonus: 0 },
+  { divi: 2_000, bonus: 0.02 },
+  { divi: 5_000, bonus: 0.05 },
+  { divi: 10_000, bonus: 0.10 },
+];
+
+/** The bonus a custom amount earns: whatever the largest tier it clears would. */
+export function bonusFor(divi: number): number {
+  let best = 0;
+  for (const t of BUY_TIERS) if (divi >= t.divi) best = t.bonus;
+  return best;
+}
+
+/**
+ * What a DIVI purchase is worth in points, at the live price, bonus included.
+ * Null with no price, and never a guess: this is real money changing hands.
+ */
+export function pointsForPurchase(divi: number, diviUsd: number | null): number | null {
+  if (!diviUsd || !Number.isFinite(diviUsd) || diviUsd <= 0 || !(divi > 0)) return null;
+  const base = (divi * diviUsd) / USD_PER_POINT;
+  return base * (1 + bonusFor(divi));
+}

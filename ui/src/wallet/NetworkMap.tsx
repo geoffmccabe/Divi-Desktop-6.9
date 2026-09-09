@@ -300,7 +300,13 @@ function fmtDur(secs: number): string {
   return `${Math.round(secs / 86400)}d`;
 }
 
-export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
+export function NetworkMap({ onReturn, autoplay = false }: {
+  onReturn?: () => void;
+  /** Open in globe view with the game already running. The sidebar's
+   *  "Divi Rebels Game" entry, which should land in the cockpit rather than on
+   *  a map with a button on it. */
+  autoplay?: boolean;
+}) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [snap, setSnap] = useState<{ peers: Peer[]; selfIp: string | null } | null>(null);
@@ -367,9 +373,18 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
   // animating while you fly through it.
   const [rebels, setRebels] = useState<RebelsController | null>(null);
   const playing = rebels !== null;
+  /* Asked to start flying: the same thing the play button does, once. The
+     controller attaches itself to the globe when the globe is ready, so it is
+     safe to make it before the globe has drawn a frame. */
+  useEffect(() => {
+    if (!autoplay) return;
+    setRebels((cur) => cur ?? createRebels(labelForIp));
+    // The label function is stable for the life of the map.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoplay]);
   // FLAT vs GLOBE view. When GLOBE is on, the 2D canvas loop pauses (see draw())
   // and the WebGL globe renders the same nodes/arcs on top.
-  const [globe, setGlobe] = useState(false);
+  const [globe, setGlobe] = useState(autoplay);
   const globeActiveRef = useRef(false);
   globeActiveRef.current = globe;
   // New-node spirals: the list the draw loop animates, refreshed off the poll (a
