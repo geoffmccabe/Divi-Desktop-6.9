@@ -39,7 +39,7 @@ import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
-import { watchAudio, audioHealth } from "../../sound";
+import { watchAudio, audioHealth, settleAudioFromGesture } from "../../sound";
 import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
@@ -662,6 +662,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      input and there is nothing to gain from asking sixty times. */
   let wokeAt = 0;
   function wakeAudio() {
+    /* Whatever the bus watchdog decided while no hand was on the controls
+       happens here, inside a real gesture, where WebKit will allow it. */
+    settleAudioFromGesture();
     const now = performance.now();
     if (now - wokeAt < 1000) return;
     wokeAt = now;

@@ -658,6 +658,30 @@ pub fn tx_status(cfg: &NodeConfig, txid: &str) -> TxStatus {
     }
 }
 
+/// A send matching this address and amount since `since`, if the wallet has
+/// one. Polled for a while, because the node may still be finishing it.
+fn find_recent_send(rpc: &RpcClient, address: &str, amount: f64, since: i64) -> Option<String> {
+    for _ in 0..12 {
+        if let Ok(txs) = rpc.call("listtransactions", json!(["*", 50])) {
+            if let Some(list) = txs.as_array() {
+                for t in list.iter().rev() {
+                    let cat = t["category"].as_str().unwrap_or("");
+                    let addr = t["address"].as_str().unwrap_or("");
+                    let amt = t["amount"].as_f64().unwrap_or(0.0);
+                    let time = t["time"].as_i64().unwrap_or(0);
+                    if cat == "send" && addr == address && (amt + amount).abs() < 1e-6 && time >= since {
+                        if let Some(txid) = t["txid"].as_str() {
+                            return Some(txid.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(5));
+    }
+    None
+}
+
 pub fn send_coins(cfg: &NodeConfig, address: &str, amount: f64, passphrase: Option<&str>) -> Result<String, String> {
     if amount <= 0.0 {
         return Err("Amount must be greater than zero.".into());
@@ -670,9 +694,32 @@ pub fn send_coins(cfg: &NodeConfig, address: &str, amount: f64, passphrase: Opti
             .map_err(|e| format!("Unlock failed: {e}"))?;
     }
 
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
     let result = rpc
         .call("sendtoaddress", json!([address, amount]))
         .map(|v| v.as_str().unwrap_or_default().to_string());
+
+    /* ---- A TIMEOUT IS NOT A FAILURE ----
+       The answer was lost, not the send. When the read times out the node
+       may well have broadcast the transaction, and reporting an error would
+       invite a second send of the same amount. So before saying anything,
+       look for it: a send to this address for this amount, made since this
+       call began, is this call's. Found, it is the txid. Not found after a
+       reasonable wait, it really did fail. */
+    let result = match result {
+        Err(e) if e.contains("timed out") || e.contains("cannot reach") => {
+            match find_recent_send(&rpc, address, amount, started - 5) {
+                Some(txid) => Ok(txid),
+                None => Err(format!(
+                    "{e}. The node did not confirm the send within the wait; check Transaction History before trying again."
+                )),
+            }
+        }
+        other => other,
+    };
 
     // Whether the send succeeded or not, re-lock spends: drop back to staking-only
     // so a full-unlock window is never left open after a send.

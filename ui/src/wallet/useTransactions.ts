@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { nodeKey } from "./activeNode";
 import { listTransactions, type Tx } from "./api";
 import { nodeStatus } from "../bridge";
 
 // A local cache so transactions appear instantly on open (before the node even
 // answers), plus a background sync that pages new/updated ones in from the
 // node's wallet — a fast local read, never a chain re-parse.
-const CACHE_KEY = "dd69.txCache";
+/* The list is a wallet's, and each node is a wallet: keyed by the node. */
+const CACHE_BASE = "dd69.txCache";
+const cacheKey = () => nodeKey(CACHE_BASE);
 const MAX = 800; // how deep we backfill / cache
 const PAGE = 100;
 
@@ -24,14 +27,14 @@ export interface TxStatus {
 
 function loadCache(): Tx[] {
   try {
-    return JSON.parse(localStorage.getItem(CACHE_KEY) || "[]");
+    return JSON.parse(localStorage.getItem(cacheKey()) || "[]");
   } catch {
     return [];
   }
 }
 function saveCache(txs: Tx[]) {
   try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(txs.slice(0, MAX)));
+    localStorage.setItem(cacheKey(), JSON.stringify(txs.slice(0, MAX)));
   } catch {
     /* storage full/unavailable */
   }

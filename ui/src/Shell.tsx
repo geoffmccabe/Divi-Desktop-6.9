@@ -1,4 +1,5 @@
 import { useEffect, useState, type ComponentType } from "react";
+import { syncActiveNode } from "./wallet/activeNode";
 import { NAV } from "./nav";
 import { resumeStaking } from "./wallet/api";
 import { stakingDesired } from "./wallet/stakeWin";
@@ -94,12 +95,26 @@ export function Shell() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Switching node in My Nodes jumps straight to the network map for that node.
+  /* ---- SWITCHING NODE THROWS AWAY EVERYTHING ON SCREEN ----
+     Two dozen panels each poll the node on their own clock, from eight
+     seconds to two minutes, and each keeps what it last saw in its own state.
+     Switching the node changed what the backend answers and told nobody, so
+     the old node's balance, addresses, staking and history stayed up until
+     each panel happened to ask again, and the screen was a mixture of two
+     nodes for a minute or more. Geoff: "it leaves behind, on top of the app
+     in almost everywhere, the old values".
+
+     A React key on the whole shell body is the honest fix: every panel is
+     unmounted and mounted fresh, so each starts in its own loading state and
+     asks the node at once. Nothing is carried across. Caches in local storage
+     that belong to a node are keyed by the node id (see activeNode.ts). */
+  const [nodeEpoch, setNodeEpoch] = useState(0);
   useEffect(() => {
-    const onSwitch = () => setView("network");
+    const onSwitch = () => { setNodeEpoch((n) => n + 1); setView("network"); };
     window.addEventListener("dd69:nodeswitch", onSwitch);
     return () => window.removeEventListener("dd69:nodeswitch", onSwitch);
   }, []);
+  useEffect(() => { syncActiveNode(); }, []);
 
   // The Contacts panel's Send button jumps to the Send view (SendPanel reads the
   // stashed recipient on its own dd69:sendto listener).
@@ -113,7 +128,7 @@ export function Shell() {
   const label = (NAV.find((n) => n.id === view)?.label ?? EXTRA_TITLES[view] ?? "").replace(/\n/g, " ");
 
   return (
-    <div className={focus ? "shell shell-focus" : "shell"}>
+    <div className={focus ? "shell shell-focus" : "shell"} key={nodeEpoch}>
       <FastReceiveHost onGoto={setView} />
       <div className="col-left">
         <button

@@ -1,7 +1,7 @@
 use crate::config::NodeConfig;
 use base64::Engine;
 use serde_json::{json, Value};
-use std::sync::OnceLock;
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 /// One shared, connection-pooling agent for the whole app. The legacy node's RPC
@@ -14,6 +14,68 @@ use std::time::Duration;
 /// as many idle connections as the node has threads, none would be left to
 /// answer new requests and the RPC would appear dead while the node is healthy.
 /// A small pool leaves most threads free.
+/* ---- HOW MANY CALLS AT ONCE ----
+   The node answers on sixteen threads and every kept-alive connection from
+   here pins one of them. The interface has two dozen panels polling on their
+   own clocks, and the moment they all ask together (a node switch remounts
+   every one of them) the node has no thread left for the call that matters:
+   Geoff's 5,000 DIVI send sat behind the pollers until the read timed out.
+   So at most this many RPC calls are in flight from this process; the rest
+   wait their turn here, in order, instead of piling onto the node. Sends
+   still queue, but they are never refused for want of a thread. */
+const MAX_IN_FLIGHT: usize = 6;
+
+struct Gate {
+    busy: Mutex<usize>,
+    free: Condvar,
+}
+
+fn gate() -> &'static Gate {
+    static GATE: OnceLock<Gate> = OnceLock::new();
+    GATE.get_or_init(|| Gate { busy: Mutex::new(0), free: Condvar::new() })
+}
+
+struct Slot;
+impl Slot {
+    fn take() -> Slot {
+        let g = gate();
+        let mut n = g.busy.lock().unwrap_or_else(|e| e.into_inner());
+        while *n >= MAX_IN_FLIGHT {
+            n = g.free.wait(n).unwrap_or_else(|e| e.into_inner());
+        }
+        *n += 1;
+        Slot
+    }
+}
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let g = gate();
+        let mut n = g.busy.lock().unwrap_or_else(|e| e.into_inner());
+        *n = n.saturating_sub(1);
+        g.free.notify_one();
+    }
+}
+
+/// Calls that make the node do real work on a big wallet: a send on a wallet
+/// with thousands of coins can take longer than the ordinary read timeout,
+/// and cutting it off does not stop the node, it only loses the answer.
+fn is_slow_call(method: &str) -> bool {
+    matches!(method, "sendtoaddress" | "sendmany" | "walletpassphrase" | "sendrawtransaction" | "fundrawtransaction")
+}
+
+fn slow_agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(8))
+            .timeout_read(Duration::from_secs(180))
+            .timeout_write(Duration::from_secs(30))
+            .max_idle_connections(2)
+            .max_idle_connections_per_host(2)
+            .build()
+    })
+}
+
 fn shared_agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
@@ -61,7 +123,9 @@ impl RpcClient {
         // Reuse a pooled keep-alive connection (see shared_agent). The 30s read
         // timeout tolerates the node's bursty spells; these run off the UI thread
         // (spawn_blocking) so waiting never freezes anything.
-        let resp = shared_agent()
+        let _slot = Slot::take();
+        let agent = if is_slow_call(method) { slow_agent() } else { shared_agent() };
+        let resp = agent
             .post(&self.url)
             .set("Authorization", &self.auth)
             .send_string(&body.to_string());

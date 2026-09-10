@@ -60,8 +60,8 @@ export function ItemStore({ ship }: { ship: string }) {
                 <b>{spec.name}</b>
                 <em>{spec.note}</em>
               </div>
-              <div className="wpn-cost">
-                {have ? <span className="wpn-have">FITTED</span> : (
+              <div className={"wpn-cost" + (poor ? " short" : "")}>
+                {have ? <span className="wpn-have">OWNED</span> : (
                   <>
                     <b>{spec.points.toLocaleString()} pts</b>
                     <em>{divi === null

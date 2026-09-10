@@ -659,6 +659,10 @@
 .wpn-what em { font-size: 10px; font-style: normal; opacity: 0.5; }
 .wpn-cost { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .wpn-cost b { font-size: 12px; color: var(--rebels-points, #7fe3a0); }
+/* Cannot afford it: the price goes red, so a green number never reads as an
+   offer on something out of reach. */
+.wpn-cost.short b { color: #ff5c5c; }
+.wpn-have { color: var(--rebels-points, #7fe3a0); font-weight: 700; letter-spacing: 0.08em; }
 .wpn-cost em { font-size: 9.5px; font-style: normal; opacity: 0.5; white-space: nowrap; }
 .wpn-have { font-size: 10px; letter-spacing: 0.08em; opacity: 0.75; }
 

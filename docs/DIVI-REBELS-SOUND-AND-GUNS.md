@@ -85,3 +85,61 @@ The Network Map wrapper took every wheel event inside it for map zoom and
 cancelled it, and the store sits inside that wrapper. Wheel events over the
 game's own panels are now left alone. Verified in a browser: the weapon list
 scrolled 353 pixels on a five-tick wheel.
+
+## Second pass (2026-Sep-10, evening)
+
+**Sound, still silent.** The bus meter now read a level (0.006 RMS) and the
+watchdog had kicked the context once, and Geoff still heard nothing. So the
+signal reaches the end of the graph; the silence is between WebKit's output
+and the speakers. Two changes:
+
+1. The watchdog no longer acts from a timer. WebKit ties a context's right
+   to make sound to a user gesture, and a suspend/resume or a new context
+   made from a timer can leave one that says "running" and is not allowed to
+   play: the fault, caused by the cure. The verdict is held and carried out
+   inside the next real key or pointer press (`settleAudioFromGesture`),
+   which the game already routes every gesture through.
+2. The black box shows the pending verdict.
+
+What I checked on the Mac itself: default output is the built-in speakers,
+not muted; CoreAudio shows an active output context; the node of the
+WebKit GPU process is running. What I could not do is hear it. If it is
+still silent with a level on the meter, the next step is outside this app:
+quit and reopen the wallet from the Dock (not from a script), then open the
+game and press a key before judging.
+
+**The beam looked flat.** A single-colour open cone with no lighting is a
+flat wedge from any angle. It now fades along its length (bright at the
+muzzle, gone at the far end, which under additive blending is a fade to
+transparent) with a brighter, narrower core inside, so it reads as a volume,
+and the shop eases the view round to three-quarters while a beam is held so
+the cone is seen going away rather than end-on.
+
+**The store.** Price in green only when it can be bought; red when the
+player is short; "OWNED" in green instead of a price once bought.
+
+## The 5,000 DIVI send that timed out, and node switching
+
+The send never left the wallet (checked the node's own transaction list),
+so nothing was lost. The read timeout was 30 seconds and the node was busy.
+Why busy: the interface has two dozen panels polling the node on their own
+clocks; a node switch (below) makes them all ask at once, the node has
+sixteen RPC threads, and a send queued behind them lost its answer.
+
+Three changes in the Rust side (`crates/supervisor/src/rpc.rs`, `wallet.rs`):
+
+- At most 6 RPC calls in flight from the app at once; the rest wait in
+  order. The node always has threads left.
+- Sends and unlocks use a 180-second read timeout. A big wallet takes time.
+- A send whose answer was lost is looked for on the node (same address,
+  same amount, since the call began) for up to a minute before it is called
+  a failure, so a lost answer is never mistaken for a failed send, and a
+  second attempt never doubles it.
+
+**Switching nodes** (`ui/src/Shell.tsx`, `activeNode.ts`): the whole shell
+body is remounted on a switch (a React key), so every panel starts in its
+own loading state and asks the new node at once; nothing from the old node
+stays on screen. The transaction cache is keyed by node id so the old
+node's history does not reappear from local storage. Other per-node caches
+(node identity, staking preference, PoE history) are still global and are
+the next candidates if something else looks stale.

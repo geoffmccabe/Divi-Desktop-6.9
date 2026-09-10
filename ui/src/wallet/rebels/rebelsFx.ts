@@ -275,22 +275,31 @@ export function createFx(): Fx {
   /* Apex at the origin, opening along +Z: see beamGeometry. */
   const beamGeo = beamGeometry();
   const beamMats: THREE.MeshBasicMaterial[] = [];
+  const beamCoreMats: THREE.MeshBasicMaterial[] = [];
   const beamMeshes: THREE.Mesh[] = [];
+  const beamCores: THREE.Mesh[] = [];
   for (let i = 0; i < 8; i++) {
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: 0.5,
-      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-    });
+    const [mat, coreMat] = beamMaterials();
     const mesh = new THREE.Mesh(beamGeo, mat);
     mesh.visible = false;
     mesh.frustumCulled = false;
     mesh.renderOrder = 2;
     group.add(mesh);
+    /* The bright core rides inside the cone: same place, same direction,
+       a third of the width. It is what makes the wide cone read as glow
+       around a beam rather than as the beam itself. */
+    const core = new THREE.Mesh(beamGeo, coreMat);
+    core.visible = false;
+    core.frustumCulled = false;
+    core.renderOrder = 3;
+    group.add(core);
     beamMats.push(mat);
+    beamCoreMats.push(coreMat);
     beamMeshes.push(mesh);
-    /* The geometry is shared and disposed once below; only the material is
+    beamCores.push(core);
+    /* The geometry is shared and disposed once below; only the materials are
        this mesh's own. */
-    bin.push(mat);
+    bin.push(mat, coreMat);
   }
   bin.push(beamGeo);
 
@@ -596,9 +605,12 @@ export function createFx(): Fx {
       for (let i = 0; i < beamMeshes.length; i++) {
         const b = beams[i];
         const mesh = beamMeshes[i];
-        if (!b) { mesh.visible = false; continue; }
+        const core = beamCores[i];
+        if (!b) { mesh.visible = false; core.visible = false; continue; }
         mesh.visible = true;
+        core.visible = true;
         mesh.position.copy(b.pos);
+        core.position.copy(b.pos);
         dir.copy(b.fwd).normalize();
         /* The cone's apex is at the origin and it opens along +Z (checked:
            its bounding box after the rotate runs 0 to +1 in z). It used to be
@@ -608,16 +620,20 @@ export function createFx(): Fx {
            invisible, behind the camera; in the shop it was a cone on top of
            the hull pointing the wrong way. */
         mesh.quaternion.copy(beamOrientation(dir));
+        core.quaternion.copy(mesh.quaternion);
         /* The radius at the far end is what the half-angle actually subtends,
            so the drawn edge is the edge that does damage. */
         const rad = Math.tan(b.half) * b.reach;
         mesh.scale.set(rad, rad, b.reach);
+        core.scale.set(rad * BEAM_CORE, rad * BEAM_CORE, b.reach);
         /* Brightest at the instant it fires and fading over its half second,
            which is what makes a held trigger read as a pulsing beam rather
            than a solid bar. */
         const k = Math.max(0, Math.min(1, b.life / Math.max(0.001, maxLife)));
         beamMats[i].color.setHex(b.colour);
         beamMats[i].opacity = 0.14 + 0.4 * k;
+        beamCoreMats[i].color.setHex(b.colour);
+        beamCoreMats[i].opacity = 0.35 + 0.6 * k;
       }
     },
 
@@ -997,14 +1013,52 @@ export function makeGuardShell(): { mesh: THREE.Object3D; step(seconds: number, 
 
 /* ---- the beam's shape, shared with the shop's preview ---- */
 
-/** A unit cone with its apex at the origin opening along +Z: scale it by
- *  (radius, radius, reach) and it is the beam. */
+/**
+ * A unit cone with its apex at the origin opening along +Z: scale it by
+ * (radius, radius, reach) and it is the beam.
+ *
+ * ---- WHY IT HAS VERTEX COLOURS ----
+ * A single-colour open cone drawn additively with no lighting is a flat
+ * wedge from any angle: there is nothing on it to say which part is near.
+ * Geoff: "it's a 3D cone, not a flat thing". So the colour fades along the
+ * length, full at the apex and gone at the far end, which under additive
+ * blending is a fade to transparent: the beam is brightest at the muzzle and
+ * thins into the distance, and the eye reads that as depth. Drawn with a
+ * narrower, brighter core inside it (see the callers) it reads as a volume.
+ * More segments along the length so the fade is smooth.
+ */
 export function beamGeometry(): THREE.ConeGeometry {
-  const g = new THREE.ConeGeometry(1, 1, 24, 1, true);
+  const g = new THREE.ConeGeometry(1, 1, 32, 12, true);
   g.translate(0, -0.5, 0);
   g.rotateX(-Math.PI / 2);
+  const pos = g.getAttribute("position");
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    /* z runs 0 at the apex to 1 at the base. Bright near, dark far, with a
+       curve so the middle still carries some light. */
+    const t = Math.max(0, Math.min(1, pos.getZ(i)));
+    const k = Math.pow(1 - t, 1.6);
+    col[i * 3] = k; col[i * 3 + 1] = k; col[i * 3 + 2] = k;
+  }
+  g.setAttribute("color", new THREE.BufferAttribute(col, 3));
   return g;
 }
+
+/** The two materials a beam is drawn with: the wide cone and the bright core. */
+export function beamMaterials(): [THREE.MeshBasicMaterial, THREE.MeshBasicMaterial] {
+  const shell = new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.5, vertexColors: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const core = new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.9, vertexColors: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  return [shell, core];
+}
+
+/** How much narrower the core is than the cone. */
+export const BEAM_CORE = 0.35;
 
 const _beamZ = new THREE.Vector3(0, 0, 1);
 const _beamQ = new THREE.Quaternion();

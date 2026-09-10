@@ -18,7 +18,7 @@ import { loadModel, unitCopy } from "./spaceAssets";
 import { makeRepaintable, type ShipPaint, type PaintHandle } from "./shipColours";
 import { fitMounts, type Mounts } from "./shipCollider";
 import { BEAM_MAX_HOLD, type WeaponSpec } from "./weaponCatalog";
-import { beamGeometry, beamOrientation } from "./rebelsFx";
+import { beamGeometry, beamOrientation, beamMaterials, BEAM_CORE } from "./rebelsFx";
 
 /* ---- TEST FIRE, IN THE SCENE ----
    It was a flat overlay drawn up the panel: a triangle over the picture, which
@@ -128,13 +128,17 @@ export function ShipPreview({ id, paint, still = false, mode = "turntable", fire
        One cone for a beam, a small pool of rounds. Additive, so they glow
        over the hull rather than hide it. */
     const beamGeo = beamGeometry();
-    const beamMat = new THREE.MeshBasicMaterial({
-      color: 0xffd83a, transparent: true, opacity: 0.4, blending: THREE.AdditiveBlending,
-      depthWrite: false, side: THREE.DoubleSide,
-    });
+    const [beamMat, beamCoreMat] = beamMaterials();
     const beam = new THREE.Mesh(beamGeo, beamMat);
     beam.visible = false;
     scene.add(beam);
+    const beamCore = new THREE.Mesh(beamGeo, beamCoreMat);
+    beamCore.visible = false;
+    scene.add(beamCore);
+    /* While a beam is held the view eases round to three-quarters, so the
+       cone is seen going away into the distance rather than end-on from
+       behind, where a cone of any length is a short wedge. */
+    let sideView = 0;
     const roundGeo = new THREE.SphereGeometry(1, 8, 6);
     roundGeo.scale(0.022, 0.022, 0.09);
     const roundMat = new THREE.MeshBasicMaterial({
@@ -253,6 +257,8 @@ export function ShipPreview({ id, paint, still = false, mode = "turntable", fire
       idle += dt;
 
       if (modeRef.current === "flight") {
+        const wantSide = fireRef.current?.kind === "beam" ? 0.62 : 0;
+        sideView += (wantSide - sideView) * Math.min(1, dt * 4);
         /* ---- FLYING IT, NOT LOOKING AT IT ----
            Nose away from the camera and a little below it, which is the view
            from just behind and above a ship you are flying. It does not turn.
@@ -264,7 +270,7 @@ export function ShipPreview({ id, paint, still = false, mode = "turntable", fire
         tiltY += (want - tiltY) * Math.min(1, dt * 6);
         tiltX += (wantP - tiltX) * Math.min(1, dt * 6);
         /* Half a turn, so the nose points away rather than at the camera. */
-        turntable.rotation.set(OVERHEAD + tiltX, Math.PI + tiltY, -tiltY * 0.8);
+        turntable.rotation.set(OVERHEAD + tiltX + sideView * 0.25, Math.PI + tiltY + sideView, -tiltY * 0.8);
         camera.position.set(0, 0.42 * dolly / 2.15, dolly);
         camera.lookAt(0, -0.06, 0);
       } else {
@@ -288,17 +294,24 @@ export function ShipPreview({ id, paint, still = false, mode = "turntable", fire
       const on = spec ? (now - fireSince.current) / 1000 : 0;
       if (spec && mounts && spec.kind === "beam" && on < BEAM_MAX_HOLD) {
         beam.visible = true;
+        beamCore.visible = true;
         worldOf(mounts.nose, beam.position);
+        beamCore.position.copy(beam.position);
         beam.quaternion.copy(beamOrientation(fwd));
+        beamCore.quaternion.copy(beam.quaternion);
         const half = ((spec.cone ?? 2) * Math.PI) / 360;
         const rad = Math.tan(half) * PREVIEW_REACH;
         beam.scale.set(rad, rad, PREVIEW_REACH);
+        beamCore.scale.set(rad * BEAM_CORE, rad * BEAM_CORE, PREVIEW_REACH);
         beamMat.color.setHex(spec.colour ?? 0xffd83a);
+        beamCoreMat.color.setHex(spec.colour ?? 0xffd83a);
         /* Pulsing at the burst rate, the way a held trigger reads in flight. */
         const k = 1 - ((on % 0.5) / 0.5);
         beamMat.opacity = 0.18 + 0.4 * k;
+        beamCoreMat.opacity = 0.4 + 0.55 * k;
       } else {
         beam.visible = false;
+        beamCore.visible = false;
       }
       if (spec && mounts && spec.kind !== "beam") {
         const rate = spec.kind === "mini" ? MINI_RATE : PULSE_RATE;

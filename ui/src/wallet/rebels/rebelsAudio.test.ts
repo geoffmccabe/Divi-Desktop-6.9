@@ -301,11 +301,14 @@ async function main() {
     FakeCtx.loud = 0;
     ok("silence not expected: nothing happens", S.watchAudio(false, 2, 1002) === "none" && ctx.suspends === 0);
     ok("two seconds of expected silence: not yet", S.watchAudio(true, 2, 1004) === "none");
-    ok("four seconds: the context is kicked", S.watchAudio(true, 2, 1006) === "kick" && ctx.suspends === 1, `${ctx.suspends}`);
+    ok("four seconds: a kick is decided but NOT done from the timer", S.watchAudio(true, 2, 1006) === "kick" && ctx.suspends === 0 && S.pendingAudioFix() === "kick");
+    ok("it is done from the next gesture", S.settleAudioFromGesture() === "kick" && ctx.suspends === 1 && S.pendingAudioFix() === "none", `${ctx.suspends}`);
     ok("six, eight, ten: waiting", S.watchAudio(true, 2, 1008) === "none" && S.watchAudio(true, 2, 1010) === "none"
        && S.watchAudio(true, 2, 1012) === "none");
     const v12 = S.watchAudio(true, 2, 1014);
-    ok("twelve seconds of silence: rebuilt, and the listeners told", v12 === "rebuild" && rebuilt === 1 && ctx.closed, `${v12} ${rebuilt}`);
+    ok("twelve seconds of silence: a rebuild is decided", v12 === "rebuild" && rebuilt === 0 && !ctx.closed, `${v12} ${rebuilt}`);
+    ok("and carried out from a gesture, telling the listeners", S.settleAudioFromGesture() === "rebuild" && rebuilt === 1 && ctx.closed);
+    ok("a gesture with nothing pending just resumes", S.settleAudioFromGesture() === "none");
     ok("the black box says so", (S.audioHealth() as { rebuilds: number }).rebuilds === 1 && (S.audioHealth() as { kicks: number }).kicks === 1);
     FakeCtx.loud = 0.2;
     ctx.closed = false;

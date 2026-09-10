@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listNodes, setActiveNode, type NodeInfo } from "./api";
+import { setActiveNodeId } from "./activeNode";
 
 // "My Nodes" settings tab: pick which node the wallet reads. Desktop (this
 // computer's Divi node) is always shown; personal nodes such as DIVI LOVE SCAN
@@ -16,6 +17,7 @@ export function MyNodes() {
       .then((r) => {
         setNodes(r.nodes);
         setActive(r.active);
+        setActiveNodeId(r.active);
       })
       .catch(() => {});
   useEffect(() => {
@@ -29,7 +31,9 @@ export function MyNodes() {
     try {
       await setActiveNode(id);
       setActive(id);
-      // Tell the network map to repoint to the newly-active node immediately.
+      setActiveNodeId(id);
+      /* Everyone: the map repoints, and the shell remounts every panel so
+         nothing from the old node stays on screen (see Shell). */
       window.dispatchEvent(new CustomEvent("dd69:nodeswitch"));
       setNote("Switched. The balance and network view update within a few seconds.");
     } catch (e) {

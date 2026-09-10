@@ -107,9 +107,14 @@ export function WeaponStore({ ship, onTest }: {
                 <em>{spec.note}</em>
               </div>
 
-              <div className="wpn-cost">
+              {/* ---- WHAT THE PRICE COLOUR SAYS ----
+                  Green: you can buy it. Red: you cannot afford it, and the
+                  row says how far short. Owned: the word, in green, instead
+                  of a price. Geoff: a price in green on a thing you cannot
+                  buy looks like an offer. */}
+              <div className={"wpn-cost" + (st.state === "poor" ? " short" : "")}>
                 {st.state === "owned" ? (
-                  <span className="wpn-have">FITTED</span>
+                  <span className="wpn-have">OWNED</span>
                 ) : (
                   <>
                     <b>{spec.points.toLocaleString()} pts</b>

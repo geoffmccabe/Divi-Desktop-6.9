@@ -124,20 +124,44 @@ export function rebuildAudio(): void {
   for (const fn of rebuildListeners) { try { fn(); } catch { /* one bad listener is not all of them */ } }
 }
 
+/* ---- WHY THE FIX WAITS FOR A GESTURE ----
+   WebKit ties a context's right to make sound to a user gesture. A suspend
+   and resume, or a new context, done from a timer can leave a context that
+   says "running" and is not allowed to play: the exact fault this is meant
+   to cure, caused by the cure. So the watchdog only DECIDES; the fix is
+   carried out inside the next real key or pointer press, where the browser
+   will honour it. Until then the verdict is held. */
+let pendingFix: "none" | "kick" | "rebuild" = "none";
+
 /**
  * Call regularly (every couple of seconds is fine) with whether something
  * SHOULD be audible right now. Silence while sound is expected is what it
- * acts on; silence otherwise resets the clock.
+ * acts on; silence otherwise resets the clock. Returns the verdict; the fix
+ * itself waits for settleAudioFromGesture().
  */
 export function watchAudio(expectSound: boolean, dtSeconds: number, nowSeconds = Date.now() / 1000): "none" | "kick" | "rebuild" {
   if (!expectSound || !ctx) { silentFor = 0; return "none"; }
   const level = outputLevel();
-  if (level > 1e-4) { silentFor = 0; return "none"; }
+  if (level > 1e-4) { silentFor = 0; pendingFix = "none"; return "none"; }
   silentFor += dtSeconds;
   const verdict = watchVerdict(silentFor, nowSeconds, lastKickAt, lastRebuildAt);
-  if (verdict === "kick") { lastKickAt = nowSeconds; kickAudio(); }
-  if (verdict === "rebuild") { lastRebuildAt = nowSeconds; silentFor = 0; rebuildAudio(); }
+  if (verdict === "kick") { lastKickAt = nowSeconds; pendingFix = "kick"; }
+  if (verdict === "rebuild") { lastRebuildAt = nowSeconds; silentFor = 0; pendingFix = "rebuild"; }
   return verdict;
+}
+
+/** What the watchdog is waiting to do, for the black box. */
+export function pendingAudioFix(): "none" | "kick" | "rebuild" { return pendingFix; }
+
+/** From a real key or pointer handler: carry out whatever the watchdog
+ *  decided. Also resumes a suspended context, which is the ordinary case. */
+export function settleAudioFromGesture(): "none" | "kick" | "rebuild" {
+  const did = pendingFix;
+  pendingFix = "none";
+  if (did === "kick") kickAudio();
+  else if (did === "rebuild") rebuildAudio();
+  else if (ctx && ctx.state === "suspended") void ctx.resume();
+  return did;
 }
 
 /** For the black box. */
@@ -147,6 +171,7 @@ export function audioHealth(): Record<string, unknown> {
     level: Math.round(outputLevel() * 10000) / 10000,
     silentFor: Math.round(silentFor),
     kicks, rebuilds,
+    pending: pendingFix,
     sampleRate: ctx?.sampleRate ?? 0,
     bus: !!master,
   };
@@ -156,6 +181,7 @@ export function audioHealth(): Record<string, unknown> {
 export function resetSoundForTests(): void {
   ctx = null; master = null; analyser = null; samples = null;
   kicks = 0; rebuilds = 0; silentFor = 0; lastKickAt = 0; lastRebuildAt = 0;
+  pendingFix = "none";
   rebuildListeners.clear();
 }
 
