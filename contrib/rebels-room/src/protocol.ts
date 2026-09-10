@@ -97,7 +97,7 @@ export interface StateOut {
   /** [id, x,y,z, fx,fy,fz, guard, shield] */
   P: Array<[string, number, number, number, number, number, number, number, number]>;
   /** [x,y,z, fx,fy,fz, tier, shield, shieldMax] */
-  E: Array<[number, number, number, number, number, number, number, number, number]>;
+  E: Array<[number, number, number, number, number, number, number, number, number, number?]>;
   /** [x,y,z, vx,vy,vz, hostile, mini] */
   B: Array<[number, number, number, number, number, number, number, number]>;
   /** [x,y,z] */

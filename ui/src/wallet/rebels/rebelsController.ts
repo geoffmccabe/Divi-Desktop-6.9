@@ -19,6 +19,7 @@ import {
   fireMini, miniMuzzle, spawnFleet,
   STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
   type CombatState,
+  type Enemy, type ShipClass,
 } from "./rebelsCombat";
 import { userWonRecently } from "../stakeWin";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT, playerName } from "./rebelsScores";
@@ -38,6 +39,7 @@ import { pulseHealth } from "./healthPulse";
 import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
+import { droneClass } from "./rebelsFlock";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
 import {
   watchAudio, audioHealth, settleAudioFromGesture, watchOutputDevices, requestAudioRebuild, noteLevel,
@@ -1316,7 +1318,24 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
           /* The room's fight, put where the drawing already looks for it. */
           combat.enemies.length = 0;
+          let di = 0;
           for (const e of room.enemies) {
+            /* A drone from the wire is drawn as a drone: the sphere pass reads
+               the flag, the colour comes from the drone tier, and the pulse
+               phase is stable per slot so the swarm does not throb in unison. */
+            if (e.drone) {
+              const cls = droneClass(e.tier);
+              combat.enemies.push({
+                pos: e.pos, fwd: e.fwd, roll: 0,
+                cls: { ...cls, weight: 0 } as ShipClass,
+                shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
+                spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
+                weave: 0, weaveDir: 1, mode: "in", breakAt: 0, rejoinAt: 0,
+                escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
+                drone: true, group: 0, fleet: 0, slot: 0, pulse: (di++ * 0.73) % (Math.PI * 2),
+              } as Enemy);
+              continue;
+            }
             combat.enemies.push({
               pos: e.pos, fwd: e.fwd, roll: 0,
               cls: TIERS[Math.max(0, Math.min(TIERS.length - 1, e.tier - 1))],
@@ -1591,7 +1610,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             guards: flight.guards,
             guarding: flight.guardFor > 0,
             contacts: combat.enemies.length,
-            kills: combat.kills,
+            kills: Math.floor(combat.kills),
             score,
             junk: combat.junk.length,
             bonus: damageScale() > 1,

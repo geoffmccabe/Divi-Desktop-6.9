@@ -15,6 +15,12 @@ import {
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   type CombatState, type Enemy,
   ENEMY_SPEED,
+  stepFlockSpawns,
+  setFlockRandomForTests,
+  COIN_MAGNET,
+  COIN_RADIUS,
+  COIN_KICK,
+  spawnFleet,
 } from "./rebelsCombat";
 
 const out: string[] = [];
@@ -1345,6 +1351,73 @@ console.log(out.join("\n"));
   ok("a tier-one fighter misses a still ship at thirty units about half the time",
      missesT1 > 120 && missesT1 < 280, `${missesT1}/400`);
   ok("a tier-seven fighter does not miss a still ship", missesT7 === 0, `${missesT7}/400`);
+}
+
+/* ---- natural flocks: a roll every five seconds, from the nearest planet ---- */
+{
+  const c = createCombat();
+  const w = world();
+  const rolls: number[] = [];
+  setFlockRandomForTests(() => rolls.shift() ?? 0.5);
+  stepFlockSpawns(c, 4.9, w);
+  ok("nothing before five seconds", c.flocks.length === 0);
+  rolls.push(0.5);                       /* the spawn roll: fails (>= 1%) */
+  stepFlockSpawns(c, 0.2, w);
+  ok("a failed roll spawns nothing", c.flocks.length === 0 && c.flockClock < 5);
+  rolls.push(0.005, 0.1);                /* spawn: yes; tier roll: one */
+  c.flockClock = 5;
+  const made = stepFlockSpawns(c, 0, w);
+  ok("a one-in-a-hundred roll brings a flock", c.flocks.length === 1 && made.length === 24, `${c.flocks.length} groups, ${made.length} drones`);
+  ok("of tier one, twenty-four strong", c.flocks[0].tier === 1 && c.enemies.filter((e) => e.drone).length === 24);
+  ok("born in transit from a planet", c.flocks[0].phase === "transit");
+  const home = c.flocks[0].home;
+  ok("its home is a planet, far out", home.length() > 800, `${home.length().toFixed(0)}`);
+  ok("and it starts just off that planet's surface, on the near side",
+     made[0].pos.distanceTo(home) < 400 && made[0].pos.distanceTo(w.playerPos) < home.distanceTo(w.playerPos),
+     `${made[0].pos.distanceTo(home).toFixed(0)}`);
+  ok("not a cheat flock: it is worth something", !made[0].cheat);
+  rolls.push(0.005, 0.9995);             /* spawn: yes; tier: seven */
+  c.flockClock = 5;
+  const big = stepFlockSpawns(c, 0, w);
+  ok("a tier-seven roll brings forty-eight", big.length === 48 && c.flocks[1].tier === 7, `${big.length}`);
+  setFlockRandomForTests(null);
+}
+
+/* ---- what a flock member is worth ---- */
+{
+  const c = createCombat();
+  const w = world();
+  const [d] = spawnFleet(c, 1, w.playerPos, w.playerFwd, { count: 1 });
+  const coinsBefore = c.coins.length;
+  hurtEnemy(c, d, 999, d.pos.clone().add(new THREE.Vector3(0, 0, 1)), "me");
+  ok("a flock member counts a fifth of a kill", Math.abs(c.kills - 0.2) < 1e-9, `${c.kills}`);
+  ok("and drops one coin, not five", c.coins.length - coinsBefore === 1, `${c.coins.length - coinsBefore}`);
+  const down = c.events.find((e) => e.kind === "enemyDown");
+  ok("the event says so, for the room", down?.worth === 0.2, `${down?.worth}`);
+  const hit = c.events.find((e) => e.kind === "enemyHit");
+  ok("damage on a drone scores, capped at what it had", hit?.damage === 50, `${hit?.damage}`);
+
+  const c2 = createCombat();
+  const [cheat] = spawnFleet(c2, 1, w.playerPos, w.playerFwd, { count: 1, cheat: true });
+  hurtEnemy(c2, cheat, 999, cheat.pos.clone().add(new THREE.Vector3(0, 0, 1)), "me");
+  ok("a cheat drone is worth nothing at all", c2.kills === 0 && c2.coins.length === 0
+     && c2.events.find((e) => e.kind === "enemyDown")?.worth === 0
+     && c2.events.find((e) => e.kind === "enemyHit")?.damage === 0);
+}
+
+/* ---- coins: magnetic within twenty diameters, and shot away ---- */
+{
+  ok("the magnet reaches twenty diameters", Math.abs(COIN_MAGNET - COIN_RADIUS * 40) < 1e-9, `${COIN_MAGNET}`);
+  const c = createCombat();
+  const at = new THREE.Vector3(0, 0, R + 20);
+  c.coins.push({ pos: at.clone(), vel: new THREE.Vector3(), spin: 0, value: 1 });
+  /* A round through it. */
+  c.bullets.push({ pos: at.clone().add(new THREE.Vector3(0, 0, -2)), vel: new THREE.Vector3(0, 0, 60), life: 3, hostile: false });
+  stepCombat(c, 1 / 30, world());
+  ok("the round is spent on the coin", c.bullets.length === 0);
+  ok("the coin recoils along the round", c.coins[0].vel.z > COIN_KICK * 0.8, `${c.coins[0].vel.z.toFixed(1)}`);
+  ok("and spins", Math.abs(c.coins[0].spinVel ?? 0) > 0);
+  ok("with a hit event for the sound", c.events.some((e) => e.kind === "coinHit"));
 }
 
 console.log(`\n${out.length - failures} passed, ${failures} failed`);

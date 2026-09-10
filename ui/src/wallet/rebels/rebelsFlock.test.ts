@@ -14,11 +14,31 @@ import {
   slotOffsets, splitSizes, pickSplit, turnToward, avoidPlanet, resetFlockIds,
   FORM_SPACING, SPLIT_RANGE, DRONE_TIERS, DRONE_CAP, FLEET_SIZE,
   DRONE_RELOAD, DRONE_BULLET_SPEED, TOUCH_R,
+  FLEET_SIZES,
+  fleetSize,
+  TIER_ODDS,
+  rollFlockTier,
+  SPAWN_CHECK_SECONDS,
+  SPAWN_CHANCE,
+  SHAPE_COUNTS,
+  DRONE_KILL_WORTH,
+  TRANSIT_SPEED,
+  HUNT_RANGE,
+  GIVE_UP_SECONDS,
+  HOME_ARRIVE,
+  LEASH,
+  newGroup,
+  stepFlock,
 } from "./rebelsFlock";
 import {
   createCombat, stepCombat, spawnFleet, hurtEnemy, clearEvents,
   BULLET_SPEED, type CombatState, type Enemy,
+  setFlockRandomForTests,
 } from "./rebelsCombat";
+
+/* These tests simulate minutes of play; the one-percent natural flock roll
+   would add fleets nobody asked for. Off, unless a test turns it on. */
+setFlockRandomForTests(() => 1);
 
 const out: string[] = [];
 let failures = 0;
@@ -304,7 +324,9 @@ type Bullet = never;
   const earned = createCombat();
   const real = spawnFleet(earned, 1, home, new THREE.Vector3(1, 0, 0));
   for (const d of [...real]) hurtEnemy(earned, d, 999, home, "me");
-  ok("an earned fleet does pay", earned.coins.length > 0 && earned.kills === real.length,
+  /* A member is a fifth of a fighter: a fifth of a kill each, one coin each. */
+  ok("an earned fleet does pay, a fifth of a kill a member",
+     earned.coins.length === real.length && Math.abs(earned.kills - real.length * 0.2) < 1e-6,
     `${earned.kills} kills, ${earned.coins.length} coins`);
   ok("drone kills never inflate the fighter tiers",
     earned.tierKills.every((n) => n === 0));
@@ -312,9 +334,9 @@ type Bullet = never;
 
 /* ------------------------------------------------------- tiers and health */
 {
-  ok("six tiers, grey first", DRONE_TIERS.length === 6 && DRONE_TIERS[0].name === "Grey");
-  ok("then gold, green, blue, purple, red",
-    DRONE_TIERS.map((t) => t.name).join(",") === "Grey,Gold,Green,Blue,Purple,Red");
+  ok("seven tiers, yellow first", DRONE_TIERS.length === 7 && DRONE_TIERS[0].name === "Yellow");
+  ok("then green, blue, purple, red, white, fuchsia",
+    DRONE_TIERS.map((t) => t.name).join(",") === "Yellow,Green,Blue,Purple,Red,White,Fuchsia");
   ok("tier one has fifty health", DRONE_TIERS[0].shieldMax === 50);
   ok("higher tiers are tougher and quicker",
     DRONE_TIERS.every((t, i) => i === 0
@@ -322,10 +344,10 @@ type Bullet = never;
 
   resetFlockIds();
   const c = createCombat();
-  const red = spawnFleet(c, 6, home, new THREE.Vector3(1, 0, 0), { cheat: true });
-  ok("a tier six fleet is red", red[0].cls.colour === 0xff4d4d);
-  ok("a tier out of range is clamped, not crashed",
-    spawnFleet(createCombat(), 99, home, new THREE.Vector3(1, 0, 0)).length === FLEET_SIZE);
+  const red = spawnFleet(c, 5, home, new THREE.Vector3(1, 0, 0), { cheat: true });
+  ok("a tier five fleet is red", red[0].cls.colour === 0xff4d4d);
+  ok("a tier out of range is clamped to seven, not crashed",
+    spawnFleet(createCombat(), 99, home, new THREE.Vector3(1, 0, 0)).length === fleetSize(7));
 }
 
 /* --------------------------------------------------------- what it costs */
@@ -347,6 +369,75 @@ type Bullet = never;
      more than the loop it would replace. */
   ok("a fleet of twenty-four is cheap", per < 1.0, `${per.toFixed(3)} ms per step`);
   out.push(`      (${drones(c).length} drones, ${c.flocks.length} groups, ${per.toFixed(3)} ms/step)`);
+}
+
+/* ---- Geoff's tiers, sizes and odds (2026-Sep-09 brief, decisions Sep-10) ---- */
+{
+  ok("seven tiers", DRONE_TIERS.length === 7, `${DRONE_TIERS.length}`);
+  ok("in his order: yellow, green, blue, purple, red, white, fuchsia",
+     DRONE_TIERS.map((t) => t.name).join(",") === "Yellow,Green,Blue,Purple,Red,White,Fuchsia",
+     DRONE_TIERS.map((t) => t.name).join(","));
+  ok("health fifty plus twenty-five a tier", DRONE_TIERS[0].shieldMax === 50 && DRONE_TIERS[6].shieldMax === 200);
+  ok("speed fifteen percent a tier", Math.abs(DRONE_TIERS[6].speed - 1.9) < 1e-9);
+  ok("fleets of 24, 28, 32, 36, 40, 44, 48", FLEET_SIZES.join(",") === "24,28,32,36,40,44,48" && fleetSize(3) === 32 && fleetSize(99) === 48);
+  ok("shape counts 6 to 18", SHAPE_COUNTS.join(",") === "6,8,10,12,14,16,18");
+  ok("a member is a fifth of a fighter", DRONE_KILL_WORTH === 0.2);
+  ok("a roll every five seconds at one percent", SPAWN_CHECK_SECONDS === 5 && SPAWN_CHANCE === 0.01);
+
+  /* Odds: 70%, 21%, 6.3%... each three tenths of the one below, summing to one. */
+  const sum = TIER_ODDS.reduce((a, b) => a + b, 0);
+  ok("the odds sum to one", Math.abs(sum - 1) < 1e-9, `${sum}`);
+  ok("tier one about seventy percent", Math.abs(TIER_ODDS[0] - 0.7) < 0.001, `${TIER_ODDS[0]}`);
+  ok("tier two about twenty-one", Math.abs(TIER_ODDS[1] - 0.21) < 0.001, `${TIER_ODDS[1]}`);
+  ok("tier three about six point three", Math.abs(TIER_ODDS[2] - 0.063) < 0.001, `${TIER_ODDS[2]}`);
+  ok("tier seven is very rare indeed", TIER_ODDS[6] < 0.0006 && TIER_ODDS[6] > 0.0004, `${TIER_ODDS[6]}`);
+  ok("a low roll is tier one", rollFlockTier(() => 0.1) === 1);
+  ok("a roll just past seventy is tier two", rollFlockTier(() => 0.75) === 2);
+  ok("a roll at 0.9995 is tier seven", rollFlockTier(() => 0.9995) === 7);
+  ok("a roll of exactly one lands on the rarest, not off the end", rollFlockTier(() => 1) === 7);
+  /* Ten thousand rolls: the counts follow the table. */
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  const counts = [0, 0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < 10000; i++) counts[rollFlockTier(rnd) - 1]++;
+  ok("ten thousand rolls: about seven thousand tier one", counts[0] > 6700 && counts[0] < 7300, `${counts.join(",")}`);
+  ok("and about two thousand one hundred tier two", counts[1] > 1900 && counts[1] < 2300, `${counts[1]}`);
+}
+
+/* ---- the journey: transit, hunt, leave ---- */
+{
+  const home = new THREE.Vector3(0, 0, R + 1200);
+  const player = new THREE.Vector3(0, 0, R + 30);
+  const g = newGroup(1, 1, home.clone(), new THREE.Vector3(0, 0, -1), home);
+  ok("a group born at a planet starts in transit", g.phase === "transit" && g.home.equals(home));
+  const cheat = newGroup(2, 1, player.clone(), new THREE.Vector3(1, 0, 0));
+  ok("a cheat-key group with no planet is already hunting", cheat.phase === "hunt");
+
+  const d: any[] = [{ group: g.id, slot: 0, pos: home.clone(), fwd: new THREE.Vector3(0, 0, -1), vel: new THREE.Vector3(), tumble: new THREE.Vector3(), fireAt: 99, cls: DRONE_TIERS[0], pulse: 0 }];
+  const w = { playerPos: player, scale: () => 1, nearest: () => player, despawn: (_id: number) => { despawned.push(_id); } };
+  const despawned: number[] = [];
+  const before = g.centre.distanceTo(player);
+  stepFlock([g], d, 1, w);
+  const after = g.centre.distanceTo(player);
+  ok("in transit it closes on the player fast", after < before - 30, `${before.toFixed(0)} -> ${after.toFixed(0)}`);
+  ok("and is still in transit at a thousand units", g.phase === "transit");
+  /* Deliver it to the edge of hunting range. */
+  g.centre.copy(player).add(new THREE.Vector3(0, 0, HUNT_RANGE - 1));
+  stepFlock([g], d, 0.1, w);
+  ok("inside hunting range it starts to hunt", g.phase === "hunt" && g.mode === "form", `${g.phase}/${g.mode}`);
+
+  /* Nobody to hunt: after a minute it turns for home. */
+  const gone = { ...w, nearest: () => null };
+  for (let t = 0; t < GIVE_UP_SECONDS + 1; t += 1) stepFlock([g], d, 1, gone);
+  ok("with nobody alive for a minute it leaves", g.phase === "leave", g.phase);
+  const homeBefore = g.centre.distanceTo(home);
+  stepFlock([g], d, 1, gone);
+  ok("heading home, fast", g.centre.distanceTo(home) < homeBefore - 30);
+  g.centre.copy(home).add(new THREE.Vector3(HOME_ARRIVE - 1, 0, 0));
+  const groups = [g];
+  stepFlock(groups, d, 0.1, gone);
+  ok("arriving home, it asks to be removed and is dropped", despawned.includes(g.id) && groups.length === 0, `${despawned} ${groups.length}`);
+  ok("a leash of six hundred units decides who counts as prey", LEASH === 600 && TRANSIT_SPEED === 5);
 }
 
 console.log(out.join("\n"));

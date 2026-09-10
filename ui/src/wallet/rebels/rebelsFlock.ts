@@ -42,9 +42,12 @@ export interface DroneClass {
   speed: number;
 }
 
-const DRONE_COLOURS = [0x9aa3ad, 0xf0c14b, 0x57e06a, 0x4fa8ff, 0xa96bff, 0xff4d4d];
-const DRONE_NAMES = ["Grey", "Gold", "Green", "Blue", "Purple", "Red"];
-
+/* ---- THE SEVEN ----
+   Geoff's colours, in his order: yellow, green, blue, purple, red, white,
+   fuchsia. Health fifty at tier one and twenty-five more per tier, speed
+   fifteen percent more per tier: the ramps he confirmed. */
+const DRONE_COLOURS = [0xf5d90a, 0x57e06a, 0x4fa8ff, 0xa96bff, 0xff4d4d, 0xf2f6ff, 0xff45d0];
+const DRONE_NAMES = ["Yellow", "Green", "Blue", "Purple", "Red", "White", "Fuchsia"];
 export const DRONE_TIERS: DroneClass[] = DRONE_COLOURS.map((colour, i) => ({
   tier: i + 1,
   name: DRONE_NAMES[i],
@@ -52,6 +55,57 @@ export const DRONE_TIERS: DroneClass[] = DRONE_COLOURS.map((colour, i) => ({
   shieldMax: 50 + i * 25,
   speed: 1 + i * 0.15,
 }));
+
+/** How many arrive, by tier: "24, 28, 32, 36, 40, 44, 48". */
+export const FLEET_SIZES = [24, 28, 32, 36, 40, 44, 48];
+export function fleetSize(tier: number): number {
+  return FLEET_SIZES[Math.max(0, Math.min(FLEET_SIZES.length - 1, Math.round(tier) - 1))];
+}
+
+/** How many extra shapes grow out of a drone, by tier: "6, 8, 10, 12, 14, 16"
+ *  and 18 for the seventh, as agreed. Data for the drawing. */
+export const SHAPE_COUNTS = [6, 8, 10, 12, 14, 16, 18];
+
+/* ---- HOW RARE ----
+   "70%, 21%, 6.3%, etc": each tier is three tenths as likely as the one
+   below. Carried to seven and scaled to sum to one, so a roll always lands;
+   the very top of the range is tier seven. */
+export const TIER_ODDS: number[] = (() => {
+  const raw = DRONE_TIERS.map((_, i) => 0.7 * Math.pow(0.3, i));
+  const sum = raw.reduce((a, b) => a + b, 0);
+  return raw.map((w) => w / sum);
+})();
+
+export function rollFlockTier(rnd: () => number = Math.random): number {
+  /* Kept inside [0, 1): the top of the range is the rarest tier, and a roll
+     of exactly one must land there rather than fall off the end. */
+  let r = Math.min(Math.max(rnd(), 0), 1 - 1e-9);
+  for (let i = 0; i < TIER_ODDS.length; i++) {
+    r -= TIER_ODDS[i];
+    if (r <= 0) return i + 1;
+  }
+  return 1;
+}
+
+/** "1% chance to spawn a flock each 5 seconds of gameplay." */
+export const SPAWN_CHECK_SECONDS = 5;
+export const SPAWN_CHANCE = 0.01;
+
+/** A flock member is a fifth of a fighter: in kill count and in coins. */
+export const DRONE_KILL_WORTH = 0.2;
+
+/* ---- THE JOURNEY ----
+   Flocks come from the nearest planet, which is a thousand units out or
+   more. Geoff: "fly faster to Earth but it's okay if it takes a while." So
+   they cross at several times fighting speed and drop to it inside
+   HUNT_RANGE of their target. A flock whose prey is gone for GIVE_UP_SECONDS
+   (dead, or out past the leash) turns for home and is gone when it gets
+   there, so a dead room does not fill with idle drones. */
+export const TRANSIT_SPEED = 5;
+export const HUNT_RANGE = 220;
+export const LEASH = 600;
+export const GIVE_UP_SECONDS = 60;
+export const HOME_ARRIVE = 40;
 
 export function droneClass(tier: number): DroneClass {
   return DRONE_TIERS[Math.max(0, Math.min(DRONE_TIERS.length - 1, Math.round(tier) - 1))];
@@ -140,8 +194,16 @@ export const SPLIT_TURN = 0.7;
  * they hold their slot and push off each other, and everything that reads as
  * intent comes from here.
  */
+export type FlockPhase = "transit" | "hunt" | "leave";
+
 export interface FlockGroup {
   id: number;
+  /** Crossing from its planet, fighting, or going home. */
+  phase: FlockPhase;
+  /** The planet it came from, and returns to. */
+  home: THREE.Vector3;
+  /** Seconds without anyone to hunt. */
+  idle: number;
   /** Which fleet it was born in, so a fleet can be counted or cleared. */
   fleet: number;
   tier: number;
@@ -310,6 +372,11 @@ export interface FlockDrone {
 /** Somewhere for a group to be told about the world it is flying in. */
 export interface FlockWorld {
   playerPos: THREE.Vector3;
+  /** The nearest living player to a point, or null when nobody is alive.
+   *  Absent, playerPos is everyone. */
+  nearest?: (from: THREE.Vector3) => THREE.Vector3 | null;
+  /** A group has reached home and is done: remove its drones. */
+  despawn?: (groupId: number) => void;
   /** The open-space speed multiplier at a given height, so a swarm out among
    *  the planets can keep up with a player who is also moving faster there.
    *  The fighters had to learn this: without it the sky quietly empties. */
@@ -339,9 +406,13 @@ function sideways(v: THREE.Vector3): THREE.Vector3 {
  */
 export function newGroup(
   fleet: number, tier: number, at: THREE.Vector3, heading: THREE.Vector3,
+  home: THREE.Vector3 | null = null,
 ): FlockGroup {
   return {
     id: nextGroupId++,
+    phase: home ? "transit" : "hunt",
+    home: home ? home.clone() : at.clone(),
+    idle: 0,
     fleet,
     tier,
     mode: "form",
@@ -397,14 +468,40 @@ export function stepFlock(
   const born: FlockGroup[] = [];
 
   for (const g of groups) {
-    toPlayer.copy(w.playerPos).sub(g.centre);
+    const prey = w.nearest ? w.nearest(g.centre) : w.playerPos;
+    toPlayer.copy(prey ?? w.playerPos).sub(g.centre);
     const range = toPlayer.length();
     toPlayer.divideScalar(range || 1);
 
     if (g.wait > 0) g.wait -= dt;
     if (g.flash > 0) g.flash = Math.max(0, g.flash - dt);
 
-    if (g.mode === "form") {
+    /* ---- the journey: crossing, fighting, going home ---- */
+    if (prey && range <= LEASH) g.idle = 0; else g.idle += dt;
+    let quick = 1;
+    if (g.phase === "transit") {
+      if (prey && range <= HUNT_RANGE) {
+        g.phase = "hunt";
+        g.mode = "form";
+      } else {
+        want.copy(toPlayer);
+        quick = TRANSIT_SPEED;
+      }
+    } else if (g.phase === "hunt" && g.idle >= GIVE_UP_SECONDS) {
+      g.phase = "leave";
+    }
+    if (g.phase === "leave") {
+      want.copy(g.home).sub(g.centre);
+      const left = want.length();
+      want.divideScalar(left || 1);
+      quick = TRANSIT_SPEED;
+      if (left <= HOME_ARRIVE) {
+        w.despawn?.(g.id);
+        g.alive = 0;
+      }
+    }
+
+    if (g.phase === "hunt" && g.mode === "form") {
       /* Come in as one body, aimed a little to one side of the player rather
          than straight down their throat, so the fleet arrives ACROSS the view
          instead of appearing as a dot that gets bigger. */
@@ -416,7 +513,7 @@ export function stepFlock(
         g.mode = "run";
         g.timer = RUN_SECONDS;
       }
-    } else if (g.mode === "run") {
+    } else if (g.phase === "hunt" && g.mode === "run") {
       want.copy(toPlayer);
       g.timer -= dt;
       if (range < RUN_BREAK || g.timer <= 0) {
@@ -431,7 +528,7 @@ export function stepFlock(
           .addScaledVector(sideways(g.fwd), 0.45)
           .normalize();
       }
-    } else {
+    } else if (g.phase === "hunt") {
       want.copy(g.escape);
       if (range > RUN_REJOIN) {
         g.mode = "run";
@@ -448,10 +545,11 @@ export function stepFlock(
 
     turnToward(g.fwd, want, DRONE_TURN * 0.85 * dt, axis);
     const open = w.scale(g.centre.length() - R);
-    g.centre.addScaledVector(g.fwd, DRONE_SPEED * droneClass(g.tier).speed * open * dt);
+    g.centre.addScaledVector(g.fwd, DRONE_SPEED * droneClass(g.tier).speed * open * quick * dt);
     g.aim.copy(g.centre);
   }
   for (const g of born) groups.push(g);
+  for (let i = groups.length - 1; i >= 0; i--) if (groups[i].alive === 0) groups.splice(i, 1);
 
   /* ---- 3. the drones ---- */
   const slotCache = new Map<number, THREE.Vector3[]>();

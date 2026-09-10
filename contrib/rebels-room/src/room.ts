@@ -311,7 +311,8 @@ export class RebelsRoom {
         /* Points are the damage that landed, exactly as in the solo game. */
         who.score += Math.round(ev.damage ?? 0);
       } else if (ev.kind === "enemyDown" && who) {
-        who.kills += 1;
+        /* A fighter is a kill; a flock member a fifth of one. */
+        who.kills += ev.worth ?? 1;
         /* The bounty, in DIVI, at the rate the payout promises: a thousand
            kills is a hundred DIVI, so a kill is a tenth. The coins scattered by
            the wreck are the same tenth made visible and collectable, so only
@@ -691,6 +692,9 @@ export class RebelsRoom {
         r1(e.pos.x), r1(e.pos.y), r1(e.pos.z),
         r1(e.fwd.x), r1(e.fwd.y), r1(e.fwd.z),
         e.cls.tier, Math.max(0, Math.round(e.shield)), e.cls.shieldMax,
+        /* A drone is drawn as a sphere, a fighter as a hull: the cockpit has
+           to be told which. */
+        e.drone ? 1 : 0,
       ]),
       B: c.bullets.map((b) => [
         r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),

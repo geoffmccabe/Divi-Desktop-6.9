@@ -3,11 +3,12 @@
 // same way the flight model is.
 
 import * as THREE from "three";
-import { R, cruiseScale } from "./orbitWorld";
+import { R, cruiseScale, nearestPlanet } from "./orbitWorld";
 import { BEAM_SECONDS, type WeaponSpec } from "./weaponCatalog";
 import {
   droneClass, newGroup, newFleetId, stepFlock, reslot, slotOffsets,
-  FLEET_SIZE, DRONE_CAP, DRONE_R, DRONE_RELOAD, DRONE_BULLET_SPEED, DRONE_FIRE_RANGE,
+  fleetSize, rollFlockTier, SPAWN_CHECK_SECONDS, SPAWN_CHANCE, DRONE_KILL_WORTH,
+  DRONE_CAP, DRONE_R, DRONE_RELOAD, DRONE_BULLET_SPEED, DRONE_FIRE_RANGE,
   type FlockGroup,
 } from "./rebelsFlock";
 
@@ -191,7 +192,15 @@ export const COIN_MU = Math.round(COIN_ORBIT * COIN_ORBIT * (R + 14));
 export const COIN_R = 0.031;
 /** How close counts as collected, and how close before it starts coming to you. */
 export const COIN_PICKUP = 2.2;
-export const COIN_MAGNET = 11;
+/** How big a coin is drawn, which is also how big it is to a round. */
+export const COIN_RADIUS = 0.33;
+/* ---- MAGNETIC, LIKE MINECRAFT XP ----
+   Geoff: "if you're within 20 diameters (their diameters) then they begin to
+   move towards you." Twenty diameters of a coin. Gems use the same rule. */
+export const COIN_MAGNET = COIN_RADIUS * 2 * 20;
+/** A round that hits a coin sends it off at this much speed, spinning. */
+export const COIN_KICK = 9;
+export const COIN_KICK_SPIN = 14;
 export const COIN_MAX = 400;
 
 
@@ -199,6 +208,8 @@ export interface Coin {
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   spin: number;
+  /** Spin rate, which a hit knocks up and drag brings down. */
+  spinVel?: number;
   value: number;
 }
 /* Halved along with the player's, so a dogfight plays exactly as it did while
@@ -402,13 +413,16 @@ export interface Torpedo {
 
 export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
-      | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "waveStart"
+      | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "coinHit" | "waveStart"
       | "incoming" | "blocked";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
   power: number;
   /** enemyHit only: what the shield is down to, 0..1 of its class maximum. */
   shield?: number;
+  /** enemyDown only: what the kill counts for. A fighter is 1, a flock
+   *  member a fifth, a cheat drone nothing. */
+  worth?: number;
   /** enemyHit only: damage actually landed, which is what scores. */
   damage?: number;
   /** enemyDown only: which of the seven it was. */
@@ -501,6 +515,8 @@ export interface CombatState {
   wave: Wave | null;
   /** Live swarm formations. Empty until a fleet is sent. */
   flocks: FlockGroup[];
+  /** Seconds toward the next roll for a natural flock. */
+  flockClock: number;
   kills: number;
   /** Kills this run, one count per tier, indexed from zero. */
   tierKills: number[];
@@ -511,7 +527,7 @@ export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
     beams: [],
-    wave: null, flocks: [],
+    wave: null, flocks: [], flockClock: 0,
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -551,7 +567,8 @@ export function hurtEnemy(
   c.events.push({
     kind: "enemyHit", at: e.pos.clone(), power: Math.min(2, 0.4 + amount / 90),
     shield: Math.max(0, e.shield) / e.cls.shieldMax,
-    damage: applied,
+    /* Damage scores, for drones too; a cheat drone's does not. */
+    damage: e.cheat ? 0 : applied,
     who: by,
   });
 
@@ -567,15 +584,16 @@ export function hurtEnemy(
        exploit in the game. The guard is here, at the one place a kill is
        recorded, rather than at the call sites, so a new way to kill something
        cannot quietly reopen it. */
+    const worth = e.drone ? DRONE_KILL_WORTH : 1;
     if (!e.cheat) {
-      c.kills++;
+      c.kills += worth;
       /* Drone tiers are their own scale and would otherwise land in the
          fighter tier buckets and inflate them. */
       if (!e.drone) c.tierKills[e.cls.tier - 1] += 1;
     }
     c.events.push({
       kind: "enemyDown", at: e.pos.clone(), power: e.drone ? 2 : 3,
-      tier: e.cls.tier, who: by,
+      tier: e.cls.tier, who: by, worth: e.cheat ? 0 : worth,
     });
   }
   return applied;
@@ -632,7 +650,10 @@ function breakUp(c: CombatState, e: Enemy): void {
  */
 function scatterCoins(c: CombatState, e: Enemy): void {
   const up = e.pos.clone().normalize();
-  for (let i = 0; i < COIN_PER_KILL; i++) {
+  /* A fifth of a fighter's coins for a drone: one. A cheat drone drops none. */
+  if (e.cheat) return;
+  const coins = e.drone ? Math.max(1, Math.round(COIN_PER_KILL * DRONE_KILL_WORTH)) : COIN_PER_KILL;
+  for (let i = 0; i < coins; i++) {
     /* Thrown outward in a spread around the fighter's own heading. */
     const dir = e.fwd.clone()
       .addScaledVector(e.vel.clone().normalize(), 0.4)
@@ -946,16 +967,47 @@ export function droneFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
  * happens later and on its own, when the formation gets close enough that a
  * player can see it happen.
  */
+/* The roll for a natural flock. Swappable so a test can make one happen. */
+let flockRandom: () => number = Math.random;
+export function setFlockRandomForTests(fn: (() => number) | null): void {
+  flockRandom = fn ?? Math.random;
+}
+
+/**
+ * Every five seconds, a one-in-a-hundred roll; on a hit, a flock of a rolled
+ * tier sets out from the planet nearest a living player. Nothing spawns with
+ * nobody there, and nothing past the drone cap.
+ */
+export function stepFlockSpawns(c: CombatState, dt: number, w: CombatWorld): Enemy[] {
+  c.flockClock += dt;
+  if (c.flockClock < SPAWN_CHECK_SECONDS) return [];
+  c.flockClock -= SPAWN_CHECK_SECONDS;
+  if (flockRandom() >= SPAWN_CHANCE) return [];
+  if (w.players && !w.players.length) return [];
+  const target = (w.players && w.players.length) ? w.players[0] : null;
+  const pos = target ? target.pos : w.playerPos;
+  const fwd = target ? target.fwd : w.playerFwd;
+  const tier = rollFlockTier(flockRandom);
+  const drones = c.enemies.filter((e) => e.drone).length;
+  if (drones + fleetSize(tier) > DRONE_CAP) return [];
+  const planet = nearestPlanet(pos);
+  /* Off the planet's surface, on the side facing the target, so the flock
+     is seen leaving it rather than materialising inside it. */
+  const toward = pos.clone().sub(planet.centre).normalize();
+  const from = planet.centre.clone().addScaledVector(toward, planet.radius + 30);
+  return spawnFleet(c, tier, pos, fwd, { from, home: planet.centre, count: fleetSize(tier) });
+}
+
 export function spawnFleet(
   c: CombatState,
   tier: number,
   playerPos: THREE.Vector3,
   playerFwd: THREE.Vector3,
-  opts: { count?: number; cheat?: boolean } = {},
+  opts: { count?: number; cheat?: boolean; from?: THREE.Vector3; home?: THREE.Vector3 } = {},
 ): Enemy[] {
   const cls = droneClass(tier);
   const room = Math.max(0, DRONE_CAP - c.enemies.filter((e) => e.drone).length);
-  const count = Math.min(opts.count ?? FLEET_SIZE, room);
+  const count = Math.min(opts.count ?? fleetSize(tier), room);
   if (count <= 0) return [];
 
   /* Out in front and off to one side, far enough away to be a shape on the
@@ -964,7 +1016,7 @@ export function spawnFleet(
      arrive, and arriving is most of what this is for. */
   const up = playerPos.clone().normalize();
   const side = new THREE.Vector3().crossVectors(playerFwd, up).normalize();
-  const at = playerPos.clone()
+  const at = opts.from ? opts.from.clone() : playerPos.clone()
     .addScaledVector(playerFwd, 300)
     .addScaledVector(side, (Math.random() - 0.5) * 160)
     .addScaledVector(up, 40 + Math.random() * 90);
@@ -974,7 +1026,7 @@ export function spawnFleet(
 
   const heading = playerPos.clone().sub(at).normalize();
   const fleet = newFleetId();
-  const g = newGroup(fleet, cls.tier, at, heading);
+  const g = newGroup(fleet, cls.tier, at, heading, opts.home ?? null);
   c.flocks.push(g);
 
   const slots = slotOffsets(count);
@@ -1240,6 +1292,24 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     const b = c.bullets[i];
     const from = b.pos.clone();
     b.pos.addScaledVector(b.vel, dt);
+
+    /* ---- A ROUND THAT HITS A COIN SENDS IT FLYING ----
+       Geoff: "if a player shoots them, then they should recoil with momentum
+       and spinning using physics." Momentum along the round, spin at random,
+       the round spent. Only coins near the round's path are tested, since
+       there can be hundreds of them. */
+    let coined = false;
+    for (const k of c.coins) {
+      if (k.pos.distanceToSquared(from) > 900) continue;
+      if (!segmentHit(from, b.pos, k.pos, COIN_RADIUS * 1.6)) continue;
+      const dir = _segAb.copy(b.vel).normalize();
+      k.vel.addScaledVector(dir, COIN_KICK);
+      k.spinVel = (k.spinVel ?? 0) + (Math.random() - 0.5) * 2 * COIN_KICK_SPIN;
+      c.events.push({ kind: "coinHit", at: k.pos.clone(), power: 0.5 });
+      coined = true;
+      break;
+    }
+    if (coined) { c.bullets.splice(i, 1); continue; }
     b.life -= dt;
     /* The trail grows with the round and stops where it stopped. */
     if (b.tracer) b.tracer.to.copy(b.pos);
@@ -1382,7 +1452,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     if (fast > COIN_TOP) k.vel.multiplyScalar(COIN_TOP / fast);
 
     k.pos.addScaledVector(k.vel, dt);
-    k.spin += dt * 2.2;
+    /* Turning on its own, faster after a hit, settling back. */
+    k.spinVel = (k.spinVel ?? 0) * Math.max(0, 1 - 1.4 * dt);
+    k.spin += dt * (2.2 + (k.spinVel ?? 0));
 
     if (range < COIN_PICKUP) {
       c.events.push({ kind: "coin", at: k.pos.clone(), power: 0.4, value: k.value, who: claimant.id });
@@ -1657,16 +1729,42 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
      Flown as groups rather than as individuals, in its own file. Everything
      above this point has already had its say about damage, wreckage and
      collisions; all that is left is where they go. */
+  /* ---- a flock from a planet, now and then ---- */
+  stepFlockSpawns(c, dt, w);
+
   if (c.flocks.length) {
     /* Into a reused array rather than a fresh one from filter(): this runs
        every frame and the list can be a hundred long. */
     _drones.length = 0;
     for (const e of c.enemies) if (e.drone) _drones.push(e as Enemy & { group: number; slot: number });
     const drones = _drones;
-    stepFlock(c.flocks, drones, dt, { playerPos: w.playerPos, scale: cruiseScale });
+    stepFlock(c.flocks, drones, dt, {
+      playerPos: w.playerPos, scale: cruiseScale,
+      /* The players the room passes in are the living ones. */
+      nearest: (from) => {
+        if (!w.players) return w.playerPos;
+        if (!w.players.length) return null;
+        let best: PlayerBody | null = null;
+        let bestD = Infinity;
+        for (const p of w.players) {
+          const d = p.pos.distanceToSquared(from);
+          if (d < bestD) { bestD = d; best = p; }
+        }
+        return best ? best.pos : null;
+      },
+      despawn: (gid) => {
+        for (let k = c.enemies.length - 1; k >= 0; k--) {
+          const e = c.enemies[k];
+          if (e.drone && e.group === gid) c.enemies.splice(k, 1);
+        }
+      },
+    });
+    const phaseOf = new Map<number, string>();
+    for (const g of c.flocks) phaseOf.set(g.id, g.phase);
 
     for (let i = drones.length - 1; i >= 0; i--) {
       const d = drones[i];
+      if (c.enemies.indexOf(d) < 0) continue;   /* despawned this frame */
       const prey = nearestPlayer(w, d.pos);
       const gap = d.pos.distanceTo(prey.pos);
       const open = cruiseScale(d.pos.length() - R);
@@ -1680,7 +1778,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
 
       /* Gone for good. A whole fleet that has run off is a whole fleet still
          being simulated, so the leash matters more here than for a fighter. */
-      if (gap > 900 * open) {
+      /* Only for a flock that is here to fight: one crossing from its planet
+         or going home is a long way off on purpose. */
+      if (gap > 900 * open && phaseOf.get(d.group) === "hunt") {
         const k = c.enemies.indexOf(d);
         if (k >= 0) c.enemies.splice(k, 1);
       }

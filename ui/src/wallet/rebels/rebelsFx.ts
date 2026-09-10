@@ -9,7 +9,7 @@
 import * as THREE from "three";
 import diviLogo from "../../assets/divi-coin.webp";
 import { DRONE_SIZE } from "./rebelsFlock";
-import { SHIELD_SHOW } from "./rebelsCombat";
+import { SHIELD_SHOW, COIN_RADIUS } from "./rebelsCombat";
 
 const BULLET_CAP = 160;
 const SHARD_CAP = 320;
@@ -38,7 +38,7 @@ const ORB_CAP = 96;
  * nothing about catching one: the pickup radius is 2.2 units and lives in the
  * simulation, not here.
  */
-const COIN_RADIUS = 0.33;
+/* Drawn at the size the simulation treats it as. */
 /* Warm gold going out, green coming back, pale for the mini gun: the same
    language the rounds themselves use. */
 const MINE_TRAIL = [1.0, 0.78, 0.25] as const;

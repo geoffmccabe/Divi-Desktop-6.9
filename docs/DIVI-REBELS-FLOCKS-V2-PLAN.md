@@ -163,3 +163,29 @@ Items tab and a redeploy.
    untradeable gems?
 4. Tier seven shape count: 18?
 5. Pickup by flying through (assumed), not by shooting.
+
+## Decisions (2026-Sep-10, Geoff)
+
+1. Transit: flocks cross from their planet at five times fighting speed and
+   fight at normal speed inside 220 units. "Okay if it takes a while."
+2. A flock member kill is worth a fifth of a fighter: a fifth of a kill, one
+   coin instead of five. Damage on a member scores points as on a fighter.
+3. Gems are player property to be sold later, so the record of ownership is
+   the room's. Flying alone still meets flocks and earns points and DIVI, but
+   a gem only exists when the room is connected to record it.
+4. Tier seven has 18 shapes.
+5. Pickup by flying through or near. Gems AND coins are magnetic within
+   twenty of their own diameters. A round that hits a gem or coin knocks it
+   away with momentum and spin.
+6. Health and speed ramps stay as they were.
+
+## Built so far
+
+Phase 1 (2026-Sep-10): seven tiers and colours, fleet sizes by tier, spawn
+odds, the five-second one-percent roll, spawning off the nearest planet with
+transit, hunting and going home, the fifth-of-a-kill worth, coin magnet at
+twenty diameters, coin recoil and spin when shot. The room streams a drone
+flag so a room client draws drones as drones.
+
+Not yet: the living visuals (phase 2), per-player member tallies and the
+flock kill (phase 3), gems (phase 4).
