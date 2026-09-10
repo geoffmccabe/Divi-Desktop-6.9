@@ -8,7 +8,7 @@
 
 import * as THREE from "three";
 import diviLogo from "../../assets/divi-coin.webp";
-import { DRONE_SIZE } from "./rebelsFlock";
+import { DRONE_SIZE, droneClass, SHAPE_COUNTS, DRONE_TIERS } from "./rebelsFlock";
 import { SHIELD_SHOW, COIN_RADIUS } from "./rebelsCombat";
 
 const BULLET_CAP = 160;
@@ -18,6 +18,7 @@ const RING_CAP = 10;
 const JUNK_CAP = 64;
 const TRACER_CAP = 220;
 const COIN_CAP = 400;
+const GEM_CAP = 300;
 const DOCK_RUNGS = 14;
 /** How long a struck drone glows white. */
 const FLASH_FOR = 0.32;
@@ -157,6 +158,8 @@ export interface Fx {
   drawDockLink(from: THREE.Vector3 | null, to: THREE.Vector3 | null, seconds: number): void;
   /** DIVI in orbit, waiting to be flown into. */
   drawCoins(coins: { pos: THREE.Vector3; spin: number }[]): void;
+  /** Gems: faceted, in their tier's colour, turning. */
+  drawGems(gems: { pos: THREE.Vector3; spin: number; tier: number }[]): void;
   /** The swarm: glowing spheres, breathing out of step with each other. */
   drawDrones(drones: {
     pos: THREE.Vector3; pulse?: number; flash: number; cls: { colour: number };
@@ -241,6 +244,82 @@ export function createFx(): Fx {
   /* Additive glow must be drawn after the solid bodies. */
   droneGlow.renderOrder = 2;
   bin.push(droneGeo, droneCoreMat, droneGlowMat, droneCore, droneGlow);
+
+  /* ---- THE LIVING PART ----
+     Geoff: "make them more complex by having some shapes like spikes growing
+     in and out and pulsating from the main sphere... spikes, lines, rods,
+     cones, capsules... The higher the tier, the more of these extra shapes
+     that grow and pulse away from the center." And "small spheres radiating
+     around them, spinning around them like in orbit."
+
+     One instanced mesh PER TIER: its geometry is that tier's set of shapes
+     (6 to 18 of them, cones, rods and capsules in turn) merged into one, set
+     round the sphere on a Fibonacci lattice, each pointing outward. The
+     growing and pulsing is done in the vertex shader: every vertex carries
+     the axis of its shape and the shape's number, each instance carries its
+     drone's pulse phase, and the shader stretches each shape along its axis
+     by a sine of time, so the whole swarm breathes with no CPU work at all.
+     Seven draw calls for every drone in the sky, whatever the count.
+
+     The motes are one more instanced mesh: up to eight tiny spheres per
+     drone, placed on the CPU each frame (a thousand small matrices, cheap)
+     on tilted orbits at different rates, so they wheel round the body. */
+  const livingMeshes: THREE.InstancedMesh[] = [];
+  const livingPhase: THREE.InstancedBufferAttribute[] = [];
+  const livingMats: THREE.MeshStandardMaterial[] = [];
+  const livingUniforms = { uTime: { value: 0 } };
+  for (let t = 0; t < DRONE_TIERS.length; t++) {
+    const geo = livingGeometry(SHAPE_COUNTS[t] ?? 6);
+    const phase = new THREE.InstancedBufferAttribute(new Float32Array(DRONE_CAP), 1);
+    phase.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute("aPhase", phase);
+    const mat = new THREE.MeshStandardMaterial({
+      metalness: 0.15, roughness: 0.4, emissive: 0x181818, emissiveIntensity: 1,
+    });
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = livingUniforms.uTime;
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", `#include <common>
+          attribute vec3 aDir;
+          attribute float aK;
+          attribute float aPhase;
+          uniform float uTime;`)
+        .replace("#include <begin_vertex>", `
+          vec3 transformed = vec3(position);
+          /* Each shape grows out and draws back on its own beat: the sine
+             is offset by the drone's phase and the shape's number. */
+          float grow = 0.55 + 0.45 * sin(uTime * 2.1 + aPhase + aK * 0.9);
+          float along = dot(transformed, aDir);
+          transformed += aDir * (along * (grow - 1.0));`);
+    };
+    const mesh = new THREE.InstancedMesh(geo, mat, DRONE_CAP);
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(DRONE_CAP * 3), 3);
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    group.add(mesh);
+    livingMeshes.push(mesh);
+    livingPhase.push(phase);
+    livingMats.push(mat);
+    bin.push(geo, mat, mesh);
+  }
+  const MOTE_CAP = DRONE_CAP * 8;
+  const moteGeo = new THREE.IcosahedronGeometry(0.11, 1);
+  const moteMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+  const motes = new THREE.InstancedMesh(moteGeo, moteMat, MOTE_CAP);
+  motes.frustumCulled = false;
+  motes.count = 0;
+  motes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  motes.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MOTE_CAP * 3), 3);
+  motes.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  motes.renderOrder = 2;
+  group.add(motes);
+  bin.push(moteGeo, moteMat, motes);
+  const livingCount = new Int32Array(DRONE_TIERS.length);
+  const moteAxis = new THREE.Vector3();
+  const motePos = new THREE.Vector3();
+  const moteQ = new THREE.Quaternion();
 
   /* ---- their rounds ---- */
   const ORB_RED = new THREE.Color(0xff2b2b);
@@ -419,6 +498,26 @@ export function createFx(): Fx {
     t.anisotropy = 8;
     return t;
   })();
+  /* ---- gems ----
+     A coin's size, but faceted and lit rather than a printed ball, so the
+     two are never confused: one is money and one is property. Colour per
+     instance from the tier, a glow behind it so it can be found. */
+  const gemGeo = new THREE.OctahedronGeometry(COIN_RADIUS * 1.15, 0);
+  const gemMat = new THREE.MeshStandardMaterial({ metalness: 0.3, roughness: 0.25, emissive: 0x111111 });
+  const gemMesh = new THREE.InstancedMesh(gemGeo, gemMat, GEM_CAP);
+  const gemGlowMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false });
+  const gemGlow = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), gemGlowMat, GEM_CAP);
+  for (const m of [gemMesh, gemGlow]) {
+    m.frustumCulled = false;
+    m.count = 0;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(GEM_CAP * 3), 3);
+    m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    group.add(m);
+  }
+  gemGlow.renderOrder = 2;
+  bin.push(gemGeo, gemMat, gemMesh, gemGlowMat, gemGlow);
+
   const coinGeo = new THREE.SphereGeometry(COIN_RADIUS, 20, 14);
   /* White, so the artwork's own colours survive. See above. */
   const coinMat = new THREE.MeshBasicMaterial({ map: coinTex, color: 0xffffff });
@@ -570,6 +669,49 @@ export function createFx(): Fx {
       droneGlow.count = n;
       droneCore.instanceMatrix.needsUpdate = true;
       droneGlow.instanceMatrix.needsUpdate = true;
+
+      /* ---- the living shapes and the motes ---- */
+      livingUniforms.uTime.value = now;
+      livingCount.fill(0);
+      let mo = 0;
+      let seen = 0;
+      for (const d of list) {
+        if (seen++ >= DRONE_CAP) break;
+        const tier = (d.cls as unknown as { tier?: number }).tier ?? 1;
+        const t = Math.max(0, Math.min(DRONE_TIERS.length - 1, tier - 1));
+        const beat = Math.sin(now * 2.4 + (d.pulse ?? 0));
+        const size = DRONE_SIZE * (1 + beat * 0.16);
+        const k = livingCount[t]++;
+        const mesh = livingMeshes[t];
+        /* Turning slowly on its own axis, each at its own rate. */
+        q.setFromAxisAngle(upAxis, now * 0.5 + (d.pulse ?? 0));
+        mesh.setMatrixAt(k, m4.compose(d.pos, q, scl.setScalar(size)));
+        colour.setHex(d.cls.colour);
+        mesh.setColorAt(k, tinted.copy(colour).multiplyScalar(0.85));
+        livingPhase[t].setX(k, d.pulse ?? 0);
+        /* Motes: two at tier one, one more per tier. */
+        const count = 2 + t;
+        for (let j = 0; j < count && mo < MOTE_CAP; j++) {
+          const radius = size * (1.7 + 0.18 * j);
+          const angle = now * (1.1 + 0.23 * j) + (d.pulse ?? 0) + j * 2.1;
+          moteAxis.set(Math.sin(j * 1.3), Math.cos(j * 0.7), Math.sin(j * 2.9 + 0.4)).normalize();
+          moteQ.setFromAxisAngle(moteAxis, angle);
+          motePos.set(radius, 0, 0).applyQuaternion(moteQ).add(d.pos);
+          motes.setMatrixAt(mo, m4.compose(motePos, q.identity(), scl.setScalar(1)));
+          motes.setColorAt(mo, tinted.copy(colour).lerp(WHITE, 0.35));
+          mo++;
+        }
+      }
+      for (let t = 0; t < livingMeshes.length; t++) {
+        livingMeshes[t].count = livingCount[t];
+        livingMeshes[t].instanceMatrix.needsUpdate = true;
+        livingPhase[t].needsUpdate = true;
+        const ic = livingMeshes[t].instanceColor;
+        if (ic) ic.needsUpdate = true;
+      }
+      motes.count = mo;
+      motes.instanceMatrix.needsUpdate = true;
+      if (motes.instanceColor) motes.instanceColor.needsUpdate = true;
       /* Forgetting these is the classic InstancedMesh bug: the matrices go up
          and the colours silently do not. */
       if (droneCore.instanceColor) droneCore.instanceColor.needsUpdate = true;
@@ -692,6 +834,26 @@ export function createFx(): Fx {
       a.needsUpdate = true;
     },
 
+    drawGems(gems) {
+      const n = Math.min(gems.length, GEM_CAP);
+      for (let i = 0; i < n; i++) {
+        const g = gems[i];
+        q.setFromAxisAngle(upAxis, g.spin);
+        m4.compose(g.pos, q, scl.setScalar(1));
+        gemMesh.setMatrixAt(i, m4);
+        colour.setHex(droneClass(g.tier).colour);
+        gemMesh.setColorAt(i, colour);
+        m4.compose(g.pos, q, scl.setScalar(3.2));
+        gemGlow.setMatrixAt(i, m4);
+        gemGlow.setColorAt(i, tinted.copy(colour).multiplyScalar(0.5));
+      }
+      gemMesh.count = n;
+      gemGlow.count = n;
+      gemMesh.instanceMatrix.needsUpdate = true;
+      gemGlow.instanceMatrix.needsUpdate = true;
+      if (gemMesh.instanceColor) gemMesh.instanceColor.needsUpdate = true;
+      if (gemGlow.instanceColor) gemGlow.instanceColor.needsUpdate = true;
+    },
     drawCoins(coins) {
       const n = Math.min(coins.length, COIN_CAP);
       for (let i = 0; i < n; i++) {
@@ -1065,4 +1227,60 @@ const _beamQ = new THREE.Quaternion();
 /** Turns beamGeometry so it opens along `fwd`. */
 export function beamOrientation(fwd: THREE.Vector3): THREE.Quaternion {
   return _beamQ.setFromUnitVectors(_beamZ, fwd);
+}
+
+
+/* ---- a tier's set of shapes, as one geometry ----
+   Cones (spikes), rods and capsules in turn, on a Fibonacci lattice round a
+   unit sphere, each pointing straight out. Every vertex carries its shape's
+   outward axis (aDir) and its number (aK) for the shader that breathes them. */
+export function livingGeometry(count: number): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < count; i++) {
+    const y = 1 - (2 * (i + 0.5)) / count;
+    const r = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = golden * i;
+    const dir = new THREE.Vector3(r * Math.cos(theta), y, r * Math.sin(theta)).normalize();
+    const kind = i % 3;
+    let g: THREE.BufferGeometry;
+    const len = 0.9 + 0.35 * ((i * 7) % 5) / 4;
+    if (kind === 0) g = new THREE.ConeGeometry(0.16, len, 6, 1);           /* spike */
+    else if (kind === 1) g = new THREE.CylinderGeometry(0.06, 0.06, len, 5, 1); /* rod */
+    else g = new THREE.CapsuleGeometry(0.1, len * 0.7, 2, 6);             /* capsule */
+    g = g.toNonIndexed();
+    /* Base on the sphere's surface, pointing out along dir. Cone/cylinder
+       geometry stands along +Y with its middle at the origin. */
+    g.translate(0, 0.85 + len / 2, 0);
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    g.applyQuaternion(q);
+    const n = g.getAttribute("position").count;
+    const dirs = new Float32Array(n * 3);
+    const ks = new Float32Array(n);
+    for (let v = 0; v < n; v++) { dirs[v * 3] = dir.x; dirs[v * 3 + 1] = dir.y; dirs[v * 3 + 2] = dir.z; ks[v] = i; }
+    g.setAttribute("aDir", new THREE.BufferAttribute(dirs, 3));
+    g.setAttribute("aK", new THREE.BufferAttribute(ks, 1));
+    parts.push(g);
+  }
+  /* Merge: positions, normals, and the two custom attributes, end to end. */
+  const total = parts.reduce((a, g) => a + g.getAttribute("position").count, 0);
+  const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3);
+  const dirs = new Float32Array(total * 3), ks = new Float32Array(total);
+  let at = 0;
+  for (const g of parts) {
+    const p = g.getAttribute("position"), nn = g.getAttribute("normal");
+    const d = g.getAttribute("aDir"), k = g.getAttribute("aK");
+    pos.set(p.array as Float32Array, at * 3);
+    nor.set(nn.array as Float32Array, at * 3);
+    dirs.set(d.array as Float32Array, at * 3);
+    ks.set(k.array as Float32Array, at);
+    at += p.count;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  out.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+  out.setAttribute("aDir", new THREE.BufferAttribute(dirs, 3));
+  out.setAttribute("aK", new THREE.BufferAttribute(ks, 1));
+  return out;
 }

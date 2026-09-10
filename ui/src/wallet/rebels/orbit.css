@@ -817,3 +817,13 @@
 /* The frame readout, bottom of the top-left block. */
 .orbit-frame { font-size: 10px; letter-spacing: 0.06em; opacity: 0.55; }
 .pts-custom input:disabled { opacity: 0.5; }
+/* Gems held, on the Items tab. */
+.gems-held { margin-top: 10px; }
+.gem-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.gem-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 8px; font: 600 10px/1 var(--font-mono); letter-spacing: 0.06em;
+  border: 1px solid; border-radius: 4px; background: hsl(var(--rebels-hud) / 0.06);
+}
+.gem-chip i { width: 9px; height: 9px; transform: rotate(45deg); display: inline-block; }
+.gem-chip b { color: var(--rebels-points, #7fe3a0); }

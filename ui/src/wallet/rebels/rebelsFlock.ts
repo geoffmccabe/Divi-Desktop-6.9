@@ -204,6 +204,12 @@ export interface FlockGroup {
   home: THREE.Vector3;
   /** Seconds without anyone to hunt. */
   idle: number;
+  /** Seconds to the next split-merge-or-nothing decision. */
+  decideAt: number;
+  /** The group this one is flying to rejoin, if any. */
+  mergeWith: number | null;
+  /** How many the fleet had when it set out, for the flock kill. */
+  fleetTotal: number;
   /** Which fleet it was born in, so a fleet can be counted or cleared. */
   fleet: number;
   tier: number;
@@ -343,11 +349,43 @@ export function splitSizes(total: number, parts: number): number[] {
 
 /** Pick one of the splits at random, never into groups of one. A lone drone is
  *  not a group, it is a straggler, and it flies like one. */
+/* Geoff: "they seem to always split into 2 groups so I want them to also
+   split more often." Two is the least interesting split, so it is the least
+   likely: the parts are weighted, and a bigger fleet has more ways to come
+   apart. */
+const SPLIT_WEIGHTS: Record<number, number> = { 2: 1, 3: 2, 4: 2, 6: 2 };
 export function pickSplit(total: number, rnd: () => number = Math.random): number[] {
   const usable = SPLIT_PARTS.filter((p) => total / p >= 2);
   if (!usable.length) return [total];
-  const parts = usable[Math.floor(rnd() * usable.length)] ?? usable[0];
+  const weights = usable.map((p) => SPLIT_WEIGHTS[p] ?? 1);
+  let r = rnd() * weights.reduce((a, b) => a + b, 0);
+  let parts = usable[usable.length - 1];
+  for (let i = 0; i < usable.length; i++) {
+    r -= weights[i];
+    if (r <= 0) { parts = usable[i]; break; }
+  }
   return splitSizes(total, parts);
+}
+
+/* ---- THE MINUTE'S DECISION ----
+   Geoff: "every minute, two groups may decide to combine... so n groups
+   should make a decision every minute to combine or split again or do
+   nothing. If they decide to recombine then they will fly towards each
+   other and regroup, unless they are in active combat."
+
+   Each group keeps its own clock, offset at birth so a fleet's pieces do not
+   all decide on the same frame. In combat (prey inside RUN_REJOIN) a merge is
+   not started and a merge already under way waits: the fight comes first. */
+export const DECIDE_SECONDS = 60;
+/** Two merging groups this close are one group. */
+export const MERGE_RANGE = 30;
+/** The odds of each choice, when it is possible. */
+export const DECIDE_SPLIT = 0.4;
+export const DECIDE_MERGE = 0.4;
+
+let decideRandom: () => number = Math.random;
+export function setDecideRandomForTests(fn: (() => number) | null): void {
+  decideRandom = fn ?? Math.random;
 }
 
 /**
@@ -413,6 +451,9 @@ export function newGroup(
     phase: home ? "transit" : "hunt",
     home: home ? home.clone() : at.clone(),
     idle: 0,
+    decideAt: DECIDE_SECONDS + decideRandom() * 20,
+    mergeWith: null,
+    fleetTotal: 0,
     fleet,
     tier,
     mode: "form",
@@ -501,7 +542,31 @@ export function stepFlock(
       }
     }
 
-    if (g.phase === "hunt" && g.mode === "form") {
+    /* ---- the minute's decision, and merging ---- */
+    const fighting = g.phase === "hunt" && !!prey && range < RUN_REJOIN;
+    let merging = false;
+    if (g.phase === "hunt") {
+      g.decideAt -= dt;
+      if (g.decideAt <= 0) {
+        g.decideAt = DECIDE_SECONDS;
+        decide(g, groups, byGroup, born, fighting);
+      }
+      const partner = g.mergeWith === null ? null : groups.find((o) => o.id === g.mergeWith && o.alive > 0);
+      if (g.mergeWith !== null && !partner) g.mergeWith = null;
+      if (partner && !fighting) {
+        const gap = partner.centre.distanceTo(g.centre);
+        if (gap <= MERGE_RANGE) {
+          mergeInto(g, partner, byGroup);
+        } else {
+          want.copy(partner.centre).sub(g.centre).normalize();
+          merging = true;
+        }
+      }
+    }
+
+    if (merging) {
+      /* Steering set above: straight at the other half. */
+    } else if (g.phase === "hunt" && g.mode === "form") {
       /* Come in as one body, aimed a little to one side of the player rather
          than straight down their throat, so the fleet arrives ACROSS the view
          instead of appearing as a dot that gets bigger. */
@@ -785,6 +850,54 @@ export function turnToward(
  * they visibly peel apart and come at you one after another, instead of all
  * arriving together looking like the same single blob it was a second ago.
  */
+/**
+ * Split again, join up with another group of the fleet, or do nothing.
+ *
+ * A merge needs a partner: another group of the same fleet, in the fight,
+ * not already merging, and not this one. Both are told, so both fly. In
+ * combat nothing is started; the clock simply comes round again.
+ */
+function decide(
+  g: FlockGroup, groups: FlockGroup[], byGroup: Map<number, FlockDrone[]>,
+  born: FlockGroup[], fighting: boolean,
+): void {
+  if (g.mergeWith !== null) return;
+  const members = byGroup.get(g.id) ?? [];
+  const partners = groups.filter((o) =>
+    o !== g && o.fleet === g.fleet && o.phase === "hunt" && o.mergeWith === null && o.alive > 0);
+  const r = decideRandom();
+  if (r < DECIDE_SPLIT) {
+    if (members.length >= 4) splitGroup(g, members, born);
+  } else if (r < DECIDE_SPLIT + DECIDE_MERGE) {
+    if (fighting || !partners.length) return;
+    /* The nearest of them: the shortest flight to rejoin. */
+    let best = partners[0];
+    let bestD = Infinity;
+    for (const o of partners) {
+      const d = o.centre.distanceToSquared(g.centre);
+      if (d < bestD) { bestD = d; best = o; }
+    }
+    g.mergeWith = best.id;
+    best.mergeWith = g.id;
+  }
+}
+
+/** Two groups within reach of each other become one: the partner's drones
+ *  join this group, in fresh slots, and the partner is done. */
+function mergeInto(g: FlockGroup, partner: FlockGroup, byGroup: Map<number, FlockDrone[]>): void {
+  const mine = byGroup.get(g.id) ?? [];
+  const theirs = byGroup.get(partner.id) ?? [];
+  for (const d of theirs) { d.group = g.id; mine.push(d); }
+  byGroup.set(partner.id, []);
+  reslot(mine);
+  g.alive = mine.length;
+  g.flash = SPLIT_FLASH;
+  g.mergeWith = null;
+  g.decideAt = DECIDE_SECONDS;
+  partner.alive = 0;
+  partner.mergeWith = null;
+}
+
 function splitGroup(g: FlockGroup, members: FlockDrone[], born: FlockGroup[]): void {
   g.split = true;
   const sizes = pickSplit(members.length);
@@ -846,6 +959,9 @@ function splitGroup(g: FlockGroup, members: FlockDrone[], born: FlockGroup[]): v
     part.approach.copy(side);
     part.split = true;
     part.mode = "form";
+    /* A fresh clock, staggered, and no merge carried over from the whole. */
+    part.decideAt = DECIDE_SECONDS * (0.6 + decideRandom() * 0.8);
+    part.mergeWith = null;
     /* One after another, a couple of seconds apart, so they arrive in
        sequence rather than as one wall. */
     part.wait = i * 2.1;

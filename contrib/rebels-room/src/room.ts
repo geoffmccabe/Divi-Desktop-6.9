@@ -28,7 +28,7 @@
 
 import * as THREE from "three";
 import {
-  createCombat, stepCombat, clearEvents, startWave, fireBeam,
+  createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE,
   type CombatState, type CombatWorld, type PlayerBody,
@@ -93,6 +93,13 @@ interface Seat {
   ammoMax: number;
   torpsMax: number;
   lastBeam: number;
+  /* ---- the flock tally ----
+     Members of each fleet this seat has downed, by fleet id. Internal: the
+     player sees only flock kills. Cleared with the fleet. */
+  tally: Map<number, number>;
+  /** Flock kills and gems picked up since the last banking. */
+  flocks: number;
+  gems: number[];
   name: string;
   /** Which hull they fly and how it is painted, so the room can tell everyone
    *  else what this player looks like. Paint, not gameplay: see onJoin. */
@@ -193,6 +200,7 @@ export class RebelsRoom {
       id, ws, node: "", name: "", ship: "", paint: undefined,
       account: from, lastClaim: -99,
       gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, lastBeam: -99,
+      tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0],
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
       shield: MAX_SHIELD, ammo: MAX_AMMO, torps: MAX_TORPEDOES,
@@ -227,6 +235,7 @@ export class RebelsRoom {
 
   private start(): void {
     if (this.timer) return;
+    void this.loadGems();
     this.combat = createCombat();
     this.now = 0;
     startWave(this.combat, 1);
@@ -239,6 +248,7 @@ export class RebelsRoom {
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
+    void this.saveGems();
   }
 
   private refreshRoster(): void {
@@ -279,6 +289,9 @@ export class RebelsRoom {
     if (this.world.players!.length === 0) { clearEvents(this.combat); return; }
 
     stepCombat(this.combat, DT, this.world);
+    /* Gems move; their saved positions should not go stale. */
+    this.gemSaveAt += DT;
+    if (this.gemSaveAt >= 30 && this.combat.gems.length) { this.gemSaveAt = 0; void this.saveGems(); }
     this.settle();
     this.broadcastState();
     clearEvents(this.combat);
@@ -303,6 +316,7 @@ export class RebelsRoom {
         ...(ev.damage !== undefined ? { dmg: Math.round(ev.damage) } : {}),
         ...(ev.wave ? { wave: ev.wave } : {}),
         ...(ev.guarded ? { g: 1 } : {}),
+        ...(ev.gem !== undefined ? { gem: String(ev.gem) } : {}),
       });
 
       const who = ev.who ? this.seats.get(ev.who) : undefined;
@@ -313,6 +327,13 @@ export class RebelsRoom {
       } else if (ev.kind === "enemyDown" && who) {
         /* A fighter is a kill; a flock member a fifth of one. */
         who.kills += ev.worth ?? 1;
+        if (ev.fleet !== undefined && (ev.worth ?? 0) > 0) this.tallyFlock(who, ev);
+      } else if (ev.kind === "gem" && who && ev.tier) {
+        /* Property: the seat's, banked to the account, and gone from the
+           world for good. */
+        who.gems[ev.tier - 1] = (who.gems[ev.tier - 1] ?? 0) + 1;
+        const id = this.gemIdAt(ev.at);
+        if (id) void this.state.storage.delete(`gem:${id}`);
         /* The bounty, in DIVI, at the rate the payout promises: a thousand
            kills is a hundred DIVI, so a kill is a tenth. The coins scattered by
            the wreck are the same tenth made visible and collectable, so only
@@ -337,6 +358,84 @@ export class RebelsRoom {
         if (list.length > 0) this.send(s, { t: "e", v: list as never });
       }
     }
+  }
+
+  /* ---- flock kills and gems ----
+     Geoff: "In order for a player to get a 'Kill' for a flock, they need to
+     kill over 50% of its members. Keep track of all the members of a flock
+     that have been killed by each player, but only record flock kills. When
+     the last member of a flock is killed, it will leave a GEM of that tier."
+     The tally is per seat per fleet; when the fleet's last member falls the
+     seat over half takes the kill, and a gem of the tier goes into orbit
+     where it fell. The gem is written to storage at once: it persists. */
+  private tallyFlock(who: Seat, ev: { fleet?: number; fleetTotal?: number; fleetLeft?: number; tier?: number; at: THREE.Vector3 }): void {
+    const fleet = ev.fleet!;
+    who.tally.set(fleet, (who.tally.get(fleet) ?? 0) + 1);
+    if ((ev.fleetLeft ?? 1) > 0) return;
+    const total = ev.fleetTotal ?? 0;
+    let winner: Seat | null = null;
+    for (const s of this.seats.values()) {
+      const n = s.tally.get(fleet) ?? 0;
+      if (total > 0 && n > total / 2) winner = s;
+      s.tally.delete(fleet);
+    }
+    const tier = ev.tier ?? 1;
+    if (winner) winner.flocks += 1;
+    const id = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const gem = dropGem(this.combat, tier, ev.at, id);
+    void this.saveGem(gem);
+    this.combat.events.push({ kind: "flockDown", at: ev.at.clone(), power: 3, tier, who: winner?.id ?? "", gem: tier });
+  }
+
+  private gemIdAt(at: THREE.Vector3): string | null {
+    /* The gem that was just taken is no longer in the list; the event says
+       where it was. Storage keys are by id, so the id is looked up by
+       position among what was saved last. */
+    let best: string | null = null;
+    let bestD = 4;
+    for (const [id, p] of this.gemPos) {
+      const d = p.distanceTo(at);
+      if (d < bestD) { bestD = d; best = id; }
+    }
+    if (best) this.gemPos.delete(best);
+    return best;
+  }
+
+  /** Where each gem was last saved, by id, so a pickup can find its key. */
+  private gemPos = new Map<string, THREE.Vector3>();
+  private gemSaveAt = 0;
+
+  private async saveGem(g: Gem): Promise<void> {
+    this.gemPos.set(g.id, g.pos.clone());
+    try {
+      await this.state.storage.put(`gem:${g.id}`, {
+        id: g.id, tier: g.tier, body: g.body,
+        p: [g.pos.x, g.pos.y, g.pos.z], v: [g.vel.x, g.vel.y, g.vel.z], spin: g.spin,
+      });
+    } catch { /* storage unhappy; the gem still exists in memory */ }
+  }
+
+  /** Every so often, and at stop, write where the gems are now, so a restart
+   *  finds them where they were and not where they were born. */
+  private async saveGems(): Promise<void> {
+    for (const g of this.combat.gems) await this.saveGem(g);
+  }
+
+  private async loadGems(): Promise<void> {
+    try {
+      const all = await this.state.storage.list<{ id: string; tier: number; body: number; p: number[]; v: number[]; spin: number }>({ prefix: "gem:" });
+      for (const g of all.values()) {
+        if (this.combat.gems.some((x) => x.id === g.id)) continue;
+        const gem: Gem = {
+          id: g.id, tier: g.tier, body: g.body ?? 0,
+          pos: new THREE.Vector3(g.p[0], g.p[1], g.p[2]),
+          vel: new THREE.Vector3(g.v[0], g.v[1], g.v[2]),
+          spin: g.spin ?? 0,
+        };
+        this.combat.gems.push(gem);
+        this.gemPos.set(gem.id, gem.pos.clone());
+      }
+    } catch { /* nothing saved, or storage unhappy */ }
   }
 
   private down(s: Seat): void {
@@ -366,18 +465,20 @@ export class RebelsRoom {
      a player may fly in several over a week and the payout is one running
      total. The room is the only thing that ever writes to it. */
   private async bank(s: Seat): Promise<void> {
-    if (!(s.account || s.node) || (s.kills === 0 && s.divi === 0 && s.score === 0)) return;
-    const kills = s.kills, divi = s.divi, score = s.score;
-    s.kills = 0; s.divi = 0; s.score = 0;
+    const anyGems = s.gems.some((n) => n > 0);
+    if (!(s.account || s.node) || (s.kills === 0 && s.divi === 0 && s.score === 0 && s.flocks === 0 && !anyGems)) return;
+    const kills = s.kills, divi = s.divi, score = s.score, flocks = s.flocks, gems = s.gems.slice();
+    s.kills = 0; s.divi = 0; s.score = 0; s.flocks = 0; s.gems = [0, 0, 0, 0, 0, 0, 0];
     try {
       const id = this.env.LEDGER.idFromName("v1");
       await this.env.LEDGER.get(id).fetch("https://ledger/credit", {
         method: "POST",
-        body: JSON.stringify({ node: s.account || s.node, name: s.name, kills, divi, score }),
+        body: JSON.stringify({ node: s.account || s.node, name: s.name, kills, divi, score, flocks, gems }),
       });
     } catch {
       /* Put it back rather than lose it: the next flush will carry it. */
-      s.kills += kills; s.divi += divi; s.score += score;
+      s.kills += kills; s.divi += divi; s.score += score; s.flocks += flocks;
+      for (let i = 0; i < 7; i++) s.gems[i] += gems[i] ?? 0;
     }
   }
 
@@ -702,6 +803,9 @@ export class RebelsRoom {
         b.hostile ? 1 : 0, b.mini ? 1 : 0,
       ]),
       C: c.coins.map((k) => [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)]),
+      ...(c.gems.length ? {
+        G: c.gems.map((g) => [r1(g.pos.x), r1(g.pos.y), r1(g.pos.z), g.tier, Math.round(g.spin * 100) / 100, g.id]),
+      } : {}),
       ...(c.beams.length ? {
         M: c.beams.map((b) => [
           r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),

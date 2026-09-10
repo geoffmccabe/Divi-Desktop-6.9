@@ -98,6 +98,8 @@ export interface HudState {
      FPS plan goes after next. */
   fps: number;
   simMs: number;
+  /** Flock kills this run: over half a fleet's members. */
+  flocks: number;
   /** Draw calls the renderer made last frame, and its pixel ratio. */
   drawCalls: number;
   pixelRatio: number;
@@ -150,7 +152,7 @@ const BLANK: HudState = {
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, throttle: 1,
-  room: "off", crew: 0, points: 0, fps: 0, simMs: 0, drawCalls: 0, pixelRatio: 0,
+  room: "off", crew: 0, points: 0, fps: 0, simMs: 0, drawCalls: 0, pixelRatio: 0, flocks: 0,
   primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
@@ -235,6 +237,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      released, and the next attach puts them back into the new scene. */
   let suspended = false;
   let attachCount = 0;
+  /* Flock members downed by this player, by fleet, when flying alone. */
+  const flockTally = new Map<number, number>();
+  let flocks = 0;
   /* The map re-attaches within the same tick when it rebuilds, so a detach
      that is NOT followed by an attach almost at once was the panel closing,
      and then the run is over for real: banked, the room left, the music
@@ -1353,6 +1358,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              so a beam is seen by the whole room and hits what the room says. */
           combat.beams.length = 0;
           for (const b of room.beams) combat.beams.push(b);
+          /* Gems are the room's: drawn from its list, never simulated here. */
+          combat.gems.length = 0;
+          for (const g of room.gems) {
+            combat.gems.push({ id: g.id, tier: g.tier, pos: g.pos, vel: new THREE.Vector3(), spin: g.spin, body: 0 });
+          }
           combat.coins.length = 0;
           for (const k of room.coins) {
             combat.coins.push({ pos: k.pos, vel: new THREE.Vector3(), spin: 0, value: 0 });
@@ -1456,6 +1466,22 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           } else if (ev.kind === "enemyDown") {
             fx.boom(ev.at, 3, "hot");
             playShipExplosion();
+            /* ---- the flock tally, alone ----
+               In a room the room decides. Alone, the same rule is kept here
+               so the count on the HUD means the same thing: over half of a
+               fleet's members, and the kill lands when its last one falls.
+               Nothing here reaches the ledger. */
+            if (!inRoom && ev.fleet !== undefined && (ev.worth ?? 0) > 0) {
+              flockTally.set(ev.fleet, (flockTally.get(ev.fleet) ?? 0) + 1);
+              if ((ev.fleetLeft ?? 1) === 0) {
+                const mine = flockTally.get(ev.fleet) ?? 0;
+                flockTally.delete(ev.fleet);
+                if ((ev.fleetTotal ?? 0) > 0 && mine > (ev.fleetTotal ?? 0) / 2) {
+                  flocks += 1;
+                  setHud({ flocks, note: `FLOCK DOWN: ${mine} of ${ev.fleetTotal}`, noteAt: performance.now() });
+                }
+              }
+            }
             if (ev.tier) {
               lifetimeTiers[ev.tier - 1] = (lifetimeTiers[ev.tier - 1] ?? 0) + 1;
               setHud({ tierKills: lifetimeTiers.slice() });
@@ -1466,6 +1492,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             score += Math.round(ev.damage ?? 0);
             /* A small spark where the shot landed. The bubble does the rest. */
             fx.boom(ev.at, ev.power, "cold");
+          } else if (ev.kind === "flockDown") {
+            fx.boom(ev.at, 4, "hot");
+            playTorpedoBlast();
+            if (ev.who && room && ev.who === room.me()) {
+              flocks += 1;
+              setHud({ flocks, note: "FLOCK DOWN", noteAt: performance.now() });
+            }
+          } else if (ev.kind === "gem") {
+            fx.boom(ev.at, 1.2, "cold");
+            playBounce();
+            if (!ev.who || (room && ev.who === room.me())) {
+              setHud({ note: `GEM: ${["yellow", "green", "blue", "purple", "red", "white", "fuchsia"][(ev.tier ?? 1) - 1] ?? ""}`, noteAt: performance.now() });
+            }
+          } else if (ev.kind === "coinHit" || ev.kind === "gemHit") {
+            fx.boom(ev.at, 0.5, "cold");
           } else if (ev.kind === "waveStart") {
             /* Shown big for three seconds, then two seconds of fading. */
             setHud({ wave: ev.wave ?? 0, waveAt: performance.now() });
@@ -1584,6 +1625,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         fx.drawJunk(combat.junk);
         fx.drawTracers(combat.tracers, TRACER_LIFE);
         fx.drawCoins(combat.coins);
+        fx.drawGems(combat.gems);
         /* The tether, drawn only while a resupply is running. */
         fx.drawDockLink(
           flight.dock > 0 ? flight.pos : null,

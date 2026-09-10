@@ -105,12 +105,14 @@ export interface StateOut {
   /** Beams in the air: origin, direction, weapon key, seconds left. Absent
    *  when there are none, which is nearly always. */
   M?: Array<[number, number, number, number, number, number, string, number]>;
+  /** Gems in the world: position, tier, spin, id. Absent when there are none. */
+  G?: Array<[number, number, number, number, number, string]>;
 }
 
 /** One thing that happened, for sound and sparks. */
 export interface EventOut {
   t: "e";
-  v: Array<{ k: string; at: Vec; p: number; who?: string; tier?: number; sh?: number; dmg?: number; wave?: number; g?: 1 }>;
+  v: Array<{ k: string; at: Vec; p: number; who?: string; tier?: number; sh?: number; dmg?: number; wave?: number; g?: 1; gem?: string }>;
 }
 
 /** This player's own gauges. Every one of these is the room's number, never
@@ -177,6 +179,9 @@ export interface PurseOut {
   /** How the last one ended. */
   last: { to: string; amount: number; txid?: string; error?: string; at: number } | null;
   why?: string;
+  /** Flock kills, ever, and gems held, one count per tier. */
+  flocks?: number;
+  gems?: number[];
 }
 
 export type ServerMessage =

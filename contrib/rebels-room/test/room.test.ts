@@ -36,7 +36,14 @@ const storage = {
   map: new Map<string, unknown>(),
   async get(k: string) { return this.map.get(k); },
   async put(k: string, v: unknown) { this.map.set(k, v); },
-  async list() { return new Map(); },
+  async delete(k: string) { return this.map.delete(k); },
+  async list(opts: { prefix?: string } = {}) {
+    const out = new Map<string, unknown>();
+    for (const [k, v] of this.map) if (!opts.prefix || k.startsWith(opts.prefix)) out.set(k, v);
+    return out;
+  },
+  clear() { this.map.clear(); },
+  keys() { return this.map.keys(); },
 };
 const fakeState = { storage } as never;
 const credits: any[] = [];
@@ -380,6 +387,50 @@ console.log(out.join("\n"));
   ok("the pulse gun always fires", room.combat.bullets.length > before);
   const st0 = (room.broadcastState(), ws.last("s"));
   ok("no beams, no M key on the wire", !("M" in st0), Object.keys(st0).join(","));
+  room.stop();
+}
+
+// Flock kills: over half a fleet's members, tallied per seat; the last death drops a gem.
+{
+  storage.clear();
+  const room = newRoom();
+  const wsA = new FakeSocket(), wsB = new FakeSocket();
+  const a = join(room, wsA, "a-node");
+  const b = join(room, wsB, "b-node");
+  const { spawnFleet, hurtEnemy, setFlockRandomForTests } = await import("../../../ui/src/wallet/rebels/rebelsCombat");
+  setFlockRandomForTests(() => 1);
+  const fleet = spawnFleet(room.combat, 2, a.body.pos, a.body.fwd, { count: 4 });
+  /* A downs three, B downs one. */
+  for (const [d, who] of [[fleet[0], a.id], [fleet[1], a.id], [fleet[2], b.id], [fleet[3], a.id]] as const) {
+    hurtEnemy(room.combat, d, 999, d.pos.clone().add(new THREE.Vector3(0, 0, 1)), who);
+  }
+  room.step();
+  await new Promise((r) => setTimeout(r, 0));
+  ok("a fifth of a kill a member, on the seats", Math.abs(a.kills - 0.6) < 1e-9 && Math.abs(b.kills - 0.2) < 1e-9, `${a.kills} ${b.kills}`);
+  ok("the seat over half takes the flock kill", a.flocks === 1 && b.flocks === 0, `${a.flocks} ${b.flocks}`);
+  ok("the tally is cleared with the fleet", a.tally.size === 0 && b.tally.size === 0);
+  ok("a gem of the fleet's tier is in the world", room.combat.gems.length === 1 && room.combat.gems[0].tier === 2);
+  ok("everyone is told", wsB.all("e").some((m: any) => (m.v as any[]).some((v) => v.k === "flockDown" && v.who === a.id)));
+  const st = wsA.last("s");
+  ok("and sees it on the wire", Array.isArray(st.G) && st.G.length === 1 && st.G[0][3] === 2, JSON.stringify(st.G));
+  const saved = [...storage.keys()].filter((k) => String(k).startsWith("gem:"));
+  ok("it is written to storage at once", saved.length === 1, `${saved.length}`);
+
+  /* B flies through it: B's property, banked, gone from storage. */
+  const gem = room.combat.gems[0];
+  b.body.pos.copy(gem.pos);
+  room.combat.gems.length = 0;
+  room.combat.events.push({ kind: "gem", at: gem.pos.clone(), power: 1, tier: gem.tier, who: b.id });
+  room.step();
+  await new Promise((r) => setTimeout(r, 0));
+  ok("the gem is the seat's", b.gems[1] === 1, `${b.gems}`);
+  ok("and leaves storage", [...storage.keys()].filter((k) => String(k).startsWith("gem:")).length === 0);
+  credits.length = 0;
+  await room.bank(b);
+  ok("banking carries gems and flock kills", credits[0]?.gems?.[1] === 1 && credits[0]?.flocks === 0, JSON.stringify(credits[0]));
+  credits.length = 0;
+  await room.bank(a);
+  ok("and the flock kill", credits[0]?.flocks === 1, JSON.stringify(credits[0]));
   room.stop();
 }
 

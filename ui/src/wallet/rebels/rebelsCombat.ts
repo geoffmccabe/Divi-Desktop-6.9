@@ -3,7 +3,7 @@
 // same way the flight model is.
 
 import * as THREE from "three";
-import { R, cruiseScale, nearestPlanet } from "./orbitWorld";
+import { R, cruiseScale, nearestPlanet, planetCentre, planetDiameter } from "./orbitWorld";
 import { BEAM_SECONDS, type WeaponSpec } from "./weaponCatalog";
 import {
   droneClass, newGroup, newFleetId, stepFlock, reslot, slotOffsets,
@@ -194,6 +194,97 @@ export const COIN_R = 0.031;
 export const COIN_PICKUP = 2.2;
 /** How big a coin is drawn, which is also how big it is to a round. */
 export const COIN_RADIUS = 0.33;
+
+/* ---- GEMS ----
+   Dropped where the last member of a flock dies. A gem is a thing, not a
+   score: it is owned by whoever flies through it, it persists in the room's
+   world until then, and it is the size of a coin. It orbits whichever body
+   is nearer, Earth or a planet, at coin speed, so it moves and takes finding.
+   Same magnet as a coin, same recoil when shot. */
+export interface Gem {
+  id: string;
+  tier: number;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  spin: number;
+  spinVel?: number;
+  /** 0 for Earth, else the planet number it orbits. */
+  body: number;
+}
+export const GEM_RADIUS = COIN_RADIUS;
+export const GEM_MAX = 300;
+
+/** The gravity of a body a gem orbits: Earth's is the coins'; a planet's
+ *  scales with its size so the orbit is as slow as Earth's, at its scale. */
+function bodyMu(body: number): number {
+  if (body === 0) return COIN_MU;
+  const p = planetCentre(body);
+  void p;
+  return COIN_MU * (planetDiameter(body) / (2 * R));
+}
+function bodyCentre(body: number): THREE.Vector3 {
+  return body === 0 ? new THREE.Vector3() : planetCentre(body);
+}
+function bodyRadius(body: number): number {
+  return body === 0 ? R : planetDiameter(body) / 2;
+}
+
+/** Put a gem in orbit where it dropped, round the nearer body. */
+export function dropGem(c: CombatState, tier: number, at: THREE.Vector3, id: string): Gem {
+  const planet = nearestPlanet(at);
+  const body = at.length() <= planet.centre.distanceTo(at) ? 0 : planet.n;
+  const centre = bodyCentre(body);
+  const rel = at.clone().sub(centre);
+  const r = Math.max(bodyRadius(body) + 6, rel.length());
+  const up = rel.clone().normalize();
+  const pos = centre.clone().addScaledVector(up, r);
+  /* A circular orbit at this height: sideways, at the speed that stays up. */
+  const side = new THREE.Vector3().randomDirection();
+  const tangent = side.addScaledVector(up, -side.dot(up)).normalize();
+  const speed = Math.sqrt(bodyMu(body) / r);
+  const gem: Gem = { id, tier, pos, vel: tangent.multiplyScalar(speed), spin: Math.random() * 6.28, body };
+  c.gems.push(gem);
+  while (c.gems.length > GEM_MAX) c.gems.shift();
+  return gem;
+}
+
+/** Fly the gems: gravity, the magnet, spin, pickup. Never lost: one that
+ *  would fall in is bounced back out, since it is somebody's property. */
+export function stepGems(c: CombatState, dt: number, w: CombatWorld): void {
+  for (let i = c.gems.length - 1; i >= 0; i--) {
+    const g = c.gems[i];
+    const centre = bodyCentre(g.body);
+    const rel = _segRel.copy(g.pos).sub(centre);
+    const r2 = rel.lengthSq();
+    const r = Math.sqrt(r2);
+    g.vel.addScaledVector(rel, -(bodyMu(g.body) / (r2 * r)) * dt);
+    const claimant = nearestPlayer(w, g.pos);
+    const toPlayer = _segAt.copy(claimant.pos).sub(g.pos);
+    const range = toPlayer.length();
+    if (range < COIN_MAGNET) {
+      const pull = (1 - range / COIN_MAGNET) ** 2 * 140;
+      g.vel.addScaledVector(toPlayer.normalize(), pull * dt);
+    }
+    const fast = g.vel.length();
+    if (fast > COIN_TOP) g.vel.multiplyScalar(COIN_TOP / fast);
+    g.pos.addScaledVector(g.vel, dt);
+    g.spinVel = (g.spinVel ?? 0) * Math.max(0, 1 - 1.4 * dt);
+    g.spin += dt * (1.6 + (g.spinVel ?? 0));
+    if (range < COIN_PICKUP) {
+      c.events.push({ kind: "gem", at: g.pos.clone(), power: 0.8, tier: g.tier, who: claimant.id });
+      c.gems.splice(i, 1);
+      continue;
+    }
+    const floor = bodyRadius(g.body) + 3;
+    if (r < floor) {
+      /* Back out, and the inward speed turned outward. */
+      const up = rel.clone().normalize();
+      g.pos.copy(centre).addScaledVector(up, floor);
+      const inward = g.vel.dot(up);
+      if (inward < 0) g.vel.addScaledVector(up, -inward * 1.6);
+    }
+  }
+}
 /* ---- MAGNETIC, LIKE MINECRAFT XP ----
    Geoff: "if you're within 20 diameters (their diameters) then they begin to
    move towards you." Twenty diameters of a coin. Gems use the same rule. */
@@ -414,6 +505,7 @@ export interface Torpedo {
 export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
       | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "coinHit" | "waveStart"
+            | "flockDown" | "gem" | "gemHit"
       | "incoming" | "blocked";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
@@ -423,6 +515,14 @@ export interface CombatEvent {
   /** enemyDown only: what the kill counts for. A fighter is 1, a flock
    *  member a fifth, a cheat drone nothing. */
   worth?: number;
+  /** enemyDown of a flock member: which fleet, how many it set out with, and
+   *  how many are left after this one. The flock kill is decided from these:
+   *  whoever downed more than half of fleetTotal when fleetLeft reaches 0. */
+  fleet?: number;
+  fleetTotal?: number;
+  fleetLeft?: number;
+  /** gem / flockDown: the gem's tier and id. */
+  gem?: number;
   /** enemyHit only: damage actually landed, which is what scores. */
   damage?: number;
   /** enemyDown only: which of the seven it was. */
@@ -517,6 +617,8 @@ export interface CombatState {
   flocks: FlockGroup[];
   /** Seconds toward the next roll for a natural flock. */
   flockClock: number;
+  /** Gems in the world. In a room these are the room's and persist. */
+  gems: Gem[];
   kills: number;
   /** Kills this run, one count per tier, indexed from zero. */
   tierKills: number[];
@@ -527,7 +629,7 @@ export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
     beams: [],
-    wave: null, flocks: [], flockClock: 0,
+    wave: null, flocks: [], flockClock: 0, gems: [],
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -591,9 +693,15 @@ export function hurtEnemy(
          fighter tier buckets and inflate them. */
       if (!e.drone) c.tierKills[e.cls.tier - 1] += 1;
     }
+    const fleetBits = e.drone && e.fleet !== undefined && !e.cheat ? (() => {
+      let left = 0;
+      for (const o of c.enemies) if (o.drone && o.fleet === e.fleet) left++;
+      const g = c.flocks.find((x) => x.fleet === e.fleet);
+      return { fleet: e.fleet, fleetTotal: g?.fleetTotal ?? 0, fleetLeft: left };
+    })() : {};
     c.events.push({
       kind: "enemyDown", at: e.pos.clone(), power: e.drone ? 2 : 3,
-      tier: e.cls.tier, who: by, worth: e.cheat ? 0 : worth,
+      tier: e.cls.tier, who: by, worth: e.cheat ? 0 : worth, ...fleetBits,
     });
   }
   return applied;
@@ -1027,6 +1135,7 @@ export function spawnFleet(
   const heading = playerPos.clone().sub(at).normalize();
   const fleet = newFleetId();
   const g = newGroup(fleet, cls.tier, at, heading, opts.home ?? null);
+  g.fleetTotal = count;
   c.flocks.push(g);
 
   const slots = slotOffsets(count);
@@ -1299,6 +1408,17 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
        the round spent. Only coins near the round's path are tested, since
        there can be hundreds of them. */
     let coined = false;
+    for (const g of c.gems) {
+      if (g.pos.distanceToSquared(from) > 900) continue;
+      if (!segmentHit(from, b.pos, g.pos, GEM_RADIUS * 1.6)) continue;
+      const dir = _segAb.copy(b.vel).normalize();
+      g.vel.addScaledVector(dir, COIN_KICK);
+      g.spinVel = (g.spinVel ?? 0) + (Math.random() - 0.5) * 2 * COIN_KICK_SPIN;
+      c.events.push({ kind: "gemHit", at: g.pos.clone(), power: 0.5 });
+      coined = true;
+      break;
+    }
+    if (coined) { c.bullets.splice(i, 1); continue; }
     for (const k of c.coins) {
       if (k.pos.distanceToSquared(from) > 900) continue;
       if (!segmentHit(from, b.pos, k.pos, COIN_RADIUS * 1.6)) continue;
@@ -1731,6 +1851,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
      collisions; all that is left is where they go. */
   /* ---- a flock from a planet, now and then ---- */
   stepFlockSpawns(c, dt, w);
+  stepGems(c, dt, w);
 
   if (c.flocks.length) {
     /* Into a reused array rather than a fresh one from filter(): this runs

@@ -86,6 +86,9 @@ export interface Purse {
   last: { to: string; amount: number; txid?: string; error?: string; at: number } | null;
   /** Why the last claim was refused, when it was. */
   why?: string;
+  /** Flock kills ever, and gems held per tier. */
+  flocks: number;
+  gems: number[];
   /** When this arrived, by the cockpit's clock. */
   at: number;
 }
@@ -109,6 +112,8 @@ export interface Room {
   fire(kind: "main" | "mini" | "torp" | "beam", pos: THREE.Vector3, fwd: THREE.Vector3, aim?: THREE.Vector3, weapon?: string): void;
   /** Beams in the air, as the room sees them. Overwritten every tick. */
   beams: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; life: number; half: number; reach: number; colour: number; key: string }>;
+  /** Gems in the world. The room's; they persist there. */
+  gems: Array<{ id: string; tier: number; pos: THREE.Vector3; spin: number }>;
   detonate(): void;
   /** Ask to be paid what is banked, to this address. The answer comes back
    *  as a purse, with `why` set if it was refused. */
@@ -177,6 +182,7 @@ export function joinRoom(opts: Opts): Room {
     bullets: [],
     coins: [],
     beams: [],
+    gems: [],
     wave: 0,
     gauges: null,
     takeEvents() { const out = events.slice(); events.length = 0; return out; },
@@ -265,6 +271,7 @@ export function joinRoom(opts: Opts): Room {
       room.bullets.length = 0;
       room.coins.length = 0;
       room.beams.length = 0;
+      room.gems.length = 0;
       room.gauges = null;
       if (!closed) backoff();
     };
@@ -357,6 +364,10 @@ export function joinRoom(opts: Opts): Room {
             key: String(b[6]),
           };
         });
+        room.gems = ((m.G ?? []) as Array<[number, number, number, number, number, string]>).map((g) => ({
+          id: String(g[5]), tier: Number(g[3]) || 1,
+          pos: new THREE.Vector3(g[0], g[1], g[2]), spin: Number(g[4]) || 0,
+        }));
         return;
       }
 
@@ -413,6 +424,8 @@ export function joinRoom(opts: Opts): Room {
             }
             : null,
           ...(typeof m.why === "string" && m.why ? { why: m.why } : {}),
+          flocks: Number(m.flocks) || 0,
+          gems: Array.isArray(m.gems) ? (m.gems as unknown[]).map((n) => Number(n) || 0) : [0, 0, 0, 0, 0, 0, 0],
           at: performance.now(),
         };
         room.purse = purse;

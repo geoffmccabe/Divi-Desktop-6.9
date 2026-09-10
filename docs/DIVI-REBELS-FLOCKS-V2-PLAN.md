@@ -189,3 +189,28 @@ flag so a room client draws drones as drones.
 
 Not yet: the living visuals (phase 2), per-player member tallies and the
 flock kill (phase 3), gems (phase 4).
+
+## Built (2026-Sep-10, second pass): phases 2, 3, 4 and the minute's decision
+
+- **The minute's decision.** Every group in the fight keeps a clock; at the
+  minute it splits again (40%), rejoins another group of its fleet (40%) or
+  does nothing. A merge is not started in active combat (prey inside 130
+  units) and an ongoing one waits for the fight; the two fly toward each
+  other and become one group within 30 units. Splits into two are the
+  least likely split (weights 1:2:2:2 for 2, 3, 4, 6 pieces).
+- **Living look.** One instanced mesh per tier whose geometry is the tier's
+  6 to 18 shapes (cones, rods, capsules in turn) on a Fibonacci lattice,
+  breathing in the vertex shader from a per-drone phase; two to eight motes
+  per drone on tilted orbits. Eight draw calls for the whole sky.
+- **Flock kills.** The room tallies members per seat per fleet; at the last
+  member's death the seat over half takes the kill (`flocks` on the account).
+  Alone, the cockpit keeps the same tally for its own HUD; nothing reaches
+  the ledger from solo play.
+- **Gems.** The last member drops a gem of the tier where it fell, into
+  orbit round Earth or the nearer planet at coin speed; magnetic within
+  twenty diameters; a round knocks it away spinning; it can never fall in.
+  The room writes every gem to storage on the spot and re-saves positions
+  every 30 seconds and at stop, so a restart finds them where they were.
+  Flying through one credits the account (`gems` per tier on the ledger)
+  and deletes it from storage. The Items tab shows what is held. Gems exist
+  only in the room, as agreed.

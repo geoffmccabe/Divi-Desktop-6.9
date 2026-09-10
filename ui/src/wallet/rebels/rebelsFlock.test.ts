@@ -29,6 +29,9 @@ import {
   LEASH,
   newGroup,
   stepFlock,
+  DECIDE_SECONDS,
+  MERGE_RANGE,
+  setDecideRandomForTests,
 } from "./rebelsFlock";
 import {
   createCombat, stepCombat, spawnFleet, hurtEnemy, clearEvents,
@@ -39,6 +42,9 @@ import {
 /* These tests simulate minutes of play; the one-percent natural flock roll
    would add fleets nobody asked for. Off, unless a test turns it on. */
 setFlockRandomForTests(() => 1);
+/* Likewise the minute's split-or-merge decision: "nothing", unless a test
+   is about it. The older tests measure the first split and the run cadence. */
+setDecideRandomForTests(() => 0.95);
 
 const out: string[] = [];
 let failures = 0;
@@ -438,6 +444,71 @@ type Bullet = never;
   stepFlock(groups, d, 0.1, gone);
   ok("arriving home, it asks to be removed and is dropped", despawned.includes(g.id) && groups.length === 0, `${despawned} ${groups.length}`);
   ok("a leash of six hundred units decides who counts as prey", LEASH === 600 && TRANSIT_SPEED === 5);
+}
+
+/* ---- the minute's decision: split again, merge, or nothing ---- */
+{
+  /* Splits: two is the least likely. A thousand picks from twenty-four. */
+  let seed = 777;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  const parts: Record<number, number> = {};
+  for (let i = 0; i < 1000; i++) { const n = pickSplit(24, rnd).length; parts[n] = (parts[n] ?? 0) + 1; }
+  ok("a split into two is the rarest choice", parts[2] < parts[3] && parts[2] < parts[4] && parts[2] < parts[6], JSON.stringify(parts));
+  ok("but it still happens", (parts[2] ?? 0) > 50, `${parts[2]}`);
+
+  /* Two groups of one fleet, hunting, out of combat, decide to merge. */
+  const player = new THREE.Vector3(0, 0, R + 400);       /* far off: not fighting */
+  const mk = (_id: number, x: number) => {
+    const g = newGroup(9, 1, new THREE.Vector3(x, 0, R + 60), new THREE.Vector3(0, 0, 1));
+    const drones: any[] = [];
+    for (let k = 0; k < 6; k++) drones.push({ group: g.id, slot: k, pos: new THREE.Vector3(x + k, 0, R + 60), fwd: new THREE.Vector3(0, 0, 1), vel: new THREE.Vector3(), tumble: new THREE.Vector3(), fireAt: 99, cls: DRONE_TIERS[0], pulse: 0, fleet: 9 });
+    return { g, drones };
+  };
+  const a = mk(1, -60), b = mk(2, 60);
+  const groups = [a.g, b.g];
+  const all = [...a.drones, ...b.drones];
+  const w = { playerPos: player, scale: () => 1, nearest: () => player };
+  setDecideRandomForTests(() => 0.5);      /* the merge band */
+  a.g.decideAt = 0.01; b.g.decideAt = 999;
+  stepFlock(groups, all, 0.02, w);
+  ok("at the minute, out of combat, a group picks a partner to rejoin", a.g.mergeWith === b.g.id && b.g.mergeWith === a.g.id, `${a.g.mergeWith} ${b.g.mergeWith}`);
+  const gapBefore = a.g.centre.distanceTo(b.g.centre);
+  for (let i = 0; i < 30; i++) stepFlock(groups, all, 0.1, w);
+  const gapAfter = a.g.centre.distanceTo(b.g.centre);
+  ok("and the two fly toward each other", gapAfter < gapBefore - 20, `${gapBefore.toFixed(0)} -> ${gapAfter.toFixed(0)}`);
+  a.g.centre.copy(b.g.centre).add(new THREE.Vector3(MERGE_RANGE - 5, 0, 0));
+  stepFlock(groups, all, 0.1, w);
+  ok("within reach they become one group", groups.length === 1 && all.every((d) => d.group === groups[0].id), `${groups.length} groups`);
+  ok("of twelve, reslotted", groups[0].alive === 12 && new Set(all.map((d) => d.slot)).size === 12);
+
+  /* In combat: no merge is started. */
+  const c = mk(3, -60), d = mk(4, 60);
+  const near = new THREE.Vector3(0, 0, R + 60);         /* right on top of them */
+  const fight = { playerPos: near, scale: () => 1, nearest: () => near };
+  c.g.decideAt = 0.01; d.g.decideAt = 999;
+  stepFlock([c.g, d.g], [...c.drones, ...d.drones], 0.02, fight);
+  ok("in active combat the minute's merge is not started", c.g.mergeWith === null && d.g.mergeWith === null);
+
+  /* The split band: a group of twelve splits again. */
+  setDecideRandomForTests(() => 0.1);
+  const e = mk(5, 0);
+  for (let k = 6; k < 12; k++) e.drones.push({ group: e.g.id, slot: k, pos: new THREE.Vector3(k, 0, R + 60), fwd: new THREE.Vector3(0, 0, 1), vel: new THREE.Vector3(), tumble: new THREE.Vector3(), fireAt: 99, cls: DRONE_TIERS[0], pulse: 0, fleet: 5 });
+  e.g.split = true;                                    /* already split once, as a fleet in the fight has */
+  e.g.decideAt = 0.01;
+  const eg = [e.g];
+  stepFlock(eg, e.drones, 0.02, w);
+  ok("at the minute a group may split again", eg.length >= 2, `${eg.length} groups`);
+  ok("into groups of at least two", eg.every((g) => e.drones.filter((x) => x.group === g.id).length >= 2));
+
+  /* The nothing band. */
+  setDecideRandomForTests(() => 0.95);
+  const f = mk(6, 0), h = mk(7, 50);
+  f.g.decideAt = 0.01;
+  const fg = [f.g, h.g];
+  stepFlock(fg, [...f.drones, ...h.drones], 0.02, w);
+  ok("or do nothing", fg.length === 2 && f.g.mergeWith === null);
+  ok("and the clock is reset to a minute", f.g.decideAt > DECIDE_SECONDS - 1);
+  setDecideRandomForTests(() => 0.95);
 }
 
 console.log(out.join("\n"));

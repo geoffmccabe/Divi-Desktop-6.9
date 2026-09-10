@@ -21,7 +21,14 @@ import {
   COIN_RADIUS,
   COIN_KICK,
   spawnFleet,
+  dropGem,
+  stepGems,
+  GEM_RADIUS,
 } from "./rebelsCombat";
+
+/* The natural flock roll would drop fleets into tests that time waves to the
+   second. Off, unless a test turns it on. */
+setFlockRandomForTests(() => 1);
 
 const out: string[] = [];
 let failures = 0;
@@ -1280,7 +1287,7 @@ function run(c: CombatState, frames: number, w = world()) {
      `${worst.toFixed(2)} vs ${BOOST}`);
 }
 
-console.log(out.join("\n"));
+
 /* ---- enemy aim error, by tier ----
    Geoff: "adding some randomness to their aim ... T7 is right on target by
    only 0.3% off." */
@@ -1380,7 +1387,7 @@ console.log(out.join("\n"));
   c.flockClock = 5;
   const big = stepFlockSpawns(c, 0, w);
   ok("a tier-seven roll brings forty-eight", big.length === 48 && c.flocks[1].tier === 7, `${big.length}`);
-  setFlockRandomForTests(null);
+  setFlockRandomForTests(() => 1);
 }
 
 /* ---- what a flock member is worth ---- */
@@ -1420,5 +1427,72 @@ console.log(out.join("\n"));
   ok("with a hit event for the sound", c.events.some((e) => e.kind === "coinHit"));
 }
 
+/* ---- the flock kill's bookkeeping on the event ---- */
+{
+  const c = createCombat();
+  const w = world();
+  const fleet = spawnFleet(c, 1, w.playerPos, w.playerFwd, { count: 4 });
+  const fleetId = fleet[0].fleet!;
+  hurtEnemy(c, fleet[0], 999, fleet[0].pos.clone().add(new THREE.Vector3(0, 0, 1)), "a");
+  let ev = c.events.filter((e) => e.kind === "enemyDown").pop()!;
+  ok("a member's death names its fleet, the fleet's size and what is left",
+     ev.fleet === fleetId && ev.fleetTotal === 4 && ev.fleetLeft === 3, JSON.stringify({ f: ev.fleet, t: ev.fleetTotal, l: ev.fleetLeft }));
+  for (const d of fleet.slice(1)) hurtEnemy(c, d, 999, d.pos.clone().add(new THREE.Vector3(0, 0, 1)), "b");
+  ev = c.events.filter((e) => e.kind === "enemyDown").pop()!;
+  ok("the last one says none are left", ev.fleetLeft === 0 && ev.fleetTotal === 4);
+}
+
+/* ---- gems: orbit, magnet, pickup, recoil, never lost ---- */
+{
+  const c = createCombat();
+  const w = world();
+  const far = new THREE.Vector3(0, 0, R + 40);
+  w.playerPos.set(0, 0, R + 400);   /* out of magnet reach */
+  const g = dropGem(c, 3, far, "gem-1");
+  ok("a gem dropped near Earth orbits Earth", g.body === 0 && c.gems.length === 1);
+  ok("at the coin's size", GEM_RADIUS === 0.33);
+  ok("at orbital speed", Math.abs(g.vel.length() - Math.sqrt(COIN_MU / g.pos.length())) < 1e-6);
+  ok("moving sideways, not up or down", Math.abs(g.vel.dot(g.pos.clone().normalize())) < 1e-6);
+  const r0 = g.pos.length();
+  for (let i = 0; i < 600; i++) stepGems(c, 1 / 60, w);
+  ok("ten seconds on it is still up, at the same height", Math.abs(g.pos.length() - r0) < 1.5 && c.gems.length === 1, `${(g.pos.length() - r0).toFixed(2)}`);
+
+  /* The magnet: inside twenty diameters it comes to you. Held still first,
+     since at orbital speed it would sweep past the point being tested. */
+  g.vel.set(0, 0, 0);
+  w.playerPos.copy(g.pos).add(new THREE.Vector3(0, 0, 8));
+  const before = g.pos.distanceTo(w.playerPos);
+  for (let i = 0; i < 30; i++) stepGems(c, 1 / 60, w);
+  ok("inside the magnet it closes on the player", g.pos.distanceTo(w.playerPos) < before, `${before.toFixed(1)} -> ${g.pos.distanceTo(w.playerPos).toFixed(1)}`);
+  for (let i = 0; i < 300 && c.gems.length; i++) stepGems(c, 1 / 60, w);
+  ok("and is picked up", c.gems.length === 0 && c.events.some((e) => e.kind === "gem" && e.tier === 3), `${c.gems.length}`);
+
+  /* Shot: recoil and spin. */
+  const c2 = createCombat();
+  const w2 = world();
+  w2.playerPos.set(0, 0, R + 400);
+  const g2 = dropGem(c2, 1, new THREE.Vector3(0, 0, R + 30), "gem-2");
+  g2.vel.set(0, 0, 0);
+  c2.bullets.push({ pos: g2.pos.clone().add(new THREE.Vector3(0, 0, -2)), vel: new THREE.Vector3(0, 0, 60), life: 3, hostile: false });
+  stepCombat(c2, 1 / 30, w2);
+  ok("a round knocks a gem away and spins it", c2.bullets.length === 0 && g2.vel.z > 5 && Math.abs(g2.spinVel ?? 0) > 0, `${g2.vel.z.toFixed(1)}`);
+  ok("with its own event", c2.events.some((e) => e.kind === "gemHit"));
+
+  /* Never lost: aimed straight down, it is bounced back out. */
+  const c3 = createCombat();
+  const g3 = dropGem(c3, 1, new THREE.Vector3(0, 0, R + 10), "gem-3");
+  g3.vel.copy(g3.pos.clone().normalize().multiplyScalar(-14));
+  for (let i = 0; i < 240; i++) stepGems(c3, 1 / 60, w2);
+  ok("a gem falling in is bounced out, never lost", c3.gems.length === 1 && g3.pos.length() > R + 2, `${(g3.pos.length() - R).toFixed(1)}`);
+
+  /* Far out, it orbits the nearest planet. */
+  const c4 = createCombat();
+  const { planetCentre } = await import("./orbitWorld");
+  const pc = planetCentre(1);
+  const g4 = dropGem(c4, 2, pc.clone().add(new THREE.Vector3(0, 0, 60)), "gem-4");
+  ok("dropped by a planet it orbits that planet", g4.body === 1);
+}
+
+console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

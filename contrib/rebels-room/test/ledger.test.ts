@@ -274,6 +274,18 @@ async function main() {
     ok("and London never hears of it", rows.length === 0);
   }
 
+  /* ------------------------------------------------ flock kills and gems */
+  {
+    const { led } = newLedger();
+    await led.fetch(internal("credit", { node: "g1", flocks: 2, gems: [1, 0, 3, 0, 0, 0, 0] }));
+    await led.fetch(internal("credit", { node: "g1", flocks: 1, gems: [0, 1, 0, 0, 0, 0, 1] }));
+    const p = await j(await led.fetch(GET_INTERNAL("purse?node=g1")));
+    ok("flock kills add up on the account", p.flocks === 3, `${p.flocks}`);
+    ok("gems add up per tier", JSON.stringify(p.gems) === "[1,1,3,0,0,0,1]", JSON.stringify(p.gems));
+    const q = await j(await led.fetch(GET_INTERNAL("purse?node=nobody")));
+    ok("a new account has none", q.flocks === 0 && JSON.stringify(q.gems) === "[0,0,0,0,0,0,0]");
+  }
+
   console.log(`\n${out.length - failures} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);
 }

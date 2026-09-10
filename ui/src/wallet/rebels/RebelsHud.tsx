@@ -175,6 +175,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         </div>
         <div className="orbit-row orbit-dim">{hud.towers} towers</div>
         {hud.wave > 0 && <div className="orbit-row">WAVE {hud.wave}</div>}
+        {hud.flocks > 0 && <div className="orbit-row">FLOCKS {hud.flocks}</div>}
         <div className={"orbit-row" + (hud.contacts > 0 ? " orbit-alert" : " orbit-dim")}>
           {hud.contacts > 0 ? `${hud.contacts} CONTACT${hud.contacts > 1 ? "S" : ""}` : "no contacts"}
         </div>
