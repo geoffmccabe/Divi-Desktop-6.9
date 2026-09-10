@@ -29,6 +29,20 @@ Reviewed 2026-Sep-09. The room is the Cloudflare Durable Object in
 - **Enemy aim error by tier** applies in the room, since it shares the
   simulation.
 
+## Fixed 2026-Sep-10 (evening)
+
+- **The wallet could never reach the room.** The webview's content security
+  policy (`connect-src` in `crates/app/tauri.conf.json`) did not list the
+  room's host, so every socket was refused inside the app and the HUD sat
+  on "retrying" for good, while a plain browser connected fine. The host is
+  in the policy now, and `rebelsRoom.test.ts` reads the config and checks
+  the client's room address is allowed, so it cannot quietly come back.
+
+- **The fight starts over when everyone is down.** Geoff's rule: waves climb
+  until every player is dead or gone, then wave one. An empty room already
+  started fresh; now the last death does too. Gems survive a reset: they are
+  property, not part of the fight.
+
 ## Not right yet, in order of how much it matters
 
 1. **Gear is the client's word.** A client can declare a beam it never bought.

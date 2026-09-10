@@ -282,6 +282,22 @@ async function main() {
     room.close();
   }
 
+  /* ---- the wallet must be ALLOWED to open the socket ----
+     The room worked from a browser and never from the wallet: the webview's
+     content security policy did not list the room's host, so every attempt
+     was refused before it left the app and the cockpit sat on "retrying"
+     for good. The policy lives in the app's config; this reads it and checks
+     the host the client is built with is in connect-src. */
+  {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const conf = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../crates/app/tauri.conf.json"), "utf8"));
+    const csp: string = conf?.app?.security?.csp ?? conf?.tauri?.security?.csp ?? "";
+    const connect = csp.split(";").map((x: string) => x.trim()).find((x: string) => x.startsWith("connect-src")) ?? "";
+    const host = new URL(R.ROOM_BASE.replace("wss://", "https://")).host;
+    ok("the wallet's policy lets the socket reach the room", connect.includes(`wss://${host}`), connect.slice(0, 120));
+  }
+
   console.log(out.join("\n"));
   console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);

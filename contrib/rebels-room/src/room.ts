@@ -447,6 +447,23 @@ export class RebelsRoom {
     /* Earnings survive death, as promised. Only the ship is lost. */
     void this.bank(s);
     this.refreshRoster();
+    /* ---- EVERYONE DOWN: THE FIGHT STARTS OVER ----
+       Geoff: "the game resets once all the players have died, or if no one
+       is playing, it will start over. Otherwise the waves will just keep
+       increasing until everyone is dead or given up." An empty room already
+       starts fresh (see start); this is the other half. Wave one, nothing in
+       the air. The gems stay: they are property, not part of the fight. */
+    let anyoneLeft = false;
+    for (const o of this.seats.values()) if (o.joined && !o.dead) anyoneLeft = true;
+    if (!anyoneLeft) this.resetFight();
+  }
+
+  private resetFight(): void {
+    const gems = this.combat.gems;
+    this.combat = createCombat();
+    this.combat.gems = gems;
+    for (const o of this.seats.values()) o.tally.clear();
+    startWave(this.combat, 1);
   }
 
   private revive(s: Seat): void {

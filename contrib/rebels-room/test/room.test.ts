@@ -434,5 +434,26 @@ console.log(out.join("\n"));
   room.stop();
 }
 
+// Everyone dead: the fight starts over at wave one; gems survive it.
+{
+  storage.clear();
+  const room = newRoom();
+  const wsA = new FakeSocket(), wsB = new FakeSocket();
+  const a = join(room, wsA, "r-a");
+  const b = join(room, wsB, "r-b");
+  const { startWave, dropGem } = await import("../../../ui/src/wallet/rebels/rebelsCombat");
+  startWave(room.combat, 7);
+  room.combat.enemies.push(...room.combat.enemies);   /* whatever is there */
+  dropGem(room.combat, 3, a.body.pos.clone().add(new THREE.Vector3(0, 0, 20)), "keep-me");
+  const waveBefore = room.combat.wave?.n;
+  room.down(a);
+  ok("one player down: the fight goes on", room.combat.wave?.n === waveBefore && !b.dead, `${room.combat.wave?.n}`);
+  room.down(b);
+  ok("everyone down: back to wave one", room.combat.wave?.n === 1, `${room.combat.wave?.n}`);
+  ok("with nothing left in the air", room.combat.enemies.length === 0 && room.combat.bullets.length === 0);
+  ok("and the gems still there", room.combat.gems.length === 1 && room.combat.gems[0].id === "keep-me");
+  room.stop();
+}
+
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);
