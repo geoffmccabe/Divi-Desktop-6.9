@@ -39,7 +39,9 @@ import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
-import { watchAudio, audioHealth, settleAudioFromGesture } from "../../sound";
+import {
+  watchAudio, audioHealth, settleAudioFromGesture, watchOutputDevices, requestAudioRebuild, noteLevel,
+} from "../../sound";
 import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
@@ -230,6 +232,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      flight, the room and the music are kept, only the scene objects are
      released, and the next attach puts them back into the new scene. */
   let suspended = false;
+  let attachCount = 0;
   /* The map re-attaches within the same tick when it rebuilds, so a detach
      that is NOT followed by an attach almost at once was the panel closing,
      and then the run is over for real: banked, the room left, the music
@@ -1614,6 +1617,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          to start; if the download is still in flight it begins the moment it
          lands. */
       if (endAt) { clearTimeout(endAt); endAt = null; }
+      watchOutputDevices();
+      /* A reopened panel gets a fresh audio context. The sound has been
+         reported dying mid-session with every measurement on this side
+         reading healthy; whatever that is, a new context on the current
+         output device is the reset a restart of the app would give, without
+         the restart. Carried out from the click that opened the panel. */
+      if (attachCount++ > 0 && !suspended) { requestAudioRebuild(); settleAudioFromGesture(); }
       primeMusic();
       if (!suspended) playOpening(1.6);
       setHud({ points: spendable() });
@@ -1785,6 +1795,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            to be playing and the player is not mid-death-fade, silence at the
            speakers is a fault, and the bus deals with it. */
         const mus = musicState() as { playing?: string | null };
+        noteLevel();
         lastWatch = watchAudio(!!mus.playing && !hud.dead, 2);
         try {
           localStorage.setItem("dd69.rebels.diag", JSON.stringify({

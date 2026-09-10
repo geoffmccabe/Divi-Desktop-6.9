@@ -153,6 +153,42 @@ export function watchAudio(expectSound: boolean, dtSeconds: number, nowSeconds =
 /** What the watchdog is waiting to do, for the black box. */
 export function pendingAudioFix(): "none" | "kick" | "rebuild" { return pendingFix; }
 
+/* ---- WHEN THE SPEAKERS CHANGE UNDER US ----
+   Headphones in or out, a Bluetooth device, a call starting: macOS moves the
+   default output and WebKit's context can be left rendering into the device
+   that is gone, with every measurement on this side still reading fine. That
+   is the one silence a meter before the output cannot see. The browser does
+   announce the change, and the answer is a fresh context on the new device,
+   from the next gesture. */
+let deviceChanges = 0;
+let deviceWatch = false;
+export function watchOutputDevices(): void {
+  if (deviceWatch) return;
+  deviceWatch = true;
+  try {
+    navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+      deviceChanges++;
+      if (ctx) pendingFix = "rebuild";
+    });
+  } catch { /* no such thing here */ }
+}
+
+/** Ask for a fresh context at the next gesture, without a reason the meter
+ *  can see. The game does this when its panel is reopened: if the sound had
+ *  died in a way nothing here can measure, coming back to the game gets a
+ *  new start rather than the same dead one. */
+export function requestAudioRebuild(): void {
+  if (ctx) pendingFix = "rebuild";
+}
+
+/* The last readings, so a frozen output (the same number every time) can be
+   told from a live one in the black box. */
+const history: number[] = [];
+export function noteLevel(): void {
+  history.push(Math.round(outputLevel() * 10000) / 10000);
+  if (history.length > 8) history.shift();
+}
+
 /** From a real key or pointer handler: carry out whatever the watchdog
  *  decided. Also resumes a suspended context, which is the ordinary case. */
 export function settleAudioFromGesture(): "none" | "kick" | "rebuild" {
@@ -172,6 +208,9 @@ export function audioHealth(): Record<string, unknown> {
     silentFor: Math.round(silentFor),
     kicks, rebuilds,
     pending: pendingFix,
+    deviceChanges,
+    history: history.slice(),
+    ctxAge: ctx ? Math.round(ctx.currentTime) : 0,
     sampleRate: ctx?.sampleRate ?? 0,
     bus: !!master,
   };
@@ -181,7 +220,7 @@ export function audioHealth(): Record<string, unknown> {
 export function resetSoundForTests(): void {
   ctx = null; master = null; analyser = null; samples = null;
   kicks = 0; rebuilds = 0; silentFor = 0; lastKickAt = 0; lastRebuildAt = 0;
-  pendingFix = "none";
+  pendingFix = "none"; deviceChanges = 0; history.length = 0;
   rebuildListeners.clear();
 }
 
