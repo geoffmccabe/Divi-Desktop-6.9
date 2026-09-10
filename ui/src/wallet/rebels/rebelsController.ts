@@ -40,6 +40,8 @@ import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
 import { droneClass } from "./rebelsFlock";
+import { respawnSeconds } from "./itemCatalog";
+import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
 import {
   watchAudio, audioHealth, settleAudioFromGesture, watchOutputDevices, requestAudioRebuild, noteLevel,
@@ -181,7 +183,7 @@ export interface RebelsController extends GlobeFlight {
 export function createRebels(labelFor: (ip: string) => string): RebelsController {
   let hud: HudState = { ...BLANK };
   const listeners = new Set<(h: HudState) => void>();
-  const push = () => { for (const fn of listeners) fn(hud); };
+  const push = () => { const t = performance.now(); for (const fn of listeners) fn(hud); dflow.add("hud", performance.now() - t); };
 
   let scene: THREE.Scene | null = null;
   let camera: THREE.PerspectiveCamera | null = null;
@@ -220,7 +222,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let fpsAvg = 0;
   let simAvg = 0;
   let readoutAt = 0;
-  let stats: (() => { calls: number; triangles: number; ratio: number }) | null = null;
+  let stats: (() => { calls: number; triangles: number; ratio: number; programs?: number; geometries?: number; textures?: number }) | null = null;
   let lastWatch: "none" | "kick" | "rebuild" = "none";
   /* ---- THE MAP REBUILDS ITSELF UNDER THE GAME ----
      The globe tears its whole scene down and builds it again whenever its
@@ -378,7 +380,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      ten-times-a-second HUD tick: a rack that updates a tenth of a second after
      the trigger reads as the trigger not having worked. */
   /** How long a player waits before rejoining while others are still flying. */
-  const RESPAWN_WAIT = 10;
+  /* Thirty seconds, or ten with a VIP Pass. See itemCatalog. */
+  const respawnWait = () => respawnSeconds(owned(loadShip()));
   let respawnAt = 0;
   let nearTower = Infinity;
   let dockBlock: string = "";
@@ -423,7 +426,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       respawnAt = 0;
       setHud({ wave: 0, respawnIn: 0 });
     } else {
-      respawnAt = performance.now() + RESPAWN_WAIT * 1000;
+      respawnAt = performance.now() + respawnWait() * 1000;
     }
     setHud({ dead: true, score: 0 });
     if (typeof document !== "undefined" && document.pointerLockElement === dom) {
@@ -1084,7 +1087,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           throttle: 0, fullStop: false, boosting: false, firing: false,
           secondary: false, guard: false, mini: false,
         };
+        const tFlight = performance.now();
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
+        dflow.add("flight", performance.now() - tFlight);
         if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
         nearTower = res.nearTower;
         dockBlock = res.dockBlock;
@@ -1317,6 +1322,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            before it turned would feel broken however good the connection was,
            so the stick still moves the ship at once and the position is
            reported afterwards for everyone else to see. */
+        const tRoom = performance.now();
         if (inRoom && room) {
           room.step(dt);
           room.report(flight.pos, flight.fwd, flight.guardFor > 0);
@@ -1396,8 +1402,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           peers.draw([], camera);
         }
 
+        dflow.add("room", performance.now() - tRoom);
         /* ---- fighters and their fire ----
            Only when nobody else is running them. */
+        const tCombat = performance.now();
         if (!inRoom) stepCombat(combat, dt, {
           tips: tipList,
           playerPos: flight.pos,
@@ -1433,6 +1441,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           }
         }
 
+        dflow.add("combat", performance.now() - tCombat);
+        const tEvents = performance.now();
         for (const ev of combat.events) {
           if (ev.kind === "incoming") {
             /* The event carries how near the round is, which is what the alarm
@@ -1538,6 +1548,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            building and destroying. */
         /* A model per fighter, and it has to match that fighter's tier, so a
            slot whose occupant changed tier is rebuilt rather than recoloured. */
+        dflow.add("events", performance.now() - tEvents);
+        const tMeshes = performance.now();
         for (let i = 0; i < combat.enemies.length; i++) {
           /* Drones are spheres drawn by the instanced pass, not models. A
              sentinel tier keeps their slot in step with the enemy list without
@@ -1610,8 +1622,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* Everything raised this frame has now been drawn and scored. */
         clearEvents(combat);
 
-        fx.drawBullets(combat.bullets);
-        fx.drawBeams(combat.beams, BEAM_SECONDS);
+        dflow.add("meshes", performance.now() - tMeshes);
+        dflow.time("draw.bullets", () => fx!.drawBullets(combat.bullets));
+        dflow.time("draw.beams", () => fx!.drawBeams(combat.beams, BEAM_SECONDS));
         /* The swarm and its fire. Both are instanced, so the cost of drawing a
            hundred and forty spheres is the cost of drawing one. */
         /* Reused lists rather than two fresh arrays from filter() a frame. */
@@ -1619,19 +1632,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         for (const e of combat.enemies) if (e.drone) droneList.push(e);
         orbList.length = 0;
         for (const b of combat.bullets) if (b.orb) orbList.push(b);
-        fx.drawDrones(droneList, nowS);
-        fx.drawOrbs(orbList, nowS);
-        fx.drawTorpedoes(combat.torpedoes);
-        fx.drawJunk(combat.junk);
-        fx.drawTracers(combat.tracers, TRACER_LIFE);
-        fx.drawCoins(combat.coins);
-        fx.drawGems(combat.gems);
+        dflow.time("draw.drones", () => fx!.drawDrones(droneList, nowS));
+        dflow.time("draw.orbs", () => fx!.drawOrbs(orbList, nowS));
+        dflow.time("draw.torps", () => fx!.drawTorpedoes(combat.torpedoes));
+        dflow.time("draw.junk", () => fx!.drawJunk(combat.junk));
+        dflow.time("draw.tracers", () => fx!.drawTracers(combat.tracers, TRACER_LIFE));
+        dflow.time("draw.coins", () => fx!.drawCoins(combat.coins));
+        dflow.time("draw.gems", () => fx!.drawGems(combat.gems));
+        const tDock = performance.now();
         /* The tether, drawn only while a resupply is running. */
         fx.drawDockLink(
           flight.dock > 0 ? flight.pos : null,
           flight.dock > 0 && flight.dockedAt >= 0 ? tipList[flight.dockedAt] ?? null : null,
           performance.now() / 1000,
         );
+        dflow.add("draw.dock", performance.now() - tDock);
         fx.step(dt, camera);
 
         const now = performance.now();
@@ -1699,6 +1714,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         camera = api.camera;
         dom = api.dom;
         stats = api.stats ?? null;
+        /* The version is a build-time define; tests run without one. */
+        const ver = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
+        dflow.setLabel(`v${ver} · ${typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 60) : ""}`);
 
         /* Real tower tips off the real map. Docking lines up with the towers
            you can actually see, because they ARE those towers. */
@@ -1817,6 +1835,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        place, so it costs nothing and grows into nothing. */
     frame(dt) {
       const t0 = performance.now();
+      dflow.frameStart(dt);
       try {
         runFrame(dt);
       } catch (err) {
@@ -1839,6 +1858,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         fpsAvg += ((1 / dt) - fpsAvg) * k;
         simAvg += ((performance.now() - t0) - simAvg) * k;
       }
+      /* Everything the collector wants to know about this frame. */
+      dflow.counts({
+        enemies: combat.enemies.length,
+        drones: combat.enemies.reduce((n, e) => n + (e.drone ? 1 : 0), 0),
+        bullets: combat.bullets.length, coins: combat.coins.length, gems: combat.gems.length,
+        tracers: combat.tracers.length, junk: combat.junk.length, beams: combat.beams.length,
+        torps: combat.torpedoes.length, peers: room ? room.others().length : 0,
+        flocks: combat.flocks.length, meshes: enemyMeshes.length,
+      });
+      {
+        const st = stats?.();
+        if (st) dflow.render({ calls: st.calls, triangles: st.triangles, ratio: st.ratio, programs: st.programs ?? 0, geometries: st.geometries ?? 0, textures: st.textures ?? 0 });
+      }
+      dflow.room(roomStatus);
+      dflow.frameEnd();
       readoutAt -= dt;
       if (readoutAt <= 0) {
         readoutAt = 0.25;
@@ -1857,6 +1891,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            speakers is a fault, and the bus deals with it. */
         const mus = musicState() as { playing?: string | null };
         noteLevel();
+        dflow.audio((audioHealth() as { level: number }).level);
         lastWatch = watchAudio(!!mus.playing && !hud.dead, 2);
         try {
           localStorage.setItem("dd69.rebels.diag", JSON.stringify({

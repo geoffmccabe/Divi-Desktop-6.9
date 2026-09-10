@@ -455,5 +455,21 @@ console.log(out.join("\n"));
   room.stop();
 }
 
+// Respawn: thirty seconds, ten with a VIP Pass declared.
+{
+  const room = newRoom();
+  const wsA = new FakeSocket(), wsB = new FakeSocket();
+  room.seat(wsA as never);
+  const idA = wsA.last("hi").id as string;
+  wsA.deliver(JSON.stringify({ t: "join", node: "v-a", name: "A", home: [0, 0, R], gear: ["vip"] }));
+  const a = room.seats.get(idA);
+  const b = join(room, wsB, "v-b");
+  room.down(a);
+  ok("a VIP pass respawns in ten seconds", a.respawn === 10, `${a.respawn}`);
+  room.down(b);
+  ok("without it, thirty", b.respawn === 30, `${b.respawn}`);
+  room.stop();
+}
+
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

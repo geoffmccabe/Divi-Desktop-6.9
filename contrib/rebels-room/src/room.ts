@@ -39,7 +39,7 @@ import {
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
-import { ITEMS, torpedoBonus, magBonus } from "../../../ui/src/wallet/rebels/itemCatalog";
+import { ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP } from "../../../ui/src/wallet/rebels/itemCatalog";
 import { ammoFor, torpedoesFor } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
@@ -58,7 +58,9 @@ const MAX_SEATS = 24;
 const MAX_FRAME = 2048;
 
 /** Seconds on the ground after being shot down. Geoff's figure. */
-const RESPAWN_SECONDS = 10;
+/* Thirty seconds down, or ten with a VIP Pass among the seat's gear. The
+   figures are the item catalogue's, so the shop and the room agree. */
+const RESPAWN_SECONDS = RESPAWN_WAIT;
 
 /** A thousand kills is a hundred DIVI. */
 const KILLS_PER_PAYOUT = 1000;
@@ -440,7 +442,7 @@ export class RebelsRoom {
 
   private down(s: Seat): void {
     s.dead = true;
-    s.respawn = RESPAWN_SECONDS;
+    s.respawn = s.gear.has("vip") ? RESPAWN_VIP : RESPAWN_SECONDS;
     s.shield = 0;
     s.guardFor = 0;
     s.body.guard = false;

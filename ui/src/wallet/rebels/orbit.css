@@ -817,6 +817,45 @@
 /* The frame readout, bottom of the top-left block. */
 .orbit-frame { font-size: 10px; letter-spacing: 0.06em; opacity: 0.55; }
 .pts-custom input:disabled { opacity: 0.5; }
+/* ---- DFlow: the game's own diagnostics panel ----
+   Same cloth as the store: the HUD colour, the mono face, a frosted dark
+   plate. Docked bottom-left so the cockpit's own readouts stay visible. */
+.dflow {
+  position: absolute; left: 16px; bottom: 56px; width: min(760px, calc(100% - 32px));
+  max-height: 62%; overflow-y: auto;
+  padding: 12px 14px 10px;
+  font: 500 11px/1.45 var(--font-mono);
+  color: hsl(var(--rebels-hud) / 0.85);
+  background: hsl(230 30% 6% / 0.82);
+  border: 1px solid hsl(var(--rebels-hud) / 0.35);
+  border-radius: 6px;
+  box-shadow: 0 0 22px hsl(var(--rebels-hud) / 0.18);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  pointer-events: auto; z-index: 12;
+}
+.dflow-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.dflow-head > b { font-size: 12px; letter-spacing: 0.16em; color: hsl(var(--rebels-hud)); }
+.dflow-head > span { opacity: 0.55; }
+.dflow-actions { margin-left: auto; display: flex; gap: 6px; }
+.dflow-actions button {
+  padding: 6px 10px; font: 600 10px/1 var(--font-mono); letter-spacing: 0.08em;
+  color: hsl(var(--rebels-hud)); background: hsl(var(--rebels-hud) / 0.1);
+  border: 1px solid hsl(var(--rebels-hud) / 0.4); border-radius: 4px; cursor: pointer;
+}
+.dflow-actions button:hover { background: hsl(var(--rebels-hud) / 0.22); }
+.dflow-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 16px; }
+.dflow-grid section { min-width: 0; }
+.dflow-grid h5 { margin: 0 0 4px; font-size: 9.5px; letter-spacing: 0.14em; font-weight: 600; opacity: 0.6; }
+.dflow-grid b { color: var(--rebels-points, #7fe3a0); font-weight: 700; }
+.dflow-grid b.warn { color: #ff5c5c; }
+.dflow-big { font-size: 22px; font-weight: 700; color: hsl(var(--rebels-hud)); line-height: 1.1; margin-bottom: 2px; }
+.dflow-big em { font-size: 11px; font-style: normal; opacity: 0.6; }
+.dflow-row { display: grid; grid-template-columns: 96px 1fr 48px; align-items: center; gap: 6px; }
+.dflow-row i { display: block; height: 6px; background: hsl(var(--rebels-hud) / 0.55); border-radius: 3px; min-width: 2px; }
+.dflow-row b { text-align: right; }
+.dflow-dim { opacity: 0.5; }
+.dflow-foot { margin: 10px 0 0; font-size: 9.5px; opacity: 0.5; }
+
 /* Gems held, on the Items tab. */
 .gems-held { margin-top: 10px; }
 .gem-row { display: flex; flex-wrap: wrap; gap: 6px; }

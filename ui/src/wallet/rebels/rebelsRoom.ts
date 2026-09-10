@@ -23,6 +23,7 @@
 
 import * as THREE from "three";
 import { weaponByKey } from "./weaponCatalog";
+import { dflow } from "./rebelsDflow";
 
 /** Everything the cockpit needs to know about somebody else in the room. */
 export interface RoomPlayer {
@@ -261,6 +262,8 @@ export function joinRoom(opts: Opts): Room {
       });
     };
     sock.onmessage = (ev) => {
+      const text = String(ev.data);
+      dflow.net(text.length, text.startsWith('{"t":"s"') ? text.length : undefined);
       try { onMessage(JSON.parse(String(ev.data))); } catch { /* not ours */ }
     };
     sock.onerror = () => { /* onclose follows */ };

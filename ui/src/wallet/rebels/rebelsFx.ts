@@ -268,8 +268,14 @@ export function createFx(): Fx {
   const livingPhase: THREE.InstancedBufferAttribute[] = [];
   const livingMats: THREE.MeshStandardMaterial[] = [];
   const livingUniforms = { uTime: { value: 0 } };
+  /* Built the first time a tier is seen, not at attach: all seven cost 390ms
+     together (measured in node), which was a stall at panel open for shapes
+     nobody would see for minutes. One tier is about 55ms, once. */
+  const livingBuild = (t: number): THREE.BufferGeometry => livingGeometry(SHAPE_COUNTS[t] ?? 6);
+  const livingReady: boolean[] = [];
   for (let t = 0; t < DRONE_TIERS.length; t++) {
-    const geo = livingGeometry(SHAPE_COUNTS[t] ?? 6);
+    livingReady.push(false);
+    const geo = new THREE.BufferGeometry();
     const phase = new THREE.InstancedBufferAttribute(new Float32Array(DRONE_CAP), 1);
     phase.setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute("aPhase", phase);
@@ -683,6 +689,14 @@ export function createFx(): Fx {
         const size = DRONE_SIZE * (1 + beat * 0.16);
         const k = livingCount[t]++;
         const mesh = livingMeshes[t];
+        if (!livingReady[t]) {
+          const built = livingBuild(t);
+          const phaseAttr = mesh.geometry.getAttribute("aPhase");
+          built.setAttribute("aPhase", phaseAttr);
+          mesh.geometry.dispose();
+          mesh.geometry = built;
+          livingReady[t] = true;
+        }
         /* Turning slowly on its own axis, each at its own rate. */
         q.setFromAxisAngle(upAxis, now * 0.5 + (d.pulse ?? 0));
         mesh.setMatrixAt(k, m4.compose(d.pos, q, scl.setScalar(size)));

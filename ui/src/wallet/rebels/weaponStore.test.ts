@@ -221,7 +221,11 @@ async function main() {
     A.resetArmouryForTests();
     const ship = "space_SM_Ship_Fighter_01";
 
-    ok("six items", I.ITEMS.length === 6, `${I.ITEMS.length}`);
+    ok("seven items: three torpedo, three magazine, the VIP pass", I.ITEMS.length === 7, `${I.ITEMS.length}`);
+    ok("thirty seconds to respawn, ten with the pass", I.respawnSeconds([]) === 30 && I.respawnSeconds(["vip"]) === 10
+       && I.RESPAWN_WAIT === 30 && I.RESPAWN_VIP === 10);
+    ok("the pass is a plain purchase with nothing before it", I.ITEMS.find((x) => x.key === "vip")?.needs === null
+       && I.ITEMS.find((x) => x.key === "vip")?.points === 5000);
     ok("three torpedo tiers and three magazines",
        I.ITEMS.filter((x) => x.kind === "torpedo").length === 3
        && I.ITEMS.filter((x) => x.kind === "mag").length === 3);

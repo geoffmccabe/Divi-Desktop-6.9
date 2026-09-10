@@ -42,6 +42,10 @@ Reviewed 2026-Sep-09. The room is the Cloudflare Durable Object in
   until every player is dead or gone, then wave one. An empty room already
   started fresh; now the last death does too. Gems survive a reset: they are
   property, not part of the fight.
+- **Respawn is thirty seconds, ten with a VIP Pass.** While anyone is still
+  flying, the dead count down and come back into the current wave. The pass
+  is an item in the shop (5,000 points, my figure, since none was given);
+  the room reads it from the seat's declared gear.
 
 ## Not right yet, in order of how much it matters
 

@@ -55,7 +55,7 @@ export function ItemStore({ ship }: { ship: string }) {
               key={spec.key}
               className={"wpn-row" + (have ? " on" : "") + (locked ? " locked" : "")}
             >
-              <span className="wpn-slot">{spec.kind === "torpedo" ? "T" : "M"}</span>
+              <span className="wpn-slot">{spec.kind === "torpedo" ? "T" : spec.kind === "mag" ? "M" : "V"}</span>
               <span className="wpn-swatch" />
               <div className="wpn-what">
                 <b>{spec.name}</b>

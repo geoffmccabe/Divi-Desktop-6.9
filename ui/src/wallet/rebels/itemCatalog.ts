@@ -12,7 +12,7 @@
 // upgrade path rather than as three separate things that might be bought in
 // any order and then argued about.
 
-export type ItemKind = "torpedo" | "mag";
+export type ItemKind = "torpedo" | "mag" | "vip";
 
 export interface ItemSpec {
   key: string;
@@ -60,10 +60,34 @@ const mag = (n: number): ItemSpec => ({
   amount: n * 0.3,
 });
 
+/* ---- RESPAWN ----
+   Geoff: "people should be able to respawn into higher levels after a wait
+   time and countdown... I think 30 seconds is good and then if they buy an
+   item or VIP pass it could reduce to 10 seconds." The room keeps the same
+   figures; a VIP Pass is a declared item like any other. */
+export const RESPAWN_WAIT = 30;
+export const RESPAWN_VIP = 10;
+const VIP_PASS: ItemSpec = {
+  key: "vip",
+  name: "VIP Pass",
+  note: `Back in the fight ${RESPAWN_VIP} seconds after you go down, not ${RESPAWN_WAIT}.`,
+  kind: "vip",
+  points: 5_000,
+  needs: null,
+  tier: 1,
+  amount: RESPAWN_VIP,
+};
+
 export const ITEMS: ItemSpec[] = [
   torpedo(1), torpedo(2), torpedo(3),
   mag(1), mag(2), mag(3),
+  VIP_PASS,
 ];
+
+/** How long this player waits to respawn, given what they own. */
+export function respawnSeconds(owned: string[]): number {
+  return owned.includes("vip") ? RESPAWN_VIP : RESPAWN_WAIT;
+}
 
 export function itemByKey(key: string): ItemSpec | null {
   return ITEMS.find((i) => i.key === key) ?? null;
