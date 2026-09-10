@@ -801,6 +801,12 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     };
     // Scroll wheel zooms about the cursor; double-click re-enables auto-fit.
     const onWheel = (e: WheelEvent) => {
+      /* The game's panels sit inside this wrapper, and this handler was
+         taking every wheel event on them for map zoom and cancelling it, so
+         the weapon list and the ship's specs could not be scrolled at all.
+         Anything over the game's own surfaces is theirs. */
+      const t = e.target as Element | null;
+      if (t?.closest?.(".orbit-hud, .ship-market, .rebels-hud")) return;
       e.preventDefault();
       const rect = wrap.getBoundingClientRect();
       const mx = e.clientX - rect.left;

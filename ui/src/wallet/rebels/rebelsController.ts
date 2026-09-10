@@ -29,7 +29,7 @@ import { loadModel, unitCopy } from "./spaceAssets";
 import { loadShip } from "./shipChoice";
 import { loadPaint, makeRepaintable, type PaintHandle } from "./shipColours";
 import {
-  fitCollider, placeCollider, noseOf, HULL_FORWARD, HULL_UP, type HitSphere,
+  fitCollider, fitMounts, type Mounts, placeCollider, noseOf, HULL_FORWARD, HULL_UP, type HitSphere,
 } from "./shipCollider";
 import {
   loadLoadout, saveLoadout, weaponAt, type Loadout, type SlotKind,
@@ -39,6 +39,7 @@ import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
+import { watchAudio, audioHealth } from "../../sound";
 import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
@@ -214,6 +215,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let simAvg = 0;
   let readoutAt = 0;
   let stats: (() => { calls: number; triangles: number; ratio: number }) | null = null;
+  let lastWatch: "none" | "kick" | "rebuild" = "none";
   /* ---- THE MAP REBUILDS ITSELF UNDER THE GAME ----
      The globe tears its whole scene down and builds it again whenever its
      node list changes (a node arriving or leaving, which the map polls for
@@ -272,6 +274,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const camFwd = new THREE.Vector3();
   let shipPaint: PaintHandle | null = null;
   let shipHull: HitSphere[] = [];
+  /* Where its guns are, read off the model. See fitMounts. */
+  let shipMounts: Mounts | null = null;
   let shipLoading = false;
   /** How long the hull is in world units, which sets both how far the camera
    *  pulls back and how big a target the ship is. */
@@ -679,9 +683,29 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /** The tip of the hull in the world: where the guns and the tube are. */
   const noseLocal = new THREE.Vector3();
   function shipNose(f: { pos: THREE.Vector3; fwd: THREE.Vector3 }): THREE.Vector3 {
+    if (shipMounts) return mountWorld(f, shipMounts.nose);
     if (shipHull.length === 0) return f.pos.clone().addScaledVector(f.fwd, SHIP_LENGTH * 0.5);
     noseLocal.copy(noseOf(shipHull)).multiplyScalar(SHIP_LENGTH).applyQuaternion(shipQuat);
     return f.pos.clone().add(noseLocal);
+  }
+
+  /** A mount, in the world: the model's unit-box point scaled to the ship's
+   *  length and turned the way the ship is facing. */
+  function mountWorld(f: { pos: THREE.Vector3 }, local: THREE.Vector3): THREE.Vector3 {
+    return noseLocal.copy(local).multiplyScalar(SHIP_LENGTH).applyQuaternion(shipQuat).add(f.pos).clone();
+  }
+
+  /** The two barrels, in the world. Off the wings when the hull has them. */
+  function shipBarrels(f: { pos: THREE.Vector3; fwd: THREE.Vector3; up: THREE.Vector3 }): [THREE.Vector3, THREE.Vector3] {
+    if (shipMounts) return [mountWorld(f, shipMounts.gunL), mountWorld(f, shipMounts.gunR)];
+    const nose = shipNose(f);
+    const side = new THREE.Vector3().crossVectors(f.fwd, f.up).normalize().multiplyScalar(SHIP_LENGTH * 0.2);
+    return [nose.clone().add(side), nose.clone().sub(side)];
+  }
+
+  /** Under the hull, for a torpedo. */
+  function shipBelly(f: { pos: THREE.Vector3; fwd: THREE.Vector3 }): THREE.Vector3 {
+    return shipMounts ? mountWorld(f, shipMounts.belly) : shipNose(f);
   }
 
   /** Fetch the hull the first time the camera leaves the cockpit. */
@@ -704,6 +728,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            around inside a hit shape two and a half times too big and taking
            rounds that visibly missed it. */
         shipHull = fitCollider(model);
+        shipMounts = fitMounts(model);
         model.scale.setScalar(SHIP_LENGTH);
 
         /* Which way the hull faces is a property of the PACK, not of the
@@ -1245,12 +1270,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              hull's length, still converging on the crosshair, so the rounds
              leave the ship and meet where you are aiming. */
           let at: [THREE.Vector3, THREE.Vector3] | undefined;
-          if (shipModel && flight.view > 0.01) {
-            const nose = shipNose(flight);
-            const side = new THREE.Vector3().crossVectors(flight.fwd, flight.up)
-              .normalize().multiplyScalar(SHIP_LENGTH * 0.2);
-            at = [nose.clone().add(side), nose.clone().sub(side)];
-          }
+          if (shipModel && flight.view > 0.01) at = shipBarrels(flight);
           /* ---- WHO PULLS THE TRIGGER ----
              In a room the shot is a REQUEST, not a fact: the room decides
              whether this ship had rounds left, whether it may fire yet, and
@@ -1372,7 +1392,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             if (!detonateOldest(combat, w) && flight.torpedoes > 0) {
               flight.torpedoes -= 1;
               /* Out of the tube at the nose, not out of the camera. */
-              fireTorpedo(combat, shipNose(flight), flight.fwd);
+              fireTorpedo(combat, shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
               playTorpedoSound();
             }
           }
@@ -1757,6 +1777,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       diagAt -= dt;
       if (diagAt <= 0) {
         diagAt = 2;
+        /* ---- IS ANYTHING ACTUALLY COMING OUT ----
+           Music plays whenever the panel is open, so while a track is meant
+           to be playing and the player is not mid-death-fade, silence at the
+           speakers is a fault, and the bus deals with it. */
+        const mus = musicState() as { playing?: string | null };
+        lastWatch = watchAudio(!!mus.playing && !hud.dead, 2);
         try {
           localStorage.setItem("dd69.rebels.diag", JSON.stringify({
             at: new Date().toISOString(),
@@ -1771,6 +1797,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             respawnIn: respawnAt > performance.now()
               ? Math.round((respawnAt - performance.now()) / 1000) : 0,
             audio: audioState(),
+            bus: { ...audioHealth(), lastWatch },
             music: musicState(),
             enemies: combat.enemies.length,
             fighters: combat.enemies.filter((e) => !e.drone).length,
@@ -1836,6 +1863,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         shipModel = null;
         shipPaint = null;
         shipHull = [];
+        shipMounts = null;
         sky?.restore();
         sky = null;
         if (space) { scene.remove(space.group); space.dispose(); space = null; }

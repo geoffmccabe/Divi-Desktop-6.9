@@ -121,6 +121,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
                 paint={paint}
                 /* On the armoury tabs the ship is being FLOWN, not browsed. */
                 mode={tab === "ships" ? "turntable" : "flight"}
+                fire={testing}
               />
             </div>
           </div>

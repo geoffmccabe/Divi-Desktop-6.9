@@ -10,6 +10,7 @@
 import * as THREE from "three";
 import {
   fitCollider, placeCollider, colliderBound, noseOf, HULL_FORWARD, HULL_UP,
+  mountsFromPoints, fitMounts,
 } from "./shipCollider";
 
 const out: string[] = [];
@@ -194,5 +195,73 @@ function wideWing(): THREE.Object3D {
 }
 
 console.log(out.join("\n"));
+/* ---- where the guns are ----
+   A fuselage with two swept wings, as a cloud of vertices: the barrels have to
+   land on the wing tips, at their leading edge, and the nose at the front. */
+{
+  const pts: THREE.Vector3[] = [];
+  /* Fuselage: a box 0.2 wide, 0.16 tall, 1.0 long, centred. */
+  for (const x of [-0.1, 0.1]) for (const y of [-0.08, 0.08]) for (const z of [-0.5, -0.2, 0.1, 0.5]) pts.push(new THREE.Vector3(x, y, z));
+  /* Wings: thin, out to +-0.6, leading edge at z = 0.05 at the tip, trailing at -0.4. */
+  for (const side of [-1, 1]) for (const t of [0.3, 0.45, 0.6]) {
+    pts.push(new THREE.Vector3(side * t, 0, 0.05 - (0.6 - t) * 0.2));   /* leading edge, swept back toward the root */
+    pts.push(new THREE.Vector3(side * t, 0, -0.4));
+  }
+  const m = mountsFromPoints(pts.map((p) => p.clone()));
+  ok("the nose is at the very front", m.nose.z === 0.5 && Math.abs(m.nose.x) < 1e-9, `${m.nose.toArray()}`);
+  ok("the hull counts as winged", m.winged);
+  ok("the left barrel is at the left wing tip's leading edge", m.gunL.x === -0.6 && Math.abs(m.gunL.z - 0.05) < 1e-9, `${m.gunL.toArray()}`);
+  ok("the right barrel at the right", m.gunR.x === 0.6 && Math.abs(m.gunR.z - 0.05) < 1e-9, `${m.gunR.toArray()}`);
+  ok("the belly is under the middle of the fuselage", m.belly.y === -0.08 && m.belly.x === 0, `${m.belly.toArray()}`);
+  ok("the half-span is measured", m.halfSpan === 0.6);
+}
+{
+  /* No wings: a needle. Barrels sit just off the nose. */
+  const pts: THREE.Vector3[] = [];
+  for (const x of [-0.05, 0.05]) for (const y of [-0.05, 0.05]) for (const z of [-0.5, 0, 0.5]) pts.push(new THREE.Vector3(x, y, z));
+  const m = mountsFromPoints(pts);
+  ok("a hull without wings is not winged", !m.winged);
+  ok("its barrels flank the nose, a little back from it",
+     m.gunL.x < 0 && m.gunR.x > 0 && m.gunR.x === -m.gunL.x && m.gunL.z < m.nose.z && m.gunL.z > m.nose.z - 0.1,
+     `${m.gunL.toArray()} / ${m.nose.toArray()}`);
+}
+{
+  /* From a real object: the same answer as from its points, in the unit frame. */
+  const g = new THREE.Group();
+  const wing = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.02, 0.3));
+  wing.position.z = -0.1;
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.16, 1));
+  g.add(body, wing);
+  const m = fitMounts(g);
+  ok("fitMounts reads a scene object", m.winged && Math.abs(m.halfSpan - 0.6) < 1e-6 && Math.abs(m.nose.z - 0.5) < 1e-6,
+     `${m.halfSpan} ${m.nose.toArray()}`);
+  ok("and puts the barrels on the wing's leading corners", Math.abs(m.gunL.x + 0.6) < 1e-6 && Math.abs(m.gunL.z - 0.05) < 1e-6,
+     `${m.gunL.toArray()}`);
+  ok("an empty object gives an empty answer", !fitMounts(new THREE.Group()).winged);
+}
+
+/* ---- the beam's cone points where it fires ----
+   It was drawn backwards: the geometry opens along +Z and it was being turned
+   to face minus the firing direction. */
+{
+  const { beamGeometry, beamOrientation } = await import("./rebelsFx");
+  const g = beamGeometry();
+  g.computeBoundingBox();
+  ok("the cone's apex is at the origin and it opens along +Z",
+     Math.abs(g.boundingBox!.min.z) < 1e-6 && Math.abs(g.boundingBox!.max.z - 1) < 1e-6,
+     `${g.boundingBox!.min.z} .. ${g.boundingBox!.max.z}`);
+  const m = new THREE.Mesh(g);
+  const fwd = new THREE.Vector3(0, 0, -1);
+  m.quaternion.copy(beamOrientation(fwd));
+  m.updateMatrixWorld(true);
+  const b = new THREE.Box3().setFromObject(m);
+  ok("turned to fire down -Z it opens down -Z", b.max.z < 1e-6 && Math.abs(b.min.z + 1) < 1e-6, `${b.min.z} .. ${b.max.z}`);
+  const side = new THREE.Vector3(1, 0, 0);
+  m.quaternion.copy(beamOrientation(side));
+  m.updateMatrixWorld(true);
+  const b2 = new THREE.Box3().setFromObject(m);
+  ok("and sideways it opens sideways", Math.abs(b2.max.x - 1) < 1e-6 && Math.abs(b2.min.x) < 1e-6, `${b2.min.x} .. ${b2.max.x}`);
+}
+
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

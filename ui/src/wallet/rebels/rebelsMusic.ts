@@ -23,7 +23,7 @@
 // lose the opening theme almost every time, since the panel opens before the
 // download finishes.
 
-import { audioContext, masterVolume } from "../../sound";
+import { audioContext, masterVolume, output, onAudioRebuild } from "../../sound";
 
 const BASE = "https://assets.dreadroot.com/rebels/music";
 const DB = "dd69.music";
@@ -239,7 +239,7 @@ export function pumpMusic(): void {
   gain.gain.setValueAtTime(0.0001, now);
   gain.gain.linearRampToValueAtTime(Math.max(0.0001, top), now + Math.max(0.01, fadeIn));
   src.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(output() ?? ctx.destination);
   src.start();
   voice = { src, gain, track: wanted };
   fadeIn = SWAP_FADE;
@@ -326,6 +326,18 @@ export function musicState(): Record<string, unknown> {
 }
 
 /** Test hook. */
+/* The bus was rebuilt. The decoded tracks belonged to the old context, the
+   voice died with it; the intent (what is wanted) survives, so decoding the
+   wanted track again is enough for pumpMusic to start it over. */
+onAudioRebuild(() => {
+  buffers.clear();
+  fetching.clear();
+  failed = new Set();
+  voice = null;
+  holdUntil = 0;
+  if (wanted) fetchTrack(wanted);
+});
+
 export function resetMusicForTests(): void {
   prefetched = false;
   buffers.clear();

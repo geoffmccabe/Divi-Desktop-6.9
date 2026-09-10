@@ -272,11 +272,8 @@ export function createFx(): Fx {
      Built pointing down -Z with its tip at the origin, so placing one is a
      look-at and a scale rather than any arithmetic at the call site. Additive
      and unlit, because a beam is light rather than a thing. */
-  const beamGeo = new THREE.ConeGeometry(1, 1, 24, 1, true);
-  /* Cone geometry stands on its base pointing +Y. Turned to point down -Z and
-     shifted so the TIP is at the origin, which is where the ship is. */
-  beamGeo.translate(0, -0.5, 0);
-  beamGeo.rotateX(-Math.PI / 2);
+  /* Apex at the origin, opening along +Z: see beamGeometry. */
+  const beamGeo = beamGeometry();
   const beamMats: THREE.MeshBasicMaterial[] = [];
   const beamMeshes: THREE.Mesh[] = [];
   for (let i = 0; i < 8; i++) {
@@ -603,9 +600,14 @@ export function createFx(): Fx {
         mesh.visible = true;
         mesh.position.copy(b.pos);
         dir.copy(b.fwd).normalize();
-        /* The cone points down -Z, which is where a quaternion built from the
-           z axis puts it. */
-        mesh.quaternion.setFromUnitVectors(zAxis, dir.negate());
+        /* The cone's apex is at the origin and it opens along +Z (checked:
+           its bounding box after the rotate runs 0 to +1 in z). It used to be
+           turned to face MINUS the firing direction on the belief that it
+           opened down -Z, so every beam was drawn pointing backwards out of
+           the ship while its damage went forwards. From the cockpit that is
+           invisible, behind the camera; in the shop it was a cone on top of
+           the hull pointing the wrong way. */
+        mesh.quaternion.copy(beamOrientation(dir));
         /* The radius at the far end is what the half-angle actually subtends,
            so the drawn edge is the edge that does damage. */
         const rad = Math.tan(b.half) * b.reach;
@@ -990,4 +992,23 @@ export function makeGuardShell(): { mesh: THREE.Object3D; step(seconds: number, 
     },
     dispose() { geo.dispose(); mat.dispose(); },
   };
+}
+
+
+/* ---- the beam's shape, shared with the shop's preview ---- */
+
+/** A unit cone with its apex at the origin opening along +Z: scale it by
+ *  (radius, radius, reach) and it is the beam. */
+export function beamGeometry(): THREE.ConeGeometry {
+  const g = new THREE.ConeGeometry(1, 1, 24, 1, true);
+  g.translate(0, -0.5, 0);
+  g.rotateX(-Math.PI / 2);
+  return g;
+}
+
+const _beamZ = new THREE.Vector3(0, 0, 1);
+const _beamQ = new THREE.Quaternion();
+/** Turns beamGeometry so it opens along `fwd`. */
+export function beamOrientation(fwd: THREE.Vector3): THREE.Quaternion {
+  return _beamQ.setFromUnitVectors(_beamZ, fwd);
 }

@@ -211,3 +211,109 @@ export function noseOf(fitted: HitSphere[], forward = HULL_FORWARD): THREE.Vecto
   }
   return best.local.clone();
 }
+
+
+/* ---- WHERE THE GUNS ARE ----
+   The pack's models are one mesh each with no named parts (checked: every
+   .glb has a single node and a single mesh), so there is nothing to look up.
+   The mounts are read off the geometry instead, in the same frame the hit
+   spheres use (unit-box coordinates, centred, +Z forward, +Y up):
+
+     nose   the forward-most point of the hull, for the beam and the mini gun
+     gunL   the forward-most point of the LEFT wing's outer part
+     gunR   the same on the right: the pulse gun's two barrels
+     belly  the lowest point under the middle of the hull, for torpedoes
+
+   "Outer part of a wing" means beyond 55% of the half-span. A hull with no
+   wings to speak of (span under a third of its length) gets its barrels a
+   little either side of the nose instead, which is where a gun pod would be.
+   Every figure is a real vertex or a small step from one, so a round leaves
+   the model's surface and not a point in the air beside it. */
+
+export interface Mounts {
+  nose: THREE.Vector3;
+  gunL: THREE.Vector3;
+  gunR: THREE.Vector3;
+  belly: THREE.Vector3;
+  /** Half the wingspan, unit-box units. */
+  halfSpan: number;
+  /** True when the barrels came off real wings rather than the nose. */
+  winged: boolean;
+}
+
+function samplePoints(root: THREE.Object3D, budget = 4000): THREE.Vector3[] {
+  const points: THREE.Vector3[] = [];
+  const v = new THREE.Vector3();
+  root.updateMatrixWorld(true);
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.geometry) return;
+    const pos = m.geometry.getAttribute("position");
+    if (!pos) return;
+    const step = Math.max(1, Math.floor(pos.count / budget));
+    for (let i = 0; i < pos.count; i += step) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld);
+      points.push(v.clone());
+    }
+  });
+  return points;
+}
+
+export function fitMounts(root: THREE.Object3D): Mounts {
+  const points = samplePoints(root);
+  const empty = () => ({
+    nose: new THREE.Vector3(), gunL: new THREE.Vector3(), gunR: new THREE.Vector3(),
+    belly: new THREE.Vector3(), halfSpan: 0, winged: false,
+  });
+  if (points.length === 0) return empty();
+  const box = new THREE.Box3().setFromPoints(points);
+  const centre = new THREE.Vector3();
+  box.getCenter(centre);
+  for (const p of points) p.sub(centre);
+  return mountsFromPoints(points);
+}
+
+/** The arithmetic, on centred points, so a test can hand in a shape. */
+export function mountsFromPoints(points: THREE.Vector3[]): Mounts {
+  let maxX = 0, minZ = Infinity, maxZ = -Infinity;
+  for (const p of points) {
+    maxX = Math.max(maxX, Math.abs(p.x));
+    minZ = Math.min(minZ, p.z);
+    maxZ = Math.max(maxZ, p.z);
+  }
+  const length = Math.max(1e-6, maxZ - minZ);
+
+  /* Nose: the forward-most vertex, taken as the average of the few that tie
+     for it so a single stray corner does not put it off centre. */
+  const front = points.filter((p) => p.z >= maxZ - length * 0.02);
+  const nose = new THREE.Vector3();
+  for (const p of front) nose.add(p);
+  nose.divideScalar(Math.max(1, front.length));
+  nose.z = maxZ;
+
+  const winged = maxX >= length * 0.33;
+  const pick = (side: 1 | -1): THREE.Vector3 => {
+    if (!winged) {
+      /* A gun pod's width off the nose: a twelfth of the length. */
+      return new THREE.Vector3(side * length * 0.08, nose.y, nose.z - length * 0.06);
+    }
+    const outer = points.filter((p) => side * p.x >= maxX * 0.55);
+    let best: THREE.Vector3 | null = null;
+    for (const p of outer) if (!best || p.z > best.z) best = p;
+    return best ? best.clone() : new THREE.Vector3(side * maxX, 0, 0);
+  };
+  const gunL = pick(-1);
+  const gunR = pick(1);
+
+  /* Belly: lowest point within the middle third of the length, near the
+     centreline, so a torpedo drops from under the hull and not off a wing. */
+  let belly: THREE.Vector3 | null = null;
+  for (const p of points) {
+    if (Math.abs(p.z) > length / 6 || Math.abs(p.x) > maxX * 0.25) continue;
+    if (!belly || p.y < belly.y) belly = p;
+  }
+  const b = belly ? belly.clone() : new THREE.Vector3(0, 0, 0);
+  b.x = 0;
+
+  return { nose, gunL, gunR, belly: b, halfSpan: maxX, winged };
+}

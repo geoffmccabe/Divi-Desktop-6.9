@@ -1,13 +1,9 @@
 // Firing a weapon in the shop, so you can see and hear what you are buying.
 //
-// Drawn as a flat overlay rather than in the preview's own scene. The preview
-// renders one ship on a transparent canvas and knows nothing about weapons;
-// putting fire inside it would mean teaching it the catalogue, the cone
-// geometry and the tier colours for the sake of a shop.
-//
-// The ship points AWAY from the camera in this view, so everything here is
-// drawn going up the panel from the nose: that is the direction its guns are
-// pointing, seen from behind and slightly above.
+// The SOUND and the timing. The picture is drawn inside the ship preview,
+// from the model's own gun mounts, as a real cone and real rounds: a flat
+// overlay used to be drawn up the panel here, which put the beam on top of
+// the hull, forty degrees wide, and had nothing to do with where the guns are.
 //
 // The five second limit is the weapon's, not the shop's. A beam cannot be held
 // longer than that in flight either, so a test that ran for ever would be
@@ -77,55 +73,10 @@ export function TestFire({ spec }: { spec: WeaponSpec | null }) {
     return () => { cancelAnimationFrame(raf); stopBeamSound(); };
   }, [spec]);
 
-  if (!spec) return null;
-
-  const colour = `#${(spec.colour ?? 0xffe08a).toString(16).padStart(6, "0")}`;
-
-  if (spec.kind === "beam") {
-    if (held >= BEAM_MAX_HOLD) return null;
-    /* ---- A CONE, NOT A CYLINDER ----
-       It was a rounded rectangle, which is a cylinder however it is coloured.
-       The clip path makes it what the weapon actually is: a point at the ship's
-       nose widening away from it. The width follows the weapon's own cone, so a
-       higher tier is visibly wider, scaled up because two degrees across a
-       380 pixel panel is a hairline and the whole point of the shop is to show
-       the difference between the tiers. */
-    const width = 8 + (spec.cone ?? 2) * 6;
-    return (
-      <div className="test-fire" aria-hidden>
-        <i
-          className="test-beam"
-          style={{
-            width: `${width}%`,
-            background: `linear-gradient(to top, ${colour} 0%, ${colour}dd 55%, ${colour}22 100%)`,
-            clipPath: "polygon(50% 100%, 100% 0%, 0% 0%)",
-          }}
-        />
-        <span className="test-secs">{held.toFixed(1)}s / {BEAM_MAX_HOLD}s</span>
-      </div>
-    );
-  }
-
-  const now = held;
-  return (
-    <div className="test-fire" aria-hidden>
-      {shots.map((sh) => {
-        const k = Math.min(1, (now - sh.born) / SHOT_FLIGHT);
-        return (
-          <i
-            key={sh.id}
-            className={spec.kind === "mini" ? "test-shot test-shot-mini" : "test-shot"}
-            style={{
-              left: `${sh.x * 100}%`,
-              /* Up the panel and shrinking, which is what a round going away
-                 from you does. */
-              bottom: `${18 + k * 74}%`,
-              opacity: 1 - k * 0.75,
-              transform: `translateX(-50%) scale(${1 - k * 0.55})`,
-            }}
-          />
-        );
-      })}
-    </div>
-  );
+  /* The picture is drawn in the ship preview itself now, from the model's
+     own mounts (see ShipPreview). This component keeps the sound and the
+     five-second limit and draws nothing. */
+  void held;
+  void shots;
+  return null;
 }

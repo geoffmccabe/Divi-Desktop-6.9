@@ -1,8 +1,26 @@
 // Instant UI sounds via Web Audio — oscillator tones, so there's no file to
 // load and playback is immediate. Each event's waveform + pitch come from the
 // theme's --sound-* CSS variables, so a skin defines its own sounds.
+//
+// ---- THE ONE BUS ----
+// Everything that makes a noise in the wallet, the game's guns and music
+// included, goes through output(): one master gain into one analyser into
+// the speakers. Two reasons, and both are Geoff's:
+//   1. "Do you have a sound module that all sounds go through, like you
+//      should?" Now there is, and it is this file.
+//   2. The game lost its sound four times, and every time the code said it
+//      was playing. Nothing on this side could tell the difference between
+//      a graph that was making sound and one that was not. The analyser can:
+//      it measures what actually reaches the output, and watchAudio() acts
+//      on silence where sound is expected, first by kicking the context
+//      (suspend and resume, the standard cure for a WebKit context that says
+//      "running" and produces nothing) and then by rebuilding it, telling
+//      everyone who registered to decode their samples again.
 
 let ctx: AudioContext | null = null;
+let master: GainNode | null = null;
+let analyser: AnalyserNode | null = null;
+let samples: Float32Array<ArrayBuffer> | null = null;
 
 /** The wallet's one and only audio context, shared with anything else that
  *  needs to make a noise. Browsers cap how many a page may open. */
@@ -18,6 +36,127 @@ function getCtx(): AudioContext | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Where every sound connects. Never `ctx.destination` directly: a node wired
+ * straight to the speakers is a node the watchdog cannot hear.
+ */
+export function output(): AudioNode | null {
+  const c = getCtx();
+  if (!c) return null;
+  if (!master || !analyser) {
+    master = c.createGain();
+    master.gain.value = 1;
+    analyser = c.createAnalyser();
+    analyser.fftSize = 1024;
+    samples = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
+    master.connect(analyser);
+    analyser.connect(c.destination);
+  }
+  return master;
+}
+
+/** What is actually reaching the speakers right now, as an RMS level. Zero
+ *  when nothing has been wired yet. */
+export function outputLevel(): number {
+  if (!analyser || !samples) return 0;
+  try {
+    analyser.getFloatTimeDomainData(samples);
+  } catch {
+    return 0;
+  }
+  let sum = 0;
+  for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+  return Math.sqrt(sum / samples.length);
+}
+
+/* ---- the watchdog ---- */
+
+const rebuildListeners = new Set<() => void>();
+
+/** Register to be told when the context has been thrown away and rebuilt:
+ *  decode your samples again, restart anything that should be playing. */
+export function onAudioRebuild(fn: () => void): () => void {
+  rebuildListeners.add(fn);
+  return () => { rebuildListeners.delete(fn); };
+}
+
+let kicks = 0;
+let rebuilds = 0;
+let silentFor = 0;
+let lastKickAt = 0;
+let lastRebuildAt = 0;
+
+/** Seconds of expected-but-absent sound before the context is kicked, and
+ *  before it is rebuilt. The kick is cheap; the rebuild re-decodes everything. */
+export const KICK_AFTER = 4;
+export const REBUILD_AFTER = 12;
+const KICK_GAP = 8;
+const REBUILD_GAP = 30;
+
+/** Pure: what the watchdog should do, given how long sound has been expected
+ *  and missing. Separate so it can be tested without an audio context. */
+export function watchVerdict(
+  silentSeconds: number, now: number, kickAt: number, rebuildAt: number,
+): "none" | "kick" | "rebuild" {
+  if (silentSeconds >= REBUILD_AFTER && now - rebuildAt >= REBUILD_GAP) return "rebuild";
+  if (silentSeconds >= KICK_AFTER && now - kickAt >= KICK_GAP) return "kick";
+  return "none";
+}
+
+/** Suspend and resume: what unsticks a WebKit context that reports running
+ *  and outputs nothing. */
+export function kickAudio(): void {
+  const c = ctx;
+  if (!c) return;
+  kicks++;
+  try { void c.suspend().then(() => c.resume()); } catch { /* then rebuild */ }
+}
+
+/** Throw the context away and start again. Everyone who registered decodes
+ *  their samples again and restarts what was playing. */
+export function rebuildAudio(): void {
+  rebuilds++;
+  const old = ctx;
+  ctx = null; master = null; analyser = null; samples = null;
+  try { void old?.close(); } catch { /* gone anyway */ }
+  for (const fn of rebuildListeners) { try { fn(); } catch { /* one bad listener is not all of them */ } }
+}
+
+/**
+ * Call regularly (every couple of seconds is fine) with whether something
+ * SHOULD be audible right now. Silence while sound is expected is what it
+ * acts on; silence otherwise resets the clock.
+ */
+export function watchAudio(expectSound: boolean, dtSeconds: number, nowSeconds = Date.now() / 1000): "none" | "kick" | "rebuild" {
+  if (!expectSound || !ctx) { silentFor = 0; return "none"; }
+  const level = outputLevel();
+  if (level > 1e-4) { silentFor = 0; return "none"; }
+  silentFor += dtSeconds;
+  const verdict = watchVerdict(silentFor, nowSeconds, lastKickAt, lastRebuildAt);
+  if (verdict === "kick") { lastKickAt = nowSeconds; kickAudio(); }
+  if (verdict === "rebuild") { lastRebuildAt = nowSeconds; silentFor = 0; rebuildAudio(); }
+  return verdict;
+}
+
+/** For the black box. */
+export function audioHealth(): Record<string, unknown> {
+  return {
+    state: ctx ? ctx.state : "none",
+    level: Math.round(outputLevel() * 10000) / 10000,
+    silentFor: Math.round(silentFor),
+    kicks, rebuilds,
+    sampleRate: ctx?.sampleRate ?? 0,
+    bus: !!master,
+  };
+}
+
+/** Test hook. */
+export function resetSoundForTests(): void {
+  ctx = null; master = null; analyser = null; samples = null;
+  kicks = 0; rebuilds = 0; silentFor = 0; lastKickAt = 0; lastRebuildAt = 0;
+  rebuildListeners.clear();
 }
 
 function cssVar(name: string, fallback: string): string {
@@ -60,7 +199,7 @@ export function playSound(event: SoundEvent): void {
   gain.gain.linearRampToValueAtTime(vol, now + 0.005);
   gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
 
-  osc.connect(gain).connect(c.destination);
+  osc.connect(gain).connect(output() ?? c.destination);
   osc.start(now);
   osc.stop(now + 0.16);
 }
