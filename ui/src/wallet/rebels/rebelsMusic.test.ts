@@ -61,6 +61,13 @@ const fakeCtx = {
   /* A webview only lets a context resume from a real user gesture. Resuming
      unconditionally is what a naive fake does, and it hides the exact bug this
      file exists to guard against. */
+  /* What the sound bus asks a context for. */
+  sampleRate: 48000,
+  suspend() { return Promise.resolve(); },
+  close() { return Promise.resolve(); },
+  createAnalyser() {
+    return { fftSize: 1024, connect() { return this; }, getFloatTimeDomainData(arr: Float32Array) { arr.fill(0.1); } };
+  },
   resume() { if (gestured) ctxState = "running"; return Promise.resolve(); },
 };
 

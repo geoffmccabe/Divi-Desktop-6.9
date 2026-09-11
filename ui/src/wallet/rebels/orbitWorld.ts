@@ -170,3 +170,44 @@ export function buildShip(pal: Palette): THREE.Object3D {
   const m = new THREE.LineBasicMaterial({ color: pal.ship });
   return new THREE.LineSegments(g, m);
 }
+
+
+/* ---- WHERE THE PLANETS ARE ----
+   The same arithmetic the space environment draws them by, moved here so the
+   simulation (and the room, which shares it) can ask where a planet is
+   without touching anything that draws. Flocks come from these. */
+
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+export function latticeDirection(slot: number, offset = 0): THREE.Vector3 {
+  const i = slot + offset;
+  /* Evenly down the axis, avoiding the exact poles. */
+  const y = 1 - (2 * (i + 0.5)) / PLANET_COUNT;
+  const r = Math.sqrt(Math.max(0, 1 - y * y));
+  const theta = GOLDEN_ANGLE * i;
+  return new THREE.Vector3(r * Math.cos(theta), y, r * Math.sin(theta));
+}
+
+/** Which way planet n (1 to 14) lies from Earth. A fixed co-prime step round
+ *  the fourteen mixes the order without changing the set of directions. */
+export function planetDirection(n: number): THREE.Vector3 {
+  return latticeDirection(((n - 1) * 5) % PLANET_COUNT);
+}
+
+export function planetCentre(n: number): THREE.Vector3 {
+  return planetDirection(n).multiplyScalar(planetDistance(n));
+}
+
+export interface NearPlanet { n: number; centre: THREE.Vector3; radius: number }
+
+/** The planet nearest a point. */
+export function nearestPlanet(pos: THREE.Vector3): NearPlanet {
+  let best: NearPlanet | null = null;
+  let bestD = Infinity;
+  for (let n = 1; n <= PLANET_COUNT; n++) {
+    const centre = planetCentre(n);
+    const d = centre.distanceTo(pos);
+    if (d < bestD) { bestD = d; best = { n, centre, radius: planetDiameter(n) / 2 }; }
+  }
+  return best!;
+}

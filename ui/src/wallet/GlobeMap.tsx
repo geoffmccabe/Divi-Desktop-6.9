@@ -5,6 +5,7 @@ import earthNight from "../assets/earth-night.jpg";
 import diviLogo from "../assets/divi-coin.webp";
 import { pulseTrigger, pulseHsl, pulseActiveUntil, makeLegs, legU, pingDone, type Leg } from "./activityPulse";
 import { useTheme } from "../theme/ThemeProvider";
+import { dflow } from "./rebels/rebelsDflow";
 import { towerMaterials, tickTowerLights } from "./towerLights";
 import { createDetail, type DetailLayer } from "./globeDetail";
 import { createBorders, type Borders } from "./globeBorders";
@@ -67,6 +68,8 @@ export interface GlobeFlight {
     scaleTowers(s: number): Map<string, THREE.Vector3>;
     /** The globe's own canvas, which is where the pointer already is. */
     dom: HTMLCanvasElement;
+    /** What the renderer did last frame, for the game's readout. */
+    stats?: () => { calls: number; triangles: number; ratio: number; programs?: number; geometries?: number; textures?: number };
   }): void;
   /** Every frame while flying. Move the camera here. */
   frame(dt: number): void;
@@ -82,6 +85,8 @@ export interface GlobeArc {
 }
 
 const R = 100;
+/** The renderer's pixel ratio while the game has the globe. See attachFlight. */
+const GAME_PIXEL_RATIO = 1;
 
 // Node Tower geometry — ALL dimensions 50% of the original (base, height, tip
 // sphere), which also halves the packed-cluster diameter.
@@ -387,6 +392,9 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
   const flightRef = useRef<GlobeFlight | null | undefined>(flight);
   flightRef.current = flight;
   const attachedRef = useRef<GlobeFlight | null>(null);
+  /* The map's own pixel ratio, kept while the game runs at one. */
+  const ratioRef = useRef(0);
+  let unpatchRender: (() => void) | null = null;
   // Rebuild the scene only when the set of nodes changes, not on every 10s poll
   // (rebuilding all the helix tubes each poll would hitch).
   const sig = useMemo(() => points.map((p) => `${p.ip}:${p.kind}`).sort().join("|"), [points]);
@@ -712,7 +720,41 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       if (!f || attachedRef.current === f) return;
       if (attachedRef.current) attachedRef.current.detach();
       attachedRef.current = f;
+      /* ---- HALF THE PIXELS, OR A QUARTER ----
+         The globe library renders at the display's own pixel ratio, capped at
+         two, which on a Retina screen is FOUR times the pixels of the frame
+         you see. That is fine for a map that redraws when you drag it and
+         ruinous for a game that redraws sixty times a second with additive
+         glow over most of the frame: fill is the cost, and fill is pixels.
+         The game runs at one, and the map gets its ratio back when the game
+         lets go. An earlier audit said the ratio was already one; it read the
+         three.js default and not the library's. */
+      const renderer = g.renderer();
+      ratioRef.current = renderer.getPixelRatio();
+      renderer.setPixelRatio(GAME_PIXEL_RATIO);
+      /* ---- the renderer's own submit time, for DFlow ----
+         gl.render is where the draw calls are issued, and it is the one cost
+         the game cannot see from inside its own frame. Wrapped so it is timed
+         and always called; unwrapped on detach. */
+      const origRender = renderer.render.bind(renderer);
+      (renderer as unknown as { render: typeof renderer.render }).render = ((scene: THREE.Scene, cam: THREE.Camera) => {
+        const t = performance.now();
+        try { origRender(scene, cam); } finally { dflow.add("gl.render", performance.now() - t); }
+      }) as typeof renderer.render;
+      unpatchRender = () => { (renderer as unknown as { render: typeof renderer.render }).render = origRender; };
+      /* Every shader the game will need, compiled now in one go rather than
+         one stall at a time as each thing first appears. DFlow counted 62
+         compiles across a flight, each a frame of 50 to 100ms. */
+      const prewarm = () => { try { renderer.compile(scene, camera); } catch { /* not fatal */ } };
       f.attach({
+        stats: () => ({
+          calls: renderer.info.render.calls,
+          triangles: renderer.info.render.triangles,
+          ratio: renderer.getPixelRatio(),
+          programs: renderer.info.programs?.length ?? 0,
+          geometries: renderer.info.memory.geometries,
+          textures: renderer.info.memory.textures,
+        }),
         scene,
         camera: camera as THREE.PerspectiveCamera,
         tips: tipOf,
@@ -730,11 +772,15 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
           return tipOf;
         },
       });
+      prewarm();
+
     };
     const detachFlight = () => {
       if (!attachedRef.current) return;
       attachedRef.current.detach();
       attachedRef.current = null;
+      unpatchRender?.(); unpatchRender = null;
+      if (ratioRef.current > 0) { g.renderer().setPixelRatio(ratioRef.current); ratioRef.current = 0; }
     };
 
     // Hover tooltips: raycast the towers on pointer move. A hit farther from the
@@ -743,6 +789,10 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
     const dom = g.renderer().domElement as HTMLCanvasElement;
     const ndc = new THREE.Vector2();
     const onMove = (e: PointerEvent) => {
+      /* Flying, the pointer is the gun sight and moves every frame, and a
+         raycast through every tower on every one of those moves was paid for
+         nothing: there are no tooltips in the cockpit. */
+      if (flightRef.current) return;
       const rect = dom.getBoundingClientRect();
       const mx = e.clientX - rect.left, my = e.clientY - rect.top;
       ndc.set((mx / rect.width) * 2 - 1, -(my / rect.height) * 2 + 1);
@@ -791,10 +841,14 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
          orbiting the map, it is what is centred; flying, it is where the ship
          is. Altitude comes back in globe radii, which is what decides whether
          any of this is worth fetching. */
+      const tSharp = performance.now();
       sharpenGlobe();
+      dflow.add("map.sharpen", performance.now() - tSharp);
       const eye = camera.position;
       const geo = g.toGeoCoords({ x: eye.x, y: eye.y, z: eye.z });
+      const tDetail = performance.now();
       detail.update(geo.lat, geo.lng, geo.altitude, dt);
+      dflow.add("map.detail", performance.now() - tDetail);
 
       const isFlying = !!flightRef.current;
       if (isFlying !== wasFlying) {
@@ -807,7 +861,10 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         flightRef.current!.frame(dt);
       }
 
+      const tLights = performance.now();
       tickTowerLights(now / 1000);
+      dflow.add("map.lights", performance.now() - tLights);
+      const tHelix = performance.now();
 
       const cam = camera.position;
 
@@ -934,6 +991,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         posAttr.needsUpdate = true;
         if (paint && gcolAttr) { gcolAttr.needsUpdate = true; goldOn = anyActive; }
       }
+      dflow.add("map.helix", performance.now() - tHelix);
       raf = requestAnimationFrame(animate);
     };
     raf = requestAnimationFrame(animate);

@@ -3,11 +3,14 @@
 // same way the flight model is.
 
 import * as THREE from "three";
-import { R, cruiseScale } from "./orbitWorld";
+import { R, cruiseScale, nearestPlanet, planetCentre, planetDiameter } from "./orbitWorld";
 import { BEAM_SECONDS, type WeaponSpec } from "./weaponCatalog";
+import { DEFAULT_DROP_CONFIG, DROP_PRIVATE_SECONDS, rollDrop, type DropConfig } from "./dropCharts";
+import { itemByKey } from "./itemCatalog";
 import {
   droneClass, newGroup, newFleetId, stepFlock, reslot, slotOffsets,
-  FLEET_SIZE, DRONE_CAP, DRONE_R, DRONE_RELOAD, DRONE_BULLET_SPEED, DRONE_FIRE_RANGE,
+  fleetSize, rollFlockTier, SPAWN_CHECK_SECONDS, SPAWN_CHANCE, DRONE_KILL_WORTH,
+  DRONE_CAP, DRONE_R, DRONE_RELOAD, DRONE_BULLET_SPEED, DRONE_FIRE_RANGE,
   type FlockGroup,
 } from "./rebelsFlock";
 
@@ -27,6 +30,11 @@ export const MINI_AMMO = 0.25;
 /** It keeps firing while the trigger is held, twenty times a second. */
 export const MINI_INTERVAL = 0.05;
 export const ENEMY_R = 1.05;          /* hit radius of a fighter */
+export const DRAGON_R = 3.6;          /* and of the dragon: it is big */
+/** What a round has to come within. */
+export function enemyRadius(e: { drone?: true; dragon?: true }): number {
+  return e.dragon ? DRAGON_R : e.drone ? DRONE_R : ENEMY_R;
+}
 
 /* ---- damage ----
    A hit is worth somewhere between ten and a hundred, so no two exchanges feel
@@ -161,7 +169,12 @@ export const COIN_PER_KILL = 5;
  * dragged along by the magnet, can pick up more than that; and a coin quicker
  * than the ship is not a reward, it is a tease.
  */
-export const COIN_TOP = 15.2;
+/* Geoff, 2026-Sep-11: "They're supposed to be moving slower than average
+   ship speed, I think I said 80%? So even at normal speed I can catch up."
+   Average ship speed is CRUISE (8, in orbitFlight, which imports this file
+   so the number is written here): eighty percent of it. It was eighty
+   percent of BOOST, which made a coin faster than a cruising ship. */
+export const COIN_TOP = 8 * 0.8;
 
 /**
  * How hard the planet pulls on a coin.
@@ -191,7 +204,160 @@ export const COIN_MU = Math.round(COIN_ORBIT * COIN_ORBIT * (R + 14));
 export const COIN_R = 0.031;
 /** How close counts as collected, and how close before it starts coming to you. */
 export const COIN_PICKUP = 2.2;
-export const COIN_MAGNET = 11;
+/* ---- CAPTURE REACH ----
+   A gem or a sphere is taken when it touches a ball round the ship as wide as
+   the ship's wingspan (halfSpan in shipCollider, times the ship's scale).
+   Each ship's own, sent to the room on join and clamped there: a liar can
+   have a magnet a little bigger than their wings, never a room-sized one. */
+export const REACH_MIN = COIN_PICKUP;
+export const REACH_MAX = 9;
+export function clampReach(r: number | undefined): number {
+  if (!Number.isFinite(r as number)) return REACH_MIN;
+  return Math.min(REACH_MAX, Math.max(REACH_MIN, r as number));
+}
+/** How big a coin is drawn, which is also how big it is to a round. */
+export const COIN_RADIUS = 0.33;
+
+/* ---- GEMS ----
+   Dropped where the last member of a flock dies. A gem is a thing, not a
+   score: it is owned by whoever flies through it, it persists in the room's
+   world until then, and it is the size of a coin. It orbits whichever body
+   is nearer, Earth or a planet, at coin speed, so it moves and takes finding.
+   Same magnet as a coin, same recoil when shot. */
+export interface Gem {
+  id: string;
+  tier: number;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  spin: number;
+  spinVel?: number;
+  /** 0 for Earth, else the planet number it orbits. */
+  body: number;
+  /* ---- a DROPPED ITEM is a gem with a name ----
+     Same orbit, same magnet, same recoil, same persistence, but it is one
+     particular thing from the catalogue (`item` is its key, `tier` its item
+     tier) and for its first minute it belongs to whoever made the kill:
+     only they can pick it up, only they see it. Geoff: "seen only by the
+     killer for one minute, then everyone." `hidden` counts that minute
+     down; `owner` is the seat id, or "" flying solo. */
+  item?: string;
+  owner?: string;
+  hidden?: number;
+}
+export const GEM_RADIUS = COIN_RADIUS;
+export const GEM_MAX = 300;
+
+/** The gravity of a body a gem orbits: Earth's is the coins'; a planet's
+ *  scales with its size so the orbit is as slow as Earth's, at its scale. */
+function bodyMu(body: number): number {
+  if (body === 0) return COIN_MU;
+  const p = planetCentre(body);
+  void p;
+  return COIN_MU * (planetDiameter(body) / (2 * R));
+}
+function bodyCentre(body: number): THREE.Vector3 {
+  return body === 0 ? new THREE.Vector3() : planetCentre(body);
+}
+function bodyRadius(body: number): number {
+  return body === 0 ? R : planetDiameter(body) / 2;
+}
+
+/** Put a gem in orbit where it dropped, round the nearer body. */
+export function dropGem(c: CombatState, tier: number, at: THREE.Vector3, id: string): Gem {
+  const planet = nearestPlanet(at);
+  const body = at.length() <= planet.centre.distanceTo(at) ? 0 : planet.n;
+  const centre = bodyCentre(body);
+  const rel = at.clone().sub(centre);
+  const r = Math.max(bodyRadius(body) + 6, rel.length());
+  const up = rel.clone().normalize();
+  const pos = centre.clone().addScaledVector(up, r);
+  /* A circular orbit at this height: sideways, at the speed that stays up. */
+  const side = new THREE.Vector3().randomDirection();
+  const tangent = side.addScaledVector(up, -side.dot(up)).normalize();
+  const speed = Math.sqrt(bodyMu(body) / r);
+  const gem: Gem = { id, tier, pos, vel: tangent.multiplyScalar(speed), spin: Math.random() * 6.28, body };
+  c.gems.push(gem);
+  while (c.gems.length > GEM_MAX) c.gems.shift();
+  return gem;
+}
+
+/** Put a dropped item in orbit where the wreck was, the killer's for a minute. */
+export function dropItem(c: CombatState, key: string, tier: number, at: THREE.Vector3, id: string, owner: string): Gem {
+  const g = dropGem(c, tier, at, id);
+  g.item = key;
+  g.owner = owner;
+  g.hidden = DROP_PRIVATE_SECONDS;
+  return g;
+}
+
+/** Who may take this gem right now: its owner while it is theirs alone,
+ *  else whoever is nearest. Null when the owner is not in the fight. */
+export function gemClaimant(w: CombatWorld, g: Gem): PlayerBody | null {
+  if (g.item && (g.hidden ?? 0) > 0) {
+    for (const p of roster(w)) if (p.id === (g.owner ?? "")) return p;
+    return null;
+  }
+  return nearestPlayer(w, g.pos);
+}
+
+/** Fly the gems: gravity, the magnet, spin, pickup. Never lost: one that
+ *  would fall in is bounced back out, since it is somebody's property. */
+export function stepGems(c: CombatState, dt: number, w: CombatWorld): void {
+  for (let i = c.gems.length - 1; i >= 0; i--) {
+    const g = c.gems[i];
+    const centre = bodyCentre(g.body);
+    const rel = _segRel.copy(g.pos).sub(centre);
+    const r2 = rel.lengthSq();
+    const r = Math.sqrt(r2);
+    g.vel.addScaledVector(rel, -(bodyMu(g.body) / (r2 * r)) * dt);
+    if (g.hidden !== undefined && g.hidden > 0) g.hidden = Math.max(0, g.hidden - dt);
+    const claimant = gemClaimant(w, g);
+    if (!claimant) {
+      /* The owner is away: it keeps orbiting, and nobody's magnet works. */
+      const fast0 = g.vel.length();
+      if (fast0 > COIN_TOP) g.vel.multiplyScalar(COIN_TOP / fast0);
+      g.pos.addScaledVector(g.vel, dt);
+      g.spin += dt * 1.6;
+      continue;
+    }
+    const toPlayer = _segAt.copy(claimant.pos).sub(g.pos);
+    const range = toPlayer.length();
+    if (range < COIN_MAGNET) {
+      const pull = (1 - range / COIN_MAGNET) ** 2 * 140;
+      g.vel.addScaledVector(toPlayer.normalize(), pull * dt);
+    }
+    const fast = g.vel.length();
+    if (fast > COIN_TOP) g.vel.multiplyScalar(COIN_TOP / fast);
+    g.pos.addScaledVector(g.vel, dt);
+    g.spinVel = (g.spinVel ?? 0) * Math.max(0, 1 - 1.4 * dt);
+    g.spin += dt * (1.6 + (g.spinVel ?? 0));
+    /* Touching counts: the ship's reach plus the gem's own radius. */
+    const reach = clampReach(claimant.reach ?? w.reach) + GEM_RADIUS;
+    if (_segAt.copy(claimant.pos).sub(g.pos).length() < reach) {
+      c.events.push({
+        kind: "gem", at: g.pos.clone(), power: 0.8, tier: g.tier, who: claimant.id, id: g.id,
+        ...(g.item ? { item: g.item } : {}),
+      });
+      c.gems.splice(i, 1);
+      continue;
+    }
+    const floor = bodyRadius(g.body) + 3;
+    if (r < floor) {
+      /* Back out, and the inward speed turned outward. */
+      const up = rel.clone().normalize();
+      g.pos.copy(centre).addScaledVector(up, floor);
+      const inward = g.vel.dot(up);
+      if (inward < 0) g.vel.addScaledVector(up, -inward * 1.6);
+    }
+  }
+}
+/* ---- MAGNETIC, LIKE MINECRAFT XP ----
+   Geoff: "if you're within 20 diameters (their diameters) then they begin to
+   move towards you." Twenty diameters of a coin. Gems use the same rule. */
+export const COIN_MAGNET = COIN_RADIUS * 2 * 20;
+/** A round that hits a coin sends it off at this much speed, spinning. */
+export const COIN_KICK = 9;
+export const COIN_KICK_SPIN = 14;
 export const COIN_MAX = 400;
 
 
@@ -199,6 +365,8 @@ export interface Coin {
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   spin: number;
+  /** Spin rate, which a hit knocks up and drag brings down. */
+  spinVel?: number;
   value: number;
 }
 /* Halved along with the player's, so a dogfight plays exactly as it did while
@@ -318,7 +486,14 @@ export interface Bullet {
   tracer?: Tracer;
 }
 
+/* Every enemy carries a number of its own, so a hull model on screen can
+   follow ONE enemy for its whole life rather than whichever enemy happens to
+   be at its index this frame. See the controller for what that was costing. */
+let nextEnemyId = 1;
+export function newEnemyId(): number { return nextEnemyId++; }
+
 export interface Enemy {
+  id?: number;
   pos: THREE.Vector3;
   fwd: THREE.Vector3;
   roll: number;
@@ -369,6 +544,11 @@ export interface Enemy {
      this file then works on it without being told about it. Only the flying is
      different, and only the flying is branched on. */
   drone?: true;
+  /** The dragon: an apparition, not a fighter. Drifts, does not shoot, is
+   *  gone after DRAGON_LIFE seconds, leaves an egg. See stepDragon. */
+  dragon?: true;
+  /** dragon only: seconds left before it fades. */
+  life?: number;
   /** Which formation it flies in, and which fleet that came from. */
   group?: number;
   fleet?: number;
@@ -402,13 +582,29 @@ export interface Torpedo {
 
 export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
-      | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "waveStart"
+      | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "coinHit" | "waveStart"
+            | "flockDown" | "gem" | "gemHit" | "drop" | "dragon" | "dragonGone"
       | "incoming" | "blocked";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
   power: number;
   /** enemyHit only: what the shield is down to, 0..1 of its class maximum. */
   shield?: number;
+  /** enemyDown only: what the kill counts for. A fighter is 1, a flock
+   *  member a fifth, a cheat drone nothing. */
+  worth?: number;
+  /** enemyDown of a flock member: which fleet, how many it set out with, and
+   *  how many are left after this one. The flock kill is decided from these:
+   *  whoever downed more than half of fleetTotal when fleetLeft reaches 0. */
+  fleet?: number;
+  fleetTotal?: number;
+  fleetLeft?: number;
+  /** gem / flockDown: the gem's tier. */
+  gem?: number;
+  /** gem / drop: which gem, by id. */
+  id?: string;
+  /** gem / drop of an ITEM: its catalogue key. */
+  item?: string;
   /** enemyHit only: damage actually landed, which is what scores. */
   damage?: number;
   /** enemyDown only: which of the seven it was. */
@@ -501,6 +697,15 @@ export interface CombatState {
   wave: Wave | null;
   /** Live swarm formations. Empty until a fleet is sent. */
   flocks: FlockGroup[];
+  /** Seconds toward the next roll for a natural flock. */
+  flockClock: number;
+  /** Seconds toward the dragon's next minute. */
+  dragonClock: number;
+  /** Gems in the world. In a room these are the room's and persist. */
+  gems: Gem[];
+  /** What wrecks leave behind. The room and the cockpit both load the live
+   *  charts over this default. */
+  drops: DropConfig;
   kills: number;
   /** Kills this run, one count per tier, indexed from zero. */
   tierKills: number[];
@@ -511,7 +716,7 @@ export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
     beams: [],
-    wave: null, flocks: [],
+    wave: null, flocks: [], flockClock: 0, dragonClock: 0, gems: [], drops: DEFAULT_DROP_CONFIG,
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -551,13 +756,14 @@ export function hurtEnemy(
   c.events.push({
     kind: "enemyHit", at: e.pos.clone(), power: Math.min(2, 0.4 + amount / 90),
     shield: Math.max(0, e.shield) / e.cls.shieldMax,
-    damage: applied,
+    /* Damage scores, for drones too; a cheat drone's does not. */
+    damage: e.cheat ? 0 : applied,
     who: by,
   });
 
   /* Shield through nought is the end of it. */
   if (e.shield <= 0) {
-    breakUp(c, e);
+    if (!e.dragon) breakUp(c, e);
     const i = c.enemies.indexOf(e);
     if (i >= 0) c.enemies.splice(i, 1);
     /* ---- ANTI-CHEAT ----
@@ -567,18 +773,123 @@ export function hurtEnemy(
        exploit in the game. The guard is here, at the one place a kill is
        recorded, rather than at the call sites, so a new way to kill something
        cannot quietly reopen it. */
+    const worth = e.drone ? DRONE_KILL_WORTH : 1;
     if (!e.cheat) {
-      c.kills++;
+      c.kills += worth;
       /* Drone tiers are their own scale and would otherwise land in the
-         fighter tier buckets and inflate them. */
-      if (!e.drone) c.tierKills[e.cls.tier - 1] += 1;
+         fighter tier buckets and inflate them. The dragon is nobody's tier. */
+      if (!e.drone && !e.dragon) c.tierKills[e.cls.tier - 1] += 1;
     }
+    const fleetBits = e.drone && e.fleet !== undefined && !e.cheat ? (() => {
+      let left = 0;
+      for (const o of c.enemies) if (o.drone && o.fleet === e.fleet) left++;
+      const g = c.flocks.find((x) => x.fleet === e.fleet);
+      return { fleet: e.fleet, fleetTotal: g?.fleetTotal ?? 0, fleetLeft: left };
+    })() : {};
     c.events.push({
       kind: "enemyDown", at: e.pos.clone(), power: e.drone ? 2 : 3,
-      tier: e.cls.tier, who: by,
+      tier: e.cls.tier, who: by, worth: e.cheat ? 0 : worth, ...fleetBits,
     });
+    /* ---- the drop ----
+       Rolled here, in the one simulation, so the room's roll and the solo
+       roll are the same roll. A flock member rolls at the full chance for
+       its tier, as a fighter does (Geoff). A cheat drone leaves nothing. */
+    if (e.dragon && !e.cheat) {
+      /* The dragon always leaves its egg. Geoff: "if killed then it drops a
+         Dragon Egg." No chart, no roll. */
+      const g = dropItem(c, "dragonegg", 1, e.pos, newDropId(), by);
+      c.events.push({ kind: "drop", at: e.pos.clone(), power: 2, tier: 1, who: by, id: g.id, item: "dragonegg" });
+    } else if (!e.cheat) {
+      const key = rollDrop(c.drops, e.drone ? "flock" : "fighter", e.cls.tier, dropRandom(), dropRandom());
+      if (key) {
+        const spec = itemByKey(key);
+        const g = dropItem(c, key, spec?.tier ?? 1, e.pos, newDropId(), by);
+        c.events.push({ kind: "drop", at: e.pos.clone(), power: 1, tier: g.tier, who: by, id: g.id, item: key });
+      }
+    }
   }
   return applied;
+}
+
+/* ---- THE DRAGON ----
+   Geoff (2026-Sep-11): "a random apparition... 10% chance each minute, and
+   last for 10 seconds. It will render, animated, and will be only 30%
+   opaque. It can appear anywhere in the general orbit of Earth. It has 2000
+   Health and if killed then it drops a Dragon Egg."
+
+   It is an Enemy so every bullet, beam, torpedo and shield test in this file
+   already works on it; it is branched on only where a fighter would fly or
+   fire, which it never does. One at a time. The clock and the roll run in
+   the one simulation, so the room's dragon is the room's and the solo
+   dragon is the cockpit's. */
+export const DRAGON_CHECK_SECONDS = 60;
+export const DRAGON_CHANCE = 0.1;
+export const DRAGON_LIFE = 10;
+export const DRAGON_HP = 2000;
+export const DRAGON_SPEED = 2.5;
+export const DRAGON_ALT = [14, 40];
+export const DRAGON_CLASS: ShipClass = { tier: 1, name: "Dragon", shieldMax: DRAGON_HP, colour: 0xffc44d, speed: 0.3, weight: 0 };
+
+let dragonRandom: () => number = Math.random;
+export function setDragonRandomForTests(fn: (() => number) | null): void {
+  dragonRandom = fn ?? Math.random;
+}
+
+export function spawnDragon(c: CombatState, at?: THREE.Vector3, fwd?: THREE.Vector3): Enemy {
+  const up = at ? at.clone().normalize() : new THREE.Vector3().randomDirection();
+  const pos = at ? at.clone() : up.clone().multiplyScalar(R + DRAGON_ALT[0] + dragonRandom() * (DRAGON_ALT[1] - DRAGON_ALT[0]));
+  const side = fwd ? fwd.clone() : new THREE.Vector3().randomDirection();
+  const heading = side.addScaledVector(up, -side.dot(up));
+  if (heading.lengthSq() < 1e-6) heading.set(0, 1, 0).addScaledVector(up, -up.y);
+  heading.normalize();
+  const e: Enemy = {
+    id: newEnemyId(), pos, fwd: heading, roll: 0, cls: DRAGON_CLASS, shield: DRAGON_HP,
+    vel: new THREE.Vector3(), tumble: new THREE.Vector3(), spin: new THREE.Vector3(),
+    flash: 0, ammo: 0, reload: 1e9, fireAt: 1e9, weave: 1e9, weaveDir: 1,
+    mode: "in", breakAt: 0, rejoinAt: 1e9, escape: new THREE.Vector3(0, 0, 1), passFor: 1e9,
+    wave: -1, dragon: true, life: DRAGON_LIFE,
+  };
+  c.enemies.push(e);
+  c.events.push({ kind: "dragon", at: pos.clone(), power: 2 });
+  return e;
+}
+
+/** Once a minute, one chance in ten. Then it drifts, then it is gone. */
+export function stepDragon(c: CombatState, dt: number): void {
+  c.dragonClock += dt;
+  if (c.dragonClock >= DRAGON_CHECK_SECONDS) {
+    c.dragonClock -= DRAGON_CHECK_SECONDS;
+    if (!c.enemies.some((e) => e.dragon) && dragonRandom() < DRAGON_CHANCE) spawnDragon(c);
+  }
+  for (let i = c.enemies.length - 1; i >= 0; i--) {
+    const e = c.enemies[i];
+    if (!e.dragon) continue;
+    e.life = (e.life ?? DRAGON_LIFE) - dt;
+    if (e.life <= 0) {
+      c.enemies.splice(i, 1);
+      c.events.push({ kind: "dragonGone", at: e.pos.clone(), power: 1 });
+      continue;
+    }
+    /* A slow glide along its heading, held to its height: an apparition,
+       not a pilot. Knockback still moves it, as it moves everything. */
+    e.pos.addScaledVector(e.fwd, DRAGON_SPEED * dt).addScaledVector(e.vel, dt);
+    e.vel.multiplyScalar(Math.max(0, 1 - 2 * dt));
+    const r = e.pos.length();
+    const up = e.pos.clone().divideScalar(r);
+    e.fwd.addScaledVector(up, -e.fwd.dot(up)).normalize();
+  }
+}
+
+/* Drops are chance; tests pin the chance. Off by a call, never by an
+   environment check inside the logic. */
+let dropRandom: () => number = Math.random;
+export function setDropRandomForTests(fn: (() => number) | null): void {
+  dropRandom = fn ?? Math.random;
+}
+let nextDropId = 0;
+export function newDropId(): string {
+  nextDropId += 1;
+  return `${Date.now().toString(36)}${nextDropId.toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
 }
 
 /** A dead fighter comes apart into its body and its two panels. */
@@ -632,7 +943,10 @@ function breakUp(c: CombatState, e: Enemy): void {
  */
 function scatterCoins(c: CombatState, e: Enemy): void {
   const up = e.pos.clone().normalize();
-  for (let i = 0; i < COIN_PER_KILL; i++) {
+  /* A fifth of a fighter's coins for a drone: one. A cheat drone drops none. */
+  if (e.cheat) return;
+  const coins = e.drone ? Math.max(1, Math.round(COIN_PER_KILL * DRONE_KILL_WORTH)) : COIN_PER_KILL;
+  for (let i = 0; i < coins; i++) {
     /* Thrown outward in a spread around the fighter's own heading. */
     const dir = e.fwd.clone()
       .addScaledVector(e.vel.clone().normalize(), 0.4)
@@ -946,16 +1260,47 @@ export function droneFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
  * happens later and on its own, when the formation gets close enough that a
  * player can see it happen.
  */
+/* The roll for a natural flock. Swappable so a test can make one happen. */
+let flockRandom: () => number = Math.random;
+export function setFlockRandomForTests(fn: (() => number) | null): void {
+  flockRandom = fn ?? Math.random;
+}
+
+/**
+ * Every five seconds, a one-in-a-hundred roll; on a hit, a flock of a rolled
+ * tier sets out from the planet nearest a living player. Nothing spawns with
+ * nobody there, and nothing past the drone cap.
+ */
+export function stepFlockSpawns(c: CombatState, dt: number, w: CombatWorld): Enemy[] {
+  c.flockClock += dt;
+  if (c.flockClock < SPAWN_CHECK_SECONDS) return [];
+  c.flockClock -= SPAWN_CHECK_SECONDS;
+  if (flockRandom() >= SPAWN_CHANCE) return [];
+  if (w.players && !w.players.length) return [];
+  const target = (w.players && w.players.length) ? w.players[0] : null;
+  const pos = target ? target.pos : w.playerPos;
+  const fwd = target ? target.fwd : w.playerFwd;
+  const tier = rollFlockTier(flockRandom);
+  const drones = c.enemies.filter((e) => e.drone).length;
+  if (drones + fleetSize(tier) > DRONE_CAP) return [];
+  const planet = nearestPlanet(pos);
+  /* Off the planet's surface, on the side facing the target, so the flock
+     is seen leaving it rather than materialising inside it. */
+  const toward = pos.clone().sub(planet.centre).normalize();
+  const from = planet.centre.clone().addScaledVector(toward, planet.radius + 30);
+  return spawnFleet(c, tier, pos, fwd, { from, home: planet.centre, count: fleetSize(tier) });
+}
+
 export function spawnFleet(
   c: CombatState,
   tier: number,
   playerPos: THREE.Vector3,
   playerFwd: THREE.Vector3,
-  opts: { count?: number; cheat?: boolean } = {},
+  opts: { count?: number; cheat?: boolean; from?: THREE.Vector3; home?: THREE.Vector3 } = {},
 ): Enemy[] {
   const cls = droneClass(tier);
   const room = Math.max(0, DRONE_CAP - c.enemies.filter((e) => e.drone).length);
-  const count = Math.min(opts.count ?? FLEET_SIZE, room);
+  const count = Math.min(opts.count ?? fleetSize(tier), room);
   if (count <= 0) return [];
 
   /* Out in front and off to one side, far enough away to be a shape on the
@@ -964,7 +1309,7 @@ export function spawnFleet(
      arrive, and arriving is most of what this is for. */
   const up = playerPos.clone().normalize();
   const side = new THREE.Vector3().crossVectors(playerFwd, up).normalize();
-  const at = playerPos.clone()
+  const at = opts.from ? opts.from.clone() : playerPos.clone()
     .addScaledVector(playerFwd, 300)
     .addScaledVector(side, (Math.random() - 0.5) * 160)
     .addScaledVector(up, 40 + Math.random() * 90);
@@ -974,7 +1319,8 @@ export function spawnFleet(
 
   const heading = playerPos.clone().sub(at).normalize();
   const fleet = newFleetId();
-  const g = newGroup(fleet, cls.tier, at, heading);
+  const g = newGroup(fleet, cls.tier, at, heading, opts.home ?? null);
+  g.fleetTotal = count;
   c.flocks.push(g);
 
   const slots = slotOffsets(count);
@@ -989,6 +1335,7 @@ export function spawnFleet(
       .addScaledVector(realUp, off.y)
       .addScaledVector(heading, off.z);
     const e: Enemy = {
+      id: newEnemyId(),
       pos,
       fwd: heading.clone(),
       roll: 0,
@@ -1046,6 +1393,8 @@ export interface BeamShot {
   half: number;
   reach: number;
   colour: number;
+  /** Which weapon, so a room can name it on the wire. */
+  key: string;
   owner?: string;
 }
 
@@ -1074,7 +1423,7 @@ export function fireBeam(
   const cos = Math.cos(half);
   const shot: BeamShot = {
     pos: pos.clone(), fwd: fwd.clone().normalize(),
-    life: BEAM_SECONDS, half, reach, colour: spec.colour ?? 0xffd83a, owner,
+    life: BEAM_SECONDS, half, reach, colour: spec.colour ?? 0xffd83a, key: spec.key, owner,
   };
   c.beams.push(shot);
   while (c.beams.length > BEAM_MAX) c.beams.shift();
@@ -1088,7 +1437,7 @@ export function fireBeam(
     /* Inside the cone, generously: a fighter is a real size, so being a hair
        outside the line at forty units should still count. The allowance is the
        body's own angular size at that range. */
-    const slack = Math.atan2(e.drone ? DRONE_R : ENEMY_R, range);
+    const slack = Math.atan2(enemyRadius(e), range);
     if (rel.divideScalar(range).dot(shot.fwd) < Math.cos(half + slack)) continue;
     void cos;
     hurtEnemy(c, e, rollLaserDamage() * spec.damage * damageScale, shot.pos, owner);
@@ -1097,6 +1446,8 @@ export function fireBeam(
 }
 
 /** Start a round's trail. Called wherever a bullet is created. */
+const _liveRounds = new Set<Tracer>();
+
 function addTracer(c: CombatState, b: Bullet): void {
   const t: Tracer = {
     from: b.pos.clone(), to: b.pos.clone(),
@@ -1141,6 +1492,8 @@ export interface PlayerBody {
   /** Guard up right now. Checked HERE rather than by whoever reads the events,
    *  so a client cannot decide for itself that it blocked something. */
   guard?: boolean;
+  /** How far out a gem or sphere is captured: this hull's half wingspan. */
+  reach?: number;
   /**
    * The hull's own shape, as a chain of spheres already placed in the world.
    *
@@ -1168,6 +1521,8 @@ export interface CombatWorld {
    * shot whom, and the disagreement always favours whoever is lying.
    */
   players?: PlayerBody[];
+  /** The solo ship's capture reach (see clampReach). */
+  reach?: number;
   /** Multiplies everything the player's guns do. Three for a minute after
    *  winning a stake on your node. */
   damageScale: number;
@@ -1238,6 +1593,45 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     const b = c.bullets[i];
     const from = b.pos.clone();
     b.pos.addScaledVector(b.vel, dt);
+
+    /* ---- A ROUND THAT HITS A COIN SENDS IT FLYING ----
+       Geoff: "if a player shoots them, then they should recoil with momentum
+       and spinning using physics." Momentum along the round, spin at random,
+       the round spent. Only coins near the round's path are tested, since
+       there can be hundreds of them. */
+    let coined = false;
+    for (const g of c.gems) {
+      if (g.pos.distanceToSquared(from) > 900) continue;
+      if (!segmentHit(from, b.pos, g.pos, GEM_RADIUS * 1.6)) continue;
+      const dir = _segAb.copy(b.vel).normalize();
+      g.vel.addScaledVector(dir, COIN_KICK);
+      g.spinVel = (g.spinVel ?? 0) + (Math.random() - 0.5) * 2 * COIN_KICK_SPIN;
+      c.events.push({ kind: "gemHit", at: g.pos.clone(), power: 0.5 });
+      coined = true;
+      break;
+    }
+    if (coined) {
+      /* The round is spent: its trail must start fading now, like any other
+         round's. Left "live" it would never fade at all. */
+      if (b.tracer) b.tracer.live = false;
+      c.bullets.splice(i, 1);
+      continue;
+    }
+    for (const k of c.coins) {
+      if (k.pos.distanceToSquared(from) > 900) continue;
+      if (!segmentHit(from, b.pos, k.pos, COIN_RADIUS * 1.6)) continue;
+      const dir = _segAb.copy(b.vel).normalize();
+      k.vel.addScaledVector(dir, COIN_KICK);
+      k.spinVel = (k.spinVel ?? 0) + (Math.random() - 0.5) * 2 * COIN_KICK_SPIN;
+      c.events.push({ kind: "coinHit", at: k.pos.clone(), power: 0.5 });
+      coined = true;
+      break;
+    }
+    if (coined) {
+      if (b.tracer) b.tracer.live = false;
+      c.bullets.splice(i, 1);
+      continue;
+    }
     b.life -= dt;
     /* The trail grows with the round and stops where it stopped. */
     if (b.tracer) b.tracer.to.copy(b.pos);
@@ -1246,7 +1640,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     if (!b.hostile) {
       for (let j = c.enemies.length - 1; j >= 0 && !spent; j--) {
         const e = c.enemies[j];
-        if (!segmentHit(from, b.pos, e.pos, e.drone ? DRONE_R : ENEMY_R)) continue;
+        if (!segmentHit(from, b.pos, e.pos, enemyRadius(e))) continue;
         spent = true;
         const scale = (b.mini ? MINI_DAMAGE : 1) * w.damageScale;
         hurtEnemy(c, e, rollLaserDamage() * scale, from, b.owner ?? "");
@@ -1348,8 +1742,16 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
      They only start counting down once their round has finished flying, so a
      long shot leaves its line for three seconds after it lands rather than
      three seconds after it was fired. */
+  /* A trail is "live" while its round flies. Any path that removes a round
+     must say so, and one did not (rounds spent on coins), which left trails
+     that never faded. Belt and braces: a live trail whose round is no longer
+     in the air is released here whatever removed it, including a room
+     replacing the whole list from the wire. */
+  _liveRounds.clear();
+  for (const b of c.bullets) if (b.tracer) _liveRounds.add(b.tracer);
   for (let i = c.tracers.length - 1; i >= 0; i--) {
     const t = c.tracers[i];
+    if (t.live && !_liveRounds.has(t)) t.live = false;
     if (t.live) continue;
     t.life -= dt;
     if (t.life <= 0) c.tracers.splice(i, 1);
@@ -1380,7 +1782,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     if (fast > COIN_TOP) k.vel.multiplyScalar(COIN_TOP / fast);
 
     k.pos.addScaledVector(k.vel, dt);
-    k.spin += dt * 2.2;
+    /* Turning on its own, faster after a hit, settling back. */
+    k.spinVel = (k.spinVel ?? 0) * Math.max(0, 1 - 1.4 * dt);
+    k.spin += dt * (2.2 + (k.spinVel ?? 0));
 
     if (range < COIN_PICKUP) {
       c.events.push({ kind: "coin", at: k.pos.clone(), power: 0.4, value: k.value, who: claimant.id });
@@ -1421,7 +1825,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     let struck = false;
     for (let k = c.enemies.length - 1; k >= 0 && !struck; k--) {
       const e = c.enemies[k];
-      if (e.pos.distanceTo(j.pos) > (e.drone ? DRONE_R : ENEMY_R) + JUNK_R) continue;
+      if (e.pos.distanceTo(j.pos) > enemyRadius(e) + JUNK_R) continue;
       struck = true;
       hurtEnemy(c, e, rollLaserDamage(), j.pos);
     }
@@ -1503,7 +1907,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     /* Drones are flown by the flock, below. They share this list so that every
        bullet, shield and explosion in this file works on them unchanged, but
        nothing about how a fighter flies applies to a sphere in formation. */
-    if (e.drone) continue;
+    if (e.drone || e.dragon) continue;
     /* Each fighter hunts whoever is closest to it, re-checked every frame, so
        flying past a dogfight pulls some of it onto you. */
     const prey = nearestPlayer(w, e.pos);
@@ -1655,16 +2059,44 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
      Flown as groups rather than as individuals, in its own file. Everything
      above this point has already had its say about damage, wreckage and
      collisions; all that is left is where they go. */
+  /* ---- a flock from a planet, now and then ---- */
+  stepFlockSpawns(c, dt, w);
+  stepDragon(c, dt);
+  stepGems(c, dt, w);
+
   if (c.flocks.length) {
     /* Into a reused array rather than a fresh one from filter(): this runs
        every frame and the list can be a hundred long. */
     _drones.length = 0;
     for (const e of c.enemies) if (e.drone) _drones.push(e as Enemy & { group: number; slot: number });
     const drones = _drones;
-    stepFlock(c.flocks, drones, dt, { playerPos: w.playerPos, scale: cruiseScale });
+    stepFlock(c.flocks, drones, dt, {
+      playerPos: w.playerPos, scale: cruiseScale,
+      /* The players the room passes in are the living ones. */
+      nearest: (from) => {
+        if (!w.players) return w.playerPos;
+        if (!w.players.length) return null;
+        let best: PlayerBody | null = null;
+        let bestD = Infinity;
+        for (const p of w.players) {
+          const d = p.pos.distanceToSquared(from);
+          if (d < bestD) { bestD = d; best = p; }
+        }
+        return best ? best.pos : null;
+      },
+      despawn: (gid) => {
+        for (let k = c.enemies.length - 1; k >= 0; k--) {
+          const e = c.enemies[k];
+          if (e.drone && e.group === gid) c.enemies.splice(k, 1);
+        }
+      },
+    });
+    const phaseOf = new Map<number, string>();
+    for (const g of c.flocks) phaseOf.set(g.id, g.phase);
 
     for (let i = drones.length - 1; i >= 0; i--) {
       const d = drones[i];
+      if (c.enemies.indexOf(d) < 0) continue;   /* despawned this frame */
       const prey = nearestPlayer(w, d.pos);
       const gap = d.pos.distanceTo(prey.pos);
       const open = cruiseScale(d.pos.length() - R);
@@ -1678,7 +2110,9 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
 
       /* Gone for good. A whole fleet that has run off is a whole fleet still
          being simulated, so the leash matters more here than for a fighter. */
-      if (gap > 900 * open) {
+      /* Only for a flock that is here to fight: one crossing from its planet
+         or going home is a long way off on purpose. */
+      if (gap > 900 * open && phaseOf.get(d.group) === "hunt") {
         const k = c.enemies.indexOf(d);
         if (k >= 0) c.enemies.splice(k, 1);
       }
@@ -1736,6 +2170,7 @@ function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3, bias = 1)
   const fwd = playerPos.clone().sub(pos).normalize();
   const cls = rollTier(bias);
   return {
+    id: newEnemyId(),
     pos, fwd, roll: 0,
     cls,
     shield: cls.shieldMax,

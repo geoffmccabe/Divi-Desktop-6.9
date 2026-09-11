@@ -28,7 +28,8 @@
 
 import * as THREE from "three";
 import {
-  createCombat, stepCombat, clearEvents, startWave,
+  createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
+  setDropRandomForTests, clampReach,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE,
   type CombatState, type CombatWorld, type PlayerBody,
@@ -38,6 +39,11 @@ import {
   BOOST,
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
+import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
+import { ALL_ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, superBoostMult, strafeMult, vstrafeMult, hullMult } from "../../../ui/src/wallet/rebels/itemCatalog";
+import { fetchDropConfig } from "../../../ui/src/wallet/rebels/dropConfigRemote";
+import { DEFAULT_DROP_CONFIG, type DropConfig } from "../../../ui/src/wallet/rebels/dropCharts";
+import { ammoFor, torpedoesFor, topSpeedFor, shieldMaxFor, recharge, supercharge, SUPER_BOOST_MULT, type Extras } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
   type PaintWire, type PaintPart,
@@ -55,7 +61,9 @@ const MAX_SEATS = 24;
 const MAX_FRAME = 2048;
 
 /** Seconds on the ground after being shot down. Geoff's figure. */
-const RESPAWN_SECONDS = 10;
+/* Thirty seconds down, or ten with a VIP Pass among the seat's gear. The
+   figures are the item catalogue's, so the shop and the room agree. */
+const RESPAWN_SECONDS = RESPAWN_WAIT;
 
 /** A thousand kills is a hundred DIVI. */
 const KILLS_PER_PAYOUT = 1000;
@@ -78,6 +86,32 @@ interface Seat {
   account: string;
   /** When the last cash-out was asked for, so the ledger is not hammered. */
   lastClaim: number;
+  /* ---- what they bought ----
+     Weapon and item keys, declared on join. The room takes them at the
+     client's word, which is the same trust the scores and the paint get and
+     is stated here so nobody mistakes it for a check: a client that lies
+     about owning a beam gets a beam. The honest fix is the same as for
+     points, a purchase record the server can read, and it is not built. What
+     the room DOES do is refuse a weapon that was not declared, so the fight
+     everyone sees is at least the fight each client said it was bringing. */
+  gear: Set<string>;
+  ammoMax: number;
+  torpsMax: number;
+  shieldMax: number;
+  extras: Extras;
+  /** Room clock of the last Y, so a client cannot pour recharges in. */
+  lastUse: number;
+  /** The most this ship can move in a second, from its gear. */
+  topSpeed: number;
+  lastBeam: number;
+  /* ---- the flock tally ----
+     Members of each fleet this seat has downed, by fleet id. Internal: the
+     player sees only flock kills. Cleared with the fleet. */
+  tally: Map<number, number>;
+  /** Flock kills, gems and items picked up since the last banking. */
+  flocks: number;
+  gems: number[];
+  items: Record<string, number>;
   name: string;
   /** Which hull they fly and how it is painted, so the room can tell everyone
    *  else what this player looks like. Paint, not gameplay: see onJoin. */
@@ -177,6 +211,9 @@ export class RebelsRoom {
     const seat: Seat = {
       id, ws, node: "", name: "", ship: "", paint: undefined,
       account: from, lastClaim: -99,
+      gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, shieldMax: MAX_SHIELD, topSpeed: topSpeedFor(), lastBeam: -99,
+      extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99,
+      tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0], items: {},
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
       shield: MAX_SHIELD, ammo: MAX_AMMO, torps: MAX_TORPEDOES,
@@ -211,7 +248,10 @@ export class RebelsRoom {
 
   private start(): void {
     if (this.timer) return;
+    void this.loadGems();
     this.combat = createCombat();
+    this.combat.drops = this.drops;
+    void this.refreshDrops();
     this.now = 0;
     startWave(this.combat, 1);
     this.timer = setInterval(() => {
@@ -223,6 +263,7 @@ export class RebelsRoom {
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
+    void this.saveGems();
   }
 
   private refreshRoster(): void {
@@ -263,6 +304,11 @@ export class RebelsRoom {
     if (this.world.players!.length === 0) { clearEvents(this.combat); return; }
 
     stepCombat(this.combat, DT, this.world);
+    /* Gems move; their saved positions should not go stale. */
+    this.gemSaveAt += DT;
+    if (this.gemSaveAt >= 30 && this.combat.gems.length) { this.gemSaveAt = 0; void this.saveGems(); }
+    this.dropsAt += DT;
+    if (this.dropsAt >= 600) { this.dropsAt = 0; void this.refreshDrops(); }
     this.settle();
     this.broadcastState();
     clearEvents(this.combat);
@@ -287,6 +333,9 @@ export class RebelsRoom {
         ...(ev.damage !== undefined ? { dmg: Math.round(ev.damage) } : {}),
         ...(ev.wave ? { wave: ev.wave } : {}),
         ...(ev.guarded ? { g: 1 } : {}),
+        ...(ev.gem !== undefined ? { gem: String(ev.gem) } : {}),
+        ...(ev.item ? { item: ev.item } : {}),
+        ...(ev.id ? { id: ev.id } : {}),
       });
 
       const who = ev.who ? this.seats.get(ev.who) : undefined;
@@ -295,7 +344,21 @@ export class RebelsRoom {
         /* Points are the damage that landed, exactly as in the solo game. */
         who.score += Math.round(ev.damage ?? 0);
       } else if (ev.kind === "enemyDown" && who) {
-        who.kills += 1;
+        /* A fighter is a kill; a flock member a fifth of one. */
+        who.kills += ev.worth ?? 1;
+        if (ev.fleet !== undefined && (ev.worth ?? 0) > 0) this.tallyFlock(who, ev);
+      } else if (ev.kind === "drop" && ev.id) {
+        /* A wreck left something. The simulation put it in orbit; the room
+           writes it down so a restart finds it. */
+        const g = this.combat.gems.find((x) => x.id === ev.id);
+        if (g) void this.saveGem(g);
+      } else if (ev.kind === "gem" && who && ev.tier) {
+        /* Property: the seat's, banked to the account, and gone from the
+           world for good. An item counts by its key; a flock gem by tier. */
+        if (ev.item) who.items[ev.item] = (who.items[ev.item] ?? 0) + 1;
+        else who.gems[ev.tier - 1] = (who.gems[ev.tier - 1] ?? 0) + 1;
+        const id = ev.id ?? this.gemIdAt(ev.at);
+        if (id) { this.gemPos.delete(id); void this.state.storage.delete(`gem:${id}`); }
         /* The bounty, in DIVI, at the rate the payout promises: a thousand
            kills is a hundred DIVI, so a kill is a tenth. The coins scattered by
            the wreck are the same tenth made visible and collectable, so only
@@ -322,22 +385,141 @@ export class RebelsRoom {
     }
   }
 
+  /* ---- flock kills and gems ----
+     Geoff: "In order for a player to get a 'Kill' for a flock, they need to
+     kill over 50% of its members. Keep track of all the members of a flock
+     that have been killed by each player, but only record flock kills. When
+     the last member of a flock is killed, it will leave a GEM of that tier."
+     The tally is per seat per fleet; when the fleet's last member falls the
+     seat over half takes the kill, and a gem of the tier goes into orbit
+     where it fell. The gem is written to storage at once: it persists. */
+  private tallyFlock(who: Seat, ev: { fleet?: number; fleetTotal?: number; fleetLeft?: number; tier?: number; at: THREE.Vector3 }): void {
+    const fleet = ev.fleet!;
+    who.tally.set(fleet, (who.tally.get(fleet) ?? 0) + 1);
+    if ((ev.fleetLeft ?? 1) > 0) return;
+    const total = ev.fleetTotal ?? 0;
+    let winner: Seat | null = null;
+    for (const s of this.seats.values()) {
+      const n = s.tally.get(fleet) ?? 0;
+      if (total > 0 && n > total / 2) winner = s;
+      s.tally.delete(fleet);
+    }
+    const tier = ev.tier ?? 1;
+    if (winner) winner.flocks += 1;
+    const id = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+    const gem = dropGem(this.combat, tier, ev.at, id);
+    void this.saveGem(gem);
+    this.combat.events.push({ kind: "flockDown", at: ev.at.clone(), power: 3, tier, who: winner?.id ?? "", gem: tier });
+  }
+
+  private gemIdAt(at: THREE.Vector3): string | null {
+    /* The gem that was just taken is no longer in the list; the event says
+       where it was. Storage keys are by id, so the id is looked up by
+       position among what was saved last. */
+    let best: string | null = null;
+    let bestD = 4;
+    for (const [id, p] of this.gemPos) {
+      const d = p.distanceTo(at);
+      if (d < bestD) { bestD = d; best = id; }
+    }
+    if (best) this.gemPos.delete(best);
+    return best;
+  }
+
+  /** Where each gem was last saved, by id, so a pickup can find its key. */
+  private gemPos = new Map<string, THREE.Vector3>();
+  private gemSaveAt = 0;
+
+  private async saveGem(g: Gem): Promise<void> {
+    this.gemPos.set(g.id, g.pos.clone());
+    try {
+      await this.state.storage.put(`gem:${g.id}`, {
+        id: g.id, tier: g.tier, body: g.body,
+        p: [g.pos.x, g.pos.y, g.pos.z], v: [g.vel.x, g.vel.y, g.vel.z], spin: g.spin,
+        ...(g.item ? { item: g.item, owner: g.owner ?? "", hidden: Math.round(g.hidden ?? 0) } : {}),
+      });
+    } catch { /* storage unhappy; the gem still exists in memory */ }
+  }
+
+  /* ---- drop charts ----
+     Read from the table on start and every ten minutes, so an admin edit
+     reaches a running room without a restart. The default until then. */
+  private drops: DropConfig = DEFAULT_DROP_CONFIG;
+  private dropsAt = 0;
+  private async refreshDrops(): Promise<void> {
+    if (!this.dropsOn) return;
+    const r = await fetchDropConfig();
+    this.drops = r.config;
+    this.combat.drops = r.config;
+  }
+  /** Tests: no network, and a pinned roll. */
+  dropsOn = true;
+  setDropsForTests(cfg: DropConfig | null, rand: (() => number) | null): void {
+    this.dropsOn = false;
+    this.drops = cfg ?? DEFAULT_DROP_CONFIG;
+    this.combat.drops = this.drops;
+    setDropRandomForTests(rand);
+  }
+
+  /** Every so often, and at stop, write where the gems are now, so a restart
+   *  finds them where they were and not where they were born. */
+  private async saveGems(): Promise<void> {
+    for (const g of this.combat.gems) await this.saveGem(g);
+  }
+
+  private async loadGems(): Promise<void> {
+    try {
+      const all = await this.state.storage.list<{ id: string; tier: number; body: number; p: number[]; v: number[]; spin: number; item?: string; owner?: string; hidden?: number }>({ prefix: "gem:" });
+      for (const g of all.values()) {
+        if (this.combat.gems.some((x) => x.id === g.id)) continue;
+        const gem: Gem = {
+          id: g.id, tier: g.tier, body: g.body ?? 0,
+          pos: new THREE.Vector3(g.p[0], g.p[1], g.p[2]),
+          vel: new THREE.Vector3(g.v[0], g.v[1], g.v[2]),
+          spin: g.spin ?? 0,
+          /* An item that was private when the room stopped: its owner's seat
+             is gone with the restart, so it becomes everyone's. */
+          ...(g.item ? { item: g.item, owner: "", hidden: 0 } : {}),
+        };
+        this.combat.gems.push(gem);
+        this.gemPos.set(gem.id, gem.pos.clone());
+      }
+    } catch { /* nothing saved, or storage unhappy */ }
+  }
+
   private down(s: Seat): void {
     s.dead = true;
-    s.respawn = RESPAWN_SECONDS;
+    s.respawn = s.gear.has("vip") ? RESPAWN_VIP : RESPAWN_SECONDS;
     s.shield = 0;
     s.guardFor = 0;
     s.body.guard = false;
     /* Earnings survive death, as promised. Only the ship is lost. */
     void this.bank(s);
     this.refreshRoster();
+    /* ---- EVERYONE DOWN: THE FIGHT STARTS OVER ----
+       Geoff: "the game resets once all the players have died, or if no one
+       is playing, it will start over. Otherwise the waves will just keep
+       increasing until everyone is dead or given up." An empty room already
+       starts fresh (see start); this is the other half. Wave one, nothing in
+       the air. The gems stay: they are property, not part of the fight. */
+    let anyoneLeft = false;
+    for (const o of this.seats.values()) if (o.joined && !o.dead) anyoneLeft = true;
+    if (!anyoneLeft) this.resetFight();
+  }
+
+  private resetFight(): void {
+    const gems = this.combat.gems;
+    this.combat = createCombat();
+    this.combat.gems = gems;
+    for (const o of this.seats.values()) o.tally.clear();
+    startWave(this.combat, 1);
   }
 
   private revive(s: Seat): void {
     s.dead = false;
-    s.shield = MAX_SHIELD;
-    s.ammo = MAX_AMMO;
-    s.torps = MAX_TORPEDOES;
+    s.shield = s.shieldMax;
+    s.ammo = s.ammoMax;
+    s.torps = s.torpsMax;
     s.guards = MAX_GUARDS;
     /* Back on your own pad, which is where a launch happens. */
     s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
@@ -349,18 +531,22 @@ export class RebelsRoom {
      a player may fly in several over a week and the payout is one running
      total. The room is the only thing that ever writes to it. */
   private async bank(s: Seat): Promise<void> {
-    if (!(s.account || s.node) || (s.kills === 0 && s.divi === 0 && s.score === 0)) return;
-    const kills = s.kills, divi = s.divi, score = s.score;
-    s.kills = 0; s.divi = 0; s.score = 0;
+    const anyGems = s.gems.some((n) => n > 0);
+    const anyItems = Object.keys(s.items).length > 0;
+    if (!(s.account || s.node) || (s.kills === 0 && s.divi === 0 && s.score === 0 && s.flocks === 0 && !anyGems && !anyItems)) return;
+    const kills = s.kills, divi = s.divi, score = s.score, flocks = s.flocks, gems = s.gems.slice(), items = s.items;
+    s.kills = 0; s.divi = 0; s.score = 0; s.flocks = 0; s.gems = [0, 0, 0, 0, 0, 0, 0]; s.items = {};
     try {
       const id = this.env.LEDGER.idFromName("v1");
       await this.env.LEDGER.get(id).fetch("https://ledger/credit", {
         method: "POST",
-        body: JSON.stringify({ node: s.account || s.node, name: s.name, kills, divi, score }),
+        body: JSON.stringify({ node: s.account || s.node, name: s.name, kills, divi, score, flocks, gems, items }),
       });
     } catch {
       /* Put it back rather than lose it: the next flush will carry it. */
-      s.kills += kills; s.divi += divi; s.score += score;
+      s.kills += kills; s.divi += divi; s.score += score; s.flocks += flocks;
+      for (let i = 0; i < 7; i++) s.gems[i] += gems[i] ?? 0;
+      for (const [k, n] of Object.entries(items)) s.items[k] = (s.items[k] ?? 0) + n;
     }
   }
 
@@ -379,6 +565,7 @@ export class RebelsRoom {
       case "tf": return this.onTransform(seat, msg);
       case "fire": return this.onFire(seat, msg);
       case "det": return this.onDetonate(seat);
+      case "use": return this.onUse(seat, msg);
       case "claim": { void this.onClaim(seat, msg); return; }
       case "purse": {
         /* Rate-limited the same way: a panel that polls is fine, a loop that
@@ -416,6 +603,29 @@ export class RebelsRoom {
     seat.ship = /^space_SM_Ship_[A-Za-z0-9_]{1,60}$/.test(String(m.ship ?? ""))
       ? String(m.ship) : "";
     seat.paint = cleanPaint(m.paint);
+    /* The capture ball. The client measured its own wings; the room only
+       keeps it within reason. */
+    seat.body.reach = clampReach(Number(m.reach));
+    /* Gear: known keys only, bounded, and the magazine and rack sized from
+       the items in it exactly as the solo game sizes them. */
+    seat.gear = new Set(
+      (Array.isArray(m.gear) ? m.gear : []).slice(0, 32)
+        .filter((k): k is string => typeof k === "string" && (!!weaponByKey(k) || ALL_ITEMS.some((i) => i.key === k))),
+    );
+    const gearList = [...seat.gear];
+    const extras: Extras = {
+      torpedoes: torpedoBonus(gearList), magazine: magBonus(gearList),
+      superMult: superBoostMult(gearList, SUPER_BOOST_MULT), strafeMult: strafeMult(gearList),
+      vstrafeMult: vstrafeMult(gearList), hullMult: hullMult(gearList),
+    };
+    seat.extras = extras;
+    seat.ammoMax = ammoFor(extras);
+    seat.torpsMax = torpedoesFor(extras);
+    seat.shieldMax = shieldMaxFor(extras);
+    seat.topSpeed = topSpeedFor(extras);
+    seat.ammo = seat.ammoMax;
+    seat.torps = seat.torpsMax;
+    seat.shield = seat.shieldMax;
     seat.home.copy(home).normalize().multiplyScalar(R);
     seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 8);
     seat.joined = true;
@@ -504,7 +714,8 @@ export class RebelsRoom {
        player teleporting backwards through no fault of their own, which is a
        far worse bug than someone gaining a few units. */
     const since = Math.max(DT, this.now - (seat as { lastTf?: number }).lastTf!) || DT;
-    const budget = BOOST * (since + 0.5) * 1.25;
+    /* Against what THIS ship can do: super boost and the slides count. */
+    const budget = seat.topSpeed * (since + 0.5) * 1.25;
     if (seat.body.pos.distanceTo(p) > budget) {
       return this.snapBack(seat, "moved too far");
     }
@@ -551,6 +762,7 @@ export class RebelsRoom {
       const up = from.clone().normalize();
       fireGuns(this.combat, from, f, up, 70, 1.6, seat.id);
     } else if (m.k === "mini") {
+      if (!seat.gear.has("mini")) return this.send(seat, { t: "no", why: "no minigun on this ship" });
       if (this.now - seat.lastMini < MINI_INTERVAL * 0.9) return;
       if (seat.ammo < MINI_AMMO) return;
       seat.lastMini = this.now;
@@ -572,6 +784,17 @@ export class RebelsRoom {
       seat.lastTorp = this.now;
       seat.torps -= 1;
       fireTorpedo(this.combat, from, f, seat.id);
+    } else if (m.k === "beam") {
+      /* The beam the client named, if it declared it. Same burst length and
+         cost as the solo game, so a beam in company is the beam alone. */
+      const spec = typeof m.w === "string" ? weaponByKey(m.w) : null;
+      if (!spec || spec.kind !== "beam") return this.strike(seat, "unknown weapon");
+      if (!seat.gear.has(spec.key)) return this.send(seat, { t: "no", why: `no ${spec.name} on this ship` });
+      if (this.now - seat.lastBeam < BEAM_SECONDS * 0.9) return;
+      if (seat.ammo < BEAM_AMMO) return;
+      seat.lastBeam = this.now;
+      seat.ammo -= BEAM_AMMO;
+      fireBeam(this.combat, spec, from, f, seat.id);
     } else {
       return this.strike(seat, "unknown weapon");
     }
@@ -581,6 +804,22 @@ export class RebelsRoom {
   private onDetonate(seat: Seat): void {
     if (!seat.joined || seat.dead) return;
     detonateOldest(this.combat, this.world, seat.id);
+  }
+
+  /* Y: a held Instant Recharge or Supercharge. The room does not hold the
+     inventory (the account row does), so it cannot count them; what it can
+     do is the same as for gear, refuse the malformed and pace it: one every
+     two seconds, which is all an honest player could ever want. */
+  static USE_GAP = 2;
+  private onUse(seat: Seat, m: Extract<ClientMessage, { t: "use" }>): void {
+    if (!seat.joined || seat.dead) return;
+    if (m.k !== "recharge" && m.k !== "supercharge") return this.send(seat, { t: "no", why: "no such item" });
+    if (this.now - seat.lastUse < RebelsRoom.USE_GAP) return;
+    seat.lastUse = this.now;
+    const g = { shields: seat.shield, ammo: seat.ammo, torpedoes: seat.torps, guards: seat.guards };
+    if (m.k === "recharge") recharge(g, seat.extras); else supercharge(g, seat.extras);
+    seat.shield = g.shields; seat.ammo = g.ammo; seat.torps = g.torpedoes; seat.guards = g.guards;
+    this.sendYou(seat);
   }
 
   /* ---- discipline ----
@@ -639,6 +878,21 @@ export class RebelsRoom {
 
   private broadcastState(): void {
     const c = this.combat;
+    /* A dropped item in its private minute goes only to its owner: nobody
+       else is told it exists. Everything else is one string for everyone. */
+    const shared: Gem[] = [];
+    const mine = new Map<string, Gem[]>();
+    for (const g of c.gems) {
+      if (g.item && (g.hidden ?? 0) > 0) {
+        const list = mine.get(g.owner ?? "") ?? [];
+        list.push(g);
+        mine.set(g.owner ?? "", list);
+      } else shared.push(g);
+    }
+    const gemWire = (g: Gem) => [
+      r1(g.pos.x), r1(g.pos.y), r1(g.pos.z), g.tier, Math.round(g.spin * 100) / 100, g.id,
+      ...(g.item ? [g.item, g.owner ?? "", Math.round(g.hidden ?? 0)] : []),
+    ];
     const state = {
       t: "s" as const,
       n: this.tick,
@@ -652,6 +906,9 @@ export class RebelsRoom {
         r1(e.pos.x), r1(e.pos.y), r1(e.pos.z),
         r1(e.fwd.x), r1(e.fwd.y), r1(e.fwd.z),
         e.cls.tier, Math.max(0, Math.round(e.shield)), e.cls.shieldMax,
+        /* A drone is drawn as a sphere, a fighter as a hull: the cockpit has
+           to be told which. And WHICH enemy, so its hull model follows it. */
+        e.dragon ? 2 : e.drone ? 1 : 0, e.id ?? 0,
       ]),
       B: c.bullets.map((b) => [
         r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
@@ -659,10 +916,20 @@ export class RebelsRoom {
         b.hostile ? 1 : 0, b.mini ? 1 : 0,
       ]),
       C: c.coins.map((k) => [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)]),
+      ...(shared.length ? { G: shared.map(gemWire) } : {}),
+      ...(c.beams.length ? {
+        M: c.beams.map((b) => [
+          r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
+          Math.round(b.fwd.x * 1000) / 1000, Math.round(b.fwd.y * 1000) / 1000, Math.round(b.fwd.z * 1000) / 1000,
+          b.key, r1(b.life),
+        ]),
+      } : {}),
     };
     const wire = JSON.stringify(state);
     for (const s of this.seats.values()) {
-      try { s.ws.send(wire); } catch { this.leave(s); }
+      const own = mine.get(s.id);
+      const text = own ? JSON.stringify({ ...state, G: [...shared, ...own].map(gemWire) }) : wire;
+      try { s.ws.send(text); } catch { this.leave(s); }
     }
     /* Gauges every half second rather than every tick: they change slowly and
        they are the one message that is different for every player. */

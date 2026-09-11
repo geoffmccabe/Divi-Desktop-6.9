@@ -16,7 +16,7 @@
 // something has to draw one.
 
 import * as THREE from "three";
-import { PLANET_COUNT, EARTH_D, planetDiameter, planetDistance } from "./orbitWorld";
+import { PLANET_COUNT, EARTH_D, planetDiameter, planetDistance, latticeDirection, planetDirection } from "./orbitWorld";
 import { loadModel, unitCopy } from "./spaceAssets";
 
 /** One thing hanging in the sky, and what to say about it. */
@@ -75,8 +75,6 @@ const PLANET_KINDS = [
  * band as you fly along the lattice, which reads as a pattern rather than as a
  * solar system.
  */
-const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
-
 /** A deterministic 0..1 from a number. Scattering a hundred rocks needs some
  *  randomness and none of it may be Math.random: the field has to be the same
  *  field every time the game is opened, like everything else out here. */
@@ -85,21 +83,8 @@ function hash(n: number): number {
   return x - Math.floor(x);
 }
 
-export function latticeDirection(slot: number, offset = 0): THREE.Vector3 {
-  const i = slot + offset;
-  /* Evenly down the axis, avoiding the exact poles. */
-  const y = 1 - (2 * (i + 0.5)) / PLANET_COUNT;
-  const r = Math.sqrt(Math.max(0, 1 - y * y));
-  const theta = GOLDEN_ANGLE * i;
-  return new THREE.Vector3(r * Math.cos(theta), y, r * Math.sin(theta));
-}
-
-function directionFor(n: number): THREE.Vector3 {
-  /* A fixed co-prime step round the fourteen, which mixes the order without
-     changing the set of directions. 5 and 14 share no factors, so it visits
-     every slot exactly once. */
-  return latticeDirection(((n - 1) * 5) % PLANET_COUNT);
-}
+/* The planet lattice lives in orbitWorld now, shared with the simulation. */
+const directionFor = planetDirection;
 
 /* ---- colour ----
    Synty's planet texture is a greyscale mask, so the colour is ours to choose

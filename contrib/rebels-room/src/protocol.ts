@@ -29,6 +29,12 @@ export interface JoinIn {
    *  room full of identical grey arrows. */
   ship?: string;
   paint?: PaintWire;
+  /** What the player has bought: weapon and item keys from the catalogues.
+   *  The client's word, as the paint is; see the room for what that means. */
+  gear?: string[];
+  /** Half the hull's wingspan in world units: how far out a gem or sphere is
+   *  captured. Clamped by the room. */
+  reach?: number;
 }
 
 /**
@@ -52,11 +58,13 @@ export interface TransformIn {
 
 export interface FireIn {
   t: "fire";
-  k: "main" | "mini" | "torp";
+  k: "main" | "mini" | "torp" | "beam";
   p: Vec;
   f: Vec;
   /** Mini gun only: where the pointer was aiming. */
   a?: Vec;
+  /** Beam only: which one, a weapon key such as "beam2". */
+  w?: string;
 }
 
 export interface DetonateIn { t: "det" }
@@ -70,7 +78,11 @@ export interface ClaimIn {
 /** Ask for the purse again. Sent when the player opens the points panel. */
 export interface PurseIn { t: "purse" }
 
-export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn;
+/** Use a held Instant Recharge or Supercharge (Y). The count is the
+ *  client's, as the gear is; the room only paces it. */
+export interface UseIn { t: "use"; k: "recharge" | "supercharge" }
+
+export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn;
 
 /* ---- room to cockpit ---- */
 
@@ -91,18 +103,25 @@ export interface StateOut {
   w: number;
   /** [id, x,y,z, fx,fy,fz, guard, shield] */
   P: Array<[string, number, number, number, number, number, number, number, number]>;
-  /** [x,y,z, fx,fy,fz, tier, shield, shieldMax] */
-  E: Array<[number, number, number, number, number, number, number, number, number]>;
+  /** [x,y,z, fx,fy,fz, tier, shield, shieldMax, kind (0 fighter, 1 drone, 2 dragon), id] */
+  E: Array<[number, number, number, number, number, number, number, number, number, number?, number?]>;
   /** [x,y,z, vx,vy,vz, hostile, mini] */
   B: Array<[number, number, number, number, number, number, number, number]>;
   /** [x,y,z] */
   C: Array<[number, number, number]>;
+  /** Beams in the air: origin, direction, weapon key, seconds left. Absent
+   *  when there are none, which is nearly always. */
+  M?: Array<[number, number, number, number, number, number, string, number]>;
+  /** Gems in the world: position, tier, spin, id, and for a dropped ITEM its
+   *  catalogue key, owner seat and seconds it stays theirs alone. A private
+   *  drop is sent only to its owner. Absent when there are none. */
+  G?: Array<[number, number, number, number, number, string, string?, string?, number?]>;
 }
 
 /** One thing that happened, for sound and sparks. */
 export interface EventOut {
   t: "e";
-  v: Array<{ k: string; at: Vec; p: number; who?: string; tier?: number; sh?: number; dmg?: number; wave?: number; g?: 1 }>;
+  v: Array<{ k: string; at: Vec; p: number; who?: string; tier?: number; sh?: number; dmg?: number; wave?: number; g?: 1; gem?: string; item?: string; id?: string }>;
 }
 
 /** This player's own gauges. Every one of these is the room's number, never
@@ -169,6 +188,11 @@ export interface PurseOut {
   /** How the last one ended. */
   last: { to: string; amount: number; txid?: string; error?: string; at: number } | null;
   why?: string;
+  /** Flock kills, ever, and gems held, one count per tier. */
+  flocks?: number;
+  gems?: number[];
+  /** Items picked up in rooms, by catalogue key: the room's count. */
+  items?: Record<string, number>;
 }
 
 export type ServerMessage =

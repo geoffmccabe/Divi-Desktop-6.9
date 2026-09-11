@@ -8,8 +8,9 @@
 
 import * as THREE from "three";
 import diviLogo from "../../assets/divi-coin.webp";
-import { DRONE_SIZE } from "./rebelsFlock";
-import { SHIELD_SHOW } from "./rebelsCombat";
+import { DRONE_SIZE, droneClass, SHAPE_COUNTS, DRONE_TIERS } from "./rebelsFlock";
+import { SHIELD_SHOW, COIN_RADIUS } from "./rebelsCombat";
+import { itemByKey, itemMark, itemTierColour } from "./itemCatalog";
 
 const BULLET_CAP = 160;
 const SHARD_CAP = 320;
@@ -18,6 +19,7 @@ const RING_CAP = 10;
 const JUNK_CAP = 64;
 const TRACER_CAP = 220;
 const COIN_CAP = 400;
+const GEM_CAP = 300;
 const DOCK_RUNGS = 14;
 /** How long a struck drone glows white. */
 const FLASH_FOR = 0.32;
@@ -38,7 +40,7 @@ const ORB_CAP = 96;
  * nothing about catching one: the pickup radius is 2.2 units and lives in the
  * simulation, not here.
  */
-const COIN_RADIUS = 0.33;
+/* Drawn at the size the simulation treats it as. */
 /* Warm gold going out, green coming back, pale for the mini gun: the same
    language the rounds themselves use. */
 const MINE_TRAIL = [1.0, 0.78, 0.25] as const;
@@ -157,6 +159,12 @@ export interface Fx {
   drawDockLink(from: THREE.Vector3 | null, to: THREE.Vector3 | null, seconds: number): void;
   /** DIVI in orbit, waiting to be flown into. */
   drawCoins(coins: { pos: THREE.Vector3; spin: number }[]): void;
+  /** Gems: faceted, in their tier's colour, turning. Skips dropped items. */
+  drawGems(gems: { pos: THREE.Vector3; spin: number; tier: number; item?: string }[]): void;
+  /** Dropped items: the placeholder models, a coin-sized ball in the item's
+   *  tier colour with "T2 D" printed round it, until real models exist.
+   *  Skips plain gems. */
+  drawDrops(gems: { pos: THREE.Vector3; spin: number; tier: number; item?: string; hidden?: number }[]): void;
   /** The swarm: glowing spheres, breathing out of step with each other. */
   drawDrones(drones: {
     pos: THREE.Vector3; pulse?: number; flash: number; cls: { colour: number };
@@ -242,6 +250,88 @@ export function createFx(): Fx {
   droneGlow.renderOrder = 2;
   bin.push(droneGeo, droneCoreMat, droneGlowMat, droneCore, droneGlow);
 
+  /* ---- THE LIVING PART ----
+     Geoff: "make them more complex by having some shapes like spikes growing
+     in and out and pulsating from the main sphere... spikes, lines, rods,
+     cones, capsules... The higher the tier, the more of these extra shapes
+     that grow and pulse away from the center." And "small spheres radiating
+     around them, spinning around them like in orbit."
+
+     One instanced mesh PER TIER: its geometry is that tier's set of shapes
+     (6 to 18 of them, cones, rods and capsules in turn) merged into one, set
+     round the sphere on a Fibonacci lattice, each pointing outward. The
+     growing and pulsing is done in the vertex shader: every vertex carries
+     the axis of its shape and the shape's number, each instance carries its
+     drone's pulse phase, and the shader stretches each shape along its axis
+     by a sine of time, so the whole swarm breathes with no CPU work at all.
+     Seven draw calls for every drone in the sky, whatever the count.
+
+     The motes are one more instanced mesh: up to eight tiny spheres per
+     drone, placed on the CPU each frame (a thousand small matrices, cheap)
+     on tilted orbits at different rates, so they wheel round the body. */
+  const livingMeshes: THREE.InstancedMesh[] = [];
+  const livingPhase: THREE.InstancedBufferAttribute[] = [];
+  const livingMats: THREE.MeshStandardMaterial[] = [];
+  const livingUniforms = { uTime: { value: 0 } };
+  /* Built the first time a tier is seen, not at attach: all seven cost 390ms
+     together (measured in node), which was a stall at panel open for shapes
+     nobody would see for minutes. One tier is about 55ms, once. */
+  const livingBuild = (t: number): THREE.BufferGeometry => livingGeometry(SHAPE_COUNTS[t] ?? 6);
+  const livingReady: boolean[] = [];
+  for (let t = 0; t < DRONE_TIERS.length; t++) {
+    livingReady.push(false);
+    const geo = new THREE.BufferGeometry();
+    const phase = new THREE.InstancedBufferAttribute(new Float32Array(DRONE_CAP), 1);
+    phase.setUsage(THREE.DynamicDrawUsage);
+    geo.setAttribute("aPhase", phase);
+    const mat = new THREE.MeshStandardMaterial({
+      metalness: 0.15, roughness: 0.4, emissive: 0x181818, emissiveIntensity: 1,
+    });
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uTime = livingUniforms.uTime;
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", `#include <common>
+          attribute vec3 aDir;
+          attribute float aK;
+          attribute float aPhase;
+          uniform float uTime;`)
+        .replace("#include <begin_vertex>", `
+          vec3 transformed = vec3(position);
+          /* Each shape grows out and draws back on its own beat: the sine
+             is offset by the drone's phase and the shape's number. */
+          float grow = 0.55 + 0.45 * sin(uTime * 2.1 + aPhase + aK * 0.9);
+          float along = dot(transformed, aDir);
+          transformed += aDir * (along * (grow - 1.0));`);
+    };
+    const mesh = new THREE.InstancedMesh(geo, mat, DRONE_CAP);
+    mesh.frustumCulled = false;
+    mesh.count = 0;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(DRONE_CAP * 3), 3);
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    group.add(mesh);
+    livingMeshes.push(mesh);
+    livingPhase.push(phase);
+    livingMats.push(mat);
+    bin.push(geo, mat, mesh);
+  }
+  const MOTE_CAP = DRONE_CAP * 8;
+  const moteGeo = new THREE.IcosahedronGeometry(0.11, 1);
+  const moteMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false });
+  const motes = new THREE.InstancedMesh(moteGeo, moteMat, MOTE_CAP);
+  motes.frustumCulled = false;
+  motes.count = 0;
+  motes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  motes.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(MOTE_CAP * 3), 3);
+  motes.instanceColor.setUsage(THREE.DynamicDrawUsage);
+  motes.renderOrder = 2;
+  group.add(motes);
+  bin.push(moteGeo, moteMat, motes);
+  const livingCount = new Int32Array(DRONE_TIERS.length);
+  const moteAxis = new THREE.Vector3();
+  const motePos = new THREE.Vector3();
+  const moteQ = new THREE.Quaternion();
+
   /* ---- their rounds ---- */
   const ORB_RED = new THREE.Color(0xff2b2b);
   const WHITE = new THREE.Color(0xffffff);
@@ -272,28 +362,34 @@ export function createFx(): Fx {
      Built pointing down -Z with its tip at the origin, so placing one is a
      look-at and a scale rather than any arithmetic at the call site. Additive
      and unlit, because a beam is light rather than a thing. */
-  const beamGeo = new THREE.ConeGeometry(1, 1, 24, 1, true);
-  /* Cone geometry stands on its base pointing +Y. Turned to point down -Z and
-     shifted so the TIP is at the origin, which is where the ship is. */
-  beamGeo.translate(0, -0.5, 0);
-  beamGeo.rotateX(-Math.PI / 2);
+  /* Apex at the origin, opening along +Z: see beamGeometry. */
+  const beamGeo = beamGeometry();
   const beamMats: THREE.MeshBasicMaterial[] = [];
+  const beamCoreMats: THREE.MeshBasicMaterial[] = [];
   const beamMeshes: THREE.Mesh[] = [];
+  const beamCores: THREE.Mesh[] = [];
   for (let i = 0; i < 8; i++) {
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xffffff, transparent: true, opacity: 0.5,
-      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-    });
+    const [mat, coreMat] = beamMaterials();
     const mesh = new THREE.Mesh(beamGeo, mat);
     mesh.visible = false;
     mesh.frustumCulled = false;
     mesh.renderOrder = 2;
     group.add(mesh);
+    /* The bright core rides inside the cone: same place, same direction,
+       a third of the width. It is what makes the wide cone read as glow
+       around a beam rather than as the beam itself. */
+    const core = new THREE.Mesh(beamGeo, coreMat);
+    core.visible = false;
+    core.frustumCulled = false;
+    core.renderOrder = 3;
+    group.add(core);
     beamMats.push(mat);
+    beamCoreMats.push(coreMat);
     beamMeshes.push(mesh);
-    /* The geometry is shared and disposed once below; only the material is
+    beamCores.push(core);
+    /* The geometry is shared and disposed once below; only the materials are
        this mesh's own. */
-    bin.push(mat);
+    bin.push(mat, coreMat);
   }
   bin.push(beamGeo);
 
@@ -413,6 +509,86 @@ export function createFx(): Fx {
     t.anisotropy = 8;
     return t;
   })();
+  /* ---- gems ----
+     A coin's size, but faceted and lit rather than a printed ball, so the
+     two are never confused: one is money and one is property. Colour per
+     instance from the tier, a glow behind it so it can be found. */
+  const gemGeo = new THREE.OctahedronGeometry(COIN_RADIUS * 1.15, 0);
+  const gemMat = new THREE.MeshStandardMaterial({ metalness: 0.3, roughness: 0.25, emissive: 0x111111 });
+  const gemMesh = new THREE.InstancedMesh(gemGeo, gemMat, GEM_CAP);
+  const gemGlowMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false });
+  const gemGlow = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), gemGlowMat, GEM_CAP);
+  for (const m of [gemMesh, gemGlow]) {
+    m.frustumCulled = false;
+    m.count = 0;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(GEM_CAP * 3), 3);
+    m.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    group.add(m);
+  }
+  gemGlow.renderOrder = 2;
+  bin.push(gemGeo, gemMat, gemMesh, gemGlowMat, gemGlow);
+
+  /* ---- dropped items: the placeholders ----
+     Geoff: "like the Divi spheres, with T1 / T2 printed on them in the tier
+     colour." A ball the coin's size, the tier colour as its ground, the
+     tier and a one-letter mark printed round it, a glow behind it. One
+     texture per (tier, mark), made on first use and kept; one small pool
+     of meshes, because a screen never has more than a few dozen in view. */
+  const DROP_CAP = 48;
+  const dropGeo = new THREE.SphereGeometry(COIN_RADIUS * 1.25, 20, 14);
+  const dropGlowGeo = new THREE.IcosahedronGeometry(1, 1);
+  const dropMats = new Map<string, THREE.MeshBasicMaterial>();
+  const dropMatFor = (tier: number, mark: string): THREE.MeshBasicMaterial => {
+    const id = `${tier}:${mark}`;
+    let m = dropMats.get(id);
+    if (m) return m;
+    const col = new THREE.Color(itemTierColour(tier));
+    if (typeof document === "undefined") {
+      m = new THREE.MeshBasicMaterial({ color: col });
+    } else {
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = size; canvas.height = size / 2;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = `#${col.getHexString()}`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        /* Dark print on the light tiers, light print on the dark ones. */
+        const lum = col.r * 0.3 + col.g * 0.59 + col.b * 0.11;
+        ctx.fillStyle = lum > 0.55 ? "#101418" : "#f6f8ff";
+        ctx.font = "bold 88px system-ui, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        /* Twice round, so a label faces the pilot whichever way it turns. */
+        ctx.fillText(`T${tier} ${mark}`, size * 0.25, size * 0.25);
+        ctx.fillText(`T${tier} ${mark}`, size * 0.75, size * 0.25);
+      }
+      const t = new THREE.CanvasTexture(canvas);
+      t.colorSpace = THREE.SRGBColorSpace;
+      bin.push(t);
+      m = new THREE.MeshBasicMaterial({ map: t, color: 0xffffff });
+    }
+    bin.push(m);
+    dropMats.set(id, m);
+    return m;
+  };
+  const dropPool: Array<{ ball: THREE.Mesh; glow: THREE.Mesh; glowMat: THREE.MeshBasicMaterial }> = [];
+  const dropAt = (i: number) => {
+    while (dropPool.length <= i) {
+      const glowMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false });
+      const ball = new THREE.Mesh(dropGeo, dropMatFor(1, "?"));
+      const glow = new THREE.Mesh(dropGlowGeo, glowMat);
+      glow.renderOrder = 2;
+      ball.visible = glow.visible = false;
+      ball.frustumCulled = glow.frustumCulled = false;
+      group.add(ball, glow);
+      bin.push(glowMat);
+      dropPool.push({ ball, glow, glowMat });
+    }
+    return dropPool[i];
+  };
+  bin.push(dropGeo, dropGlowGeo);
+
   const coinGeo = new THREE.SphereGeometry(COIN_RADIUS, 20, 14);
   /* White, so the artwork's own colours survive. See above. */
   const coinMat = new THREE.MeshBasicMaterial({ map: coinTex, color: 0xffffff });
@@ -564,6 +740,57 @@ export function createFx(): Fx {
       droneGlow.count = n;
       droneCore.instanceMatrix.needsUpdate = true;
       droneGlow.instanceMatrix.needsUpdate = true;
+
+      /* ---- the living shapes and the motes ---- */
+      livingUniforms.uTime.value = now;
+      livingCount.fill(0);
+      let mo = 0;
+      let seen = 0;
+      for (const d of list) {
+        if (seen++ >= DRONE_CAP) break;
+        const tier = (d.cls as unknown as { tier?: number }).tier ?? 1;
+        const t = Math.max(0, Math.min(DRONE_TIERS.length - 1, tier - 1));
+        const beat = Math.sin(now * 2.4 + (d.pulse ?? 0));
+        const size = DRONE_SIZE * (1 + beat * 0.16);
+        const k = livingCount[t]++;
+        const mesh = livingMeshes[t];
+        if (!livingReady[t]) {
+          const built = livingBuild(t);
+          const phaseAttr = mesh.geometry.getAttribute("aPhase");
+          built.setAttribute("aPhase", phaseAttr);
+          mesh.geometry.dispose();
+          mesh.geometry = built;
+          livingReady[t] = true;
+        }
+        /* Turning slowly on its own axis, each at its own rate. */
+        q.setFromAxisAngle(upAxis, now * 0.5 + (d.pulse ?? 0));
+        mesh.setMatrixAt(k, m4.compose(d.pos, q, scl.setScalar(size)));
+        colour.setHex(d.cls.colour);
+        mesh.setColorAt(k, tinted.copy(colour).multiplyScalar(0.85));
+        livingPhase[t].setX(k, d.pulse ?? 0);
+        /* Motes: two at tier one, one more per tier. */
+        const count = 2 + t;
+        for (let j = 0; j < count && mo < MOTE_CAP; j++) {
+          const radius = size * (1.7 + 0.18 * j);
+          const angle = now * (1.1 + 0.23 * j) + (d.pulse ?? 0) + j * 2.1;
+          moteAxis.set(Math.sin(j * 1.3), Math.cos(j * 0.7), Math.sin(j * 2.9 + 0.4)).normalize();
+          moteQ.setFromAxisAngle(moteAxis, angle);
+          motePos.set(radius, 0, 0).applyQuaternion(moteQ).add(d.pos);
+          motes.setMatrixAt(mo, m4.compose(motePos, q.identity(), scl.setScalar(1)));
+          motes.setColorAt(mo, tinted.copy(colour).lerp(WHITE, 0.35));
+          mo++;
+        }
+      }
+      for (let t = 0; t < livingMeshes.length; t++) {
+        livingMeshes[t].count = livingCount[t];
+        livingMeshes[t].instanceMatrix.needsUpdate = true;
+        livingPhase[t].needsUpdate = true;
+        const ic = livingMeshes[t].instanceColor;
+        if (ic) ic.needsUpdate = true;
+      }
+      motes.count = mo;
+      motes.instanceMatrix.needsUpdate = true;
+      if (motes.instanceColor) motes.instanceColor.needsUpdate = true;
       /* Forgetting these is the classic InstancedMesh bug: the matrices go up
          and the colours silently do not. */
       if (droneCore.instanceColor) droneCore.instanceColor.needsUpdate = true;
@@ -599,23 +826,35 @@ export function createFx(): Fx {
       for (let i = 0; i < beamMeshes.length; i++) {
         const b = beams[i];
         const mesh = beamMeshes[i];
-        if (!b) { mesh.visible = false; continue; }
+        const core = beamCores[i];
+        if (!b) { mesh.visible = false; core.visible = false; continue; }
         mesh.visible = true;
+        core.visible = true;
         mesh.position.copy(b.pos);
+        core.position.copy(b.pos);
         dir.copy(b.fwd).normalize();
-        /* The cone points down -Z, which is where a quaternion built from the
-           z axis puts it. */
-        mesh.quaternion.setFromUnitVectors(zAxis, dir.negate());
+        /* The cone's apex is at the origin and it opens along +Z (checked:
+           its bounding box after the rotate runs 0 to +1 in z). It used to be
+           turned to face MINUS the firing direction on the belief that it
+           opened down -Z, so every beam was drawn pointing backwards out of
+           the ship while its damage went forwards. From the cockpit that is
+           invisible, behind the camera; in the shop it was a cone on top of
+           the hull pointing the wrong way. */
+        mesh.quaternion.copy(beamOrientation(dir));
+        core.quaternion.copy(mesh.quaternion);
         /* The radius at the far end is what the half-angle actually subtends,
            so the drawn edge is the edge that does damage. */
         const rad = Math.tan(b.half) * b.reach;
         mesh.scale.set(rad, rad, b.reach);
+        core.scale.set(rad * BEAM_CORE, rad * BEAM_CORE, b.reach);
         /* Brightest at the instant it fires and fading over its half second,
            which is what makes a held trigger read as a pulsing beam rather
            than a solid bar. */
         const k = Math.max(0, Math.min(1, b.life / Math.max(0.001, maxLife)));
         beamMats[i].color.setHex(b.colour);
         beamMats[i].opacity = 0.14 + 0.4 * k;
+        beamCoreMats[i].color.setHex(b.colour);
+        beamCoreMats[i].opacity = 0.35 + 0.6 * k;
       }
     },
 
@@ -674,6 +913,50 @@ export function createFx(): Fx {
       a.needsUpdate = true;
     },
 
+    drawGems(gems) {
+      let n = 0;
+      for (let i = 0; i < gems.length && n < GEM_CAP; i++) {
+        const g = gems[i];
+        if (g.item) continue;
+        q.setFromAxisAngle(upAxis, g.spin);
+        m4.compose(g.pos, q, scl.setScalar(1));
+        gemMesh.setMatrixAt(n, m4);
+        colour.setHex(droneClass(g.tier).colour);
+        gemMesh.setColorAt(n, colour);
+        m4.compose(g.pos, q, scl.setScalar(3.2));
+        gemGlow.setMatrixAt(n, m4);
+        gemGlow.setColorAt(n, tinted.copy(colour).multiplyScalar(0.5));
+        n++;
+      }
+      gemMesh.count = n;
+      gemGlow.count = n;
+      gemMesh.instanceMatrix.needsUpdate = true;
+      gemGlow.instanceMatrix.needsUpdate = true;
+      if (gemMesh.instanceColor) gemMesh.instanceColor.needsUpdate = true;
+      if (gemGlow.instanceColor) gemGlow.instanceColor.needsUpdate = true;
+    },
+    drawDrops(gems) {
+      let n = 0;
+      for (let i = 0; i < gems.length && n < DROP_CAP; i++) {
+        const g = gems[i];
+        if (!g.item) continue;
+        const spec = itemByKey(g.item);
+        const slot = dropAt(n++);
+        slot.ball.material = dropMatFor(g.tier, spec ? itemMark(spec) : "?");
+        slot.ball.position.copy(g.pos);
+        slot.ball.rotation.set(0, g.spin, 0);
+        /* The egg is an oval; everything else a ball. */
+        slot.ball.scale.set(1, spec?.kind === "egg" ? 1.4 : 1, 1);
+        slot.glow.position.copy(g.pos);
+        /* A little bigger and brighter while it is still yours alone, so the
+           minute reads as something. */
+        const own = (g.hidden ?? 0) > 0;
+        slot.glow.scale.setScalar(own ? 3.6 : 2.8);
+        slot.glowMat.color.setHex(itemTierColour(g.tier)).multiplyScalar(own ? 0.7 : 0.45);
+        slot.ball.visible = slot.glow.visible = true;
+      }
+      for (let i = n; i < dropPool.length; i++) dropPool[i].ball.visible = dropPool[i].glow.visible = false;
+    },
     drawCoins(coins) {
       const n = Math.min(coins.length, COIN_CAP);
       for (let i = 0; i < n; i++) {
@@ -990,4 +1273,117 @@ export function makeGuardShell(): { mesh: THREE.Object3D; step(seconds: number, 
     },
     dispose() { geo.dispose(); mat.dispose(); },
   };
+}
+
+
+/* ---- the beam's shape, shared with the shop's preview ---- */
+
+/**
+ * A unit cone with its apex at the origin opening along +Z: scale it by
+ * (radius, radius, reach) and it is the beam.
+ *
+ * ---- WHY IT HAS VERTEX COLOURS ----
+ * A single-colour open cone drawn additively with no lighting is a flat
+ * wedge from any angle: there is nothing on it to say which part is near.
+ * Geoff: "it's a 3D cone, not a flat thing". So the colour fades along the
+ * length, full at the apex and gone at the far end, which under additive
+ * blending is a fade to transparent: the beam is brightest at the muzzle and
+ * thins into the distance, and the eye reads that as depth. Drawn with a
+ * narrower, brighter core inside it (see the callers) it reads as a volume.
+ * More segments along the length so the fade is smooth.
+ */
+export function beamGeometry(): THREE.ConeGeometry {
+  const g = new THREE.ConeGeometry(1, 1, 32, 12, true);
+  g.translate(0, -0.5, 0);
+  g.rotateX(-Math.PI / 2);
+  const pos = g.getAttribute("position");
+  const col = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++) {
+    /* z runs 0 at the apex to 1 at the base. Bright near, dark far, with a
+       curve so the middle still carries some light. */
+    const t = Math.max(0, Math.min(1, pos.getZ(i)));
+    const k = Math.pow(1 - t, 1.6);
+    col[i * 3] = k; col[i * 3 + 1] = k; col[i * 3 + 2] = k;
+  }
+  g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
+/** The two materials a beam is drawn with: the wide cone and the bright core. */
+export function beamMaterials(): [THREE.MeshBasicMaterial, THREE.MeshBasicMaterial] {
+  const shell = new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.5, vertexColors: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const core = new THREE.MeshBasicMaterial({
+    color: 0xffffff, transparent: true, opacity: 0.9, vertexColors: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  return [shell, core];
+}
+
+/** How much narrower the core is than the cone. */
+export const BEAM_CORE = 0.35;
+
+const _beamZ = new THREE.Vector3(0, 0, 1);
+const _beamQ = new THREE.Quaternion();
+/** Turns beamGeometry so it opens along `fwd`. */
+export function beamOrientation(fwd: THREE.Vector3): THREE.Quaternion {
+  return _beamQ.setFromUnitVectors(_beamZ, fwd);
+}
+
+
+/* ---- a tier's set of shapes, as one geometry ----
+   Cones (spikes), rods and capsules in turn, on a Fibonacci lattice round a
+   unit sphere, each pointing straight out. Every vertex carries its shape's
+   outward axis (aDir) and its number (aK) for the shader that breathes them. */
+export function livingGeometry(count: number): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = [];
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < count; i++) {
+    const y = 1 - (2 * (i + 0.5)) / count;
+    const r = Math.sqrt(Math.max(0, 1 - y * y));
+    const theta = golden * i;
+    const dir = new THREE.Vector3(r * Math.cos(theta), y, r * Math.sin(theta)).normalize();
+    const kind = i % 3;
+    let g: THREE.BufferGeometry;
+    const len = 0.9 + 0.35 * ((i * 7) % 5) / 4;
+    if (kind === 0) g = new THREE.ConeGeometry(0.16, len, 6, 1);           /* spike */
+    else if (kind === 1) g = new THREE.CylinderGeometry(0.06, 0.06, len, 5, 1); /* rod */
+    else g = new THREE.CapsuleGeometry(0.1, len * 0.7, 2, 6);             /* capsule */
+    g = g.toNonIndexed();
+    /* Base on the sphere's surface, pointing out along dir. Cone/cylinder
+       geometry stands along +Y with its middle at the origin. */
+    g.translate(0, 0.85 + len / 2, 0);
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+    g.applyQuaternion(q);
+    const n = g.getAttribute("position").count;
+    const dirs = new Float32Array(n * 3);
+    const ks = new Float32Array(n);
+    for (let v = 0; v < n; v++) { dirs[v * 3] = dir.x; dirs[v * 3 + 1] = dir.y; dirs[v * 3 + 2] = dir.z; ks[v] = i; }
+    g.setAttribute("aDir", new THREE.BufferAttribute(dirs, 3));
+    g.setAttribute("aK", new THREE.BufferAttribute(ks, 1));
+    parts.push(g);
+  }
+  /* Merge: positions, normals, and the two custom attributes, end to end. */
+  const total = parts.reduce((a, g) => a + g.getAttribute("position").count, 0);
+  const pos = new Float32Array(total * 3), nor = new Float32Array(total * 3);
+  const dirs = new Float32Array(total * 3), ks = new Float32Array(total);
+  let at = 0;
+  for (const g of parts) {
+    const p = g.getAttribute("position"), nn = g.getAttribute("normal");
+    const d = g.getAttribute("aDir"), k = g.getAttribute("aK");
+    pos.set(p.array as Float32Array, at * 3);
+    nor.set(nn.array as Float32Array, at * 3);
+    dirs.set(d.array as Float32Array, at * 3);
+    ks.set(k.array as Float32Array, at);
+    at += p.count;
+    g.dispose();
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  out.setAttribute("normal", new THREE.BufferAttribute(nor, 3));
+  out.setAttribute("aDir", new THREE.BufferAttribute(dirs, 3));
+  out.setAttribute("aK", new THREE.BufferAttribute(ks, 1));
+  return out;
 }

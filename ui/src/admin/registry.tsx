@@ -8,6 +8,7 @@ import { ValuePanel } from "./panels/ValuePanel";
 import { PayoutPanel } from "./panels/PayoutPanel";
 import { AiPanel } from "./panels/AiPanel";
 import { ChainHealthPanel } from "../wallet/ChainHealthPanel";
+import { RebelsDropsPanel } from "./panels/RebelsDropsPanel";
 
 export interface AdminPanel {
   id: string;
@@ -30,4 +31,6 @@ export const ADMIN_PANELS: AdminPanel[] = [
   // Payouts panel above.
   { id: "nfd-fees", title: "NFD Fees", render: () => <PayoutsPanel /> },
   { id: "arweave", title: "Arweave", render: () => <ArweavePanel /> },
+  // Divi Rebels: what wrecks drop. Saved live with the admin secret.
+  { id: "rebels-drops", title: "Rebels Drops", render: () => <RebelsDropsPanel /> },
 ];

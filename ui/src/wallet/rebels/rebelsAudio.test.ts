@@ -38,7 +38,22 @@ class FakeCtx {
     upX: new FakeParam(), upY: new FakeParam(), upZ: new FakeParam(),
   };
   destination = { name: "out" };
+  sampleRate = 48000;
+  /* What the bus asks for: an analyser it can read a level from. `loud`
+     decides what it reports, so a test can make the speakers go quiet. */
+  static loud = 0.2;
+  suspends = 0;
+  closed = false;
   resume() { this.state = "running"; return Promise.resolve(); }
+  suspend() { this.suspends++; return Promise.resolve(); }
+  close() { this.closed = true; return Promise.resolve(); }
+  createAnalyser() {
+    return {
+      fftSize: 1024,
+      connect() { return this; },
+      getFloatTimeDomainData(arr: Float32Array) { for (let i = 0; i < arr.length; i++) arr[i] = FakeCtx.loud; },
+    };
+  }
   createBufferSource() {
     const node = {
       buffer: null as unknown,
@@ -260,6 +275,43 @@ async function main() {
        typeof st.ctx === "string" && typeof st.failed === "boolean"
        && typeof st.buffers === "number" && typeof st.volume === "number",
        JSON.stringify(st));
+  }
+
+    /* ---------------------------------------------------- the one bus */
+  {
+    const S = await import("../../sound");
+    S.resetSoundForTests();
+    const bus = S.output();
+    ok("there is one output everything connects to", !!bus && S.output() === bus);
+    ok("and it reports a level from the analyser", S.outputLevel() > 0.19 && S.outputLevel() < 0.21, `${S.outputLevel()}`);
+
+    /* The verdict, pure. */
+    ok("no verdict while sound is missing for under four seconds", S.watchVerdict(3, 100, 0, 0) === "none");
+    ok("a kick at four seconds", S.watchVerdict(4, 100, 0, 0) === "kick");
+    ok("not another kick inside eight seconds of the last", S.watchVerdict(6, 100, 95, 0) === "none");
+    ok("a rebuild at twelve seconds", S.watchVerdict(12, 100, 90, 0) === "rebuild");
+    ok("inside thirty seconds of a rebuild it falls back to a kick", S.watchVerdict(20, 100, 90, 80) === "kick");
+    ok("and to nothing when the kick is recent too", S.watchVerdict(20, 100, 95, 80) === "none");
+
+    /* Acted on: silence while music is expected kicks, then rebuilds. */
+    let rebuilt = 0;
+    S.onAudioRebuild(() => { rebuilt++; });
+    FakeCtx.loud = 0.2;
+    ok("sound present: nothing happens", S.watchAudio(true, 2, 1000) === "none" && ctx.suspends === 0);
+    FakeCtx.loud = 0;
+    ok("silence not expected: nothing happens", S.watchAudio(false, 2, 1002) === "none" && ctx.suspends === 0);
+    ok("two seconds of expected silence: not yet", S.watchAudio(true, 2, 1004) === "none");
+    ok("four seconds: a kick is decided but NOT done from the timer", S.watchAudio(true, 2, 1006) === "kick" && ctx.suspends === 0 && S.pendingAudioFix() === "kick");
+    ok("it is done from the next gesture", S.settleAudioFromGesture() === "kick" && ctx.suspends === 1 && S.pendingAudioFix() === "none", `${ctx.suspends}`);
+    ok("six, eight, ten: waiting", S.watchAudio(true, 2, 1008) === "none" && S.watchAudio(true, 2, 1010) === "none"
+       && S.watchAudio(true, 2, 1012) === "none");
+    const v12 = S.watchAudio(true, 2, 1014);
+    ok("twelve seconds of silence: a rebuild is decided", v12 === "rebuild" && rebuilt === 0 && !ctx.closed, `${v12} ${rebuilt}`);
+    ok("and carried out from a gesture, telling the listeners", S.settleAudioFromGesture() === "rebuild" && rebuilt === 1 && ctx.closed);
+    ok("a gesture with nothing pending just resumes", S.settleAudioFromGesture() === "none");
+    ok("the black box says so", (S.audioHealth() as { rebuilds: number }).rebuilds === 1 && (S.audioHealth() as { kicks: number }).kicks === 1);
+    FakeCtx.loud = 0.2;
+    ctx.closed = false;
   }
 
   console.log(out.join("\n"));

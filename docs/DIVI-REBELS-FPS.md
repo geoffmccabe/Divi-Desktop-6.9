@@ -135,3 +135,61 @@ code and every simulation figure is measured headless in node; neither is a
 measurement of the game running on a GPU. The order of the recommendations is
 what the counts say, and I would want number 5 in place before spending a day
 on number 1, so that the day is measured rather than believed.
+
+## Correction and second pass (2026-Sep-09)
+
+**The pixel ratio finding above was wrong.** Nothing in OUR code sets it, but
+the globe library (three-render-objects) sets the renderer to
+`min(2, devicePixelRatio)` on start. On a Retina Mac that is 2: the game was
+rendering FOUR times the pixels of the frame on screen, with additive glow
+over most of it. Fill cost scales with pixels, so this was the single largest
+cost and the cheapest to remove. The game now sets the ratio to 1 while it
+has the globe (`GAME_PIXEL_RATIO` in `GlobeMap.tsx`) and hands the map its
+ratio back on the way out. Expected effect on a Retina display: GPU time
+roughly a quarter of what it was for the same scene. Not measured on Geoff's
+machine; the readout now shows the ratio so it can be confirmed at a glance.
+
+**The map raycast every tower on every mouse move, while flying.** The pointer
+is the gun sight and moves every frame; the hover-tooltip raycast through all
+the tower meshes was being paid on each of those moves for nothing. Skipped
+while a flight is attached.
+
+**The readout now shows draw calls and the pixel ratio** (top-left: FPS, game
+ms, draws, ratio). "Draws" is the number the plan above is about; the map
+alone is several hundred. If FPS is still poor at 1x with draws under ~400,
+the cost is somewhere this audit has not looked, and the next step is a
+profile in the browser, not another guess.
+
+Remaining, unchanged from the ranked list: instance the fighters (largest
+remaining win, medium effort), merge the helix tubes, instance the towers,
+peer level of detail.
+
+### Measured in a real Chrome window (2026-Sep-09, this Mac, Retina)
+
+The built UI runs in a browser with the app's own node list seeded into
+local storage, so the map and the game can be driven outside the wallet.
+
+| | Build before the change | Build after |
+|---|---|---|
+| Canvas pixels for a 986 x 676 view | 1,972 x 1,352 (ratio 2) | 986 x 669 (ratio 1) |
+| Draw calls, map view with the game card up | not shown in that build | 358 |
+| Draw calls, flying | not shown | 47 to 65 |
+| FPS, 9 fighters in the air | 44 to 75, fluctuating | not reached: see below |
+| FPS, 4 fighters | | 60, pinned (display refresh) |
+
+The before figure is the useful one: at the old pixel ratio the frame rate
+was already dropping under 60 with nine fighters, in a browser, with nothing
+else running. The after run pinned at the display's refresh with four
+fighters and 47 draws; a like-for-like count was not reached because the
+Chrome tab under automation kept going hidden, which pauses animation
+frames. Two facts stand regardless: the pixel count really was four times
+what it needed to be, and in FLIGHT the draw count is low (47 to 65), so
+draw calls are not the flight-time bottleneck this audit assumed; fill was.
+The 358 draws belong to the map view before launch.
+
+What this means for the plan: instancing fighters is still right for late
+waves (each is ~10 draws), but it is now a second-order win. The first-order
+one has shipped. If Geoff still sees low FPS at 1x, the next suspect is the
+map's own per-frame work (helix animation, tower lights, sharpening tiles)
+and the atmosphere shader, and the way to find out is the browser profiler,
+not more counting.

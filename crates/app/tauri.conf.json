@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Divi Desktop 69",
-  "version": "69.9.11",
+  "version": "69.9.28",
   "identifier": "io.diviproject.desktop69",
   "build": {
     "frontendDist": "../../ui/dist"
@@ -20,7 +20,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: divi-app: http://divi-app.localhost https://*.walletconnect.com https://*.walletconnect.org https://*.metamask.io https://imagedelivery.net https://api.web3modal.org; font-src 'self' data:; media-src 'self' data: blob: divi-app: http://divi-app.localhost; connect-src 'self' ipc: http://ipc.localhost https://assets.dreadroot.com https://nodes.divi.love https://nbnhjstexdlvtwcxopqk.supabase.co http://127.0.0.1:8788 http://localhost:8788 https://ethereum-rpc.publicnode.com https://*.walletconnect.com wss://*.walletconnect.com https://*.walletconnect.org wss://*.walletconnect.org https://*.metamask.io wss://*.metamask.io wss://mm-sdk-relay.api.cx.metamask.io https://mm-sdk-relay.api.cx.metamask.io https://mm-sdk-analytics.api.cx.metamask.io https://fwd.metamask.io wss://metamask-sdk-socket.metafi.codefi.network https://*.infura.io https://api.web3modal.org https://*.web3modal.org https://*.web3modal.com https://pulse.walletconnect.org https://rpc.walletconnect.org; frame-src https://www.youtube-nocookie.com divi-app: http://divi-app.localhost https://*.walletconnect.com https://*.walletconnect.org; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: divi-app: http://divi-app.localhost https://*.walletconnect.com https://*.walletconnect.org https://*.metamask.io https://imagedelivery.net https://api.web3modal.org; font-src 'self' data:; media-src 'self' data: blob: divi-app: http://divi-app.localhost; connect-src 'self' ipc: http://ipc.localhost https://assets.dreadroot.com https://nodes.divi.love https://nbnhjstexdlvtwcxopqk.supabase.co http://127.0.0.1:8788 http://localhost:8788 https://ethereum-rpc.publicnode.com https://*.walletconnect.com wss://*.walletconnect.com https://*.walletconnect.org wss://*.walletconnect.org https://*.metamask.io wss://*.metamask.io wss://mm-sdk-relay.api.cx.metamask.io https://mm-sdk-relay.api.cx.metamask.io https://mm-sdk-analytics.api.cx.metamask.io https://fwd.metamask.io wss://metamask-sdk-socket.metafi.codefi.network https://*.infura.io https://api.web3modal.org https://*.web3modal.org https://*.web3modal.com https://pulse.walletconnect.org https://rpc.walletconnect.org wss://divi-rebels-room.geoff-de3.workers.dev https://divi-rebels-room.geoff-de3.workers.dev; frame-src https://www.youtube-nocookie.com divi-app: http://divi-app.localhost https://*.walletconnect.com https://*.walletconnect.org; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'",
       "dangerousDisableAssetCspModification": [
         "style-src"
       ]

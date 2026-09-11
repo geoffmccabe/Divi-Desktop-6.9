@@ -19,7 +19,7 @@ import warnUrl from "../../assets/warning_bullet_approach.mp3";
 import bounceUrl from "../../assets/bullet_bounce.mp3";
 import boostUrl from "../../assets/jet_boots_1.mp3";
 import beamUrl from "../../assets/beam_v1.mp3";
-import { audioContext, masterVolume } from "../../sound";
+import { audioContext, masterVolume, output, onAudioRebuild } from "../../sound";
 
 /** How far speed, pitch and volume may wander, either way. */
 const WOBBLE = 0.1;
@@ -140,6 +140,18 @@ export function primeGunSound(): void {
  * making: that a decode which never finishes stops blocking every later one.
  * That exact latch silenced the game for a whole session at a time.
  */
+/* The bus was rebuilt: every buffer belonged to the old context. Forget
+   them and decode again; anything looping is gone with the old graph. */
+onAudioRebuild(() => {
+  buffer = null; rechargeBuffer = null; torpedoBuffer = null; torpedoBlastBuffer = null;
+  shipBlastBuffer = null; warnBuffer = null; bounceBuffer = null; boostBuffer = null; beamBuffer = null;
+  loading = null; failed = false;
+  rechargeNode = null; rechargeGain = null;
+  boostNode = null; boostGain = null;
+  beamNode = null; beamGain = null;
+  primeGunSound();
+});
+
 export function resetAudioForTests(): void {
   buffer = rechargeBuffer = torpedoBuffer = null;
   torpedoBlastBuffer = shipBlastBuffer = warnBuffer = bounceBuffer = null;
@@ -193,7 +205,7 @@ function shot(ctx: AudioContext, at: number, volume: number): void {
   const gain = ctx.createGain();
   gain.gain.value = volume * wobble();
   src.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(output() ?? ctx.destination);
   src.start(at);
 }
 
@@ -230,7 +242,7 @@ export function startRechargeSound(): void {
   gain.gain.setValueAtTime(0.0001, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(volume, ctx.currentTime + 0.08);
   src.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(output() ?? ctx.destination);
   src.start();
   rechargeNode = src;
   rechargeGain = gain;
@@ -277,7 +289,7 @@ function once(buf: AudioBuffer | null, loudness = 1, vary = true): void {
   const gain = ctx.createGain();
   gain.gain.value = volume * loudness * (vary ? wobble() : 1);
   src.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(output() ?? ctx.destination);
   src.start();
 }
 
@@ -297,7 +309,7 @@ export function playMiniSound(): void {
   const gain = ctx.createGain();
   gain.gain.value = volume * 0.85 * wobble();
   src.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(output() ?? ctx.destination);
   src.start();
 }
 
@@ -377,7 +389,7 @@ export function playShotAt(x: number, y: number, z: number, pitch = 0.7): void {
 
   src.connect(gain);
   gain.connect(panner);
-  panner.connect(ctx.destination);
+  panner.connect(output() ?? ctx.destination);
   src.start();
 }
 
@@ -469,7 +481,7 @@ export function startBoostSound(): void {
   gain.gain.setValueAtTime(0.0001, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(volume * 0.9, ctx.currentTime + 0.06);
   src.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(output() ?? ctx.destination);
   src.start();
   boostNode = src;
   boostGain = gain;
@@ -477,6 +489,11 @@ export function startBoostSound(): void {
 
 /** Off the throttle, out of boost, docked, dead, or gone. Faded rather than
  *  cut, or letting go of shift clicks. */
+/** Super boost sounds like more: the same loop, faster and higher. */
+export function setBoostPitch(rate: number): void {
+  if (boostNode) boostNode.playbackRate.value = rate;
+}
+
 export function stopBoostSound(): void {
   const ctx = audioContext();
   const node = boostNode;
@@ -516,7 +533,7 @@ export function startBeamSound(): void {
   const gain = ctx.createGain();
   gain.gain.setValueAtTime(volume, ctx.currentTime);
   src.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(output() ?? ctx.destination);
   src.start();
   /* If it runs to the end on its own, forget it, or the next press would think
      one was already playing and stay silent. */

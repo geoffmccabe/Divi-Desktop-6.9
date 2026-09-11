@@ -5,6 +5,7 @@
 import * as THREE from "three";
 import { R, cruiseScale } from "./orbitWorld";
 import { MAX_SHIELD, CRUISE, BOOST } from "./orbitFlight";
+import { DROP_PRIVATE_SECONDS } from "./dropCharts";
 import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
   AIM_ERROR, AIM_SPREAD, aimErrorFor, scatterAim, PLAYER_HIT_R,
@@ -13,9 +14,28 @@ import {
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
   TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, COIN_TOP, COIN_MU,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
+  setDropRandomForTests, dropItem, clampReach, REACH_MIN, REACH_MAX,
+  setDragonRandomForTests, spawnDragon, stepDragon, DRAGON_CHECK_SECONDS, DRAGON_CHANCE, DRAGON_LIFE, DRAGON_HP, DRAGON_R, enemyRadius,
   type CombatState, type Enemy,
   ENEMY_SPEED,
+  stepFlockSpawns,
+  setFlockRandomForTests,
+  COIN_MAGNET,
+  COIN_RADIUS,
+  COIN_KICK,
+  spawnFleet,
+  dropGem,
+  stepGems,
+  GEM_RADIUS,
 } from "./rebelsCombat";
+
+/* The natural flock roll would drop fleets into tests that time waves to the
+   second. Off, unless a test turns it on. */
+setFlockRandomForTests(() => 1);
+/* And wrecks roll for items: pinned to "nothing" until the drop block. */
+setDropRandomForTests(() => 0.99);
+/* And the dragon never comes unless a test calls it. */
+setDragonRandomForTests(() => 0.99);
 
 const out: string[] = [];
 let failures = 0;
@@ -741,10 +761,13 @@ function run(c: CombatState, frames: number, w = world()) {
   /* Against the REAL speeds rather than numbers typed in once. Both of these
      read 16 and 30 until the world was halved and the ship slowed to match,
      after which they were asserting against a game that no longer existed. */
-  ok("coins move slower than a boosting player can fly",
-     Math.max(...speeds) < BOOST, `fastest ${Math.max(...speeds).toFixed(1)} of ${BOOST}`);
-  ok("but faster than the player cruises, so they take chasing",
-     Math.min(...speeds) > CRUISE, `slowest ${Math.min(...speeds).toFixed(1)} of ${CRUISE}`);
+  /* Geoff, Sep-11: "moving slower than average ship speed, I think I said
+     80%... so even at normal speed I can catch up." So under cruise, not
+     merely under boost. */
+  ok("coins move slower than a cruising player, so cruise catches them",
+     Math.max(...speeds) < CRUISE, `fastest ${Math.max(...speeds).toFixed(1)} of ${CRUISE}`);
+  ok("and well under boost", Math.max(...speeds) < BOOST * 0.5, `fastest ${Math.max(...speeds).toFixed(1)} of ${BOOST}`);
+  ok("at about eighty percent of cruise", Math.max(...speeds) <= CRUISE * 0.8 + 1e-6 && Math.max(...speeds) > CRUISE * 0.5);
 }
 {
   /* They have to STAY up. A coin that falls in ten seconds is not a pickup, it
@@ -1237,7 +1260,7 @@ function run(c: CombatState, frames: number, w = world()) {
      units a second at the height they sit, against a ship that cruises at
      eight and boosts to nineteen. The coins were faster than the ship. */
   ok("the cap really is eighty percent of a boosting ship",
-     Math.abs(COIN_TOP - BOOST * 0.8) < 1e-9, `${COIN_TOP} vs ${(BOOST * 0.8).toFixed(2)}`);
+     Math.abs(COIN_TOP - CRUISE * 0.8) < 1e-9, `${COIN_TOP} vs ${(CRUISE * 0.8).toFixed(2)}`);
 
   /* And that number is written out in the combat file rather than imported,
      because orbitFlight already imports from it and closing that loop reads a
@@ -1274,7 +1297,7 @@ function run(c: CombatState, frames: number, w = world()) {
      `${worst.toFixed(2)} vs ${BOOST}`);
 }
 
-console.log(out.join("\n"));
+
 /* ---- enemy aim error, by tier ----
    Geoff: "adding some randomness to their aim ... T7 is right on target by
    only 0.3% off." */
@@ -1347,5 +1370,308 @@ console.log(out.join("\n"));
   ok("a tier-seven fighter does not miss a still ship", missesT7 === 0, `${missesT7}/400`);
 }
 
+/* ---- natural flocks: a roll every five seconds, from the nearest planet ---- */
+{
+  const c = createCombat();
+  const w = world();
+  const rolls: number[] = [];
+  setFlockRandomForTests(() => rolls.shift() ?? 0.5);
+  stepFlockSpawns(c, 4.9, w);
+  ok("nothing before five seconds", c.flocks.length === 0);
+  rolls.push(0.5);                       /* the spawn roll: fails (>= 1%) */
+  stepFlockSpawns(c, 0.2, w);
+  ok("a failed roll spawns nothing", c.flocks.length === 0 && c.flockClock < 5);
+  rolls.push(0.005, 0.1);                /* spawn: yes; tier roll: one */
+  c.flockClock = 5;
+  const made = stepFlockSpawns(c, 0, w);
+  ok("a one-in-a-hundred roll brings a flock", c.flocks.length === 1 && made.length === 24, `${c.flocks.length} groups, ${made.length} drones`);
+  ok("of tier one, twenty-four strong", c.flocks[0].tier === 1 && c.enemies.filter((e) => e.drone).length === 24);
+  ok("born in transit from a planet", c.flocks[0].phase === "transit");
+  const home = c.flocks[0].home;
+  ok("its home is a planet, far out", home.length() > 800, `${home.length().toFixed(0)}`);
+  ok("and it starts just off that planet's surface, on the near side",
+     made[0].pos.distanceTo(home) < 400 && made[0].pos.distanceTo(w.playerPos) < home.distanceTo(w.playerPos),
+     `${made[0].pos.distanceTo(home).toFixed(0)}`);
+  ok("not a cheat flock: it is worth something", !made[0].cheat);
+  rolls.push(0.005, 0.9995);             /* spawn: yes; tier: seven */
+  c.flockClock = 5;
+  const big = stepFlockSpawns(c, 0, w);
+  ok("a tier-seven roll brings forty-eight", big.length === 48 && c.flocks[1].tier === 7, `${big.length}`);
+  setFlockRandomForTests(() => 1);
+}
+
+/* ---- what a flock member is worth ---- */
+{
+  const c = createCombat();
+  const w = world();
+  const [d] = spawnFleet(c, 1, w.playerPos, w.playerFwd, { count: 1 });
+  const coinsBefore = c.coins.length;
+  hurtEnemy(c, d, 999, d.pos.clone().add(new THREE.Vector3(0, 0, 1)), "me");
+  ok("a flock member counts a fifth of a kill", Math.abs(c.kills - 0.2) < 1e-9, `${c.kills}`);
+  ok("and drops one coin, not five", c.coins.length - coinsBefore === 1, `${c.coins.length - coinsBefore}`);
+  const down = c.events.find((e) => e.kind === "enemyDown");
+  ok("the event says so, for the room", down?.worth === 0.2, `${down?.worth}`);
+  const hit = c.events.find((e) => e.kind === "enemyHit");
+  ok("damage on a drone scores, capped at what it had", hit?.damage === 50, `${hit?.damage}`);
+
+  const c2 = createCombat();
+  const [cheat] = spawnFleet(c2, 1, w.playerPos, w.playerFwd, { count: 1, cheat: true });
+  hurtEnemy(c2, cheat, 999, cheat.pos.clone().add(new THREE.Vector3(0, 0, 1)), "me");
+  ok("a cheat drone is worth nothing at all", c2.kills === 0 && c2.coins.length === 0
+     && c2.events.find((e) => e.kind === "enemyDown")?.worth === 0
+     && c2.events.find((e) => e.kind === "enemyHit")?.damage === 0);
+}
+
+/* ---- coins: magnetic within twenty diameters, and shot away ---- */
+{
+  ok("the magnet reaches twenty diameters", Math.abs(COIN_MAGNET - COIN_RADIUS * 40) < 1e-9, `${COIN_MAGNET}`);
+  const c = createCombat();
+  const at = new THREE.Vector3(0, 0, R + 20);
+  c.coins.push({ pos: at.clone(), vel: new THREE.Vector3(), spin: 0, value: 1 });
+  /* A round through it. */
+  c.bullets.push({ pos: at.clone().add(new THREE.Vector3(0, 0, -2)), vel: new THREE.Vector3(0, 0, 60), life: 3, hostile: false });
+  stepCombat(c, 1 / 30, world());
+  ok("the round is spent on the coin", c.bullets.length === 0);
+  ok("the coin recoils along the round, up to the cap", c.coins[0].vel.z > Math.min(COIN_KICK, COIN_TOP) * 0.9, `${c.coins[0].vel.z.toFixed(1)}`);
+  ok("a round spent on a coin leaves no live trail behind", c.tracers.every((t) => !t.live));
+  for (let i = 0; i < 60 * 4; i++) stepCombat(c, 1 / 60, world());
+  ok("and is gone within its life", c.tracers.length === 0, `${c.tracers.length}`);
+  ok("and spins", Math.abs(c.coins[0].spinVel ?? 0) > 0);
+  ok("with a hit event for the sound", c.events.some((e) => e.kind === "coinHit"));
+}
+
+/* ---- the flock kill's bookkeeping on the event ---- */
+{
+  const c = createCombat();
+  const w = world();
+  const fleet = spawnFleet(c, 1, w.playerPos, w.playerFwd, { count: 4 });
+  const fleetId = fleet[0].fleet!;
+  hurtEnemy(c, fleet[0], 999, fleet[0].pos.clone().add(new THREE.Vector3(0, 0, 1)), "a");
+  let ev = c.events.filter((e) => e.kind === "enemyDown").pop()!;
+  ok("a member's death names its fleet, the fleet's size and what is left",
+     ev.fleet === fleetId && ev.fleetTotal === 4 && ev.fleetLeft === 3, JSON.stringify({ f: ev.fleet, t: ev.fleetTotal, l: ev.fleetLeft }));
+  for (const d of fleet.slice(1)) hurtEnemy(c, d, 999, d.pos.clone().add(new THREE.Vector3(0, 0, 1)), "b");
+  ev = c.events.filter((e) => e.kind === "enemyDown").pop()!;
+  ok("the last one says none are left", ev.fleetLeft === 0 && ev.fleetTotal === 4);
+}
+
+/* ---- gems: orbit, magnet, pickup, recoil, never lost ---- */
+{
+  const c = createCombat();
+  const w = world();
+  const far = new THREE.Vector3(0, 0, R + 40);
+  w.playerPos.set(0, 0, R + 400);   /* out of magnet reach */
+  const g = dropGem(c, 3, far, "gem-1");
+  ok("a gem dropped near Earth orbits Earth", g.body === 0 && c.gems.length === 1);
+  ok("at the coin's size", GEM_RADIUS === 0.33);
+  ok("at orbital speed", Math.abs(g.vel.length() - Math.sqrt(COIN_MU / g.pos.length())) < 1e-6);
+  ok("moving sideways, not up or down", Math.abs(g.vel.dot(g.pos.clone().normalize())) < 1e-6);
+  const r0 = g.pos.length();
+  for (let i = 0; i < 600; i++) stepGems(c, 1 / 60, w);
+  ok("ten seconds on it is still up, at the same height", Math.abs(g.pos.length() - r0) < 1.5 && c.gems.length === 1, `${(g.pos.length() - r0).toFixed(2)}`);
+
+  /* The magnet: inside twenty diameters it comes to you. Held still first,
+     since at orbital speed it would sweep past the point being tested. */
+  g.vel.set(0, 0, 0);
+  w.playerPos.copy(g.pos).add(new THREE.Vector3(0, 0, 8));
+  const before = g.pos.distanceTo(w.playerPos);
+  for (let i = 0; i < 30; i++) stepGems(c, 1 / 60, w);
+  ok("inside the magnet it closes on the player", g.pos.distanceTo(w.playerPos) < before, `${before.toFixed(1)} -> ${g.pos.distanceTo(w.playerPos).toFixed(1)}`);
+  for (let i = 0; i < 300 && c.gems.length; i++) stepGems(c, 1 / 60, w);
+  ok("and is picked up", c.gems.length === 0 && c.events.some((e) => e.kind === "gem" && e.tier === 3), `${c.gems.length}`);
+
+  /* Shot: recoil and spin. */
+  const c2 = createCombat();
+  const w2 = world();
+  w2.playerPos.set(0, 0, R + 400);
+  const g2 = dropGem(c2, 1, new THREE.Vector3(0, 0, R + 30), "gem-2");
+  g2.vel.set(0, 0, 0);
+  c2.bullets.push({ pos: g2.pos.clone().add(new THREE.Vector3(0, 0, -2)), vel: new THREE.Vector3(0, 0, 60), life: 3, hostile: false });
+  stepCombat(c2, 1 / 30, w2);
+  ok("a round knocks a gem away and spins it", c2.bullets.length === 0 && g2.vel.z > 5 && Math.abs(g2.spinVel ?? 0) > 0, `${g2.vel.z.toFixed(1)}`);
+  ok("with its own event", c2.events.some((e) => e.kind === "gemHit"));
+
+  /* Never lost: aimed straight down, it is bounced back out. */
+  const c3 = createCombat();
+  const g3 = dropGem(c3, 1, new THREE.Vector3(0, 0, R + 10), "gem-3");
+  g3.vel.copy(g3.pos.clone().normalize().multiplyScalar(-14));
+  for (let i = 0; i < 240; i++) stepGems(c3, 1 / 60, w2);
+  ok("a gem falling in is bounced out, never lost", c3.gems.length === 1 && g3.pos.length() > R + 2, `${(g3.pos.length() - R).toFixed(1)}`);
+
+  /* Far out, it orbits the nearest planet. */
+  const c4 = createCombat();
+  const { planetCentre } = await import("./orbitWorld");
+  const pc = planetCentre(1);
+  const g4 = dropGem(c4, 2, pc.clone().add(new THREE.Vector3(0, 0, 60)), "gem-4");
+  ok("dropped by a planet it orbits that planet", g4.body === 1);
+}
+
+/* ---- a trail whose round vanished by any other road still fades ---- */
+{
+  const c = createCombat();
+  fireGuns(c, new THREE.Vector3(0, 0, R + 30), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 1, 0), 70, 1.6);
+  ok("(setup) the guns leave live trails", c.tracers.length === 2 && c.tracers.every((t) => t.live));
+  /* A room replacing the bullet list from the wire, with nothing in it. */
+  c.bullets.length = 0;
+  stepCombat(c, 1 / 60, world());
+  ok("trails with no round in the air are released", c.tracers.every((t) => !t.live));
+  for (let i = 0; i < 60 * 4; i++) stepCombat(c, 1 / 60, world());
+  ok("and fade away", c.tracers.length === 0, `${c.tracers.length}`);
+}
+
+/* ---- dropped items ----
+   A wreck rolls once for whether and once for what, from the charts on the
+   state; the thing lands in orbit as a gem with a name, the killer's alone
+   for a minute, then anyone's. */
+{
+  const rolls: number[] = [];
+  setDropRandomForTests(() => rolls.shift() ?? 0.99);
+  const c = createCombat();
+  const a = { id: "A", pos: new THREE.Vector3(0, 0, R + 30), fwd: new THREE.Vector3(1, 0, 0) };
+  const b = { id: "B", pos: new THREE.Vector3(0, 0, R + 30), fwd: new THREE.Vector3(1, 0, 0) };
+  const w = world({ players: [a, b] });
+  const mk = (tier = 1) => {
+    const e = fighter(new THREE.Vector3(0, 0, R + 32), { cls: TIERS[tier - 1], shield: 1 });
+    c.enemies.push(e);
+    return e;
+  };
+  /* Whether: 0.05 is under a tier-one's 10%. What: 0 lands on the first
+     entry of the chart, Instant Recharge. */
+  rolls.push(0.05, 0);
+  hurtEnemy(c, mk(), 9999, new THREE.Vector3(0, 0, R + 31), "A");
+  const drop = c.gems.find((g) => g.item);
+  ok("a tier-one kill at 5% drops something", !!drop, `${c.gems.length}`);
+  ok("the first entry of the chart, by weight order", drop?.item === "recharge", drop?.item);
+  ok("it is the killer's, for a minute", drop?.owner === "A" && drop?.hidden === DROP_PRIVATE_SECONDS, `${drop?.owner} ${drop?.hidden}`);
+  ok("a drop event names it", c.events.some((ev) => ev.kind === "drop" && ev.item === "recharge" && ev.id === drop?.id && ev.who === "A"));
+  clearEvents(c);
+
+  /* Whether: 0.15 is over a tier-one's 10% but under a tier-two's 20%. */
+  rolls.push(0.15, 0);
+  hurtEnemy(c, mk(1), 9999, new THREE.Vector3(0, 0, R + 31), "A");
+  ok("15% is no drop from a tier one", c.gems.filter((g) => g.item).length === 1);
+  rolls.push(0.15, 0.9999999);
+  hurtEnemy(c, mk(2), 9999, new THREE.Vector3(0, 0, R + 31), "B");
+  const last = c.gems.filter((g) => g.item).pop();
+  ok("but is a drop from a tier two, the last entry at the top of the range", last?.item === "drone5" && last?.owner === "B", last?.item);
+  ok("the gem's tier is the ITEM's tier", last?.tier === 5, `${last?.tier}`);
+  clearEvents(c);
+
+  /* B sits on A's drop. Nothing: it is A's for a minute. */
+  c.gems.length = 0;
+  c.gems.push(drop!);
+  b.pos.copy(drop!.pos);
+  a.pos.set(0, 0, R + 80);
+  stepCombat(c, 1 / 60, w);
+  ok("someone else flying through it takes nothing", c.gems.includes(drop!) && !c.events.some((ev) => ev.kind === "gem"));
+  ok("and their magnet does not move it", drop!.vel.length() < COIN_TOP + 1e-6);
+  /* A minute passes. */
+  drop!.hidden = 0.01;
+  b.pos.copy(drop!.pos);
+  stepCombat(c, 1 / 60, w);
+  stepCombat(c, 1 / 60, w);
+  const took = c.events.find((ev) => ev.kind === "gem");
+  ok("after the minute, whoever is there takes it", took?.who === "B" && took?.item === "recharge" && took?.id === drop!.id, JSON.stringify(took && { who: took.who, item: took.item }));
+  ok("and it is gone from the world", !c.gems.includes(drop!));
+
+  /* ---- capture reach ----
+     Taken when it touches a ball as wide as the wings, not a fixed 2.2. */
+  {
+    const c2 = createCombat();
+    const wide = { id: "W", pos: new THREE.Vector3(0, 0, R + 30), fwd: new THREE.Vector3(1, 0, 0), reach: 6 };
+    const g = dropItem(c2, "hull1", 1, new THREE.Vector3(0, 0, R + 30), "g1", "W");
+    g.hidden = 0;
+    g.vel.set(0, 0, 0);
+    g.pos.copy(wide.pos).add(new THREE.Vector3(6 + GEM_RADIUS - 0.05, 0, 0));
+    stepCombat(c2, 1 / 600, world({ players: [wide] }));
+    ok("touching the ball at six units captures", c2.events.some((ev) => ev.kind === "gem" && ev.who === "W"), `${c2.gems.length}`);
+    const c3 = createCombat();
+    const g3 = dropItem(c3, "hull1", 1, new THREE.Vector3(0, 0, R + 30), "g2", "W");
+    g3.hidden = 0; g3.vel.set(0, 0, 0);
+    g3.pos.copy(wide.pos).add(new THREE.Vector3(6 + GEM_RADIUS + 0.3, 0, 0));
+    stepCombat(c3, 1 / 600, world({ players: [wide] }));
+    ok("just past it does not", !c3.events.some((ev) => ev.kind === "gem") && c3.gems.length === 1);
+    ok("the reach is clamped: never under the old pickup, never room-sized", clampReach(0.5) === REACH_MIN && clampReach(50) === REACH_MAX && clampReach(undefined) === REACH_MIN && clampReach(4) === 4);
+    const c4 = createCombat();
+    const g4 = dropItem(c4, "hull1", 1, new THREE.Vector3(0, 0, R + 30), "g3", "");
+    g4.hidden = 0; g4.vel.set(0, 0, 0);
+    g4.pos.set(5 + GEM_RADIUS - 0.05, 0, R + 30);
+    const w4 = world({ reach: 5 });
+    w4.playerPos.set(0, 0, R + 30);
+    stepCombat(c4, 1 / 600, w4);
+    ok("flying solo, the world's reach is the ship's", c4.events.some((ev) => ev.kind === "gem"));
+  }
+
+  /* A flock member rolls at the full chance for its tier (Geoff). */
+  clearEvents(c);
+  c.gems.length = 0;
+  const fleet = spawnFleet(c, 3, a.pos, a.fwd, { count: 2 });
+  rolls.push(0.25, 0);
+  hurtEnemy(c, fleet[0], 9999, fleet[0].pos.clone().add(new THREE.Vector3(0, 0, 1)), "A");
+  ok("a tier-three flock member at 25% drops (30%)", c.gems.some((g) => g.item), `${c.gems.length}`);
+
+  /* A cheat drone leaves nothing, whatever the roll. */
+  c.gems.length = 0;
+  const cheat = mk(1);
+  cheat.cheat = true;
+  rolls.push(0, 0);
+  hurtEnemy(c, cheat, 9999, new THREE.Vector3(0, 0, R + 31), "A");
+  ok("a cheat drone drops nothing", !c.gems.some((g) => g.item));
+
+  /* No rule for the tier: nothing. */
+  c.drops = { charts: [{ id: "x", name: "x", entries: [{ key: "hull1", weight: 1 }] }], rules: [{ enemy: "fighter", tierMin: 5, tierMax: 7, chart: "x", chancePerTier: 0.1 }] };
+  rolls.push(0, 0);
+  hurtEnemy(c, mk(1), 9999, new THREE.Vector3(0, 0, R + 31), "A");
+  ok("an enemy no rule covers drops nothing", !c.gems.some((g) => g.item));
+  setDropRandomForTests(() => 0.99);
+}
+
+/* ---- the dragon ----
+   Once a minute, one chance in ten; ten seconds; two thousand health; an
+   egg. It never fires and never counts as a tier kill. */
+{
+  const c = createCombat();
+  const a = { id: "A", pos: new THREE.Vector3(0, 0, R + 30), fwd: new THREE.Vector3(1, 0, 0) };
+  const w = world({ players: [a] });
+  const rolls: number[] = [];
+  setDragonRandomForTests(() => rolls.shift() ?? 0.99);
+  rolls.push(0.5, 0.5);
+  for (let i = 0; i < 60 * DRAGON_CHECK_SECONDS - 1; i++) stepCombat(c, 1 / 60, w);
+  ok("nothing before the minute", !c.enemies.some((e) => e.dragon));
+  stepCombat(c, 1 / 60, w); stepCombat(c, 1 / 60, w);
+  ok("a roll over ten percent is no dragon", !c.enemies.some((e) => e.dragon));
+  rolls.length = 0;
+  rolls.push(DRAGON_CHANCE - 0.01, 0.5);
+  for (let i = 0; i < 60 * DRAGON_CHECK_SECONDS + 2; i++) stepCombat(c, 1 / 60, w);
+  const d = c.enemies.find((e) => e.dragon);
+  ok("under it, a dragon appears", !!d && d.shield === DRAGON_HP, `${d?.shield}`);
+  ok("in Earth's general orbit", !!d && d.pos.length() > R + 10 && d.pos.length() < R + 45, `${d && (d.pos.length() - R).toFixed(1)}`);
+  ok("it is announced", c.events.some((ev) => ev.kind === "dragon"));
+  ok("it is big to hit", enemyRadius(d!) === DRAGON_R);
+  clearEvents(c);
+  const fired = c.bullets.length;
+  for (let i = 0; i < 60 * 3; i++) stepCombat(c, 1 / 60, w);
+  ok("it never fires", c.bullets.length === fired && !c.events.some((ev) => ev.kind === "enemyShot"));
+  ok("it glides rather than hunts", !!d && d.pos.distanceTo(a.pos) > 5);
+  for (let i = 0; i < 60 * (DRAGON_LIFE - 2); i++) stepCombat(c, 1 / 60, w);
+  ok("after ten seconds it is gone, quietly", !c.enemies.some((e) => e.dragon) && c.events.some((ev) => ev.kind === "dragonGone") && !c.events.some((ev) => ev.kind === "enemyDown"));
+
+  /* Killed: an egg for the killer, no chart roll, no tier kill. */
+  clearEvents(c);
+  const d2 = spawnDragon(c, new THREE.Vector3(0, 0, R + 30));
+  const before = c.tierKills.slice();
+  hurtEnemy(c, d2, DRAGON_HP - 1, new THREE.Vector3(0, 0, R + 29), "A");
+  ok("1999 damage leaves it flying", c.enemies.includes(d2) && d2.shield > 0);
+  hurtEnemy(c, d2, 5, new THREE.Vector3(0, 0, R + 29), "A");
+  ok("2000 finishes it", !c.enemies.includes(d2));
+  const egg = c.gems.find((g) => g.item === "dragonegg");
+  ok("and it leaves a Dragon Egg, the killer's", !!egg && egg.owner === "A" && egg.tier === 1, egg?.item);
+  ok("no tier kill for it, but a kill", before.join() === c.tierKills.join() && c.kills >= 1);
+  ok("no wreckage", c.junk.length === 0);
+  ok("only ever one at a time", (rolls.push(0, 0), c.dragonClock = DRAGON_CHECK_SECONDS, spawnDragon(c), stepDragon(c, 0.01), c.enemies.filter((e) => e.dragon).length) === 1);
+  setDragonRandomForTests(() => 0.99);
+}
+
+console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

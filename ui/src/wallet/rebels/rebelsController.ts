@@ -11,25 +11,28 @@ import * as THREE from "three";
 import type { GlobeFlight } from "../GlobeMap";
 import {
   createFlight, stepFlight, MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS, MAX_VIEW,
+  shieldMaxFor, recharge, supercharge, isFull,
   GUARD_ABSORB, GUARD_SECONDS,
   type Flight, type Stick,
 } from "./orbitFlight";
 import {
+  clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
   createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles, fireBeam,
   fireMini, miniMuzzle, spawnFleet,
   STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
   type CombatState,
+  type Enemy, type ShipClass,
 } from "./rebelsCombat";
 import { userWonRecently } from "../stakeWin";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT, playerName } from "./rebelsScores";
 import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import { installSky, skyTexture, type SkyHandle } from "./starfield";
-import { loadModel, unitCopy } from "./spaceAssets";
+import { loadModel, unitCopy, modelClips } from "./spaceAssets";
 import { loadShip } from "./shipChoice";
 import { loadPaint, makeRepaintable, type PaintHandle } from "./shipColours";
 import {
-  fitCollider, placeCollider, noseOf, HULL_FORWARD, HULL_UP, type HitSphere,
+  fitCollider, fitMounts, halfSpan, type Mounts, placeCollider, noseOf, HULL_FORWARD, HULL_UP, type HitSphere,
 } from "./shipCollider";
 import {
   loadLoadout, saveLoadout, weaponAt, type Loadout, type SlotKind,
@@ -38,11 +41,22 @@ import { pulseHealth } from "./healthPulse";
 import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
+import { droneClass } from "./rebelsFlock";
+import { respawnSeconds, itemByKey } from "./itemCatalog";
+import { fetchDropConfig } from "./dropConfigRemote";
+import { DEFAULT_DROP_CONFIG, type DropConfig } from "./dropCharts";
+import { addSphere, heldCount, takeHeld } from "./rebelsInventory";
+import { GAME_KEYS } from "./RebelsControls";
+import { dflow } from "./rebelsDflow";
+import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
+import {
+  watchAudio, audioHealth, settleAudioFromGesture, watchOutputDevices, requestAudioRebuild, noteLevel,
+} from "../../sound";
 import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
 import {
-  hasWeapon, earnPoints, spendable, extraTorpedoes, extraMagazine,
+  hasWeapon, owned, earnPoints, spendable, flightExtras, gearKeys,
 } from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
@@ -52,7 +66,7 @@ import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
   playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce, audioState,
-  startBoostSound, stopBoostSound,
+  startBoostSound, stopBoostSound, setBoostPitch,
 } from "./rebelsAudio";
 import {
   primeMusic, playOpening, playGameplay, musicOnDeath, stopMusic, tickMusic,
@@ -64,6 +78,8 @@ export interface HudState {
   speed: number;
   alt: number;
   shields: number;
+  /** What full is for this hull: MAX_SHIELD times the Hull Boost. */
+  shieldMax: number;
   ammo: number;
   /** How many are still in the rack, and how many are out there right now. */
   torpedoes: number;
@@ -92,6 +108,14 @@ export interface HudState {
      FPS plan goes after next. */
   fps: number;
   simMs: number;
+  /** Flock kills this run: over half a fleet's members. */
+  flocks: number;
+  /** TAB held with fuel: the gauge says so, and by how much. */
+  superBoost: boolean;
+  superMult: number;
+  /** Draw calls the renderer made last frame, and its pixel ratio. */
+  drawCalls: number;
+  pixelRatio: number;
   /** Points left to spend on guns. One is earned for each DIVI brought home. */
   points: number;
   /** Where the throttle lever is, -0.35 to 1. */
@@ -137,11 +161,11 @@ export interface HudState {
 }
 
 const BLANK: HudState = {
-  ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO,
+  ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, shieldMax: MAX_SHIELD, ammo: MAX_AMMO,
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, throttle: 1,
-  room: "off", crew: 0, points: 0, fps: 0, simMs: 0,
+  room: "off", crew: 0, points: 0, fps: 0, simMs: 0, drawCalls: 0, pixelRatio: 0, flocks: 0, superBoost: false, superMult: 2,
   primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
@@ -150,11 +174,19 @@ const BLANK: HudState = {
 /** Fighters are drawn about a unit across, against three-unit towers. */
 const ENEMY_SCALE = 0.85;
 
+/** How long a detached game waits for the map to hand it a new scene before
+ *  concluding the panel has closed. The rebuild re-attaches in the same tick;
+ *  this is only slack for a slow machine. */
+export const SUSPEND_GRACE_MS = 400;
+
 export interface RebelsController extends GlobeFlight {
   cursor(): { x: number; y: number };
   /** Called when the player presses Escape, which the browser signals by
    *  releasing the pointer. */
   onEscape(fn: () => void): void;
+  /** A panel that needs the mouse is open (true) or closed (false): the
+   *  pointer is freed without that counting as Escape, and taken back after. */
+  panel(open: boolean): void;
   hud(): HudState;
   subscribe(fn: (h: HudState) => void): () => void;
   launch(): void;
@@ -165,17 +197,56 @@ export interface RebelsController extends GlobeFlight {
 export function createRebels(labelFor: (ip: string) => string): RebelsController {
   let hud: HudState = { ...BLANK };
   const listeners = new Set<(h: HudState) => void>();
-  const push = () => { for (const fn of listeners) fn(hud); };
+  const push = () => { const t = performance.now(); for (const fn of listeners) fn(hud); dflow.add("hud", performance.now() - t); };
 
   let scene: THREE.Scene | null = null;
   let camera: THREE.PerspectiveCamera | null = null;
   let dom: HTMLCanvasElement | null = null;
   let fx: Fx | null = null;
-  let combat: CombatState = createCombat();
+  /* The live drop charts, fetched once per attach; the default until then,
+     and every fresh fight is dealt them. */
+  let drops: DropConfig = DEFAULT_DROP_CONFIG;
+  const freshCombat = (): CombatState => { const c = createCombat(); c.drops = drops; return c; };
+  let combat: CombatState = freshCombat();
   /* One model per fighter in the air, kept in step with the simulation's list
      by index. Built from a single prototype and cloned, so a spawn costs a
      clone rather than a pile of new geometry. */
   let protos: THREE.Group[] = [];
+  /* ---- the dragon's rig ----
+     One, because there is only ever one dragon. The model is fetched once
+     (nine megabytes, then cached on this machine) when the game attaches,
+     so its first appearance is not a download. Drawn at thirty percent,
+     animated with its own clip. Geoff, 2026-Sep-11. */
+  const DRAGON_SIZE = 9;
+  const DRAGON_OPACITY = 0.3;
+  let dragonRig: { group: THREE.Group; mixer: THREE.AnimationMixer } | null = null;
+  let dragonProto: THREE.Group | null = null;
+  function ensureDragonRig(): void {
+    if (dragonRig || !dragonProto || !scene) return;
+    const group = unitCopy(dragonProto);
+    group.scale.setScalar(DRAGON_SIZE);
+    group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      const ghosts = mats.map((mat) => {
+        const c = (mat as THREE.Material).clone() as THREE.MeshStandardMaterial;
+        c.transparent = true; c.opacity = DRAGON_OPACITY; c.depthWrite = false;
+        return c;
+      });
+      m.material = Array.isArray(m.material) ? ghosts : ghosts[0];
+      m.frustumCulled = false;
+    });
+    /* The mixer wants the model the clip was made for: the one inside the
+       two normalising wrappers unitCopy adds. */
+    const inner = group.children[0]?.children[0] ?? group;
+    const mixer = new THREE.AnimationMixer(inner);
+    const clip = modelClips("rebels_dragon")[0];
+    if (clip) mixer.clipAction(clip).play();
+    group.visible = false;
+    scene.add(group);
+    dragonRig = { group, mixer };
+  }
   /* ---- the room ----
      Null when flying alone, which is still a perfectly good way to play. While
      it is live the ROOM owns the fight: the fighters, every round in the air,
@@ -204,6 +275,44 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let fpsAvg = 0;
   let simAvg = 0;
   let readoutAt = 0;
+  let stats: (() => { calls: number; triangles: number; ratio: number; programs?: number; geometries?: number; textures?: number }) | null = null;
+  let lastWatch: "none" | "kick" | "rebuild" = "none";
+  /* ---- THE MAP REBUILDS ITSELF UNDER THE GAME ----
+     The globe tears its whole scene down and builds it again whenever its
+     node list changes (a node arriving or leaving, which the map polls for
+     every ten seconds) or a map setting changes. Each time it does, it hands
+     the game back its scene (detach) and then a new one (attach). This used
+     to be treated as the game ENDING and STARTING: the run was banked, the
+     room left, the fight thrown away, the opening music put back on; and
+     from the cockpit it looked like the enemies had simply stopped coming.
+     Geoff played a whole session to make a video and met nobody.
+
+     So a detach mid-flight is a suspension, not an end: the fight, the
+     flight, the room and the music are kept, only the scene objects are
+     released, and the next attach puts them back into the new scene. */
+  let suspended = false;
+  let attachCount = 0;
+  /* Flock members downed by this player, by fleet, when flying alone. */
+  const flockTally = new Map<number, number>();
+  let flocks = 0;
+  /* The map re-attaches within the same tick when it rebuilds, so a detach
+     that is NOT followed by an attach almost at once was the panel closing,
+     and then the run is over for real: banked, the room left, the music
+     stopped. Nothing else can tell the two apart at detach time. */
+  let endAt: ReturnType<typeof setTimeout> | null = null;
+  let stopLoadoutWatch: (() => void) | null = null;
+
+  /** The run has ended for real (the panel closed mid-flight). */
+  function endSuspended(): void {
+    endAt = null;
+    if (!suspended) return;
+    suspended = false;
+    stopMusic();
+    leaveRoom();
+    if (flying && !hud.dead) bank();
+    combat = freshCombat();
+    flight = null;
+  }
   const enemyMeshes: THREE.Group[] = [];
   /* One shield rig per fighter model, hanging off it. */
   const enemyShields: ShieldRig[] = [];
@@ -230,6 +339,23 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const camFwd = new THREE.Vector3();
   let shipPaint: PaintHandle | null = null;
   let shipHull: HitSphere[] = [];
+  /** The capture ball's radius, from the flown hull's wingspan. */
+  let shipReach = REACH_MIN;
+  /* Hull models by enemy id, and pools of hidden ones by tier. */
+  type HullSlot = { mesh: THREE.Object3D; rig: ShieldRig; tier: number };
+  const enemyRigs = new Map<number, HullSlot>();
+  const hullPools = new Map<number, HullSlot[]>();
+  const seenEnemies = new Set<number>();
+  function releaseHull(slot: HullSlot): void {
+    slot.mesh.visible = false;
+    slot.rig.group.visible = false;
+    slot.rig.step(0, 0);
+    let pool = hullPools.get(slot.tier);
+    if (!pool) { pool = []; hullPools.set(slot.tier, pool); }
+    pool.push(slot);
+  }
+  /* Where its guns are, read off the model. See fitMounts. */
+  let shipMounts: Mounts | null = null;
   let shipLoading = false;
   /** How long the hull is in world units, which sets both how far the camera
    *  pulls back and how big a target the ship is. */
@@ -322,7 +448,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      ten-times-a-second HUD tick: a rack that updates a tenth of a second after
      the trigger reads as the trigger not having worked. */
   /** How long a player waits before rejoining while others are still flying. */
-  const RESPAWN_WAIT = 10;
+  /* Thirty seconds, or ten with a VIP Pass. See itemCatalog. */
+  const respawnWait = () => respawnSeconds(owned(loadShip()));
   let respawnAt = 0;
   let nearTower = Infinity;
   let dockBlock: string = "";
@@ -367,7 +494,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       respawnAt = 0;
       setHud({ wave: 0, respawnIn: 0 });
     } else {
-      respawnAt = performance.now() + RESPAWN_WAIT * 1000;
+      respawnAt = performance.now() + respawnWait() * 1000;
     }
     setHud({ dead: true, score: 0 });
     if (typeof document !== "undefined" && document.pointerLockElement === dom) {
@@ -386,7 +513,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
 
   const stick: Stick = {
-    x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
+    x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0, lift: 0, superBoost: false,
     throttle: 0, fullStop: false, boosting: false, firing: false,
     secondary: false, guard: false, mini: false,
   };
@@ -546,12 +673,45 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     cursor.y = 0.5;
   }
 
+  /* ---- Y: a held Instant Recharge or Supercharge ----
+     A recharge when anything is below full; when everything is, a
+     supercharge, which stacks a whole refill on top up to double. Taken from
+     the inventory here (the account row follows); in a room the room is
+     told and applies the same arithmetic to the seat's numbers, which the
+     next gauge message carries back. */
+  function useHeld(): void {
+    if (!flight || !flying || hud.dead) return;
+    const haveR = heldCount("recharge"), haveS = heldCount("supercharge");
+    const full = isFull(flight, flight.extras);
+    const key = haveR > 0 && !full ? "recharge" : haveS > 0 ? "supercharge" : haveR > 0 ? "recharge" : null;
+    if (!key) { setHud({ note: "NOTHING TO USE: OPEN A SPHERE IN YOUR INVENTORY (I)", noteAt: performance.now() }); return; }
+    if (key === "recharge" && full) { setHud({ note: "ALREADY FULL", noteAt: performance.now() }); return; }
+    if (!takeHeld(key, 1)) return;
+    if (room && room.status() === "live") room.use(key);
+    else if (key === "recharge") recharge(flight, flight.extras);
+    else supercharge(flight, flight.extras);
+    playBounce();
+    setHud({ note: key === "recharge" ? "INSTANT RECHARGE" : "SUPERCHARGE", noteAt: performance.now() });
+  }
+
   /* Escape releases the lock, which the browser does for us, and that is the
-     signal to leave the game. Nothing else can take the pointer away. */
+     signal to leave the game. Nothing else can take the pointer away, except
+     a panel that needs the mouse (the inventory): while one is open the lock
+     is let go on purpose and its loss means nothing. */
+  let panelOpen = false;
   function onLockChange() {
     const was = locked;
     locked = typeof document !== "undefined" && document.pointerLockElement === dom;
-    if (was && !locked && flying) onEscape?.();
+    if (was && !locked && flying && !panelOpen) onEscape?.();
+  }
+  function setPanelOpen(on: boolean): void {
+    panelOpen = on;
+    if (typeof document === "undefined") return;
+    if (on) {
+      if (document.pointerLockElement === dom) document.exitPointerLock();
+    } else if (flying && !hud.dead) {
+      try { dom?.requestPointerLock?.(); } catch { /* not supported here */ }
+    }
   }
   function onDown(e: PointerEvent) {
     e.preventDefault();
@@ -616,6 +776,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      input and there is nothing to gain from asking sixty times. */
   let wokeAt = 0;
   function wakeAudio() {
+    /* Whatever the bus watchdog decided while no hand was on the controls
+       happens here, inside a real gesture, where WebKit will allow it. */
+    settleAudioFromGesture();
     const now = performance.now();
     if (now - wokeAt < 1000) return;
     wokeAt = now;
@@ -637,9 +800,29 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /** The tip of the hull in the world: where the guns and the tube are. */
   const noseLocal = new THREE.Vector3();
   function shipNose(f: { pos: THREE.Vector3; fwd: THREE.Vector3 }): THREE.Vector3 {
+    if (shipMounts) return mountWorld(f, shipMounts.nose);
     if (shipHull.length === 0) return f.pos.clone().addScaledVector(f.fwd, SHIP_LENGTH * 0.5);
     noseLocal.copy(noseOf(shipHull)).multiplyScalar(SHIP_LENGTH).applyQuaternion(shipQuat);
     return f.pos.clone().add(noseLocal);
+  }
+
+  /** A mount, in the world: the model's unit-box point scaled to the ship's
+   *  length and turned the way the ship is facing. */
+  function mountWorld(f: { pos: THREE.Vector3 }, local: THREE.Vector3): THREE.Vector3 {
+    return noseLocal.copy(local).multiplyScalar(SHIP_LENGTH).applyQuaternion(shipQuat).add(f.pos).clone();
+  }
+
+  /** The two barrels, in the world. Off the wings when the hull has them. */
+  function shipBarrels(f: { pos: THREE.Vector3; fwd: THREE.Vector3; up: THREE.Vector3 }): [THREE.Vector3, THREE.Vector3] {
+    if (shipMounts) return [mountWorld(f, shipMounts.gunL), mountWorld(f, shipMounts.gunR)];
+    const nose = shipNose(f);
+    const side = new THREE.Vector3().crossVectors(f.fwd, f.up).normalize().multiplyScalar(SHIP_LENGTH * 0.2);
+    return [nose.clone().add(side), nose.clone().sub(side)];
+  }
+
+  /** Under the hull, for a torpedo. */
+  function shipBelly(f: { pos: THREE.Vector3; fwd: THREE.Vector3 }): THREE.Vector3 {
+    return shipMounts ? mountWorld(f, shipMounts.belly) : shipNose(f);
   }
 
   /** Fetch the hull the first time the camera leaves the cockpit. */
@@ -662,6 +845,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            around inside a hit shape two and a half times too big and taking
            rounds that visibly missed it. */
         shipHull = fitCollider(model);
+        shipMounts = fitMounts(model);
+        /* The capture ball: as wide as the wings, in world units. */
+        shipReach = clampReach(halfSpan(model) * SHIP_LENGTH);
         model.scale.setScalar(SHIP_LENGTH);
 
         /* Which way the hull faces is a property of the PACK, not of the
@@ -731,11 +917,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      assist off), the torpedo was on control-click, and the mini gun was on a
      held E, which is roll everywhere else. The arrow keys still pitch and yaw
      for anyone who wants them. */
-  const MAPPED = [
-    "w", "a", "s", "d", "q", "e", "x", "f", "v", " ",
-    "1", "2", "3", "4", "5", "6", "shift",
-    "arrowup", "arrowdown", "arrowleft", "arrowright",
-  ];
+  /* The keys the game claims are the help card's list, so the two cannot
+     drift: a key the card explains is a key the game swallows, and no other. */
+  const MAPPED = GAME_KEYS;
 
   function applyKeys() {
     /* The arrows still fly, for anyone who would rather not use the mouse.
@@ -745,9 +929,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stick.y = (keys.arrowup ? 1 : 0) - (keys.arrowdown ? 1 : 0);
     stick.roll = (keys.e ? 1 : 0) - (keys.q ? 1 : 0);
     stick.strafe = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+    stick.lift = (keys.r ? 1 : 0) - (keys.c ? 1 : 0);
     stick.throttle = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
     stick.fullStop = !!keys.x;
     stick.boosting = !!keys.shift;
+    stick.superBoost = !!keys.tab;
     stick.guard = !!keys.f;
     stick.mini = weapons.primary === 1;
   }
@@ -811,6 +997,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        six guns are now a single upgrade path, so all six numbers pick along it
        and the secondary stays where the genre puts it: the right button. */
     if (k >= "1" && k <= "6") selectWeapon("primary", Number(k) - 1);
+    if (k === "y") useHeld();
     if (k === "v" && flight) {
       flight.view = flight.view > 0.01 ? 0 : 2;
       if (flight.view > 0) ensureShip();
@@ -829,7 +1016,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     for (const k in keys) keys[k] = false;
     stick.firing = false; stick.boosting = false; stick.secondary = false;
     stick.guard = false; stick.fullStop = false;
-    stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.throttle = 0;
+    stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.lift = 0; stick.superBoost = false; stick.throttle = 0;
     stick.aimX = 0; stick.aimY = 0;
   }
 
@@ -854,6 +1041,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       name: playerName(),
       home,
       ship: loadShip(),
+      /* What this ship carries, so the room arms it the same way the solo
+         game does: the minigun, the beams, the extra tubes and magazine. */
+      gear: gearKeys(loadShip()).filter((k) => k !== "pulse"),
+      reach: shipReach,
       /* Flattened in the order the shader keeps the parts, which is the order
          the other end puts them back in. */
       paint: PART_ORDER.map((k) => [
@@ -890,10 +1081,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     /* What this hull carries beyond the standard, from the store. Read at the
        moment of launch so a purchase made between sorties is felt on the next
        one without the panel having to be reopened. */
-    flight = createFlight(at, {
-      torpedoes: extraTorpedoes(loadShip()),
-      magazine: extraMagazine(loadShip()),
-    });
+    flight = createFlight(at, flightExtras(loadShip()));
+    setHud({ shieldMax: shieldMaxFor(flight.extras) });
     setHud({ dead: false });
   }
 
@@ -997,11 +1186,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         const live = !hud.dead;
         const blank: Stick = {
-          x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
+          x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0, lift: 0, superBoost: false,
           throttle: 0, fullStop: false, boosting: false, firing: false,
           secondary: false, guard: false, mini: false,
         };
+        const tFlight = performance.now();
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
+        dflow.add("flight", performance.now() - tFlight);
         if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
         nearTower = res.nearTower;
         dockBlock = res.dockBlock;
@@ -1181,7 +1372,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             beamAt = BEAM_SECONDS;
             flight.ammo -= 1;
             const from = shipNose(flight);
-            if (inRoom && room) room.fire("main", from, flight.fwd);
+            if (inRoom && room) room.fire("beam", from, flight.fwd, undefined, armed.key);
             else fireBeam(combat, armed, from, flight.fwd, "", damageScale());
             fx.muzzle(from);
             playGunSound();
@@ -1200,12 +1391,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              hull's length, still converging on the crosshair, so the rounds
              leave the ship and meet where you are aiming. */
           let at: [THREE.Vector3, THREE.Vector3] | undefined;
-          if (shipModel && flight.view > 0.01) {
-            const nose = shipNose(flight);
-            const side = new THREE.Vector3().crossVectors(flight.fwd, flight.up)
-              .normalize().multiplyScalar(SHIP_LENGTH * 0.2);
-            at = [nose.clone().add(side), nose.clone().sub(side)];
-          }
+          if (shipModel && flight.view > 0.01) at = shipBarrels(flight);
           /* ---- WHO PULLS THE TRIGGER ----
              In a room the shot is a REQUEST, not a fact: the room decides
              whether this ship had rounds left, whether it may fire yet, and
@@ -1239,16 +1425,35 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            before it turned would feel broken however good the connection was,
            so the stick still moves the ship at once and the position is
            reported afterwards for everyone else to see. */
+        const tRoom = performance.now();
         if (inRoom && room) {
           room.step(dt);
           room.report(flight.pos, flight.fwd, flight.guardFor > 0);
 
           /* The room's fight, put where the drawing already looks for it. */
           combat.enemies.length = 0;
+          let di = 0;
           for (const e of room.enemies) {
+            /* A drone from the wire is drawn as a drone: the sphere pass reads
+               the flag, the colour comes from the drone tier, and the pulse
+               phase is stable per slot so the swarm does not throb in unison. */
+            if (e.drone) {
+              const cls = droneClass(e.tier);
+              combat.enemies.push({
+                id: e.id, pos: e.pos, fwd: e.fwd, roll: 0,
+                cls: { ...cls, weight: 0 } as ShipClass,
+                shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
+                spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
+                weave: 0, weaveDir: 1, mode: "in", breakAt: 0, rejoinAt: 0,
+                escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
+                drone: true, group: 0, fleet: 0, slot: 0, pulse: (di++ * 0.73) % (Math.PI * 2),
+              } as Enemy);
+              continue;
+            }
             combat.enemies.push({
-              pos: e.pos, fwd: e.fwd, roll: 0,
-              cls: TIERS[Math.max(0, Math.min(TIERS.length - 1, e.tier - 1))],
+              id: e.id, pos: e.pos, fwd: e.fwd, roll: 0,
+              cls: e.dragon ? DRAGON_CLASS : TIERS[Math.max(0, Math.min(TIERS.length - 1, e.tier - 1))],
+              ...(e.dragon ? { dragon: true as const, life: DRAGON_LIFE } : {}),
               shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
               spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
               weave: 0, weaveDir: 1, mode: "in", breakAt: 0, rejoinAt: 0,
@@ -1259,6 +1464,20 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           for (const b of room.bullets) {
             combat.bullets.push({ pos: b.pos, vel: b.vel, life: 1, hostile: b.hostile, mini: b.mini });
           }
+          /* Beams too: yours and everyone else's, drawn from the room's list
+             so a beam is seen by the whole room and hits what the room says. */
+          combat.beams.length = 0;
+          for (const b of room.beams) combat.beams.push(b);
+          /* Gems are the room's: drawn from its list, never simulated here.
+             A private drop only ever arrives at its owner, so nothing here
+             has to hide anything. */
+          combat.gems.length = 0;
+          for (const g of room.gems) {
+            combat.gems.push({
+              id: g.id, tier: g.tier, pos: g.pos, vel: new THREE.Vector3(), spin: g.spin, body: 0,
+              ...(g.item ? { item: g.item, owner: g.owner, hidden: g.hidden } : {}),
+            });
+          }
           combat.coins.length = 0;
           for (const k of room.coins) {
             combat.coins.push({ pos: k.pos, vel: new THREE.Vector3(), spin: 0, value: 0 });
@@ -1266,7 +1485,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           combat.events.push(...room.takeEvents().map((e) => ({
             kind: e.kind as never, at: e.at, power: e.power, who: e.who,
             tier: e.tier, shield: e.shield, damage: e.damage, wave: e.wave,
-            guarded: e.guarded,
+            guarded: e.guarded, item: e.item, id: e.id,
           })));
 
           /* ---- ANTI-CHEAT: THE GAUGES ARE THE ROOM'S ----
@@ -1292,8 +1511,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           peers.draw([], camera);
         }
 
+        dflow.add("room", performance.now() - tRoom);
         /* ---- fighters and their fire ----
            Only when nobody else is running them. */
+        const tCombat = performance.now();
         if (!inRoom) stepCombat(combat, dt, {
           tips: tipList,
           playerPos: flight.pos,
@@ -1303,8 +1524,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              miss against, so the single radius round the camera is both fairer
              and cheaper. */
           players: hullWorld.length > 0
-            ? [{ id: "", pos: flight.pos, fwd: flight.fwd, hull: hullWorld }]
+            ? [{ id: "", pos: flight.pos, fwd: flight.fwd, hull: hullWorld, reach: shipReach }]
             : undefined,
+          reach: shipReach,
           damageScale: damageScale(),
         });
 
@@ -1323,12 +1545,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             if (!detonateOldest(combat, w) && flight.torpedoes > 0) {
               flight.torpedoes -= 1;
               /* Out of the tube at the nose, not out of the camera. */
-              fireTorpedo(combat, shipNose(flight), flight.fwd);
+              fireTorpedo(combat, shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
               playTorpedoSound();
             }
           }
         }
 
+        dflow.add("combat", performance.now() - tCombat);
+        const tEvents = performance.now();
         for (const ev of combat.events) {
           if (ev.kind === "incoming") {
             /* The event carries how near the round is, which is what the alarm
@@ -1362,6 +1586,22 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           } else if (ev.kind === "enemyDown") {
             fx.boom(ev.at, 3, "hot");
             playShipExplosion();
+            /* ---- the flock tally, alone ----
+               In a room the room decides. Alone, the same rule is kept here
+               so the count on the HUD means the same thing: over half of a
+               fleet's members, and the kill lands when its last one falls.
+               Nothing here reaches the ledger. */
+            if (!inRoom && ev.fleet !== undefined && (ev.worth ?? 0) > 0) {
+              flockTally.set(ev.fleet, (flockTally.get(ev.fleet) ?? 0) + 1);
+              if ((ev.fleetLeft ?? 1) === 0) {
+                const mine = flockTally.get(ev.fleet) ?? 0;
+                flockTally.delete(ev.fleet);
+                if ((ev.fleetTotal ?? 0) > 0 && mine > (ev.fleetTotal ?? 0) / 2) {
+                  flocks += 1;
+                  setHud({ flocks, note: `FLOCK DOWN: ${mine} of ${ev.fleetTotal}`, noteAt: performance.now() });
+                }
+              }
+            }
             if (ev.tier) {
               lifetimeTiers[ev.tier - 1] = (lifetimeTiers[ev.tier - 1] ?? 0) + 1;
               setHud({ tierKills: lifetimeTiers.slice() });
@@ -1372,6 +1612,40 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             score += Math.round(ev.damage ?? 0);
             /* A small spark where the shot landed. The bubble does the rest. */
             fx.boom(ev.at, ev.power, "cold");
+          } else if (ev.kind === "flockDown") {
+            fx.boom(ev.at, 4, "hot");
+            playTorpedoBlast();
+            if (ev.who && room && ev.who === room.me()) {
+              flocks += 1;
+              setHud({ flocks, note: "FLOCK DOWN", noteAt: performance.now() });
+            }
+          } else if (ev.kind === "dragon") {
+            playTorpedoBlast();
+            setHud({ note: "A DRAGON", noteAt: performance.now() });
+          } else if (ev.kind === "dragonGone") {
+            fx.boom(ev.at, 1.5, "cold");
+          } else if (ev.kind === "drop") {
+            /* Something fell out of the wreck. A glint; the thing itself is
+               drawn from the gem list, and only its owner sees it. */
+            if (!ev.who || (room && ev.who === room.me())) fx.boom(ev.at, 0.9, "cold");
+          } else if (ev.kind === "gem") {
+            fx.boom(ev.at, 1.2, "cold");
+            playBounce();
+            if (!ev.who || (room && ev.who === room.me())) {
+              if (ev.item) {
+                /* Into the inventory, SEALED: the player opens it there (I).
+                   Solo, this is the client's roll and the client's pickup; in
+                   a room, the room's, relayed. Either way the account row is
+                   what keeps it (watchLoadout). */
+                addSphere(ev.item, 1);
+                const spec = itemByKey(ev.item);
+                setHud({ note: `T${spec?.tier ?? 1} SPHERE: OPEN IT IN YOUR INVENTORY (I)`, noteAt: performance.now() });
+              } else {
+                setHud({ note: `GEM: ${["yellow", "green", "blue", "purple", "red", "white", "fuchsia"][(ev.tier ?? 1) - 1] ?? ""}`, noteAt: performance.now() });
+              }
+            }
+          } else if (ev.kind === "coinHit" || ev.kind === "gemHit") {
+            fx.boom(ev.at, 0.5, "cold");
           } else if (ev.kind === "waveStart") {
             /* Shown big for three seconds, then two seconds of fading. */
             setHud({ wave: ev.wave ?? 0, waveAt: performance.now() });
@@ -1403,47 +1677,82 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            building and destroying. */
         /* A model per fighter, and it has to match that fighter's tier, so a
            slot whose occupant changed tier is rebuilt rather than recoloured. */
-        for (let i = 0; i < combat.enemies.length; i++) {
-          /* Drones are spheres drawn by the instanced pass, not models. A
-             sentinel tier keeps their slot in step with the enemy list without
-             building a hull nobody will ever see. */
-          const want = combat.enemies[i].drone ? 0 : combat.enemies[i].cls.tier;
-          const have = enemyMeshes[i];
-          if (have && have.userData.tier === want) continue;
-          if (have) scene.remove(have);
-          const m = want === 0 ? new THREE.Group() : protos[want - 1].clone(true);
-          m.userData.tier = want;
-          m.scale.setScalar(ENEMY_SCALE);
-          scene.add(m);
-          enemyMeshes[i] = m;
+        dflow.add("events", performance.now() - tEvents);
+        const tMeshes = performance.now();
+        /* ---- HULLS FOLLOW ENEMIES, NOT SLOTS ----
+           A hull model used to belong to an INDEX in the enemy list. Every
+           time one enemy died the ones after it shifted down a slot, the slot
+           saw a different tier, threw its model away and cloned a fresh one
+           from the prototype: seven meshes and three line sets per fighter,
+           several fighters per death, every death. DFlow showed it: the
+           meshes stage spiking to 22ms and a hundred stalls the report could
+           only call "outside our code", which is the garbage collector
+           sweeping up the clones. Now a model is keyed by the enemy's own id
+           and follows it for life; a model whose enemy has gone is hidden
+           and kept in a pool for the next of its tier. Nothing is cloned
+           after the first wave of each tier. */
+        seenEnemies.clear();
+        for (const e of combat.enemies) {
+          if (e.drone || e.dragon) continue;
+          const id = e.id ?? -1;
+          const tier = e.cls.tier;
+          let slot = enemyRigs.get(id);
+          if (slot && slot.tier !== tier) { releaseHull(slot); enemyRigs.delete(id); slot = undefined; }
+          if (!slot) {
+            const pool = hullPools.get(tier);
+            const reused = pool && pool.length ? pool.pop()! : null;
+            if (reused) {
+              slot = reused;
+            } else {
+              const m = protos[tier - 1].clone(true);
+              m.userData.tier = tier;
+              m.scale.setScalar(ENEMY_SCALE);
+              scene.add(m);
+              enemyMeshes.push(m);
+              const rig = makeShieldRig(0x66ccff);
+              scene.add(rig.group);
+              enemyShields.push(rig);
+              slot = { mesh: m, rig, tier };
+            }
+            slot.mesh.visible = true;
+            slot.rig.group.visible = true;
+            enemyRigs.set(id, slot);
+          }
+          seenEnemies.add(id);
         }
-        while (enemyShields.length < enemyMeshes.length) {
-          const rig = makeShieldRig(0x66ccff);
-          /* Added to the scene rather than to the fighter, so a fighter
-             tumbling wildly does not take its own shield bubble and its
-             readout spinning with it. */
-          scene.add(rig.group);
-          enemyShields.push(rig);
+        for (const [id, slot] of enemyRigs) {
+          if (seenEnemies.has(id)) continue;
+          releaseHull(slot);
+          enemyRigs.delete(id);
+        }
+        /* The dragon, if it is here. */
+        const dragon = combat.enemies.find((e) => e.dragon) ?? null;
+        if (dragon) ensureDragonRig();
+        if (dragonRig) {
+          dragonRig.group.visible = !!dragon;
+          if (dragon) {
+            dragonRig.group.position.copy(dragon.pos);
+            s.target.copy(dragon.pos).addScaledVector(dragon.fwd, 10);
+            s.m4.lookAt(dragon.pos, s.target, dragon.pos.clone().normalize());
+            dragonRig.group.quaternion.setFromRotationMatrix(s.m4);
+            dragonRig.mixer.update(Math.min(0.1, dt));
+          }
         }
         const nowS = performance.now() / 1000;
-        for (let i = 0; i < enemyMeshes.length; i++) {
-          const m = enemyMeshes[i];
-          const rig = enemyShields[i];
-          const e = combat.enemies[i];
-          if (!e || e.drone) { m.visible = false; rig.step(nowS, 0); continue; }
-          m.visible = true;
+        for (const e of combat.enemies) {
+          if (e.drone || e.dragon) continue;
+          const slot = enemyRigs.get(e.id ?? -1);
+          if (!slot) continue;
+          const m = slot.mesh, rig = slot.rig;
           m.position.copy(e.pos);
           s.target.copy(e.pos).addScaledVector(e.fwd, 10);
           s.m4.lookAt(e.pos, s.target, e.pos.clone().normalize());
           m.quaternion.setFromRotationMatrix(s.m4);
-          /* The tumble from being hit, on top of the bank from manoeuvring. */
           s.qBank.setFromEuler(new THREE.Euler(e.spin.x, e.spin.y, e.spin.z + e.roll));
           m.quaternion.multiply(s.qBank);
-
           rig.group.position.copy(e.pos);
           rig.setColour(e.cls.colour);
           rig.setLevel(e.shield, e.cls.shieldMax);
-          /* Shown for a couple of seconds after a hit, fading out. */
           rig.step(nowS, Math.min(1, e.flash / 0.6));
         }
 
@@ -1452,11 +1761,17 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            Holding shift with an empty boost tank, or while docked, or after
            being shot down, all move the ship not at all, and a roar with no
            acceleration behind it is worse than silence. */
-        const thrusting = stick.boosting && flight.boost > 0
+        const thrusting = (stick.boosting || stick.superBoost) && flight.boost > 0
           && flight.dock <= 0 && !hud.dead;
         if (thrusting !== wasThrusting) {
           wasThrusting = thrusting;
           if (thrusting) startBoostSound(); else stopBoostSound();
+        }
+        /* Super boost: the same roar, faster and higher, for as long as TAB
+           is held with fuel to burn. */
+        if (thrusting) setBoostPitch(flight.superOn ? 1.35 : 1);
+        if (flight.superOn !== hud.superBoost || flight.extras.superMult !== hud.superMult) {
+          setHud({ superBoost: flight.superOn, superMult: flight.extras.superMult });
         }
 
         /* The recharging station, on for exactly as long as the resupply. */
@@ -1475,8 +1790,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* Everything raised this frame has now been drawn and scored. */
         clearEvents(combat);
 
-        fx.drawBullets(combat.bullets);
-        fx.drawBeams(combat.beams, BEAM_SECONDS);
+        dflow.add("meshes", performance.now() - tMeshes);
+        dflow.time("draw.bullets", () => fx!.drawBullets(combat.bullets));
+        dflow.time("draw.beams", () => fx!.drawBeams(combat.beams, BEAM_SECONDS));
         /* The swarm and its fire. Both are instanced, so the cost of drawing a
            hundred and forty spheres is the cost of drawing one. */
         /* Reused lists rather than two fresh arrays from filter() a frame. */
@@ -1484,18 +1800,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         for (const e of combat.enemies) if (e.drone) droneList.push(e);
         orbList.length = 0;
         for (const b of combat.bullets) if (b.orb) orbList.push(b);
-        fx.drawDrones(droneList, nowS);
-        fx.drawOrbs(orbList, nowS);
-        fx.drawTorpedoes(combat.torpedoes);
-        fx.drawJunk(combat.junk);
-        fx.drawTracers(combat.tracers, TRACER_LIFE);
-        fx.drawCoins(combat.coins);
+        dflow.time("draw.drones", () => fx!.drawDrones(droneList, nowS));
+        dflow.time("draw.orbs", () => fx!.drawOrbs(orbList, nowS));
+        dflow.time("draw.torps", () => fx!.drawTorpedoes(combat.torpedoes));
+        dflow.time("draw.junk", () => fx!.drawJunk(combat.junk));
+        dflow.time("draw.tracers", () => fx!.drawTracers(combat.tracers, TRACER_LIFE));
+        dflow.time("draw.coins", () => fx!.drawCoins(combat.coins));
+        dflow.time("draw.gems", () => { fx!.drawGems(combat.gems); fx!.drawDrops(combat.gems); });
+        const tDock = performance.now();
         /* The tether, drawn only while a resupply is running. */
         fx.drawDockLink(
           flight.dock > 0 ? flight.pos : null,
           flight.dock > 0 && flight.dockedAt >= 0 ? tipList[flight.dockedAt] ?? null : null,
           performance.now() / 1000,
         );
+        dflow.add("draw.dock", performance.now() - tDock);
         fx.step(dt, camera);
 
         const now = performance.now();
@@ -1516,7 +1835,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             guards: flight.guards,
             guarding: flight.guardFor > 0,
             contacts: combat.enemies.length,
-            kills: combat.kills,
+            kills: Math.floor(combat.kills),
             score,
             junk: combat.junk.length,
             bonus: damageScale() > 1,
@@ -1541,13 +1860,37 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          anything else." Opening the panel is a click, so the audio is allowed
          to start; if the download is still in flight it begins the moment it
          lands. */
+      if (endAt) { clearTimeout(endAt); endAt = null; }
+      watchOutputDevices();
+      /* A reopened panel gets a fresh audio context. The sound has been
+         reported dying mid-session with every measurement on this side
+         reading healthy; whatever that is, a new context on the current
+         output device is the reset a restart of the app would give, without
+         the restart. Carried out from the click that opened the panel. */
+      if (attachCount++ > 0 && !suspended) { requestAudioRebuild(); settleAudioFromGesture(); }
       primeMusic();
-      playOpening(1.6);
+      if (!suspended) playOpening(1.6);
       setHud({ points: spendable() });
+      /* What the account has, folded in: a reinstall or a second machine gets
+         its guns back. Then every change goes up. */
+      if (!stopLoadoutWatch) {
+        stopLoadoutWatch = watchLoadout();
+        void loadLoadoutRemote().then((moved) => { if (moved) setHud({ points: spendable() }); });
+      }
+      void loadModel("rebels_dragon").then((p) => { dragonProto = p; }).catch((e) => dflow.note(`dragon model: ${String(e)}`));
+      void fetchDropConfig().then((r) => {
+        drops = r.config;
+        combat.drops = r.config;
+        dflow.note(`drops: ${r.live ? "live charts" : `default charts (${r.error ?? ""})`}`);
+      });
       try {
         scene = api.scene;
         camera = api.camera;
         dom = api.dom;
+        stats = api.stats ?? null;
+        /* The version is a build-time define; tests run without one. */
+        const ver = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
+        dflow.setLabel(`v${ver} · ${typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 60) : ""}`);
 
         /* Real tower tips off the real map. Docking lines up with the towers
            you can actually see, because they ARE those towers. */
@@ -1591,18 +1934,31 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            costs nothing and means a rare ship is the right colour from the
            frame it appears. */
         protos = TIERS.map((t) => makeFighter(t.colour));
-        combat = createCombat();
-
-        startAt(homeIndex);
+        if (suspended) {
+          /* Back into the new scene with the fight and the flight as they
+             were. The towers were halved at launch and this is a fresh set at
+             full size, so they are halved again and the tips re-read. */
+          if (scaleTowers && hud.launched) {
+            const tips = scaleTowers(WORLD_SCALE);
+            tipList = ipList.map((ip) => tips.get(ip)?.clone() ?? new THREE.Vector3());
+          }
+          if (peers) scene.add(peers.group);
+          suspended = false;
+        } else {
+          combat = freshCombat();
+          startAt(homeIndex);
+        }
 
         /* Where the globe exactly fills the height of the frame. Slightly
            inside it, so it fills rather than floats. */
         const half = (camera.fov * Math.PI) / 360;
         globeRadius = api.radius;
         approachTo = (api.radius / Math.sin(half)) * 0.92;
-        approachFrom.copy(camera.position);
-        if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
-        approach = 0;
+        if (phase === "approach") {
+          approachFrom.copy(camera.position);
+          if (approachFrom.lengthSq() < 1) approachFrom.set(0, 0, approachTo * 1.6);
+          approach = 0;
+        }
 
         dom.addEventListener("wheel", onWheel, { passive: false });
         dom.addEventListener("pointerleave", onLeave);
@@ -1653,6 +2009,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        place, so it costs nothing and grows into nothing. */
     frame(dt) {
       const t0 = performance.now();
+      dflow.frameStart(dt);
       try {
         runFrame(dt);
       } catch (err) {
@@ -1675,14 +2032,41 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         fpsAvg += ((1 / dt) - fpsAvg) * k;
         simAvg += ((performance.now() - t0) - simAvg) * k;
       }
+      /* Everything the collector wants to know about this frame. */
+      dflow.counts({
+        enemies: combat.enemies.length,
+        drones: combat.enemies.reduce((n, e) => n + (e.drone ? 1 : 0), 0),
+        bullets: combat.bullets.length, coins: combat.coins.length, gems: combat.gems.length,
+        tracers: combat.tracers.length, junk: combat.junk.length, beams: combat.beams.length,
+        torps: combat.torpedoes.length, peers: room ? room.others().length : 0,
+        flocks: combat.flocks.length, meshes: enemyMeshes.length,
+      });
+      {
+        const st = stats?.();
+        if (st) dflow.render({ calls: st.calls, triangles: st.triangles, ratio: st.ratio, programs: st.programs ?? 0, geometries: st.geometries ?? 0, textures: st.textures ?? 0 });
+      }
+      dflow.room(roomStatus);
+      dflow.frameEnd();
       readoutAt -= dt;
       if (readoutAt <= 0) {
         readoutAt = 0.25;
-        setHud({ fps: Math.round(fpsAvg), simMs: Math.round(simAvg * 10) / 10 });
+        const st = stats?.();
+        setHud({
+          fps: Math.round(fpsAvg), simMs: Math.round(simAvg * 10) / 10,
+          ...(st ? { drawCalls: st.calls, pixelRatio: st.ratio } : {}),
+        });
       }
       diagAt -= dt;
       if (diagAt <= 0) {
         diagAt = 2;
+        /* ---- IS ANYTHING ACTUALLY COMING OUT ----
+           Music plays whenever the panel is open, so while a track is meant
+           to be playing and the player is not mid-death-fade, silence at the
+           speakers is a fault, and the bus deals with it. */
+        const mus = musicState() as { playing?: string | null };
+        noteLevel();
+        dflow.audio((audioHealth() as { level: number }).level);
+        lastWatch = watchAudio(!!mus.playing && !hud.dead, 2);
         try {
           localStorage.setItem("dd69.rebels.diag", JSON.stringify({
             at: new Date().toISOString(),
@@ -1697,6 +2081,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             respawnIn: respawnAt > performance.now()
               ? Math.round((respawnAt - performance.now()) / 1000) : 0,
             audio: audioState(),
+            bus: { ...audioHealth(), lastWatch },
             music: musicState(),
             enemies: combat.enemies.length,
             fighters: combat.enemies.filter((e) => !e.drone).length,
@@ -1707,17 +2092,25 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             alt: flight ? Math.round(flight.pos.length() - R) : null,
             frameError,
             frameErrors,
+            drawCalls: hud.drawCalls,
+            pixelRatio: hud.pixelRatio,
           }));
         } catch { /* storage full or blocked; the game does not care */ }
       }
     },
     detach() {
-      stopMusic();
+      suspended = flying && !hud.dead && hud.launched;
+      if (suspended) {
+        if (endAt) clearTimeout(endAt);
+        endAt = setTimeout(endSuspended, SUSPEND_GRACE_MS);
+      } else {
+        stopMusic();
+        leaveRoom();
+      }
       stopBoostSound();
-      leaveRoom();
       /* Backing out mid-flight files what was earned. Losing a good run to a
          stray Escape would be worse than the alternative. */
-      if (flying && !hud.dead) bank();
+      if (flying && !hud.dead && !suspended) bank();
       stopRechargeSound();
       wasDocking = false;
       if (dom) {
@@ -1741,6 +2134,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         camera.far = savedFar;
         camera.updateProjectionMatrix();
       }
+      if (scene && peers) scene.remove(peers.group);
       if (scene && guardShell) scene.remove(guardShell.mesh);
       guardShell?.dispose();
       guardShell = null;
@@ -1753,6 +2147,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         shipModel = null;
         shipPaint = null;
         shipHull = [];
+        shipMounts = null;
         sky?.restore();
         sky = null;
         if (space) { scene.remove(space.group); space.dispose(); space = null; }
@@ -1760,6 +2155,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
       for (const r of enemyShields) r.dispose();
       enemyShields.length = 0;
+      enemyRigs.clear();
+      hullPools.clear();
       enemyMeshes.length = 0;
       fx?.dispose();
       /* The prototype's geometry is shared by every clone, so it is disposed
@@ -1772,8 +2169,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         else if (mat) mat.dispose();
       });
       fx = null; protos = [];
-      combat = createCombat();
-      scene = null; camera = null; dom = null; flight = null;
+      dragonRig = null;
+      if (!suspended) {
+        combat = freshCombat();
+        flight = null;
+      }
+      scene = null; camera = null; dom = null;
       setHud({ ready: false });
     },
 
@@ -1781,6 +2182,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      *  putting it through React state would make aiming feel soggy. */
     cursor: () => cursor,
     onEscape(fn) { onEscape = fn; },
+    panel: setPanelOpen,
     hud: () => hud,
     subscribe(fn) { listeners.add(fn); fn(hud); return () => { listeners.delete(fn); }; },
     launch() {
@@ -1844,6 +2246,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       try { dom?.requestPointerLock?.(); } catch { /* not supported here */ }
       setHud({ launched: true });
     },
-    dispose() { listeners.clear(); },
+    dispose() {
+      listeners.clear();
+      /* Disposed is final: whatever a detach was waiting to find out, the
+         answer is that the game is over. */
+      if (endAt) { clearTimeout(endAt); endAt = null; }
+      endSuspended();
+      stopLoadoutWatch?.();
+      stopLoadoutWatch = null;
+    },
   };
 }

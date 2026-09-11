@@ -10,8 +10,14 @@ import { MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS } from "./orbitFlight";
 import { TIERS } from "./rebelsCombat";
 import type { RebelsController, HudState } from "./rebelsController";
 import { RebelsScoreboard } from "./RebelsScoreboard";
-import { RebelsControls, CONTROLS, DOCKING } from "./RebelsControls";
+import { RebelsControls, controlLines } from "./RebelsControls";
+import { flightExtras } from "./rebelsArmoury";
+import { loadShip } from "./shipChoice";
 import { ShipMarket } from "./ShipMarket";
+import { DflowPanel } from "./DflowPanel";
+import { InventoryPanel } from "./InventoryPanel";
+import { heldCount } from "./rebelsInventory";
+import { subscribeArmoury } from "./rebelsArmoury";
 import { RebelsHealthBar } from "./RebelsHealthBar";
 import { ShipBadge } from "./ShipBadge";
 import pandaUrl from "../../assets/rebels_panda.webp";
@@ -29,6 +35,11 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
   const [scores, setScores] = useState(false);
   const [help, setHelp] = useState(false);
   const [market, setMarket] = useState(false);
+  const [dflowOpen, setDflow] = useState(false);
+  const [inv, setInv] = useState(false);
+  /* The inventory needs the mouse: tell the controller so letting go of the
+     pointer lock does not read as Escape, and it is taken back on close. */
+  useEffect(() => { ctl.panel(inv); }, [ctl, inv]);
 
   /* The hit flash: everything behind the cockpit inverts for a tenth of a
      second. Driven by a timestamp rather than a boolean so two hits in quick
@@ -71,6 +82,17 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
     ctl.onEscape(onExit);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") { e.preventDefault(); onExit(); }
+      /* # opens the DFlow panel. Not while a cheat sequence is being typed:
+         the sequence swallows its own keys, so a lone # is always this. */
+      if (e.key === "#" && !(e.target instanceof HTMLInputElement)) {
+        setDflow((v) => !v);
+        return;
+      }
+      if ((e.key === "i" || e.key === "I") && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        setInv((v) => !v);
+        return;
+      }
       if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
         e.preventDefault();
         setHelp((v) => !v);
@@ -151,7 +173,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
             for flying by. */}
         {hud.fps > 0 && (
           <div className="orbit-row orbit-dim orbit-frame">
-            {hud.fps} FPS <span className="orbit-dim">{hud.simMs.toFixed(1)}ms game</span>
+            {hud.fps} FPS <span className="orbit-dim">{hud.simMs.toFixed(1)}ms game{hud.drawCalls > 0 ? ` · ${hud.drawCalls} draws` : ""}{hud.pixelRatio > 0 ? ` · ${hud.pixelRatio}x` : ""}</span>
           </div>
         )}
       </div>
@@ -175,6 +197,8 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         </div>
         <div className="orbit-row orbit-dim">{hud.towers} towers</div>
         {hud.wave > 0 && <div className="orbit-row">WAVE {hud.wave}</div>}
+        {hud.flocks > 0 && <div className="orbit-row">FLOCKS {hud.flocks}</div>}
+        <HeldRow />
         <div className={"orbit-row" + (hud.contacts > 0 ? " orbit-alert" : " orbit-dim")}>
           {hud.contacts > 0 ? `${hud.contacts} CONTACT${hud.contacts > 1 ? "S" : ""}` : "no contacts"}
         </div>
@@ -203,7 +227,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           <div className="orbit-dockbar"><i style={{ width: pct(hud.dock) }} /></div>
           {/* What is actually being restored, filling as it goes. */}
           <div className="orbit-dock-lines">
-            <div><span>HULL</span><i><b style={{ width: pct(hud.shields / MAX_SHIELD) }} /></i></div>
+            <div><span>HULL</span><i><b style={{ width: pct(Math.min(1, hud.shields / (hud.shieldMax || MAX_SHIELD))) }} /></i></div>
             <div><span>AMMO</span><i><b style={{ width: pct(hud.ammo / MAX_AMMO) }} /></i></div>
             <div><span>BOOST</span><i><b style={{ width: pct(hud.boost) }} /></i></div>
             <div><span>TORP</span><i><b style={{ width: pct(hud.torpedoes / MAX_TORPEDOES) }} /></i></div>
@@ -237,9 +261,9 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       <div className="orbit-bars">
         <div className="orbit-gauge">
-          <span>SHIELDS {Math.max(0, Math.round((hud.shields / MAX_SHIELD) * 100))}%</span>
-          <div className={"orbit-meter" + (hud.shields <= MAX_SHIELD * 0.3 ? " low" : "")}>
-            <i style={{ width: pct(hud.shields / MAX_SHIELD) }} />
+          <span>SHIELDS {Math.max(0, Math.round((hud.shields / (hud.shieldMax || MAX_SHIELD)) * 100))}%</span>
+          <div className={"orbit-meter" + (hud.shields <= (hud.shieldMax || MAX_SHIELD) * 0.3 ? " low" : "") + (hud.shields > (hud.shieldMax || MAX_SHIELD) ? " over" : "")}>
+            <i style={{ width: pct(Math.min(1, hud.shields / (hud.shieldMax || MAX_SHIELD))) }} />
           </div>
         </div>
         <div className="orbit-gauge">
@@ -264,8 +288,8 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           </div>
         </div>
         <div className="orbit-gauge">
-          <span>BOOST</span>
-          <div className="orbit-meter boost"><i style={{ width: pct(hud.boost) }} /></div>
+          <span>BOOST{hud.superBoost ? <em className="orbit-super"> {hud.superMult}x</em> : ""}</span>
+          <div className={"orbit-meter boost" + (hud.superBoost ? " super" : "")}><i style={{ width: pct(hud.boost) }} /></div>
         </div>
       </div>
 
@@ -290,11 +314,13 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       <RebelsHealthBar />
 
-      {help && <RebelsControls onClose={() => setHelp(false)} />}
+      {help && <RebelsControls onClose={() => setHelp(false)} extras={flightExtras(loadShip())} />}
 
       {scores && <RebelsScoreboard onClose={() => setScores(false)} />}
 
       {market && <ShipMarket onClose={() => setMarket(false)} />}
+      {dflowOpen && <DflowPanel onClose={() => setDflow(false)} />}
+      {inv && <InventoryPanel onClose={() => setInv(false)} />}
 
       {!hud.broken && !hud.launched && !scores && !market && (
         <div className="orbit-card orbit-card-clear">
@@ -308,7 +334,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
               <p>{hud.homeName === "no node located" ? "No node of your own found, launching from the network." : `Launching from ${hud.homeName}.`}</p>
             </div>
             <div className="orbit-launch-keys">
-              {[...CONTROLS, ...DOCKING].map((c) => (
+              {controlLines({ extras: flightExtras(loadShip()) }).map((c) => (
                 <div key={c.keys}><b>{c.keys}</b><span>{c.what}</span></div>
               ))}
             </div>
@@ -352,6 +378,19 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** What Y would use: the held recharges and supercharges, when there are any. */
+function HeldRow() {
+  const [, bump] = useState(0);
+  useEffect(() => subscribeArmoury(() => bump((n) => n + 1)), []);
+  const r = heldCount("recharge"), s = heldCount("supercharge");
+  if (r + s === 0) return null;
+  return (
+    <div className="orbit-row">
+      Y {r > 0 && <>RECHARGE x{r}</>}{r > 0 && s > 0 && " / "}{s > 0 && <>SUPER x{s}</>}
     </div>
   );
 }

@@ -16,6 +16,29 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { loadModel, unitCopy } from "./spaceAssets";
 import { makeRepaintable, type ShipPaint, type PaintHandle } from "./shipColours";
+import { fitMounts, type Mounts } from "./shipCollider";
+import { BEAM_MAX_HOLD, type WeaponSpec } from "./weaponCatalog";
+import { beamGeometry, beamOrientation, beamMaterials, BEAM_CORE } from "./rebelsFx";
+
+/* ---- TEST FIRE, IN THE SCENE ----
+   It was a flat overlay drawn up the panel: a triangle over the picture, which
+   put the beam on top of the hull and forty degrees wide. Geoff: "it comes
+   from the nose of the plane model, and it's a cone, not a flat thing". So it
+   is now the same cone the game draws, at the weapon's own angle, leaving the
+   same point of the same model the game fires from: the mounts read off the
+   hull (shipCollider.fitMounts). The barrels come off the wing tips, the mini
+   gun and the beam off the nose. */
+
+/** The model is shown at this scale; the mounts are in its unit frame. */
+const SHOWN = 1.5;
+/** How far a beam reaches in the preview, in scene units: past the frame. */
+const PREVIEW_REACH = 7;
+/** A drawn round's speed and life, so it clears the frame and is gone. */
+const ROUND_SPEED = 9;
+const ROUND_LIFE = 0.6;
+const MINI_RATE = 14;
+const PULSE_RATE = 2.2;
+const ROUND_CAP = 24;
 
 /** How far the hull leans toward the pointer, in radians. About ten degrees:
  *  enough to feel alive, little enough that it stays square to its own guns. */
@@ -35,9 +58,16 @@ const OVERHEAD = 0.16;
  */
 export type PreviewMode = "turntable" | "flight";
 
-export function ShipPreview({ id, paint, still = false, mode = "turntable" }: {
+export function ShipPreview({ id, paint, still = false, mode = "turntable", fire = null }: {
   id: string; paint: ShipPaint; still?: boolean; mode?: PreviewMode;
+  /** A weapon being tested: drawn firing from the model's mounts. */
+  fire?: WeaponSpec | null;
 }) {
+  const fireRef = useRef<WeaponSpec | null>(fire);
+  /* When the trigger went down, so the beam can stop at its five seconds and
+     the rounds can be paced. */
+  const fireSince = useRef(0);
+  if (fire !== fireRef.current) { fireRef.current = fire; fireSince.current = performance.now(); }
   const host = useRef<HTMLDivElement | null>(null);
   const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
   /* Kept in a ref so moving a slider repaints the ship that is already on
@@ -94,6 +124,40 @@ export function ShipPreview({ id, paint, still = false, mode = "turntable" }: {
     const turntable = new THREE.Group();
     scene.add(turntable);
 
+    /* ---- the guns' effects ----
+       One cone for a beam, a small pool of rounds. Additive, so they glow
+       over the hull rather than hide it. */
+    const beamGeo = beamGeometry();
+    const [beamMat, beamCoreMat] = beamMaterials();
+    const beam = new THREE.Mesh(beamGeo, beamMat);
+    beam.visible = false;
+    scene.add(beam);
+    const beamCore = new THREE.Mesh(beamGeo, beamCoreMat);
+    beamCore.visible = false;
+    scene.add(beamCore);
+    /* While a beam is held the view eases round to three-quarters, so the
+       cone is seen going away into the distance rather than end-on from
+       behind, where a cone of any length is a short wedge. */
+    let sideView = 0;
+    const roundGeo = new THREE.SphereGeometry(1, 8, 6);
+    roundGeo.scale(0.022, 0.022, 0.09);
+    const roundMat = new THREE.MeshBasicMaterial({
+      color: 0xffe08a, transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const rounds: Array<{ mesh: THREE.Mesh; vel: THREE.Vector3; life: number }> = [];
+    for (let i = 0; i < ROUND_CAP; i++) {
+      const mesh = new THREE.Mesh(roundGeo, roundMat);
+      mesh.visible = false;
+      scene.add(mesh);
+      rounds.push({ mesh, vel: new THREE.Vector3(), life: 0 });
+    }
+    let mounts: Mounts | null = null;
+    let nextRound = 0;
+    const zAxis = new THREE.Vector3(0, 0, 1);
+    const fwd = new THREE.Vector3();
+    const worldOf = (local: THREE.Vector3, out: THREE.Vector3) =>
+      out.copy(local).multiplyScalar(SHOWN).applyMatrix4(turntable.matrixWorld);
+
     /* ---- inspecting it ----
        Grab and turn, wheel to come in closer. A shop where the thing on the
        stand cannot be picked up and looked at is a catalogue. The turntable
@@ -148,6 +212,7 @@ export function ShipPreview({ id, paint, still = false, mode = "turntable" }: {
       .then((proto) => {
         if (stop) return;
         const model = unitCopy(proto);
+        mounts = fitMounts(model);
         repaint.current = makeRepaintable(model);
         repaint.current.apply(paintRef.current);
         /* Normalised to one unit across, so every hull from a 13-unit fighter
@@ -192,6 +257,8 @@ export function ShipPreview({ id, paint, still = false, mode = "turntable" }: {
       idle += dt;
 
       if (modeRef.current === "flight") {
+        const wantSide = fireRef.current?.kind === "beam" ? 0.62 : 0;
+        sideView += (wantSide - sideView) * Math.min(1, dt * 4);
         /* ---- FLYING IT, NOT LOOKING AT IT ----
            Nose away from the camera and a little below it, which is the view
            from just behind and above a ship you are flying. It does not turn.
@@ -203,7 +270,7 @@ export function ShipPreview({ id, paint, still = false, mode = "turntable" }: {
         tiltY += (want - tiltY) * Math.min(1, dt * 6);
         tiltX += (wantP - tiltX) * Math.min(1, dt * 6);
         /* Half a turn, so the nose points away rather than at the camera. */
-        turntable.rotation.set(OVERHEAD + tiltX, Math.PI + tiltY, -tiltY * 0.8);
+        turntable.rotation.set(OVERHEAD + tiltX + sideView * 0.25, Math.PI + tiltY + sideView, -tiltY * 0.8);
         camera.position.set(0, 0.42 * dolly / 2.15, dolly);
         camera.lookAt(0, -0.06, 0);
       } else {
@@ -219,6 +286,59 @@ export function ShipPreview({ id, paint, still = false, mode = "turntable" }: {
       }
 
       if (interactive) el.style.cursor = dragging ? "grabbing" : "grab";
+
+      /* ---- firing ---- */
+      turntable.updateMatrixWorld(true);
+      fwd.set(0, 0, 1).applyQuaternion(turntable.quaternion).normalize();
+      const spec = fireRef.current;
+      const on = spec ? (now - fireSince.current) / 1000 : 0;
+      if (spec && mounts && spec.kind === "beam" && on < BEAM_MAX_HOLD) {
+        beam.visible = true;
+        beamCore.visible = true;
+        worldOf(mounts.nose, beam.position);
+        beamCore.position.copy(beam.position);
+        beam.quaternion.copy(beamOrientation(fwd));
+        beamCore.quaternion.copy(beam.quaternion);
+        const half = ((spec.cone ?? 2) * Math.PI) / 360;
+        const rad = Math.tan(half) * PREVIEW_REACH;
+        beam.scale.set(rad, rad, PREVIEW_REACH);
+        beamCore.scale.set(rad * BEAM_CORE, rad * BEAM_CORE, PREVIEW_REACH);
+        beamMat.color.setHex(spec.colour ?? 0xffd83a);
+        beamCoreMat.color.setHex(spec.colour ?? 0xffd83a);
+        /* Pulsing at the burst rate, the way a held trigger reads in flight. */
+        const k = 1 - ((on % 0.5) / 0.5);
+        beamMat.opacity = 0.18 + 0.4 * k;
+        beamCoreMat.opacity = 0.4 + 0.55 * k;
+      } else {
+        beam.visible = false;
+        beamCore.visible = false;
+      }
+      if (spec && mounts && spec.kind !== "beam") {
+        const rate = spec.kind === "mini" ? MINI_RATE : PULSE_RATE;
+        if (on >= nextRound) {
+          nextRound = on + 1 / rate;
+          const from = spec.kind === "mini" ? [mounts.nose] : [mounts.gunL, mounts.gunR];
+          for (const m of from) {
+            const r = rounds.find((x) => x.life <= 0);
+            if (!r) break;
+            worldOf(m, r.mesh.position);
+            r.vel.copy(fwd).multiplyScalar(ROUND_SPEED);
+            r.mesh.quaternion.setFromUnitVectors(zAxis, fwd);
+            r.mesh.visible = true;
+            r.life = ROUND_LIFE;
+          }
+        }
+        roundMat.color.setHex(spec.colour ?? 0xffe08a);
+      } else {
+        nextRound = 0;
+      }
+      for (const r of rounds) {
+        if (r.life <= 0) continue;
+        r.life -= dt;
+        r.mesh.position.addScaledVector(r.vel, dt);
+        if (r.life <= 0) r.mesh.visible = false;
+      }
+
       renderer.render(scene, camera);
       raf = requestAnimationFrame(tick);
     };

@@ -42,9 +42,12 @@ export interface DroneClass {
   speed: number;
 }
 
-const DRONE_COLOURS = [0x9aa3ad, 0xf0c14b, 0x57e06a, 0x4fa8ff, 0xa96bff, 0xff4d4d];
-const DRONE_NAMES = ["Grey", "Gold", "Green", "Blue", "Purple", "Red"];
-
+/* ---- THE SEVEN ----
+   Geoff's colours, in his order: yellow, green, blue, purple, red, white,
+   fuchsia. Health fifty at tier one and twenty-five more per tier, speed
+   fifteen percent more per tier: the ramps he confirmed. */
+const DRONE_COLOURS = [0xf5d90a, 0x57e06a, 0x4fa8ff, 0xa96bff, 0xff4d4d, 0xf2f6ff, 0xff45d0];
+const DRONE_NAMES = ["Yellow", "Green", "Blue", "Purple", "Red", "White", "Fuchsia"];
 export const DRONE_TIERS: DroneClass[] = DRONE_COLOURS.map((colour, i) => ({
   tier: i + 1,
   name: DRONE_NAMES[i],
@@ -52,6 +55,57 @@ export const DRONE_TIERS: DroneClass[] = DRONE_COLOURS.map((colour, i) => ({
   shieldMax: 50 + i * 25,
   speed: 1 + i * 0.15,
 }));
+
+/** How many arrive, by tier: "24, 28, 32, 36, 40, 44, 48". */
+export const FLEET_SIZES = [24, 28, 32, 36, 40, 44, 48];
+export function fleetSize(tier: number): number {
+  return FLEET_SIZES[Math.max(0, Math.min(FLEET_SIZES.length - 1, Math.round(tier) - 1))];
+}
+
+/** How many extra shapes grow out of a drone, by tier: "6, 8, 10, 12, 14, 16"
+ *  and 18 for the seventh, as agreed. Data for the drawing. */
+export const SHAPE_COUNTS = [6, 8, 10, 12, 14, 16, 18];
+
+/* ---- HOW RARE ----
+   "70%, 21%, 6.3%, etc": each tier is three tenths as likely as the one
+   below. Carried to seven and scaled to sum to one, so a roll always lands;
+   the very top of the range is tier seven. */
+export const TIER_ODDS: number[] = (() => {
+  const raw = DRONE_TIERS.map((_, i) => 0.7 * Math.pow(0.3, i));
+  const sum = raw.reduce((a, b) => a + b, 0);
+  return raw.map((w) => w / sum);
+})();
+
+export function rollFlockTier(rnd: () => number = Math.random): number {
+  /* Kept inside [0, 1): the top of the range is the rarest tier, and a roll
+     of exactly one must land there rather than fall off the end. */
+  let r = Math.min(Math.max(rnd(), 0), 1 - 1e-9);
+  for (let i = 0; i < TIER_ODDS.length; i++) {
+    r -= TIER_ODDS[i];
+    if (r <= 0) return i + 1;
+  }
+  return 1;
+}
+
+/** "1% chance to spawn a flock each 5 seconds of gameplay." */
+export const SPAWN_CHECK_SECONDS = 5;
+export const SPAWN_CHANCE = 0.01;
+
+/** A flock member is a fifth of a fighter: in kill count and in coins. */
+export const DRONE_KILL_WORTH = 0.2;
+
+/* ---- THE JOURNEY ----
+   Flocks come from the nearest planet, which is a thousand units out or
+   more. Geoff: "fly faster to Earth but it's okay if it takes a while." So
+   they cross at several times fighting speed and drop to it inside
+   HUNT_RANGE of their target. A flock whose prey is gone for GIVE_UP_SECONDS
+   (dead, or out past the leash) turns for home and is gone when it gets
+   there, so a dead room does not fill with idle drones. */
+export const TRANSIT_SPEED = 5;
+export const HUNT_RANGE = 220;
+export const LEASH = 600;
+export const GIVE_UP_SECONDS = 60;
+export const HOME_ARRIVE = 40;
 
 export function droneClass(tier: number): DroneClass {
   return DRONE_TIERS[Math.max(0, Math.min(DRONE_TIERS.length - 1, Math.round(tier) - 1))];
@@ -140,8 +194,22 @@ export const SPLIT_TURN = 0.7;
  * they hold their slot and push off each other, and everything that reads as
  * intent comes from here.
  */
+export type FlockPhase = "transit" | "hunt" | "leave";
+
 export interface FlockGroup {
   id: number;
+  /** Crossing from its planet, fighting, or going home. */
+  phase: FlockPhase;
+  /** The planet it came from, and returns to. */
+  home: THREE.Vector3;
+  /** Seconds without anyone to hunt. */
+  idle: number;
+  /** Seconds to the next split-merge-or-nothing decision. */
+  decideAt: number;
+  /** The group this one is flying to rejoin, if any. */
+  mergeWith: number | null;
+  /** How many the fleet had when it set out, for the flock kill. */
+  fleetTotal: number;
   /** Which fleet it was born in, so a fleet can be counted or cleared. */
   fleet: number;
   tier: number;
@@ -281,11 +349,43 @@ export function splitSizes(total: number, parts: number): number[] {
 
 /** Pick one of the splits at random, never into groups of one. A lone drone is
  *  not a group, it is a straggler, and it flies like one. */
+/* Geoff: "they seem to always split into 2 groups so I want them to also
+   split more often." Two is the least interesting split, so it is the least
+   likely: the parts are weighted, and a bigger fleet has more ways to come
+   apart. */
+const SPLIT_WEIGHTS: Record<number, number> = { 2: 1, 3: 2, 4: 2, 6: 2 };
 export function pickSplit(total: number, rnd: () => number = Math.random): number[] {
   const usable = SPLIT_PARTS.filter((p) => total / p >= 2);
   if (!usable.length) return [total];
-  const parts = usable[Math.floor(rnd() * usable.length)] ?? usable[0];
+  const weights = usable.map((p) => SPLIT_WEIGHTS[p] ?? 1);
+  let r = rnd() * weights.reduce((a, b) => a + b, 0);
+  let parts = usable[usable.length - 1];
+  for (let i = 0; i < usable.length; i++) {
+    r -= weights[i];
+    if (r <= 0) { parts = usable[i]; break; }
+  }
   return splitSizes(total, parts);
+}
+
+/* ---- THE MINUTE'S DECISION ----
+   Geoff: "every minute, two groups may decide to combine... so n groups
+   should make a decision every minute to combine or split again or do
+   nothing. If they decide to recombine then they will fly towards each
+   other and regroup, unless they are in active combat."
+
+   Each group keeps its own clock, offset at birth so a fleet's pieces do not
+   all decide on the same frame. In combat (prey inside RUN_REJOIN) a merge is
+   not started and a merge already under way waits: the fight comes first. */
+export const DECIDE_SECONDS = 60;
+/** Two merging groups this close are one group. */
+export const MERGE_RANGE = 30;
+/** The odds of each choice, when it is possible. */
+export const DECIDE_SPLIT = 0.4;
+export const DECIDE_MERGE = 0.4;
+
+let decideRandom: () => number = Math.random;
+export function setDecideRandomForTests(fn: (() => number) | null): void {
+  decideRandom = fn ?? Math.random;
 }
 
 /**
@@ -310,6 +410,11 @@ export interface FlockDrone {
 /** Somewhere for a group to be told about the world it is flying in. */
 export interface FlockWorld {
   playerPos: THREE.Vector3;
+  /** The nearest living player to a point, or null when nobody is alive.
+   *  Absent, playerPos is everyone. */
+  nearest?: (from: THREE.Vector3) => THREE.Vector3 | null;
+  /** A group has reached home and is done: remove its drones. */
+  despawn?: (groupId: number) => void;
   /** The open-space speed multiplier at a given height, so a swarm out among
    *  the planets can keep up with a player who is also moving faster there.
    *  The fighters had to learn this: without it the sky quietly empties. */
@@ -339,9 +444,16 @@ function sideways(v: THREE.Vector3): THREE.Vector3 {
  */
 export function newGroup(
   fleet: number, tier: number, at: THREE.Vector3, heading: THREE.Vector3,
+  home: THREE.Vector3 | null = null,
 ): FlockGroup {
   return {
     id: nextGroupId++,
+    phase: home ? "transit" : "hunt",
+    home: home ? home.clone() : at.clone(),
+    idle: 0,
+    decideAt: DECIDE_SECONDS + decideRandom() * 20,
+    mergeWith: null,
+    fleetTotal: 0,
     fleet,
     tier,
     mode: "form",
@@ -397,14 +509,64 @@ export function stepFlock(
   const born: FlockGroup[] = [];
 
   for (const g of groups) {
-    toPlayer.copy(w.playerPos).sub(g.centre);
+    const prey = w.nearest ? w.nearest(g.centre) : w.playerPos;
+    toPlayer.copy(prey ?? w.playerPos).sub(g.centre);
     const range = toPlayer.length();
     toPlayer.divideScalar(range || 1);
 
     if (g.wait > 0) g.wait -= dt;
     if (g.flash > 0) g.flash = Math.max(0, g.flash - dt);
 
-    if (g.mode === "form") {
+    /* ---- the journey: crossing, fighting, going home ---- */
+    if (prey && range <= LEASH) g.idle = 0; else g.idle += dt;
+    let quick = 1;
+    if (g.phase === "transit") {
+      if (prey && range <= HUNT_RANGE) {
+        g.phase = "hunt";
+        g.mode = "form";
+      } else {
+        want.copy(toPlayer);
+        quick = TRANSIT_SPEED;
+      }
+    } else if (g.phase === "hunt" && g.idle >= GIVE_UP_SECONDS) {
+      g.phase = "leave";
+    }
+    if (g.phase === "leave") {
+      want.copy(g.home).sub(g.centre);
+      const left = want.length();
+      want.divideScalar(left || 1);
+      quick = TRANSIT_SPEED;
+      if (left <= HOME_ARRIVE) {
+        w.despawn?.(g.id);
+        g.alive = 0;
+      }
+    }
+
+    /* ---- the minute's decision, and merging ---- */
+    const fighting = g.phase === "hunt" && !!prey && range < RUN_REJOIN;
+    let merging = false;
+    if (g.phase === "hunt") {
+      g.decideAt -= dt;
+      if (g.decideAt <= 0) {
+        g.decideAt = DECIDE_SECONDS;
+        decide(g, groups, byGroup, born, fighting);
+      }
+      const partner = g.mergeWith === null ? null : groups.find((o) => o.id === g.mergeWith && o.alive > 0);
+      if (g.mergeWith !== null && !partner) g.mergeWith = null;
+      if (partner && !fighting) {
+        const gap = partner.centre.distanceTo(g.centre);
+        if (gap <= MERGE_RANGE) {
+          mergeInto(g, partner, byGroup);
+        } else {
+          want.copy(partner.centre).sub(g.centre).normalize();
+          merging = true;
+        }
+      }
+    }
+
+    if (merging) {
+      /* Steering set above: straight at the other half. */
+    } else if (g.phase === "hunt" && g.mode === "form") {
       /* Come in as one body, aimed a little to one side of the player rather
          than straight down their throat, so the fleet arrives ACROSS the view
          instead of appearing as a dot that gets bigger. */
@@ -416,7 +578,7 @@ export function stepFlock(
         g.mode = "run";
         g.timer = RUN_SECONDS;
       }
-    } else if (g.mode === "run") {
+    } else if (g.phase === "hunt" && g.mode === "run") {
       want.copy(toPlayer);
       g.timer -= dt;
       if (range < RUN_BREAK || g.timer <= 0) {
@@ -431,7 +593,7 @@ export function stepFlock(
           .addScaledVector(sideways(g.fwd), 0.45)
           .normalize();
       }
-    } else {
+    } else if (g.phase === "hunt") {
       want.copy(g.escape);
       if (range > RUN_REJOIN) {
         g.mode = "run";
@@ -448,10 +610,11 @@ export function stepFlock(
 
     turnToward(g.fwd, want, DRONE_TURN * 0.85 * dt, axis);
     const open = w.scale(g.centre.length() - R);
-    g.centre.addScaledVector(g.fwd, DRONE_SPEED * droneClass(g.tier).speed * open * dt);
+    g.centre.addScaledVector(g.fwd, DRONE_SPEED * droneClass(g.tier).speed * open * quick * dt);
     g.aim.copy(g.centre);
   }
   for (const g of born) groups.push(g);
+  for (let i = groups.length - 1; i >= 0; i--) if (groups[i].alive === 0) groups.splice(i, 1);
 
   /* ---- 3. the drones ---- */
   const slotCache = new Map<number, THREE.Vector3[]>();
@@ -687,6 +850,54 @@ export function turnToward(
  * they visibly peel apart and come at you one after another, instead of all
  * arriving together looking like the same single blob it was a second ago.
  */
+/**
+ * Split again, join up with another group of the fleet, or do nothing.
+ *
+ * A merge needs a partner: another group of the same fleet, in the fight,
+ * not already merging, and not this one. Both are told, so both fly. In
+ * combat nothing is started; the clock simply comes round again.
+ */
+function decide(
+  g: FlockGroup, groups: FlockGroup[], byGroup: Map<number, FlockDrone[]>,
+  born: FlockGroup[], fighting: boolean,
+): void {
+  if (g.mergeWith !== null) return;
+  const members = byGroup.get(g.id) ?? [];
+  const partners = groups.filter((o) =>
+    o !== g && o.fleet === g.fleet && o.phase === "hunt" && o.mergeWith === null && o.alive > 0);
+  const r = decideRandom();
+  if (r < DECIDE_SPLIT) {
+    if (members.length >= 4) splitGroup(g, members, born);
+  } else if (r < DECIDE_SPLIT + DECIDE_MERGE) {
+    if (fighting || !partners.length) return;
+    /* The nearest of them: the shortest flight to rejoin. */
+    let best = partners[0];
+    let bestD = Infinity;
+    for (const o of partners) {
+      const d = o.centre.distanceToSquared(g.centre);
+      if (d < bestD) { bestD = d; best = o; }
+    }
+    g.mergeWith = best.id;
+    best.mergeWith = g.id;
+  }
+}
+
+/** Two groups within reach of each other become one: the partner's drones
+ *  join this group, in fresh slots, and the partner is done. */
+function mergeInto(g: FlockGroup, partner: FlockGroup, byGroup: Map<number, FlockDrone[]>): void {
+  const mine = byGroup.get(g.id) ?? [];
+  const theirs = byGroup.get(partner.id) ?? [];
+  for (const d of theirs) { d.group = g.id; mine.push(d); }
+  byGroup.set(partner.id, []);
+  reslot(mine);
+  g.alive = mine.length;
+  g.flash = SPLIT_FLASH;
+  g.mergeWith = null;
+  g.decideAt = DECIDE_SECONDS;
+  partner.alive = 0;
+  partner.mergeWith = null;
+}
+
 function splitGroup(g: FlockGroup, members: FlockDrone[], born: FlockGroup[]): void {
   g.split = true;
   const sizes = pickSplit(members.length);
@@ -748,6 +959,9 @@ function splitGroup(g: FlockGroup, members: FlockDrone[], born: FlockGroup[]): v
     part.approach.copy(side);
     part.split = true;
     part.mode = "form";
+    /* A fresh clock, staggered, and no merge carried over from the whole. */
+    part.decideAt = DECIDE_SECONDS * (0.6 + decideRandom() * 0.8);
+    part.mergeWith = null;
     /* One after another, a couple of seconds apart, so they arrive in
        sequence rather than as one wall. */
     part.wait = i * 2.1;

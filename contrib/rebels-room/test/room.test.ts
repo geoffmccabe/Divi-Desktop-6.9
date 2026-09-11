@@ -10,7 +10,14 @@
 import * as THREE from "three";
 import { RebelsRoom } from "../src/room";
 import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
-import { MAX_AMMO, MAX_SHIELD, BOOST } from "../../../ui/src/wallet/rebels/orbitFlight";
+import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES, MAX_GUARDS } from "../../../ui/src/wallet/rebels/orbitFlight";
+import { setDropRandomForTests, setDragonRandomForTests, spawnDragon } from "../../../ui/src/wallet/rebels/rebelsCombat";
+setDragonRandomForTests(() => 0.99);
+
+/* Wrecks roll for items. Pinned to "nothing" so a count of gems or storage
+   keys in the tests below is what the test put there; the drop block sets
+   its own rolls. */
+setDropRandomForTests(() => 0.99);
 
 const out: string[] = [];
 let failures = 0;
@@ -36,7 +43,14 @@ const storage = {
   map: new Map<string, unknown>(),
   async get(k: string) { return this.map.get(k); },
   async put(k: string, v: unknown) { this.map.set(k, v); },
-  async list() { return new Map(); },
+  async delete(k: string) { return this.map.delete(k); },
+  async list(opts: { prefix?: string } = {}) {
+    const out = new Map<string, unknown>();
+    for (const [k, v] of this.map) if (!opts.prefix || k.startsWith(opts.prefix)) out.set(k, v);
+    return out;
+  },
+  clear() { this.map.clear(); },
+  keys() { return this.map.keys(); },
 };
 const fakeState = { storage } as never;
 const credits: any[] = [];
@@ -279,7 +293,6 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
-console.log(out.join("\n"));
 // N. Cashing out: the account is the CONNECTING address, never the typed node.
 {
   const room = newRoom();
@@ -321,5 +334,278 @@ console.log(out.join("\n"));
   room.stop();
 }
 
+// Gear: what a ship declared is what it can fire, and its magazine is sized by it.
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  room.seat(ws as never);
+  const id = ws.last("hi").id as string;
+  ws.deliver(JSON.stringify({ t: "join", node: "g1", name: "Geared", home: [0, 0, R],
+    gear: ["mini", "beam1", "beam2", "mag2", "torp1", "deathray", 7, "pulse"] }));
+  const seat = room.seats.get(id);
+  ok("unknown gear is dropped, known gear kept",
+     [...seat.gear].sort().join(",") === "beam1,beam2,mag2,mini,pulse,torp1", [...seat.gear].sort().join(","));
+  ok("the magazine is sixty percent bigger with mag2", seat.ammoMax === Math.round(MAX_AMMO * 1.6), `${seat.ammoMax}`);
+  ok("and there is one more torpedo with torp1", seat.torpsMax === MAX_TORPEDOES + 1, `${seat.torpsMax}`);
+  ok("and it starts full", seat.ammo === seat.ammoMax && seat.torps === seat.torpsMax);
+
+  const p = seat.body.pos.toArray(), f = seat.body.fwd.toArray();
+  room.now = 10;
+  ws.deliver(JSON.stringify({ t: "fire", k: "beam", p, f, w: "beam2" }));
+  ok("a declared beam fires", room.combat.beams.length === 1 && room.combat.beams[0].key === "beam2",
+     `${room.combat.beams.length}`);
+  ok("and costs a round", seat.ammo === seat.ammoMax - 1, `${seat.ammo}`);
+  ws.deliver(JSON.stringify({ t: "fire", k: "beam", p, f, w: "beam2" }));
+  ok("not twice inside its burst", room.combat.beams.length === 1);
+  room.now = 11;
+  ws.deliver(JSON.stringify({ t: "fire", k: "beam", p, f, w: "beam3" }));
+  ok("a beam that was not declared is refused, with a reason",
+     room.combat.beams.length === 1 && String(ws.last("no")?.why).includes("no "), ws.last("no")?.why);
+  ok("and is not a strike", seat.strikes === 0);
+  ws.deliver(JSON.stringify({ t: "fire", k: "beam", p, f, w: "mini" }));
+  ok("naming a non-beam as a beam is a strike", seat.strikes === 1, `${seat.strikes}`);
+
+  /* The wire carries the beam so everyone sees it. */
+  room.broadcastState();
+  const st = ws.last("s");
+  ok("beams go out in the state message", Array.isArray(st.M) && st.M.length === 1 && st.M[0][6] === "beam2",
+     JSON.stringify(st.M));
+
+  /* Revive refills to the sized maximum, not the stock one. */
+  seat.ammo = 0; seat.torps = 0;
+  room.revive(seat);
+  ok("revived to the sized magazine", seat.ammo === seat.ammoMax && seat.torps === seat.torpsMax);
+  room.stop();
+}
+{
+  /* No gear declared: stock ship, and the minigun is refused. */
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "g2");
+  ok("stock magazine without items", seat.ammoMax === MAX_AMMO && seat.torpsMax === MAX_TORPEDOES);
+  const p = seat.body.pos.toArray(), f = seat.body.fwd.toArray();
+  room.now = 5;
+  const before = room.combat.bullets.length;
+  ws.deliver(JSON.stringify({ t: "fire", k: "mini", p, f }));
+  ok("the minigun is refused without it", room.combat.bullets.length === before
+     && String(ws.last("no")?.why).includes("minigun"), ws.last("no")?.why);
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p, f }));
+  ok("the pulse gun always fires", room.combat.bullets.length > before);
+  const st0 = (room.broadcastState(), ws.last("s"));
+  ok("no beams, no M key on the wire", !("M" in st0), Object.keys(st0).join(","));
+  room.stop();
+}
+
+// Flock kills: over half a fleet's members, tallied per seat; the last death drops a gem.
+{
+  storage.clear();
+  const room = newRoom();
+  const wsA = new FakeSocket(), wsB = new FakeSocket();
+  const a = join(room, wsA, "a-node");
+  const b = join(room, wsB, "b-node");
+  const { spawnFleet, hurtEnemy, setFlockRandomForTests } = await import("../../../ui/src/wallet/rebels/rebelsCombat");
+  setFlockRandomForTests(() => 1);
+  const fleet = spawnFleet(room.combat, 2, a.body.pos, a.body.fwd, { count: 4 });
+  /* A downs three, B downs one. */
+  for (const [d, who] of [[fleet[0], a.id], [fleet[1], a.id], [fleet[2], b.id], [fleet[3], a.id]] as const) {
+    hurtEnemy(room.combat, d, 999, d.pos.clone().add(new THREE.Vector3(0, 0, 1)), who);
+  }
+  room.step();
+  await new Promise((r) => setTimeout(r, 0));
+  ok("a fifth of a kill a member, on the seats", Math.abs(a.kills - 0.6) < 1e-9 && Math.abs(b.kills - 0.2) < 1e-9, `${a.kills} ${b.kills}`);
+  ok("the seat over half takes the flock kill", a.flocks === 1 && b.flocks === 0, `${a.flocks} ${b.flocks}`);
+  ok("the tally is cleared with the fleet", a.tally.size === 0 && b.tally.size === 0);
+  ok("a gem of the fleet's tier is in the world", room.combat.gems.length === 1 && room.combat.gems[0].tier === 2);
+  ok("everyone is told", wsB.all("e").some((m: any) => (m.v as any[]).some((v) => v.k === "flockDown" && v.who === a.id)));
+  const st = wsA.last("s");
+  ok("and sees it on the wire", Array.isArray(st.G) && st.G.length === 1 && st.G[0][3] === 2, JSON.stringify(st.G));
+  const saved = [...storage.keys()].filter((k) => String(k).startsWith("gem:"));
+  ok("it is written to storage at once", saved.length === 1, `${saved.length}`);
+
+  /* B flies through it: B's property, banked, gone from storage. */
+  const gem = room.combat.gems[0];
+  b.body.pos.copy(gem.pos);
+  room.combat.gems.length = 0;
+  room.combat.events.push({ kind: "gem", at: gem.pos.clone(), power: 1, tier: gem.tier, who: b.id });
+  room.step();
+  await new Promise((r) => setTimeout(r, 0));
+  ok("the gem is the seat's", b.gems[1] === 1, `${b.gems}`);
+  ok("and leaves storage", [...storage.keys()].filter((k) => String(k).startsWith("gem:")).length === 0);
+  credits.length = 0;
+  await room.bank(b);
+  ok("banking carries gems and flock kills", credits[0]?.gems?.[1] === 1 && credits[0]?.flocks === 0, JSON.stringify(credits[0]));
+  credits.length = 0;
+  await room.bank(a);
+  ok("and the flock kill", credits[0]?.flocks === 1, JSON.stringify(credits[0]));
+  room.stop();
+}
+
+// Everyone dead: the fight starts over at wave one; gems survive it.
+{
+  storage.clear();
+  const room = newRoom();
+  const wsA = new FakeSocket(), wsB = new FakeSocket();
+  const a = join(room, wsA, "r-a");
+  const b = join(room, wsB, "r-b");
+  const { startWave, dropGem } = await import("../../../ui/src/wallet/rebels/rebelsCombat");
+  startWave(room.combat, 7);
+  room.combat.enemies.push(...room.combat.enemies);   /* whatever is there */
+  dropGem(room.combat, 3, a.body.pos.clone().add(new THREE.Vector3(0, 0, 20)), "keep-me");
+  const waveBefore = room.combat.wave?.n;
+  room.down(a);
+  ok("one player down: the fight goes on", room.combat.wave?.n === waveBefore && !b.dead, `${room.combat.wave?.n}`);
+  room.down(b);
+  ok("everyone down: back to wave one", room.combat.wave?.n === 1, `${room.combat.wave?.n}`);
+  ok("with nothing left in the air", room.combat.enemies.length === 0 && room.combat.bullets.length === 0);
+  ok("and the gems still there", room.combat.gems.length === 1 && room.combat.gems[0].id === "keep-me");
+  room.stop();
+}
+
+// The speed budget allows a super-boosting ship, and grows with a faster item.
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "fast-a");
+  ok("a stock ship is budgeted for super boost plus a slide", seat.topSpeed > BOOST * 2 && seat.topSpeed < BOOST * 2.5, `${seat.topSpeed.toFixed(1)}`);
+  /* Two boosts' worth of movement in one report: fine. */
+  room.now = 1;
+  (seat as any).lastTf = 0.95;
+  const p = seat.body.pos.clone().add(new THREE.Vector3(0, BOOST * 2 * 0.05, 0));
+  ws.deliver(JSON.stringify({ t: "tf", p: p.toArray(), f: [0, 1, 0] }));
+  ok("a super-boost move is accepted", seat.body.pos.distanceTo(p) < 1e-6 && !ws.all("no").length, JSON.stringify(ws.last("no")));
+  room.stop();
+}
+
+// Respawn: thirty seconds, ten with a VIP Pass declared.
+{
+  const room = newRoom();
+  const wsA = new FakeSocket(), wsB = new FakeSocket();
+  room.seat(wsA as never);
+  const idA = wsA.last("hi").id as string;
+  wsA.deliver(JSON.stringify({ t: "join", node: "v-a", name: "A", home: [0, 0, R], gear: ["vip"] }));
+  const a = room.seats.get(idA);
+  const b = join(room, wsB, "v-b");
+  room.down(a);
+  ok("a VIP pass respawns in ten seconds", a.respawn === 10, `${a.respawn}`);
+  room.down(b);
+  ok("without it, thirty", b.respawn === 30, `${b.respawn}`);
+  room.stop();
+}
+
+// Opened passives ride in with the gear; Y is applied by the room and paced.
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  room.seat(ws as never);
+  ws.deliver(JSON.stringify({ t: "join", node: "h-node", name: "H", home: [0, 0, R], gear: ["hull3", "vstrafe2", "deathray"] }));
+  const seat = room.seats.get(ws.last("hi").id);
+  ok("a Hull Boost T3 in the gear is 60% more hull, from the room", seat.shieldMax === Math.round(MAX_SHIELD * 1.6) && seat.shield === seat.shieldMax, `${seat.shieldMax}`);
+  ok("junk gear is dropped, opened passives kept", seat.gear.has("hull3") && seat.gear.has("vstrafe2") && !seat.gear.has("deathray"));
+  ok("the top speed budget knows the vertical strafe", seat.topSpeed > BOOST * 2 + 4.5 * 1.42);
+  seat.shield = 100; seat.ammo = 2; seat.torps = 0; seat.guards = 0;
+  ws.deliver(JSON.stringify({ t: "use", k: "recharge" }));
+  ok("a recharge refills the seat to ITS full", seat.shield === seat.shieldMax && seat.ammo === seat.ammoMax && seat.torps === seat.torpsMax && seat.guards === MAX_GUARDS, `${seat.shield} ${seat.ammo} ${seat.torps} ${seat.guards}`);
+  ok("and the gauges go straight back", ws.last("you").shield === seat.shieldMax);
+  ws.deliver(JSON.stringify({ t: "use", k: "supercharge" }));
+  ok("a second one inside two seconds is ignored", seat.shield === seat.shieldMax);
+  room.now += 3;
+  ws.deliver(JSON.stringify({ t: "use", k: "supercharge" }));
+  ok("after the gap, a supercharge doubles", seat.shield === seat.shieldMax * 2 && seat.ammo === seat.ammoMax * 2, `${seat.shield}`);
+  room.now += 3;
+  ws.deliver(JSON.stringify({ t: "use", k: "deathray" }));
+  ok("a made-up item is refused", ws.last("no")?.why === "no such item");
+  room.stop();
+}
+
+// The dragon goes over the wire as kind 2, with its two thousand.
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  join(room, ws, "d-node");
+  spawnDragon(room.combat, new THREE.Vector3(0, 0, R + 30));
+  room.step();
+  const st = ws.last("s");
+  const row = (st.E as any[]).find((e) => e[9] === 2);
+  ok("the cockpit is told it is a dragon", !!row && row[8] === 2000, JSON.stringify(row));
+  ok("and told it appeared", ws.all("e").some((m: any) => (m.v as any[]).some((v) => v.k === "dragon")));
+  room.stop();
+}
+
+// Dropped items: the room rolls, the owner alone sees it for a minute, the
+// pickup is banked by key, and it survives a restart.
+{
+  storage.clear();
+  const room = newRoom();
+  const wsA = new FakeSocket(), wsB = new FakeSocket();
+  const a = join(room, wsA, "a-node");
+  const b = join(room, wsB, "b-node");
+  const rolls: number[] = [];
+  room.setDropsForTests(null, () => rolls.shift() ?? 0.99);
+  /* The capture ball is the client's measurement, kept within reason. */
+  ok("a join without a reach gets the floor", a.body.reach === 2.2, `${a.body.reach}`);
+  const wsW = new FakeSocket();
+  room.seat(wsW as never);
+  wsW.deliver(JSON.stringify({ t: "join", node: "w-node", name: "W", home: [0, 0, R], reach: 400 }));
+  const wSeat = room.seats.get(wsW.last("hi").id);
+  ok("a giant reach is clamped to the ceiling", wSeat.body.reach === 9, `${wSeat.body.reach}`);
+  room.leave(wSeat);
+  const { spawnFleet, hurtEnemy, setFlockRandomForTests } = await import("../../../ui/src/wallet/rebels/rebelsCombat");
+  setFlockRandomForTests(() => 1);
+  const fleet = spawnFleet(room.combat, 2, a.body.pos, a.body.fwd, { count: 3 });
+  rolls.push(0.01, 0);
+  hurtEnemy(room.combat, fleet[0], 999, fleet[0].pos.clone().add(new THREE.Vector3(0, 0, 1)), a.id);
+  room.step();
+  await new Promise((r) => setTimeout(r, 0));
+  const drop = room.combat.gems.find((g: any) => g.item);
+  ok("a kill in the room can leave an item", drop?.item === "recharge" && drop?.owner === a.id, JSON.stringify(drop && { item: drop.item, owner: drop.owner }));
+  ok("it is written to storage with its name and owner", [...storage.map.values()].some((v: any) => v.item === "recharge" && v.owner === a.id));
+  const sA = wsA.last("s"), sB = wsB.last("s");
+  ok("the owner sees it on the wire", Array.isArray(sA.G) && sA.G.some((g: any) => g[6] === "recharge" && g[7] === a.id && g[8] > 0), JSON.stringify(sA.G));
+  ok("nobody else is told it exists", !Array.isArray(sB.G) || !sB.G.some((g: any) => g[6] === "recharge"), JSON.stringify(sB.G));
+  ok("the drop event carries the key and reaches the owner", wsA.all("e").some((m: any) => (m.v as any[]).some((v) => v.k === "drop" && v.item === "recharge" && v.id === drop.id)));
+
+  /* B parks on it: nothing, for a minute. */
+  b.body.pos.copy(drop.pos);
+  a.body.pos.set(0, 0, R + 90);
+  room.step();
+  ok("someone else cannot take it yet", room.combat.gems.includes(drop) && Object.keys(b.items).length === 0);
+  drop.hidden = 0;
+  room.step();
+  b.body.pos.copy(drop.pos);
+  room.step();
+  await new Promise((r) => setTimeout(r, 0));
+  ok("after the minute it is anyone's, and goes into the seat by key", b.items.recharge === 1, JSON.stringify(b.items));
+  ok("and leaves the world and storage", !room.combat.gems.includes(drop) && ![...storage.map.values()].some((v: any) => v.item === "recharge"));
+  ok("the taker is told which item", wsB.all("e").some((m: any) => (m.v as any[]).some((v) => v.k === "gem" && v.item === "recharge" && v.who === b.id)));
+  credits.length = 0;
+  await room.bank(b);
+  ok("banking carries items by key", credits[0]?.items?.recharge === 1, JSON.stringify(credits[0]));
+  ok("and the seat is empty again", Object.keys(b.items).length === 0);
+
+  /* Another drop, still private, and the room restarts: it comes back as
+     everyone's, because its owner's seat is gone. */
+  rolls.push(0.01, 0.5);
+  hurtEnemy(room.combat, fleet[1], 999, fleet[1].pos.clone().add(new THREE.Vector3(0, 0, 1)), a.id);
+  room.step();
+  await new Promise((r) => setTimeout(r, 0));
+  const second = room.combat.gems.find((g: any) => g.item);
+  ok("(setup) a private drop is in the world", !!second && second.hidden > 0, JSON.stringify(second && { item: second.item }));
+  room.stop();
+  await new Promise((r) => setTimeout(r, 0));
+  const room2 = newRoom();
+  room2.setDropsForTests(null, () => 0.99);
+  const ws2 = new FakeSocket();
+  join(room2, ws2, "c-node");
+  await new Promise((r) => setTimeout(r, 0));
+  const back = room2.combat.gems.find((g: any) => g.item === second.item);
+  ok("it is there after a restart, and now anyone's", !!back && back.hidden === 0 && back.owner === "", JSON.stringify(back && { hidden: back.hidden, owner: back.owner }));
+  room2.stop();
+}
+
+console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

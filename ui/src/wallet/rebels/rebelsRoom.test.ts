@@ -259,6 +259,45 @@ async function main() {
     }
   }
 
+    /* ---- gear and beams on the wire ---- */
+  {
+    sock = null;
+    const room = R.joinRoom({ node: "n", name: "me", home: new THREE.Vector3(0, 0, 100), ship: "x", gear: ["mini", "beam1"] });
+    sock!.accept();
+    const join = [...sent].reverse().map((x) => JSON.parse(x) as Record<string, unknown>).find((m) => m.t === "join") as Record<string, unknown>;
+    ok("the join carries the gear", Array.isArray(join?.gear) && (join.gear as string[]).join(",") === "mini,beam1",
+       JSON.stringify(join?.gear));
+    sock!.deliver({ t: "hi", id: "s1", hz: 20 });
+    room.fire("beam", new THREE.Vector3(0, 0, 108), new THREE.Vector3(0, 1, 0), undefined, "beam1");
+    const shot = last() as Record<string, unknown>;
+    ok("a beam names its weapon", shot?.k === "beam" && shot?.w === "beam1", JSON.stringify(shot));
+    sock!.deliver({ t: "s", n: 1, w: 1, P: [], E: [], B: [], C: [],
+      M: [[0, 0, 108, 0, 1, 0, "beam2", 0.4]] });
+    ok("beams arrive with the weapon's own cone, reach and colour",
+       room.beams.length === 1 && room.beams[0].key === "beam2" && room.beams[0].life === 0.4
+       && room.beams[0].reach > 90 && room.beams[0].half > 0 && room.beams[0].fwd.y === 1,
+       JSON.stringify(room.beams[0] ?? null));
+    sock!.deliver({ t: "s", n: 2, w: 1, P: [], E: [], B: [], C: [] });
+    ok("and are gone when the wire stops carrying them", room.beams.length === 0);
+    room.close();
+  }
+
+  /* ---- the wallet must be ALLOWED to open the socket ----
+     The room worked from a browser and never from the wallet: the webview's
+     content security policy did not list the room's host, so every attempt
+     was refused before it left the app and the cockpit sat on "retrying"
+     for good. The policy lives in the app's config; this reads it and checks
+     the host the client is built with is in connect-src. */
+  {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const conf = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), "../crates/app/tauri.conf.json"), "utf8"));
+    const csp: string = conf?.app?.security?.csp ?? conf?.tauri?.security?.csp ?? "";
+    const connect = csp.split(";").map((x: string) => x.trim()).find((x: string) => x.startsWith("connect-src")) ?? "";
+    const host = new URL(R.ROOM_BASE.replace("wss://", "https://")).host;
+    ok("the wallet's policy lets the socket reach the room", connect.includes(`wss://${host}`), connect.slice(0, 120));
+  }
+
   console.log(out.join("\n"));
   console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);
