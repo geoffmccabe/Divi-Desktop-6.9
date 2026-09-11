@@ -11,7 +11,8 @@ import * as THREE from "three";
 import { RebelsRoom } from "../src/room";
 import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES, MAX_GUARDS } from "../../../ui/src/wallet/rebels/orbitFlight";
-import { setDropRandomForTests } from "../../../ui/src/wallet/rebels/rebelsCombat";
+import { setDropRandomForTests, setDragonRandomForTests, spawnDragon } from "../../../ui/src/wallet/rebels/rebelsCombat";
+setDragonRandomForTests(() => 0.99);
 
 /* Wrecks roll for items. Pinned to "nothing" so a count of gems or storage
    keys in the tests below is what the test put there; the drop block sets
@@ -515,6 +516,22 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.now += 3;
   ws.deliver(JSON.stringify({ t: "use", k: "deathray" }));
   ok("a made-up item is refused", ws.last("no")?.why === "no such item");
+  room.stop();
+}
+
+// The dragon goes over the wire as kind 2, with its two thousand.
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  join(room, ws, "d-node");
+  spawnDragon(room.combat, new THREE.Vector3(0, 0, R + 30));
+  room.step();
+  const st = ws.last("s");
+  const row = (st.E as any[]).find((e) => e[9] === 2);
+  ok("the cockpit is told it is a dragon", !!row && row[8] === 2000, JSON.stringify(row));
+  ok("and told it appeared", ws.all("e").some((m: any) => (m.v as any[]).some((v) => v.k === "dragon")));
   room.stop();
 }
 

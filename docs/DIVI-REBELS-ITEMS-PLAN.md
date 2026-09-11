@@ -330,3 +330,26 @@ phase ships on its own with tests, docs and a version.
 - Trust, stated: Y and opening are the client's word (as gear is); forging
   is the server's roll on the account's counts. Anyone who knows an
   owner key could forge that account's items (waste, never gain).
+
+## Built: the Dragon (2026-Sep-11, v69.9.27)
+
+- Model uploaded to the shared asset bucket as
+  `siege/scifi/rebels_dragon.glb` (https://assets.dreadroot.com/siege/scifi/rebels_dragon.glb,
+  9.1 MB). `spaceAssets.ts` keeps its own textures (RAW_MODELS, no Synty
+  atlas) and its animation clip (`modelClips`). Fetched once at attach,
+  cached on the machine after that.
+- In the sim (`rebelsCombat.ts`): once a minute (`DRAGON_CHECK_SECONDS`)
+  one chance in ten (`DRAGON_CHANCE`), one at a time, anywhere in Earth's
+  orbit at 14 to 40 units up, ten seconds (`DRAGON_LIFE`), 2000 health
+  (`DRAGON_HP`), hit radius 3.6 (`DRAGON_R`). It is an Enemy with
+  `dragon: true`: every bullet, beam and torpedo already hits it; it never
+  flies a pass or fires. Gone quietly after ten seconds ("dragonGone").
+  Killed, it always leaves a DRAGON EGG for the killer (no chart roll),
+  counts as a kill, not a tier kill, and leaves no wreckage.
+- Egg: `dragonegg`, kind `egg`, tier 1, drawn as an oval with a D in the
+  world, on the inventory cards, sealed or opened. The wingman's mark is
+  now W so the D is the egg's.
+- Wire: E row kind 2 = dragon. Cockpit draws it with the animated rig at
+  30% opacity, nine units long (`DRAGON_SIZE`), pointing along its glide.
+  "A DRAGON" on the HUD when it appears.
+- Room and solo both roll it in the one simulation.

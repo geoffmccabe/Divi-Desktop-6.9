@@ -15,6 +15,7 @@ import {
   TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, COIN_TOP, COIN_MU,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   setDropRandomForTests, dropItem, clampReach, REACH_MIN, REACH_MAX,
+  setDragonRandomForTests, spawnDragon, stepDragon, DRAGON_CHECK_SECONDS, DRAGON_CHANCE, DRAGON_LIFE, DRAGON_HP, DRAGON_R, enemyRadius,
   type CombatState, type Enemy,
   ENEMY_SPEED,
   stepFlockSpawns,
@@ -33,6 +34,8 @@ import {
 setFlockRandomForTests(() => 1);
 /* And wrecks roll for items: pinned to "nothing" until the drop block. */
 setDropRandomForTests(() => 0.99);
+/* And the dragon never comes unless a test calls it. */
+setDragonRandomForTests(() => 0.99);
 
 const out: string[] = [];
 let failures = 0;
@@ -1621,6 +1624,52 @@ function run(c: CombatState, frames: number, w = world()) {
   hurtEnemy(c, mk(1), 9999, new THREE.Vector3(0, 0, R + 31), "A");
   ok("an enemy no rule covers drops nothing", !c.gems.some((g) => g.item));
   setDropRandomForTests(() => 0.99);
+}
+
+/* ---- the dragon ----
+   Once a minute, one chance in ten; ten seconds; two thousand health; an
+   egg. It never fires and never counts as a tier kill. */
+{
+  const c = createCombat();
+  const a = { id: "A", pos: new THREE.Vector3(0, 0, R + 30), fwd: new THREE.Vector3(1, 0, 0) };
+  const w = world({ players: [a] });
+  const rolls: number[] = [];
+  setDragonRandomForTests(() => rolls.shift() ?? 0.99);
+  rolls.push(0.5, 0.5);
+  for (let i = 0; i < 60 * DRAGON_CHECK_SECONDS - 1; i++) stepCombat(c, 1 / 60, w);
+  ok("nothing before the minute", !c.enemies.some((e) => e.dragon));
+  stepCombat(c, 1 / 60, w); stepCombat(c, 1 / 60, w);
+  ok("a roll over ten percent is no dragon", !c.enemies.some((e) => e.dragon));
+  rolls.length = 0;
+  rolls.push(DRAGON_CHANCE - 0.01, 0.5);
+  for (let i = 0; i < 60 * DRAGON_CHECK_SECONDS + 2; i++) stepCombat(c, 1 / 60, w);
+  const d = c.enemies.find((e) => e.dragon);
+  ok("under it, a dragon appears", !!d && d.shield === DRAGON_HP, `${d?.shield}`);
+  ok("in Earth's general orbit", !!d && d.pos.length() > R + 10 && d.pos.length() < R + 45, `${d && (d.pos.length() - R).toFixed(1)}`);
+  ok("it is announced", c.events.some((ev) => ev.kind === "dragon"));
+  ok("it is big to hit", enemyRadius(d!) === DRAGON_R);
+  clearEvents(c);
+  const fired = c.bullets.length;
+  for (let i = 0; i < 60 * 3; i++) stepCombat(c, 1 / 60, w);
+  ok("it never fires", c.bullets.length === fired && !c.events.some((ev) => ev.kind === "enemyShot"));
+  ok("it glides rather than hunts", !!d && d.pos.distanceTo(a.pos) > 5);
+  for (let i = 0; i < 60 * (DRAGON_LIFE - 2); i++) stepCombat(c, 1 / 60, w);
+  ok("after ten seconds it is gone, quietly", !c.enemies.some((e) => e.dragon) && c.events.some((ev) => ev.kind === "dragonGone") && !c.events.some((ev) => ev.kind === "enemyDown"));
+
+  /* Killed: an egg for the killer, no chart roll, no tier kill. */
+  clearEvents(c);
+  const d2 = spawnDragon(c, new THREE.Vector3(0, 0, R + 30));
+  const before = c.tierKills.slice();
+  hurtEnemy(c, d2, DRAGON_HP - 1, new THREE.Vector3(0, 0, R + 29), "A");
+  ok("1999 damage leaves it flying", c.enemies.includes(d2) && d2.shield > 0);
+  hurtEnemy(c, d2, 5, new THREE.Vector3(0, 0, R + 29), "A");
+  ok("2000 finishes it", !c.enemies.includes(d2));
+  const egg = c.gems.find((g) => g.item === "dragonegg");
+  ok("and it leaves a Dragon Egg, the killer's", !!egg && egg.owner === "A" && egg.tier === 1, egg?.item);
+  ok("no tier kill for it, but a kill", before.join() === c.tierKills.join() && c.kills >= 1);
+  ok("no wreckage", c.junk.length === 0);
+  ok("only ever one at a time", (rolls.push(0, 0), c.dragonClock = DRAGON_CHECK_SECONDS, spawnDragon(c), stepDragon(c, 0.01), c.enemies.filter((e) => e.dragon).length) === 1);
+  setDragonRandomForTests(() => 0.99);
 }
 
 console.log(out.join("\n"));

@@ -106,7 +106,7 @@ export interface Room {
   /** Everybody else. */
   others(): RoomPlayer[];
   /** The fight, as the room sees it. Overwritten every tick. */
-  enemies: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; tier: number; shield: number; shieldMax: number; drone?: boolean; id?: number }>;
+  enemies: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; tier: number; shield: number; shieldMax: number; drone?: boolean; dragon?: boolean; id?: number }>;
   bullets: Array<{ pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean; mini: boolean }>;
   coins: Array<{ pos: THREE.Vector3 }>;
   wave: number;
@@ -357,7 +357,7 @@ export function joinRoom(opts: Opts): Room {
         room.enemies = ((m.E ?? []) as number[][]).map((e) => ({
           pos: new THREE.Vector3(e[0], e[1], e[2]),
           fwd: new THREE.Vector3(e[3], e[4], e[5]),
-          tier: e[6], shield: e[7], shieldMax: e[8], drone: e[9] === 1, id: e[10] || 0,
+          tier: e[6], shield: e[7], shieldMax: e[8], drone: e[9] === 1, dragon: e[9] === 2, id: e[10] || 0,
         }));
         room.bullets = ((m.B ?? []) as number[][]).map((b) => ({
           pos: new THREE.Vector3(b[0], b[1], b[2]),

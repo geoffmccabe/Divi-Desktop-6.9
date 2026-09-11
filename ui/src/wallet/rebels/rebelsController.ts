@@ -16,7 +16,7 @@ import {
   type Flight, type Stick,
 } from "./orbitFlight";
 import {
-  clampReach, REACH_MIN,
+  clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
   createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles, fireBeam,
   fireMini, miniMuzzle, spawnFleet,
   STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
@@ -28,7 +28,7 @@ import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT, playerName } fro
 import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import { installSky, skyTexture, type SkyHandle } from "./starfield";
-import { loadModel, unitCopy } from "./spaceAssets";
+import { loadModel, unitCopy, modelClips } from "./spaceAssets";
 import { loadShip } from "./shipChoice";
 import { loadPaint, makeRepaintable, type PaintHandle } from "./shipColours";
 import {
@@ -212,6 +212,41 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      by index. Built from a single prototype and cloned, so a spawn costs a
      clone rather than a pile of new geometry. */
   let protos: THREE.Group[] = [];
+  /* ---- the dragon's rig ----
+     One, because there is only ever one dragon. The model is fetched once
+     (nine megabytes, then cached on this machine) when the game attaches,
+     so its first appearance is not a download. Drawn at thirty percent,
+     animated with its own clip. Geoff, 2026-Sep-11. */
+  const DRAGON_SIZE = 9;
+  const DRAGON_OPACITY = 0.3;
+  let dragonRig: { group: THREE.Group; mixer: THREE.AnimationMixer } | null = null;
+  let dragonProto: THREE.Group | null = null;
+  function ensureDragonRig(): void {
+    if (dragonRig || !dragonProto || !scene) return;
+    const group = unitCopy(dragonProto);
+    group.scale.setScalar(DRAGON_SIZE);
+    group.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      const ghosts = mats.map((mat) => {
+        const c = (mat as THREE.Material).clone() as THREE.MeshStandardMaterial;
+        c.transparent = true; c.opacity = DRAGON_OPACITY; c.depthWrite = false;
+        return c;
+      });
+      m.material = Array.isArray(m.material) ? ghosts : ghosts[0];
+      m.frustumCulled = false;
+    });
+    /* The mixer wants the model the clip was made for: the one inside the
+       two normalising wrappers unitCopy adds. */
+    const inner = group.children[0]?.children[0] ?? group;
+    const mixer = new THREE.AnimationMixer(inner);
+    const clip = modelClips("rebels_dragon")[0];
+    if (clip) mixer.clipAction(clip).play();
+    group.visible = false;
+    scene.add(group);
+    dragonRig = { group, mixer };
+  }
   /* ---- the room ----
      Null when flying alone, which is still a perfectly good way to play. While
      it is live the ROOM owns the fight: the fighters, every round in the air,
@@ -1417,7 +1452,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             }
             combat.enemies.push({
               id: e.id, pos: e.pos, fwd: e.fwd, roll: 0,
-              cls: TIERS[Math.max(0, Math.min(TIERS.length - 1, e.tier - 1))],
+              cls: e.dragon ? DRAGON_CLASS : TIERS[Math.max(0, Math.min(TIERS.length - 1, e.tier - 1))],
+              ...(e.dragon ? { dragon: true as const, life: DRAGON_LIFE } : {}),
               shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
               spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
               weave: 0, weaveDir: 1, mode: "in", breakAt: 0, rejoinAt: 0,
@@ -1583,6 +1619,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               flocks += 1;
               setHud({ flocks, note: "FLOCK DOWN", noteAt: performance.now() });
             }
+          } else if (ev.kind === "dragon") {
+            playTorpedoBlast();
+            setHud({ note: "A DRAGON", noteAt: performance.now() });
+          } else if (ev.kind === "dragonGone") {
+            fx.boom(ev.at, 1.5, "cold");
           } else if (ev.kind === "drop") {
             /* Something fell out of the wreck. A glint; the thing itself is
                drawn from the gem list, and only its owner sees it. */
@@ -1652,7 +1693,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            after the first wave of each tier. */
         seenEnemies.clear();
         for (const e of combat.enemies) {
-          if (e.drone) continue;
+          if (e.drone || e.dragon) continue;
           const id = e.id ?? -1;
           const tier = e.cls.tier;
           let slot = enemyRigs.get(id);
@@ -1684,9 +1725,22 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           releaseHull(slot);
           enemyRigs.delete(id);
         }
+        /* The dragon, if it is here. */
+        const dragon = combat.enemies.find((e) => e.dragon) ?? null;
+        if (dragon) ensureDragonRig();
+        if (dragonRig) {
+          dragonRig.group.visible = !!dragon;
+          if (dragon) {
+            dragonRig.group.position.copy(dragon.pos);
+            s.target.copy(dragon.pos).addScaledVector(dragon.fwd, 10);
+            s.m4.lookAt(dragon.pos, s.target, dragon.pos.clone().normalize());
+            dragonRig.group.quaternion.setFromRotationMatrix(s.m4);
+            dragonRig.mixer.update(Math.min(0.1, dt));
+          }
+        }
         const nowS = performance.now() / 1000;
         for (const e of combat.enemies) {
-          if (e.drone) continue;
+          if (e.drone || e.dragon) continue;
           const slot = enemyRigs.get(e.id ?? -1);
           if (!slot) continue;
           const m = slot.mesh, rig = slot.rig;
@@ -1823,6 +1877,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         stopLoadoutWatch = watchLoadout();
         void loadLoadoutRemote().then((moved) => { if (moved) setHud({ points: spendable() }); });
       }
+      void loadModel("rebels_dragon").then((p) => { dragonProto = p; }).catch((e) => dflow.note(`dragon model: ${String(e)}`));
       void fetchDropConfig().then((r) => {
         drops = r.config;
         combat.drops = r.config;
@@ -2114,6 +2169,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         else if (mat) mat.dispose();
       });
       fx = null; protos = [];
+      dragonRig = null;
       if (!suspended) {
         combat = freshCombat();
         flight = null;

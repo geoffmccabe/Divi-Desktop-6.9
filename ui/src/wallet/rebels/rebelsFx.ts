@@ -945,6 +945,8 @@ export function createFx(): Fx {
         slot.ball.material = dropMatFor(g.tier, spec ? itemMark(spec) : "?");
         slot.ball.position.copy(g.pos);
         slot.ball.rotation.set(0, g.spin, 0);
+        /* The egg is an oval; everything else a ball. */
+        slot.ball.scale.set(1, spec?.kind === "egg" ? 1.4 : 1, 1);
         slot.glow.position.copy(g.pos);
         /* A little bigger and brighter while it is still yours alone, so the
            minute reads as something. */

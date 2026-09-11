@@ -33,7 +33,8 @@ const fired: string[] = [];
 /* ---- the catalogue ---- */
 {
   ok("the store still sells exactly what it sold", ITEMS.length === 7 && ITEMS.every((i) => !i.drop));
-  ok("twenty-two found things", DROP_ITEMS.length === 22, `${DROP_ITEMS.length}`);
+  ok("twenty-three found things, the egg among them", DROP_ITEMS.length === 23 && itemByKey("dragonegg")?.kind === "egg" && itemByKey("dragonegg")?.tier === 1, `${DROP_ITEMS.length}`);
+  ok("the egg wears a D, the wingman a W", itemMark(itemByKey("dragonegg")!) === "D" && itemMark(itemByKey("drone1")!) === "W");
   ok("every found thing is priceless and needs nothing", DROP_ITEMS.every((i) => i.drop && i.points === 0 && i.needs === null));
   ok("keys are unique across both lists", new Set(ALL_ITEMS.map((i) => i.key)).size === ALL_ITEMS.length);
   ok("itemByKey finds a found thing", itemByKey("drone5")?.tier === 5 && itemByKey("vstrafe4")?.amount === 3);
@@ -42,7 +43,7 @@ const fired: string[] = [];
   ok("the two consumables say so", itemByKey("recharge")?.consumable === true && itemByKey("supercharge")?.consumable === true && !itemByKey("hull1")?.consumable);
   ok("seven tier colours, yellow first, red fifth", ITEM_TIER_COLOURS.length === 7 && itemTierColour(1) === 0xf2d94a && itemTierColour(5) === 0xff4d4d);
   ok("a tier past the end is the last colour", itemTierColour(9) === ITEM_TIER_COLOURS[6] && itemTierColour(0) === ITEM_TIER_COLOURS[0]);
-  ok("marks tell the kinds apart", new Set(DROP_ITEMS.map((i) => itemMark(i))).size === 8, [...new Set(DROP_ITEMS.map((i) => itemMark(i)))].join(""));
+  ok("marks tell the kinds apart", new Set(DROP_ITEMS.map((i) => itemMark(i))).size === 9, [...new Set(DROP_ITEMS.map((i) => itemMark(i)))].join(""));
   ok("forged by-name tiers exist for the four families up to seven", FORGED_ITEMS.length === 3 + 3 + 2 + 2, `${FORGED_ITEMS.length}`);
   ok("a by-name tier has the top tier's power and never drops", itemByKey("hull7")?.amount === itemByKey("hull5")?.amount && itemByKey("hull7")?.byName === true && !itemByKey("hull7")?.drop && itemByKey("strafe6")?.amount === 3);
   ok("only tiered families forge, and not at the top", forgeable(itemByKey("hull1")!) && forgeable(itemByKey("drone5")!) && !forgeable(itemByKey("hull7")!) && !forgeable(itemByKey("recharge")!) && !forgeable(itemByKey("portal")!));
@@ -52,7 +53,7 @@ const fired: string[] = [];
   ok("capped at seven by name", forgeResult(itemByKey("vstrafe4")!, 0.995) === "vstrafe7" && forgeResult(itemByKey("hull6")!, 0.5) === "hull7");
   ok("the passives read the best tier held", Math.abs(hullMult(["hull2", "hull1"]) - 1.4) < 1e-9 && hullMult([]) === 1 && vstrafeMult(["vstrafe3"]) === 2.5 && vstrafeMult(["strafe4"]) === 1 && strafeMult(["strafe2"]) === 2);
   ok("a by-name tier applies the top's power", Math.abs(hullMult(["hull7"]) - 2) < 1e-9);
-  ok("every droppable key is a found thing", droppableKeys().length === 22 && droppableKeys().every((k) => itemByKey(k)?.drop));
+  ok("every droppable key is a found thing", droppableKeys().length === 23 && droppableKeys().every((k) => itemByKey(k)?.drop));
 }
 
 /* ---- the default chart ---- */

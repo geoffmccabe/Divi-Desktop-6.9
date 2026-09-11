@@ -21,7 +21,9 @@ export type ItemKind =
   | "torpedo" | "mag" | "vip" | "super" | "strafe"
   /* Found, not bought. See DROP_ITEMS below and docs/DIVI-REBELS-ITEMS-PLAN.md.
      "strafe" is the horizontal one; "vstrafe" is R and C. */
-  | "recharge" | "supercharge" | "reargun" | "vstrafe" | "hull" | "portal" | "drone";
+  | "recharge" | "supercharge" | "reargun" | "vstrafe" | "hull" | "portal" | "drone"
+  /* What the dragon leaves. An oval sphere with a D on it, tier one. */
+  | "egg";
 
 export interface ItemSpec {
   key: string;
@@ -157,6 +159,8 @@ export const DROP_ITEMS: ItemSpec[] = [
   dropRow("portal", "Local Portal", "portal", 1, 1,
     "Place it anywhere near Earth. Anyone can fly in and pick where to come out."),
   droneRow(1), droneRow(2), droneRow(3), droneRow(4), droneRow(5),
+  dropRow("dragonegg", "Dragon Egg", "egg", 1, 1,
+    "Left by the dragon. Nobody knows yet what hatches from it."),
 ];
 
 /* ---- FORGING ----
@@ -221,7 +225,8 @@ export function itemMark(spec: ItemSpec): string {
     case "strafe": return "H";
     case "hull": return "B";
     case "portal": return "P";
-    case "drone": return "D";
+    case "drone": return "W";
+    case "egg": return "D";
     default: return spec.name[0] ?? "?";
   }
 }

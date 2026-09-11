@@ -18,6 +18,8 @@ export interface SphereLook {
   tier: number;
   /** The print on it, or nothing for a sealed sphere. */
   label?: string;
+  /** An egg: taller than it is wide. */
+  oval?: boolean;
 }
 
 interface Card { canvas: HTMLCanvasElement; look: SphereLook; phase: number }
@@ -114,6 +116,8 @@ function frame(now: number): void {
     r.haloMat.color.setHex(colour);
     r.ball.rotation.y = now * 0.0007 + c.phase;
     r.ball.rotation.x = 0.18;
+    r.ball.scale.set(c.look.oval ? 0.82 : 1, c.look.oval ? 1.15 : 1, c.look.oval ? 0.82 : 1);
+    r.glow.scale.copy(r.ball.scale);
     r.renderer.render(r.scene, r.camera);
     const ctx = c.canvas.getContext("2d");
     if (ctx) {

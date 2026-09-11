@@ -99,8 +99,8 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
               {spheres.map((s) => {
                 const spec = itemByKey(s.key)!;
                 return (
-                  <SphereCard key={s.key} tier={spec.tier} count={s.count} sealed
-                    title={`TIER ${spec.tier} SPHERE`}
+                  <SphereCard key={s.key} tier={spec.tier} count={s.count} sealed oval={spec.kind === "egg"}
+                    title={spec.kind === "egg" ? "DRAGON EGG" : `TIER ${spec.tier} SPHERE`}
                     text={`${ITEM_TIER_NAMES[spec.tier - 1]} tier. Sealed. Right-click to open, or keep it to sell.`}
                     onOpen={() => open(s.key)} />
                 );
@@ -116,7 +116,7 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
                 const spec = itemByKey(s.key)!;
                 const canForge = forgeable(spec) && s.count >= FORGE_COST;
                 return (
-                  <SphereCard key={s.key} tier={spec.tier} count={s.count} label={`T${spec.tier} ${itemMark(spec)}`}
+                  <SphereCard key={s.key} tier={spec.tier} count={s.count} label={`T${spec.tier} ${itemMark(spec)}`} oval={spec.kind === "egg"}
                     title={spec.name}
                     text={spec.consumable ? `${spec.note} Press Y in flight to use one.` : spec.note}
                     action={canForge ? {
@@ -138,16 +138,16 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function SphereCard({ tier, count, label, title, text, sealed, onOpen, action }: {
+function SphereCard({ tier, count, label, title, text, sealed, onOpen, action, oval }: {
   tier: number; count: number; label?: string; title: string; text: string; sealed?: boolean; onOpen?: () => void;
-  action?: { label: string; hint: string; run: () => void };
+  action?: { label: string; hint: string; run: () => void }; oval?: boolean;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const c = ref.current;
     if (!c) return;
-    return showSphere(c, { tier, label });
-  }, [tier, label]);
+    return showSphere(c, { tier, label, oval });
+  }, [tier, label, oval]);
   const colour = `#${itemTierColour(tier).toString(16).padStart(6, "0")}`;
   return (
     <div

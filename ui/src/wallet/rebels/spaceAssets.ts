@@ -160,6 +160,14 @@ function atlasFor(id: string): THREE.Texture | null {
 const loader = new GLTFLoader();
 const inFlight = new Map<string, Promise<THREE.Group>>();
 const loaded = new Map<string, THREE.Group>();
+/** Animation clips by model id, for the few models that have them. */
+const clips = new Map<string, THREE.AnimationClip[]>();
+export function modelClips(id: string): THREE.AnimationClip[] {
+  return clips.get(id) ?? [];
+}
+/* Models that are NOT Synty: they carry their own textures and must not be
+   given the atlas. The dragon is one. */
+const RAW_MODELS = new Set(["rebels_dragon"]);
 
 async function bytesFor(id: string): Promise<ArrayBuffer> {
   const have = await cached(id);
@@ -193,10 +201,13 @@ export function loadModel(id: string): Promise<THREE.Group> {
 
   const job = bytesFor(id)
     .then((bytes) => new Promise<THREE.Group>((resolve, reject) => {
-      loader.parse(bytes, "", (gltf) => resolve(gltf.scene as THREE.Group), reject);
+      loader.parse(bytes, "", (gltf) => {
+        if (gltf.animations?.length) clips.set(id, gltf.animations);
+        resolve(gltf.scene as THREE.Group);
+      }, reject);
     }))
     .then((scene) => {
-      repair(scene, id);
+      if (!RAW_MODELS.has(id)) repair(scene, id);
       loaded.set(id, scene);
       inFlight.delete(id);
       return scene;

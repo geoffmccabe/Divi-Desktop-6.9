@@ -30,6 +30,11 @@ export const MINI_AMMO = 0.25;
 /** It keeps firing while the trigger is held, twenty times a second. */
 export const MINI_INTERVAL = 0.05;
 export const ENEMY_R = 1.05;          /* hit radius of a fighter */
+export const DRAGON_R = 3.6;          /* and of the dragon: it is big */
+/** What a round has to come within. */
+export function enemyRadius(e: { drone?: true; dragon?: true }): number {
+  return e.dragon ? DRAGON_R : e.drone ? DRONE_R : ENEMY_R;
+}
 
 /* ---- damage ----
    A hit is worth somewhere between ten and a hundred, so no two exchanges feel
@@ -539,6 +544,11 @@ export interface Enemy {
      this file then works on it without being told about it. Only the flying is
      different, and only the flying is branched on. */
   drone?: true;
+  /** The dragon: an apparition, not a fighter. Drifts, does not shoot, is
+   *  gone after DRAGON_LIFE seconds, leaves an egg. See stepDragon. */
+  dragon?: true;
+  /** dragon only: seconds left before it fades. */
+  life?: number;
   /** Which formation it flies in, and which fleet that came from. */
   group?: number;
   fleet?: number;
@@ -573,7 +583,7 @@ export interface Torpedo {
 export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
       | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "coinHit" | "waveStart"
-            | "flockDown" | "gem" | "gemHit" | "drop"
+            | "flockDown" | "gem" | "gemHit" | "drop" | "dragon" | "dragonGone"
       | "incoming" | "blocked";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
@@ -689,6 +699,8 @@ export interface CombatState {
   flocks: FlockGroup[];
   /** Seconds toward the next roll for a natural flock. */
   flockClock: number;
+  /** Seconds toward the dragon's next minute. */
+  dragonClock: number;
   /** Gems in the world. In a room these are the room's and persist. */
   gems: Gem[];
   /** What wrecks leave behind. The room and the cockpit both load the live
@@ -704,7 +716,7 @@ export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
     beams: [],
-    wave: null, flocks: [], flockClock: 0, gems: [], drops: DEFAULT_DROP_CONFIG,
+    wave: null, flocks: [], flockClock: 0, dragonClock: 0, gems: [], drops: DEFAULT_DROP_CONFIG,
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -751,7 +763,7 @@ export function hurtEnemy(
 
   /* Shield through nought is the end of it. */
   if (e.shield <= 0) {
-    breakUp(c, e);
+    if (!e.dragon) breakUp(c, e);
     const i = c.enemies.indexOf(e);
     if (i >= 0) c.enemies.splice(i, 1);
     /* ---- ANTI-CHEAT ----
@@ -765,8 +777,8 @@ export function hurtEnemy(
     if (!e.cheat) {
       c.kills += worth;
       /* Drone tiers are their own scale and would otherwise land in the
-         fighter tier buckets and inflate them. */
-      if (!e.drone) c.tierKills[e.cls.tier - 1] += 1;
+         fighter tier buckets and inflate them. The dragon is nobody's tier. */
+      if (!e.drone && !e.dragon) c.tierKills[e.cls.tier - 1] += 1;
     }
     const fleetBits = e.drone && e.fleet !== undefined && !e.cheat ? (() => {
       let left = 0;
@@ -782,7 +794,12 @@ export function hurtEnemy(
        Rolled here, in the one simulation, so the room's roll and the solo
        roll are the same roll. A flock member rolls at the full chance for
        its tier, as a fighter does (Geoff). A cheat drone leaves nothing. */
-    if (!e.cheat) {
+    if (e.dragon && !e.cheat) {
+      /* The dragon always leaves its egg. Geoff: "if killed then it drops a
+         Dragon Egg." No chart, no roll. */
+      const g = dropItem(c, "dragonegg", 1, e.pos, newDropId(), by);
+      c.events.push({ kind: "drop", at: e.pos.clone(), power: 2, tier: 1, who: by, id: g.id, item: "dragonegg" });
+    } else if (!e.cheat) {
       const key = rollDrop(c.drops, e.drone ? "flock" : "fighter", e.cls.tier, dropRandom(), dropRandom());
       if (key) {
         const spec = itemByKey(key);
@@ -792,6 +809,75 @@ export function hurtEnemy(
     }
   }
   return applied;
+}
+
+/* ---- THE DRAGON ----
+   Geoff (2026-Sep-11): "a random apparition... 10% chance each minute, and
+   last for 10 seconds. It will render, animated, and will be only 30%
+   opaque. It can appear anywhere in the general orbit of Earth. It has 2000
+   Health and if killed then it drops a Dragon Egg."
+
+   It is an Enemy so every bullet, beam, torpedo and shield test in this file
+   already works on it; it is branched on only where a fighter would fly or
+   fire, which it never does. One at a time. The clock and the roll run in
+   the one simulation, so the room's dragon is the room's and the solo
+   dragon is the cockpit's. */
+export const DRAGON_CHECK_SECONDS = 60;
+export const DRAGON_CHANCE = 0.1;
+export const DRAGON_LIFE = 10;
+export const DRAGON_HP = 2000;
+export const DRAGON_SPEED = 2.5;
+export const DRAGON_ALT = [14, 40];
+export const DRAGON_CLASS: ShipClass = { tier: 1, name: "Dragon", shieldMax: DRAGON_HP, colour: 0xffc44d, speed: 0.3, weight: 0 };
+
+let dragonRandom: () => number = Math.random;
+export function setDragonRandomForTests(fn: (() => number) | null): void {
+  dragonRandom = fn ?? Math.random;
+}
+
+export function spawnDragon(c: CombatState, at?: THREE.Vector3, fwd?: THREE.Vector3): Enemy {
+  const up = at ? at.clone().normalize() : new THREE.Vector3().randomDirection();
+  const pos = at ? at.clone() : up.clone().multiplyScalar(R + DRAGON_ALT[0] + dragonRandom() * (DRAGON_ALT[1] - DRAGON_ALT[0]));
+  const side = fwd ? fwd.clone() : new THREE.Vector3().randomDirection();
+  const heading = side.addScaledVector(up, -side.dot(up));
+  if (heading.lengthSq() < 1e-6) heading.set(0, 1, 0).addScaledVector(up, -up.y);
+  heading.normalize();
+  const e: Enemy = {
+    id: newEnemyId(), pos, fwd: heading, roll: 0, cls: DRAGON_CLASS, shield: DRAGON_HP,
+    vel: new THREE.Vector3(), tumble: new THREE.Vector3(), spin: new THREE.Vector3(),
+    flash: 0, ammo: 0, reload: 1e9, fireAt: 1e9, weave: 1e9, weaveDir: 1,
+    mode: "in", breakAt: 0, rejoinAt: 1e9, escape: new THREE.Vector3(0, 0, 1), passFor: 1e9,
+    wave: -1, dragon: true, life: DRAGON_LIFE,
+  };
+  c.enemies.push(e);
+  c.events.push({ kind: "dragon", at: pos.clone(), power: 2 });
+  return e;
+}
+
+/** Once a minute, one chance in ten. Then it drifts, then it is gone. */
+export function stepDragon(c: CombatState, dt: number): void {
+  c.dragonClock += dt;
+  if (c.dragonClock >= DRAGON_CHECK_SECONDS) {
+    c.dragonClock -= DRAGON_CHECK_SECONDS;
+    if (!c.enemies.some((e) => e.dragon) && dragonRandom() < DRAGON_CHANCE) spawnDragon(c);
+  }
+  for (let i = c.enemies.length - 1; i >= 0; i--) {
+    const e = c.enemies[i];
+    if (!e.dragon) continue;
+    e.life = (e.life ?? DRAGON_LIFE) - dt;
+    if (e.life <= 0) {
+      c.enemies.splice(i, 1);
+      c.events.push({ kind: "dragonGone", at: e.pos.clone(), power: 1 });
+      continue;
+    }
+    /* A slow glide along its heading, held to its height: an apparition,
+       not a pilot. Knockback still moves it, as it moves everything. */
+    e.pos.addScaledVector(e.fwd, DRAGON_SPEED * dt).addScaledVector(e.vel, dt);
+    e.vel.multiplyScalar(Math.max(0, 1 - 2 * dt));
+    const r = e.pos.length();
+    const up = e.pos.clone().divideScalar(r);
+    e.fwd.addScaledVector(up, -e.fwd.dot(up)).normalize();
+  }
 }
 
 /* Drops are chance; tests pin the chance. Off by a call, never by an
@@ -1351,7 +1437,7 @@ export function fireBeam(
     /* Inside the cone, generously: a fighter is a real size, so being a hair
        outside the line at forty units should still count. The allowance is the
        body's own angular size at that range. */
-    const slack = Math.atan2(e.drone ? DRONE_R : ENEMY_R, range);
+    const slack = Math.atan2(enemyRadius(e), range);
     if (rel.divideScalar(range).dot(shot.fwd) < Math.cos(half + slack)) continue;
     void cos;
     hurtEnemy(c, e, rollLaserDamage() * spec.damage * damageScale, shot.pos, owner);
@@ -1554,7 +1640,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     if (!b.hostile) {
       for (let j = c.enemies.length - 1; j >= 0 && !spent; j--) {
         const e = c.enemies[j];
-        if (!segmentHit(from, b.pos, e.pos, e.drone ? DRONE_R : ENEMY_R)) continue;
+        if (!segmentHit(from, b.pos, e.pos, enemyRadius(e))) continue;
         spent = true;
         const scale = (b.mini ? MINI_DAMAGE : 1) * w.damageScale;
         hurtEnemy(c, e, rollLaserDamage() * scale, from, b.owner ?? "");
@@ -1739,7 +1825,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     let struck = false;
     for (let k = c.enemies.length - 1; k >= 0 && !struck; k--) {
       const e = c.enemies[k];
-      if (e.pos.distanceTo(j.pos) > (e.drone ? DRONE_R : ENEMY_R) + JUNK_R) continue;
+      if (e.pos.distanceTo(j.pos) > enemyRadius(e) + JUNK_R) continue;
       struck = true;
       hurtEnemy(c, e, rollLaserDamage(), j.pos);
     }
@@ -1821,7 +1907,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     /* Drones are flown by the flock, below. They share this list so that every
        bullet, shield and explosion in this file works on them unchanged, but
        nothing about how a fighter flies applies to a sphere in formation. */
-    if (e.drone) continue;
+    if (e.drone || e.dragon) continue;
     /* Each fighter hunts whoever is closest to it, re-checked every frame, so
        flying past a dogfight pulls some of it onto you. */
     const prey = nearestPlayer(w, e.pos);
@@ -1975,6 +2061,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
      collisions; all that is left is where they go. */
   /* ---- a flock from a planet, now and then ---- */
   stepFlockSpawns(c, dt, w);
+  stepDragon(c, dt);
   stepGems(c, dt, w);
 
   if (c.flocks.length) {
