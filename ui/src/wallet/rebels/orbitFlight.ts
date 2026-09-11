@@ -42,7 +42,8 @@ export const SUPER_BOOST_MULT = 2;
 /** The fastest a ship with these extras can move, for anything that has to
  *  bound a position change: super boost plus a diagonal slide. */
 export function topSpeedFor(extras: Extras = NO_EXTRAS): number {
-  return BOOST * Math.max(1, extras.superMult) + STRAFE_SPEED * Math.max(1, extras.strafeMult) * 1.42;
+  const slide = Math.max(1, extras.strafeMult, extras.vstrafeMult ?? 1);
+  return BOOST * Math.max(1, extras.superMult) + STRAFE_SPEED * slide * 1.42;
 }
 export const YAW_RATE = 1.5;   /* radians per second at full stick */
 /** Roll, in radians a second. Quicker than yaw: rolling is how you point a
@@ -282,11 +283,51 @@ export interface Extras {
   /** What TAB multiplies boost by, and the fuel burn with it. Two to start;
    *  an item can raise it. */
   superMult: number;
-  /** What the strafe and lift speeds are multiplied by. One to start. */
+  /** What the A and D slides are multiplied by. One to start. */
   strafeMult: number;
+  /** What the R and C slides are multiplied by. One to start. */
+  vstrafeMult?: number;
+  /** What the hull is multiplied by: 1.2 for a Hull Boost T1. */
+  hullMult?: number;
 }
 
 export const NO_EXTRAS: Extras = { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 };
+
+/** The hull this ship actually has. */
+export function shieldMaxFor(extras: Extras = NO_EXTRAS): number {
+  return Math.round(MAX_SHIELD * Math.max(1, extras.hullMult ?? 1));
+}
+export function vstrafeOf(extras: Extras = NO_EXTRAS): number {
+  return Math.max(1, extras.vstrafeMult ?? 1);
+}
+
+/* ---- INSTANT RECHARGE and SUPERCHARGE ----
+   Found items, used with Y. A recharge is the tower's refill on the spot.
+   A supercharge is a whole refill ON TOP of what the ship has, up to
+   double everything, and the extra is spent first because it is simply
+   the same gauge, higher. Geoff's rules, 2026-Sep-11. Same arithmetic in
+   the room (room.ts onUse), on the seat's numbers. */
+export const OVERCHARGE = 2;
+export interface Gauges { shields: number; ammo: number; torpedoes: number; guards: number; boost?: number }
+export function recharge(g: Gauges, extras: Extras = NO_EXTRAS): void {
+  g.shields = Math.max(g.shields, shieldMaxFor(extras));
+  g.ammo = Math.max(g.ammo, ammoFor(extras));
+  g.torpedoes = Math.max(g.torpedoes, torpedoesFor(extras));
+  g.guards = Math.max(g.guards, MAX_GUARDS);
+  if (g.boost !== undefined) g.boost = 1;
+}
+export function supercharge(g: Gauges, extras: Extras = NO_EXTRAS): void {
+  g.shields = Math.min(shieldMaxFor(extras) * OVERCHARGE, g.shields + shieldMaxFor(extras));
+  g.ammo = Math.min(ammoFor(extras) * OVERCHARGE, g.ammo + ammoFor(extras));
+  g.torpedoes = Math.min(torpedoesFor(extras) * OVERCHARGE, g.torpedoes + torpedoesFor(extras));
+  g.guards = Math.min(MAX_GUARDS * OVERCHARGE, g.guards + MAX_GUARDS);
+  if (g.boost !== undefined) g.boost = 1;
+}
+/** Nothing below full: a recharge would do nothing. */
+export function isFull(g: Gauges, extras: Extras = NO_EXTRAS): boolean {
+  return g.shields >= shieldMaxFor(extras) && g.ammo >= ammoFor(extras)
+    && g.torpedoes >= torpedoesFor(extras) && g.guards >= MAX_GUARDS && (g.boost === undefined || g.boost >= 1);
+}
 
 /** The magazine this ship actually carries. */
 export function ammoFor(extras: Extras = NO_EXTRAS): number {
@@ -319,7 +360,7 @@ export function createFlight(at: THREE.Vector3, extras: Extras = NO_EXTRAS): Fli
     bank: 0,
     boost: 1,
     superOn: false,
-    shields: MAX_SHIELD,
+    shields: shieldMaxFor(extras),
     ammo: ammoFor(extras),
     torpedoes: torpedoesFor(extras),
     extras,
@@ -408,8 +449,9 @@ export function stepFlight(
      hit — a bullet, a tower, the ground — postpones it just by setting
      sinceHit to zero, and no caller has to remember to. */
   f.sinceHit += dt;
-  if (f.sinceHit > REPAIR_DELAY && f.shields > 0 && f.shields < MAX_SHIELD) {
-    f.shields = Math.min(MAX_SHIELD, f.shields + MAX_SHIELD * REPAIR_RATE * dt);
+  const hullMax = shieldMaxFor(f.extras);
+  if (f.sinceHit > REPAIR_DELAY && f.shields > 0 && f.shields < hullMax) {
+    f.shields = Math.min(hullMax, f.shields + hullMax * REPAIR_RATE * dt);
   }
 
   /* ---- how near is the nearest tower ----
@@ -539,7 +581,7 @@ export function stepFlight(
   }
   /* And up or down, the same way: the ship's own up, nose fixed. */
   if (stick.lift !== 0) {
-    f.pos.addScaledVector(f.up, stick.lift * STRAFE_SPEED * f.extras.strafeMult * cruiseScale(f.alt) * dt);
+    f.pos.addScaledVector(f.up, stick.lift * STRAFE_SPEED * vstrafeOf(f.extras) * cruiseScale(f.alt) * dt);
   }
   f.alt = f.pos.length() - R;
 
@@ -677,16 +719,17 @@ export function stepFlight(
     /* Refilled gradually rather than all at once on completion, so the gauges
        can be watched climbing. That IS the docking graphic. */
     const from = f.dockFrom ?? { shields: f.shields, ammo: f.ammo, boost: f.boost };
-    f.shields = Math.max(f.shields, from.shields + (MAX_SHIELD - from.shields) * f.dock);
+    f.shields = Math.max(f.shields, from.shields + (shieldMaxFor(f.extras) - from.shields) * f.dock);
     f.ammo = Math.max(f.ammo, Math.round(from.ammo + (ammoFor(f.extras) - from.ammo) * f.dock));
     f.boost = Math.max(f.boost, from.boost + (1 - from.boost) * f.dock);
     if (f.dock >= 1) {
       if (was < 1) {
-        f.shields = MAX_SHIELD;
-        f.ammo = ammoFor(f.extras);
+        f.shields = Math.max(f.shields, shieldMaxFor(f.extras));
+        f.ammo = Math.max(f.ammo, ammoFor(f.extras));
         f.boost = 1;
-        f.torpedoes = torpedoesFor(f.extras);
-        f.guards = MAX_GUARDS;
+        /* Never DOWN: a supercharged ship keeps its extra. */
+        f.torpedoes = Math.max(f.torpedoes, torpedoesFor(f.extras));
+        f.guards = Math.max(f.guards, MAX_GUARDS);
         f.dockHold = 1.1;
         out.docked = true;
       }

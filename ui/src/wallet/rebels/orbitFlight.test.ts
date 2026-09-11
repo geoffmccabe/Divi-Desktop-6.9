@@ -11,6 +11,7 @@ import * as THREE from "three";
 import { R, MIN_ALT, MAX_ALT, planetDistance, cruiseScale } from "./orbitWorld";
 import {
   createFlight, stepFlight, distanceToTower, CRUISE, MAX_AMMO, MAX_SHIELD,
+  shieldMaxFor, recharge, supercharge, isFull, OVERCHARGE, ammoFor, torpedoesFor,
   CRASH_DAMAGE, MAX_GUARDS, MAX_TORPEDOES,
   DOCK_SECONDS, DOCK_RANGE, type Stick,
   BOOST_SECONDS,
@@ -871,5 +872,35 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 }
 
 console.log(out.join("\n"));
+/* ---- Hull Boost, vertical strafe, recharge and supercharge ---- */
+{
+  const pad = new THREE.Vector3(0, 0, R + 8);
+  const boosted = createFlight(pad, { torpedoes: 0, magazine: 0, superMult: 2, strafeMult: 1, hullMult: 1.4 });
+  ok("a Hull Boost T2 launches with 40% more hull", boosted.shields === Math.round(MAX_SHIELD * 1.4) && shieldMaxFor(boosted.extras) === Math.round(MAX_SHIELD * 1.4), `${boosted.shields}`);
+  const plain = createFlight(pad);
+  ok("without one, the standard", plain.shields === MAX_SHIELD && shieldMaxFor() === MAX_SHIELD);
+  const lifted = createFlight(pad, { torpedoes: 0, magazine: 0, superMult: 2, strafeMult: 1, vstrafeMult: 3 });
+  const a = createFlight(pad);
+  const s0 = stick({ lift: 1 });
+  for (let i = 0; i < 30; i++) { stepFlight(lifted, DT, s0, [], -1); stepFlight(a, DT, s0, [], -1); }
+  ok("a Vertical Strafe T4 climbs three times as fast on R", Math.abs((lifted.alt - 8) / Math.max(1e-9, a.alt - 8) - 3) < 0.2, `${(lifted.alt - 8).toFixed(3)} vs ${(a.alt - 8).toFixed(3)}`);
+
+  const f = createFlight(pad);
+  f.shields = 100; f.ammo = 3; f.torpedoes = 0; f.guards = 0; f.boost = 0.2;
+  ok("(setup) not full", !isFull(f, f.extras));
+  recharge(f, f.extras);
+  ok("a recharge is the tower's refill on the spot", f.shields === MAX_SHIELD && f.ammo === ammoFor() && f.torpedoes === torpedoesFor() && f.guards === MAX_GUARDS && f.boost === 1 && isFull(f, f.extras));
+  supercharge(f, f.extras);
+  ok("a supercharge stacks a whole refill on top", f.shields === MAX_SHIELD * OVERCHARGE && f.ammo === ammoFor() * OVERCHARGE && f.torpedoes === torpedoesFor() * OVERCHARGE && f.guards === MAX_GUARDS * OVERCHARGE, `${f.shields} ${f.ammo}`);
+  supercharge(f, f.extras);
+  ok("and never past double", f.shields === MAX_SHIELD * OVERCHARGE && f.ammo === ammoFor() * OVERCHARGE);
+  const g = createFlight(pad);
+  g.shields = MAX_SHIELD * 1.5;
+  recharge(g, g.extras);
+  ok("a recharge never takes an overcharge away", g.shields === MAX_SHIELD * 1.5);
+  for (let i = 0; i < 60; i++) stepFlight(g, DT, stick(), [], -1);
+  ok("the slow repair leaves an overcharge alone", g.shields === MAX_SHIELD * 1.5, `${g.shields}`);
+}
+
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

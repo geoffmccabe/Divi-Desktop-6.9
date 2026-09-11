@@ -9,7 +9,8 @@
 // later; this is why they are kept sealed rather than opened on pickup.
 
 import { useEffect, useRef, useState } from "react";
-import { ITEMS, ITEM_TIER_NAMES, itemByKey, itemMark, itemTierColour, type ItemSpec } from "./itemCatalog";
+import { ITEMS, ITEM_TIER_NAMES, FORGE_COST, itemByKey, itemMark, itemTierColour, forgeable, type ItemSpec } from "./itemCatalog";
+import { forge } from "./rebelsForge";
 import { heldSorted, spheresSorted, openSphere } from "./rebelsInventory";
 import { owned, subscribeArmoury } from "./rebelsArmoury";
 import { weaponByKey } from "./weaponCatalog";
@@ -40,6 +41,15 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
   const open = (key: string) => {
     const spec = itemByKey(key);
     if (openSphere(key)) setNote(`OPENED: ${spec?.name ?? key}`);
+  };
+  const [forging, setForging] = useState<string | null>(null);
+  const doForge = async (key: string) => {
+    if (forging) return;
+    setForging(key);
+    setNote(`FORGING ${FORGE_COST} x ${itemByKey(key)?.name ?? key}`);
+    const r = await forge(key);
+    setForging(null);
+    setNote(r.ok ? `FORGED: ${itemByKey(r.result)?.name ?? r.result}` : `FORGE REFUSED: ${r.why}`);
   };
 
   return (
@@ -104,16 +114,23 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
             <div className="orbit-inv-cards">
               {items.map((s) => {
                 const spec = itemByKey(s.key)!;
+                const canForge = forgeable(spec) && s.count >= FORGE_COST;
                 return (
                   <SphereCard key={s.key} tier={spec.tier} count={s.count} label={`T${spec.tier} ${itemMark(spec)}`}
-                    title={spec.name} text={spec.note} />
+                    title={spec.name}
+                    text={spec.consumable ? `${spec.note} Press Y in flight to use one.` : spec.note}
+                    action={canForge ? {
+                      label: forging === s.key ? "FORGING" : `FORGE ${FORGE_COST} INTO 1`,
+                      hint: "90% next tier, 9% two up, 1% three up",
+                      run: () => void doForge(s.key),
+                    } : undefined} />
                 );
               })}
             </div>
           </section>
 
           <p className="orbit-inv-foot">
-            {ITEMS.length} things sold in the store; everything else is found. Items do nothing yet: what each does arrives with the next build.
+            {ITEMS.length} things sold in the store; everything else is found. Strafe and Hull items apply on your next launch; four of a kind can be forged into one of the next tier.
           </p>
         </div>
       </div>
@@ -121,8 +138,9 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function SphereCard({ tier, count, label, title, text, sealed, onOpen }: {
+function SphereCard({ tier, count, label, title, text, sealed, onOpen, action }: {
   tier: number; count: number; label?: string; title: string; text: string; sealed?: boolean; onOpen?: () => void;
+  action?: { label: string; hint: string; run: () => void };
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -143,6 +161,12 @@ function SphereCard({ tier, count, label, title, text, sealed, onOpen }: {
         <span className="orbit-inv-tier">T{tier} {ITEM_TIER_NAMES[tier - 1].toUpperCase()}</span>
         <b>{title}</b>
         <em>{text}</em>
+        {action && (
+          <span className="orbit-inv-action">
+            <button type="button" onClick={action.run}>{action.label}</button>
+            <i>{action.hint}</i>
+          </span>
+        )}
       </div>
       {count > 1 && <span className="orbit-inv-count">x{count}</span>}
     </div>

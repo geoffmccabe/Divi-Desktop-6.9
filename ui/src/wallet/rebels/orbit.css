@@ -925,3 +925,8 @@
   color: var(--tier);
 }
 .orbit-inv-foot { margin: 4px 0 0; font-size: 10px; opacity: 0.45; flex: 0 0 auto; }
+
+/* A supercharged gauge: full bar, brighter, until the extra is spent. */
+.orbit-meter.over i { box-shadow: 0 0 10px hsl(var(--rebels-hud)), 0 0 2px #fff inset; filter: brightness(1.35); }
+.orbit-inv-action { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.orbit-inv-action i { font-style: normal; font-size: 9.5px; opacity: 0.55; }

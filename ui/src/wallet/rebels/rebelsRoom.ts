@@ -122,6 +122,8 @@ export interface Room {
    *  carries its key, its owner and the seconds it is theirs alone. */
   gems: Array<{ id: string; tier: number; pos: THREE.Vector3; spin: number; item?: string; owner?: string; hidden?: number }>;
   detonate(): void;
+  /** Y: a held recharge or supercharge, applied by the room. */
+  use(k: "recharge" | "supercharge"): void;
   /** Ask to be paid what is banked, to this address. The answer comes back
    *  as a purse, with `why` set if it was refused. */
   claim(to: string): void;
@@ -208,6 +210,7 @@ export function joinRoom(opts: Opts): Room {
       });
     },
     detonate() { send({ t: "det" }); },
+    use(k) { send({ t: "use", k }); },
     claim(to) { send({ t: "claim", to }); },
     askPurse() { send({ t: "purse" }); },
     purse: null,

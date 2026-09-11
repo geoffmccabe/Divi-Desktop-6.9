@@ -7,7 +7,10 @@ import {
   DEFAULT_DROP_CONFIG, DROP_CHANCE_PER_TIER, chartTotal, weightedPick, rollDrop, dropChance,
   chartOdds, validateDropConfig, droppableKeys, type DropConfig,
 } from "./dropCharts";
-import { ALL_ITEMS, DROP_ITEMS, ITEMS, itemByKey, itemMark, itemTierColour, ITEM_TIER_COLOURS } from "./itemCatalog";
+import {
+  ALL_ITEMS, DROP_ITEMS, ITEMS, FORGED_ITEMS, itemByKey, itemMark, itemTierColour, ITEM_TIER_COLOURS,
+  forgeable, forgeResult, hullMult, vstrafeMult, strafeMult, FORGE_ODDS,
+} from "./itemCatalog";
 
 const out: string[] = [];
 let failures = 0;
@@ -40,6 +43,15 @@ const fired: string[] = [];
   ok("seven tier colours, yellow first, red fifth", ITEM_TIER_COLOURS.length === 7 && itemTierColour(1) === 0xf2d94a && itemTierColour(5) === 0xff4d4d);
   ok("a tier past the end is the last colour", itemTierColour(9) === ITEM_TIER_COLOURS[6] && itemTierColour(0) === ITEM_TIER_COLOURS[0]);
   ok("marks tell the kinds apart", new Set(DROP_ITEMS.map((i) => itemMark(i))).size === 8, [...new Set(DROP_ITEMS.map((i) => itemMark(i)))].join(""));
+  ok("forged by-name tiers exist for the four families up to seven", FORGED_ITEMS.length === 3 + 3 + 2 + 2, `${FORGED_ITEMS.length}`);
+  ok("a by-name tier has the top tier's power and never drops", itemByKey("hull7")?.amount === itemByKey("hull5")?.amount && itemByKey("hull7")?.byName === true && !itemByKey("hull7")?.drop && itemByKey("strafe6")?.amount === 3);
+  ok("only tiered families forge, and not at the top", forgeable(itemByKey("hull1")!) && forgeable(itemByKey("drone5")!) && !forgeable(itemByKey("hull7")!) && !forgeable(itemByKey("recharge")!) && !forgeable(itemByKey("portal")!));
+  ok("the forge odds are 90 / 9 / 1", FORGE_ODDS.join(",") === "0.9,0.09,0.01");
+  ok("a roll under 90% is one tier up", forgeResult(itemByKey("hull1")!, 0.5) === "hull2" && forgeResult(itemByKey("hull1")!, 0.899) === "hull2");
+  ok("under 99% two, else three", forgeResult(itemByKey("hull1")!, 0.95) === "hull3" && forgeResult(itemByKey("hull1")!, 0.995) === "hull4");
+  ok("capped at seven by name", forgeResult(itemByKey("vstrafe4")!, 0.995) === "vstrafe7" && forgeResult(itemByKey("hull6")!, 0.5) === "hull7");
+  ok("the passives read the best tier held", Math.abs(hullMult(["hull2", "hull1"]) - 1.4) < 1e-9 && hullMult([]) === 1 && vstrafeMult(["vstrafe3"]) === 2.5 && vstrafeMult(["strafe4"]) === 1 && strafeMult(["strafe2"]) === 2);
+  ok("a by-name tier applies the top's power", Math.abs(hullMult(["hull7"]) - 2) < 1e-9);
   ok("every droppable key is a found thing", droppableKeys().length === 22 && droppableKeys().every((k) => itemByKey(k)?.drop));
 }
 
@@ -131,6 +143,17 @@ const fired: string[] = [];
   ok("a sphere of nothing is refused", !INV.addSphere("deathray"));
   ok("the account copy merges spheres too", INV.mergeHeld({ "sphere:drone5": 2, "sphere:deathray": 1 }) && INV.heldCount("sphere:drone5") === 2 && INV.heldCount("sphere:deathray") === 0);
   ok("keyInside reads through the seal", INV.keyInside("sphere:hull3") === "hull3" && INV.keyInside("hull3") === "hull3");
+
+  /* ---- gained and used ----
+     Using something must survive a merge with a stale, richer copy. */
+  INV.resetInventoryForTests();
+  INV.addHeld("recharge", 3);
+  ok("using one leaves two", INV.takeHeld("recharge", 1) && INV.heldCount("recharge") === 2);
+  ok("the raw counters show three gained, one used", INV.rawHeld().recharge === 3 && INV.rawHeld()["used:recharge"] === 1);
+  ok("a stale copy with three gained brings nothing back", !INV.mergeHeld({ recharge: 3 }) && INV.heldCount("recharge") === 2);
+  ok("a copy that used more takes it away", INV.mergeHeld({ recharge: 3, "used:recharge": 3 }) && INV.heldCount("recharge") === 0);
+  ok("a used counter cannot be added to directly", !INV.addHeld("used:recharge", 5));
+  ok("opened items are the gear the flight reads", (INV.addHeld("hull3"), INV.addSphere("hull4"), INV.heldKeys().join(",")) === "hull3", INV.heldKeys().join(","));
 }
 
 console.log(out.join("\n"));

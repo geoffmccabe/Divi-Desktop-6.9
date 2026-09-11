@@ -40,10 +40,10 @@ import {
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
-import { ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, superBoostMult, strafeMult } from "../../../ui/src/wallet/rebels/itemCatalog";
+import { ALL_ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, superBoostMult, strafeMult, vstrafeMult, hullMult } from "../../../ui/src/wallet/rebels/itemCatalog";
 import { fetchDropConfig } from "../../../ui/src/wallet/rebels/dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "../../../ui/src/wallet/rebels/dropCharts";
-import { ammoFor, torpedoesFor, topSpeedFor, SUPER_BOOST_MULT } from "../../../ui/src/wallet/rebels/orbitFlight";
+import { ammoFor, torpedoesFor, topSpeedFor, shieldMaxFor, recharge, supercharge, SUPER_BOOST_MULT, type Extras } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
   type PaintWire, type PaintPart,
@@ -97,6 +97,10 @@ interface Seat {
   gear: Set<string>;
   ammoMax: number;
   torpsMax: number;
+  shieldMax: number;
+  extras: Extras;
+  /** Room clock of the last Y, so a client cannot pour recharges in. */
+  lastUse: number;
   /** The most this ship can move in a second, from its gear. */
   topSpeed: number;
   lastBeam: number;
@@ -207,7 +211,8 @@ export class RebelsRoom {
     const seat: Seat = {
       id, ws, node: "", name: "", ship: "", paint: undefined,
       account: from, lastClaim: -99,
-      gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, topSpeed: topSpeedFor(), lastBeam: -99,
+      gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, shieldMax: MAX_SHIELD, topSpeed: topSpeedFor(), lastBeam: -99,
+      extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99,
       tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0], items: {},
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
@@ -512,7 +517,7 @@ export class RebelsRoom {
 
   private revive(s: Seat): void {
     s.dead = false;
-    s.shield = MAX_SHIELD;
+    s.shield = s.shieldMax;
     s.ammo = s.ammoMax;
     s.torps = s.torpsMax;
     s.guards = MAX_GUARDS;
@@ -560,6 +565,7 @@ export class RebelsRoom {
       case "tf": return this.onTransform(seat, msg);
       case "fire": return this.onFire(seat, msg);
       case "det": return this.onDetonate(seat);
+      case "use": return this.onUse(seat, msg);
       case "claim": { void this.onClaim(seat, msg); return; }
       case "purse": {
         /* Rate-limited the same way: a panel that polls is fine, a loop that
@@ -604,18 +610,22 @@ export class RebelsRoom {
        the items in it exactly as the solo game sizes them. */
     seat.gear = new Set(
       (Array.isArray(m.gear) ? m.gear : []).slice(0, 32)
-        .filter((k): k is string => typeof k === "string" && (!!weaponByKey(k) || ITEMS.some((i) => i.key === k))),
+        .filter((k): k is string => typeof k === "string" && (!!weaponByKey(k) || ALL_ITEMS.some((i) => i.key === k))),
     );
     const gearList = [...seat.gear];
-    const extras = {
+    const extras: Extras = {
       torpedoes: torpedoBonus(gearList), magazine: magBonus(gearList),
       superMult: superBoostMult(gearList, SUPER_BOOST_MULT), strafeMult: strafeMult(gearList),
+      vstrafeMult: vstrafeMult(gearList), hullMult: hullMult(gearList),
     };
+    seat.extras = extras;
     seat.ammoMax = ammoFor(extras);
     seat.torpsMax = torpedoesFor(extras);
+    seat.shieldMax = shieldMaxFor(extras);
     seat.topSpeed = topSpeedFor(extras);
     seat.ammo = seat.ammoMax;
     seat.torps = seat.torpsMax;
+    seat.shield = seat.shieldMax;
     seat.home.copy(home).normalize().multiplyScalar(R);
     seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 8);
     seat.joined = true;
@@ -794,6 +804,22 @@ export class RebelsRoom {
   private onDetonate(seat: Seat): void {
     if (!seat.joined || seat.dead) return;
     detonateOldest(this.combat, this.world, seat.id);
+  }
+
+  /* Y: a held Instant Recharge or Supercharge. The room does not hold the
+     inventory (the account row does), so it cannot count them; what it can
+     do is the same as for gear, refuse the malformed and pace it: one every
+     two seconds, which is all an honest player could ever want. */
+  static USE_GAP = 2;
+  private onUse(seat: Seat, m: Extract<ClientMessage, { t: "use" }>): void {
+    if (!seat.joined || seat.dead) return;
+    if (m.k !== "recharge" && m.k !== "supercharge") return this.send(seat, { t: "no", why: "no such item" });
+    if (this.now - seat.lastUse < RebelsRoom.USE_GAP) return;
+    seat.lastUse = this.now;
+    const g = { shields: seat.shield, ammo: seat.ammo, torpedoes: seat.torps, guards: seat.guards };
+    if (m.k === "recharge") recharge(g, seat.extras); else supercharge(g, seat.extras);
+    seat.shield = g.shields; seat.ammo = g.ammo; seat.torps = g.torpedoes; seat.guards = g.guards;
+    this.sendYou(seat);
   }
 
   /* ---- discipline ----

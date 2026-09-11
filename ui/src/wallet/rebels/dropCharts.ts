@@ -162,5 +162,5 @@ export function validateDropConfig(raw: unknown): { ok: DropConfig } | { errors:
 
 /** Every key a chart may use, for the admin panel's pickers. */
 export function droppableKeys(): string[] {
-  return ALL_ITEMS.filter((i) => i.drop).map((i) => i.key);
+  return ALL_ITEMS.filter((i) => i.drop && !i.byName).map((i) => i.key);
 }

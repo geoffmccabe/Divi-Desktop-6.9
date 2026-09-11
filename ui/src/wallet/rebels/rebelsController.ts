@@ -11,6 +11,7 @@ import * as THREE from "three";
 import type { GlobeFlight } from "../GlobeMap";
 import {
   createFlight, stepFlight, MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS, MAX_VIEW,
+  shieldMaxFor, recharge, supercharge, isFull,
   GUARD_ABSORB, GUARD_SECONDS,
   type Flight, type Stick,
 } from "./orbitFlight";
@@ -44,7 +45,7 @@ import { droneClass } from "./rebelsFlock";
 import { respawnSeconds, itemByKey } from "./itemCatalog";
 import { fetchDropConfig } from "./dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "./dropCharts";
-import { addSphere } from "./rebelsInventory";
+import { addSphere, heldCount, takeHeld } from "./rebelsInventory";
 import { GAME_KEYS } from "./RebelsControls";
 import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
@@ -55,7 +56,7 @@ import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
 import {
-  hasWeapon, owned, earnPoints, spendable, flightExtras,
+  hasWeapon, owned, earnPoints, spendable, flightExtras, gearKeys,
 } from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
@@ -77,6 +78,8 @@ export interface HudState {
   speed: number;
   alt: number;
   shields: number;
+  /** What full is for this hull: MAX_SHIELD times the Hull Boost. */
+  shieldMax: number;
   ammo: number;
   /** How many are still in the rack, and how many are out there right now. */
   torpedoes: number;
@@ -158,7 +161,7 @@ export interface HudState {
 }
 
 const BLANK: HudState = {
-  ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, ammo: MAX_AMMO,
+  ready: false, speed: 0, alt: 0, shields: MAX_SHIELD, shieldMax: MAX_SHIELD, ammo: MAX_AMMO,
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, throttle: 1,
@@ -635,6 +638,27 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     cursor.y = 0.5;
   }
 
+  /* ---- Y: a held Instant Recharge or Supercharge ----
+     A recharge when anything is below full; when everything is, a
+     supercharge, which stacks a whole refill on top up to double. Taken from
+     the inventory here (the account row follows); in a room the room is
+     told and applies the same arithmetic to the seat's numbers, which the
+     next gauge message carries back. */
+  function useHeld(): void {
+    if (!flight || !flying || hud.dead) return;
+    const haveR = heldCount("recharge"), haveS = heldCount("supercharge");
+    const full = isFull(flight, flight.extras);
+    const key = haveR > 0 && !full ? "recharge" : haveS > 0 ? "supercharge" : haveR > 0 ? "recharge" : null;
+    if (!key) { setHud({ note: "NOTHING TO USE: OPEN A SPHERE IN YOUR INVENTORY (I)", noteAt: performance.now() }); return; }
+    if (key === "recharge" && full) { setHud({ note: "ALREADY FULL", noteAt: performance.now() }); return; }
+    if (!takeHeld(key, 1)) return;
+    if (room && room.status() === "live") room.use(key);
+    else if (key === "recharge") recharge(flight, flight.extras);
+    else supercharge(flight, flight.extras);
+    playBounce();
+    setHud({ note: key === "recharge" ? "INSTANT RECHARGE" : "SUPERCHARGE", noteAt: performance.now() });
+  }
+
   /* Escape releases the lock, which the browser does for us, and that is the
      signal to leave the game. Nothing else can take the pointer away, except
      a panel that needs the mouse (the inventory): while one is open the lock
@@ -938,6 +962,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        six guns are now a single upgrade path, so all six numbers pick along it
        and the secondary stays where the genre puts it: the right button. */
     if (k >= "1" && k <= "6") selectWeapon("primary", Number(k) - 1);
+    if (k === "y") useHeld();
     if (k === "v" && flight) {
       flight.view = flight.view > 0.01 ? 0 : 2;
       if (flight.view > 0) ensureShip();
@@ -983,7 +1008,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       ship: loadShip(),
       /* What this ship carries, so the room arms it the same way the solo
          game does: the minigun, the beams, the extra tubes and magazine. */
-      gear: owned(loadShip()).filter((k) => k !== "pulse"),
+      gear: gearKeys(loadShip()).filter((k) => k !== "pulse"),
       reach: shipReach,
       /* Flattened in the order the shader keeps the parts, which is the order
          the other end puts them back in. */
@@ -1022,6 +1047,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        moment of launch so a purchase made between sorties is felt on the next
        one without the panel having to be reopened. */
     flight = createFlight(at, flightExtras(loadShip()));
+    setHud({ shieldMax: shieldMaxFor(flight.extras) });
     setHud({ dead: false });
   }
 

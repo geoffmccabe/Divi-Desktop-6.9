@@ -1,5 +1,12 @@
 // What the player HOLDS: dropped items, stacked by key.
 //
+// TWO COUNTERS PER KEY, both only ever rising: how many were GAINED ("hull2")
+// and how many were USED ("used:hull2"). What is held is the difference. It
+// has to be this way because the account copy is merged by "take the larger"
+// (a stale copy can never take a thing away), and a single count that goes
+// DOWN when a sphere is opened, a recharge used or four things forged would
+// come straight back at the next merge. Same trick as points earned/spent.
+//
 // Ownership of bought things is a set (rebelsArmoury: you have the minigun or
 // you do not). Found things are counts, because forging eats four of a kind,
 // so they live here, keyed by catalogue key. Same shape of persistence as the
@@ -24,13 +31,19 @@ export type Held = Record<string, number>;
    The item inside was decided when it dropped (the roll is the wreck's, not
    the opening's), which is what lets the room bank the same key. */
 export const SPHERE_PREFIX = "sphere:";
+export const USED_PREFIX = "used:";
+export function isUsedKey(key: string): boolean { return key.startsWith(USED_PREFIX); }
 export function sphereKey(key: string): string { return SPHERE_PREFIX + key; }
 export function isSphereKey(key: string): boolean { return key.startsWith(SPHERE_PREFIX); }
 /** The item a held key refers to, sealed or not. */
 export function keyInside(key: string): string { return isSphereKey(key) ? key.slice(SPHERE_PREFIX.length) : key; }
 
 function knownKey(k: string): boolean {
-  return !!itemByKey(keyInside(k)) && (!isSphereKey(k) || !!itemByKey(keyInside(k))?.drop);
+  const base = isUsedKey(k) ? k.slice(USED_PREFIX.length) : k;
+  const spec = itemByKey(keyInside(base));
+  if (!spec) return false;
+  if (isSphereKey(base) && !spec.drop) return false;
+  return true;
 }
 
 function clean(raw: unknown): Held {
@@ -43,8 +56,21 @@ function clean(raw: unknown): Held {
   return out;
 }
 
-export function heldItems(): Held {
+/** The two counters as saved: gained under the key, used under "used:key". */
+export function rawHeld(): Held {
   try { return clean(JSON.parse(localStorage.getItem(ITEMS_KEY) || "null")); } catch { return {}; }
+}
+
+/** What is actually held: gained minus used, only the keys with something. */
+export function heldItems(): Held {
+  const raw = rawHeld();
+  const out: Held = {};
+  for (const [k, n] of Object.entries(raw)) {
+    if (isUsedKey(k)) continue;
+    const have = n - (raw[USED_PREFIX + k] ?? 0);
+    if (have > 0) out[k] = have;
+  }
+  return out;
 }
 
 function writeHeld(h: Held): void {
@@ -58,27 +84,27 @@ export function heldCount(key: string): number {
 
 /** One more (or n more) of this. Unknown keys are refused. */
 export function addHeld(key: string, n = 1): boolean {
-  if (!knownKey(key) || !(n > 0)) return false;
-  const h = heldItems();
+  if (!knownKey(key) || isUsedKey(key) || !(n > 0)) return false;
+  const h = rawHeld();
   h[key] = (h[key] ?? 0) + Math.floor(n);
   writeHeld(h);
   return true;
 }
 
-/** Take n away. False, and nothing taken, if there are not that many. */
+/** Use n up. False, and nothing used, if there are not that many. */
 export function takeHeld(key: string, n = 1): boolean {
-  const h = heldItems();
-  if ((h[key] ?? 0) < n) return false;
-  h[key] -= n;
-  if (h[key] <= 0) delete h[key];
+  if (heldCount(key) < n) return false;
+  const h = rawHeld();
+  h[USED_PREFIX + key] = (h[USED_PREFIX + key] ?? 0) + n;
   writeHeld(h);
   return true;
 }
 
-/** Fold the account's copy in. True if anything rose. */
+/** Fold the account's copy in: both counters, the larger wins. True if
+ *  anything rose. */
 export function mergeHeld(remote: unknown): boolean {
   const theirs = clean(remote);
-  const h = heldItems();
+  const h = rawHeld();
   let moved = false;
   for (const [k, n] of Object.entries(theirs)) {
     if (n > (h[k] ?? 0)) { h[k] = n; moved = true; }
@@ -95,14 +121,19 @@ export function addSphere(key: string, n = 1): boolean {
 /** Open one sealed sphere of this item: the sphere is gone, the item is held.
  *  False, and nothing moves, when there is none to open. */
 export function openSphere(key: string): boolean {
-  const h = heldItems();
   const sk = sphereKey(key);
-  if ((h[sk] ?? 0) < 1 || !itemByKey(key)) return false;
-  h[sk] -= 1;
-  if (h[sk] <= 0) delete h[sk];
+  if (heldCount(sk) < 1 || !itemByKey(key)) return false;
+  const h = rawHeld();
+  h[USED_PREFIX + sk] = (h[USED_PREFIX + sk] ?? 0) + 1;
   h[key] = (h[key] ?? 0) + 1;
   writeHeld(h);
   return true;
+}
+
+/** The opened items' keys, for the flight model and the room: what the
+ *  passives read. */
+export function heldKeys(): string[] {
+  return Object.keys(heldItems()).filter((k) => !isSphereKey(k));
 }
 
 function sorted(keys: string[], h: Held): Array<{ key: string; count: number }> {

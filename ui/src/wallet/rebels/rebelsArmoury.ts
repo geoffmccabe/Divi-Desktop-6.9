@@ -18,8 +18,8 @@
 // retrofitting that later would mean migrating everybody's purchases.
 
 import { STARTING_WEAPONS, weaponByKey, type WeaponSpec } from "./weaponCatalog";
-import { itemByKey, torpedoBonus, magBonus, superBoostMult, strafeMult, type ItemSpec } from "./itemCatalog";
-import { heldItems, mergeHeld, type Held } from "./rebelsInventory";
+import { itemByKey, torpedoBonus, magBonus, superBoostMult, strafeMult, vstrafeMult, hullMult, type ItemSpec } from "./itemCatalog";
+import { rawHeld, heldKeys, mergeHeld, type Held } from "./rebelsInventory";
 import { SUPER_BOOST_MULT, type Extras } from "./orbitFlight";
 import { USD_PER_POINT } from "./weaponCatalog";
 import { spendDivi } from "./rebelsScores";
@@ -207,7 +207,7 @@ export interface Loadout {
 
 export function loadoutSnapshot(): Loadout {
   const p = purse();
-  return { earned: p.earned, spent: p.spent, owned: readOwned(), purchases: purchases(), items: heldItems() };
+  return { earned: p.earned, spent: p.spent, owned: readOwned(), purchases: purchases(), items: rawHeld() };
 }
 
 /** Fold a copy from the account into this machine. True if anything moved. */
@@ -358,13 +358,21 @@ export function extraMagazine(ship: string): number {
 }
 
 /** Everything the flight model needs to know about what the player owns. */
+/** Everything that changes how the ship flies: bought gear AND opened found
+ *  items. What the flight model reads, and what is declared to the room. */
+export function gearKeys(ship: string): string[] {
+  return [...new Set([...owned(ship), ...heldKeys()])];
+}
+
 export function flightExtras(ship: string): Extras {
-  const mine = owned(ship);
+  const mine = gearKeys(ship);
   return {
     torpedoes: torpedoBonus(mine),
     magazine: magBonus(mine),
     superMult: superBoostMult(mine, SUPER_BOOST_MULT),
     strafeMult: strafeMult(mine),
+    vstrafeMult: vstrafeMult(mine),
+    hullMult: hullMult(mine),
   };
 }
 

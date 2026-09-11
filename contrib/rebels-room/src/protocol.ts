@@ -78,7 +78,11 @@ export interface ClaimIn {
 /** Ask for the purse again. Sent when the player opens the points panel. */
 export interface PurseIn { t: "purse" }
 
-export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn;
+/** Use a held Instant Recharge or Supercharge (Y). The count is the
+ *  client's, as the gear is; the room only paces it. */
+export interface UseIn { t: "use"; k: "recharge" | "supercharge" }
+
+export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn;
 
 /* ---- room to cockpit ---- */
 

@@ -14,7 +14,7 @@ import {
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
   TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, COIN_TOP, COIN_MU,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
-  setDropRandomForTests, dropItem, clampReach, REACH_MIN, REACH_MAX, GEM_RADIUS,
+  setDropRandomForTests, dropItem, clampReach, REACH_MIN, REACH_MAX,
   type CombatState, type Enemy,
   ENEMY_SPEED,
   stepFlockSpawns,

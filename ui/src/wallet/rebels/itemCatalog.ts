@@ -46,6 +46,9 @@ export interface ItemSpec {
   drop?: true;
   /** Used up when it is picked up (or, held, when Y is pressed). */
   consumable?: true;
+  /** A forged tier past the family's real top: the name and colour of a
+   *  higher tier, the power of the top one. Never drops. */
+  byName?: true;
 }
 
 /* ---- ITEM TIERS ----
@@ -156,8 +159,56 @@ export const DROP_ITEMS: ItemSpec[] = [
   droneRow(1), droneRow(2), droneRow(3), droneRow(4), droneRow(5),
 ];
 
-/** Everything, sold or found. */
-export const ALL_ITEMS: ItemSpec[] = [...ITEMS, ...DROP_ITEMS];
+/* ---- FORGING ----
+   Four of one tier become one of the next: +1 tier 90%, +2 9%, +3 1%
+   (Geoff). Past a family's real top the result is "by name": T6 white, T7
+   fuchsia, with the top tier's power. Those rows exist here so the
+   inventory can hold and show them; they are never on a chart. */
+export const FORGE_ODDS = [0.9, 0.09, 0.01];
+export const FORGE_COST = 4;
+const FAMILIES: Array<{ kind: ItemKind; top: number }> = [
+  { kind: "vstrafe", top: 4 }, { kind: "strafe", top: 4 }, { kind: "hull", top: 5 }, { kind: "drone", top: 5 },
+];
+export const FORGED_ITEMS: ItemSpec[] = FAMILIES.flatMap(({ kind, top }) => {
+  const rows: ItemSpec[] = [];
+  for (let t = top + 1; t <= ITEM_TIER_MAX; t++) {
+    const real = DROP_ITEMS.find((i) => i.kind === kind && i.tier === top)!;
+    rows.push({
+      ...real, key: `${kind}${t}`, tier: t, byName: true, drop: undefined,
+      name: real.name.replace(`T${top}`, `T${t}`),
+      note: `${real.note} Forged past the top: tier ${t} by name, tier ${top}'s power.`,
+    });
+  }
+  return rows;
+});
+
+/** Everything, sold, found or forged. */
+export const ALL_ITEMS: ItemSpec[] = [...ITEMS, ...DROP_ITEMS, ...FORGED_ITEMS];
+
+/** Can four of this be forged into one of the next tier? */
+export function forgeable(spec: ItemSpec): boolean {
+  return FAMILIES.some((f) => f.kind === spec.kind) && spec.tier < ITEM_TIER_MAX;
+}
+
+/** What forging this yields for a roll r in [0, 1): the key of the result. */
+export function forgeResult(spec: ItemSpec, r: number): string | null {
+  if (!forgeable(spec)) return null;
+  const step = r < FORGE_ODDS[0] ? 1 : r < FORGE_ODDS[0] + FORGE_ODDS[1] ? 2 : 3;
+  const tier = Math.min(ITEM_TIER_MAX, spec.tier + step);
+  return `${spec.kind}${tier}`;
+}
+
+/** What the R and C slides are multiplied by: the best "vstrafe" owned, else one. */
+export function vstrafeMult(owned: string[]): number {
+  const best = bestOwned("vstrafe", owned);
+  return best ? Math.max(1, best.amount) : 1;
+}
+
+/** What the hull is multiplied by: one plus the best "hull" owned. */
+export function hullMult(owned: string[]): number {
+  const best = bestOwned("hull", owned);
+  return 1 + (best ? Math.max(0, best.amount) : 0);
+}
 
 /** The one-letter mark on a drop's placeholder model, so a drone and a
  *  strafe are told apart before real models exist. */

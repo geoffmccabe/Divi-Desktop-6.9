@@ -298,3 +298,35 @@ phase ships on its own with tests, docs and a version.
     .blend files with separate animation .blends (Fire, Flip, Roar,
     LongRoar) under Desktop/LightningWorks Stuff/.../All Enemies from
     Cannon, and Synty's Hologram_Dragon_Rig_01.fbx.
+12. (2026-Sep-11) THE DRAGON APPARITION: 10% chance each minute, lasts 10
+    seconds, rendered animated at 30% opacity, anywhere in Earth's general
+    orbit, 2000 health. Killed, it drops a DRAGON EGG: a tier-1 item, an
+    oval sphere with a D on it. Model: the Perceptrons glb above. Built
+    as its own phase after Phase 1.
+
+## Built: Phase 1, items do things + forging (2026-Sep-11, v69.9.26)
+
+- **Two counters per item** in `rebels_loadout.items`: gained (`hull2`)
+  and used (`used:hull2`), both only rising, held = the difference. This
+  is what lets opening, using and forging survive the "larger wins" merge
+  (same trick as points earned/spent). No migration: same jsonb.
+- **Passives**: the best OPENED Horizontal Strafe, Vertical Strafe and
+  Hull Boost apply through `gearKeys` (bought gear plus opened items):
+  `flightExtras` gets `vstrafeMult` and `hullMult`; `shieldMaxFor(extras)`
+  is the hull (MAX_SHIELD x 1.2 per tier); R/C use `vstrafeOf`. Sent to
+  the room as gear, so the room's seat has the same hull and top speed.
+  They apply on the next launch or join.
+- **Y**: uses a held Instant Recharge when anything is below full, else a
+  Supercharge (a whole refill on top, capped at double, `OVERCHARGE`). Solo
+  the flight is refilled; in a room the room does it (`use` message, paced
+  one per two seconds, count is the client's like gear). HUD shows a
+  "Y RECHARGE x2 / SUPER x1" row while any are held; the shield gauge
+  shows over-full brighter.
+- **Forging**: FORGE button on any opened stack of four of a tiered family
+  (strafe, vstrafe, hull, drone). The SERVER rolls (`rebels_forge` RPC,
+  migration 0004, applied): 90% +1, 9% +2, 1% +3, capped at tier 7; by-name
+  rows (`FORGED_ITEMS`, T5..T7 white/fuchsia) carry the top tier's power.
+  The client saves first, asks, and merges the returned counters.
+- Trust, stated: Y and opening are the client's word (as gear is); forging
+  is the server's roll on the account's counts. Anyone who knows an
+  owner key could forge that account's items (waste, never gain).

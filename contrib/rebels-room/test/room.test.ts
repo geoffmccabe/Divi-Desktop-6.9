@@ -10,7 +10,7 @@
 import * as THREE from "three";
 import { RebelsRoom } from "../src/room";
 import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
-import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES } from "../../../ui/src/wallet/rebels/orbitFlight";
+import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES, MAX_GUARDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { setDropRandomForTests } from "../../../ui/src/wallet/rebels/rebelsCombat";
 
 /* Wrecks roll for items. Pinned to "nothing" so a count of gems or storage
@@ -488,6 +488,33 @@ const home: [number, number, number] = [0, 0, R + 8];
   ok("a VIP pass respawns in ten seconds", a.respawn === 10, `${a.respawn}`);
   room.down(b);
   ok("without it, thirty", b.respawn === 30, `${b.respawn}`);
+  room.stop();
+}
+
+// Opened passives ride in with the gear; Y is applied by the room and paced.
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  room.seat(ws as never);
+  ws.deliver(JSON.stringify({ t: "join", node: "h-node", name: "H", home: [0, 0, R], gear: ["hull3", "vstrafe2", "deathray"] }));
+  const seat = room.seats.get(ws.last("hi").id);
+  ok("a Hull Boost T3 in the gear is 60% more hull, from the room", seat.shieldMax === Math.round(MAX_SHIELD * 1.6) && seat.shield === seat.shieldMax, `${seat.shieldMax}`);
+  ok("junk gear is dropped, opened passives kept", seat.gear.has("hull3") && seat.gear.has("vstrafe2") && !seat.gear.has("deathray"));
+  ok("the top speed budget knows the vertical strafe", seat.topSpeed > BOOST * 2 + 4.5 * 1.42);
+  seat.shield = 100; seat.ammo = 2; seat.torps = 0; seat.guards = 0;
+  ws.deliver(JSON.stringify({ t: "use", k: "recharge" }));
+  ok("a recharge refills the seat to ITS full", seat.shield === seat.shieldMax && seat.ammo === seat.ammoMax && seat.torps === seat.torpsMax && seat.guards === MAX_GUARDS, `${seat.shield} ${seat.ammo} ${seat.torps} ${seat.guards}`);
+  ok("and the gauges go straight back", ws.last("you").shield === seat.shieldMax);
+  ws.deliver(JSON.stringify({ t: "use", k: "supercharge" }));
+  ok("a second one inside two seconds is ignored", seat.shield === seat.shieldMax);
+  room.now += 3;
+  ws.deliver(JSON.stringify({ t: "use", k: "supercharge" }));
+  ok("after the gap, a supercharge doubles", seat.shield === seat.shieldMax * 2 && seat.ammo === seat.ammoMax * 2, `${seat.shield}`);
+  room.now += 3;
+  ws.deliver(JSON.stringify({ t: "use", k: "deathray" }));
+  ok("a made-up item is refused", ws.last("no")?.why === "no such item");
   room.stop();
 }
 

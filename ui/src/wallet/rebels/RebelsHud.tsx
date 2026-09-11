@@ -16,6 +16,8 @@ import { loadShip } from "./shipChoice";
 import { ShipMarket } from "./ShipMarket";
 import { DflowPanel } from "./DflowPanel";
 import { InventoryPanel } from "./InventoryPanel";
+import { heldCount } from "./rebelsInventory";
+import { subscribeArmoury } from "./rebelsArmoury";
 import { RebelsHealthBar } from "./RebelsHealthBar";
 import { ShipBadge } from "./ShipBadge";
 import pandaUrl from "../../assets/rebels_panda.webp";
@@ -196,6 +198,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         <div className="orbit-row orbit-dim">{hud.towers} towers</div>
         {hud.wave > 0 && <div className="orbit-row">WAVE {hud.wave}</div>}
         {hud.flocks > 0 && <div className="orbit-row">FLOCKS {hud.flocks}</div>}
+        <HeldRow />
         <div className={"orbit-row" + (hud.contacts > 0 ? " orbit-alert" : " orbit-dim")}>
           {hud.contacts > 0 ? `${hud.contacts} CONTACT${hud.contacts > 1 ? "S" : ""}` : "no contacts"}
         </div>
@@ -224,7 +227,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           <div className="orbit-dockbar"><i style={{ width: pct(hud.dock) }} /></div>
           {/* What is actually being restored, filling as it goes. */}
           <div className="orbit-dock-lines">
-            <div><span>HULL</span><i><b style={{ width: pct(hud.shields / MAX_SHIELD) }} /></i></div>
+            <div><span>HULL</span><i><b style={{ width: pct(Math.min(1, hud.shields / (hud.shieldMax || MAX_SHIELD))) }} /></i></div>
             <div><span>AMMO</span><i><b style={{ width: pct(hud.ammo / MAX_AMMO) }} /></i></div>
             <div><span>BOOST</span><i><b style={{ width: pct(hud.boost) }} /></i></div>
             <div><span>TORP</span><i><b style={{ width: pct(hud.torpedoes / MAX_TORPEDOES) }} /></i></div>
@@ -258,9 +261,9 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       <div className="orbit-bars">
         <div className="orbit-gauge">
-          <span>SHIELDS {Math.max(0, Math.round((hud.shields / MAX_SHIELD) * 100))}%</span>
-          <div className={"orbit-meter" + (hud.shields <= MAX_SHIELD * 0.3 ? " low" : "")}>
-            <i style={{ width: pct(hud.shields / MAX_SHIELD) }} />
+          <span>SHIELDS {Math.max(0, Math.round((hud.shields / (hud.shieldMax || MAX_SHIELD)) * 100))}%</span>
+          <div className={"orbit-meter" + (hud.shields <= (hud.shieldMax || MAX_SHIELD) * 0.3 ? " low" : "") + (hud.shields > (hud.shieldMax || MAX_SHIELD) ? " over" : "")}>
+            <i style={{ width: pct(Math.min(1, hud.shields / (hud.shieldMax || MAX_SHIELD))) }} />
           </div>
         </div>
         <div className="orbit-gauge">
@@ -375,6 +378,19 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** What Y would use: the held recharges and supercharges, when there are any. */
+function HeldRow() {
+  const [, bump] = useState(0);
+  useEffect(() => subscribeArmoury(() => bump((n) => n + 1)), []);
+  const r = heldCount("recharge"), s = heldCount("supercharge");
+  if (r + s === 0) return null;
+  return (
+    <div className="orbit-row">
+      Y {r > 0 && <>RECHARGE x{r}</>}{r > 0 && s > 0 && " / "}{s > 0 && <>SUPER x{s}</>}
     </div>
   );
 }
