@@ -120,7 +120,11 @@ class Dflow {
   /* ---- per frame ---- */
 
   frameStart(dt: number): void {
-    this.frameStages.fill(0);
+    /* NOT cleared here. The map's own stages and the renderer's submit are
+       added AFTER frameEnd, between frames, and clearing at the start threw
+       them away: the first report showed every map stage and gl.render as
+       zero. They are cleared at frameEnd, once recorded, so what lands
+       between frames counts toward the next one. */
     this.frameDt = dt * 1000;
     this.frameOpen = true;
   }
@@ -197,6 +201,7 @@ class Dflow {
       if (this.worst.length > WORST_KEEP) this.worst.length = WORST_KEEP;
     }
     this.worstNote = "";
+    this.frameStages.fill(0);
 
     if (this.accSince >= SUMMARY_SECONDS) this.flush();
   }

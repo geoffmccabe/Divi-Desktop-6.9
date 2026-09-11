@@ -813,8 +813,8 @@ export class RebelsRoom {
         r1(e.fwd.x), r1(e.fwd.y), r1(e.fwd.z),
         e.cls.tier, Math.max(0, Math.round(e.shield)), e.cls.shieldMax,
         /* A drone is drawn as a sphere, a fighter as a hull: the cockpit has
-           to be told which. */
-        e.drone ? 1 : 0,
+           to be told which. And WHICH enemy, so its hull model follows it. */
+        e.drone ? 1 : 0, e.id ?? 0,
       ]),
       B: c.bullets.map((b) => [
         r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),

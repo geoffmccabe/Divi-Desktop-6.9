@@ -16,7 +16,7 @@ import { setLoadoutRemote } from "./rebelsLoadout";
 import { SUSPEND_GRACE_MS } from "./rebelsController";
 /* A detach mid-flight waits a moment for the map to re-attach before it
    treats the game as over; the tests that check the run was filed wait too. */
-const settle = () => new Promise((r) => setTimeout(r, SUSPEND_GRACE_MS + 150));
+const settle = () => new Promise((r) => setTimeout(r, SUSPEND_GRACE_MS + 600));
 import { musicState } from "./rebelsMusic";
 setLoadoutRemote(false);
 import { MAX_SHIELD, MAX_AMMO } from "./orbitFlight";

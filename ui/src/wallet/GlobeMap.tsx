@@ -742,6 +742,10 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         try { origRender(scene, cam); } finally { dflow.add("gl.render", performance.now() - t); }
       }) as typeof renderer.render;
       unpatchRender = () => { (renderer as unknown as { render: typeof renderer.render }).render = origRender; };
+      /* Every shader the game will need, compiled now in one go rather than
+         one stall at a time as each thing first appears. DFlow counted 62
+         compiles across a flight, each a frame of 50 to 100ms. */
+      const prewarm = () => { try { renderer.compile(scene, camera); } catch { /* not fatal */ } };
       f.attach({
         stats: () => ({
           calls: renderer.info.render.calls,
@@ -768,6 +772,8 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
           return tipOf;
         },
       });
+      prewarm();
+
     };
     const detachFlight = () => {
       if (!attachedRef.current) return;

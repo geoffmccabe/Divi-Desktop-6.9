@@ -420,7 +420,14 @@ export interface Bullet {
   tracer?: Tracer;
 }
 
+/* Every enemy carries a number of its own, so a hull model on screen can
+   follow ONE enemy for its whole life rather than whichever enemy happens to
+   be at its index this frame. See the controller for what that was costing. */
+let nextEnemyId = 1;
+export function newEnemyId(): number { return nextEnemyId++; }
+
 export interface Enemy {
+  id?: number;
   pos: THREE.Vector3;
   fwd: THREE.Vector3;
   roll: number;
@@ -1150,6 +1157,7 @@ export function spawnFleet(
       .addScaledVector(realUp, off.y)
       .addScaledVector(heading, off.z);
     const e: Enemy = {
+      id: newEnemyId(),
       pos,
       fwd: heading.clone(),
       roll: 0,
@@ -1959,6 +1967,7 @@ function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3, bias = 1)
   const fwd = playerPos.clone().sub(pos).normalize();
   const cls = rollTier(bias);
   return {
+    id: newEnemyId(),
     pos, fwd, roll: 0,
     cls,
     shield: cls.shieldMax,

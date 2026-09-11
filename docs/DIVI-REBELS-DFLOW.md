@@ -52,3 +52,29 @@ Notes: flocks arriving, drones gone, room status changes, compiles.
 Code: `ui/src/wallet/rebels/rebelsDflow.ts` (collector), `DflowPanel.tsx`
 (panel), hooks in `rebelsController.ts`, `GlobeMap.tsx`, `rebelsRoom.ts`.
 Tests: `scripts/run-rebels-dflow-tests.sh`.
+
+## First capture (2026-Sep-11, Geoff, 95s with a tier-1 flock)
+
+Average 16.8ms (60fps), 95th 31ms, 119 stalls over 40ms, 62 shader
+compiles. Our own stages totalled 0.3ms a frame: the JavaScript is not the
+cost. What the report showed, and what changed because of it:
+
+1. **Hull models were cloned on every death.** A hull belonged to an index
+   in the enemy list; when one enemy died the ones after it shifted, each
+   slot saw a new tier and cloned a fresh model (seven meshes and three line
+   sets). `meshes` spiked to 22ms and the stalls the report could only call
+   "outside our code" are the garbage collector sweeping the clones. Fixed:
+   every enemy carries an id (on the wire too), models follow their enemy for
+   life, and a model whose enemy has gone waits in a pool for the next of
+   its tier.
+2. **The program count rose and fell all through the flight**, 62 compiles
+   in 95 seconds, each a 50 to 100ms frame. Shaders are now compiled in one
+   go when the game attaches (`renderer.compile`), so a tier's first
+   appearance does not pay for it in the fight. If compiles still show after
+   that, something is disposing and recreating materials and the next report
+   will say which frame.
+3. **A bug in the collector itself:** the map's stages and `gl.render` were
+   recorded between frames and cleared at the next frame's start, so they
+   read zero. Fixed; the next report will show them.
+4. The frame interval is capped at 100ms by the map loop, so "100ms" in a
+   worst-frames line means "at least 100ms".

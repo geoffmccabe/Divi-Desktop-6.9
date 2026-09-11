@@ -286,6 +286,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const camFwd = new THREE.Vector3();
   let shipPaint: PaintHandle | null = null;
   let shipHull: HitSphere[] = [];
+  /* Hull models by enemy id, and pools of hidden ones by tier. */
+  type HullSlot = { mesh: THREE.Object3D; rig: ShieldRig; tier: number };
+  const enemyRigs = new Map<number, HullSlot>();
+  const hullPools = new Map<number, HullSlot[]>();
+  const seenEnemies = new Set<number>();
+  function releaseHull(slot: HullSlot): void {
+    slot.mesh.visible = false;
+    slot.rig.group.visible = false;
+    slot.rig.step(0, 0);
+    let pool = hullPools.get(slot.tier);
+    if (!pool) { pool = []; hullPools.set(slot.tier, pool); }
+    pool.push(slot);
+  }
   /* Where its guns are, read off the model. See fitMounts. */
   let shipMounts: Mounts | null = null;
   let shipLoading = false;
@@ -1337,7 +1350,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             if (e.drone) {
               const cls = droneClass(e.tier);
               combat.enemies.push({
-                pos: e.pos, fwd: e.fwd, roll: 0,
+                id: e.id, pos: e.pos, fwd: e.fwd, roll: 0,
                 cls: { ...cls, weight: 0 } as ShipClass,
                 shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
                 spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
@@ -1348,7 +1361,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               continue;
             }
             combat.enemies.push({
-              pos: e.pos, fwd: e.fwd, roll: 0,
+              id: e.id, pos: e.pos, fwd: e.fwd, roll: 0,
               cls: TIERS[Math.max(0, Math.min(TIERS.length - 1, e.tier - 1))],
               shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
               spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
@@ -1550,47 +1563,67 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            slot whose occupant changed tier is rebuilt rather than recoloured. */
         dflow.add("events", performance.now() - tEvents);
         const tMeshes = performance.now();
-        for (let i = 0; i < combat.enemies.length; i++) {
-          /* Drones are spheres drawn by the instanced pass, not models. A
-             sentinel tier keeps their slot in step with the enemy list without
-             building a hull nobody will ever see. */
-          const want = combat.enemies[i].drone ? 0 : combat.enemies[i].cls.tier;
-          const have = enemyMeshes[i];
-          if (have && have.userData.tier === want) continue;
-          if (have) scene.remove(have);
-          const m = want === 0 ? new THREE.Group() : protos[want - 1].clone(true);
-          m.userData.tier = want;
-          m.scale.setScalar(ENEMY_SCALE);
-          scene.add(m);
-          enemyMeshes[i] = m;
+        /* ---- HULLS FOLLOW ENEMIES, NOT SLOTS ----
+           A hull model used to belong to an INDEX in the enemy list. Every
+           time one enemy died the ones after it shifted down a slot, the slot
+           saw a different tier, threw its model away and cloned a fresh one
+           from the prototype: seven meshes and three line sets per fighter,
+           several fighters per death, every death. DFlow showed it: the
+           meshes stage spiking to 22ms and a hundred stalls the report could
+           only call "outside our code", which is the garbage collector
+           sweeping up the clones. Now a model is keyed by the enemy's own id
+           and follows it for life; a model whose enemy has gone is hidden
+           and kept in a pool for the next of its tier. Nothing is cloned
+           after the first wave of each tier. */
+        seenEnemies.clear();
+        for (const e of combat.enemies) {
+          if (e.drone) continue;
+          const id = e.id ?? -1;
+          const tier = e.cls.tier;
+          let slot = enemyRigs.get(id);
+          if (slot && slot.tier !== tier) { releaseHull(slot); enemyRigs.delete(id); slot = undefined; }
+          if (!slot) {
+            const pool = hullPools.get(tier);
+            const reused = pool && pool.length ? pool.pop()! : null;
+            if (reused) {
+              slot = reused;
+            } else {
+              const m = protos[tier - 1].clone(true);
+              m.userData.tier = tier;
+              m.scale.setScalar(ENEMY_SCALE);
+              scene.add(m);
+              enemyMeshes.push(m);
+              const rig = makeShieldRig(0x66ccff);
+              scene.add(rig.group);
+              enemyShields.push(rig);
+              slot = { mesh: m, rig, tier };
+            }
+            slot.mesh.visible = true;
+            slot.rig.group.visible = true;
+            enemyRigs.set(id, slot);
+          }
+          seenEnemies.add(id);
         }
-        while (enemyShields.length < enemyMeshes.length) {
-          const rig = makeShieldRig(0x66ccff);
-          /* Added to the scene rather than to the fighter, so a fighter
-             tumbling wildly does not take its own shield bubble and its
-             readout spinning with it. */
-          scene.add(rig.group);
-          enemyShields.push(rig);
+        for (const [id, slot] of enemyRigs) {
+          if (seenEnemies.has(id)) continue;
+          releaseHull(slot);
+          enemyRigs.delete(id);
         }
         const nowS = performance.now() / 1000;
-        for (let i = 0; i < enemyMeshes.length; i++) {
-          const m = enemyMeshes[i];
-          const rig = enemyShields[i];
-          const e = combat.enemies[i];
-          if (!e || e.drone) { m.visible = false; rig.step(nowS, 0); continue; }
-          m.visible = true;
+        for (const e of combat.enemies) {
+          if (e.drone) continue;
+          const slot = enemyRigs.get(e.id ?? -1);
+          if (!slot) continue;
+          const m = slot.mesh, rig = slot.rig;
           m.position.copy(e.pos);
           s.target.copy(e.pos).addScaledVector(e.fwd, 10);
           s.m4.lookAt(e.pos, s.target, e.pos.clone().normalize());
           m.quaternion.setFromRotationMatrix(s.m4);
-          /* The tumble from being hit, on top of the bank from manoeuvring. */
           s.qBank.setFromEuler(new THREE.Euler(e.spin.x, e.spin.y, e.spin.z + e.roll));
           m.quaternion.multiply(s.qBank);
-
           rig.group.position.copy(e.pos);
           rig.setColour(e.cls.colour);
           rig.setLevel(e.shield, e.cls.shieldMax);
-          /* Shown for a couple of seconds after a hit, fading out. */
           rig.step(nowS, Math.min(1, e.flash / 0.6));
         }
 
@@ -1981,6 +2014,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
       for (const r of enemyShields) r.dispose();
       enemyShields.length = 0;
+      enemyRigs.clear();
+      hullPools.clear();
       enemyMeshes.length = 0;
       fx?.dispose();
       /* The prototype's geometry is shared by every clone, so it is disposed
