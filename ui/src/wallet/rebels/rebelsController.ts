@@ -46,6 +46,7 @@ import { respawnSeconds, itemByKey } from "./itemCatalog";
 import { fetchDropConfig } from "./dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "./dropCharts";
 import { addSphere, heldCount, takeHeld } from "./rebelsInventory";
+import { REAR_KEY, inRearWindow, placeRearCamera, rearAim, tailOf, rearViewport } from "./rearGun";
 import { GAME_KEYS } from "./RebelsControls";
 import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
@@ -97,6 +98,9 @@ export interface HudState {
   towers: number;
   /** How far the camera sits behind the ship. Zero is the cockpit. */
   view: number;
+  /** The rear-gun window is open (7), and the crosshair is in it. */
+  rear: boolean;
+  rearAim: boolean;
   /** Whether this ship is in a shared world, and how many others are in it. */
   room: string;
   crew: number;
@@ -166,6 +170,7 @@ const BLANK: HudState = {
   guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, throttle: 1,
   room: "off", crew: 0, points: 0, fps: 0, simMs: 0, drawCalls: 0, pixelRatio: 0, flocks: 0, superBoost: false, superMult: 2,
+  rear: false, rearAim: false,
   primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
@@ -341,6 +346,42 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let shipHull: HitSphere[] = [];
   /** The capture ball's radius, from the flown hull's wingspan. */
   let shipReach = REACH_MIN;
+  /* ---- the rear gun ----
+     Open with 7 (when a Rear Gun is held). The scene is drawn a second time
+     into the top-right window from a camera behind the ship looking back;
+     with the crosshair in the window, the trigger fires the double shot out
+     of the tail through the crosshair, and the right button a torpedo. */
+  let rearOn = false;
+  let afterRender: ((fn: ((r: THREE.WebGLRenderer, draw: (s: THREE.Scene, c: THREE.Camera) => void) => void) | null) => void) | null = null;
+  const rearCamera = new THREE.PerspectiveCamera(70, 1.6, 0.1, 4000);
+  const _rearSize = new THREE.Vector2();
+  function drawRearView(renderer: THREE.WebGLRenderer, draw: (s: THREE.Scene, c: THREE.Camera) => void): void {
+    if (!scene || !camera || !flight || !rearOn) return;
+    renderer.getSize(_rearSize);
+    const pr = renderer.getPixelRatio();
+    const vp = rearViewport(_rearSize.x * pr, _rearSize.y * pr);
+    rearCamera.fov = camera.fov;
+    rearCamera.aspect = vp.w / Math.max(1, vp.h);
+    rearCamera.near = camera.near; rearCamera.far = camera.far;
+    rearCamera.updateProjectionMatrix();
+    placeRearCamera(rearCamera, flight);
+    const wasAutoClear = renderer.autoClear;
+    renderer.setScissorTest(true);
+    renderer.setScissor(vp.x, vp.y, vp.w, vp.h);
+    renderer.setViewport(vp.x, vp.y, vp.w, vp.h);
+    renderer.autoClear = false;
+    renderer.clearDepth();
+    try { draw(scene, rearCamera); } finally {
+      renderer.autoClear = wasAutoClear;
+      renderer.setScissorTest(false);
+      renderer.setViewport(0, 0, _rearSize.x * pr, _rearSize.y * pr);
+    }
+  }
+  function setRear(on: boolean): void {
+    rearOn = on;
+    afterRender?.(on ? drawRearView : null);
+    setHud({ rear: on, rearAim: false });
+  }
   /* Hull models by enemy id, and pools of hidden ones by tier. */
   type HullSlot = { mesh: THREE.Object3D; rig: ShieldRig; tier: number };
   const enemyRigs = new Map<number, HullSlot>();
@@ -497,6 +538,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       respawnAt = performance.now() + respawnWait() * 1000;
     }
     setHud({ dead: true, score: 0 });
+    if (rearOn) setRear(false);
     if (typeof document !== "undefined" && document.pointerLockElement === dom) {
       /* Give the pointer back, or the "launch again" button cannot be clicked. */
       document.exitPointerLock();
@@ -651,7 +693,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     if (!dom || !flying) return;
     const r = dom.getBoundingClientRect();
     if (locked) {
-      const lo = 0.5 - AIM_REACH, hi = 0.5 + AIM_REACH;
+      /* With the rear window open the crosshair may go all the way into the
+         corner, or it could never reach the window's edge. */
+      const reach = rearOn ? 0.5 : AIM_REACH;
+      const lo = 0.5 - reach, hi = 0.5 + reach;
       cursor.x = Math.max(lo, Math.min(hi, cursor.x + (e.movementX || 0) / r.width));
       cursor.y = Math.max(lo, Math.min(hi, cursor.y + (e.movementY || 0) / r.height));
     } else {
@@ -998,6 +1043,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        and the secondary stays where the genre puts it: the right button. */
     if (k >= "1" && k <= "6") selectWeapon("primary", Number(k) - 1);
     if (k === "y") useHeld();
+    if (k === REAR_KEY && flying) {
+      if (!gearKeys(loadShip()).includes("reargun")) {
+        setHud({ note: "NO REAR GUN: FIND ONE AND OPEN IT (I)", noteAt: performance.now() });
+      } else setRear(!rearOn);
+    }
     if (k === "v" && flight) {
       flight.view = flight.view > 0.01 ? 0 : 2;
       if (flight.view > 0) ensureShip();
@@ -1379,7 +1429,20 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           }
         }
 
-        if (res.fired) {
+        const rearAiming = rearOn && inRearWindow(cursor);
+        if (rearAiming !== hud.rearAim) setHud({ rearAim: rearAiming });
+        if (res.fired && rearAiming) {
+          /* ---- the rear gun ----
+             The double shot leaves the tail and goes through the crosshair's
+             spot in the rear window. The room takes any direction; it fires
+             from where it knows the ship is. */
+          const aim = rearAim(rearCamera, cursor);
+          const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
+          if (inRoom && room) room.fire("main", flight.pos, aim);
+          else fireGuns(combat, tail, aim, flight.up, camera.fov, camera.aspect);
+          fx.muzzle(tail);
+          playGunSound();
+        } else if (res.fired) {
           /* ---- where the guns are ----
              In the cockpit they come from the EDGES of the frame at eye level,
              which is the arcade convention and the only sensible answer when
@@ -1533,7 +1596,16 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* One button does both jobs. If a torpedo is already in the air the
            press sets it off; otherwise it launches the next one. That is what
            "control-click again to detonate" means with a single control. */
-        if (res.heavyPress) {
+        if (res.heavyPress && rearAiming) {
+          /* A torpedo backwards, out of the tail. */
+          if (flight.torpedoes > 0) {
+            const aim = rearAim(rearCamera, cursor);
+            const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
+            if (inRoom && room) { room.fire("torp", flight.pos, aim); }
+            else { flight.torpedoes -= 1; fireTorpedo(combat, tail, aim); }
+            playTorpedoSound();
+          }
+        } else if (res.heavyPress) {
           const slot = weaponAt("secondary", weapons.secondary);
           if (slot && !slot.ready) {
             setHud({ note: `${slot.name}: not yet fitted`, noteAt: performance.now() });
@@ -1888,6 +1960,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         camera = api.camera;
         dom = api.dom;
         stats = api.stats ?? null;
+        afterRender = api.afterRender ?? null;
+        afterRender?.(null);
+        rearOn = false;
+        setHud({ rear: false, rearAim: false });
         /* The version is a build-time define; tests run without one. */
         const ver = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
         dflow.setLabel(`v${ver} · ${typeof navigator !== "undefined" ? navigator.userAgent.slice(0, 60) : ""}`);

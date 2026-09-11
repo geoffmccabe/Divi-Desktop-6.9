@@ -70,6 +70,9 @@ export interface GlobeFlight {
     dom: HTMLCanvasElement;
     /** What the renderer did last frame, for the game's readout. */
     stats?: () => { calls: number; triangles: number; ratio: number; programs?: number; geometries?: number; textures?: number };
+    /** A second pass after each frame's render, for the rear-gun window.
+     *  `draw` is the renderer's own render, unpatched. Null clears it. */
+    afterRender?: (fn: ((renderer: THREE.WebGLRenderer, draw: (s: THREE.Scene, c: THREE.Camera) => void) => void) | null) => void;
   }): void;
   /** Every frame while flying. Move the camera here. */
   frame(dt: number): void;
@@ -737,16 +740,21 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
          the game cannot see from inside its own frame. Wrapped so it is timed
          and always called; unwrapped on detach. */
       const origRender = renderer.render.bind(renderer);
+      let after: ((r: THREE.WebGLRenderer, draw: (s: THREE.Scene, c: THREE.Camera) => void) => void) | null = null;
       (renderer as unknown as { render: typeof renderer.render }).render = ((scene: THREE.Scene, cam: THREE.Camera) => {
         const t = performance.now();
-        try { origRender(scene, cam); } finally { dflow.add("gl.render", performance.now() - t); }
+        try {
+          origRender(scene, cam);
+          if (after) after(renderer, origRender);
+        } finally { dflow.add("gl.render", performance.now() - t); }
       }) as typeof renderer.render;
-      unpatchRender = () => { (renderer as unknown as { render: typeof renderer.render }).render = origRender; };
+      unpatchRender = () => { after = null; (renderer as unknown as { render: typeof renderer.render }).render = origRender; };
       /* Every shader the game will need, compiled now in one go rather than
          one stall at a time as each thing first appears. DFlow counted 62
          compiles across a flight, each a frame of 50 to 100ms. */
       const prewarm = () => { try { renderer.compile(scene, camera); } catch { /* not fatal */ } };
       f.attach({
+        afterRender: (fn) => { after = fn; },
         stats: () => ({
           calls: renderer.info.render.calls,
           triangles: renderer.info.render.triangles,

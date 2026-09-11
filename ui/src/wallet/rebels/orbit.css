@@ -930,3 +930,20 @@
 .orbit-meter.over i { box-shadow: 0 0 10px hsl(var(--rebels-hud)), 0 0 2px #fff inset; filter: brightness(1.35); }
 .orbit-inv-action { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .orbit-inv-action i { font-style: normal; font-size: 9.5px; opacity: 0.55; }
+
+/* ---- the rear-gun window (7) ----
+   The picture itself is the renderer's second pass into this corner; this
+   is only its frame, drawn over it. */
+.orbit-rear {
+  position: absolute; right: 0; top: 0; width: 35%; height: 35%;
+  border: 1px solid hsl(var(--rebels-hud) / 0.55);
+  box-shadow: inset 0 0 18px hsl(var(--rebels-hud) / 0.18), 0 0 12px hsl(var(--rebels-hud) / 0.25);
+  pointer-events: none; z-index: 6;
+}
+.orbit-rear.aiming { border-color: #ff45d0; box-shadow: inset 0 0 22px rgb(255 69 208 / 0.25), 0 0 14px rgb(255 69 208 / 0.4); }
+.orbit-rear span {
+  position: absolute; left: 8px; bottom: 6px; font: 600 10px/1 var(--font-mono);
+  letter-spacing: 0.18em; color: hsl(var(--rebels-hud) / 0.85);
+}
+.orbit-rear.aiming span { color: #ff45d0; }
+.orbit-cross.rear::before, .orbit-cross.rear::after { background: #ff45d0; }
