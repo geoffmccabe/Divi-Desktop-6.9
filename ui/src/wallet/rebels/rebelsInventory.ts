@@ -16,12 +16,29 @@ export const INVENTORY_CHANGED = "dd69-rebels-armoury";
 
 export type Held = Record<string, number>;
 
+/* ---- SEALED SPHERES ----
+   Geoff (2026-Sep-11): "when someone gets an item sphere, it goes into their
+   inventory and they need to go there to open it... later when we have a
+   marketplace, they can sell it unopened." So a pickup is a SPHERE, counted
+   under "sphere:<key>" in the same map; opening one moves it to "<key>".
+   The item inside was decided when it dropped (the roll is the wreck's, not
+   the opening's), which is what lets the room bank the same key. */
+export const SPHERE_PREFIX = "sphere:";
+export function sphereKey(key: string): string { return SPHERE_PREFIX + key; }
+export function isSphereKey(key: string): boolean { return key.startsWith(SPHERE_PREFIX); }
+/** The item a held key refers to, sealed or not. */
+export function keyInside(key: string): string { return isSphereKey(key) ? key.slice(SPHERE_PREFIX.length) : key; }
+
+function knownKey(k: string): boolean {
+  return !!itemByKey(keyInside(k)) && (!isSphereKey(k) || !!itemByKey(keyInside(k))?.drop);
+}
+
 function clean(raw: unknown): Held {
   const out: Held = {};
   if (!raw || typeof raw !== "object") return out;
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     const n = Math.floor(Number(v));
-    if (itemByKey(k) && Number.isFinite(n) && n > 0) out[k] = Math.min(n, 1_000_000);
+    if (knownKey(k) && Number.isFinite(n) && n > 0) out[k] = Math.min(n, 1_000_000);
   }
   return out;
 }
@@ -41,7 +58,7 @@ export function heldCount(key: string): number {
 
 /** One more (or n more) of this. Unknown keys are refused. */
 export function addHeld(key: string, n = 1): boolean {
-  if (!itemByKey(key) || !(n > 0)) return false;
+  if (!knownKey(key) || !(n > 0)) return false;
   const h = heldItems();
   h[key] = (h[key] ?? 0) + Math.floor(n);
   writeHeld(h);
@@ -70,12 +87,41 @@ export function mergeHeld(remote: unknown): boolean {
   return moved;
 }
 
-/** Every stack, best tier first, then by name: the inventory's order. */
-export function heldSorted(): Array<{ key: string; count: number }> {
-  return Object.entries(heldItems())
-    .map(([key, count]) => ({ key, count, spec: itemByKey(key)! }))
+/** A picked-up sphere, sealed. */
+export function addSphere(key: string, n = 1): boolean {
+  return addHeld(sphereKey(key), n);
+}
+
+/** Open one sealed sphere of this item: the sphere is gone, the item is held.
+ *  False, and nothing moves, when there is none to open. */
+export function openSphere(key: string): boolean {
+  const h = heldItems();
+  const sk = sphereKey(key);
+  if ((h[sk] ?? 0) < 1 || !itemByKey(key)) return false;
+  h[sk] -= 1;
+  if (h[sk] <= 0) delete h[sk];
+  h[key] = (h[key] ?? 0) + 1;
+  writeHeld(h);
+  return true;
+}
+
+function sorted(keys: string[], h: Held): Array<{ key: string; count: number }> {
+  return keys
+    .map((key) => ({ key, count: h[key], spec: itemByKey(keyInside(key))! }))
     .sort((a, b) => (b.spec.tier - a.spec.tier) || a.spec.name.localeCompare(b.spec.name))
     .map(({ key, count }) => ({ key, count }));
+}
+
+/** Every OPENED stack, best tier first, then by name: the inventory's order. */
+export function heldSorted(): Array<{ key: string; count: number }> {
+  const h = heldItems();
+  return sorted(Object.keys(h).filter((k) => !isSphereKey(k)), h);
+}
+
+/** Every SEALED stack, in the same order. `key` is the item inside. */
+export function spheresSorted(): Array<{ key: string; count: number }> {
+  const h = heldItems();
+  return sorted(Object.keys(h).filter(isSphereKey), h).map(({ key, count }) => ({ key: keyInside(key), count }));
 }
 
 export function resetInventoryForTests(): void {

@@ -43,7 +43,7 @@ import { droneClass } from "./rebelsFlock";
 import { respawnSeconds, itemByKey } from "./itemCatalog";
 import { fetchDropConfig } from "./dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "./dropCharts";
-import { addHeld } from "./rebelsInventory";
+import { addSphere } from "./rebelsInventory";
 import { GAME_KEYS } from "./RebelsControls";
 import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
@@ -180,6 +180,9 @@ export interface RebelsController extends GlobeFlight {
   /** Called when the player presses Escape, which the browser signals by
    *  releasing the pointer. */
   onEscape(fn: () => void): void;
+  /** A panel that needs the mouse is open (true) or closed (false): the
+   *  pointer is freed without that counting as Escape, and taken back after. */
+  panel(open: boolean): void;
   hud(): HudState;
   subscribe(fn: (h: HudState) => void): () => void;
   launch(): void;
@@ -630,11 +633,23 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
 
   /* Escape releases the lock, which the browser does for us, and that is the
-     signal to leave the game. Nothing else can take the pointer away. */
+     signal to leave the game. Nothing else can take the pointer away, except
+     a panel that needs the mouse (the inventory): while one is open the lock
+     is let go on purpose and its loss means nothing. */
+  let panelOpen = false;
   function onLockChange() {
     const was = locked;
     locked = typeof document !== "undefined" && document.pointerLockElement === dom;
-    if (was && !locked && flying) onEscape?.();
+    if (was && !locked && flying && !panelOpen) onEscape?.();
+  }
+  function setPanelOpen(on: boolean): void {
+    panelOpen = on;
+    if (typeof document === "undefined") return;
+    if (on) {
+      if (document.pointerLockElement === dom) document.exitPointerLock();
+    } else if (flying && !hud.dead) {
+      try { dom?.requestPointerLock?.(); } catch { /* not supported here */ }
+    }
   }
   function onDown(e: PointerEvent) {
     e.preventDefault();
@@ -1544,12 +1559,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             playBounce();
             if (!ev.who || (room && ev.who === room.me())) {
               if (ev.item) {
-                /* Into the inventory. Solo, this is the client's roll and the
-                   client's pickup; in a room, the room's, relayed. Either
-                   way the account row is what keeps it (watchLoadout). */
-                addHeld(ev.item, 1);
+                /* Into the inventory, SEALED: the player opens it there (I).
+                   Solo, this is the client's roll and the client's pickup; in
+                   a room, the room's, relayed. Either way the account row is
+                   what keeps it (watchLoadout). */
+                addSphere(ev.item, 1);
                 const spec = itemByKey(ev.item);
-                setHud({ note: `FOUND: ${(spec?.name ?? ev.item).toUpperCase()}`, noteAt: performance.now() });
+                setHud({ note: `T${spec?.tier ?? 1} SPHERE: OPEN IT IN YOUR INVENTORY (I)`, noteAt: performance.now() });
               } else {
                 setHud({ note: `GEM: ${["yellow", "green", "blue", "purple", "red", "white", "fuchsia"][(ev.tier ?? 1) - 1] ?? ""}`, noteAt: performance.now() });
               }
@@ -2077,6 +2093,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      *  putting it through React state would make aiming feel soggy. */
     cursor: () => cursor,
     onEscape(fn) { onEscape = fn; },
+    panel: setPanelOpen,
     hud: () => hud,
     subscribe(fn) { listeners.add(fn); fn(hud); return () => { listeners.delete(fn); }; },
     launch() {

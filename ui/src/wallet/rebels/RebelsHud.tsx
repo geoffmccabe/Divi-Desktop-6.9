@@ -15,6 +15,7 @@ import { flightExtras } from "./rebelsArmoury";
 import { loadShip } from "./shipChoice";
 import { ShipMarket } from "./ShipMarket";
 import { DflowPanel } from "./DflowPanel";
+import { InventoryPanel } from "./InventoryPanel";
 import { RebelsHealthBar } from "./RebelsHealthBar";
 import { ShipBadge } from "./ShipBadge";
 import pandaUrl from "../../assets/rebels_panda.webp";
@@ -33,6 +34,10 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
   const [help, setHelp] = useState(false);
   const [market, setMarket] = useState(false);
   const [dflowOpen, setDflow] = useState(false);
+  const [inv, setInv] = useState(false);
+  /* The inventory needs the mouse: tell the controller so letting go of the
+     pointer lock does not read as Escape, and it is taken back on close. */
+  useEffect(() => { ctl.panel(inv); }, [ctl, inv]);
 
   /* The hit flash: everything behind the cockpit inverts for a tenth of a
      second. Driven by a timestamp rather than a boolean so two hits in quick
@@ -79,6 +84,11 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
          the sequence swallows its own keys, so a lone # is always this. */
       if (e.key === "#" && !(e.target instanceof HTMLInputElement)) {
         setDflow((v) => !v);
+        return;
+      }
+      if ((e.key === "i" || e.key === "I") && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        setInv((v) => !v);
         return;
       }
       if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
@@ -307,6 +317,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       {market && <ShipMarket onClose={() => setMarket(false)} />}
       {dflowOpen && <DflowPanel onClose={() => setDflow(false)} />}
+      {inv && <InventoryPanel onClose={() => setInv(false)} />}
 
       {!hud.broken && !hud.launched && !scores && !market && (
         <div className="orbit-card orbit-card-clear">

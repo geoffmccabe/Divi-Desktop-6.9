@@ -117,6 +117,20 @@ const fired: string[] = [];
   ok("merging nothing new moves nothing", !INV.mergeHeld({ hull5: 2 }) && !INV.mergeHeld(null));
   store.set("dd69.rebels.items", "{not json");
   ok("a broken saved copy reads as empty", Object.keys(INV.heldItems()).length === 0);
+
+  /* ---- sealed spheres ----
+     A pickup is a sphere; opening it in the inventory is what makes it the
+     item. Sold unopened one day, so the two are counted apart. */
+  INV.resetInventoryForTests();
+  ok("a pickup is a sealed sphere, not the item", INV.addSphere("hull2") && INV.heldCount("sphere:hull2") === 1 && INV.heldCount("hull2") === 0);
+  ok("spheres are listed by the item inside, best first", (INV.addSphere("drone1"), INV.addSphere("hull2"), INV.spheresSorted().map((s) => `${s.key}x${s.count}`).join(",")) === "hull2x2,drone1x1", INV.spheresSorted().map((s) => `${s.key}x${s.count}`).join(","));
+  ok("and are not among the opened items", INV.heldSorted().length === 0);
+  ok("opening one moves it", INV.openSphere("hull2") && INV.heldCount("sphere:hull2") === 1 && INV.heldCount("hull2") === 1);
+  ok("opening what you do not have does nothing", !INV.openSphere("drone5") && !INV.openSphere("hull1") && INV.heldCount("drone5") === 0);
+  ok("a sphere of a bought-only thing is refused", !INV.addSphere("vip") && !INV.addHeld("sphere:mini"));
+  ok("a sphere of nothing is refused", !INV.addSphere("deathray"));
+  ok("the account copy merges spheres too", INV.mergeHeld({ "sphere:drone5": 2, "sphere:deathray": 1 }) && INV.heldCount("sphere:drone5") === 2 && INV.heldCount("sphere:deathray") === 0);
+  ok("keyInside reads through the seal", INV.keyInside("sphere:hull3") === "hull3" && INV.keyInside("hull3") === "hull3");
 }
 
 console.log(out.join("\n"));

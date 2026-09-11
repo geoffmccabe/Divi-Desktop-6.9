@@ -255,3 +255,31 @@ phase ships on its own with tests, docs and a version.
   suites pin the drop roll to "nothing".
 - NOT yet: the items DO nothing (phase 1), no inventory panel (phase 2), no
   Y key, no forging.
+9. (2026-Sep-11) A picked-up item sphere goes into the inventory SEALED.
+   The player opens it there (right-click on the sphere) to get the item;
+   a marketplace can later sell it unopened. In the inventory it shows as
+   the sphere, in 3D on the left of its card, with its tier-colour glow.
+   This replaces "consumables apply on pickup": nothing applies until it
+   is opened; an opened Instant Recharge or Supercharge is held and used
+   with Y.
+
+## Built: sealed spheres + the Inventory panel (2026-Sep-11, v69.9.24)
+
+- A pickup is now a SEALED sphere: `rebelsInventory.ts` counts it under
+  `sphere:<key>` in the same account map (`rebels_loadout.items`, merged by
+  the larger count, no new migration). `openSphere(key)` moves one to
+  `<key>`. The HUD says "T2 SPHERE: OPEN IT IN YOUR INVENTORY (I)".
+- **Inventory panel** (`ui/src/wallet/rebels/InventoryPanel.tsx`, key `I`,
+  anywhere in the game): SHIPS (the fleet from `rebels_ships`, the flown
+  one marked), GUNS AND GEAR (bought), SEALED SPHERES and ITEMS as cards
+  in an auto-fill grid, best tier first then name. Each card: the sphere
+  turning in 3D on the left with its tier glow, tier, name, note, count.
+  Right-click a sealed sphere to open it. Sealed = plain glossy ball,
+  opened = the "T2 D" placeholder print.
+- **One renderer for every card** (`sphereCards.ts`): a shared offscreen
+  WebGL renderer paints each card's 2D canvas once a frame, because a
+  browser allows only about a dozen GL contexts.
+- The controller got `panel(open)`: while the inventory is open the pointer
+  lock is let go without that counting as Escape, and taken back on close.
+- `I` is on the help card's keyboard and in the control table.
+- Still NOT: items do nothing, no Y, no forging (next).
