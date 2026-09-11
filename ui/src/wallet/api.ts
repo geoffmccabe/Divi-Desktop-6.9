@@ -319,6 +319,12 @@ export interface NodeIdentity { id: string; name: string; nameSource: string }
 export const nodeIdentity = () => invoke<NodeIdentity>("node_identity");
 export const setNodeName = (name: string, source = "custom") =>
   invoke<NodeIdentity>("set_node_name", { name, source });
+
+// Is a newer build published for this OS? Powers the "UPDATE TO vX.Y.Z" flash.
+export interface UpdateInfo { current: string; latest: string | null; available: boolean; os: string; downloadUrl: string | null }
+export const updateCheck = () => invoke<UpdateInfo>("update_check");
+// Firewalls / antivirus that might prompt about a freshly-updated binary.
+export const securityTools = () => invoke<string[]>("security_tools");
 // Latest DIVI/USD from the shared CMC feed (no per-user key) — used to price PoE.
 export const priceLatest = () => invoke<number | null>("price_latest");
 export interface StaleBlock {

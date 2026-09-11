@@ -1640,6 +1640,47 @@ async fn set_node_name(name: String, source: Option<String>) -> serde_json::Valu
     .unwrap_or_else(|_| serde_json::json!({ "id": "", "name": "", "nameSource": "custom" }))
 }
 
+/// Is a newer build published for THIS platform? Powers the "UPDATE TO vX.Y.Z"
+/// flash under the logo. Read-only: compares the running version to the manifest
+/// on scan.divi.love. Never claims an update for an equal or older version.
+#[tauri::command]
+async fn update_check(app: tauri::AppHandle) -> serde_json::Value {
+    let current = app.package_info().version.to_string();
+    let latest = tauri::async_runtime::spawn_blocking(dd69_supervisor::updates::latest_version)
+        .await
+        .ok()
+        .flatten();
+    let available = latest
+        .as_deref()
+        .map(|l| dd69_supervisor::updates::is_newer(l, &current))
+        .unwrap_or(false);
+    let os = dd69_supervisor::updates::os_key();
+    // The installer filename for this OS follows the scan.divi.love naming
+    // convention, so the modal can offer the right download.
+    let download_url = latest.as_deref().map(|l| {
+        let file = match os {
+            "mac" => format!("Divi-Desktop-{l}-Universal.dmg"),
+            "windows" => format!("Divi-Desktop-{l}-Windows-x64-setup.exe"),
+            _ => format!("Divi-Desktop-{l}-Linux-x86_64.deb"),
+        };
+        format!("https://scan.divi.love/downloads/{file}")
+    });
+    serde_json::json!({
+        "current": current, "latest": latest, "available": available,
+        "os": os, "downloadUrl": download_url
+    })
+}
+
+/// Firewalls / antivirus installed on this machine that might prompt about (or
+/// block) a freshly-updated binary, so the update modal can pre-warn the user.
+/// Best-effort and read-only.
+#[tauri::command]
+async fn security_tools() -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(dd69_supervisor::updates::security_tools)
+        .await
+        .unwrap_or_default()
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -2862,6 +2903,8 @@ fn main() {
             setup_log_report,
             node_identity,
             set_node_name,
+            update_check,
+            security_tools,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,

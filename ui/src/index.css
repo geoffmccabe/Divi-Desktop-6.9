@@ -2189,3 +2189,36 @@ code, .mono { font-family: var(--font-mono); }
   cursor: pointer;
 }
 .orbit-exit:hover { background: hsl(var(--primary) / 0.3); }
+
+/* ── In-app update: flashing sidebar version + the update modal ─────────────── */
+/* The version becomes a clickable pill that alternates with "UPDATE TO vX". */
+.sidebar-brand .ver-update {
+  border: 1px solid hsl(var(--primary) / 0.5); border-radius: 6px; padding: 1px 6px;
+  background: hsl(var(--primary) / 0.12); cursor: pointer; white-space: nowrap;
+  transition: background 0.25s, box-shadow 0.25s, color 0.25s;
+}
+.sidebar-brand .ver-update.ver-flash {
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.35);
+  box-shadow: 0 0 10px hsl(var(--primary) / 0.6);
+}
+.sidebar-brand .ver-update:hover { background: hsl(var(--primary) / 0.45); }
+
+.upd-modal { width: min(520px, 92vw); max-height: 88vh; overflow: auto; padding: 0 20px 18px; }
+.upd-body { display: flex; flex-direction: column; gap: 14px; }
+.upd-jump { display: flex; align-items: center; gap: 12px; font-family: var(--font-mono); font-size: 1.2rem; }
+.upd-cur { color: hsl(var(--muted-foreground)); }
+.upd-arrow { color: hsl(var(--primary)); }
+.upd-new { color: hsl(var(--foreground)); font-weight: 700; }
+.upd-warn {
+  padding: 10px 12px; border-radius: 8px; line-height: 1.4; font-size: 0.86rem;
+  background: hsl(var(--warning) / 0.14); border: 1px solid hsl(var(--warning) / 0.5);
+}
+.upd-note { font-size: 0.82rem; color: hsl(var(--muted-foreground)); line-height: 1.4; margin: 0; }
+.upd-actions { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
+.upd-go {
+  padding: 9px 18px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.22);
+  border: 1px solid hsl(var(--primary) / 0.6); transition: background 0.15s;
+}
+.upd-go:hover { background: hsl(var(--primary) / 0.38); }
+.upd-soon { font-size: 0.75rem; color: hsl(var(--muted-foreground) / 0.8); margin: 2px 0 0; font-style: italic; }
