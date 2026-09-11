@@ -353,3 +353,24 @@ phase ships on its own with tests, docs and a version.
   30% opacity, nine units long (`DRAGON_SIZE`), pointing along its glide.
   "A DRAGON" on the HUD when it appears.
 - Room and solo both roll it in the one simulation.
+
+## Built: the Rear Gun (2026-Sep-11, v69.9.28)
+
+- `7` opens the rear window when a Rear Gun is opened in the inventory
+  (`gearKeys` includes `reargun`); without one the HUD says so. Off again
+  on `7`, on death, on detach.
+- The window is the top-right 35% x 35% of the canvas (`REAR_WINDOW` in
+  `rearGun.ts`). The scene is drawn a second time into it after every
+  frame (GlobeMap `afterRender` hook, scissor + viewport) from a camera
+  behind and above the ship looking back along its track
+  (`placeRearCamera`). The HUD draws the frame; it turns fuchsia while the
+  crosshair is inside.
+- With the crosshair in the window (the pointer stays locked; the
+  crosshair is the pointer, and it may reach the corner while the window
+  is open): the trigger fires the DOUBLE SHOT out of the tail through the
+  crosshair's spot in the window (`rearAim`); the right button fires a
+  TORPEDO backwards the same way. In a room the room fires from the seat
+  along the given direction, as for any shot. Crosshair elsewhere: the
+  guns fire forward as before.
+- Tests: `scripts/run-rebels-reargun-tests.sh` (window, crosshair
+  mapping, camera behind, aim back/right/up, tail, scissor rectangle).

@@ -60,6 +60,8 @@ export const CONTROL_GROUPS: ControlGroup[] = [
   { id: "arrows", keys: ["arrowup", "arrowdown", "arrowleft", "arrowright"], label: "ARROWS",
     what: () => "Steer, for anyone who would rather not use the mouse." },
   { id: "esc", keys: ["escape"], label: "ESC", what: () => "Back to the map." },
+  { id: "rear", keys: ["7"], label: "7",
+    what: () => "Rear Gun, when you hold one: a rear view top right. Aim in it to fire backwards; right-click there for a torpedo." },
   { id: "use", keys: ["y"], label: "Y",
     what: () => "Use a held Instant Recharge; a Supercharge when you are already full (up to double)." },
   { id: "inventory", keys: ["i"], label: "I",
@@ -89,7 +91,7 @@ export const GROUP_OF_KEY: Record<string, string> = Object.fromEntries(
    stands for]; a cap with no key is decoration. */
 type Cap = [string, string | null, number?];
 const KEYBOARD: Cap[][] = [
-  [["ESC", "escape"], ["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"], ["6", "6"], ["7", null], ["8", null]],
+  [["ESC", "escape"], ["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"], ["6", "6"], ["7", "7"], ["8", null]],
   [["TAB", "tab", 1.6], ["Q", "q"], ["W", "w"], ["E", "e"], ["R", "r"], ["T", null], ["Y", "y"], ["I", "i"]],
   [["SHIFT", "shift", 2.1], ["A", "a"], ["S", "s"], ["D", "d"], ["F", "f"], ["G", null]],
   [["Z", null, 1.2], ["X", "x"], ["C", "c"], ["V", "v"], ["SPACE", " ", 3.2]],

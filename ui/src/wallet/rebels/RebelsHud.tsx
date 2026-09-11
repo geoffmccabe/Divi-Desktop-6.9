@@ -217,7 +217,12 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         </div>
       )}
 
-      {hud.launched && !hud.dead && !hud.broken && <div className="orbit-cross" ref={crossRef} />}
+      {hud.launched && !hud.dead && !hud.broken && hud.rear && (
+        <div className={"orbit-rear" + (hud.rearAim ? " aiming" : "")}>
+          <span>REAR{hud.rearAim ? ": FIRING BACKWARDS" : ""}</span>
+        </div>
+      )}
+      {hud.launched && !hud.dead && !hud.broken && <div className={"orbit-cross" + (hud.rearAim ? " rear" : "")} ref={crossRef} />}
 
       {hud.launched && hud.dock > 0 && (
         <div className="orbit-dock">
