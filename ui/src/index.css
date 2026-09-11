@@ -2193,6 +2193,7 @@ code, .mono { font-family: var(--font-mono); }
 /* ── In-app update: flashing sidebar version + the update modal ─────────────── */
 /* The version becomes a clickable pill that alternates with "UPDATE TO vX". */
 .sidebar-brand .ver-update {
+  font: inherit; font-family: inherit; /* it's a <button>: match the version text, not browser button defaults */
   border: 1px solid hsl(var(--primary) / 0.5); border-radius: 6px; padding: 1px 6px;
   background: hsl(var(--primary) / 0.12); cursor: pointer; white-space: nowrap;
   transition: background 0.25s, box-shadow 0.25s, color 0.25s;
@@ -2203,7 +2204,9 @@ code, .mono { font-family: var(--font-mono); }
 }
 .sidebar-brand .ver-update:hover { background: hsl(var(--primary) / 0.45); }
 
-.upd-modal { width: min(520px, 92vw); max-height: 88vh; overflow: auto; padding: 0 20px 18px; }
+/* Narrower than the default modal shell; the shell (poe-modal-*) handles the
+   backdrop, centering, padding and scrolling — only the width is ours. */
+.upd-modal { width: min(520px, 100%); }
 .upd-body { display: flex; flex-direction: column; gap: 14px; }
 .upd-jump { display: flex; align-items: center; gap: 12px; font-family: var(--font-mono); font-size: 1.2rem; }
 .upd-cur { color: hsl(var(--muted-foreground)); }

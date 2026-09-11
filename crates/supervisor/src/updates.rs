@@ -41,8 +41,11 @@ pub fn latest_version() -> Option<String> {
     let v: Value = serde_json::from_str(&resp.into_string().ok()?).ok()?;
     v.get(os_key())
         .and_then(|x| x.as_str())
-        .map(|s| s.to_string())
-        .filter(|s| !s.is_empty())
+        .map(|s| s.trim().to_string())
+        // Only a plain dotted number (69.9.10) is a version. Anything else — a
+        // stray string, path characters, a hostile manifest — is rejected here
+        // so it can never reach the download URL or the sidebar.
+        .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit() || c == '.') && s.chars().any(|c| c.is_ascii_digit()))
 }
 
 /// True if `latest` is a strictly newer version than `current`, comparing the

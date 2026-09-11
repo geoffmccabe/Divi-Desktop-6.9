@@ -11,9 +11,13 @@ export function Sidebar({ active, onSelect }: { active: string; onSelect: (id: s
   const [flashOn, setFlashOn] = useState(false); // toggles the version/UPDATE swap
   const [modal, setModal] = useState(false);
 
-  // Ask once on mount whether a newer build is published for this OS.
+  // Ask on mount, then re-check hourly, so a wallet left open for days still
+  // notices a release instead of only ever checking at launch.
   useEffect(() => {
-    updateCheck().then(setUpd).catch(() => {});
+    const check = () => updateCheck().then(setUpd).catch(() => {});
+    check();
+    const id = setInterval(check, 60 * 60 * 1000);
+    return () => clearInterval(id);
   }, []);
 
   // When an update is available, flash between the version and "UPDATE TO vX".
