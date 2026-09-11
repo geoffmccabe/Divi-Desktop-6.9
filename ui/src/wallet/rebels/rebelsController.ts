@@ -40,7 +40,10 @@ import { createLean, stepLean, LEAN_SLIDE } from "./shipLean";
 import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
 import { droneClass } from "./rebelsFlock";
-import { respawnSeconds } from "./itemCatalog";
+import { respawnSeconds, itemByKey } from "./itemCatalog";
+import { fetchDropConfig } from "./dropConfigRemote";
+import { DEFAULT_DROP_CONFIG, type DropConfig } from "./dropCharts";
+import { addHeld } from "./rebelsInventory";
 import { GAME_KEYS } from "./RebelsControls";
 import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
@@ -193,7 +196,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let camera: THREE.PerspectiveCamera | null = null;
   let dom: HTMLCanvasElement | null = null;
   let fx: Fx | null = null;
-  let combat: CombatState = createCombat();
+  /* The live drop charts, fetched once per attach; the default until then,
+     and every fresh fight is dealt them. */
+  let drops: DropConfig = DEFAULT_DROP_CONFIG;
+  const freshCombat = (): CombatState => { const c = createCombat(); c.drops = drops; return c; };
+  let combat: CombatState = freshCombat();
   /* One model per fighter in the air, kept in step with the simulation's list
      by index. Built from a single prototype and cloned, so a spawn costs a
      clone rather than a pile of new geometry. */
@@ -261,7 +268,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stopMusic();
     leaveRoom();
     if (flying && !hud.dead) bank();
-    combat = createCombat();
+    combat = freshCombat();
     flight = null;
   }
   const enemyMeshes: THREE.Group[] = [];
@@ -1378,10 +1385,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              so a beam is seen by the whole room and hits what the room says. */
           combat.beams.length = 0;
           for (const b of room.beams) combat.beams.push(b);
-          /* Gems are the room's: drawn from its list, never simulated here. */
+          /* Gems are the room's: drawn from its list, never simulated here.
+             A private drop only ever arrives at its owner, so nothing here
+             has to hide anything. */
           combat.gems.length = 0;
           for (const g of room.gems) {
-            combat.gems.push({ id: g.id, tier: g.tier, pos: g.pos, vel: new THREE.Vector3(), spin: g.spin, body: 0 });
+            combat.gems.push({
+              id: g.id, tier: g.tier, pos: g.pos, vel: new THREE.Vector3(), spin: g.spin, body: 0,
+              ...(g.item ? { item: g.item, owner: g.owner, hidden: g.hidden } : {}),
+            });
           }
           combat.coins.length = 0;
           for (const k of room.coins) {
@@ -1390,7 +1402,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           combat.events.push(...room.takeEvents().map((e) => ({
             kind: e.kind as never, at: e.at, power: e.power, who: e.who,
             tier: e.tier, shield: e.shield, damage: e.damage, wave: e.wave,
-            guarded: e.guarded,
+            guarded: e.guarded, item: e.item, id: e.id,
           })));
 
           /* ---- ANTI-CHEAT: THE GAUGES ARE THE ROOM'S ----
@@ -1523,11 +1535,24 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               flocks += 1;
               setHud({ flocks, note: "FLOCK DOWN", noteAt: performance.now() });
             }
+          } else if (ev.kind === "drop") {
+            /* Something fell out of the wreck. A glint; the thing itself is
+               drawn from the gem list, and only its owner sees it. */
+            if (!ev.who || (room && ev.who === room.me())) fx.boom(ev.at, 0.9, "cold");
           } else if (ev.kind === "gem") {
             fx.boom(ev.at, 1.2, "cold");
             playBounce();
             if (!ev.who || (room && ev.who === room.me())) {
-              setHud({ note: `GEM: ${["yellow", "green", "blue", "purple", "red", "white", "fuchsia"][(ev.tier ?? 1) - 1] ?? ""}`, noteAt: performance.now() });
+              if (ev.item) {
+                /* Into the inventory. Solo, this is the client's roll and the
+                   client's pickup; in a room, the room's, relayed. Either
+                   way the account row is what keeps it (watchLoadout). */
+                addHeld(ev.item, 1);
+                const spec = itemByKey(ev.item);
+                setHud({ note: `FOUND: ${(spec?.name ?? ev.item).toUpperCase()}`, noteAt: performance.now() });
+              } else {
+                setHud({ note: `GEM: ${["yellow", "green", "blue", "purple", "red", "white", "fuchsia"][(ev.tier ?? 1) - 1] ?? ""}`, noteAt: performance.now() });
+              }
             }
           } else if (ev.kind === "coinHit" || ev.kind === "gemHit") {
             fx.boom(ev.at, 0.5, "cold");
@@ -1678,7 +1703,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         dflow.time("draw.junk", () => fx!.drawJunk(combat.junk));
         dflow.time("draw.tracers", () => fx!.drawTracers(combat.tracers, TRACER_LIFE));
         dflow.time("draw.coins", () => fx!.drawCoins(combat.coins));
-        dflow.time("draw.gems", () => fx!.drawGems(combat.gems));
+        dflow.time("draw.gems", () => { fx!.drawGems(combat.gems); fx!.drawDrops(combat.gems); });
         const tDock = performance.now();
         /* The tether, drawn only while a resupply is running. */
         fx.drawDockLink(
@@ -1749,6 +1774,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         stopLoadoutWatch = watchLoadout();
         void loadLoadoutRemote().then((moved) => { if (moved) setHud({ points: spendable() }); });
       }
+      void fetchDropConfig().then((r) => {
+        drops = r.config;
+        combat.drops = r.config;
+        dflow.note(`drops: ${r.live ? "live charts" : `default charts (${r.error ?? ""})`}`);
+      });
       try {
         scene = api.scene;
         camera = api.camera;
@@ -1811,7 +1841,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           if (peers) scene.add(peers.group);
           suspended = false;
         } else {
-          combat = createCombat();
+          combat = freshCombat();
           startAt(homeIndex);
         }
 
@@ -2036,7 +2066,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       });
       fx = null; protos = [];
       if (!suspended) {
-        combat = createCombat();
+        combat = freshCombat();
         flight = null;
       }
       scene = null; camera = null; dom = null;

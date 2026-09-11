@@ -5,6 +5,8 @@
 import * as THREE from "three";
 import { R, cruiseScale, nearestPlanet, planetCentre, planetDiameter } from "./orbitWorld";
 import { BEAM_SECONDS, type WeaponSpec } from "./weaponCatalog";
+import { DEFAULT_DROP_CONFIG, DROP_PRIVATE_SECONDS, rollDrop, type DropConfig } from "./dropCharts";
+import { itemByKey } from "./itemCatalog";
 import {
   droneClass, newGroup, newFleetId, stepFlock, reslot, slotOffsets,
   fleetSize, rollFlockTier, SPAWN_CHECK_SECONDS, SPAWN_CHANCE, DRONE_KILL_WORTH,
@@ -215,6 +217,16 @@ export interface Gem {
   spinVel?: number;
   /** 0 for Earth, else the planet number it orbits. */
   body: number;
+  /* ---- a DROPPED ITEM is a gem with a name ----
+     Same orbit, same magnet, same recoil, same persistence, but it is one
+     particular thing from the catalogue (`item` is its key, `tier` its item
+     tier) and for its first minute it belongs to whoever made the kill:
+     only they can pick it up, only they see it. Geoff: "seen only by the
+     killer for one minute, then everyone." `hidden` counts that minute
+     down; `owner` is the seat id, or "" flying solo. */
+  item?: string;
+  owner?: string;
+  hidden?: number;
 }
 export const GEM_RADIUS = COIN_RADIUS;
 export const GEM_MAX = 300;
@@ -253,6 +265,25 @@ export function dropGem(c: CombatState, tier: number, at: THREE.Vector3, id: str
   return gem;
 }
 
+/** Put a dropped item in orbit where the wreck was, the killer's for a minute. */
+export function dropItem(c: CombatState, key: string, tier: number, at: THREE.Vector3, id: string, owner: string): Gem {
+  const g = dropGem(c, tier, at, id);
+  g.item = key;
+  g.owner = owner;
+  g.hidden = DROP_PRIVATE_SECONDS;
+  return g;
+}
+
+/** Who may take this gem right now: its owner while it is theirs alone,
+ *  else whoever is nearest. Null when the owner is not in the fight. */
+export function gemClaimant(w: CombatWorld, g: Gem): PlayerBody | null {
+  if (g.item && (g.hidden ?? 0) > 0) {
+    for (const p of roster(w)) if (p.id === (g.owner ?? "")) return p;
+    return null;
+  }
+  return nearestPlayer(w, g.pos);
+}
+
 /** Fly the gems: gravity, the magnet, spin, pickup. Never lost: one that
  *  would fall in is bounced back out, since it is somebody's property. */
 export function stepGems(c: CombatState, dt: number, w: CombatWorld): void {
@@ -263,7 +294,16 @@ export function stepGems(c: CombatState, dt: number, w: CombatWorld): void {
     const r2 = rel.lengthSq();
     const r = Math.sqrt(r2);
     g.vel.addScaledVector(rel, -(bodyMu(g.body) / (r2 * r)) * dt);
-    const claimant = nearestPlayer(w, g.pos);
+    if (g.hidden !== undefined && g.hidden > 0) g.hidden = Math.max(0, g.hidden - dt);
+    const claimant = gemClaimant(w, g);
+    if (!claimant) {
+      /* The owner is away: it keeps orbiting, and nobody's magnet works. */
+      const fast0 = g.vel.length();
+      if (fast0 > COIN_TOP) g.vel.multiplyScalar(COIN_TOP / fast0);
+      g.pos.addScaledVector(g.vel, dt);
+      g.spin += dt * 1.6;
+      continue;
+    }
     const toPlayer = _segAt.copy(claimant.pos).sub(g.pos);
     const range = toPlayer.length();
     if (range < COIN_MAGNET) {
@@ -276,7 +316,10 @@ export function stepGems(c: CombatState, dt: number, w: CombatWorld): void {
     g.spinVel = (g.spinVel ?? 0) * Math.max(0, 1 - 1.4 * dt);
     g.spin += dt * (1.6 + (g.spinVel ?? 0));
     if (range < COIN_PICKUP) {
-      c.events.push({ kind: "gem", at: g.pos.clone(), power: 0.8, tier: g.tier, who: claimant.id });
+      c.events.push({
+        kind: "gem", at: g.pos.clone(), power: 0.8, tier: g.tier, who: claimant.id, id: g.id,
+        ...(g.item ? { item: g.item } : {}),
+      });
       c.gems.splice(i, 1);
       continue;
     }
@@ -517,7 +560,7 @@ export interface Torpedo {
 export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
       | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "coinHit" | "waveStart"
-            | "flockDown" | "gem" | "gemHit"
+            | "flockDown" | "gem" | "gemHit" | "drop"
       | "incoming" | "blocked";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
@@ -533,8 +576,12 @@ export interface CombatEvent {
   fleet?: number;
   fleetTotal?: number;
   fleetLeft?: number;
-  /** gem / flockDown: the gem's tier and id. */
+  /** gem / flockDown: the gem's tier. */
   gem?: number;
+  /** gem / drop: which gem, by id. */
+  id?: string;
+  /** gem / drop of an ITEM: its catalogue key. */
+  item?: string;
   /** enemyHit only: damage actually landed, which is what scores. */
   damage?: number;
   /** enemyDown only: which of the seven it was. */
@@ -631,6 +678,9 @@ export interface CombatState {
   flockClock: number;
   /** Gems in the world. In a room these are the room's and persist. */
   gems: Gem[];
+  /** What wrecks leave behind. The room and the cockpit both load the live
+   *  charts over this default. */
+  drops: DropConfig;
   kills: number;
   /** Kills this run, one count per tier, indexed from zero. */
   tierKills: number[];
@@ -641,7 +691,7 @@ export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
     beams: [],
-    wave: null, flocks: [], flockClock: 0, gems: [],
+    wave: null, flocks: [], flockClock: 0, gems: [], drops: DEFAULT_DROP_CONFIG,
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -715,8 +765,32 @@ export function hurtEnemy(
       kind: "enemyDown", at: e.pos.clone(), power: e.drone ? 2 : 3,
       tier: e.cls.tier, who: by, worth: e.cheat ? 0 : worth, ...fleetBits,
     });
+    /* ---- the drop ----
+       Rolled here, in the one simulation, so the room's roll and the solo
+       roll are the same roll. A flock member rolls at the full chance for
+       its tier, as a fighter does (Geoff). A cheat drone leaves nothing. */
+    if (!e.cheat) {
+      const key = rollDrop(c.drops, e.drone ? "flock" : "fighter", e.cls.tier, dropRandom(), dropRandom());
+      if (key) {
+        const spec = itemByKey(key);
+        const g = dropItem(c, key, spec?.tier ?? 1, e.pos, newDropId(), by);
+        c.events.push({ kind: "drop", at: e.pos.clone(), power: 1, tier: g.tier, who: by, id: g.id, item: key });
+      }
+    }
   }
   return applied;
+}
+
+/* Drops are chance; tests pin the chance. Off by a call, never by an
+   environment check inside the logic. */
+let dropRandom: () => number = Math.random;
+export function setDropRandomForTests(fn: (() => number) | null): void {
+  dropRandom = fn ?? Math.random;
+}
+let nextDropId = 0;
+export function newDropId(): string {
+  nextDropId += 1;
+  return `${Date.now().toString(36)}${nextDropId.toString(36)}${Math.floor(Math.random() * 1e4).toString(36)}`;
 }
 
 /** A dead fighter comes apart into its body and its two panels. */

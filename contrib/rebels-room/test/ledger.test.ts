@@ -284,6 +284,14 @@ async function main() {
     ok("gems add up per tier", JSON.stringify(p.gems) === "[1,1,3,0,0,0,1]", JSON.stringify(p.gems));
     const q = await j(await led.fetch(GET_INTERNAL("purse?node=nobody")));
     ok("a new account has none", q.flocks === 0 && JSON.stringify(q.gems) === "[0,0,0,0,0,0,0]");
+
+    /* Dropped items, by key. The room's count; the client keeps its own. */
+    await led.fetch(internal("credit", { node: "g1", items: { hull2: 1, recharge: 3 } }));
+    await led.fetch(internal("credit", { node: "g1", items: { hull2: 2, ["x".repeat(40)]: 1, drone1: -5 } }));
+    const pi = await j(await led.fetch(GET_INTERNAL("purse?node=g1"))) as any;
+    ok("items add up per key", pi.items?.hull2 === 3 && pi.items?.recharge === 3, JSON.stringify(pi.items));
+    ok("a silly key is dropped and a negative count is nothing", Object.keys(pi.items).length === 3 && pi.items.drone1 === 0, JSON.stringify(pi.items));
+    ok("a new account holds nothing", JSON.stringify(q.items) === "{}", JSON.stringify(q.items));
   }
 
   console.log(`\n${out.length - failures} passed, ${failures} failed`);

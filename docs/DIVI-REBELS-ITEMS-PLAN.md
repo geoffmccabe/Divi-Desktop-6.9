@@ -50,8 +50,8 @@ end decide details; the phases do not depend on them except where marked.
 | 100 | Local Portal | A placeable portal near Earth; phase 5. |
 | 10000 / 2500 / 625 / 156 / 39 | Drone T1 to T5 | Autonomous wingman; phase 4. |
 
-Total weight 322,742. Instant Recharge is 31% of drops, a T5 Drone one in
-eight thousand drops, about one in 80,000 tier-1 kills.
+Total weight 313,951 over 22 items. Instant Recharge is 32% of drops, a T5
+Drone one in eight thousand drops, about one in 80,000 tier-1 kills.
 
 ## Phase 0: the drop system and the charts (server first)
 
@@ -190,3 +190,68 @@ phase ships on its own with tests, docs and a version.
     owner's next respawn?
 11. Stacking drones: can a player fly with several (up to the eight slots)
     if they own several?
+
+## Decisions (Geoff, 2026-Sep-11)
+
+1. Flock members roll drops at the FULL chance for their tier.
+2. Rear Gun: key `7` toggles a rear-view window, top right, 35% of width
+   and height, camera pointing backwards. Pointer inside the window: the
+   cursor fires a double shot backwards at whatever is behind. Right-click
+   inside it: a torpedo backwards.
+3. Hull Boost: +20% max hull per tier (T5 doubles).
+4. Instant Recharge and Supercharge apply the instant they are picked up.
+   If the ship is 100% on every charge factor it goes to the inventory
+   instead (only then). A held one is used with `Y`. Bought ones sit in the
+   inventory too.
+5. Admin secret: a file on the Mac, typed once into the admin panel,
+   checked by the Supabase write function.
+6. Drops ALWAYS happen, flying solo or in the room. Solo drops are rolled
+   by the client (its word); room drops by the room.
+7. Drones come back with the ship on respawn, the same way at the same
+   time. Several fly at once, filling slots in the order: left, right,
+   top, bottom, top right, bottom left, top left, bottom right.
+8. Drones, two or more: the formation orbits the ship slowly, one
+   revolution every 15 seconds, and every drone always points the way the
+   ship points.
+
+## Built: Phase 0 (2026-Sep-11, v69.9.23)
+
+- **Catalogue**: `ui/src/wallet/rebels/itemCatalog.ts` has the 22 found
+  items (`DROP_ITEMS`, marked `drop`, never priced), `ALL_ITEMS`, the item
+  tier colours and `itemMark` (the letter on the placeholder ball). The
+  store still lists only `ITEMS`.
+- **Charts**: `ui/src/wallet/rebels/dropCharts.ts` is the one roll
+  (`rollDrop`: whether, then a weighted pick) used by the room, the solo
+  cockpit and the admin panel's tally. Geoff's chart 1 is the default,
+  total weight 313,951.
+- **Live config**: table `rebels_drops` (row `live`), read by every wallet
+  and by the room (on start and every ten minutes) through
+  `ui/src/wallet/rebels/dropConfigRemote.ts`. Written only by the RPC
+  `rebels_drops_save(secret, config)`, which checks `rebels_admin` (RLS, no
+  policies, unreadable through the API). Migration:
+  `contrib/rebels-room/supabase/0003_rebels_items_and_drops.sql` (applied).
+- **The secret** is in `/Users/geoffreymccabe/.rebels-drops-admin.secret`
+  on Geoff's Mac. Paste it once into the admin panel; it stays in that
+  wallet's localStorage.
+- **Admin panel**: "Rebels Drops" in the wallet's admin overlay
+  (`ui/src/admin/panels/RebelsDropsPanel.tsx`): charts, weights, shares,
+  add/remove items and charts, rules (enemy kind, tiers, chart, chance per
+  tier), "test ten thousand kills", SAVE LIVE.
+- **The drop** is a gem with a name (`Gem.item/owner/hidden` in
+  `rebelsCombat.ts`): rolled in `hurtEnemy` on every non-cheat kill, in
+  orbit like a gem, the killer's alone for 60 seconds (`gemClaimant`), then
+  anyone's. The room sends a private drop only to its owner, saves it to
+  storage with its name, and after a restart it is everyone's.
+- **Pickup** raises a `gem` event carrying the item key. The cockpit adds
+  one to the inventory (`ui/src/wallet/rebels/rebelsInventory.ts`,
+  localStorage `dd69.rebels.items`, saved to `rebels_loadout.items` by the
+  existing loadout watcher, merged by the larger count). The room also
+  banks `items` by key to the ledger account (`purse.items`).
+- **Placeholder models**: `drawDrops` in `rebelsFx.ts`, a coin-sized ball
+  in the item's tier colour printed "T2 D" twice round, with a glow that is
+  bigger while the drop is still private.
+- Tests: `scripts/run-rebels-drops-tests.sh` (charts, catalogue, inventory)
+  plus new blocks in the combat, room, ledger and weapons suites. Kill-heavy
+  suites pin the drop roll to "nothing".
+- NOT yet: the items DO nothing (phase 1), no inventory panel (phase 2), no
+  Y key, no forging.

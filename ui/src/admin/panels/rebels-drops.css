@@ -1,0 +1,24 @@
+/* Admin: Rebels Drops. Rows of item / weight / share, the game's own colours. */
+.rd-panel { display: flex; flex-direction: column; gap: 14px; }
+.rd-chart { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 10px;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--card) / 0.5); }
+.rd-chart-head, .rd-chart-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rd-chart-foot { justify-content: space-between; }
+.rd-name { flex: 1; min-width: 120px; font-weight: 600; }
+.rd-title { font-size: 0.95rem; }
+.rd-id, .rd-total { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+.rd-rows { display: flex; flex-direction: column; gap: 4px; }
+.rd-row { display: grid; grid-template-columns: minmax(0, 1fr) 110px 70px 28px; gap: 6px; align-items: center; }
+.rd-row.rd-rule { grid-template-columns: 90px 110px minmax(0, 1fr) 90px 28px; }
+.rd-row.rd-trial { grid-template-columns: minmax(0, 1fr) 80px 80px; }
+.rd-head { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: hsl(var(--muted-foreground)); }
+.rd-row .wl-input { width: 100%; min-width: 0; padding: 4px 6px; font-size: 0.85rem; }
+.rd-tiers { display: flex; gap: 4px; }
+.rd-share { font-variant-numeric: tabular-nums; font-size: 0.8rem; text-align: right; }
+.rd-inline { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; }
+.rd-inline .wl-input { width: 56px; padding: 4px 6px; }
+.rd-btn { padding: 5px 10px; border-radius: 7px; font-size: 0.78rem; letter-spacing: 0.04em; cursor: pointer;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+.rd-btn:disabled { opacity: 0.45; cursor: default; }
+.rd-btn.rd-danger { color: #ff7a8a; }
+.rd-btn.rd-primary { background: #ff45d0; border-color: #ff45d0; color: #14040f; font-weight: 700; }

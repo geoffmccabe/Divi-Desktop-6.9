@@ -11,6 +11,12 @@ import * as THREE from "three";
 import { RebelsRoom } from "../src/room";
 import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES } from "../../../ui/src/wallet/rebels/orbitFlight";
+import { setDropRandomForTests } from "../../../ui/src/wallet/rebels/rebelsCombat";
+
+/* Wrecks roll for items. Pinned to "nothing" so a count of gems or storage
+   keys in the tests below is what the test put there; the drop block sets
+   its own rolls. */
+setDropRandomForTests(() => 0.99);
 
 const out: string[] = [];
 let failures = 0;
@@ -286,7 +292,6 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
-console.log(out.join("\n"));
 // N. Cashing out: the account is the CONNECTING address, never the typed node.
 {
   const room = newRoom();
@@ -486,5 +491,69 @@ console.log(out.join("\n"));
   room.stop();
 }
 
+// Dropped items: the room rolls, the owner alone sees it for a minute, the
+// pickup is banked by key, and it survives a restart.
+{
+  storage.clear();
+  const room = newRoom();
+  const wsA = new FakeSocket(), wsB = new FakeSocket();
+  const a = join(room, wsA, "a-node");
+  const b = join(room, wsB, "b-node");
+  const rolls: number[] = [];
+  room.setDropsForTests(null, () => rolls.shift() ?? 0.99);
+  const { spawnFleet, hurtEnemy, setFlockRandomForTests } = await import("../../../ui/src/wallet/rebels/rebelsCombat");
+  setFlockRandomForTests(() => 1);
+  const fleet = spawnFleet(room.combat, 2, a.body.pos, a.body.fwd, { count: 3 });
+  rolls.push(0.01, 0);
+  hurtEnemy(room.combat, fleet[0], 999, fleet[0].pos.clone().add(new THREE.Vector3(0, 0, 1)), a.id);
+  room.step();
+  await new Promise((r) => setTimeout(r, 0));
+  const drop = room.combat.gems.find((g: any) => g.item);
+  ok("a kill in the room can leave an item", drop?.item === "recharge" && drop?.owner === a.id, JSON.stringify(drop && { item: drop.item, owner: drop.owner }));
+  ok("it is written to storage with its name and owner", [...storage.map.values()].some((v: any) => v.item === "recharge" && v.owner === a.id));
+  const sA = wsA.last("s"), sB = wsB.last("s");
+  ok("the owner sees it on the wire", Array.isArray(sA.G) && sA.G.some((g: any) => g[6] === "recharge" && g[7] === a.id && g[8] > 0), JSON.stringify(sA.G));
+  ok("nobody else is told it exists", !Array.isArray(sB.G) || !sB.G.some((g: any) => g[6] === "recharge"), JSON.stringify(sB.G));
+  ok("the drop event carries the key and reaches the owner", wsA.all("e").some((m: any) => (m.v as any[]).some((v) => v.k === "drop" && v.item === "recharge" && v.id === drop.id)));
+
+  /* B parks on it: nothing, for a minute. */
+  b.body.pos.copy(drop.pos);
+  a.body.pos.set(0, 0, R + 90);
+  room.step();
+  ok("someone else cannot take it yet", room.combat.gems.includes(drop) && Object.keys(b.items).length === 0);
+  drop.hidden = 0;
+  room.step();
+  b.body.pos.copy(drop.pos);
+  room.step();
+  await new Promise((r) => setTimeout(r, 0));
+  ok("after the minute it is anyone's, and goes into the seat by key", b.items.recharge === 1, JSON.stringify(b.items));
+  ok("and leaves the world and storage", !room.combat.gems.includes(drop) && ![...storage.map.values()].some((v: any) => v.item === "recharge"));
+  ok("the taker is told which item", wsB.all("e").some((m: any) => (m.v as any[]).some((v) => v.k === "gem" && v.item === "recharge" && v.who === b.id)));
+  credits.length = 0;
+  await room.bank(b);
+  ok("banking carries items by key", credits[0]?.items?.recharge === 1, JSON.stringify(credits[0]));
+  ok("and the seat is empty again", Object.keys(b.items).length === 0);
+
+  /* Another drop, still private, and the room restarts: it comes back as
+     everyone's, because its owner's seat is gone. */
+  rolls.push(0.01, 0.5);
+  hurtEnemy(room.combat, fleet[1], 999, fleet[1].pos.clone().add(new THREE.Vector3(0, 0, 1)), a.id);
+  room.step();
+  await new Promise((r) => setTimeout(r, 0));
+  const second = room.combat.gems.find((g: any) => g.item);
+  ok("(setup) a private drop is in the world", !!second && second.hidden > 0, JSON.stringify(second && { item: second.item }));
+  room.stop();
+  await new Promise((r) => setTimeout(r, 0));
+  const room2 = newRoom();
+  room2.setDropsForTests(null, () => 0.99);
+  const ws2 = new FakeSocket();
+  join(room2, ws2, "c-node");
+  await new Promise((r) => setTimeout(r, 0));
+  const back = room2.combat.gems.find((g: any) => g.item === second.item);
+  ok("it is there after a restart, and now anyone's", !!back && back.hidden === 0 && back.owner === "", JSON.stringify(back && { hidden: back.hidden, owner: back.owner }));
+  room2.stop();
+}
+
+console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

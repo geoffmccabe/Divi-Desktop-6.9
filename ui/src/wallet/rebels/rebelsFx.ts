@@ -10,6 +10,7 @@ import * as THREE from "three";
 import diviLogo from "../../assets/divi-coin.webp";
 import { DRONE_SIZE, droneClass, SHAPE_COUNTS, DRONE_TIERS } from "./rebelsFlock";
 import { SHIELD_SHOW, COIN_RADIUS } from "./rebelsCombat";
+import { itemByKey, itemMark, itemTierColour } from "./itemCatalog";
 
 const BULLET_CAP = 160;
 const SHARD_CAP = 320;
@@ -158,8 +159,12 @@ export interface Fx {
   drawDockLink(from: THREE.Vector3 | null, to: THREE.Vector3 | null, seconds: number): void;
   /** DIVI in orbit, waiting to be flown into. */
   drawCoins(coins: { pos: THREE.Vector3; spin: number }[]): void;
-  /** Gems: faceted, in their tier's colour, turning. */
-  drawGems(gems: { pos: THREE.Vector3; spin: number; tier: number }[]): void;
+  /** Gems: faceted, in their tier's colour, turning. Skips dropped items. */
+  drawGems(gems: { pos: THREE.Vector3; spin: number; tier: number; item?: string }[]): void;
+  /** Dropped items: the placeholder models, a coin-sized ball in the item's
+   *  tier colour with "T2 D" printed round it, until real models exist.
+   *  Skips plain gems. */
+  drawDrops(gems: { pos: THREE.Vector3; spin: number; tier: number; item?: string; hidden?: number }[]): void;
   /** The swarm: glowing spheres, breathing out of step with each other. */
   drawDrones(drones: {
     pos: THREE.Vector3; pulse?: number; flash: number; cls: { colour: number };
@@ -524,6 +529,66 @@ export function createFx(): Fx {
   gemGlow.renderOrder = 2;
   bin.push(gemGeo, gemMat, gemMesh, gemGlowMat, gemGlow);
 
+  /* ---- dropped items: the placeholders ----
+     Geoff: "like the Divi spheres, with T1 / T2 printed on them in the tier
+     colour." A ball the coin's size, the tier colour as its ground, the
+     tier and a one-letter mark printed round it, a glow behind it. One
+     texture per (tier, mark), made on first use and kept; one small pool
+     of meshes, because a screen never has more than a few dozen in view. */
+  const DROP_CAP = 48;
+  const dropGeo = new THREE.SphereGeometry(COIN_RADIUS * 1.25, 20, 14);
+  const dropGlowGeo = new THREE.IcosahedronGeometry(1, 1);
+  const dropMats = new Map<string, THREE.MeshBasicMaterial>();
+  const dropMatFor = (tier: number, mark: string): THREE.MeshBasicMaterial => {
+    const id = `${tier}:${mark}`;
+    let m = dropMats.get(id);
+    if (m) return m;
+    const col = new THREE.Color(itemTierColour(tier));
+    if (typeof document === "undefined") {
+      m = new THREE.MeshBasicMaterial({ color: col });
+    } else {
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = size; canvas.height = size / 2;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = `#${col.getHexString()}`;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        /* Dark print on the light tiers, light print on the dark ones. */
+        const lum = col.r * 0.3 + col.g * 0.59 + col.b * 0.11;
+        ctx.fillStyle = lum > 0.55 ? "#101418" : "#f6f8ff";
+        ctx.font = "bold 88px system-ui, sans-serif";
+        ctx.textAlign = "center"; ctx.textBaseline = "middle";
+        /* Twice round, so a label faces the pilot whichever way it turns. */
+        ctx.fillText(`T${tier} ${mark}`, size * 0.25, size * 0.25);
+        ctx.fillText(`T${tier} ${mark}`, size * 0.75, size * 0.25);
+      }
+      const t = new THREE.CanvasTexture(canvas);
+      t.colorSpace = THREE.SRGBColorSpace;
+      bin.push(t);
+      m = new THREE.MeshBasicMaterial({ map: t, color: 0xffffff });
+    }
+    bin.push(m);
+    dropMats.set(id, m);
+    return m;
+  };
+  const dropPool: Array<{ ball: THREE.Mesh; glow: THREE.Mesh; glowMat: THREE.MeshBasicMaterial }> = [];
+  const dropAt = (i: number) => {
+    while (dropPool.length <= i) {
+      const glowMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false });
+      const ball = new THREE.Mesh(dropGeo, dropMatFor(1, "?"));
+      const glow = new THREE.Mesh(dropGlowGeo, glowMat);
+      glow.renderOrder = 2;
+      ball.visible = glow.visible = false;
+      ball.frustumCulled = glow.frustumCulled = false;
+      group.add(ball, glow);
+      bin.push(glowMat);
+      dropPool.push({ ball, glow, glowMat });
+    }
+    return dropPool[i];
+  };
+  bin.push(dropGeo, dropGlowGeo);
+
   const coinGeo = new THREE.SphereGeometry(COIN_RADIUS, 20, 14);
   /* White, so the artwork's own colours survive. See above. */
   const coinMat = new THREE.MeshBasicMaterial({ map: coinTex, color: 0xffffff });
@@ -849,17 +914,19 @@ export function createFx(): Fx {
     },
 
     drawGems(gems) {
-      const n = Math.min(gems.length, GEM_CAP);
-      for (let i = 0; i < n; i++) {
+      let n = 0;
+      for (let i = 0; i < gems.length && n < GEM_CAP; i++) {
         const g = gems[i];
+        if (g.item) continue;
         q.setFromAxisAngle(upAxis, g.spin);
         m4.compose(g.pos, q, scl.setScalar(1));
-        gemMesh.setMatrixAt(i, m4);
+        gemMesh.setMatrixAt(n, m4);
         colour.setHex(droneClass(g.tier).colour);
-        gemMesh.setColorAt(i, colour);
+        gemMesh.setColorAt(n, colour);
         m4.compose(g.pos, q, scl.setScalar(3.2));
-        gemGlow.setMatrixAt(i, m4);
-        gemGlow.setColorAt(i, tinted.copy(colour).multiplyScalar(0.5));
+        gemGlow.setMatrixAt(n, m4);
+        gemGlow.setColorAt(n, tinted.copy(colour).multiplyScalar(0.5));
+        n++;
       }
       gemMesh.count = n;
       gemGlow.count = n;
@@ -867,6 +934,26 @@ export function createFx(): Fx {
       gemGlow.instanceMatrix.needsUpdate = true;
       if (gemMesh.instanceColor) gemMesh.instanceColor.needsUpdate = true;
       if (gemGlow.instanceColor) gemGlow.instanceColor.needsUpdate = true;
+    },
+    drawDrops(gems) {
+      let n = 0;
+      for (let i = 0; i < gems.length && n < DROP_CAP; i++) {
+        const g = gems[i];
+        if (!g.item) continue;
+        const spec = itemByKey(g.item);
+        const slot = dropAt(n++);
+        slot.ball.material = dropMatFor(g.tier, spec ? itemMark(spec) : "?");
+        slot.ball.position.copy(g.pos);
+        slot.ball.rotation.set(0, g.spin, 0);
+        slot.glow.position.copy(g.pos);
+        /* A little bigger and brighter while it is still yours alone, so the
+           minute reads as something. */
+        const own = (g.hidden ?? 0) > 0;
+        slot.glow.scale.setScalar(own ? 3.6 : 2.8);
+        slot.glowMat.color.setHex(itemTierColour(g.tier)).multiplyScalar(own ? 0.7 : 0.45);
+        slot.ball.visible = slot.glow.visible = true;
+      }
+      for (let i = n; i < dropPool.length; i++) dropPool[i].ball.visible = dropPool[i].glow.visible = false;
     },
     drawCoins(coins) {
       const n = Math.min(coins.length, COIN_CAP);

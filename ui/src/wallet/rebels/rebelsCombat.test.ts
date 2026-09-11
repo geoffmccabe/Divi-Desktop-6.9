@@ -5,6 +5,7 @@
 import * as THREE from "three";
 import { R, cruiseScale } from "./orbitWorld";
 import { MAX_SHIELD, CRUISE, BOOST } from "./orbitFlight";
+import { DROP_PRIVATE_SECONDS } from "./dropCharts";
 import {
   createCombat, stepCombat, fireGuns, gunMuzzles, enemyFire,
   AIM_ERROR, AIM_SPREAD, aimErrorFor, scatterAim, PLAYER_HIT_R,
@@ -13,6 +14,7 @@ import {
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
   TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, COIN_TOP, COIN_MU,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
+  setDropRandomForTests,
   type CombatState, type Enemy,
   ENEMY_SPEED,
   stepFlockSpawns,
@@ -29,6 +31,8 @@ import {
 /* The natural flock roll would drop fleets into tests that time waves to the
    second. Off, unless a test turns it on. */
 setFlockRandomForTests(() => 1);
+/* And wrecks roll for items: pinned to "nothing" until the drop block. */
+setDropRandomForTests(() => 0.99);
 
 const out: string[] = [];
 let failures = 0;
@@ -1510,6 +1514,85 @@ function run(c: CombatState, frames: number, w = world()) {
   ok("trails with no round in the air are released", c.tracers.every((t) => !t.live));
   for (let i = 0; i < 60 * 4; i++) stepCombat(c, 1 / 60, world());
   ok("and fade away", c.tracers.length === 0, `${c.tracers.length}`);
+}
+
+/* ---- dropped items ----
+   A wreck rolls once for whether and once for what, from the charts on the
+   state; the thing lands in orbit as a gem with a name, the killer's alone
+   for a minute, then anyone's. */
+{
+  const rolls: number[] = [];
+  setDropRandomForTests(() => rolls.shift() ?? 0.99);
+  const c = createCombat();
+  const a = { id: "A", pos: new THREE.Vector3(0, 0, R + 30), fwd: new THREE.Vector3(1, 0, 0) };
+  const b = { id: "B", pos: new THREE.Vector3(0, 0, R + 30), fwd: new THREE.Vector3(1, 0, 0) };
+  const w = world({ players: [a, b] });
+  const mk = (tier = 1) => {
+    const e = fighter(new THREE.Vector3(0, 0, R + 32), { cls: TIERS[tier - 1], shield: 1 });
+    c.enemies.push(e);
+    return e;
+  };
+  /* Whether: 0.05 is under a tier-one's 10%. What: 0 lands on the first
+     entry of the chart, Instant Recharge. */
+  rolls.push(0.05, 0);
+  hurtEnemy(c, mk(), 9999, new THREE.Vector3(0, 0, R + 31), "A");
+  const drop = c.gems.find((g) => g.item);
+  ok("a tier-one kill at 5% drops something", !!drop, `${c.gems.length}`);
+  ok("the first entry of the chart, by weight order", drop?.item === "recharge", drop?.item);
+  ok("it is the killer's, for a minute", drop?.owner === "A" && drop?.hidden === DROP_PRIVATE_SECONDS, `${drop?.owner} ${drop?.hidden}`);
+  ok("a drop event names it", c.events.some((ev) => ev.kind === "drop" && ev.item === "recharge" && ev.id === drop?.id && ev.who === "A"));
+  clearEvents(c);
+
+  /* Whether: 0.15 is over a tier-one's 10% but under a tier-two's 20%. */
+  rolls.push(0.15, 0);
+  hurtEnemy(c, mk(1), 9999, new THREE.Vector3(0, 0, R + 31), "A");
+  ok("15% is no drop from a tier one", c.gems.filter((g) => g.item).length === 1);
+  rolls.push(0.15, 0.9999999);
+  hurtEnemy(c, mk(2), 9999, new THREE.Vector3(0, 0, R + 31), "B");
+  const last = c.gems.filter((g) => g.item).pop();
+  ok("but is a drop from a tier two, the last entry at the top of the range", last?.item === "drone5" && last?.owner === "B", last?.item);
+  ok("the gem's tier is the ITEM's tier", last?.tier === 5, `${last?.tier}`);
+  clearEvents(c);
+
+  /* B sits on A's drop. Nothing: it is A's for a minute. */
+  c.gems.length = 0;
+  c.gems.push(drop!);
+  b.pos.copy(drop!.pos);
+  a.pos.set(0, 0, R + 80);
+  stepCombat(c, 1 / 60, w);
+  ok("someone else flying through it takes nothing", c.gems.includes(drop!) && !c.events.some((ev) => ev.kind === "gem"));
+  ok("and their magnet does not move it", drop!.vel.length() < COIN_TOP + 1e-6);
+  /* A minute passes. */
+  drop!.hidden = 0.01;
+  b.pos.copy(drop!.pos);
+  stepCombat(c, 1 / 60, w);
+  stepCombat(c, 1 / 60, w);
+  const took = c.events.find((ev) => ev.kind === "gem");
+  ok("after the minute, whoever is there takes it", took?.who === "B" && took?.item === "recharge" && took?.id === drop!.id, JSON.stringify(took && { who: took.who, item: took.item }));
+  ok("and it is gone from the world", !c.gems.includes(drop!));
+
+  /* A flock member rolls at the full chance for its tier (Geoff). */
+  clearEvents(c);
+  c.gems.length = 0;
+  const fleet = spawnFleet(c, 3, a.pos, a.fwd, { count: 2 });
+  rolls.push(0.25, 0);
+  hurtEnemy(c, fleet[0], 9999, fleet[0].pos.clone().add(new THREE.Vector3(0, 0, 1)), "A");
+  ok("a tier-three flock member at 25% drops (30%)", c.gems.some((g) => g.item), `${c.gems.length}`);
+
+  /* A cheat drone leaves nothing, whatever the roll. */
+  c.gems.length = 0;
+  const cheat = mk(1);
+  cheat.cheat = true;
+  rolls.push(0, 0);
+  hurtEnemy(c, cheat, 9999, new THREE.Vector3(0, 0, R + 31), "A");
+  ok("a cheat drone drops nothing", !c.gems.some((g) => g.item));
+
+  /* No rule for the tier: nothing. */
+  c.drops = { charts: [{ id: "x", name: "x", entries: [{ key: "hull1", weight: 1 }] }], rules: [{ enemy: "fighter", tierMin: 5, tierMax: 7, chart: "x", chancePerTier: 0.1 }] };
+  rolls.push(0, 0);
+  hurtEnemy(c, mk(1), 9999, new THREE.Vector3(0, 0, R + 31), "A");
+  ok("an enemy no rule covers drops nothing", !c.gems.some((g) => g.item));
+  setDropRandomForTests(() => 0.99);
 }
 
 console.log(out.join("\n"));

@@ -105,14 +105,16 @@ export interface StateOut {
   /** Beams in the air: origin, direction, weapon key, seconds left. Absent
    *  when there are none, which is nearly always. */
   M?: Array<[number, number, number, number, number, number, string, number]>;
-  /** Gems in the world: position, tier, spin, id. Absent when there are none. */
-  G?: Array<[number, number, number, number, number, string]>;
+  /** Gems in the world: position, tier, spin, id, and for a dropped ITEM its
+   *  catalogue key, owner seat and seconds it stays theirs alone. A private
+   *  drop is sent only to its owner. Absent when there are none. */
+  G?: Array<[number, number, number, number, number, string, string?, string?, number?]>;
 }
 
 /** One thing that happened, for sound and sparks. */
 export interface EventOut {
   t: "e";
-  v: Array<{ k: string; at: Vec; p: number; who?: string; tier?: number; sh?: number; dmg?: number; wave?: number; g?: 1; gem?: string }>;
+  v: Array<{ k: string; at: Vec; p: number; who?: string; tier?: number; sh?: number; dmg?: number; wave?: number; g?: 1; gem?: string; item?: string; id?: string }>;
 }
 
 /** This player's own gauges. Every one of these is the room's number, never
@@ -182,6 +184,8 @@ export interface PurseOut {
   /** Flock kills, ever, and gems held, one count per tier. */
   flocks?: number;
   gems?: number[];
+  /** Items picked up in rooms, by catalogue key: the room's count. */
+  items?: Record<string, number>;
 }
 
 export type ServerMessage =

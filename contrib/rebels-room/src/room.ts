@@ -29,6 +29,7 @@
 import * as THREE from "three";
 import {
   createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
+  setDropRandomForTests,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE,
   type CombatState, type CombatWorld, type PlayerBody,
@@ -40,6 +41,8 @@ import {
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
 import { ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, superBoostMult, strafeMult } from "../../../ui/src/wallet/rebels/itemCatalog";
+import { fetchDropConfig } from "../../../ui/src/wallet/rebels/dropConfigRemote";
+import { DEFAULT_DROP_CONFIG, type DropConfig } from "../../../ui/src/wallet/rebels/dropCharts";
 import { ammoFor, torpedoesFor, topSpeedFor, SUPER_BOOST_MULT } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
@@ -101,9 +104,10 @@ interface Seat {
      Members of each fleet this seat has downed, by fleet id. Internal: the
      player sees only flock kills. Cleared with the fleet. */
   tally: Map<number, number>;
-  /** Flock kills and gems picked up since the last banking. */
+  /** Flock kills, gems and items picked up since the last banking. */
   flocks: number;
   gems: number[];
+  items: Record<string, number>;
   name: string;
   /** Which hull they fly and how it is painted, so the room can tell everyone
    *  else what this player looks like. Paint, not gameplay: see onJoin. */
@@ -204,7 +208,7 @@ export class RebelsRoom {
       id, ws, node: "", name: "", ship: "", paint: undefined,
       account: from, lastClaim: -99,
       gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, topSpeed: topSpeedFor(), lastBeam: -99,
-      tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0],
+      tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0], items: {},
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
       shield: MAX_SHIELD, ammo: MAX_AMMO, torps: MAX_TORPEDOES,
@@ -241,6 +245,8 @@ export class RebelsRoom {
     if (this.timer) return;
     void this.loadGems();
     this.combat = createCombat();
+    this.combat.drops = this.drops;
+    void this.refreshDrops();
     this.now = 0;
     startWave(this.combat, 1);
     this.timer = setInterval(() => {
@@ -296,6 +302,8 @@ export class RebelsRoom {
     /* Gems move; their saved positions should not go stale. */
     this.gemSaveAt += DT;
     if (this.gemSaveAt >= 30 && this.combat.gems.length) { this.gemSaveAt = 0; void this.saveGems(); }
+    this.dropsAt += DT;
+    if (this.dropsAt >= 600) { this.dropsAt = 0; void this.refreshDrops(); }
     this.settle();
     this.broadcastState();
     clearEvents(this.combat);
@@ -321,6 +329,8 @@ export class RebelsRoom {
         ...(ev.wave ? { wave: ev.wave } : {}),
         ...(ev.guarded ? { g: 1 } : {}),
         ...(ev.gem !== undefined ? { gem: String(ev.gem) } : {}),
+        ...(ev.item ? { item: ev.item } : {}),
+        ...(ev.id ? { id: ev.id } : {}),
       });
 
       const who = ev.who ? this.seats.get(ev.who) : undefined;
@@ -332,12 +342,18 @@ export class RebelsRoom {
         /* A fighter is a kill; a flock member a fifth of one. */
         who.kills += ev.worth ?? 1;
         if (ev.fleet !== undefined && (ev.worth ?? 0) > 0) this.tallyFlock(who, ev);
+      } else if (ev.kind === "drop" && ev.id) {
+        /* A wreck left something. The simulation put it in orbit; the room
+           writes it down so a restart finds it. */
+        const g = this.combat.gems.find((x) => x.id === ev.id);
+        if (g) void this.saveGem(g);
       } else if (ev.kind === "gem" && who && ev.tier) {
         /* Property: the seat's, banked to the account, and gone from the
-           world for good. */
-        who.gems[ev.tier - 1] = (who.gems[ev.tier - 1] ?? 0) + 1;
-        const id = this.gemIdAt(ev.at);
-        if (id) void this.state.storage.delete(`gem:${id}`);
+           world for good. An item counts by its key; a flock gem by tier. */
+        if (ev.item) who.items[ev.item] = (who.items[ev.item] ?? 0) + 1;
+        else who.gems[ev.tier - 1] = (who.gems[ev.tier - 1] ?? 0) + 1;
+        const id = ev.id ?? this.gemIdAt(ev.at);
+        if (id) { this.gemPos.delete(id); void this.state.storage.delete(`gem:${id}`); }
         /* The bounty, in DIVI, at the rate the payout promises: a thousand
            kills is a hundred DIVI, so a kill is a tenth. The coins scattered by
            the wreck are the same tenth made visible and collectable, so only
@@ -415,8 +431,29 @@ export class RebelsRoom {
       await this.state.storage.put(`gem:${g.id}`, {
         id: g.id, tier: g.tier, body: g.body,
         p: [g.pos.x, g.pos.y, g.pos.z], v: [g.vel.x, g.vel.y, g.vel.z], spin: g.spin,
+        ...(g.item ? { item: g.item, owner: g.owner ?? "", hidden: Math.round(g.hidden ?? 0) } : {}),
       });
     } catch { /* storage unhappy; the gem still exists in memory */ }
+  }
+
+  /* ---- drop charts ----
+     Read from the table on start and every ten minutes, so an admin edit
+     reaches a running room without a restart. The default until then. */
+  private drops: DropConfig = DEFAULT_DROP_CONFIG;
+  private dropsAt = 0;
+  private async refreshDrops(): Promise<void> {
+    if (!this.dropsOn) return;
+    const r = await fetchDropConfig();
+    this.drops = r.config;
+    this.combat.drops = r.config;
+  }
+  /** Tests: no network, and a pinned roll. */
+  dropsOn = true;
+  setDropsForTests(cfg: DropConfig | null, rand: (() => number) | null): void {
+    this.dropsOn = false;
+    this.drops = cfg ?? DEFAULT_DROP_CONFIG;
+    this.combat.drops = this.drops;
+    setDropRandomForTests(rand);
   }
 
   /** Every so often, and at stop, write where the gems are now, so a restart
@@ -427,7 +464,7 @@ export class RebelsRoom {
 
   private async loadGems(): Promise<void> {
     try {
-      const all = await this.state.storage.list<{ id: string; tier: number; body: number; p: number[]; v: number[]; spin: number }>({ prefix: "gem:" });
+      const all = await this.state.storage.list<{ id: string; tier: number; body: number; p: number[]; v: number[]; spin: number; item?: string; owner?: string; hidden?: number }>({ prefix: "gem:" });
       for (const g of all.values()) {
         if (this.combat.gems.some((x) => x.id === g.id)) continue;
         const gem: Gem = {
@@ -435,6 +472,9 @@ export class RebelsRoom {
           pos: new THREE.Vector3(g.p[0], g.p[1], g.p[2]),
           vel: new THREE.Vector3(g.v[0], g.v[1], g.v[2]),
           spin: g.spin ?? 0,
+          /* An item that was private when the room stopped: its owner's seat
+             is gone with the restart, so it becomes everyone's. */
+          ...(g.item ? { item: g.item, owner: "", hidden: 0 } : {}),
         };
         this.combat.gems.push(gem);
         this.gemPos.set(gem.id, gem.pos.clone());
@@ -487,19 +527,21 @@ export class RebelsRoom {
      total. The room is the only thing that ever writes to it. */
   private async bank(s: Seat): Promise<void> {
     const anyGems = s.gems.some((n) => n > 0);
-    if (!(s.account || s.node) || (s.kills === 0 && s.divi === 0 && s.score === 0 && s.flocks === 0 && !anyGems)) return;
-    const kills = s.kills, divi = s.divi, score = s.score, flocks = s.flocks, gems = s.gems.slice();
-    s.kills = 0; s.divi = 0; s.score = 0; s.flocks = 0; s.gems = [0, 0, 0, 0, 0, 0, 0];
+    const anyItems = Object.keys(s.items).length > 0;
+    if (!(s.account || s.node) || (s.kills === 0 && s.divi === 0 && s.score === 0 && s.flocks === 0 && !anyGems && !anyItems)) return;
+    const kills = s.kills, divi = s.divi, score = s.score, flocks = s.flocks, gems = s.gems.slice(), items = s.items;
+    s.kills = 0; s.divi = 0; s.score = 0; s.flocks = 0; s.gems = [0, 0, 0, 0, 0, 0, 0]; s.items = {};
     try {
       const id = this.env.LEDGER.idFromName("v1");
       await this.env.LEDGER.get(id).fetch("https://ledger/credit", {
         method: "POST",
-        body: JSON.stringify({ node: s.account || s.node, name: s.name, kills, divi, score, flocks, gems }),
+        body: JSON.stringify({ node: s.account || s.node, name: s.name, kills, divi, score, flocks, gems, items }),
       });
     } catch {
       /* Put it back rather than lose it: the next flush will carry it. */
       s.kills += kills; s.divi += divi; s.score += score; s.flocks += flocks;
       for (let i = 0; i < 7; i++) s.gems[i] += gems[i] ?? 0;
+      for (const [k, n] of Object.entries(items)) s.items[k] = (s.items[k] ?? 0) + n;
     }
   }
 
@@ -807,6 +849,21 @@ export class RebelsRoom {
 
   private broadcastState(): void {
     const c = this.combat;
+    /* A dropped item in its private minute goes only to its owner: nobody
+       else is told it exists. Everything else is one string for everyone. */
+    const shared: Gem[] = [];
+    const mine = new Map<string, Gem[]>();
+    for (const g of c.gems) {
+      if (g.item && (g.hidden ?? 0) > 0) {
+        const list = mine.get(g.owner ?? "") ?? [];
+        list.push(g);
+        mine.set(g.owner ?? "", list);
+      } else shared.push(g);
+    }
+    const gemWire = (g: Gem) => [
+      r1(g.pos.x), r1(g.pos.y), r1(g.pos.z), g.tier, Math.round(g.spin * 100) / 100, g.id,
+      ...(g.item ? [g.item, g.owner ?? "", Math.round(g.hidden ?? 0)] : []),
+    ];
     const state = {
       t: "s" as const,
       n: this.tick,
@@ -830,9 +887,7 @@ export class RebelsRoom {
         b.hostile ? 1 : 0, b.mini ? 1 : 0,
       ]),
       C: c.coins.map((k) => [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)]),
-      ...(c.gems.length ? {
-        G: c.gems.map((g) => [r1(g.pos.x), r1(g.pos.y), r1(g.pos.z), g.tier, Math.round(g.spin * 100) / 100, g.id]),
-      } : {}),
+      ...(shared.length ? { G: shared.map(gemWire) } : {}),
       ...(c.beams.length ? {
         M: c.beams.map((b) => [
           r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
@@ -843,7 +898,9 @@ export class RebelsRoom {
     };
     const wire = JSON.stringify(state);
     for (const s of this.seats.values()) {
-      try { s.ws.send(wire); } catch { this.leave(s); }
+      const own = mine.get(s.id);
+      const text = own ? JSON.stringify({ ...state, G: [...shared, ...own].map(gemWire) }) : wire;
+      try { s.ws.send(text); } catch { this.leave(s); }
     }
     /* Gauges every half second rather than every tick: they change slowly and
        they are the one message that is different for every player. */

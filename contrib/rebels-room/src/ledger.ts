@@ -63,6 +63,10 @@ interface Account {
   flocks?: number;
   /** Gems held, one count per tier. Property, to be sold on a market one day. */
   gems?: number[];
+  /** Dropped items picked up in rooms, by catalogue key. The room's count,
+   *  kept beside the client's own (rebels_loadout.items) so they can be
+   *  compared. */
+  items?: Record<string, number>;
   /** An in-flight claim, if there is one. */
   reserved?: { amount: number; ref: string; at: number };
   seen: number;
@@ -146,7 +150,7 @@ export class RebelsLedger {
   }
 
   private async credit(req: Request): Promise<Response> {
-    let body: { node?: string; name?: string; kills?: number; divi?: number; score?: number; flocks?: number; gems?: number[] };
+    let body: { node?: string; name?: string; kills?: number; divi?: number; score?: number; flocks?: number; gems?: number[]; items?: Record<string, number> };
     try { body = await req.json(); } catch { return new Response("bad", { status: 400 }); }
     const node = String(body.node ?? "").slice(0, 80);
     if (!node) return new Response("bad", { status: 400 });
@@ -163,6 +167,15 @@ export class RebelsLedger {
       const have = a.gems ?? [0, 0, 0, 0, 0, 0, 0];
       for (let i = 0; i < 7; i++) have[i] = (have[i] ?? 0) + clamp(body.gems[i], 0, 10_000);
       a.gems = have;
+    }
+    if (body.items && typeof body.items === "object") {
+      const have = a.items ?? {};
+      let keys = 0;
+      for (const [k, n] of Object.entries(body.items)) {
+        if (typeof k !== "string" || k.length > 32 || keys++ > 64) continue;
+        have[k] = (have[k] ?? 0) + clamp(n, 0, 10_000);
+      }
+      a.items = have;
     }
     a.score += score;
     a.games += score > 0 ? 1 : 0;
@@ -209,6 +222,7 @@ export class RebelsLedger {
       last: last ?? null,
       flocks: a.flocks ?? 0,
       gems: a.gems ?? [0, 0, 0, 0, 0, 0, 0],
+      items: a.items ?? {},
       ...(why ? { why } : {}),
     };
   }

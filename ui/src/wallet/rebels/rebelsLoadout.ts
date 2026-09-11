@@ -40,6 +40,7 @@ export async function saveLoadoutRemote(who = playerName()): Promise<boolean> {
         p_points_spent: Math.round(l.spent * 10000) / 10000,
         p_owned: l.owned,
         p_purchases: l.purchases,
+        p_items: l.items,
       }),
     });
     return res.ok;
@@ -54,7 +55,7 @@ export async function loadLoadoutRemote(who = playerName()): Promise<boolean> {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/rebels_loadout` +
         `?owner_key=eq.${encodeURIComponent(who.toLowerCase())}` +
-        `&select=points_earned,points_spent,owned,purchases`,
+        `&select=points_earned,points_spent,owned,purchases,items`,
       { headers },
     );
     if (!res.ok) return false;
@@ -66,6 +67,7 @@ export async function loadLoadoutRemote(who = playerName()): Promise<boolean> {
       spent: Number(r.points_spent),
       owned: Array.isArray(r.owned) ? (r.owned as string[]) : [],
       purchases: Array.isArray(r.purchases) ? (r.purchases as Loadout["purchases"]) : [],
+      items: r.items && typeof r.items === "object" ? (r.items as Loadout["items"]) : {},
     });
   } catch {
     return false;

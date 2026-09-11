@@ -74,6 +74,9 @@ export interface RoomEvent {
   damage?: number;
   wave?: number;
   guarded?: boolean;
+  /** gem / drop of an item: its catalogue key, and the gem's id. */
+  item?: string;
+  id?: string;
 }
 
 export type RoomStatus = "off" | "connecting" | "live" | "retrying" | "refused";
@@ -90,6 +93,8 @@ export interface Purse {
   /** Flock kills ever, and gems held per tier. */
   flocks: number;
   gems: number[];
+  /** Items picked up in rooms, by key: the room's own count. */
+  items: Record<string, number>;
   /** When this arrived, by the cockpit's clock. */
   at: number;
 }
@@ -113,8 +118,9 @@ export interface Room {
   fire(kind: "main" | "mini" | "torp" | "beam", pos: THREE.Vector3, fwd: THREE.Vector3, aim?: THREE.Vector3, weapon?: string): void;
   /** Beams in the air, as the room sees them. Overwritten every tick. */
   beams: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; life: number; half: number; reach: number; colour: number; key: string }>;
-  /** Gems in the world. The room's; they persist there. */
-  gems: Array<{ id: string; tier: number; pos: THREE.Vector3; spin: number }>;
+  /** Gems in the world. The room's; they persist there. A dropped item
+   *  carries its key, its owner and the seconds it is theirs alone. */
+  gems: Array<{ id: string; tier: number; pos: THREE.Vector3; spin: number; item?: string; owner?: string; hidden?: number }>;
   detonate(): void;
   /** Ask to be paid what is banked, to this address. The answer comes back
    *  as a purse, with `why` set if it was refused. */
@@ -367,9 +373,10 @@ export function joinRoom(opts: Opts): Room {
             key: String(b[6]),
           };
         });
-        room.gems = ((m.G ?? []) as Array<[number, number, number, number, number, string]>).map((g) => ({
+        room.gems = ((m.G ?? []) as Array<[number, number, number, number, number, string, string?, string?, number?]>).map((g) => ({
           id: String(g[5]), tier: Number(g[3]) || 1,
           pos: new THREE.Vector3(g[0], g[1], g[2]), spin: Number(g[4]) || 0,
+          ...(g[6] ? { item: String(g[6]), owner: String(g[7] ?? ""), hidden: Number(g[8]) || 0 } : {}),
         }));
         return;
       }
@@ -402,6 +409,8 @@ export function joinRoom(opts: Opts): Room {
             damage: e.dmg as number | undefined,
             wave: e.wave as number | undefined,
             guarded: e.g === 1,
+            ...(typeof e.item === "string" ? { item: e.item } : {}),
+            ...(typeof e.id === "string" ? { id: e.id } : {}),
           });
         }
         /* A long stall must not deliver a thousand bangs at once. */
@@ -429,6 +438,9 @@ export function joinRoom(opts: Opts): Room {
           ...(typeof m.why === "string" && m.why ? { why: m.why } : {}),
           flocks: Number(m.flocks) || 0,
           gems: Array.isArray(m.gems) ? (m.gems as unknown[]).map((n) => Number(n) || 0) : [0, 0, 0, 0, 0, 0, 0],
+          items: m.items && typeof m.items === "object" ? Object.fromEntries(
+            Object.entries(m.items as Record<string, unknown>).map(([k, v]) => [k, Number(v) || 0]),
+          ) : {},
           at: performance.now(),
         };
         room.purse = purse;

@@ -10,6 +10,7 @@
 
 import * as THREE from "three";
 import { R } from "./orbitWorld";
+import { setDropRandomForTests } from "./rebelsCombat";
 import {
   slotOffsets, splitSizes, pickSplit, turnToward, avoidPlanet, resetFlockIds,
   FORM_SPACING, SPLIT_RANGE, DRONE_TIERS, DRONE_CAP, FLEET_SIZE,
@@ -42,6 +43,8 @@ import {
 /* These tests simulate minutes of play; the one-percent natural flock roll
    would add fleets nobody asked for. Off, unless a test turns it on. */
 setFlockRandomForTests(() => 1);
+/* Wrecks roll for items; pinned to "nothing" so gem counts are the flock's. */
+setDropRandomForTests(() => 0.99);
 /* Likewise the minute's split-or-merge decision: "nothing", unless a test
    is about it. The older tests measure the first split and the run cadence. */
 setDecideRandomForTests(() => 0.95);

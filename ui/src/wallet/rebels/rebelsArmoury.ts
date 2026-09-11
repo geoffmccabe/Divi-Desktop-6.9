@@ -19,6 +19,7 @@
 
 import { STARTING_WEAPONS, weaponByKey, type WeaponSpec } from "./weaponCatalog";
 import { itemByKey, torpedoBonus, magBonus, superBoostMult, strafeMult, type ItemSpec } from "./itemCatalog";
+import { heldItems, mergeHeld, type Held } from "./rebelsInventory";
 import { SUPER_BOOST_MULT, type Extras } from "./orbitFlight";
 import { USD_PER_POINT } from "./weaponCatalog";
 import { spendDivi } from "./rebelsScores";
@@ -200,11 +201,13 @@ export interface Loadout {
   spent: number;
   owned: string[];
   purchases: Purchase[];
+  /** Found items, stacked by key. Merged by the larger count. */
+  items: Held;
 }
 
 export function loadoutSnapshot(): Loadout {
   const p = purse();
-  return { earned: p.earned, spent: p.spent, owned: readOwned(), purchases: purchases() };
+  return { earned: p.earned, spent: p.spent, owned: readOwned(), purchases: purchases(), items: heldItems() };
 }
 
 /** Fold a copy from the account into this machine. True if anything moved. */
@@ -236,6 +239,7 @@ export function mergeLoadout(remote: Partial<Loadout>): boolean {
     try { localStorage.setItem(PURCHASES_KEY, JSON.stringify(have)); } catch { /* full */ }
     changed();
   }
+  if (remote.items && mergeHeld(remote.items)) moved = true;
   return moved;
 }
 

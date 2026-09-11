@@ -7,6 +7,7 @@ export {};
 
 import * as THREE from "three";
 import { R } from "./orbitWorld";
+import * as INV from "./rebelsInventory";
 import {
   WEAPONS, weaponByKey, weaponInSlot, upgradeLabel, priceInDivi,
   USD_PER_POINT, BEAM_SECONDS, STARTING_WEAPONS,
@@ -402,6 +403,17 @@ async function main() {
        && !A.mergeLoadout({ purchases: [{ txid: "t1", divi: 1, points: 1, at: "" }] })
        && A.purchases().length === 1);
     ok("spendable is earned minus spent after a merge", A.spendable() === 1000, `${A.spendable()}`);
+
+    /* ---- found items ride along ----
+       Counts per key, merged by the larger, so a stale copy takes nothing. */
+    INV.resetInventoryForTests();
+    INV.addHeld("hull2", 2);
+    ok("a snapshot carries what is held", A.loadoutSnapshot().items.hull2 === 2, JSON.stringify(A.loadoutSnapshot().items));
+    ok("a remote copy with more raises the count", A.mergeLoadout({ items: { hull2: 5, drone1: 1 } })
+       && INV.heldCount("hull2") === 5 && INV.heldCount("drone1") === 1);
+    ok("one with fewer changes nothing", !A.mergeLoadout({ items: { hull2: 1 } }) && INV.heldCount("hull2") === 5);
+    ok("junk keys are ignored", !A.mergeLoadout({ items: { deathray: 9, hull2: "x" as never } }));
+    ok("a drop-only key never lands in the store's owned set", !A.owned().includes("hull2"));
   }
 
   console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
