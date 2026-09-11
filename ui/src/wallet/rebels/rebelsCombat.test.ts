@@ -754,10 +754,13 @@ function run(c: CombatState, frames: number, w = world()) {
   /* Against the REAL speeds rather than numbers typed in once. Both of these
      read 16 and 30 until the world was halved and the ship slowed to match,
      after which they were asserting against a game that no longer existed. */
-  ok("coins move slower than a boosting player can fly",
-     Math.max(...speeds) < BOOST, `fastest ${Math.max(...speeds).toFixed(1)} of ${BOOST}`);
-  ok("but faster than the player cruises, so they take chasing",
-     Math.min(...speeds) > CRUISE, `slowest ${Math.min(...speeds).toFixed(1)} of ${CRUISE}`);
+  /* Geoff, Sep-11: "moving slower than average ship speed, I think I said
+     80%... so even at normal speed I can catch up." So under cruise, not
+     merely under boost. */
+  ok("coins move slower than a cruising player, so cruise catches them",
+     Math.max(...speeds) < CRUISE, `fastest ${Math.max(...speeds).toFixed(1)} of ${CRUISE}`);
+  ok("and well under boost", Math.max(...speeds) < BOOST * 0.5, `fastest ${Math.max(...speeds).toFixed(1)} of ${BOOST}`);
+  ok("at about eighty percent of cruise", Math.max(...speeds) <= CRUISE * 0.8 + 1e-6 && Math.max(...speeds) > CRUISE * 0.5);
 }
 {
   /* They have to STAY up. A coin that falls in ten seconds is not a pickup, it
@@ -1250,7 +1253,7 @@ function run(c: CombatState, frames: number, w = world()) {
      units a second at the height they sit, against a ship that cruises at
      eight and boosts to nineteen. The coins were faster than the ship. */
   ok("the cap really is eighty percent of a boosting ship",
-     Math.abs(COIN_TOP - BOOST * 0.8) < 1e-9, `${COIN_TOP} vs ${(BOOST * 0.8).toFixed(2)}`);
+     Math.abs(COIN_TOP - CRUISE * 0.8) < 1e-9, `${COIN_TOP} vs ${(CRUISE * 0.8).toFixed(2)}`);
 
   /* And that number is written out in the combat file rather than imported,
      because orbitFlight already imports from it and closing that loop reads a
@@ -1422,7 +1425,10 @@ function run(c: CombatState, frames: number, w = world()) {
   c.bullets.push({ pos: at.clone().add(new THREE.Vector3(0, 0, -2)), vel: new THREE.Vector3(0, 0, 60), life: 3, hostile: false });
   stepCombat(c, 1 / 30, world());
   ok("the round is spent on the coin", c.bullets.length === 0);
-  ok("the coin recoils along the round", c.coins[0].vel.z > COIN_KICK * 0.8, `${c.coins[0].vel.z.toFixed(1)}`);
+  ok("the coin recoils along the round, up to the cap", c.coins[0].vel.z > Math.min(COIN_KICK, COIN_TOP) * 0.9, `${c.coins[0].vel.z.toFixed(1)}`);
+  ok("a round spent on a coin leaves no live trail behind", c.tracers.every((t) => !t.live));
+  for (let i = 0; i < 60 * 4; i++) stepCombat(c, 1 / 60, world());
+  ok("and is gone within its life", c.tracers.length === 0, `${c.tracers.length}`);
   ok("and spins", Math.abs(c.coins[0].spinVel ?? 0) > 0);
   ok("with a hit event for the sound", c.events.some((e) => e.kind === "coinHit"));
 }
@@ -1491,6 +1497,19 @@ function run(c: CombatState, frames: number, w = world()) {
   const pc = planetCentre(1);
   const g4 = dropGem(c4, 2, pc.clone().add(new THREE.Vector3(0, 0, 60)), "gem-4");
   ok("dropped by a planet it orbits that planet", g4.body === 1);
+}
+
+/* ---- a trail whose round vanished by any other road still fades ---- */
+{
+  const c = createCombat();
+  fireGuns(c, new THREE.Vector3(0, 0, R + 30), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 1, 0), 70, 1.6);
+  ok("(setup) the guns leave live trails", c.tracers.length === 2 && c.tracers.every((t) => t.live));
+  /* A room replacing the bullet list from the wire, with nothing in it. */
+  c.bullets.length = 0;
+  stepCombat(c, 1 / 60, world());
+  ok("trails with no round in the air are released", c.tracers.every((t) => !t.live));
+  for (let i = 0; i < 60 * 4; i++) stepCombat(c, 1 / 60, world());
+  ok("and fade away", c.tracers.length === 0, `${c.tracers.length}`);
 }
 
 console.log(out.join("\n"));

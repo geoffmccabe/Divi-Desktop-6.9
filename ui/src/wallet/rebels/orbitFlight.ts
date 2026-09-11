@@ -33,6 +33,8 @@ import { R, MIN_ALT, MAX_ALT, cruiseScale } from "./orbitWorld";
    has to be re-tuned. Actually scaling the world would move all of it. */
 export const CRUISE = 8;       /* globe units per second, about 512 km/s of Earth */
 export const BOOST = 19;
+/** How long a full tank of boost lasts, in seconds. */
+export const BOOST_SECONDS = 12;
 export const YAW_RATE = 1.5;   /* radians per second at full stick */
 /** Roll, in radians a second. Quicker than yaw: rolling is how you point a
  *  turn, so it has to happen faster than the turn it is setting up. */
@@ -408,7 +410,10 @@ export function stepFlight(
   if (stick.fullStop) f.throttle = 0;
 
   const wantBoost = stick.boosting && f.boost > 0;
-  if (wantBoost) f.boost = Math.max(0, f.boost - dt / 6);
+  /* Twelve seconds of boost from a full tank. It was six; Geoff: "make each
+     boost burn only half as much boost points as before so there's
+     effectively double the amount of boost time available." */
+  if (wantBoost) f.boost = Math.max(0, f.boost - dt / BOOST_SECONDS);
   const openSpace = cruiseScale(f.alt);
   /* Boost ignores the lever: it is a button that means "everything you have",
      and having to remember to push the throttle up first would make it feel

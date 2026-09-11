@@ -162,7 +162,12 @@ export const COIN_PER_KILL = 5;
  * dragged along by the magnet, can pick up more than that; and a coin quicker
  * than the ship is not a reward, it is a tease.
  */
-export const COIN_TOP = 15.2;
+/* Geoff, 2026-Sep-11: "They're supposed to be moving slower than average
+   ship speed, I think I said 80%? So even at normal speed I can catch up."
+   Average ship speed is CRUISE (8, in orbitFlight, which imports this file
+   so the number is written here): eighty percent of it. It was eighty
+   percent of BOOST, which made a coin faster than a cruising ship. */
+export const COIN_TOP = 8 * 0.8;
 
 /**
  * How hard the planet pulls on a coin.
@@ -1268,6 +1273,8 @@ export function fireBeam(
 }
 
 /** Start a round's trail. Called wherever a bullet is created. */
+const _liveRounds = new Set<Tracer>();
+
 function addTracer(c: CombatState, b: Bullet): void {
   const t: Tracer = {
     from: b.pos.clone(), to: b.pos.clone(),
@@ -1426,7 +1433,13 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       coined = true;
       break;
     }
-    if (coined) { c.bullets.splice(i, 1); continue; }
+    if (coined) {
+      /* The round is spent: its trail must start fading now, like any other
+         round's. Left "live" it would never fade at all. */
+      if (b.tracer) b.tracer.live = false;
+      c.bullets.splice(i, 1);
+      continue;
+    }
     for (const k of c.coins) {
       if (k.pos.distanceToSquared(from) > 900) continue;
       if (!segmentHit(from, b.pos, k.pos, COIN_RADIUS * 1.6)) continue;
@@ -1437,7 +1450,11 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       coined = true;
       break;
     }
-    if (coined) { c.bullets.splice(i, 1); continue; }
+    if (coined) {
+      if (b.tracer) b.tracer.live = false;
+      c.bullets.splice(i, 1);
+      continue;
+    }
     b.life -= dt;
     /* The trail grows with the round and stops where it stopped. */
     if (b.tracer) b.tracer.to.copy(b.pos);
@@ -1548,8 +1565,16 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
      They only start counting down once their round has finished flying, so a
      long shot leaves its line for three seconds after it lands rather than
      three seconds after it was fired. */
+  /* A trail is "live" while its round flies. Any path that removes a round
+     must say so, and one did not (rounds spent on coins), which left trails
+     that never faded. Belt and braces: a live trail whose round is no longer
+     in the air is released here whatever removed it, including a room
+     replacing the whole list from the wire. */
+  _liveRounds.clear();
+  for (const b of c.bullets) if (b.tracer) _liveRounds.add(b.tracer);
   for (let i = c.tracers.length - 1; i >= 0; i--) {
     const t = c.tracers[i];
+    if (t.live && !_liveRounds.has(t)) t.live = false;
     if (t.live) continue;
     t.life -= dt;
     if (t.life <= 0) c.tracers.splice(i, 1);

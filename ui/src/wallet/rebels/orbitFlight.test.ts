@@ -13,6 +13,7 @@ import {
   createFlight, stepFlight, distanceToTower, CRUISE, MAX_AMMO, MAX_SHIELD,
   CRASH_DAMAGE, MAX_GUARDS, MAX_TORPEDOES,
   DOCK_SECONDS, DOCK_RANGE, type Stick,
+  BOOST_SECONDS,
 } from "./orbitFlight";
 
 const out: string[] = [];
@@ -260,11 +261,13 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const f = createFlight(pad);
   run(f, 60, stick({ boosting: true }));
   ok("boost accelerates", f.speed > CRUISE * 1.5, `speed ${f.speed.toFixed(1)}`);
-  run(f, 60 * 8, stick({ boosting: true }));
+  /* A full tank is BOOST_SECONDS (twelve; it was six). Run past it. */
+  run(f, 60 * (BOOST_SECONDS + 1), stick({ boosting: true }));
   ok("boost runs dry", f.boost === 0, `boost ${f.boost.toFixed(2)}`);
+  ok("after twelve seconds, not six", BOOST_SECONDS === 12);
   run(f, 120, stick({ boosting: true }));
-  /* Against cruise AT THIS ALTITUDE: nine seconds of boost carries the ship a
-     few hundred units up, where open space is already a little faster. */
+  /* Against cruise AT THIS ALTITUDE: fourteen seconds of boost carries the
+     ship a few hundred units up, where open space is already a little faster. */
   ok("dry boost falls back to cruise, never to a stop",
      Math.abs(f.speed - CRUISE * cruiseScale(f.alt)) < 0.5,
      `speed ${f.speed.toFixed(1)}`);
