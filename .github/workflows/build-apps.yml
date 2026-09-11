@@ -101,6 +101,14 @@ jobs:
         run: echo "RUSTFLAGS=--remap-path-prefix=$HOME=/build" >> "$GITHUB_ENV"
         shell: bash
 
+      # The cached target/ keeps the previous build's installer bundles, so
+      # without this the artifact would carry stale old-version installers
+      # alongside the new ones. Purge them; only dependency artifacts are worth
+      # keeping in the cache, and those live elsewhere under target/.
+      - name: Clear stale installers from the cache
+        run: find target -type d -name bundle -prune -exec rm -rf {} + 2>/dev/null || true
+        shell: bash
+
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         with:
