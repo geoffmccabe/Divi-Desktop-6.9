@@ -14,7 +14,7 @@ import {
   BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
   TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, COIN_TOP, COIN_MU,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
-  setDropRandomForTests,
+  setDropRandomForTests, dropItem, clampReach, REACH_MIN, REACH_MAX, GEM_RADIUS,
   type CombatState, type Enemy,
   ENEMY_SPEED,
   stepFlockSpawns,
@@ -1570,6 +1570,34 @@ function run(c: CombatState, frames: number, w = world()) {
   const took = c.events.find((ev) => ev.kind === "gem");
   ok("after the minute, whoever is there takes it", took?.who === "B" && took?.item === "recharge" && took?.id === drop!.id, JSON.stringify(took && { who: took.who, item: took.item }));
   ok("and it is gone from the world", !c.gems.includes(drop!));
+
+  /* ---- capture reach ----
+     Taken when it touches a ball as wide as the wings, not a fixed 2.2. */
+  {
+    const c2 = createCombat();
+    const wide = { id: "W", pos: new THREE.Vector3(0, 0, R + 30), fwd: new THREE.Vector3(1, 0, 0), reach: 6 };
+    const g = dropItem(c2, "hull1", 1, new THREE.Vector3(0, 0, R + 30), "g1", "W");
+    g.hidden = 0;
+    g.vel.set(0, 0, 0);
+    g.pos.copy(wide.pos).add(new THREE.Vector3(6 + GEM_RADIUS - 0.05, 0, 0));
+    stepCombat(c2, 1 / 600, world({ players: [wide] }));
+    ok("touching the ball at six units captures", c2.events.some((ev) => ev.kind === "gem" && ev.who === "W"), `${c2.gems.length}`);
+    const c3 = createCombat();
+    const g3 = dropItem(c3, "hull1", 1, new THREE.Vector3(0, 0, R + 30), "g2", "W");
+    g3.hidden = 0; g3.vel.set(0, 0, 0);
+    g3.pos.copy(wide.pos).add(new THREE.Vector3(6 + GEM_RADIUS + 0.3, 0, 0));
+    stepCombat(c3, 1 / 600, world({ players: [wide] }));
+    ok("just past it does not", !c3.events.some((ev) => ev.kind === "gem") && c3.gems.length === 1);
+    ok("the reach is clamped: never under the old pickup, never room-sized", clampReach(0.5) === REACH_MIN && clampReach(50) === REACH_MAX && clampReach(undefined) === REACH_MIN && clampReach(4) === 4);
+    const c4 = createCombat();
+    const g4 = dropItem(c4, "hull1", 1, new THREE.Vector3(0, 0, R + 30), "g3", "");
+    g4.hidden = 0; g4.vel.set(0, 0, 0);
+    g4.pos.set(5 + GEM_RADIUS - 0.05, 0, R + 30);
+    const w4 = world({ reach: 5 });
+    w4.playerPos.set(0, 0, R + 30);
+    stepCombat(c4, 1 / 600, w4);
+    ok("flying solo, the world's reach is the ship's", c4.events.some((ev) => ev.kind === "gem"));
+  }
 
   /* A flock member rolls at the full chance for its tier (Geoff). */
   clearEvents(c);

@@ -15,6 +15,7 @@ import {
   type Flight, type Stick,
 } from "./orbitFlight";
 import {
+  clampReach, REACH_MIN,
   createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles, fireBeam,
   fireMini, miniMuzzle, spawnFleet,
   STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
@@ -30,7 +31,7 @@ import { loadModel, unitCopy } from "./spaceAssets";
 import { loadShip } from "./shipChoice";
 import { loadPaint, makeRepaintable, type PaintHandle } from "./shipColours";
 import {
-  fitCollider, fitMounts, type Mounts, placeCollider, noseOf, HULL_FORWARD, HULL_UP, type HitSphere,
+  fitCollider, fitMounts, halfSpan, type Mounts, placeCollider, noseOf, HULL_FORWARD, HULL_UP, type HitSphere,
 } from "./shipCollider";
 import {
   loadLoadout, saveLoadout, weaponAt, type Loadout, type SlotKind,
@@ -300,6 +301,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const camFwd = new THREE.Vector3();
   let shipPaint: PaintHandle | null = null;
   let shipHull: HitSphere[] = [];
+  /** The capture ball's radius, from the flown hull's wingspan. */
+  let shipReach = REACH_MIN;
   /* Hull models by enemy id, and pools of hidden ones by tier. */
   type HullSlot = { mesh: THREE.Object3D; rig: ShieldRig; tier: number };
   const enemyRigs = new Map<number, HullSlot>();
@@ -784,6 +787,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            rounds that visibly missed it. */
         shipHull = fitCollider(model);
         shipMounts = fitMounts(model);
+        /* The capture ball: as wide as the wings, in world units. */
+        shipReach = clampReach(halfSpan(model) * SHIP_LENGTH);
         model.scale.setScalar(SHIP_LENGTH);
 
         /* Which way the hull faces is a property of the PACK, not of the
@@ -979,6 +984,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       /* What this ship carries, so the room arms it the same way the solo
          game does: the minigun, the beams, the extra tubes and magazine. */
       gear: owned(loadShip()).filter((k) => k !== "pulse"),
+      reach: shipReach,
       /* Flattened in the order the shader keeps the parts, which is the order
          the other end puts them back in. */
       paint: PART_ORDER.map((k) => [
@@ -1456,8 +1462,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              miss against, so the single radius round the camera is both fairer
              and cheaper. */
           players: hullWorld.length > 0
-            ? [{ id: "", pos: flight.pos, fwd: flight.fwd, hull: hullWorld }]
+            ? [{ id: "", pos: flight.pos, fwd: flight.fwd, hull: hullWorld, reach: shipReach }]
             : undefined,
+          reach: shipReach,
           damageScale: damageScale(),
         });
 

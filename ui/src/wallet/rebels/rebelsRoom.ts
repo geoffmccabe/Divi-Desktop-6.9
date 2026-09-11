@@ -162,6 +162,8 @@ interface Opts {
   paint?: number[][];
   /** Weapon and item keys the player owns, so the room can arm the ship. */
   gear?: string[];
+  /** The hull's capture reach, half its wingspan in world units. */
+  reach?: number;
   /** Told when the connection comes up or goes down, for the cockpit's own
    *  display. */
   onStatus?: (s: RoomStatus) => void;
@@ -265,6 +267,7 @@ export function joinRoom(opts: Opts): Room {
         ship: opts.ship,
         ...(opts.paint ? { paint: opts.paint } : {}),
         ...(opts.gear ? { gear: opts.gear } : {}),
+        ...(opts.reach ? { reach: Math.round(opts.reach * 100) / 100 } : {}),
       });
     };
     sock.onmessage = (ev) => {

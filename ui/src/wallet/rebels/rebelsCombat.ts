@@ -199,6 +199,17 @@ export const COIN_MU = Math.round(COIN_ORBIT * COIN_ORBIT * (R + 14));
 export const COIN_R = 0.031;
 /** How close counts as collected, and how close before it starts coming to you. */
 export const COIN_PICKUP = 2.2;
+/* ---- CAPTURE REACH ----
+   A gem or a sphere is taken when it touches a ball round the ship as wide as
+   the ship's wingspan (halfSpan in shipCollider, times the ship's scale).
+   Each ship's own, sent to the room on join and clamped there: a liar can
+   have a magnet a little bigger than their wings, never a room-sized one. */
+export const REACH_MIN = COIN_PICKUP;
+export const REACH_MAX = 9;
+export function clampReach(r: number | undefined): number {
+  if (!Number.isFinite(r as number)) return REACH_MIN;
+  return Math.min(REACH_MAX, Math.max(REACH_MIN, r as number));
+}
 /** How big a coin is drawn, which is also how big it is to a round. */
 export const COIN_RADIUS = 0.33;
 
@@ -315,7 +326,9 @@ export function stepGems(c: CombatState, dt: number, w: CombatWorld): void {
     g.pos.addScaledVector(g.vel, dt);
     g.spinVel = (g.spinVel ?? 0) * Math.max(0, 1 - 1.4 * dt);
     g.spin += dt * (1.6 + (g.spinVel ?? 0));
-    if (range < COIN_PICKUP) {
+    /* Touching counts: the ship's reach plus the gem's own radius. */
+    const reach = clampReach(claimant.reach ?? w.reach) + GEM_RADIUS;
+    if (_segAt.copy(claimant.pos).sub(g.pos).length() < reach) {
       c.events.push({
         kind: "gem", at: g.pos.clone(), power: 0.8, tier: g.tier, who: claimant.id, id: g.id,
         ...(g.item ? { item: g.item } : {}),
@@ -1393,6 +1406,8 @@ export interface PlayerBody {
   /** Guard up right now. Checked HERE rather than by whoever reads the events,
    *  so a client cannot decide for itself that it blocked something. */
   guard?: boolean;
+  /** How far out a gem or sphere is captured: this hull's half wingspan. */
+  reach?: number;
   /**
    * The hull's own shape, as a chain of spheres already placed in the world.
    *
@@ -1420,6 +1435,8 @@ export interface CombatWorld {
    * shot whom, and the disagreement always favours whoever is lying.
    */
   players?: PlayerBody[];
+  /** The solo ship's capture reach (see clampReach). */
+  reach?: number;
   /** Multiplies everything the player's guns do. Three for a minute after
    *  winning a stake on your node. */
   damageScale: number;

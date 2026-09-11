@@ -32,6 +32,9 @@ export interface JoinIn {
   /** What the player has bought: weapon and item keys from the catalogues.
    *  The client's word, as the paint is; see the room for what that means. */
   gear?: string[];
+  /** Half the hull's wingspan in world units: how far out a gem or sphere is
+   *  captured. Clamped by the room. */
+  reach?: number;
 }
 
 /**

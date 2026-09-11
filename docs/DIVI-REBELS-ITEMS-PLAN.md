@@ -283,3 +283,18 @@ phase ships on its own with tests, docs and a version.
   lock is let go without that counting as Escape, and taken back on close.
 - `I` is on the help card's keyboard and in the control table.
 - Still NOT: items do nothing, no Y, no forging (next).
+10. (2026-Sep-11) Capture rule: a ball round the ship as wide as its wings
+    (centre to the farthest wingtip, the sides, not nose or tail). A gem or
+    sphere that touches that ball at all is captured. BUILT v69.9.25:
+    `halfSpan` in shipCollider.ts, `reach` on the player body (sent on
+    join, clamped 2.2..9 by the room), `clampReach` in rebelsCombat.ts.
+11. (2026-Sep-11) A DRAGON: an animated dragon glb Geoff has on disk
+    somewhere. To become a very rare enemy that, killed, leaves a Dragon
+    Egg (a sphere/item of its own). FOUND (2026-Sep-11):
+    `/Users/geoffreymccabe/Desktop/Perceptrons/Perc Con/Models for Perc Con/gold_dragon_fbx.glb`
+    (9.1 MB, glTF 2, rigged with 3 skins, ONE animation "ArmatureAction",
+    289 channels, converted from FBX by Fab; source zip and .blend beside
+    it). Also on disk, not glb: the Siege Worlds "Dragon of Cannon" rig as
+    .blend files with separate animation .blends (Fire, Flip, Roar,
+    LongRoar) under Desktop/LightningWorks Stuff/.../All Enemies from
+    Cannon, and Synty's Hologram_Dragon_Rig_01.fbx.

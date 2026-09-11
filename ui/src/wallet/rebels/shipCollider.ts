@@ -156,6 +156,39 @@ export function placeCollider(
   }
 }
 
+/**
+ * Half the wingspan, in the model's own units: the farthest point out to
+ * EITHER SIDE from the ship's centre line. X is the wing axis on every hull
+ * in the pack (see HULL_FORWARD below), so this is the box's half-width, not
+ * its length. Multiply by the ship's world scale to use it.
+ *
+ * What it is for: Geoff, "a circle is drawn from the center of the ship to
+ * the farthest point/wing and make a sphere of that size (on the sides, not
+ * the nose or rear), and if the sphere passes through this area, even
+ * touching it a small amount, it's captured to inventory."
+ */
+export function halfSpan(root: THREE.Object3D): number {
+  const box = new THREE.Box3();
+  const v = new THREE.Vector3();
+  root.updateMatrixWorld(true);
+  let any = false;
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh || !m.geometry) return;
+    const pos = m.geometry.getAttribute("position");
+    if (!pos) return;
+    const step = Math.max(1, Math.floor(pos.count / 900));
+    for (let i = 0; i < pos.count; i += step) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld);
+      box.expandByPoint(v);
+      any = true;
+    }
+  });
+  if (!any) return 0;
+  const centreX = (box.min.x + box.max.x) / 2;
+  return Math.max(box.max.x - centreX, centreX - box.min.x);
+}
+
 /** How far the chain reaches from the ship's centre: a cheap reject before the
  *  spheres are tested one by one. */
 export function colliderBound(fitted: HitSphere[]): number {

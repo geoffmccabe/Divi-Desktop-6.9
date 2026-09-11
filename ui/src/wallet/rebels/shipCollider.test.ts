@@ -10,7 +10,7 @@
 import * as THREE from "three";
 import {
   fitCollider, placeCollider, colliderBound, noseOf, HULL_FORWARD, HULL_UP,
-  mountsFromPoints, fitMounts,
+  mountsFromPoints, fitMounts, halfSpan,
 } from "./shipCollider";
 
 const out: string[] = [];
@@ -192,6 +192,21 @@ function wideWing(): THREE.Object3D {
   placeCollider([], new THREE.Vector3(), new THREE.Quaternion(), 1, placed);
   ok("and placing nothing places nothing", placed.length === 0);
   ok("and its reach is zero", colliderBound([]) === 0);
+}
+
+/* ---- halfSpan ----
+   The capture ball's radius: the farthest point out to either side. */
+{
+  const g = new THREE.BoxGeometry(19.3, 2, 15.2);
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(g));
+  ok("half the width, not half the length", Math.abs(halfSpan(root) - 9.65) < 1e-6, `${halfSpan(root)}`);
+  const off = new THREE.Group();
+  const m = new THREE.Mesh(new THREE.BoxGeometry(4, 1, 1));
+  m.position.x = 3;
+  off.add(m);
+  ok("measured from the ship's own centre line, wherever the mesh sits", Math.abs(halfSpan(off) - 2) < 1e-6, `${halfSpan(off)}`);
+  ok("nothing in it is nothing", halfSpan(new THREE.Group()) === 0);
 }
 
 console.log(out.join("\n"));

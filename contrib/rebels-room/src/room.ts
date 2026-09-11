@@ -29,7 +29,7 @@
 import * as THREE from "three";
 import {
   createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
-  setDropRandomForTests,
+  setDropRandomForTests, clampReach,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE,
   type CombatState, type CombatWorld, type PlayerBody,
@@ -597,6 +597,9 @@ export class RebelsRoom {
     seat.ship = /^space_SM_Ship_[A-Za-z0-9_]{1,60}$/.test(String(m.ship ?? ""))
       ? String(m.ship) : "";
     seat.paint = cleanPaint(m.paint);
+    /* The capture ball. The client measured its own wings; the room only
+       keeps it within reason. */
+    seat.body.reach = clampReach(Number(m.reach));
     /* Gear: known keys only, bounded, and the magazine and rack sized from
        the items in it exactly as the solo game sizes them. */
     seat.gear = new Set(

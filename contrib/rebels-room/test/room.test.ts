@@ -501,6 +501,14 @@ const home: [number, number, number] = [0, 0, R + 8];
   const b = join(room, wsB, "b-node");
   const rolls: number[] = [];
   room.setDropsForTests(null, () => rolls.shift() ?? 0.99);
+  /* The capture ball is the client's measurement, kept within reason. */
+  ok("a join without a reach gets the floor", a.body.reach === 2.2, `${a.body.reach}`);
+  const wsW = new FakeSocket();
+  room.seat(wsW as never);
+  wsW.deliver(JSON.stringify({ t: "join", node: "w-node", name: "W", home: [0, 0, R], reach: 400 }));
+  const wSeat = room.seats.get(wsW.last("hi").id);
+  ok("a giant reach is clamped to the ceiling", wSeat.body.reach === 9, `${wSeat.body.reach}`);
+  room.leave(wSeat);
   const { spawnFleet, hurtEnemy, setFlockRandomForTests } = await import("../../../ui/src/wallet/rebels/rebelsCombat");
   setFlockRandomForTests(() => 1);
   const fleet = spawnFleet(room.combat, 2, a.body.pos, a.body.fwd, { count: 3 });
