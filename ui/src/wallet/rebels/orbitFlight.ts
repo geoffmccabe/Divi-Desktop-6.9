@@ -35,6 +35,15 @@ export const CRUISE = 8;       /* globe units per second, about 512 km/s of Eart
 export const BOOST = 19;
 /** How long a full tank of boost lasts, in seconds. */
 export const BOOST_SECONDS = 12;
+/** TAB's multiple of boost, before any item. Geoff: "a super-boost that
+ *  doubled the speed and used two boosts at once." */
+export const SUPER_BOOST_MULT = 2;
+
+/** The fastest a ship with these extras can move, for anything that has to
+ *  bound a position change: super boost plus a diagonal slide. */
+export function topSpeedFor(extras: Extras = NO_EXTRAS): number {
+  return BOOST * Math.max(1, extras.superMult) + STRAFE_SPEED * Math.max(1, extras.strafeMult) * 1.42;
+}
 export const YAW_RATE = 1.5;   /* radians per second at full stick */
 /** Roll, in radians a second. Quicker than yaw: rolling is how you point a
  *  turn, so it has to happen faster than the turn it is setting up. */
@@ -167,6 +176,8 @@ export interface Flight {
   speed: number;
   bank: number;
   boost: number;      /* 0..1 of the boost cells */
+  /** TAB held with fuel to burn: for the gauge and the sound. */
+  superOn: boolean;
   shields: number;
   ammo: number;
   torpedoes: number;
@@ -233,11 +244,16 @@ export interface Stick {
   roll: number;
   /** -1 left to +1 right. A and D. Sideways, without turning. */
   strafe: number;
+  /** -1 down to +1 up. R and C. The other slide, same speed, nose fixed. */
+  lift: number;
   /** W and S, as -1, 0 or +1. Moves the throttle rather than setting a speed. */
   throttle: number;
   /** X. Everything to a stop. */
   fullStop: boolean;
   boosting: boolean;
+  /** TAB: boost at a multiple of boost speed, burning the tank that many
+   *  times faster. No other penalty: the fuel is the price. */
+  superBoost: boolean;
   firing: boolean;
   /** The secondary trigger: the right button. Launches or sets off whatever is
    *  in the secondary slot. */
@@ -263,9 +279,14 @@ export interface Extras {
   torpedoes: number;
   /** A bigger magazine, as a fraction of the standard. */
   magazine: number;
+  /** What TAB multiplies boost by, and the fuel burn with it. Two to start;
+   *  an item can raise it. */
+  superMult: number;
+  /** What the strafe and lift speeds are multiplied by. One to start. */
+  strafeMult: number;
 }
 
-export const NO_EXTRAS: Extras = { torpedoes: 0, magazine: 0 };
+export const NO_EXTRAS: Extras = { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 };
 
 /** The magazine this ship actually carries. */
 export function ammoFor(extras: Extras = NO_EXTRAS): number {
@@ -297,6 +318,7 @@ export function createFlight(at: THREE.Vector3, extras: Extras = NO_EXTRAS): Fli
     speed: CRUISE,
     bank: 0,
     boost: 1,
+    superOn: false,
     shields: MAX_SHIELD,
     ammo: ammoFor(extras),
     torpedoes: torpedoesFor(extras),
@@ -409,16 +431,20 @@ export function stepFlight(
   }
   if (stick.fullStop) f.throttle = 0;
 
-  const wantBoost = stick.boosting && f.boost > 0;
+  const wantSuper = stick.superBoost && f.boost > 0;
+  const wantBoost = (stick.boosting || wantSuper) && f.boost > 0;
+  f.superOn = wantSuper;
   /* Twelve seconds of boost from a full tank. It was six; Geoff: "make each
      boost burn only half as much boost points as before so there's
      effectively double the amount of boost time available." */
-  if (wantBoost) f.boost = Math.max(0, f.boost - dt / BOOST_SECONDS);
+  if (wantBoost) f.boost = Math.max(0, f.boost - (dt / BOOST_SECONDS) * (wantSuper ? f.extras.superMult : 1));
   const openSpace = cruiseScale(f.alt);
   /* Boost ignores the lever: it is a button that means "everything you have",
      and having to remember to push the throttle up first would make it feel
      broken exactly when it is wanted. */
-  let target = wantBoost ? BOOST * openSpace : CRUISE * openSpace * f.throttle;
+  let target = wantSuper ? BOOST * f.extras.superMult * openSpace
+    : wantBoost ? BOOST * openSpace
+    : CRUISE * openSpace * f.throttle;
   /* Docked means STOPPED. Not slowed: stopped. Being handed fuel while drifting
      past is not docking, and it was what happened before. */
   if (f.dock > 0) target = 0;
@@ -509,7 +535,11 @@ export function stepFlight(
      out among the planets. */
   if (stick.strafe !== 0) {
     _right.crossVectors(f.fwd, f.up).normalize();
-    f.pos.addScaledVector(_right, stick.strafe * STRAFE_SPEED * cruiseScale(f.alt) * dt);
+    f.pos.addScaledVector(_right, stick.strafe * STRAFE_SPEED * f.extras.strafeMult * cruiseScale(f.alt) * dt);
+  }
+  /* And up or down, the same way: the ship's own up, nose fixed. */
+  if (stick.lift !== 0) {
+    f.pos.addScaledVector(f.up, stick.lift * STRAFE_SPEED * f.extras.strafeMult * cruiseScale(f.alt) * dt);
   }
   f.alt = f.pos.length() - R;
 

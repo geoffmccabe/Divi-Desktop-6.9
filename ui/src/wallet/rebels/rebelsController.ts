@@ -41,6 +41,7 @@ import { joinRoom, type Room, type RoomStatus } from "./rebelsRoom";
 import { setBankStatus, setBankPurse, setBankActor } from "./rebelsBank";
 import { droneClass } from "./rebelsFlock";
 import { respawnSeconds } from "./itemCatalog";
+import { GAME_KEYS } from "./RebelsControls";
 import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
 import {
@@ -50,7 +51,7 @@ import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
 import {
-  hasWeapon, owned, earnPoints, spendable, extraTorpedoes, extraMagazine,
+  hasWeapon, owned, earnPoints, spendable, flightExtras,
 } from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
@@ -60,7 +61,7 @@ import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
   playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce, audioState,
-  startBoostSound, stopBoostSound,
+  startBoostSound, stopBoostSound, setBoostPitch,
 } from "./rebelsAudio";
 import {
   primeMusic, playOpening, playGameplay, musicOnDeath, stopMusic, tickMusic,
@@ -102,6 +103,9 @@ export interface HudState {
   simMs: number;
   /** Flock kills this run: over half a fleet's members. */
   flocks: number;
+  /** TAB held with fuel: the gauge says so, and by how much. */
+  superBoost: boolean;
+  superMult: number;
   /** Draw calls the renderer made last frame, and its pixel ratio. */
   drawCalls: number;
   pixelRatio: number;
@@ -154,7 +158,7 @@ const BLANK: HudState = {
   torpedoes: MAX_TORPEDOES, inFlight: 0, hitAt: 0,
   guards: MAX_GUARDS, guarding: false, boost: 1,
   dock: 0, dockName: "", homeName: "", homeDist: 0, towers: 0, view: 0, throttle: 1,
-  room: "off", crew: 0, points: 0, fps: 0, simMs: 0, drawCalls: 0, pixelRatio: 0, flocks: 0,
+  room: "off", crew: 0, points: 0, fps: 0, simMs: 0, drawCalls: 0, pixelRatio: 0, flocks: 0, superBoost: false, superMult: 2,
   primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
@@ -458,7 +462,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
 
   const stick: Stick = {
-    x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
+    x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0, lift: 0, superBoost: false,
     throttle: 0, fullStop: false, boosting: false, firing: false,
     secondary: false, guard: false, mini: false,
   };
@@ -827,11 +831,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      assist off), the torpedo was on control-click, and the mini gun was on a
      held E, which is roll everywhere else. The arrow keys still pitch and yaw
      for anyone who wants them. */
-  const MAPPED = [
-    "w", "a", "s", "d", "q", "e", "x", "f", "v", " ",
-    "1", "2", "3", "4", "5", "6", "shift",
-    "arrowup", "arrowdown", "arrowleft", "arrowright",
-  ];
+  /* The keys the game claims are the help card's list, so the two cannot
+     drift: a key the card explains is a key the game swallows, and no other. */
+  const MAPPED = GAME_KEYS;
 
   function applyKeys() {
     /* The arrows still fly, for anyone who would rather not use the mouse.
@@ -841,9 +843,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stick.y = (keys.arrowup ? 1 : 0) - (keys.arrowdown ? 1 : 0);
     stick.roll = (keys.e ? 1 : 0) - (keys.q ? 1 : 0);
     stick.strafe = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
+    stick.lift = (keys.r ? 1 : 0) - (keys.c ? 1 : 0);
     stick.throttle = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
     stick.fullStop = !!keys.x;
     stick.boosting = !!keys.shift;
+    stick.superBoost = !!keys.tab;
     stick.guard = !!keys.f;
     stick.mini = weapons.primary === 1;
   }
@@ -925,7 +929,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     for (const k in keys) keys[k] = false;
     stick.firing = false; stick.boosting = false; stick.secondary = false;
     stick.guard = false; stick.fullStop = false;
-    stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.throttle = 0;
+    stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.lift = 0; stick.superBoost = false; stick.throttle = 0;
     stick.aimX = 0; stick.aimY = 0;
   }
 
@@ -989,10 +993,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     /* What this hull carries beyond the standard, from the store. Read at the
        moment of launch so a purchase made between sorties is felt on the next
        one without the panel having to be reopened. */
-    flight = createFlight(at, {
-      torpedoes: extraTorpedoes(loadShip()),
-      magazine: extraMagazine(loadShip()),
-    });
+    flight = createFlight(at, flightExtras(loadShip()));
     setHud({ dead: false });
   }
 
@@ -1096,7 +1097,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         const live = !hud.dead;
         const blank: Stick = {
-          x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
+          x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0, lift: 0, superBoost: false,
           throttle: 0, fullStop: false, boosting: false, firing: false,
           secondary: false, guard: false, mini: false,
         };
@@ -1632,11 +1633,17 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            Holding shift with an empty boost tank, or while docked, or after
            being shot down, all move the ship not at all, and a roar with no
            acceleration behind it is worse than silence. */
-        const thrusting = stick.boosting && flight.boost > 0
+        const thrusting = (stick.boosting || stick.superBoost) && flight.boost > 0
           && flight.dock <= 0 && !hud.dead;
         if (thrusting !== wasThrusting) {
           wasThrusting = thrusting;
           if (thrusting) startBoostSound(); else stopBoostSound();
+        }
+        /* Super boost: the same roar, faster and higher, for as long as TAB
+           is held with fuel to burn. */
+        if (thrusting) setBoostPitch(flight.superOn ? 1.35 : 1);
+        if (flight.superOn !== hud.superBoost || flight.extras.superMult !== hud.superMult) {
+          setHud({ superBoost: flight.superOn, superMult: flight.extras.superMult });
         }
 
         /* The recharging station, on for exactly as long as the resupply. */

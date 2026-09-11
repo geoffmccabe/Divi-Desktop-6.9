@@ -14,6 +14,10 @@ import {
   CRASH_DAMAGE, MAX_GUARDS, MAX_TORPEDOES,
   DOCK_SECONDS, DOCK_RANGE, type Stick,
   BOOST_SECONDS,
+  SUPER_BOOST_MULT,
+  topSpeedFor,
+  STRAFE_SPEED,
+  BOOST,
 } from "./orbitFlight";
 
 const out: string[] = [];
@@ -23,8 +27,8 @@ function ok(name: string, cond: boolean, extra = "") {
   out.push(`${cond ? "PASS" : "FAIL"} ${name}${extra ? `  [${extra}]` : ""}`);
 }
 const stick = (o: Partial<Stick> = {}): Stick => ({
-  x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0,
-  throttle: 0, fullStop: false, boosting: false, firing: false,
+  x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0, lift: 0,
+  throttle: 0, fullStop: false, boosting: false, superBoost: false, firing: false,
   secondary: false, guard: false, mini: false, ...o,
 });
 
@@ -265,12 +269,50 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   run(f, 60 * (BOOST_SECONDS + 1), stick({ boosting: true }));
   ok("boost runs dry", f.boost === 0, `boost ${f.boost.toFixed(2)}`);
   ok("after twelve seconds, not six", BOOST_SECONDS === 12);
-  run(f, 120, stick({ boosting: true }));
+  /* Long enough to settle back: a longer boost climbs higher, into faster
+     open space, and the fall to cruise takes a few seconds. */
+  run(f, 60 * 6, stick({ boosting: true }));
   /* Against cruise AT THIS ALTITUDE: fourteen seconds of boost carries the
      ship a few hundred units up, where open space is already a little faster. */
   ok("dry boost falls back to cruise, never to a stop",
      Math.abs(f.speed - CRUISE * cruiseScale(f.alt)) < 0.5,
-     `speed ${f.speed.toFixed(1)}`);
+     `speed ${f.speed.toFixed(1)} vs ${(CRUISE * cruiseScale(f.alt)).toFixed(1)} at alt ${f.alt.toFixed(0)}, boost ${f.boost.toFixed(2)}, throttle ${f.throttle.toFixed(2)}`);
+}
+
+// 5b. Super boost: twice the speed, twice the burn; and the slides.
+{
+  const f = createFlight(pad);
+  run(f, 60, stick({ superBoost: true }));
+  ok("TAB flags super boost", f.superOn === true);
+  run(f, 60 * 2, stick({ superBoost: true }));
+  ok("super boost is twice boost", f.speed > BOOST * 1.6 * cruiseScale(f.alt), `speed ${f.speed.toFixed(1)} vs boost ${BOOST}`);
+  const g = createFlight(pad);
+  run(g, 60 * 3, stick({ boosting: true }));
+  ok("and burns fuel twice as fast", Math.abs((1 - f.boost) - 2 * (1 - g.boost)) < 0.02, `super used ${(1 - f.boost).toFixed(2)}, boost used ${(1 - g.boost).toFixed(2)}`);
+  ok("a full tank of super lasts six seconds", BOOST_SECONDS / SUPER_BOOST_MULT === 6);
+  const h = createFlight(pad, { torpedoes: 0, magazine: 0, superMult: 3, strafeMult: 2 });
+  run(h, 60 * 3, stick({ superBoost: true }));
+  ok("a 3x item makes it three times boost", h.speed > BOOST * 2.5 * cruiseScale(h.alt), `speed ${h.speed.toFixed(1)}`);
+
+  /* Slides: sideways and vertical, nose fixed, position moves. */
+  const s1 = createFlight(pad);
+  const fwd0 = s1.fwd.clone(), up0 = s1.up.clone(), p0 = s1.pos.clone();
+  run(s1, 60, stick({ lift: 1 }));
+  const moved = s1.pos.clone().sub(p0);
+  /* Forward motion continues (the throttle is where it was); what is new is
+     the climb along the ship's own up. */
+  ok("R slides the ship up its own up", moved.dot(up0) > STRAFE_SPEED * 0.8 * cruiseScale(s1.alt), `${moved.dot(up0).toFixed(2)} up, ${moved.dot(fwd0).toFixed(2)} forward`);
+  ok("without turning the nose", s1.fwd.angleTo(fwd0) < 1e-6);
+  const s2 = createFlight(pad);
+  const p1 = s2.pos.clone();
+  run(s2, 60, stick({ lift: -1 }));
+  ok("C slides it down", s2.pos.clone().sub(p1).dot(up0) < -STRAFE_SPEED * 0.8 * cruiseScale(s2.alt));
+  const s3 = createFlight(pad, { torpedoes: 0, magazine: 0, superMult: 2, strafeMult: 2 });
+  const p2 = s3.pos.clone();
+  run(s3, 60, stick({ strafe: 1 }));
+  ok("a 2x strafe item doubles the slide", s3.pos.distanceTo(p2) > STRAFE_SPEED * 1.6 * cruiseScale(s3.alt), `${s3.pos.distanceTo(p2).toFixed(2)}`);
+  ok("the top speed the room budgets for counts super boost and a diagonal slide",
+     Math.abs(topSpeedFor() - (BOOST * 2 + STRAFE_SPEED * 1.42)) < 1e-9 && topSpeedFor({ torpedoes: 0, magazine: 0, superMult: 3, strafeMult: 1 }) > topSpeedFor());
 }
 
 // 6. Guns fire, cost ammo, and stop when empty. What comes OUT of them is the

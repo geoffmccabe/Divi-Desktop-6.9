@@ -834,7 +834,26 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   await settle();
 }
 
-console.log(out.join("\n"));
+/* ---- R, C and TAB reach the flight model; the key list is the help card's ---- */
+{
+  const g = stubGlobe([["self-ip", home], ["peer-ip", other]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  ctl.launch();
+  for (let i = 0; i < 400; i++) ctl.frame(1 / 60);
+  press("keydown", { key: "Tab" });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  ok("TAB is super boost, and the HUD says so", ctl.hud().superBoost === true && ctl.hud().superMult === 2, `${ctl.hud().superBoost} ${ctl.hud().superMult}`);
+  press("keyup", { key: "Tab" });
+  for (let i = 0; i < 5; i++) ctl.frame(1 / 60);
+  ok("and off again when released", ctl.hud().superBoost === false);
+  const { GAME_KEYS } = await import("./RebelsControls");
+  ok("the keys the game swallows are the ones the card explains", ["r", "c", "tab", "w", "shift", "f"].every((k) => GAME_KEYS.includes(k)));
+  ok("and nothing the card does not explain", !GAME_KEYS.includes("z") && !GAME_KEYS.includes("MOUSE"));
+  ctl.detach();
+  await settle();
+}
+
 /* ---- the map rebuilding under a live game ----
    The globe hands the scene back and gives a new one whenever its node list
    changes. That must not end the game. */
@@ -878,5 +897,6 @@ console.log(out.join("\n"));
   ctl.detach();
 }
 
+console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

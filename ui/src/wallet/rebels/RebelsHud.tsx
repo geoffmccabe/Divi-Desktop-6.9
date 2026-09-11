@@ -10,7 +10,9 @@ import { MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS } from "./orbitFlight";
 import { TIERS } from "./rebelsCombat";
 import type { RebelsController, HudState } from "./rebelsController";
 import { RebelsScoreboard } from "./RebelsScoreboard";
-import { RebelsControls, CONTROLS, DOCKING } from "./RebelsControls";
+import { RebelsControls, controlLines } from "./RebelsControls";
+import { flightExtras } from "./rebelsArmoury";
+import { loadShip } from "./shipChoice";
 import { ShipMarket } from "./ShipMarket";
 import { DflowPanel } from "./DflowPanel";
 import { RebelsHealthBar } from "./RebelsHealthBar";
@@ -273,8 +275,8 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           </div>
         </div>
         <div className="orbit-gauge">
-          <span>BOOST</span>
-          <div className="orbit-meter boost"><i style={{ width: pct(hud.boost) }} /></div>
+          <span>BOOST{hud.superBoost ? <em className="orbit-super"> {hud.superMult}x</em> : ""}</span>
+          <div className={"orbit-meter boost" + (hud.superBoost ? " super" : "")}><i style={{ width: pct(hud.boost) }} /></div>
         </div>
       </div>
 
@@ -299,7 +301,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       <RebelsHealthBar />
 
-      {help && <RebelsControls onClose={() => setHelp(false)} />}
+      {help && <RebelsControls onClose={() => setHelp(false)} extras={flightExtras(loadShip())} />}
 
       {scores && <RebelsScoreboard onClose={() => setScores(false)} />}
 
@@ -318,7 +320,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
               <p>{hud.homeName === "no node located" ? "No node of your own found, launching from the network." : `Launching from ${hud.homeName}.`}</p>
             </div>
             <div className="orbit-launch-keys">
-              {[...CONTROLS, ...DOCKING].map((c) => (
+              {controlLines({ extras: flightExtras(loadShip()) }).map((c) => (
                 <div key={c.keys}><b>{c.keys}</b><span>{c.what}</span></div>
               ))}
             </div>

@@ -39,8 +39,8 @@ import {
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
-import { ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP } from "../../../ui/src/wallet/rebels/itemCatalog";
-import { ammoFor, torpedoesFor } from "../../../ui/src/wallet/rebels/orbitFlight";
+import { ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, superBoostMult, strafeMult } from "../../../ui/src/wallet/rebels/itemCatalog";
+import { ammoFor, torpedoesFor, topSpeedFor, SUPER_BOOST_MULT } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
   type PaintWire, type PaintPart,
@@ -94,6 +94,8 @@ interface Seat {
   gear: Set<string>;
   ammoMax: number;
   torpsMax: number;
+  /** The most this ship can move in a second, from its gear. */
+  topSpeed: number;
   lastBeam: number;
   /* ---- the flock tally ----
      Members of each fleet this seat has downed, by fleet id. Internal: the
@@ -201,7 +203,7 @@ export class RebelsRoom {
     const seat: Seat = {
       id, ws, node: "", name: "", ship: "", paint: undefined,
       account: from, lastClaim: -99,
-      gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, lastBeam: -99,
+      gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, topSpeed: topSpeedFor(), lastBeam: -99,
       tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0],
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
@@ -559,9 +561,14 @@ export class RebelsRoom {
       (Array.isArray(m.gear) ? m.gear : []).slice(0, 32)
         .filter((k): k is string => typeof k === "string" && (!!weaponByKey(k) || ITEMS.some((i) => i.key === k))),
     );
-    const extras = { torpedoes: torpedoBonus([...seat.gear]), magazine: magBonus([...seat.gear]) };
+    const gearList = [...seat.gear];
+    const extras = {
+      torpedoes: torpedoBonus(gearList), magazine: magBonus(gearList),
+      superMult: superBoostMult(gearList, SUPER_BOOST_MULT), strafeMult: strafeMult(gearList),
+    };
     seat.ammoMax = ammoFor(extras);
     seat.torpsMax = torpedoesFor(extras);
+    seat.topSpeed = topSpeedFor(extras);
     seat.ammo = seat.ammoMax;
     seat.torps = seat.torpsMax;
     seat.home.copy(home).normalize().multiplyScalar(R);
@@ -652,7 +659,8 @@ export class RebelsRoom {
        player teleporting backwards through no fault of their own, which is a
        far worse bug than someone gaining a few units. */
     const since = Math.max(DT, this.now - (seat as { lastTf?: number }).lastTf!) || DT;
-    const budget = BOOST * (since + 0.5) * 1.25;
+    /* Against what THIS ship can do: super boost and the slides count. */
+    const budget = seat.topSpeed * (since + 0.5) * 1.25;
     if (seat.body.pos.distanceTo(p) > budget) {
       return this.snapBack(seat, "moved too far");
     }

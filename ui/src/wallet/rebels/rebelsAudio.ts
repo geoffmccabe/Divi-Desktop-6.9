@@ -489,6 +489,11 @@ export function startBoostSound(): void {
 
 /** Off the throttle, out of boost, docked, dead, or gone. Faded rather than
  *  cut, or letting go of shift clicks. */
+/** Super boost sounds like more: the same loop, faster and higher. */
+export function setBoostPitch(rate: number): void {
+  if (boostNode) boostNode.playbackRate.value = rate;
+}
+
 export function stopBoostSound(): void {
   const ctx = audioContext();
   const node = boostNode;

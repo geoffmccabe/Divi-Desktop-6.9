@@ -455,6 +455,21 @@ console.log(out.join("\n"));
   room.stop();
 }
 
+// The speed budget allows a super-boosting ship, and grows with a faster item.
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "fast-a");
+  ok("a stock ship is budgeted for super boost plus a slide", seat.topSpeed > BOOST * 2 && seat.topSpeed < BOOST * 2.5, `${seat.topSpeed.toFixed(1)}`);
+  /* Two boosts' worth of movement in one report: fine. */
+  room.now = 1;
+  (seat as any).lastTf = 0.95;
+  const p = seat.body.pos.clone().add(new THREE.Vector3(0, BOOST * 2 * 0.05, 0));
+  ws.deliver(JSON.stringify({ t: "tf", p: p.toArray(), f: [0, 1, 0] }));
+  ok("a super-boost move is accepted", seat.body.pos.distanceTo(p) < 1e-6 && !ws.all("no").length, JSON.stringify(ws.last("no")));
+  room.stop();
+}
+
 // Respawn: thirty seconds, ten with a VIP Pass declared.
 {
   const room = newRoom();

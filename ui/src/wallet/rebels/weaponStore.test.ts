@@ -261,6 +261,7 @@ async function main() {
     const plain = F.createFlight(new THREE.Vector3(0, 0, R + 8));
     const kitted = F.createFlight(new THREE.Vector3(0, 0, R + 8), {
       torpedoes: I.torpedoBonus(A.owned(ship)), magazine: I.magBonus(A.owned(ship)),
+          superMult: 2, strafeMult: 1,
     });
     ok("a kitted ship launches with more tubes",
        kitted.torpedoes === plain.torpedoes + 3, `${plain.torpedoes} -> ${kitted.torpedoes}`);

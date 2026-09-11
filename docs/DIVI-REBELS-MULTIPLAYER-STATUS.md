@@ -47,6 +47,11 @@ Reviewed 2026-Sep-09. The room is the Cloudflare Durable Object in
   is an item in the shop (5,000 points, my figure, since none was given);
   the room reads it from the seat's declared gear.
 
+- **The room's speed budget follows the ship's gear.** With super boost
+  (TAB, twice boost speed, twice the burn) and the vertical slide (R/C), a
+  seat's budget is `topSpeedFor(extras)` from the gear it declared, so a
+  faster item bought later is honoured without a room change.
+
 ## Not right yet, in order of how much it matters
 
 1. **Gear is the client's word.** A client can declare a beam it never bought.

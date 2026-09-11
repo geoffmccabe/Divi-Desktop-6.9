@@ -18,7 +18,8 @@
 // retrofitting that later would mean migrating everybody's purchases.
 
 import { STARTING_WEAPONS, weaponByKey, type WeaponSpec } from "./weaponCatalog";
-import { itemByKey, torpedoBonus, magBonus, type ItemSpec } from "./itemCatalog";
+import { itemByKey, torpedoBonus, magBonus, superBoostMult, strafeMult, type ItemSpec } from "./itemCatalog";
+import { SUPER_BOOST_MULT, type Extras } from "./orbitFlight";
 import { USD_PER_POINT } from "./weaponCatalog";
 import { spendDivi } from "./rebelsScores";
 
@@ -350,6 +351,17 @@ export function extraTorpedoes(ship: string): number {
 /** How much bigger this hull's magazine is, as a fraction of the standard. */
 export function extraMagazine(ship: string): number {
   return magBonus(owned(ship));
+}
+
+/** Everything the flight model needs to know about what the player owns. */
+export function flightExtras(ship: string): Extras {
+  const mine = owned(ship);
+  return {
+    torpedoes: torpedoBonus(mine),
+    magazine: magBonus(mine),
+    superMult: superBoostMult(mine, SUPER_BOOST_MULT),
+    strafeMult: strafeMult(mine),
+  };
 }
 
 /** Test hook. */

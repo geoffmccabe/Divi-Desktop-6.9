@@ -12,7 +12,12 @@
 // upgrade path rather than as three separate things that might be bought in
 // any order and then argued about.
 
-export type ItemKind = "torpedo" | "mag" | "vip";
+/* "super" and "strafe" are the two kinds nothing is sold under yet: a 3x
+   boost or a 2x strafe is a row here with `amount` as the multiplier, and
+   the flight model, the help card and the room all read it from
+   superBoostMult / strafeMult below. Geoff: "Don't hardcode anything because
+   we will add items such as a 3x boost item to buy or 1.5x or 2x strafe." */
+export type ItemKind = "torpedo" | "mag" | "vip" | "super" | "strafe";
 
 export interface ItemSpec {
   key: string;
@@ -87,6 +92,18 @@ export const ITEMS: ItemSpec[] = [
 /** How long this player waits to respawn, given what they own. */
 export function respawnSeconds(owned: string[]): number {
   return owned.includes("vip") ? RESPAWN_VIP : RESPAWN_WAIT;
+}
+
+/** What TAB multiplies boost by: the best "super" item owned, else the base. */
+export function superBoostMult(owned: string[], base: number): number {
+  const best = bestOwned("super", owned);
+  return best ? Math.max(base, best.amount) : base;
+}
+
+/** What the slides are multiplied by: the best "strafe" item owned, else one. */
+export function strafeMult(owned: string[]): number {
+  const best = bestOwned("strafe", owned);
+  return best ? Math.max(1, best.amount) : 1;
 }
 
 export function itemByKey(key: string): ItemSpec | null {
