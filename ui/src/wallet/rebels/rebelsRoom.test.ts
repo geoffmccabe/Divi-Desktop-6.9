@@ -299,7 +299,18 @@ async function main() {
   }
 
   console.log(out.join("\n"));
-  console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
+  /* A fired direction crosses the wire at a tenth of a degree, not a tenth
+   of a unit: rounding a unit vector to 0.1 bends it by up to five degrees,
+   which at the guns' convergence is a miss of several ship lengths. */
+{
+  const { dir } = await import("./rebelsRoom");
+  const v = new THREE.Vector3(0.3333, 0.6667, 0.6667).normalize();
+  const d = dir(v);
+  const back = new THREE.Vector3(d[0], d[1], d[2]);
+  ok("a direction survives the wire to within a tenth of a degree", back.angleTo(v) < 0.002, `${(back.angleTo(v) * 180 / Math.PI).toFixed(3)} deg`);
+}
+
+console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);
 }
 

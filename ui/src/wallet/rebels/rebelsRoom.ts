@@ -124,6 +124,11 @@ export interface Room {
   detonate(): void;
   /** Y: a held recharge or supercharge, applied by the room. */
   use(k: "recharge" | "supercharge"): void;
+  /** The resupply finished at a tower: the room refills the seat, having
+   *  checked the ship really is at one. */
+  dock(): void;
+  /** Test cheats, so the shared fight has the same ones as the solo one. */
+  cheat(code: string): void;
   /** Ask to be paid what is banked, to this address. The answer comes back
    *  as a purse, with `why` set if it was refused. */
   claim(to: string): void;
@@ -201,16 +206,18 @@ export function joinRoom(opts: Opts): Room {
       if (!ws || status !== "live") return;
       if (sinceReport < 1 / REPORT_HZ) return;
       sinceReport = 0;
-      send({ t: "tf", p: xyz(pos), f: xyz(fwd), ...(guard ? { g: 1 as const } : {}) });
+      send({ t: "tf", p: xyz(pos), f: dir(fwd), ...(guard ? { g: 1 as const } : {}) });
     },
     fire(kind, pos, fwd, aim, weapon) {
       send({
-        t: "fire", k: kind, p: xyz(pos), f: xyz(fwd),
-        ...(aim ? { a: xyz(aim) } : {}), ...(weapon ? { w: weapon } : {}),
+        t: "fire", k: kind, p: xyz(pos), f: dir(fwd),
+        ...(aim ? { a: dir(aim) } : {}), ...(weapon ? { w: weapon } : {}),
       });
     },
     detonate() { send({ t: "det" }); },
     use(k) { send({ t: "use", k }); },
+    dock() { send({ t: "dock" }); },
+    cheat(code) { send({ t: "cheat", code }); },
     claim(to) { send({ t: "claim", to }); },
     askPurse() { send({ t: "purse" }); },
     purse: null,
@@ -494,3 +501,11 @@ function xyz(v: THREE.Vector3): [number, number, number] {
   return [round1(v.x), round1(v.y), round1(v.z)];
 }
 const round1 = (n: number) => Math.round(n * 10) / 10;
+/* A DIRECTION is a unit vector: rounding it to a tenth per axis bends it by
+   up to five degrees, which at the guns' convergence distance is a miss of
+   several ship lengths. Geoff: "far off course." Four decimals is a tenth of
+   a degree and three bytes more. */
+export function dir(v: THREE.Vector3): [number, number, number] {
+  return [round4(v.x), round4(v.y), round4(v.z)];
+}
+const round4 = (n: number) => Math.round(n * 10000) / 10000;

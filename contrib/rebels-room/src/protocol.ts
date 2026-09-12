@@ -82,7 +82,14 @@ export interface PurseIn { t: "purse" }
  *  client's, as the gear is; the room only paces it. */
 export interface UseIn { t: "use"; k: "recharge" | "supercharge" }
 
-export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn;
+/** The resupply at a tower finished. The room checks the ship is at one. */
+export interface DockIn { t: "dock" }
+
+/** A test cheat ("21" the dragon, "1x" a flock of tier x). Marked to remove
+ *  with the cockpit's cheat key. */
+export interface CheatIn { t: "cheat"; code: string }
+
+export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn | DockIn | CheatIn;
 
 /* ---- room to cockpit ---- */
 

@@ -29,7 +29,7 @@
 import * as THREE from "three";
 import {
   createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
-  setDropRandomForTests, clampReach,
+  setDropRandomForTests, clampReach, spawnDragon, spawnFleet,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE,
   type CombatState, type CombatWorld, type PlayerBody,
@@ -39,6 +39,7 @@ import {
   BOOST,
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
+import { distanceToTower, DOCK_RANGE, DOCK_SECONDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
 import { ALL_ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, superBoostMult, strafeMult, vstrafeMult, hullMult } from "../../../ui/src/wallet/rebels/itemCatalog";
 import { fetchDropConfig } from "../../../ui/src/wallet/rebels/dropConfigRemote";
@@ -101,6 +102,8 @@ interface Seat {
   extras: Extras;
   /** Room clock of the last Y, so a client cannot pour recharges in. */
   lastUse: number;
+  /** And of the last tower resupply. */
+  lastDock: number;
   /** The most this ship can move in a second, from its gear. */
   topSpeed: number;
   lastBeam: number;
@@ -212,7 +215,7 @@ export class RebelsRoom {
       id, ws, node: "", name: "", ship: "", paint: undefined,
       account: from, lastClaim: -99,
       gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, shieldMax: MAX_SHIELD, topSpeed: topSpeedFor(), lastBeam: -99,
-      extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99,
+      extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99, lastDock: -99,
       tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0], items: {},
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
@@ -566,6 +569,8 @@ export class RebelsRoom {
       case "fire": return this.onFire(seat, msg);
       case "det": return this.onDetonate(seat);
       case "use": return this.onUse(seat, msg);
+      case "dock": return this.onDock(seat);
+      case "cheat": return this.onCheat(seat, msg);
       case "claim": { void this.onClaim(seat, msg); return; }
       case "purse": {
         /* Rate-limited the same way: a panel that polls is fine, a loop that
@@ -749,10 +754,13 @@ export class RebelsRoom {
     if (!p || !f || f.lengthSq() < 1e-6) return this.strike(seat, "bad shot");
     f.normalize();
 
-    /* Fired from where the room thinks they are, not from where the message
-       says. Otherwise a shot could be taken from across the map. */
+    /* Fired from where the message says, PROVIDED that is within a few units
+       of where the room thinks they are. The room's copy of the position is
+       up to a report behind, and a round that leaves from where the ship
+       was fifty milliseconds ago reads as a gun that is off. A shot from
+       across the map is still refused. */
     if (p.distanceTo(seat.body.pos) > 6) return this.snapBack(seat, "shot from elsewhere");
-    const from = seat.body.pos;
+    const from = p;
 
     if (m.k === "main") {
       if (this.now - seat.lastMain < 0.075) return;   /* the gun's own cooldown */
@@ -804,6 +812,47 @@ export class RebelsRoom {
   private onDetonate(seat: Seat): void {
     if (!seat.joined || seat.dead) return;
     detonateOldest(this.combat, this.world, seat.id);
+  }
+
+  /* ---- the tower ----
+     The cockpit runs the docking (the approach, the four seconds, the
+     tether) and says when it finished; the room refills the seat if the ship
+     is indeed beside a tower. The room's numbers are the ones the cockpit
+     shows in company, so without this a resupply refilled nothing: Geoff,
+     "going to my tower didn't replenish my ammo... my tower stopped
+     working." Generous on the distance, because the room's position is a
+     report behind. */
+  private onDock(seat: Seat): void {
+    if (!seat.joined || seat.dead) return;
+    if (this.now - seat.lastDock < DOCK_SECONDS * 0.8) return;
+    let near = Infinity;
+    for (const tip of this.tips) near = Math.min(near, distanceToTower(seat.body.pos, tip));
+    if (near > DOCK_RANGE * 2.5) return this.send(seat, { t: "no", why: "not at a tower" });
+    seat.lastDock = this.now;
+    seat.shield = Math.max(seat.shield, seat.shieldMax);
+    seat.ammo = Math.max(seat.ammo, seat.ammoMax);
+    seat.torps = Math.max(seat.torps, seat.torpsMax);
+    seat.guards = Math.max(seat.guards, MAX_GUARDS);
+    this.sendYou(seat);
+  }
+
+  /* ---- test cheats ----
+     The same ones the solo game has, so the shared fight and the solo fight
+     are the same game to test. "21" is a REAL dragon ahead of the seat
+     (it leaves its egg): to remove or gate before eggs are worth anything.
+     "1x" is a flock of tier x, worth nothing, as in the cockpit. */
+  private onCheat(seat: Seat, m: Extract<ClientMessage, { t: "cheat" }>): void {
+    if (!seat.joined || seat.dead) return;
+    const code = String(m.code ?? "");
+    if (code === "21") {
+      if (this.combat.enemies.some((e) => e.dragon)) return;
+      const ahead = seat.body.pos.clone().addScaledVector(seat.body.fwd, 35);
+      const up = seat.body.pos.clone().normalize();
+      const across = new THREE.Vector3().crossVectors(seat.body.fwd, up).normalize();
+      spawnDragon(this.combat, ahead, across);
+    } else if (/^1[1-6]$/.test(code)) {
+      spawnFleet(this.combat, Number(code[1]), seat.body.pos, seat.body.fwd, { cheat: true });
+    }
   }
 
   /* Y: a held Instant Recharge or Supercharge. The room does not hold the

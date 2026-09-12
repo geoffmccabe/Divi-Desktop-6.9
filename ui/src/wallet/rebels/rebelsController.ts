@@ -1003,16 +1003,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     const kind = code[1];
     const tier = Number(code[2]);
     if (!flight) return;
+    /* In company the fight is the room's, so the room spawns the same
+       things: one game, solo or shared. */
+    const inRoom = !!room && room.status() === "live";
     if (kind === "1" && tier >= 1 && tier <= 6) {
-      spawnFleet(combat, tier, flight.pos, flight.fwd, { cheat: true });
+      if (inRoom) room!.cheat(code.slice(1));
+      else spawnFleet(combat, tier, flight.pos, flight.fwd, { cheat: true });
     } else if (kind === "2" && tier === 1) {
       /* ---- TEST: !21, the dragon, in front of you ----
          Thirty-five units ahead, crossing left to right so it can be seen
-         and chased. Solo only: in a room the room owns the enemies. It is a
-         REAL dragon (it leaves its egg), so this is a way to mint eggs and
-         must go, or be gated, before eggs are worth anything. Geoff asked
-         for it to test, 2026-Sep-11. */
-      if (room && room.status() === "live") { setHud({ note: "NOT IN A ROOM", noteAt: performance.now() }); return; }
+         and chased. It is a REAL dragon (it leaves its egg), so this is a
+         way to mint eggs and must go, or be gated, before eggs are worth
+         anything. Geoff asked for it to test, 2026-Sep-11. */
+      if (inRoom) { room!.cheat("21"); return; }
       const ahead = flight.pos.clone().addScaledVector(flight.fwd, 35);
       const across = new THREE.Vector3().crossVectors(flight.fwd, flight.up).normalize();
       spawnDragon(combat, ahead, across);
@@ -1263,6 +1266,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
         nearTower = res.nearTower;
         dockBlock = res.dockBlock;
+        /* The resupply finished: in company the room holds the gauges, so it
+           is told, checks the ship is at a tower, and refills. */
+        if (res.docked && room && room.status() === "live") room.dock();
 
         /* ---- the ship you can see, and the camera behind it ----
            The hull sits at the flight position and the CAMERA pulls back from
@@ -1575,7 +1581,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              the whole reason the room exists is that it settles those numbers
              where nobody can reach them. */
           const g = room.gauges;
-          if (g) {
+          /* Not while a resupply is running: the gauges climb locally over
+             the four seconds and the room refills at the end, so taking the
+             room's numbers mid-way would pin them at empty until then. */
+          const docking = flight.dock > 0 && flight.dock < 1;
+          if (g && !docking) {
             flight.shields = g.shield;
             flight.ammo = g.ammo;
             flight.torpedoes = g.torps;

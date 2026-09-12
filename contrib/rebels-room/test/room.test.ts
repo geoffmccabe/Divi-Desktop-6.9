@@ -519,6 +519,44 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
+// A shot leaves from where the cockpit says, not from the room's older copy;
+// the tower refills the seat, only at a tower, only every few seconds; the
+// test cheats work in company too.
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "s-node");
+  const near = seat.body.pos.clone().add(new THREE.Vector3(0, 3, 0));
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [near.x, near.y, near.z], f: [0, 1, 0] }));
+  const b = room.combat.bullets[room.combat.bullets.length - 1];
+  ok("a round leaves from the reported position when it is close enough", !!b && b.pos.distanceTo(near) < 4 && b.pos.distanceTo(seat.body.pos) > b.pos.distanceTo(near), `${b?.pos.distanceTo(near).toFixed(2)} vs ${b?.pos.distanceTo(seat.body.pos).toFixed(2)}`);
+
+  room.setTips([[0, 0, R + 4]]);
+  seat.ammo = 0; seat.shield = 10; seat.torps = 0;
+  seat.body.pos.set(0, 0, R + 8);
+  ws.deliver(JSON.stringify({ t: "dock" }));
+  ok("at a tower, the dock refills the seat", seat.ammo === seat.ammoMax && seat.shield === seat.shieldMax && seat.torps === seat.torpsMax, `${seat.ammo} ${seat.shield}`);
+  ok("and the gauges go back", ws.last("you").ammo === seat.ammoMax);
+  seat.ammo = 0;
+  ws.deliver(JSON.stringify({ t: "dock" }));
+  ok("not again inside the resupply time", seat.ammo === 0);
+  room.now += 10;
+  seat.body.pos.set(0, R + 8, 0);
+  ws.deliver(JSON.stringify({ t: "dock" }));
+  ok("away from every tower it is refused", seat.ammo === 0 && ws.last("no")?.why === "not at a tower");
+
+  ws.deliver(JSON.stringify({ t: "cheat", code: "21" }));
+  const d = room.combat.enemies.find((e: any) => e.dragon);
+  ok("the dragon cheat works in company", !!d && d.pos.distanceTo(seat.body.pos) > 30, `${d?.pos.distanceTo(seat.body.pos).toFixed(1)}`);
+  ws.deliver(JSON.stringify({ t: "cheat", code: "21" }));
+  ok("one at a time", room.combat.enemies.filter((e: any) => e.dragon).length === 1);
+  ws.deliver(JSON.stringify({ t: "cheat", code: "13" }));
+  ok("a flock cheat too, worth nothing", room.combat.enemies.some((e: any) => e.drone && e.cheat));
+  room.stop();
+}
+
 // The dragon goes over the wire as kind 2, with its two thousand.
 {
   storage.clear();

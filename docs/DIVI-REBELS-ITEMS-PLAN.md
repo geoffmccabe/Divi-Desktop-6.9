@@ -382,3 +382,26 @@ phase ships on its own with tests, docs and a version.
   worth anything.
 - `!77`: an opened Rear Gun into the inventory. Same caveat.
 - The existing `!1x` flock cheat is harmless (worth nothing).
+
+## Fixed after Geoff's test (2026-Sep-12, v69.9.30)
+
+- **Guns off course in company**: fire directions crossed the wire rounded
+  to a TENTH per axis (`xyz`), bending a unit vector by up to five degrees;
+  at the guns' convergence that is several ship lengths. Now `dir()` at
+  four decimals for every direction (fire, aim, heading). The room also
+  fires from the position the cockpit reports (within six units of its own
+  copy) rather than its copy, which is up to a report behind.
+- **Tower did not refill in company**: the room held the gauges and had no
+  resupply at all. Now the cockpit sends `dock` when its four-second
+  resupply completes; the room checks the seat is within reach of a tower
+  tip and refills (shield, ammo, torpedoes, guards), paced. While the
+  resupply runs the cockpit keeps its own climbing gauges instead of the
+  room's.
+- **Cheats in company**: `!21` and `!1x` go to the room, which spawns the
+  same thing, so the shared fight and the solo fight test the same way.
+  "NOT IN A ROOM" is gone.
+- **Rear Gun for Geoff**: put directly on the account row (`ash falcone`,
+  items reargun 1); `!77` also fits one.
+- What "the room" is: the multiplayer server. The wallet joins it whenever
+  it is reachable, so ordinary play IS company play; the intent is that it
+  never shows. Where they differ is a bug.
