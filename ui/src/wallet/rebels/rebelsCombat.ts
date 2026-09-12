@@ -608,6 +608,10 @@ export interface CombatEvent {
       | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "coinHit" | "waveStart"
             | "flockDown" | "gem" | "gemHit" | "drop" | "dragon" | "dragonGone"
       | "wingHit" | "wingDown"
+      /* Not the simulation's: the room refusing something a cockpit asked
+         for. It travels the same pipeline so that one place draws and
+         announces everything that happens to a player. */
+      | "denied"
       | "incoming" | "blocked";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */

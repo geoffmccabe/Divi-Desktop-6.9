@@ -65,6 +65,8 @@ export const CONTROL_GROUPS: ControlGroup[] = [
     what: () => "Use a held Instant Recharge; a Supercharge when you are already full (up to double)." },
   { id: "inventory", keys: ["i"], label: "I",
     what: () => "Inventory: your ships, guns, sealed spheres and items. Right-click a sphere to open it." },
+  { id: "sound", keys: ["0"], label: "0",
+    what: () => "Sound gone? Start the sound again from scratch, without restarting the game." },
   { id: "help", keys: ["?"], label: "?", what: () => "This panel." },
   { id: "dflow", keys: ["#"], label: "#", what: () => "The DFlow panel: frame times and what is costing them." },
 ];
@@ -90,7 +92,7 @@ export const GROUP_OF_KEY: Record<string, string> = Object.fromEntries(
    stands for]; a cap with no key is decoration. */
 type Cap = [string, string | null, number?];
 const KEYBOARD: Cap[][] = [
-  [["ESC", "escape"], ["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"], ["6", "6"], ["7", "7"], ["8", null]],
+  [["ESC", "escape"], ["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"], ["6", "6"], ["7", "7"], ["8", null], ["0", "0"]],
   [["TAB", "tab", 1.6], ["Q", "q"], ["W", "w"], ["E", "e"], ["R", "r"], ["T", null], ["Y", "y"], ["I", "i"]],
   [["SHIFT", "shift", 2.1], ["A", "a"], ["S", "s"], ["D", "d"], ["F", "f"], ["G", null]],
   [["Z", null, 1.2], ["X", "x"], ["C", "c"], ["V", "v"], ["SPACE", " ", 3.2]],
@@ -107,7 +109,12 @@ const EXTRA_CAPS: Cap[] = [
  *  that each explanation below has something above it that lights it. */
 export const KEYBOARD_CAPS: Cap[] = [...KEYBOARD.flat(), ...EXTRA_CAPS];
 
-export function Keyboard({ active, onHover }: { active: string | null; onHover: (group: string | null) => void }) {
+export function Keyboard({ active, onHover, onPick }: {
+  active: string | null;
+  onHover: (group: string | null) => void;
+  /** Clicking a key holds its explanation up, for anyone not hovering. */
+  onPick?: (group: string) => void;
+}) {
   const cap = ([text, key, w]: Cap) => {
     const group = key ? GROUP_OF_KEY[key] : undefined;
     return (
@@ -117,6 +124,7 @@ export function Keyboard({ active, onHover }: { active: string | null; onHover: 
         style={w ? { flex: `${w} 0 0` } : undefined}
         onMouseEnter={() => group && onHover(group)}
         onMouseLeave={() => onHover(null)}
+        onClick={() => group && onPick?.(group)}
       >
         {text}
       </span>
@@ -130,7 +138,45 @@ export function Keyboard({ active, onHover }: { active: string | null; onHover: 
   );
 }
 
-/** The plain list, for the launch card. */
+/**
+ * The controls, as a picture you point at.
+ *
+ * The keyboard on top and ONE explanation under it, the one for whatever the
+ * pointer is on. This is what the launch screen shows beside the logo, in
+ * place of the wall of two dozen lines that used to be there. Geoff,
+ * 2026-Sep-12: "You're supposed to show a keyboard layout on top, to show how
+ * the controls work, with interactive highlighting, and not just a list, and
+ * this is supposed to show on startup on the right side, next to the logo
+ * too."
+ *
+ * Clicking a key holds its line up, so it reads without a steady hand.
+ */
+export function ControlsBoard({ extras = NO_EXTRAS }: { extras?: Extras }) {
+  const [hover, setHover] = useState<string | null>(null);
+  const [pinned, setPinned] = useState<string | null>(null);
+  const active = hover ?? pinned;
+  const group = CONTROL_GROUPS.find((g) => g.id === active) ?? null;
+  return (
+    <div className="orbit-board">
+      <Keyboard
+        active={active}
+        onHover={setHover}
+        onPick={(g) => setPinned((p) => (p === g ? null : g))}
+      />
+      <div className={"orbit-board-read" + (group ? " on" : "")}>
+        <b>{group ? group.label : "THE CONTROLS"}</b>
+        <span>{group ? group.what({ extras }) : "Point at a key to see what it does. Click one to hold it."}</span>
+      </div>
+      <div className="orbit-board-notes">
+        {DOCKING_NOTES.map((d) => (
+          <div key={d.label}><b>{d.label}</b><span>{d.what}</span></div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** The plain list, for anywhere that wants every line at once. */
 export function controlLines(ctx: ControlsContext): Array<{ keys: string; what: string }> {
   return [
     ...CONTROL_GROUPS.map((g) => ({ keys: g.label, what: g.what(ctx) })),

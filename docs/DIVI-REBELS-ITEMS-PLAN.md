@@ -563,3 +563,73 @@ the interaction, not the presence of the list.
 Covered by scripts/run-rebels-controls-tests.sh, which asserts the four
 groupings by name, that every line has a cap that lights it, and that a 2x
 strafe, a 3x vertical strafe and a 3x boost item each change the words.
+
+## Fixed: the tower was not really refilling anything (2026-Sep-12, v69.9.36)
+
+Geoff: "I ran out of ammo so I went back and recharged on my node tower.
+Then I flew away from the tower and suddenly it said SHIP LOST... I should
+have been at 100% hull." And: "the charging happens with sound and visuals
+but it's not actually replenishing my stats."
+
+The room measured docking against its OWN tower list, and NOTHING has ever
+filled that list in: `setTips` exists on the server and no code anywhere
+calls it, so the list was empty, every dock was refused with "not at a
+tower", and the resupply a player watched was the cockpit's four-second
+animation and nothing else. The moment the animation stopped suppressing
+the gauges, the server's real numbers came back: the same empty magazine
+and the same battered hull the player had flown in with. Fly away from
+there and the next hit is the last one.
+
+- Docking is now measured to the tip of the player's OWN tower, which they
+  report when they join, and to its foot as well, since launching halves
+  every mast under them. That is also the rule the flight model already
+  follows: nodes cluster, so "the nearest tower" is often a neighbour's.
+- The room never needs the whole map for this, which is thousands of
+  towers and not something to put on a wire.
+- And damage during a resupply is no longer hidden: the cockpit ignores the
+  room's gauges while the animation climbs, but takes them at once if the
+  hull DROPS, so nobody is shot to pieces behind a bar that reads full.
+- Still true, and separate: the room has no tower geometry, so enemy fire
+  never hits a tower and the map's masts are not obstacles in the shared
+  fight. Worth a wire message one day; it is not what killed anybody.
+
+## Also: the sound, one more time (2026-Sep-12, v69.9.36)
+
+The black box from Geoff's silent session read: context running, clock
+advanced 1110 seconds, level 0.0236 and varying, no stalls, no kicks, no
+rebuilds, no device changes. Everything the game can measure was alive, so
+the silence is below the last point it can see, between the audio
+destination and the speakers. This webview appears to have no
+device-change API at all, so a machine moving its output is invisible to
+us; `deviceApi` is now recorded so that is provable rather than assumed.
+
+- `0` restarts the sound from scratch: a brand new context, every sample
+  decoded again, the music restarted. What quitting the app used to do.
+- Coming back from another application after more than a few seconds arms
+  a rebuild for the next keypress, since that is when a machine moves its
+  audio and we get no event to say so.
+- A rebuild now clears the audio clock it watches, or the fresh context's
+  clock starting at zero would read as a stall and rebuild for ever.
+
+## Fixed: the wave, and silent refusals (2026-Sep-12, v69.9.36)
+
+- **The WAVE title stuck on screen for the rest of the session.** Its timers
+  were hung off the wave NUMBER as well as the announcement. React runs the
+  previous effect's cleanup before the next one, so the instant the number
+  changed to zero (which it does the moment you die, and between waves) the
+  pending timers were cancelled and the next run bailed out at its guard
+  without setting new ones. It now hangs off the announcement alone.
+- **The cockpit never read the room's wave number.** It only ever learned it
+  from an announcement, and the announcement that matters most is the one it
+  cannot receive: when the last player alive goes down the fight starts over
+  at wave one, on a tick with nobody flying, whose events are cleared without
+  being broadcast. So after dying alone a player carried on being shown the
+  wave they died in. The number is now read from the room's state every tick,
+  which is authoritative and cannot be missed, and any change flashes the
+  title.
+- **A refusal from the room reached nobody.** It was turned into an event
+  that no handler in the cockpit matched, so it vanished: a resupply the room
+  threw away still looked and sounded exactly like a resupply. Geoff: "I
+  didn't see any indication that the server was refusing the dock. It showed
+  it as docked." Refusals now show in the cockpit and go into the black box.
+  That alone would have made the tower bug obvious in seconds.

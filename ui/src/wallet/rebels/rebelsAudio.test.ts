@@ -343,6 +343,27 @@ async function main() {
     ok("and it is carried out at the next gesture", S.settleAudioFromGesture() === "rebuild" && rebuilt === 1);
     off();
 
+    /* ---- AND THE REBUILD MUST NOT EAT ITSELF ----
+       A fresh context starts its clock at zero. If the last reading were
+       kept, the very next check would see the clock go backwards, call it a
+       stall, and rebuild again, for ever: sound that is torn down faster
+       than it can play, which is worse than the fault it was curing. */
+    S.resetSoundForTests();
+    const c3 = S.audioContext() as unknown as FakeCtx;
+    S.output();
+    c3.currentTime = 800;
+    S.watchAudio(true, 2, 4000);
+    c3.currentTime = 802;
+    ok("(setup) healthy", S.watchAudio(true, 2, 4002) === "none");
+    S.rebuildAudio();
+    const c4 = S.audioContext() as unknown as FakeCtx;
+    S.output();
+    c4.currentTime = 0.5;                     /* a brand new clock */
+    ok("a rebuilt context is not immediately called stalled", S.watchAudio(true, 2, 4004) === "none",
+       `${S.watchAudio(true, 2, 4006)}`);
+    c4.currentTime = 2.5;
+    ok("and it carries on being watched", S.watchAudio(true, 2, 4008) === "none");
+
     /* A context taken away by something else on the machine: WebKit's own
        state, which is neither running nor suspended. */
     S.resetSoundForTests();

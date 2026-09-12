@@ -53,6 +53,7 @@ import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
 import {
   watchAudio, audioHealth, settleAudioFromGesture, watchOutputDevices, requestAudioRebuild, noteLevel,
+  resetAudioNow,
 } from "../../sound";
 import { createPeers, paintFromWire, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
@@ -354,6 +355,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* Wreckage and wingmen come off the wire ready to draw and are never moved
      here, so one shared zero stands in for the fields the drawing ignores. */
   const _zero = new THREE.Vector3();
+  /** The room's last word on the hull, so a drop during a resupply is not
+   *  hidden by the animation. */
+  let lastRoomShield = -1;
+  /** When the last refusal was shown, so a repeated one does not shout. */
+  let deniedAt = 0;
+  /** The wave the cockpit last announced, so a change is noticed once. */
+  let lastWaveSeen = -1;
 
   /* ---- THE WINGMEN ----
      Half-size copies of the hull they fly with, one model per owner and
@@ -1165,6 +1173,17 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        and the secondary stays where the genre puts it: the right button. */
     if (k >= "1" && k <= "6") selectWeapon("primary", Number(k) - 1);
     if (k === "y") useHeld();
+    if (k === "0") {
+      /* ---- THE SOUND, FROM SCRATCH ----
+         There is one silence the game cannot measure (see resetAudioNow),
+         and this is the cure that used to mean quitting the app. A keypress
+         is a gesture, which is what a webview wants before it will let a new
+         context make a noise. */
+      resetAudioNow();
+      primeMusic();
+      pumpMusic();
+      setHud({ note: "SOUND RESTARTED", noteAt: performance.now() });
+    }
     if (k === REAR_KEY && flying) {
       if (!gearKeys(loadShip()).includes("reargun")) {
         setHud({ note: "NO REAR GUN: FIND ONE AND OPEN IT (I)", noteAt: performance.now() });
@@ -1190,6 +1209,17 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stick.guard = false; stick.fullStop = false;
     stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.lift = 0; stick.superBoost = false; stick.throttle = 0;
     stick.aimX = 0; stick.aimY = 0;
+    blurredAt = performance.now();
+  }
+  let blurredAt = 0;
+  /* ---- COMING BACK FROM SOMETHING ELSE ----
+     A call, a video, another app: that is when a machine moves its audio
+     output, and this webview gets no event to say so. Anyone away for more
+     than a moment gets a fresh context at their next press, which costs a
+     blink and is the difference between sound and none. */
+  function onFocus() {
+    if (blurredAt && performance.now() - blurredAt > 4000) requestAudioRebuild();
+    blurredAt = 0;
   }
 
   /**
@@ -1755,9 +1785,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           const g = room.gauges;
           /* Not while a resupply is running: the gauges climb locally over
              the four seconds and the room refills at the end, so taking the
-             room's numbers mid-way would pin them at empty until then. */
+             room's numbers mid-way would pin them at empty until then.
+             DAMAGE is the exception. Anything that takes the hull down while
+             the animation is playing has to be shown, or a player can be
+             shot to pieces behind a bar that reads full and only find out
+             when they leave. */
           const docking = flight.dock > 0 && flight.dock < 1;
-          if (g && !docking) {
+          const hurtWhileDocking = !!g && lastRoomShield >= 0 && g.shield < lastRoomShield - 0.5;
+          if (g) lastRoomShield = g.shield;
+          if (g && (!docking || hurtWhileDocking)) {
             flight.shields = g.shield;
             flight.ammo = g.ammo;
             flight.torpedoes = g.torps;
@@ -1772,6 +1808,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
                flight model works out and the server applies. */
             if (g.dead && !hud.dead) die();
             if (g.respawn > 0) respawnAt = performance.now() + g.respawn * 1000;
+          }
+          /* ---- WHICH WAVE IT IS ----
+             Read from the room's own state every tick rather than from the
+             announcement, because an announcement can be missed. When the
+             last player alive goes down the fight starts over at wave one,
+             and that reset happens on a tick with nobody flying, whose
+             events are cleared without being sent: the cockpit was never
+             told, and went on showing the wave it died in. Geoff,
+             2026-Sep-12: "instead of restarting the game like it should
+             have, it went directly to Wave 2." */
+          if (room.wave !== lastWaveSeen) {
+            lastWaveSeen = room.wave;
+            setHud(room.wave > 0
+              ? { wave: room.wave, waveAt: performance.now() }
+              : { wave: 0 });
           }
           /* Once. others() builds a fresh array each call. */
           const crew = room.others();
@@ -1882,6 +1933,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               flocks += 1;
               setHud({ flocks, note: "FLOCK DOWN", noteAt: performance.now() });
             }
+          } else if (ev.kind === "denied") {
+            /* ---- THE SERVER SAID NO ----
+               And the cockpit used to say nothing at all: the refusal was
+               turned into an event that nothing handled, so a resupply the
+               server threw away still looked and sounded like a resupply.
+               Geoff, 2026-Sep-12: "I didn't see any indication that the
+               server was refusing the dock. It showed it as docked." Shown
+               now, and written down, because this is exactly where a bug
+               and a cheat look the same. */
+            const why = ev.who ?? "";
+            dflow.note(`refused: ${why}`);
+            if (performance.now() - deniedAt > 2000) {
+              deniedAt = performance.now();
+              setHud({ note: `REFUSED: ${why.toUpperCase()}`, noteAt: performance.now() });
+            }
           } else if (ev.kind === "wingHit") {
             fx.boom(ev.at, 0.9, "cold");
           } else if (ev.kind === "wingDown") {
@@ -1917,9 +1983,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             }
           } else if (ev.kind === "coinHit" || ev.kind === "gemHit") {
             fx.boom(ev.at, 0.5, "cold");
-          } else if (ev.kind === "waveStart") {
-            /* Shown big for three seconds, then two seconds of fading. */
-            setHud({ wave: ev.wave ?? 0, waveAt: performance.now() });
           } else if (ev.kind === "coin") {
             playCoin();
             /* Picked up. Kept for ever, not for this life: earnings survive
@@ -2261,6 +2324,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         window.addEventListener("keydown", onKeyDown);
         window.addEventListener("keyup", onKeyUp);
         window.addEventListener("blur", onBlur);
+        window.addEventListener("focus", onFocus);
         if (typeof document !== "undefined") {
           document.addEventListener("pointerlockchange", onLockChange);
         }
@@ -2423,6 +2487,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
+      window.removeEventListener("focus", onFocus);
       if (typeof document !== "undefined") {
         document.removeEventListener("pointerlockchange", onLockChange);
         if (document.pointerLockElement === dom) document.exitPointerLock();

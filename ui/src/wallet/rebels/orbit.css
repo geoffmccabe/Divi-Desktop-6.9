@@ -961,3 +961,30 @@
   animation: orbit-offline-pulse 1.4s ease-in-out infinite;
 }
 @keyframes orbit-offline-pulse { 0%, 100% { opacity: 0.95; } 50% { opacity: 0.5; } }
+
+/* ---- the controls board ----
+   The keyboard, and under it the one line for whatever the pointer is on.
+   This is what the launch screen shows beside the logo. The readout has a
+   floor under its height so that moving along a row does not shuffle the
+   card about underneath the pointer. */
+.orbit-board { display: grid; gap: 8px; text-align: left; }
+.orbit-board .orbit-keyboard { margin: 0; }
+.orbit-board .orbit-key { font-size: 9px; padding: 6px 0; }
+.orbit-board-read {
+  display: grid; gap: 3px; min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--rebels-hud) / 0.2);
+  border-left: 2px solid hsl(var(--rebels-hud) / 0.35);
+  border-radius: 5px;
+  background: hsl(var(--rebels-hud) / 0.05);
+}
+.orbit-board-read.on { border-left-color: hsl(var(--rebels-hud)); background: hsl(var(--rebels-hud) / 0.1); }
+.orbit-board-read b {
+  font-size: 10.5px; letter-spacing: 0.12em; font-weight: 700;
+  color: hsl(var(--rebels-home));
+}
+.orbit-board-read.on b { color: hsl(var(--rebels-hud)); }
+.orbit-board-read span { font-size: 11.5px; line-height: 1.4; opacity: 0.9; }
+.orbit-board-notes { display: grid; gap: 3px; font-size: 10px; line-height: 1.35; opacity: 0.75; }
+.orbit-board-notes > div { display: grid; grid-template-columns: 128px 1fr; gap: 8px; }
+.orbit-board-notes b { color: hsl(var(--rebels-home)); font-weight: 600; letter-spacing: 0.06em; }

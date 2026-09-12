@@ -135,6 +135,11 @@ export function rebuildAudio(): void {
   rebuilds++;
   const old = ctx;
   ctx = null; master = null; analyser = null; samples = null;
+  /* The new context starts its clock at zero, so the old reading would look
+     like a clock that had gone backwards and the watchdog would call it a
+     stall and rebuild again, for ever. */
+  lastClock = -1;
+  silentFor = 0;
   try { void old?.close(); } catch { /* gone anyway */ }
   for (const fn of rebuildListeners) { try { fn(); } catch { /* one bad listener is not all of them */ } }
 }
@@ -220,6 +225,28 @@ export function watchOutputDevices(): void {
   } catch { /* no such thing here */ }
 }
 
+/**
+ * Throw the sound away and start again, NOW, from a gesture.
+ *
+ * There is one silence nothing here can measure. The meter sits on the bus,
+ * one node before the speakers, so it reads the graph rather than what comes
+ * out of the machine; the context can be running, its clock advancing, real
+ * varying signal arriving, and the sound still going nowhere, because
+ * something below the destination has moved. Geoff's black box read exactly
+ * that on 2026-Sep-12: running, level 0.0236 and changing, no stalls, no
+ * device changes, eighteen minutes of clock, and not a sound in the room.
+ *
+ * A webview usually has no device-change event to tell us, so this is the
+ * honest answer: a key the player can press that does what restarting the
+ * app did. Everything that decoded a sample decodes it again and whatever
+ * was playing starts again.
+ */
+export function resetAudioNow(): void {
+  rebuildAudio();
+  const c = getCtx();
+  if (c && c.state !== "running") void c.resume();
+}
+
 /** Ask for a fresh context at the next gesture, without a reason the meter
  *  can see. The game does this when its panel is reopened: if the sound had
  *  died in a way nothing here can measure, coming back to the game gets a
@@ -254,6 +281,14 @@ export function audioHealth(): Record<string, unknown> {
     level: Math.round(outputLevel() * 10000) / 10000,
     silentFor: Math.round(silentFor),
     kicks, rebuilds, stalls,
+    /* Whether this webview can even tell us the speakers changed. When it
+       cannot, deviceChanges being zero means nothing. */
+    deviceApi: typeof navigator !== "undefined" && !!navigator.mediaDevices,
+    /* What the machine says about its own output. On a dead sink these tend
+       to go to zero, which is the only hint from below the destination. */
+    outLatency: Math.round(((ctx as unknown as { outputLatency?: number })?.outputLatency ?? 0) * 10000) / 10000,
+    baseLatency: Math.round((ctx?.baseLatency ?? 0) * 10000) / 10000,
+    channels: ctx?.destination?.maxChannelCount ?? 0,
     pending: pendingFix,
     deviceChanges,
     history: history.slice(),

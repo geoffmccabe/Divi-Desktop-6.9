@@ -79,10 +79,12 @@ function newRoom() {
   const room = new RebelsRoom(fakeState, fakeEnv) as any;
   return room;
 }
-function join(room: any, ws: FakeSocket, node = "node-a") {
+/** `home` is the TIP of the player's own tower, mast and all, which is what
+ *  the cockpit sends and what docking is measured to. */
+function join(room: any, ws: FakeSocket, node = "node-a", home: [number, number, number] = [0, 0, R + 6]) {
   room.seat(ws as never);
   const id = ws.last("hi").id as string;
-  ws.deliver(JSON.stringify({ t: "join", node, name: "A Node", home: [0, 0, R] }));
+  ws.deliver(JSON.stringify({ t: "join", node, name: "A Node", home }));
   return room.seats.get(id);
 }
 const home: [number, number, number] = [0, 0, R + 8];
@@ -589,19 +591,29 @@ const home: [number, number, number] = [0, 0, R + 8];
   ok("a launched torpedo is on the wire", Array.isArray(st1.T) && st1.T.length === 1 && st1.T[0].length === 6, JSON.stringify(st1.T));
   ok("and off the rack", seat.torps === seat.torpsMax - 1);
 
-  room.setTips([[0, 0, R + 4]]);
+  /* ---- THE TOWER ----
+     Measured to the player's OWN mast, reported when they joined. The room's
+     own tower list is deliberately not consulted: nothing has ever filled it
+     in, so every dock used to be refused and the resupply a player watched
+     was their cockpit's animation and nothing else. */
   seat.ammo = 0; seat.shield = 10; seat.torps = 0;
   seat.body.pos.set(0, 0, R + 8);
+  ok("(setup) the room has no tower list at all", room.tips.length === 0);
   ws.deliver(JSON.stringify({ t: "dock" }));
-  ok("at a tower, the dock refills the seat", seat.ammo === seat.ammoMax && seat.shield === seat.shieldMax && seat.torps === seat.torpsMax, `${seat.ammo} ${seat.shield}`);
+  ok("at your own tower, the dock refills the seat", seat.ammo === seat.ammoMax && seat.shield === seat.shieldMax && seat.torps === seat.torpsMax, `${seat.ammo} ${seat.shield}`);
   ok("and the gauges go back", ws.last("you").ammo === seat.ammoMax);
   seat.ammo = 0;
   ws.deliver(JSON.stringify({ t: "dock" }));
   ok("not again inside the resupply time", seat.ammo === 0);
   room.now += 10;
-  seat.body.pos.set(0, R + 8, 0);
+  seat.body.pos.set(0, R + 8, 0);          /* a quarter of the way round the world */
   ws.deliver(JSON.stringify({ t: "dock" }));
-  ok("away from every tower it is refused", seat.ammo === 0 && ws.last("no")?.why === "not at a tower");
+  ok("away from your own tower it is refused", seat.ammo === 0 && ws.last("no")?.why === "not at a tower");
+  /* And it still works after a launch, which halves every mast under you. */
+  room.now += 10;
+  seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 3);
+  ws.deliver(JSON.stringify({ t: "dock" }));
+  ok("and at a tower half its old height, since launching shrinks them", seat.ammo === seat.ammoMax, `${seat.ammo}`);
 
   ws.deliver(JSON.stringify({ t: "cheat", code: "21" }));
   const d = room.combat.enemies.find((e: any) => e.dragon);

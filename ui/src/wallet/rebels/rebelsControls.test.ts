@@ -13,6 +13,13 @@
 import { CONTROL_GROUPS, GROUP_OF_KEY, GAME_KEYS, KEYBOARD_CAPS, controlLines } from "./RebelsControls";
 import { NO_EXTRAS, BOOST, STRAFE_SPEED } from "./orbitFlight";
 
+/* Read rather than rendered: the card is React and these tests run in node,
+   so what is checked is that the launch screen reaches for the board. */
+import { readFileSync } from "node:fs";
+/* Bundled into a temporary file, so the path is taken from the repo rather
+   than from wherever the bundle happens to sit. */
+const hudSource = readFileSync(`${process.cwd()}/src/wallet/rebels/RebelsHud.tsx`, "utf8");
+
 const out: string[] = [];
 let failures = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -78,7 +85,12 @@ const groupOf = (key: string) => GROUP_OF_KEY[key];
   ok("the keys the game swallows come from the same table",
      GAME_KEYS.includes("w") && GAME_KEYS.includes("7") && GAME_KEYS.includes("i")
      && !GAME_KEYS.includes("MOUSE") && !GAME_KEYS.includes("LEFT CLICK"));
-  ok("the launch card reads the same table", controlLines({ extras: NO_EXTRAS }).length >= CONTROL_GROUPS.length);
+  ok("the plain list reads the same table", controlLines({ extras: NO_EXTRAS }).length >= CONTROL_GROUPS.length);
+  /* The launch screen shows the BOARD: the keyboard with one explanation
+     under it, not the list. Geoff asked for the picture beside the logo. */
+  ok("the launch screen shows the keyboard, not a list of two dozen lines",
+     /<ControlsBoard/.test(hudSource) && !/controlLines\(/.test(hudSource),
+     hudSource.match(/controlLines\([^)]*\)/)?.[0] ?? "no list");
 }
 
 console.log(out.join("\n"));

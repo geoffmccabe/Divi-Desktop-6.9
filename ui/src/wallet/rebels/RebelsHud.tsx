@@ -10,7 +10,7 @@ import { MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS } from "./orbitFlight";
 import { TIERS } from "./rebelsCombat";
 import type { RebelsController, HudState } from "./rebelsController";
 import { RebelsScoreboard } from "./RebelsScoreboard";
-import { RebelsControls, controlLines } from "./RebelsControls";
+import { RebelsControls, ControlsBoard } from "./RebelsControls";
 import { flightExtras } from "./rebelsArmoury";
 import { loadShip } from "./shipChoice";
 import { ShipMarket } from "./ShipMarket";
@@ -134,14 +134,24 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
      arriving while the last title is still up simply replaces it. */
   const [waveShown, setWaveShown] = useState(0);
   const [waveOpacity, setWaveOpacity] = useState(0);
+  /* ---- ON THE ANNOUNCEMENT, AND NOTHING ELSE ----
+     This used to watch the wave NUMBER as well. React runs the old effect's
+     cleanup before the new one, so the moment the number changed to zero
+     (which it does the instant you die, and between waves) the pending
+     timers were cancelled and the new run bailed out at the guard above
+     without setting any. The title then sat at full opacity for the rest of
+     the session. Geoff, 2026-Sep-12: "the WAVE 2 text in the middle of the
+     screen stayed there, blocking my view and didn't ever go away." */
+  const waveNow = useRef(0);
+  waveNow.current = hud.wave;
   useEffect(() => {
-    if (!hud.waveAt || !hud.wave) return;
-    setWaveShown(hud.wave);
+    if (!hud.waveAt || !waveNow.current) return;
+    setWaveShown(waveNow.current);
     setWaveOpacity(1);
     const hold = setTimeout(() => setWaveOpacity(0), 3000);
     const gone = setTimeout(() => setWaveShown(0), 5000);
     return () => { clearTimeout(hold); clearTimeout(gone); };
-  }, [hud.waveAt, hud.wave]);
+  }, [hud.waveAt]);
 
   const pct = (v: number) => `${Math.round(Math.max(0, Math.min(1, v)) * 100)}%`;
   /* One globe unit is about 64 km of real Earth, which is what makes this a
@@ -349,11 +359,9 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
               <h2>DIVI REBELS</h2>
               <p>{hud.homeName === "no node located" ? "No node of your own found, launching from the network." : `Launching from ${hud.homeName}.`}</p>
             </div>
-            <div className="orbit-launch-keys">
-              {controlLines({ extras: flightExtras(loadShip()) }).map((c) => (
-                <div key={c.keys}><b>{c.keys}</b><span>{c.what}</span></div>
-              ))}
-            </div>
+            {/* The keyboard, pointed at, rather than two dozen lines of
+                text beside the logo. */}
+            <ControlsBoard extras={flightExtras(loadShip())} />
           </div>
           <div className="orbit-buttons">
             {/* ---- ONE GAME ----

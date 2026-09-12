@@ -131,6 +131,15 @@ interface Seat {
   wings: Wing[];
   /** Room clock of the last Y, so a client cannot pour recharges in. */
   lastUse: number;
+  /**
+   * The tip of THIS player's own tower, as they reported it on joining.
+   *
+   * Docking is measured against it and nothing else, which is the same rule
+   * the flight model follows: nodes cluster, and "the nearest tower" is very
+   * often a neighbour's. It also means the room does not need the whole map,
+   * which is thousands of towers and not something to put on a wire.
+   */
+  homeTip: THREE.Vector3;
   /** And of the last tower resupply, and of the last gear declaration. */
   lastDock: number;
   lastGear: number;
@@ -262,6 +271,7 @@ export class RebelsRoom {
       lastBonus: -1e9,
       tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0], items: {}, wings: [],
       home: new THREE.Vector3(0, 0, R),
+      homeTip: new THREE.Vector3(0, 0, R + 6),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
       shield: MAX_SHIELD, ammo: MAX_AMMO, torps: MAX_TORPEDOES,
       guards: MAX_GUARDS, guardFor: 0, wantGuard: false,
@@ -703,6 +713,9 @@ export class RebelsRoom {
        the items in it exactly as the solo game sizes them. */
     this.applyGear(seat, Array.isArray(m.gear) ? m.gear : [], true, m.drones);
     seat.home.copy(home).normalize().multiplyScalar(R);
+    /* Kept as sent, mast and all: the surface point alone cannot say how
+       tall the thing is, and docking is measured to the mast. */
+    seat.homeTip.copy(home);
     seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 8);
     seat.joined = true;
     this.refreshRoster();
@@ -918,8 +931,24 @@ export class RebelsRoom {
   private onDock(seat: Seat): void {
     if (!seat.joined || seat.dead) return;
     if (this.now - seat.lastDock < DOCK_SECONDS * 0.8) return;
-    let near = Infinity;
-    for (const tip of this.tips) near = Math.min(near, distanceToTower(seat.body.pos, tip));
+    /* ---- YOUR OWN TOWER ----
+       Measured to the mast of the tower this player joined from. It used to
+       be measured against the room's own tower list, which NOTHING has ever
+       filled in: setTips exists and nobody calls it, so the list was always
+       empty, every dock was refused, and the resupply a player watched was
+       the cockpit's animation and nothing more. Their real hull and ammo
+       came back the moment the animation stopped hiding the gauges, which
+       is why a trip to the tower could be followed by dying in clear sky.
+       Geoff, 2026-Sep-12. */
+    const near = Math.min(
+      distanceToTower(seat.body.pos, seat.homeTip),
+      /* A launch halves every tower, so the mast reported before launch is
+         twice the height of the one being flown to. Measuring to the foot as
+         well covers both, and erring generous here costs nothing: the worst
+         case is a resupply granted a few units early at your own front
+         door. */
+      seat.body.pos.distanceTo(seat.home),
+    );
     if (near > DOCK_RANGE * 2.5) return this.send(seat, { t: "no", why: "not at a tower" });
     seat.lastDock = this.now;
     seat.shield = Math.max(seat.shield, seat.shieldMax);
