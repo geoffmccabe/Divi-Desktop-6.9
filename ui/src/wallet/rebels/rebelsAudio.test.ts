@@ -24,7 +24,7 @@ const started: Started[] = [];
 let decodeCalls = 0;
 /** How many sounds the game carries. One assertion's worth of counting, so a
  *  new sound does not look like a regression. */
-const SAMPLES = 9;
+const SAMPLES = 10;
 let decodeShouldFail = false;
 let decodeShouldHang = false;
 
@@ -300,18 +300,59 @@ async function main() {
     ok("sound present: nothing happens", S.watchAudio(true, 2, 1000) === "none" && ctx.suspends === 0);
     FakeCtx.loud = 0;
     ok("silence not expected: nothing happens", S.watchAudio(false, 2, 1002) === "none" && ctx.suspends === 0);
-    ok("two seconds of expected silence: not yet", S.watchAudio(true, 2, 1004) === "none");
-    ok("four seconds: a kick is decided but NOT done from the timer", S.watchAudio(true, 2, 1006) === "kick" && ctx.suspends === 0 && S.pendingAudioFix() === "kick");
+    /* A real context's clock advances while its stream is alive, and the
+       watchdog now reads it (see below), so the fake's has to move too. */
+    const quiet = (at: number) => { ctx.currentTime += 2; return S.watchAudio(true, 2, at); };
+    ctx.currentTime = 200;
+    ok("two seconds of expected silence: not yet", quiet(1004) === "none");
+    ok("four seconds: a kick is decided but NOT done from the timer", quiet(1006) === "kick" && ctx.suspends === 0 && S.pendingAudioFix() === "kick");
     ok("it is done from the next gesture", S.settleAudioFromGesture() === "kick" && ctx.suspends === 1 && S.pendingAudioFix() === "none", `${ctx.suspends}`);
-    ok("six, eight, ten: waiting", S.watchAudio(true, 2, 1008) === "none" && S.watchAudio(true, 2, 1010) === "none"
-       && S.watchAudio(true, 2, 1012) === "none");
-    const v12 = S.watchAudio(true, 2, 1014);
+    ok("six, eight, ten: waiting", quiet(1008) === "none" && quiet(1010) === "none" && quiet(1012) === "none");
+    const v12 = quiet(1014);
     ok("twelve seconds of silence: a rebuild is decided", v12 === "rebuild" && rebuilt === 0 && !ctx.closed, `${v12} ${rebuilt}`);
     ok("and carried out from a gesture, telling the listeners", S.settleAudioFromGesture() === "rebuild" && rebuilt === 1 && ctx.closed);
     ok("a gesture with nothing pending just resumes", S.settleAudioFromGesture() === "none");
     ok("the black box says so", (S.audioHealth() as { rebuilds: number }).rebuilds === 1 && (S.audioHealth() as { kicks: number }).kicks === 1);
     FakeCtx.loud = 0.2;
     ctx.closed = false;
+  }
+
+  /* ---- THE CLOCK THAT STOPPED ----
+     The failure that kept killing the sound in long sessions: the context
+     still says "running", the meter still reads signal, and nothing comes
+     out, because the stream behind it has died. A context's currentTime only
+     advances while that stream is being rendered, so a clock that has
+     stopped is the one honest witness. */
+  {
+    const S = await import("../../sound");
+    S.resetSoundForTests();
+    FakeCtx.loud = 0.2;                      /* the meter reads healthy */
+    const ctx = S.audioContext() as unknown as FakeCtx;
+    S.output();
+    ctx.currentTime = 500;
+    ok("(setup) a healthy context is left alone", S.watchAudio(true, 2, 2000) === "none");
+    ctx.currentTime = 502;
+    ok("and again while its clock runs", S.watchAudio(true, 2, 2002) === "none");
+    /* Now the stream dies: the clock stops, everything else looks fine. */
+    const stalled = S.watchAudio(true, 2, 2004);
+    ok("a stopped clock is a rebuild, even with the meter reading sound", stalled === "rebuild",
+       `${stalled}`);
+    ok("the black box counts the stall", (S.audioHealth() as { stalls: number }).stalls === 1);
+    let rebuilt = 0;
+    const off = S.onAudioRebuild(() => { rebuilt++; });
+    ok("and it is carried out at the next gesture", S.settleAudioFromGesture() === "rebuild" && rebuilt === 1);
+    off();
+
+    /* A context taken away by something else on the machine: WebKit's own
+       state, which is neither running nor suspended. */
+    S.resetSoundForTests();
+    const c2 = S.audioContext() as unknown as FakeCtx;
+    S.output();
+    c2.currentTime = 900;
+    c2.state = "interrupted";
+    ok("an interrupted context is woken at once, not after four seconds of silence",
+       S.watchAudio(true, 2, 3000) === "kick");
+    ok("and the gesture resumes it", (S.settleAudioFromGesture(), c2.state) === "running", c2.state);
   }
 
   console.log(out.join("\n"));

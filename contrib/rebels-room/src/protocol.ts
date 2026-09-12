@@ -35,6 +35,9 @@ export interface JoinIn {
   /** Half the hull's wingspan in world units: how far out a gem or sphere is
    *  captured. Clamped by the room. */
   reach?: number;
+  /** How many wingmen of each tier this account holds, tier one first. Counts
+   *  rather than keys, because two T3 drones are two wingmen. */
+  drones?: number[];
 }
 
 /**
@@ -92,7 +95,7 @@ export interface DockIn { t: "dock" }
 /** What this ship carries, when it changes mid-flight: a gun bought, a sphere
  *  opened, four things forged. Without this the server only ever knew what was
  *  declared on join, and anything bought while flying did nothing. */
-export interface GearIn { t: "gear"; gear: string[]; reach?: number }
+export interface GearIn { t: "gear"; gear: string[]; reach?: number; drones?: number[] }
 
 /** The cockpit's flight model says the ship hit the ground or a tower, and by
  *  how much. See the room's onHurt for what is and is not trusted here. */
@@ -139,6 +142,10 @@ export interface StateOut {
   M?: Array<[number, number, number, number, number, number, string, number]>;
   /** Torpedoes in the air: position and velocity. Absent when none. */
   T?: Array<[number, number, number, number, number, number]>;
+  /** Wingmen: whose, which of the eight places, where, hull, hull max, tier.
+   *  They always point where their owner points, so no heading is sent.
+   *  Absent when nobody in the room flies any. */
+  W?: Array<[string, number, number, number, number, number, number, number]>;
   /** Gems in the world: position, tier, spin, id, and for a dropped ITEM its
    *  catalogue key, owner seat and seconds it stays theirs alone. A private
    *  drop is sent only to its owner. Absent when there are none. */

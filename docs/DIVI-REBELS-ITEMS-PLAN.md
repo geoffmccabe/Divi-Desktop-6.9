@@ -464,3 +464,32 @@ and the second copy is gone.
 - STILL MISSING, found by this: wreckage. Dead fighters used to come apart
   into three tumbling pieces, which only ever happened in the copy that is
   gone. It is decoration, driven by the enemyDown event, and wants doing.
+
+## Fixed after Geoff's third test (2026-Sep-12, v69.9.33)
+
+- **The sound kept dying in long sessions.** Two causes, both measured now.
+  The watchdog only listened while the MUSIC reported itself playing, so
+  when the whole bus died the music died with it and the watchdog concluded
+  that silence was expected and slept for the rest of the session: it now
+  expects sound whenever a game is on. And it had no way to see the failure
+  it was built for, since the meter reads the bus rather than the speakers:
+  it now reads the AUDIO CLOCK, which only advances while the stream behind
+  the context is really being rendered, so a clock that has stopped is a
+  rebuild even when everything else looks healthy. WebKit's own
+  "interrupted" state (a call, another app, the screen locking) is handled
+  as well; it used to leave a dead context that said it was fine.
+- **The mini gun fired up and to the right.** The cockpit sent the MUZZLE as
+  its position, a couple of units up and out at the corner of the frame, and
+  the server measured the convergence point from there, so the stream
+  crossed above and beside the crosshair. It now sends the ship's position
+  and an aim expressed from the ship. The server's muzzle was also on the
+  ship's left rather than its right (forward crossed with up is the left).
+- **The rear gun did nothing, and the cursor spun the ship.** Only the pulse
+  gun honoured the rear window, so with the mini gun or a beam armed the
+  trigger fired out of the nose. Every primary weapon now fires backwards
+  while the crosshair is in the window. And the crosshair no longer steers
+  while it is in there: it is over your shoulder, not out in front, so the
+  ship flies straight. Tested end to end through the real server.
+- **The dragon lasts a minute** rather than ten seconds.
+- **DIVI picked up sounds like DreadRoot's coin** (its own sample, copied
+  into ui/src/assets/coin_hit_sound.mp3).

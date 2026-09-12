@@ -17,7 +17,7 @@ import {
 } from "./orbitFlight";
 import {
   clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
-  createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE,
+  createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE, CONVERGE,
   miniMuzzle,
   STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS,
   type CombatState,
@@ -66,7 +66,7 @@ import {
 import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
-  playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce, audioState,
+  playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce, playCoin, audioState,
   startBoostSound, stopBoostSound, setBoostPitch,
 } from "./rebelsAudio";
 import {
@@ -382,6 +382,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function setRear(on: boolean): void {
     rearOn = on;
     afterRender?.(on ? drawRearView : null);
+    /* Closing the window with the crosshair still in the corner would hand
+       the stick a hard turn, so the aim is worked out again either way. */
+    aimFromCursor();
     setHud({ rear: on, rearAim: false });
   }
   /* Hull models by enemy id, and pools of hidden ones by tier. */
@@ -696,8 +699,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (a <= AIM_DEAD) return 0;
       return Math.sign(v) * Math.min(1, (a - AIM_DEAD) / (AIM_FULL - AIM_DEAD));
     };
-    stick.aimX = shape(cursor.x * 2 - 1);
-    stick.aimY = -shape(cursor.y * 2 - 1);
+    /* ---- THE REAR WINDOW DOES NOT STEER ----
+       While the crosshair is in it the ship flies straight, because the
+       crosshair is over its shoulder, not out in front. Without this,
+       looking behind you pushed the stick into the top right corner and the
+       ship spun. Geoff, 2026-Sep-12: "It needs to move straight forward
+       when the cursor is in the rear gun window." */
+    const aiming = rearOn && inRearWindow(cursor);
+    stick.aimX = aiming ? 0 : shape(cursor.x * 2 - 1);
+    stick.aimY = aiming ? 0 : -shape(cursor.y * 2 - 1);
   }
 
   function onMove(e: PointerEvent) {
@@ -1418,6 +1428,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            Fired from the edges of the frame at eye level, converging on the
            crosshair, which is why the muzzles come from the camera's frustum
            rather than from a fixed offset. */
+        /* ---- WHICH WAY THE GUNS POINT ----
+           Every primary weapon fires through the crosshair, and while the
+           crosshair is in the rear window the crosshair is BEHIND you, so
+           they all fire backwards: the pulse gun, the mini gun and the
+           beams alike. Only the pulse gun used to honour it, so a player
+           with the mini gun or a beam armed pressed the trigger in the rear
+           window and watched rounds leave the nose. Geoff, 2026-Sep-12:
+           "The rear gun doesn't seem to work." */
+        const rearAiming = rearOn && inRearWindow(cursor);
+        if (rearAiming !== hud.rearAim) setHud({ rearAim: rearAiming });
+        if (rearAiming) placeRearCamera(rearCamera, flight);
+        const backwards = rearAiming ? rearAim(rearCamera, cursor) : null;
+
         /* The mini gun: one round from the top right, along the line the
            POINTER is on rather than the ship's own axis. The ray is taken
            straight from the camera through the crosshair, so what is under the
@@ -1444,8 +1467,23 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              whether this ship had a round left, whether it may fire yet, and
              what it hits. Firing locally as well would put a round in the air
              that nobody else can see and that scores nothing. */
-          room?.fire("mini", muzzle, flight.fwd, aimDir);
-          fx.muzzle(muzzle);
+          /* ---- WHERE THE MINI GUN IS AIMED ----
+             At the point under the crosshair, expressed from the SHIP, since
+             that is where the server fires from. It used to send the muzzle
+             as the position and the camera's own aim, so the server measured
+             the convergence from a point already a couple of units up and
+             out at the corner of the frame, and the stream landed up and to
+             the right of the crosshair. Geoff, 2026-Sep-12. */
+          if (backwards) {
+            /* Out of the tail, down the rear window's own line. */
+            const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
+            room?.fire("mini", tail, backwards, backwards, undefined, s.up);
+            fx.muzzle(tail);
+          } else {
+            const mark = camera.position.clone().addScaledVector(aimDir, CONVERGE);
+            room?.fire("mini", flight.pos, flight.fwd, mark.sub(flight.pos).normalize(), undefined, s.up);
+            fx.muzzle(muzzle);
+          }
           playMiniSound();
         }
 
@@ -1460,16 +1498,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           if (stick.firing && beamAt <= 0 && flight.ammo >= 1) {
             beamAt = BEAM_SECONDS;
             flight.ammo -= 1;
-            const from = shipNose(flight);
-            room?.fire("beam", from, flight.fwd, undefined, armed.key);
+            const from = backwards ? tailOf(flight.pos, flight.fwd, SHIP_LENGTH) : shipNose(flight);
+            room?.fire("beam", from, backwards ?? flight.fwd, undefined, armed.key);
             fx.muzzle(from);
             playGunSound();
           }
         }
 
-        const rearAiming = rearOn && inRearWindow(cursor);
-        if (rearAiming !== hud.rearAim) setHud({ rearAim: rearAiming });
-        if (res.fired && rearAiming) {
+        if (res.fired && backwards) {
           /* ---- the rear gun ----
              Geoff: "fire from the two sides of the mini-screen and go
              towards wherever the mouse pointer is." So the muzzles are the
@@ -1478,8 +1514,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              spot in the window. The room is given the rear camera's place
              (three units behind the ship, within its tolerance), the aim,
              and the ship's up. */
-          placeRearCamera(rearCamera, flight);
-          const aim = rearAim(rearCamera, cursor);
+          const aim = backwards;
           const rearUp = new THREE.Vector3(0, 1, 0).applyQuaternion(rearCamera.quaternion);
           const muzzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
           gunMuzzles(rearCamera.position, aim, rearUp, rearCamera.fov, rearCamera.aspect, muzzles);
@@ -1664,11 +1699,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* One button does both jobs. If a torpedo is already in the air the
            press sets it off; otherwise it launches the next one. That is what
            "control-click again to detonate" means with a single control. */
-        if (res.heavyPress && rearAiming) {
+        if (res.heavyPress && backwards) {
           /* A torpedo backwards, out of the tail. */
           if (flight.torpedoes > 0) {
-            placeRearCamera(rearCamera, flight);
-            const aim = rearAim(rearCamera, cursor);
+            const aim = backwards;
             const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
             room?.fire("torp", tail, aim);
             torpSentAt = performance.now();
@@ -1779,6 +1813,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             /* Shown big for three seconds, then two seconds of fading. */
             setHud({ wave: ev.wave ?? 0, waveAt: performance.now() });
           } else if (ev.kind === "coin") {
+            playCoin();
             /* Picked up. Kept for ever, not for this life: earnings survive
                being shot down. */
             divi += ev.value ?? 0;
@@ -2214,7 +2249,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         const mus = musicState() as { playing?: string | null };
         noteLevel();
         dflow.audio((audioHealth() as { level: number }).level);
-        lastWatch = watchAudio(!!mus.playing && !hud.dead, 2);
+        /* ---- WHAT COUNTS AS "SOMETHING SHOULD BE AUDIBLE" ----
+           Flying, and not mid-death-fade. It used to be whether the MUSIC
+           reported itself playing, which is the one thing that cannot be
+           relied on here: when the whole bus died the music died with it,
+           `playing` went quiet, and the watchdog concluded that silence was
+           expected and went to sleep for the rest of the session. The
+           cockpit is never meant to be silent while a game is on. */
+        lastWatch = watchAudio((flying || !!mus.playing) && !hud.dead, 2);
         try {
           localStorage.setItem("dd69.rebels.diag", JSON.stringify({
             at: new Date().toISOString(),

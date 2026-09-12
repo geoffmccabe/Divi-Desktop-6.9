@@ -29,9 +29,10 @@
 import * as THREE from "three";
 import {
   createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
-  setDropRandomForTests, clampReach, spawnDragon, spawnFleet,
+  setDropRandomForTests, clampReach, spawnDragon, spawnFleet, type WingBody,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE, STAKE_BONUS, STAKE_BONUS_MS,
+  BULLET_SPEED, BULLET_LIFE, CONVERGE,
   type CombatState, type CombatWorld, type PlayerBody,
 } from "../../../ui/src/wallet/rebels/rebelsCombat";
 import {
@@ -39,6 +40,9 @@ import {
   BOOST,
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
+import {
+  WING_MAX, wingPosition, wingSpin, wingShare, wingRounds, wingTiers,
+} from "../../../ui/src/wallet/rebels/rebelsWings";
 import { distanceToTower, DOCK_RANGE, DOCK_SECONDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
 import { ALL_ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, superBoostMult, strafeMult, vstrafeMult, hullMult } from "../../../ui/src/wallet/rebels/itemCatalog";
@@ -71,6 +75,23 @@ const KILLS_PER_PAYOUT = 1000;
 const DIVI_PER_PAYOUT = 100;
 
 /* ---- what the room believes about one player ---- */
+/**
+ * One wingman on one seat.
+ *
+ * Its hull and its magazine are shares of the ship it flies with, worked out
+ * from its tier when the gear is declared, so a bigger ship carries stronger
+ * drones without a second table anywhere.
+ */
+interface Wing {
+  slot: number;
+  tier: number;
+  hull: number;
+  hullMax: number;
+  ammo: number;
+  ammoMax: number;
+  pos: THREE.Vector3;
+}
+
 interface Seat {
   id: string;
   ws: WebSocket;
@@ -100,6 +121,14 @@ interface Seat {
   torpsMax: number;
   shieldMax: number;
   extras: Extras;
+  /**
+   * The wingmen flying formation on this ship.
+   *
+   * The room's, entirely: what the client declares is how many of each tier
+   * the ACCOUNT holds, and everything after that (where they are, what they
+   * have left, whether they are still there) is decided here.
+   */
+  wings: Wing[];
   /** Room clock of the last Y, so a client cannot pour recharges in. */
   lastUse: number;
   /** And of the last tower resupply, and of the last gear declaration. */
@@ -166,6 +195,9 @@ interface Env {
   LEDGER: DurableObjectNamespace;
 }
 
+/* Scratch for the wingmen's aim, which is worked out once per round fired. */
+const _wingAim = new THREE.Vector3();
+
 export class RebelsRoom {
   private seats = new Map<string, Seat>();
   private combat: CombatState = createCombat();
@@ -228,7 +260,7 @@ export class RebelsRoom {
       /* Far enough back that the first claim in a fresh room is not inside
          the five-minute gap: the room clock starts at zero. */
       lastBonus: -1e9,
-      tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0], items: {},
+      tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0], items: {}, wings: [],
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
       shield: MAX_SHIELD, ammo: MAX_AMMO, torps: MAX_TORPEDOES,
@@ -281,6 +313,30 @@ export class RebelsRoom {
     void this.saveGems();
   }
 
+  /* ---- the wingmen ----
+     They fly formation and nothing else: the ring's places are fixed in the
+     ship's own frame and the whole ring rolls slowly when there are two or
+     more of them, so there is no flying to do, only placing. What makes
+     them matter is that they are real bodies (rounds hit them) and they
+     fire when their owner fires. */
+  private stepWings(): void {
+    const bodies: WingBody[] = [];
+    for (const s of this.seats.values()) {
+      if (!s.joined || s.dead || s.wings.length === 0) continue;
+      const alive = s.wings.filter((x) => x.hull > 0);
+      const spin = wingSpin(this.now, alive.length);
+      /* The ship's up, from its own frame: the room has no roll on the wire,
+         so away from the planet stands in, which is what level flight is. */
+      const up = s.body.pos.clone().normalize();
+      const frame = { pos: s.body.pos, fwd: s.body.fwd, up };
+      for (const wing of alive) {
+        wingPosition(frame, wing.slot, spin, s.body.reach ?? 2.2, wing.pos);
+        bodies.push({ owner: s.id, slot: wing.slot, pos: wing.pos, hull: wing.hull });
+      }
+    }
+    this.world.wings = bodies.length ? bodies : undefined;
+  }
+
   private refreshRoster(): void {
     const live: PlayerBody[] = [];
     for (const s of this.seats.values()) if (s.joined && !s.dead) live.push(s.body);
@@ -317,6 +373,7 @@ export class RebelsRoom {
 
     this.refreshRoster();
     if (this.world.players!.length === 0) { clearEvents(this.combat); return; }
+    this.stepWings();
 
     stepCombat(this.combat, DT, this.world);
     /* Gems move; their saved positions should not go stale. */
@@ -362,6 +419,19 @@ export class RebelsRoom {
         /* A fighter is a kill; a flock member a fifth of one. */
         who.kills += ev.worth ?? 1;
         if (ev.fleet !== undefined && (ev.worth ?? 0) > 0) this.tallyFlock(who, ev);
+      } else if (ev.kind === "wingHit" && who && ev.slot !== undefined) {
+        /* A round that hit a wingman instead of the ship. The hull is the
+           room's, so it comes off here. */
+        const wing = who.wings.find((x) => x.slot === ev.slot);
+        if (wing && wing.hull > 0) {
+          wing.hull -= ev.damage ?? 25;
+          if (wing.hull <= 0) {
+            wing.hull = 0;
+            this.combat.events.push({
+              kind: "wingDown", at: wing.pos.clone(), power: 2, who: who.id, slot: wing.slot,
+            });
+          }
+        }
       } else if (ev.kind === "drop" && ev.id) {
         /* A wreck left something. The simulation put it in orbit; the room
            writes it down so a restart finds it. */
@@ -536,6 +606,9 @@ export class RebelsRoom {
     s.ammo = s.ammoMax;
     s.torps = s.torpsMax;
     s.guards = MAX_GUARDS;
+    /* Geoff: "drones get replenished along with your ship in the same way at
+       the same time." */
+    for (const wing of s.wings) { wing.hull = wing.hullMax; wing.ammo = wing.ammoMax; }
     /* Back on your own pad, which is where a launch happens. */
     s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
     this.refreshRoster();
@@ -628,7 +701,7 @@ export class RebelsRoom {
     seat.body.reach = clampReach(Number(m.reach));
     /* Gear: known keys only, bounded, and the magazine and rack sized from
        the items in it exactly as the solo game sizes them. */
-    this.applyGear(seat, Array.isArray(m.gear) ? m.gear : [], true);
+    this.applyGear(seat, Array.isArray(m.gear) ? m.gear : [], true, m.drones);
     seat.home.copy(home).normalize().multiplyScalar(R);
     seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 8);
     seat.joined = true;
@@ -769,6 +842,24 @@ export class RebelsRoom {
       seat.lastMain = this.now;
       seat.ammo -= 1;
       fireGuns(this.combat, from, f, up, 70, 1.6, seat.id);
+      /* ---- IN UNISON ----
+         Every wingman with a round left fires from where it is, at what its
+         owner is aiming at, for its tier's share of a round's damage. The
+         mini gun and the beams are the player's alone: eight streams at
+         twenty rounds a second would be a wall rather than a wingman. */
+      for (const wing of seat.wings) {
+        if (wing.hull <= 0 || wing.ammo < 1) continue;
+        wing.ammo -= 1;
+        const aim = _wingAim.copy(from).addScaledVector(f, CONVERGE).sub(wing.pos).normalize();
+        this.combat.bullets.push({
+          pos: wing.pos.clone(),
+          vel: aim.clone().multiplyScalar(BULLET_SPEED),
+          life: BULLET_LIFE,
+          hostile: false,
+          owner: seat.id,
+          scale: wingShare(wing.tier),
+        });
+      }
     } else if (m.k === "mini") {
       if (!seat.gear.has("mini")) return this.send(seat, { t: "no", why: "no minigun on this ship" });
       if (this.now - seat.lastMini < MINI_INTERVAL * 0.9) return;
@@ -776,7 +867,10 @@ export class RebelsRoom {
       seat.lastMini = this.now;
       seat.ammo -= MINI_AMMO;
       const aim = vec(m.a) ?? f;
-      const right = new THREE.Vector3().crossVectors(f, up).normalize();
+      /* The ship's RIGHT: up crossed with forward. It was forward crossed
+         with up, which is the left, so the stream came from the wrong
+         corner of the frame. */
+      const right = new THREE.Vector3().crossVectors(up, f).normalize();
       const muzzle = new THREE.Vector3();
       /* The helper measures the corner in a camera frame; the room has no
          camera, so the ship's own frame stands in. It was being called with
@@ -840,7 +934,7 @@ export class RebelsRoom {
      a sphere opened in the middle of a flight has to take effect without
      relaunching. The maxima move; what is in the magazine right now does
      NOT, or buying a bigger magazine would be a free refill. */
-  private applyGear(seat: Seat, list: unknown[], refill: boolean): void {
+  private applyGear(seat: Seat, list: unknown[], refill: boolean, drones?: unknown): void {
     seat.gear = new Set(
       list.slice(0, 64)
         .filter((k): k is string => typeof k === "string" && (!!weaponByKey(k) || ALL_ITEMS.some((i) => i.key === k))),
@@ -861,6 +955,37 @@ export class RebelsRoom {
       seat.torps = seat.torpsMax;
       seat.shield = seat.shieldMax;
     }
+    this.fitWings(seat, drones, refill);
+  }
+
+  /**
+   * Give this seat the wingmen its account holds.
+   *
+   * A wingman already in a place keeps what is left of it when the
+   * declaration has not changed that place, or a player could heal the
+   * formation by saying the same thing twice. Anything new starts whole.
+   */
+  private fitWings(seat: Seat, drones: unknown, refill: boolean): void {
+    const counts: Record<string, number> = {};
+    if (Array.isArray(drones)) {
+      for (let i = 0; i < Math.min(7, drones.length); i++) {
+        const n = Number(drones[i]);
+        if (Number.isFinite(n) && n > 0) counts[`drone${i + 1}`] = Math.min(WING_MAX, Math.floor(n));
+      }
+    }
+    const tiers = wingTiers(counts);
+    const was = seat.wings;
+    seat.wings = tiers.map((tier, slot) => {
+      const hullMax = Math.round(seat.shieldMax * wingShare(tier));
+      const ammoMax = Math.round(seat.ammoMax * wingRounds(tier));
+      const before = was.find((x) => x.slot === slot && x.tier === tier);
+      return {
+        slot, tier, hullMax, ammoMax,
+        hull: before && !refill ? Math.min(before.hull, hullMax) : hullMax,
+        ammo: before && !refill ? Math.min(before.ammo, ammoMax) : ammoMax,
+        pos: before ? before.pos : new THREE.Vector3().copy(seat.body.pos),
+      };
+    });
   }
 
   static GEAR_GAP = 1;
@@ -868,8 +993,8 @@ export class RebelsRoom {
     if (!seat.joined) return;
     if (this.now - seat.lastGear < RebelsRoom.GEAR_GAP) return;
     seat.lastGear = this.now;
-    this.applyGear(seat, Array.isArray(m.gear) ? m.gear : [], false);
     if (m.reach !== undefined) seat.body.reach = clampReach(Number(m.reach));
+    this.applyGear(seat, Array.isArray(m.gear) ? m.gear : [], false, m.drones);
     this.sendYou(seat);
   }
 
@@ -1024,6 +1149,19 @@ export class RebelsRoom {
       r1(g.pos.x), r1(g.pos.y), r1(g.pos.z), g.tier, Math.round(g.spin * 100) / 100, g.id,
       ...(g.item ? [g.item, g.owner ?? "", Math.round(g.hidden ?? 0)] : []),
     ];
+    /* The wingmen, whose and where. They point where their owner points, so
+       the cockpit takes the heading from the ship they belong to. */
+    const wings: Array<[string, number, number, number, number, number, number, number]> = [];
+    for (const s of this.seats.values()) {
+      if (!s.joined || s.dead) continue;
+      for (const wing of s.wings) {
+        if (wing.hull <= 0) continue;
+        wings.push([
+          s.id, wing.slot, r1(wing.pos.x), r1(wing.pos.y), r1(wing.pos.z),
+          Math.max(0, Math.round(wing.hull)), wing.hullMax, wing.tier,
+        ]);
+      }
+    }
     const state = {
       t: "s" as const,
       n: this.tick,
@@ -1050,6 +1188,7 @@ export class RebelsRoom {
       ...(c.torpedoes.length ? {
         T: c.torpedoes.map((t) => [r1(t.pos.x), r1(t.pos.y), r1(t.pos.z), r1(t.vel.x), r1(t.vel.y), r1(t.vel.z)]),
       } : {}),
+      ...(wings.length ? { W: wings } : {}),
       ...(shared.length ? { G: shared.map(gemWire) } : {}),
       ...(c.beams.length ? {
         M: c.beams.map((b) => [

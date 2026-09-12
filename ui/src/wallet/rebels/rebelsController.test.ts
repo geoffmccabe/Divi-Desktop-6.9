@@ -1016,6 +1016,82 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.detach();
 }
 
+/* ---- THE REAR GUN, END TO END ----
+   Seven opens a window behind you; with the crosshair in it the ship flies
+   straight and every primary weapon fires backwards, through the server. */
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ctl.launch();
+  for (let i = 0; i < 60 * 4; i++) ctl.frame(1 / 60);
+  ok("(setup) flying", ctl.hud().launched && !ctl.hud().dead);
+
+  press("keydown", { key: "7" });
+  press("keyup", { key: "7" });
+  ok("without one, seven says where to get one", /REAR GUN/.test(ctl.hud().note) && !ctl.hud().rear, ctl.hud().note);
+
+  const INV = await import("./rebelsInventory");
+  INV.addHeld("reargun", 1);
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);      /* the gear reaches the server */
+  press("keydown", { key: "7" });
+  press("keyup", { key: "7" });
+  ok("with one, seven opens the window", ctl.hud().rear);
+
+  /* The crosshair into the top-right corner, where the window is. */
+  g.fire("pointermove", { clientX: 700, clientY: 90 });
+  for (let i = 0; i < 6; i++) ctl.frame(1 / 60);
+  ok("the crosshair is in the window", ctl.hud().rearAim);
+
+  /* ---- and the ship flies STRAIGHT ----
+     The crosshair is over your shoulder, not out in front, so it must not
+     steer. This used to spin the ship. */
+  const heading = () => g.camera.getWorldDirection(new THREE.Vector3());
+  const wasHeading = heading();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ok("and the ship does not spin", wasHeading.angleTo(heading()) < 0.25,
+     `${((wasHeading.angleTo(heading()) * 180) / Math.PI).toFixed(1)} degrees in a second`);
+
+  /* Fire: a round should leave going backwards, from the server. */
+  const fwd = heading();
+  const combat = server!.combat as { bullets: Array<{ pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean }> };
+  combat.bullets.length = 0;
+  g.fire("pointerdown", { button: 0 });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  g.fire("pointerup", { button: 0 });
+  const mine = combat.bullets.filter((b) => !b.hostile);
+  ok("the guns fire", mine.length > 0, `${mine.length} rounds`);
+  ok("and they go backwards", mine.every((b) => b.vel.clone().normalize().dot(fwd) < 0),
+     mine.map((b) => b.vel.clone().normalize().dot(fwd).toFixed(2)).join(" "));
+
+  /* The mini gun too, which used to keep firing out of the nose. */
+  const { grant } = await import("./rebelsArmoury");
+  const { loadShip } = await import("./shipChoice");
+  grant(loadShip(), "mini");
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  press("keydown", { key: "2" });
+  press("keyup", { key: "2" });
+  combat.bullets.length = 0;
+  g.fire("pointerdown", { button: 0 });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  g.fire("pointerup", { button: 0 });
+  const minis = combat.bullets.filter((b) => !b.hostile);
+  ok("the mini gun fires backwards as well", minis.length > 0 && minis.every((b) => b.vel.clone().normalize().dot(fwd) < 0),
+     `${minis.length} rounds`);
+
+  /* Out of the window, and the guns face forward again. */
+  g.fire("pointermove", { clientX: 400, clientY: 300 });
+  for (let i = 0; i < 6; i++) ctl.frame(1 / 60);
+  ok("leaving the window points them forward again", !ctl.hud().rearAim);
+  press("keydown", { key: "7" });
+  press("keyup", { key: "7" });
+  ok("seven closes it", !ctl.hud().rear);
+  ctl.detach();
+  await settle();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

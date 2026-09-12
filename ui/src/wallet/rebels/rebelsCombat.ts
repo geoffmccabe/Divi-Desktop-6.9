@@ -33,6 +33,8 @@ export const MINI_AMMO = 0.25;
 /** It keeps firing while the trigger is held, twenty times a second. */
 export const MINI_INTERVAL = 0.05;
 export const ENEMY_R = 1.05;          /* hit radius of a fighter */
+/** And of a wingman, which is drawn at half a ship. */
+export const WING_HIT_R = 0.9;
 export const DRAGON_R = 3.6;          /* and of the dragon: it is big */
 /** What a round has to come within. */
 export function enemyRadius(e: { drone?: true; dragon?: true }): number {
@@ -488,6 +490,14 @@ export interface Bullet {
    * be closest when the fighter comes apart.
    */
   owner?: string;
+  /**
+   * What this round does, against what the gun that fired it would do.
+   *
+   * A WINGMAN's rounds, at its tier's share: half of a whole one at T1, one
+   * and seven tenths at T5. Its owner is still credited with the kill, so
+   * this cannot be read off the owner. Absent means a whole round's worth.
+   */
+  scale?: number;
   /** From the mini gun: quarter damage, drawn smaller. */
   mini?: boolean;
   /** From a swarm drone: drawn as a pulsing red energy sphere rather than as a
@@ -597,6 +607,7 @@ export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
       | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "coinHit" | "waveStart"
             | "flockDown" | "gem" | "gemHit" | "drop" | "dragon" | "dragonGone"
+      | "wingHit" | "wingDown"
       | "incoming" | "blocked";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
@@ -618,6 +629,8 @@ export interface CombatEvent {
   id?: string;
   /** gem / drop of an ITEM: its catalogue key. */
   item?: string;
+  /** wingHit / wingDown: which of the owner's eight places it was. */
+  slot?: number;
   /** enemyHit only: damage actually landed, which is what scores. */
   damage?: number;
   /** enemyDown only: which of the seven it was. */
@@ -842,7 +855,8 @@ export function hurtEnemy(
    dragon is the cockpit's. */
 export const DRAGON_CHECK_SECONDS = 60;
 export const DRAGON_CHANCE = 0.1;
-export const DRAGON_LIFE = 10;
+/* Geoff, 2026-Sep-12: "make the dragon last 1 minute so it lasts longer." */
+export const DRAGON_LIFE = 60;
 export const DRAGON_HP = 2000;
 export const DRAGON_SPEED = 2.5;
 export const DRAGON_ALT = [14, 40];
@@ -1524,6 +1538,16 @@ export interface PlayerBody {
   hull?: Array<{ at: THREE.Vector3; r: number }>;
 }
 
+/** One wingman, as the fight sees it. */
+export interface WingBody {
+  /** The seat it flies for. */
+  owner: string;
+  /** Which of the eight places, so one hit can be told from another's. */
+  slot: number;
+  pos: THREE.Vector3;
+  hull: number;
+}
+
 export interface CombatWorld {
   /** Tower tips, straight off the map. */
   tips: THREE.Vector3[];
@@ -1539,6 +1563,14 @@ export interface CombatWorld {
    * shot whom, and the disagreement always favours whoever is lying.
    */
   players?: PlayerBody[];
+  /**
+   * The wingmen in the fight, so rounds can hit them.
+   *
+   * Positions only: the room holds the hull and does the taking-off, which
+   * is the same division of labour as for players. Absent when nobody flies
+   * any, which is most of the time.
+   */
+  wings?: WingBody[];
   /** The solo ship's capture reach (see clampReach). */
   reach?: number;
   /**
@@ -1666,7 +1698,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
         const e = c.enemies[j];
         if (!segmentHit(from, b.pos, e.pos, enemyRadius(e))) continue;
         spent = true;
-        const scale = (b.mini ? MINI_DAMAGE : 1) * scaleFor(w, b.owner ?? "");
+        const scale = (b.mini ? MINI_DAMAGE : 1) * (b.scale ?? 1) * scaleFor(w, b.owner ?? "");
         hurtEnemy(c, e, rollLaserDamage() * scale, from, b.owner ?? "");
       }
       /* Wreckage is solid: shoot a piece and it goes. */
@@ -1696,6 +1728,21 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
           who: pl.id, guarded: !!pl.guard,
         });
         break;
+      }
+      /* ---- and the wingmen ----
+         A drone flying formation is a real body: a round meant for the ship
+         hits it instead when it is in the way, which is half of what having
+         one is for. The room holds their hulls, so this only says what was
+         hit and lets the room take it off. */
+      for (const wing of w.wings ?? []) {
+        if (spent) break;
+        if (wing.hull <= 0) continue;
+        if (!segmentHit(from, b.pos, wing.pos, WING_HIT_R)) continue;
+        spent = true;
+        c.events.push({
+          kind: "wingHit", at: b.pos.clone(), power: 1.2, damage: rollLaserDamage(),
+          who: wing.owner, slot: wing.slot,
+        });
       }
     }
 

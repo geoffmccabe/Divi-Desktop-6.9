@@ -553,6 +553,34 @@ const home: [number, number, number] = [0, 0, R + 8];
     return Math.abs(Math.abs(d.dot(radialRight)) - 1) < 1e-6;
   })());
 
+  /* ---- THE MINI GUN MEETS THE CROSSHAIR ----
+     Its muzzle is a corner of the frame, so the round does not travel along
+     the aim: it travels to where the aim POINTS, fifty-five units out, and
+     crosses it there. What went wrong was the cockpit sending the muzzle as
+     its position, which moved that crossing point up and out with it. */
+  {
+    room.combat.bullets.length = 0;
+    room.now += 2;
+    /* The mini gun has to be declared, as any gun does. */
+    ws.deliver(JSON.stringify({ t: "gear", gear: ["mini"] }));
+    room.now += 1;
+    const eye = seat.body.pos.clone();
+    const aim = new THREE.Vector3(0.2, 0.9, 0.3).normalize();
+    ws.deliver(JSON.stringify({
+      t: "fire", k: "mini", p: [eye.x, eye.y, eye.z], f: [0, 1, 0],
+      a: [aim.x, aim.y, aim.z], u: [0, 0, 1],
+    }));
+    const shot = room.combat.bullets[room.combat.bullets.length - 1];
+    const mark = eye.clone().addScaledVector(aim, 55);
+    /* Closest approach of the round's line to the point under the crosshair. */
+    const dir = shot.vel.clone().normalize();
+    const along = mark.clone().sub(shot.pos).dot(dir);
+    const miss = mark.distanceTo(shot.pos.clone().addScaledVector(dir, along));
+    ok("a mini round crosses the point under the crosshair", miss < 1.5, `${miss.toFixed(2)} units off`);
+    ok("and it leaves from beside the ship, not from the crosshair", shot.pos.distanceTo(eye) < 6 && shot.pos.distanceTo(eye) > 0.5,
+       `${shot.pos.distanceTo(eye).toFixed(2)}`);
+  }
+
   /* A torpedo is the room's, and comes back on the wire to be drawn. */
   room.now += 1;
   ws.deliver(JSON.stringify({ t: "fire", k: "torp", p: [p0.x, p0.y, p0.z], f: [0, 1, 0] }));

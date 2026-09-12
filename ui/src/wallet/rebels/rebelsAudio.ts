@@ -12,6 +12,9 @@
 
 import laserUrl from "../../assets/laser_shot_v1.mp3";
 import rechargeUrl from "../../assets/recharge_station_v1.mp3";
+/* DreadRoot's coin, so picking DIVI up sounds the same in both games.
+   Geoff, 2026-Sep-12. */
+import coinUrl from "../../assets/coin_hit_sound.mp3";
 import torpedoUrl from "../../assets/torpedo_v1.mp3";
 import torpedoBlastUrl from "../../assets/torpedo_explosion_v1.mp3";
 import shipBlastUrl from "../../assets/spaceship_explosion_v1.mp3";
@@ -34,6 +37,7 @@ let torpedoBlastBuffer: AudioBuffer | null = null;
 let shipBlastBuffer: AudioBuffer | null = null;
 let warnBuffer: AudioBuffer | null = null;
 let bounceBuffer: AudioBuffer | null = null;
+let coinBuffer: AudioBuffer | null = null;
 let boostBuffer: AudioBuffer | null = null;
 let beamBuffer: AudioBuffer | null = null;
 let loading: Promise<void> | null = null;
@@ -104,7 +108,7 @@ export function primeGunSound(): void {
   if (loading && Date.now() - loadingSince < LOAD_PATIENCE) return;
   if (failed || (buffer && rechargeBuffer && torpedoBuffer
       && torpedoBlastBuffer && shipBlastBuffer && warnBuffer && bounceBuffer
-      && boostBuffer && beamBuffer)) return;
+      && boostBuffer && beamBuffer && coinBuffer)) return;
   const ctx = audioContext();
   if (!ctx) { failed = true; return; }
   loadingSince = Date.now();
@@ -112,9 +116,9 @@ export function primeGunSound(): void {
   loading = Promise.all([
     load(laserUrl), load(rechargeUrl), load(torpedoUrl),
     load(torpedoBlastUrl), load(shipBlastUrl), load(warnUrl), load(bounceUrl),
-    load(boostUrl), load(beamUrl),
+    load(boostUrl), load(beamUrl), load(coinUrl),
   ])
-    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast, warn, bounce, boost, beam]) => {
+    .then(([gun, recharge, torpedo, torpedoBlast, shipBlast, warn, bounce, boost, beam, coin]) => {
       buffer = gun;
       rechargeBuffer = recharge;
       torpedoBuffer = torpedo;
@@ -122,6 +126,7 @@ export function primeGunSound(): void {
       shipBlastBuffer = shipBlast;
       warnBuffer = warn;
       bounceBuffer = bounce;
+      coinBuffer = coin;
       boostBuffer = boost;
       beamBuffer = beam;
     })
@@ -145,6 +150,7 @@ export function primeGunSound(): void {
 onAudioRebuild(() => {
   buffer = null; rechargeBuffer = null; torpedoBuffer = null; torpedoBlastBuffer = null;
   shipBlastBuffer = null; warnBuffer = null; bounceBuffer = null; boostBuffer = null; beamBuffer = null;
+  coinBuffer = null;
   loading = null; failed = false;
   rechargeNode = null; rechargeGain = null;
   boostNode = null; boostGain = null;
@@ -154,7 +160,7 @@ onAudioRebuild(() => {
 
 export function resetAudioForTests(): void {
   buffer = rechargeBuffer = torpedoBuffer = null;
-  torpedoBlastBuffer = shipBlastBuffer = warnBuffer = bounceBuffer = null;
+  torpedoBlastBuffer = shipBlastBuffer = warnBuffer = bounceBuffer = coinBuffer = null;
   boostBuffer = beamBuffer = null;
   loading = null;
   loadingSince = 0;
@@ -183,7 +189,7 @@ export function audioState(): Record<string, unknown> {
     loading: !!loading,
     loadingFor: loading ? Date.now() - loadingSince : 0,
     buffers: [buffer, rechargeBuffer, torpedoBuffer, torpedoBlastBuffer,
-      shipBlastBuffer, warnBuffer, bounceBuffer, boostBuffer,
+      shipBlastBuffer, warnBuffer, bounceBuffer, boostBuffer, coinBuffer,
       beamBuffer].filter(Boolean).length,
     volume: (() => { try { return masterVolume(); } catch { return -1; } })(),
   };
@@ -562,4 +568,11 @@ export function stopBeamSound(): void {
 /** A round turned away by the guard. The reward for having reacted. */
 export function playBounce(): void {
   once(bounceBuffer, 1, false);
+}
+
+/** DIVI flown into: DreadRoot's coin. Pitched about a little, because a run
+ *  of five in a second is the usual case and five identical clicks read as
+ *  one stuck sound. */
+export function playCoin(): void {
+  once(coinBuffer, 0.85);
 }
