@@ -14,7 +14,10 @@ import {
   type FlockGroup,
 } from "./rebelsFlock";
 
-export const BULLET_SPEED = 120;      /* globe units per second */
+/* Doubled from 120 (Geoff, 2026-Sep-12: "make the bullets all 2x the current
+   velocity so they move faster and it's easier to hit things"). Every round
+   scales from this: the mini gun, the fighters', the drones'. */
+export const BULLET_SPEED = 240;      /* globe units per second */
 export const BULLET_LIFE = 2.2;
 export const BULLET_R = 0.16;         /* what it hits with */
 export const CONVERGE = 55;           /* where the two guns cross, in units ahead */

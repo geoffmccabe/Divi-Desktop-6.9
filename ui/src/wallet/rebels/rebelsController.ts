@@ -17,7 +17,7 @@ import {
 } from "./orbitFlight";
 import {
   clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE, spawnDragon,
-  createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles, fireBeam,
+  createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles, fireBeam, TORPEDO_FUSE,
   fireMini, miniMuzzle, spawnFleet,
   STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
   type CombatState,
@@ -228,7 +228,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let dragonProto: THREE.Group | null = null;
   function ensureDragonRig(): void {
     if (dragonRig || !dragonProto || !scene) return;
-    const group = unitCopy(dragonProto);
+    const group = unitCopy(dragonProto, { skinned: true });
     group.scale.setScalar(DRAGON_SIZE);
     group.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -352,6 +352,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      with the crosshair in the window, the trigger fires the double shot out
      of the tail through the crosshair, and the right button a torpedo. */
   let rearOn = false;
+  /** When this cockpit last asked the room for a torpedo, so the next press
+   *  is a detonate while it could still be flying. */
+  let torpSentAt = 0;
   let afterRender: ((fn: ((r: THREE.WebGLRenderer, draw: (s: THREE.Scene, c: THREE.Camera) => void) => void) | null) => void) | null = null;
   const rearCamera = new THREE.PerspectiveCamera(70, 1.6, 0.1, 4000);
   const _rearSize = new THREE.Vector2();
@@ -1456,14 +1459,22 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         if (rearAiming !== hud.rearAim) setHud({ rearAim: rearAiming });
         if (res.fired && rearAiming) {
           /* ---- the rear gun ----
-             The double shot leaves the tail and goes through the crosshair's
-             spot in the rear window. The room takes any direction; it fires
-             from where it knows the ship is. */
+             Geoff: "fire from the two sides of the mini-screen and go
+             towards wherever the mouse pointer is." So the muzzles are the
+             edges of the REAR camera's frame, as the main guns are the edges
+             of the main one, and the two streams cross on the crosshair's
+             spot in the window. The room is given the rear camera's place
+             (three units behind the ship, within its tolerance), the aim,
+             and the ship's up. */
+          placeRearCamera(rearCamera, flight);
           const aim = rearAim(rearCamera, cursor);
-          const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
-          if (inRoom && room) room.fire("main", flight.pos, aim);
-          else fireGuns(combat, tail, aim, flight.up, camera.fov, camera.aspect);
-          fx.muzzle(tail);
+          const rearUp = new THREE.Vector3(0, 1, 0).applyQuaternion(rearCamera.quaternion);
+          const muzzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
+          gunMuzzles(rearCamera.position, aim, rearUp, rearCamera.fov, rearCamera.aspect, muzzles);
+          if (inRoom && room) room.fire("main", rearCamera.position, aim, undefined, undefined, rearUp);
+          else fireGuns(combat, rearCamera.position, aim, rearUp, rearCamera.fov, rearCamera.aspect, "", muzzles);
+          fx.muzzle(muzzles[0]);
+          fx.muzzle(muzzles[1]);
           playGunSound();
         } else if (res.fired) {
           /* ---- where the guns are ----
@@ -1492,7 +1503,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             muzzles = [new THREE.Vector3(), new THREE.Vector3()];
             gunMuzzles(flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, muzzles);
           }
-          if (inRoom && room) room.fire("main", flight.pos, flight.fwd);
+          if (inRoom && room) room.fire("main", flight.pos, flight.fwd, undefined, undefined, s.up);
           else fireGuns(combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, "", at);
           fx.muzzle(muzzles[0]);
           fx.muzzle(muzzles[1]);
@@ -1552,6 +1563,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           }
           /* Beams too: yours and everyone else's, drawn from the room's list
              so a beam is seen by the whole room and hits what the room says. */
+          combat.torpedoes.length = 0;
+          for (const t of room.torpedoes) combat.torpedoes.push({ pos: t.pos, vel: t.vel, life: 1 });
           combat.beams.length = 0;
           for (const b of room.beams) combat.beams.push(b);
           /* Gems are the room's: drawn from its list, never simulated here.
@@ -1626,9 +1639,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         if (res.heavyPress && rearAiming) {
           /* A torpedo backwards, out of the tail. */
           if (flight.torpedoes > 0) {
+            placeRearCamera(rearCamera, flight);
             const aim = rearAim(rearCamera, cursor);
             const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
-            if (inRoom && room) { room.fire("torp", flight.pos, aim); }
+            if (inRoom && room) { room.fire("torp", tail, aim); torpSentAt = performance.now(); }
             else { flight.torpedoes -= 1; fireTorpedo(combat, tail, aim); }
             playTorpedoSound();
           }
@@ -1636,6 +1650,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           const slot = weaponAt("secondary", weapons.secondary);
           if (slot && !slot.ready) {
             setHud({ note: `${slot.name}: not yet fitted`, noteAt: performance.now() });
+          } else if (inRoom && room) {
+            /* ---- in company the torpedo is the room's ----
+               It flies in the room's simulation and comes back on the wire
+               to be drawn. It used to be launched locally here, where nothing
+               stepped it: a flash at the nose, then the next press blew it
+               up on the spot, and the rack count came straight back from the
+               room untouched (Geoff, 2026-Sep-12). Press once to launch,
+               again while one of yours is in the air to set it off. */
+            const mineInAir = performance.now() - torpSentAt < TORPEDO_FUSE * 1000 && combat.torpedoes.length > 0;
+            if (mineInAir) { room.detonate(); torpSentAt = 0; }
+            else if (flight.torpedoes > 0) {
+              room.fire("torp", shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
+              torpSentAt = performance.now();
+              playTorpedoSound();
+            }
           } else {
             const w = {
               tips: tipList, playerPos: flight.pos, playerFwd: flight.fwd,

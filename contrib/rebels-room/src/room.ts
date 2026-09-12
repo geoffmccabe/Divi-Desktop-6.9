@@ -762,12 +762,14 @@ export class RebelsRoom {
     if (p.distanceTo(seat.body.pos) > 6) return this.snapBack(seat, "shot from elsewhere");
     const from = p;
 
+    /* The ship's own up when given, else away from the planet. */
+    const shipUp = vec(m.u);
+    const up = shipUp && shipUp.lengthSq() > 1e-6 ? shipUp.normalize() : from.clone().normalize();
     if (m.k === "main") {
       if (this.now - seat.lastMain < 0.075) return;   /* the gun's own cooldown */
       if (seat.ammo < 1) return;
       seat.lastMain = this.now;
       seat.ammo -= 1;
-      const up = from.clone().normalize();
       fireGuns(this.combat, from, f, up, 70, 1.6, seat.id);
     } else if (m.k === "mini") {
       if (!seat.gear.has("mini")) return this.send(seat, { t: "no", why: "no minigun on this ship" });
@@ -776,7 +778,6 @@ export class RebelsRoom {
       seat.lastMini = this.now;
       seat.ammo -= MINI_AMMO;
       const aim = vec(m.a) ?? f;
-      const up = from.clone().normalize();
       const right = new THREE.Vector3().crossVectors(f, up).normalize();
       const muzzle = new THREE.Vector3();
       /* The helper measures the corner in a camera frame; the room has no
@@ -965,6 +966,9 @@ export class RebelsRoom {
         b.hostile ? 1 : 0, b.mini ? 1 : 0,
       ]),
       C: c.coins.map((k) => [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)]),
+      ...(c.torpedoes.length ? {
+        T: c.torpedoes.map((t) => [r1(t.pos.x), r1(t.pos.y), r1(t.pos.z), r1(t.vel.x), r1(t.vel.y), r1(t.vel.z)]),
+      } : {}),
       ...(shared.length ? { G: shared.map(gemWire) } : {}),
       ...(c.beams.length ? {
         M: c.beams.map((b) => [

@@ -33,6 +33,7 @@
 
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import atlasUrl from "../../assets/space_atlas.webp";
 import planetAtlasUrl from "../../assets/space_planets.webp";
 
@@ -297,9 +298,12 @@ function unlit(root: THREE.Object3D, tint = 0xffffff): void {
  */
 export function unitCopy(
   proto: THREE.Group,
-  opts: { unlit?: boolean; tint?: number } = {},
+  opts: { unlit?: boolean; tint?: number; skinned?: boolean } = {},
 ): THREE.Group {
-  const model = proto.clone(true);
+  /* A SKINNED model (the dragon) must be cloned with its skeleton, or the
+     copy's bones are the prototype's, which is nowhere in the scene, and the
+     mesh is drawn at the origin: inside the planet, never seen. */
+  const model = (opts.skinned ? SkeletonUtils.clone(proto) : proto.clone(true)) as THREE.Group;
   /* clone() SHARES materials with the prototype, so the swap has to happen on
      the copy and has to make its own materials, or unlighting one planet would
      unlight the ship turning in the Market — and tinting one would tint all

@@ -405,3 +405,26 @@ phase ships on its own with tests, docs and a version.
 - What "the room" is: the multiplayer server. The wallet joins it whenever
   it is reachable, so ordinary play IS company play; the intent is that it
   never shows. Where they differ is a bug.
+
+## Fixed after Geoff's second test (2026-Sep-12, v69.9.31)
+
+- **Guns from strange angles when rolled**: the room placed the two muzzles
+  using "away from the planet" as up, so a rolled ship's guns did not roll
+  with it. Every fire message now carries the ship's up (`u`), and the
+  room uses it. Solo was already right.
+- **Rear gun fired nothing visible**: it now fires from the two EDGES of
+  the rear window (the rear camera's frame, as the main guns are the edges
+  of the main frame) and the two streams cross on the crosshair's spot in
+  the window. In company the room is given the rear camera's place, the
+  aim and the up.
+- **Bullets 2x**: `BULLET_SPEED` 120 to 240; the mini gun, fighters' and
+  drones' rounds scale from it.
+- **Torpedoes in company**: they were launched locally, where nothing
+  stepped them (a flash, then the next press blew it up on the spot; the
+  rack came back from the room untouched). Now the room launches, flies and
+  detonates them; they ride the wire (`T`) to be drawn; press once to
+  launch, again while yours is in the air to set it off.
+- **Dragon never seen**: it is a SKINNED model; a plain clone shares the
+  prototype's bones, which are nowhere in the scene, so the mesh was drawn
+  at the origin, inside the planet. Cloned with its skeleton now
+  (`unitCopy(..., { skinned: true })`).

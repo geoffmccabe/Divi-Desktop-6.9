@@ -65,6 +65,10 @@ export interface FireIn {
   a?: Vec;
   /** Beam only: which one, a weapon key such as "beam2". */
   w?: string;
+  /** The ship's up, so the two muzzles sit at the ship's sides however it
+   *  is rolled. Without it the room used "away from the planet", and a
+   *  rolled ship's guns fired from two strange angles (Geoff). */
+  u?: Vec;
 }
 
 export interface DetonateIn { t: "det" }
@@ -119,6 +123,8 @@ export interface StateOut {
   /** Beams in the air: origin, direction, weapon key, seconds left. Absent
    *  when there are none, which is nearly always. */
   M?: Array<[number, number, number, number, number, number, string, number]>;
+  /** Torpedoes in the air: position and velocity. Absent when none. */
+  T?: Array<[number, number, number, number, number, number]>;
   /** Gems in the world: position, tier, spin, id, and for a dropped ITEM its
    *  catalogue key, owner seat and seconds it stays theirs alone. A private
    *  drop is sent only to its owner. Absent when there are none. */

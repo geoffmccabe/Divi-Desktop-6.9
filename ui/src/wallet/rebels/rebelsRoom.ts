@@ -109,13 +109,15 @@ export interface Room {
   enemies: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; tier: number; shield: number; shieldMax: number; drone?: boolean; dragon?: boolean; id?: number }>;
   bullets: Array<{ pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean; mini: boolean }>;
   coins: Array<{ pos: THREE.Vector3 }>;
+  /** Torpedoes in the air, the room's: drawn, never simulated here. */
+  torpedoes: Array<{ pos: THREE.Vector3; vel: THREE.Vector3 }>;
   wave: number;
   gauges: RoomGauges | null;
   /** Anything that happened this tick, for sound and sparks. Drained. */
   takeEvents(): RoomEvent[];
   /** Say where this ship is. Rate-limited inside. */
   report(pos: THREE.Vector3, fwd: THREE.Vector3, guard: boolean): void;
-  fire(kind: "main" | "mini" | "torp" | "beam", pos: THREE.Vector3, fwd: THREE.Vector3, aim?: THREE.Vector3, weapon?: string): void;
+  fire(kind: "main" | "mini" | "torp" | "beam", pos: THREE.Vector3, fwd: THREE.Vector3, aim?: THREE.Vector3, weapon?: string, up?: THREE.Vector3): void;
   /** Beams in the air, as the room sees them. Overwritten every tick. */
   beams: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; life: number; half: number; reach: number; colour: number; key: string }>;
   /** Gems in the world. The room's; they persist there. A dropped item
@@ -197,6 +199,7 @@ export function joinRoom(opts: Opts): Room {
     enemies: [],
     bullets: [],
     coins: [],
+    torpedoes: [],
     beams: [],
     gems: [],
     wave: 0,
@@ -208,10 +211,10 @@ export function joinRoom(opts: Opts): Room {
       sinceReport = 0;
       send({ t: "tf", p: xyz(pos), f: dir(fwd), ...(guard ? { g: 1 as const } : {}) });
     },
-    fire(kind, pos, fwd, aim, weapon) {
+    fire(kind, pos, fwd, aim, weapon, up) {
       send({
         t: "fire", k: kind, p: xyz(pos), f: dir(fwd),
-        ...(aim ? { a: dir(aim) } : {}), ...(weapon ? { w: weapon } : {}),
+        ...(aim ? { a: dir(aim) } : {}), ...(weapon ? { w: weapon } : {}), ...(up ? { u: dir(up) } : {}),
       });
     },
     detonate() { send({ t: "det" }); },
@@ -292,6 +295,7 @@ export function joinRoom(opts: Opts): Room {
       room.enemies.length = 0;
       room.bullets.length = 0;
       room.coins.length = 0;
+      room.torpedoes.length = 0;
       room.beams.length = 0;
       room.gems.length = 0;
       room.gauges = null;
@@ -370,6 +374,10 @@ export function joinRoom(opts: Opts): Room {
           pos: new THREE.Vector3(b[0], b[1], b[2]),
           vel: new THREE.Vector3(b[3], b[4], b[5]),
           hostile: b[6] === 1, mini: b[7] === 1,
+        }));
+        room.torpedoes = ((m.T ?? []) as number[][]).map((t) => ({
+          pos: new THREE.Vector3(t[0], t[1], t[2]),
+          vel: new THREE.Vector3(t[3], t[4], t[5]),
         }));
         room.coins = ((m.C ?? []) as number[][]).map((k) => ({
           pos: new THREE.Vector3(k[0], k[1], k[2]),

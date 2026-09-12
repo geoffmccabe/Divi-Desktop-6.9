@@ -533,6 +533,34 @@ const home: [number, number, number] = [0, 0, R + 8];
   const b = room.combat.bullets[room.combat.bullets.length - 1];
   ok("a round leaves from the reported position when it is close enough", !!b && b.pos.distanceTo(near) < 4 && b.pos.distanceTo(seat.body.pos) > b.pos.distanceTo(near), `${b?.pos.distanceTo(near).toFixed(2)} vs ${b?.pos.distanceTo(seat.body.pos).toFixed(2)}`);
 
+  /* The two muzzles sit at the SHIP's sides: right is forward crossed with
+     the up the cockpit sends, however the ship is rolled. */
+  room.combat.bullets.length = 0;
+  const p0 = seat.body.pos;
+  room.now += 1;
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [p0.x, p0.y, p0.z], f: [0, 1, 0], u: [1, 0, 0] }));
+  const [l, r] = room.combat.bullets.slice(-2);
+  const across = l.pos.clone().sub(r.pos);
+  const expectRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0)).normalize();
+  ok("a rolled ship's muzzles follow its own up", Math.abs(Math.abs(across.clone().normalize().dot(expectRight)) - 1) < 1e-6, across.toArray().map((n) => n.toFixed(2)).join(","));
+  ok("without an up the room falls back to away-from-the-planet", (() => {
+    room.combat.bullets.length = 0;
+    room.now += 1;
+    ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [p0.x, p0.y, p0.z], f: [0, 1, 0] }));
+    const [a, c] = room.combat.bullets.slice(-2);
+    const d = a.pos.clone().sub(c.pos).normalize();
+    const radialRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), p0.clone().normalize()).normalize();
+    return Math.abs(Math.abs(d.dot(radialRight)) - 1) < 1e-6;
+  })());
+
+  /* A torpedo is the room's, and comes back on the wire to be drawn. */
+  room.now += 1;
+  ws.deliver(JSON.stringify({ t: "fire", k: "torp", p: [p0.x, p0.y, p0.z], f: [0, 1, 0] }));
+  room.step();
+  const st1 = ws.last("s");
+  ok("a launched torpedo is on the wire", Array.isArray(st1.T) && st1.T.length === 1 && st1.T[0].length === 6, JSON.stringify(st1.T));
+  ok("and off the rack", seat.torps === seat.torpsMax - 1);
+
   room.setTips([[0, 0, R + 4]]);
   seat.ammo = 0; seat.shield = 10; seat.torps = 0;
   seat.body.pos.set(0, 0, R + 8);
