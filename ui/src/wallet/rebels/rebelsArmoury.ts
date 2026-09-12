@@ -19,7 +19,7 @@
 
 import { STARTING_WEAPONS, weaponByKey, type WeaponSpec } from "./weaponCatalog";
 import { itemByKey, torpedoBonus, magBonus, superBoostMult, strafeMult, vstrafeMult, hullMult, type ItemSpec } from "./itemCatalog";
-import { rawHeld, heldKeys, mergeHeld, type Held } from "./rebelsInventory";
+import { rawHeld, heldKeys, heldItems, mergeHeld, type Held } from "./rebelsInventory";
 import { SUPER_BOOST_MULT, type Extras } from "./orbitFlight";
 import { USD_PER_POINT } from "./weaponCatalog";
 import { spendDivi } from "./rebelsScores";
@@ -358,6 +358,19 @@ export function extraMagazine(ship: string): number {
 }
 
 /** Everything the flight model needs to know about what the player owns. */
+/**
+ * How many wingmen of each tier this account holds, tier one first.
+ *
+ * Counts, not keys, because two T3 drones are two wingmen and the owned set
+ * cannot say that. Declared to the server, which builds the formation.
+ */
+export function droneCounts(): number[] {
+  const held = heldItems();
+  const out: number[] = [];
+  for (let tier = 1; tier <= 7; tier++) out.push(Math.max(0, Math.floor(held[`drone${tier}`] ?? 0)));
+  return out;
+}
+
 /** Everything that changes how the ship flies: bought gear AND opened found
  *  items. What the flight model reads, and what is declared to the room. */
 export function gearKeys(ship: string): string[] {

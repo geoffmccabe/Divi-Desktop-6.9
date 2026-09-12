@@ -493,3 +493,38 @@ and the second copy is gone.
 - **The dragon lasts a minute** rather than ten seconds.
 - **DIVI picked up sounds like DreadRoot's coin** (its own sample, copied
   into ui/src/assets/coin_hit_sound.mp3).
+
+## Built: Phase 4, the Drones (2026-Sep-12, v69.9.34)
+
+- **The rules, in one place** (`ui/src/wallet/rebels/rebelsWings.ts`, 28
+  tests): eight places filled left, right, top, bottom, then the corners; a
+  ring one and a half ship WIDTHS out (twice the half-span the capture ball
+  uses, kept between 5 and 26 units); one revolution every fifteen seconds
+  and only with two or more; half size; the tier shares (50 to 170% hull and
+  damage, 1 to 1.75x rounds), with a forged tier past the top carrying the
+  top's power.
+- **The server owns them.** The cockpit declares how many of each tier the
+  ACCOUNT holds (`drones` on join and on the gear message: counts, because
+  two T3 drones are two wingmen and a set of keys cannot say that). The room
+  builds the formation best tier first, places it every tick, and streams it
+  as `W`. A wingman already in a place keeps what is left of it when the
+  declaration has not changed, so a player cannot heal the formation by
+  saying the same thing twice.
+- **In unison**: one trigger, one round from each wingman with a round left,
+  from where it is, at the point its owner is aiming at, carrying its tier's
+  share as the new per-round `scale`. Credited to the owner. The mini gun and
+  the beams stay the player's alone: eight streams at twenty rounds a second
+  is a wall, not a wingman.
+- **They are real bodies**: a hostile round that would have hit the ship hits
+  the wingman when it is in the way (`wingHit`), the room takes it off that
+  wingman's hull, and at zero it is gone (`wingDown`). They come back whole
+  with the ship on respawn.
+- **Drawn** as a half-size copy of the owner's hull in the owner's paint,
+  pointing where the owner points.
+- **Also fixed here**: wreckage. The room's junk is SOLID (a round that hits
+  a piece is spent) and was never sent, so shots died against nothing the
+  player could see. It rides the wire now as `J` and is drawn.
+- Test cheat `!8t` fits one wingman of tier t; press again for another.
+  Comes out with the other test cheats.
+- NOT done: enemies still aim at ships rather than choosing wingmen as
+  targets; a wingman is hit only when it happens to be in the line of fire.

@@ -1188,6 +1188,13 @@ export class RebelsRoom {
       ...(c.torpedoes.length ? {
         T: c.torpedoes.map((t) => [r1(t.pos.x), r1(t.pos.y), r1(t.pos.z), r1(t.vel.x), r1(t.vel.y), r1(t.vel.z)]),
       } : {}),
+      ...(c.junk.length ? {
+        J: c.junk.map((j) => [
+          r1(j.pos.x), r1(j.pos.y), r1(j.pos.z),
+          Math.round(j.rot.x * 100) / 100, Math.round(j.rot.y * 100) / 100, Math.round(j.rot.z * 100) / 100,
+          j.kind === "wingL" ? 1 : j.kind === "wingR" ? 2 : 0,
+        ]),
+      } : {}),
       ...(wings.length ? { W: wings } : {}),
       ...(shared.length ? { G: shared.map(gemWire) } : {}),
       ...(c.beams.length ? {

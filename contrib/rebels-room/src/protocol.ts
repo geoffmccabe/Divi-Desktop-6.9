@@ -142,6 +142,10 @@ export interface StateOut {
   M?: Array<[number, number, number, number, number, number, string, number]>;
   /** Torpedoes in the air: position and velocity. Absent when none. */
   T?: Array<[number, number, number, number, number, number]>;
+  /** Wreckage in orbit: where, how it is turned, and which piece (0 body,
+   *  1 left wing, 2 right wing). It is solid, so a round that hits it is
+   *  spent: the cockpit has to draw it or shots vanish against nothing. */
+  J?: Array<[number, number, number, number, number, number, number]>;
   /** Wingmen: whose, which of the eight places, where, hull, hull max, tier.
    *  They always point where their owner points, so no heading is sent.
    *  Absent when nobody in the room flies any. */

@@ -643,6 +643,96 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
+// ---- THE WINGMEN ----
+// Declared as counts, built by the room, flown in formation, firing in
+// unison at their tier's share, hit like anything else, and back with the
+// ship when it respawns.
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "w-node");
+  ok("nobody flies wingmen by default", seat.wings.length === 0);
+
+  /* Two T2 and one T4: the best comes first. */
+  room.now += 2;
+  ws.deliver(JSON.stringify({ t: "gear", gear: [], reach: 4, drones: [0, 2, 0, 1, 0, 0, 0] }));
+  ok("three wingmen, best tier first", seat.wings.map((w: any) => w.tier).join(",") === "4,2,2",
+     seat.wings.map((w: any) => w.tier).join(","));
+  ok("their hulls are shares of the ship's",
+     seat.wings[0].hullMax === Math.round(seat.shieldMax * 1.4) && seat.wings[1].hullMax === Math.round(seat.shieldMax * 0.8),
+     `${seat.wings[0].hullMax} ${seat.wings[1].hullMax}`);
+  ok("and their magazines too", seat.wings[0].ammoMax === Math.round(seat.ammoMax * 1.5));
+  ok("eight at most", (() => {
+    room.now += 2;
+    ws.deliver(JSON.stringify({ t: "gear", gear: [], drones: [20, 0, 0, 0, 0, 0, 0] }));
+    return seat.wings.length === 8;
+  })());
+  room.now += 2;
+  ws.deliver(JSON.stringify({ t: "gear", gear: [], reach: 4, drones: [0, 2, 0, 1, 0, 0, 0] }));
+
+  /* In formation: a ring round the ship, none of them on its nose or tail. */
+  room.step();
+  const ring = seat.wings.map((w: any) => w.pos.distanceTo(seat.body.pos));
+  ok("they sit in a ring around the ship", ring.every((d: number) => Math.abs(d - 12) < 0.001), ring.map((d: number) => d.toFixed(1)).join(","));
+  ok("none on the nose or the tail", seat.wings.every((w: any) => Math.abs(w.pos.clone().sub(seat.body.pos).dot(seat.body.fwd)) < 0.001));
+  ok("and they are on the wire", (() => {
+    const st = ws.last("s");
+    return Array.isArray(st.W) && st.W.length === 3 && st.W[0][0] === seat.id && st.W[0][7] === 4;
+  })(), JSON.stringify(ws.last("s").W?.[0]));
+
+  /* With two or more the ring turns: a revolution every fifteen seconds. */
+  const before = seat.wings[0].pos.clone();
+  for (let i = 0; i < 20 * 4; i++) room.step();          /* four seconds */
+  ok("the ring turns slowly", seat.wings[0].pos.distanceTo(before) > 3 && seat.wings[0].pos.distanceTo(before) < 24,
+     `${seat.wings[0].pos.distanceTo(before).toFixed(1)} units in four seconds`);
+
+  /* ---- IN UNISON ----
+     One trigger, four streams: the player's two and one from each wingman. */
+  room.combat.bullets.length = 0;
+  room.now += 1;
+  const p0 = seat.body.pos;
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [p0.x, p0.y, p0.z], f: [0, 1, 0], u: [0, 0, 1] }));
+  const fired = room.combat.bullets;
+  ok("the wingmen fire with their owner", fired.length === 5, `${fired.length} rounds`);
+  ok("each round is credited to the owner", fired.every((b: any) => b.owner === seat.id));
+  const shares = fired.map((b: any) => b.scale ?? 1).sort();
+  ok("and carries its own tier's share", shares.join(",") === "0.8,0.8,1,1,1.4", shares.join(","));
+  ok("their magazines empty, not the ship's", seat.wings.every((w: any) => w.ammo === w.ammoMax - 1));
+
+  /* Hit: the hull comes off the wingman, not the ship. */
+  const hull = seat.wings[0].hull;
+  const shield = seat.shield;
+  room.combat.events.push({
+    kind: "wingHit", at: seat.wings[0].pos.clone(), power: 1, damage: 40,
+    who: seat.id, slot: seat.wings[0].slot,
+  });
+  room.step();
+  ok("a hit takes the wingman's hull, not the ship's", seat.wings[0].hull === hull - 40 && seat.shield === shield,
+     `${seat.wings[0].hull} of ${hull}`);
+  room.combat.events.push({
+    kind: "wingHit", at: seat.wings[0].pos.clone(), power: 1, damage: 99999,
+    who: seat.id, slot: seat.wings[0].slot,
+  });
+  room.step();
+  ok("enough of them and it is gone", seat.wings[0].hull === 0);
+  ok("everyone is told", ws.all("e").some((m: any) => (m.v as any[]).some((v) => v.k === "wingDown")));
+  ok("and it leaves the wire", (ws.last("s").W as any[]).length === 2);
+  room.combat.bullets.length = 0;
+  room.now += 1;
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [p0.x, p0.y, p0.z], f: [0, 1, 0], u: [0, 0, 1] }));
+  ok("a dead wingman does not fire", room.combat.bullets.length === 4, `${room.combat.bullets.length}`);
+
+  /* Respawn brings them back with the ship. */
+  seat.shield = 0;
+  room.down(seat);
+  seat.respawn = 0;
+  room.revive(seat);
+  ok("they come back with the ship", seat.wings.every((w: any) => w.hull === w.hullMax && w.ammo === w.ammoMax));
+  room.stop();
+}
+
 // The dragon goes over the wire as kind 2, with its two thousand.
 {
   storage.clear();

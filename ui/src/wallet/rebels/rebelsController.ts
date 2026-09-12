@@ -17,7 +17,7 @@ import {
 } from "./orbitFlight";
 import {
   clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
-  createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE, CONVERGE,
+  createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE, CONVERGE, JUNK_LIFE,
   miniMuzzle,
   STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS,
   type CombatState,
@@ -29,7 +29,7 @@ import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import { installSky, skyTexture, type SkyHandle } from "./starfield";
 import { loadModel, unitCopy, modelClips } from "./spaceAssets";
-import { loadShip } from "./shipChoice";
+import { loadShip, DEFAULT_SHIP } from "./shipChoice";
 import { loadPaint, makeRepaintable, type PaintHandle } from "./shipColours";
 import {
   fitCollider, fitMounts, halfSpan, type Mounts, placeCollider, noseOf, HULL_FORWARD, HULL_UP, type HitSphere,
@@ -47,17 +47,18 @@ import { fetchDropConfig } from "./dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "./dropCharts";
 import { addSphere, addHeld, heldCount, takeHeld } from "./rebelsInventory";
 import { REAR_KEY, inRearWindow, placeRearCamera, rearAim, tailOf, rearViewport } from "./rearGun";
+import { WING_SCALE } from "./rebelsWings";
 import { GAME_KEYS } from "./RebelsControls";
 import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
 import {
   watchAudio, audioHealth, settleAudioFromGesture, watchOutputDevices, requestAudioRebuild, noteLevel,
 } from "../../sound";
-import { createPeers, type Peers } from "./rebelsPeers";
+import { createPeers, paintFromWire, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
 import {
-  hasWeapon, owned, earnPoints, spendable, flightExtras, gearKeys, subscribeArmoury,
+  hasWeapon, owned, earnPoints, spendable, flightExtras, gearKeys, droneCounts, subscribeArmoury,
 } from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
@@ -350,6 +351,74 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      into the top-right window from a camera behind the ship looking back;
      with the crosshair in the window, the trigger fires the double shot out
      of the tail through the crosshair, and the right button a torpedo. */
+  /* Wreckage and wingmen come off the wire ready to draw and are never moved
+     here, so one shared zero stands in for the fields the drawing ignores. */
+  const _zero = new THREE.Vector3();
+
+  /* ---- THE WINGMEN ----
+     Half-size copies of the hull they fly with, one model per owner and
+     place, kept between frames and hidden when their wingman is gone. The
+     server decides where they are and whether they are still there; this
+     only puts a model at the position it was given, facing the way its
+     owner faces (Geoff: "they always point in the same direction as you
+     do"). */
+  interface WingRig { group: THREE.Group; forModel: string }
+  const wingRigs = new Map<string, WingRig>();
+  const wingProtos = new Map<string, THREE.Group | null>();
+  function wingProto(model: string): THREE.Group | null {
+    const have = wingProtos.get(model);
+    if (have !== undefined) return have;
+    wingProtos.set(model, null);                  /* asked for; not here yet */
+    void loadModel(model)
+      .then((p) => { wingProtos.set(model, p); })
+      .catch(() => { wingProtos.delete(model); });
+    return null;
+  }
+  function drawWings(): void {
+    if (!scene || !room) { return; }
+    const seen = new Set<string>();
+    for (const wing of room.wings) {
+      /* Which hull it is a copy of, and which way that hull is pointing. */
+      const mine = wing.owner === room.me();
+      const owner = mine ? null : room.others().find((p) => p.id === wing.owner);
+      const model = mine ? loadShip() : owner?.ship || DEFAULT_SHIP;
+      const facing = mine ? flight?.fwd : owner?.fwd;
+      if (!facing) continue;
+      const key = `${wing.owner}:${wing.slot}`;
+      seen.add(key);
+      let rig = wingRigs.get(key);
+      if (rig && rig.forModel !== model) {
+        scene.remove(rig.group);
+        wingRigs.delete(key);
+        rig = undefined;
+      }
+      if (!rig) {
+        const proto = wingProto(model);
+        if (!proto) continue;                     /* still loading */
+        const group = unitCopy(proto);
+        /* Painted like the ship it flies with, which is the point of it
+           being a copy. */
+        try {
+          makeRepaintable(group).apply(mine ? loadPaint() : paintFromWire(owner?.paint));
+        } catch { /* an unpainted wingman is better than none */ }
+        group.scale.setScalar(SHIP_LENGTH * WING_SCALE);
+        scene.add(group);
+        rig = { group, forModel: model };
+        wingRigs.set(key, rig);
+      }
+      rig.group.visible = true;
+      rig.group.position.copy(wing.pos);
+      scratch.target.copy(wing.pos).addScaledVector(facing, 10);
+      scratch.m4.lookAt(wing.pos, scratch.target, wing.pos.clone().normalize());
+      rig.group.quaternion.setFromRotationMatrix(scratch.m4);
+    }
+    for (const [key, rig] of wingRigs) {
+      if (seen.has(key)) continue;
+      rig.group.visible = false;
+      scene.remove(rig.group);
+      wingRigs.delete(key);
+    }
+  }
   let rearOn = false;
   /** When this cockpit last asked the room for a torpedo, so the next press
    *  is a detonate while it could still be flying. */
@@ -1032,6 +1101,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          way to mint eggs and must go, or be gated, before eggs are worth
          anything. Geoff asked for it to test, 2026-Sep-11. */
       room?.cheat("21");
+    } else if (kind === "8" && tier >= 1 && tier <= 5) {
+      /* ---- TEST: !8t, one wingman of tier t, opened ----
+         Press it again for another, up to eight. Goes with the other test
+         cheats and comes out with them. */
+      addHeld(`drone${tier}`, 1);
+      setHud({ note: `DRONE T${tier} FITTED`, noteAt: performance.now() });
     } else if (kind === "7" && tier === 7) {
       /* ---- TEST: !77, a Rear Gun, opened, into the inventory ----
          Same caveat: a free item, to be removed with the one above. */
@@ -1128,6 +1203,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          game does: the minigun, the beams, the extra tubes and magazine. */
       gear: gearKeys(loadShip()).filter((k) => k !== "pulse"),
       reach: shipReach,
+      drones: droneCounts(),
       /* Flattened in the order the shader keeps the parts, which is the order
          the other end puts them back in. */
       paint: PART_ORDER.map((k) => [
@@ -1624,6 +1700,16 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           }
           combat.torpedoes.length = 0;
           for (const t of room.torpedoes) combat.torpedoes.push({ pos: t.pos, vel: t.vel, life: 1 });
+          /* Wreckage is the room's too, and it is SOLID: a round that hits a
+             piece is spent, so a cockpit that did not draw it watched shots
+             disappear against nothing. */
+          combat.junk.length = 0;
+          for (const j of room.junk) {
+            combat.junk.push({
+              pos: j.pos, rot: j.rot, vel: _zero, spin: _zero,
+              life: JUNK_LIFE, kind: j.kind as never,
+            });
+          }
           combat.beams.length = 0;
           for (const b of room.beams) combat.beams.push(b);
           /* Gems are the room's: drawn from its list, never simulated here.
@@ -1781,6 +1867,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             if (ev.who && room && ev.who === room.me()) {
               flocks += 1;
               setHud({ flocks, note: "FLOCK DOWN", noteAt: performance.now() });
+            }
+          } else if (ev.kind === "wingHit") {
+            fx.boom(ev.at, 0.9, "cold");
+          } else if (ev.kind === "wingDown") {
+            fx.boom(ev.at, 2.2, "hot");
+            playShipExplosion(0.8);
+            if (room && ev.who === room.me()) {
+              setHud({ note: "DRONE DOWN", noteAt: performance.now() });
             }
           } else if (ev.kind === "dragon") {
             playTorpedoBlast();
@@ -1971,6 +2065,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         dflow.time("draw.tracers", () => fx!.drawTracers(combat.tracers, TRACER_LIFE));
         dflow.time("draw.coins", () => fx!.drawCoins(combat.coins));
         dflow.time("draw.gems", () => { fx!.drawGems(combat.gems); fx!.drawDrops(combat.gems); });
+        dflow.time("draw.wings", () => drawWings());
         const tDock = performance.now();
         /* The tether, drawn only while a resupply is running. */
         fx.drawDockLink(
@@ -2043,7 +2138,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            effect only on the next launch. */
         stopArmouryWatch = subscribeArmoury(() => {
           setHud({ points: spendable() });
-          room?.gear(gearKeys(loadShip()).filter((k) => k !== "pulse"), shipReach);
+          room?.gear(gearKeys(loadShip()).filter((k) => k !== "pulse"), shipReach, droneCounts());
         });
       }
       if (!stopLoadoutWatch) {
@@ -2360,6 +2455,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       });
       fx = null; protos = [];
       dragonRig = null;
+      wingRigs.clear();
+      wingProtos.clear();
       if (!suspended) {
         combat = freshCombat();
         flight = null;

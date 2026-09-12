@@ -113,6 +113,12 @@ export interface Room {
   coins: Array<{ pos: THREE.Vector3 }>;
   /** Torpedoes in the air, the room's: drawn, never simulated here. */
   torpedoes: Array<{ pos: THREE.Vector3; vel: THREE.Vector3 }>;
+  /** Wreckage, which is solid: a round that hits a piece is spent, so it has
+   *  to be drawn or shots disappear against nothing. */
+  junk: Array<{ pos: THREE.Vector3; rot: THREE.Vector3; kind: string }>;
+  /** The wingmen flying formation on every ship in the room, this one's
+   *  included. They point where their owner points. */
+  wings: Array<{ owner: string; slot: number; pos: THREE.Vector3; hull: number; hullMax: number; tier: number }>;
   wave: number;
   gauges: RoomGauges | null;
   /** Anything that happened this tick, for sound and sparks. Drained. */
@@ -136,7 +142,7 @@ export interface Room {
   /** This node won a stake: a minute of triple damage, if the room allows it. */
   bonus(): void;
   /** What the ship carries, when it changes: a gun bought, a sphere opened. */
-  gear(list: string[], reach?: number): void;
+  gear(list: string[], reach?: number, drones?: number[]): void;
   /** The flight model hit the ground or a tower, and by how much. */
   hurt(amount: number): void;
   /** Ask to be paid what is banked, to this address. The answer comes back
@@ -181,6 +187,8 @@ interface Opts {
   gear?: string[];
   /** The hull's capture reach, half its wingspan in world units. */
   reach?: number;
+  /** How many wingmen of each tier the account holds, tier one first. */
+  drones?: number[];
   /** Told when the connection comes up or goes down, for the cockpit's own
    *  display. */
   onStatus?: (s: RoomStatus) => void;
@@ -208,6 +216,8 @@ export function joinRoom(opts: Opts): Room {
     bullets: [],
     coins: [],
     torpedoes: [],
+    junk: [],
+    wings: [],
     beams: [],
     gems: [],
     wave: 0,
@@ -230,7 +240,13 @@ export function joinRoom(opts: Opts): Room {
     dock() { send({ t: "dock" }); },
     cheat(code) { send({ t: "cheat", code }); },
     bonus() { send({ t: "bonus" }); },
-    gear(list, reach) { send({ t: "gear", gear: list, ...(reach ? { reach: Math.round(reach * 100) / 100 } : {}) }); },
+    gear(list, reach, drones) {
+      send({
+        t: "gear", gear: list,
+        ...(reach ? { reach: Math.round(reach * 100) / 100 } : {}),
+        ...(drones ? { drones } : {}),
+      });
+    },
     hurt(amount) { send({ t: "hurt", d: Math.round(amount * 100) / 100 }); },
     claim(to) { send({ t: "claim", to }); },
     askPurse() { send({ t: "purse" }); },
@@ -292,6 +308,7 @@ export function joinRoom(opts: Opts): Room {
         ...(opts.paint ? { paint: opts.paint } : {}),
         ...(opts.gear ? { gear: opts.gear } : {}),
         ...(opts.reach ? { reach: Math.round(opts.reach * 100) / 100 } : {}),
+        ...(opts.drones && opts.drones.some((n) => n > 0) ? { drones: opts.drones } : {}),
       });
     };
     sock.onmessage = (ev) => {
@@ -307,6 +324,8 @@ export function joinRoom(opts: Opts): Room {
       room.bullets.length = 0;
       room.coins.length = 0;
       room.torpedoes.length = 0;
+      room.junk.length = 0;
+      room.wings.length = 0;
       room.beams.length = 0;
       room.gems.length = 0;
       room.gauges = null;
@@ -385,6 +404,16 @@ export function joinRoom(opts: Opts): Room {
           pos: new THREE.Vector3(b[0], b[1], b[2]),
           vel: new THREE.Vector3(b[3], b[4], b[5]),
           hostile: b[6] === 1, mini: b[7] === 1,
+        }));
+        room.junk = ((m.J ?? []) as number[][]).map((j) => ({
+          pos: new THREE.Vector3(j[0], j[1], j[2]),
+          rot: new THREE.Vector3(j[3], j[4], j[5]),
+          kind: j[6] === 1 ? "wingL" : j[6] === 2 ? "wingR" : "body",
+        }));
+        room.wings = ((m.W ?? []) as Array<[string, number, number, number, number, number, number, number]>).map((v) => ({
+          owner: String(v[0]), slot: Number(v[1]) || 0,
+          pos: new THREE.Vector3(v[2], v[3], v[4]),
+          hull: Number(v[5]) || 0, hullMax: Number(v[6]) || 1, tier: Number(v[7]) || 1,
         }));
         room.torpedoes = ((m.T ?? []) as number[][]).map((t) => ({
           pos: new THREE.Vector3(t[0], t[1], t[2]),
