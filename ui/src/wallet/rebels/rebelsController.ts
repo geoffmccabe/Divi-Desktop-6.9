@@ -11,15 +11,15 @@ import * as THREE from "three";
 import type { GlobeFlight } from "../GlobeMap";
 import {
   createFlight, stepFlight, MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS, MAX_VIEW,
-  shieldMaxFor, recharge, supercharge, isFull,
+  shieldMaxFor, isFull,
   GUARD_ABSORB, GUARD_SECONDS,
   type Flight, type Stick,
 } from "./orbitFlight";
 import {
-  clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE, spawnDragon,
-  createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles, fireBeam, TORPEDO_FUSE,
-  fireMini, miniMuzzle, spawnFleet,
-  STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
+  clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
+  createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE,
+  miniMuzzle,
+  STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS,
   type CombatState,
   type Enemy, type ShipClass,
 } from "./rebelsCombat";
@@ -57,7 +57,7 @@ import { createPeers, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
 import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
 import {
-  hasWeapon, owned, earnPoints, spendable, flightExtras, gearKeys,
+  hasWeapon, owned, earnPoints, spendable, flightExtras, gearKeys, subscribeArmoury,
 } from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
@@ -297,8 +297,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      released, and the next attach puts them back into the new scene. */
   let suspended = false;
   let attachCount = 0;
-  /* Flock members downed by this player, by fleet, when flying alone. */
-  const flockTally = new Map<number, number>();
   let flocks = 0;
   /* The map re-attaches within the same tick when it rebuilds, so a detach
      that is NOT followed by an attach almost at once was the panel closing,
@@ -306,6 +304,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      stopped. Nothing else can tell the two apart at detach time. */
   let endAt: ReturnType<typeof setTimeout> | null = null;
   let stopLoadoutWatch: (() => void) | null = null;
+  let stopArmouryWatch: (() => void) | null = null;
 
   /** The run has ended for real (the panel closed mid-flight). */
   function endSuspended(): void {
@@ -478,7 +477,16 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let hudAt = 0;
   /* Winning a stake on your own node makes your guns hit three times as hard
      for a minute. The map already tracks the win; this just asks it. */
-  const damageScale = () => (userWonRecently(STAKE_BONUS_MS) ? STAKE_BONUS : 1);
+  /* ---- the stake bonus ----
+     Only this wallet knows its node won a block, so it tells the server,
+     which grants the minute of triple damage and caps how often it will.
+     Sent once per win: the flag clears when the window closes. */
+  let bonusTold = false;
+  function tellBonus(): void {
+    const won = userWonRecently(STAKE_BONUS_MS);
+    if (won && !bonusTold) { room?.bonus(); bonusTold = true; }
+    if (!won) bonusTold = false;
+  }
   /* Last frame's docking progress, so the station sound starts and stops on
      the edges rather than being re-triggered sixty times a second. */
   let wasDocking = false;
@@ -735,9 +743,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     if (!key) { setHud({ note: "NOTHING TO USE: OPEN A SPHERE IN YOUR INVENTORY (I)", noteAt: performance.now() }); return; }
     if (key === "recharge" && full) { setHud({ note: "ALREADY FULL", noteAt: performance.now() }); return; }
     if (!takeHeld(key, 1)) return;
-    if (room && room.status() === "live") room.use(key);
-    else if (key === "recharge") recharge(flight, flight.extras);
-    else supercharge(flight, flight.extras);
+    room?.use(key);
     playBounce();
     setHud({ note: key === "recharge" ? "INSTANT RECHARGE" : "SUPERCHARGE", noteAt: performance.now() });
   }
@@ -1006,22 +1012,16 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     const kind = code[1];
     const tier = Number(code[2]);
     if (!flight) return;
-    /* In company the fight is the room's, so the room spawns the same
-       things: one game, solo or shared. */
-    const inRoom = !!room && room.status() === "live";
+    /* The fight is the server's, so the server spawns these. */
     if (kind === "1" && tier >= 1 && tier <= 6) {
-      if (inRoom) room!.cheat(code.slice(1));
-      else spawnFleet(combat, tier, flight.pos, flight.fwd, { cheat: true });
+      room?.cheat(code.slice(1));
     } else if (kind === "2" && tier === 1) {
       /* ---- TEST: !21, the dragon, in front of you ----
          Thirty-five units ahead, crossing left to right so it can be seen
          and chased. It is a REAL dragon (it leaves its egg), so this is a
          way to mint eggs and must go, or be gated, before eggs are worth
          anything. Geoff asked for it to test, 2026-Sep-11. */
-      if (inRoom) { room!.cheat("21"); return; }
-      const ahead = flight.pos.clone().addScaledVector(flight.fwd, 35);
-      const across = new THREE.Vector3().crossVectors(flight.fwd, flight.up).normalize();
-      spawnDragon(combat, ahead, across);
+      room?.cheat("21");
     } else if (kind === "7" && tier === 7) {
       /* ---- TEST: !77, a Rear Gun, opened, into the inventory ----
          Same caveat: a free item, to be removed with the one above. */
@@ -1264,14 +1264,28 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           secondary: false, guard: false, mini: false,
         };
         const tFlight = performance.now();
+        const shieldsWere = flight.shields;
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
         dflow.add("flight", performance.now() - tFlight);
+        /* ---- flying into things ----
+           The ground and the towers are the flight model's rule: it owns the
+           bounce, the angle, the speed and the cost of grinding along the
+           surface, and there is one copy of that rule and it is here. The
+           HULL, though, is the server's number, so whatever the flight model
+           just took off is handed over and the local figure put back. Any
+           loss, not only the bang: most of what killing yourself on a planet
+           costs is the dragging afterwards, which raises no impact. */
+        const selfHurt = shieldsWere - flight.shields;
+        if (selfHurt > 0) {
+          flight.shields = shieldsWere;
+          room?.hurt(selfHurt);
+        }
         if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
         nearTower = res.nearTower;
         dockBlock = res.dockBlock;
         /* The resupply finished: in company the room holds the gauges, so it
            is told, checks the ship is at a tower, and refills. */
-        if (res.docked && room && room.status() === "live") room.dock();
+        if (res.docked) room?.dock();
 
         /* ---- the ship you can see, and the camera behind it ----
            The hull sits at the flight position and the CAMERA pulls back from
@@ -1430,8 +1444,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              whether this ship had a round left, whether it may fire yet, and
              what it hits. Firing locally as well would put a round in the air
              that nobody else can see and that scores nothing. */
-          if (inRoom && room) room.fire("mini", muzzle, flight.fwd, aimDir);
-          else fireMini(combat, muzzle, camera.position, aimDir);
+          room?.fire("mini", muzzle, flight.fwd, aimDir);
           fx.muzzle(muzzle);
           playMiniSound();
         }
@@ -1448,8 +1461,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             beamAt = BEAM_SECONDS;
             flight.ammo -= 1;
             const from = shipNose(flight);
-            if (inRoom && room) room.fire("beam", from, flight.fwd, undefined, armed.key);
-            else fireBeam(combat, armed, from, flight.fwd, "", damageScale());
+            room?.fire("beam", from, flight.fwd, undefined, armed.key);
             fx.muzzle(from);
             playGunSound();
           }
@@ -1471,8 +1483,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           const rearUp = new THREE.Vector3(0, 1, 0).applyQuaternion(rearCamera.quaternion);
           const muzzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
           gunMuzzles(rearCamera.position, aim, rearUp, rearCamera.fov, rearCamera.aspect, muzzles);
-          if (inRoom && room) room.fire("main", rearCamera.position, aim, undefined, undefined, rearUp);
-          else fireGuns(combat, rearCamera.position, aim, rearUp, rearCamera.fov, rearCamera.aspect, "", muzzles);
+          room?.fire("main", rearCamera.position, aim, undefined, undefined, rearUp);
           fx.muzzle(muzzles[0]);
           fx.muzzle(muzzles[1]);
           playGunSound();
@@ -1503,8 +1514,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             muzzles = [new THREE.Vector3(), new THREE.Vector3()];
             gunMuzzles(flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, muzzles);
           }
-          if (inRoom && room) room.fire("main", flight.pos, flight.fwd, undefined, undefined, s.up);
-          else fireGuns(combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, "", at);
+          room?.fire("main", flight.pos, flight.fwd, undefined, undefined, s.up);
           fx.muzzle(muzzles[0]);
           fx.muzzle(muzzles[1]);
           playGunSound();
@@ -1563,6 +1573,20 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           }
           /* Beams too: yours and everyone else's, drawn from the room's list
              so a beam is seen by the whole room and hits what the room says. */
+          /* ---- streaks ----
+             Every round in the air gets a line from where it was a fortieth
+             of a second ago to where it is now. Rebuilt each tick from the
+             wire rather than tracked, because the cockpit has no history of
+             a round it did not fire and cannot recognise one from one tick
+             to the next. */
+          combat.tracers.length = 0;
+          for (const b of combat.bullets) {
+            combat.tracers.push({
+              from: b.pos.clone().addScaledVector(b.vel, -STREAK_SECONDS),
+              to: b.pos,
+              life: TRACER_LIFE, hostile: b.hostile, mini: !!b.mini, live: true,
+            });
+          }
           combat.torpedoes.length = 0;
           for (const t of room.torpedoes) combat.torpedoes.push({ pos: t.pos, vel: t.vel, life: 1 });
           combat.beams.length = 0;
@@ -1605,6 +1629,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             flight.guards = g.guards;
             score = g.score;
             divi = g.divi;
+            /* ---- THE SERVER DECIDES WHEN YOU ARE DEAD ----
+               It holds the hull, so it is the only thing that can say. The
+               cockpit used to work this out from its own copy inside the
+               hit-event handler, which missed every death the handler did
+               not see: flying into the planet, for one, whose damage the
+               flight model works out and the server applies. */
+            if (g.dead && !hud.dead) die();
+            if (g.respawn > 0) respawnAt = performance.now() + g.respawn * 1000;
           }
           /* Once. others() builds a fresh array each call. */
           const crew = room.others();
@@ -1615,23 +1647,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         }
 
         dflow.add("room", performance.now() - tRoom);
-        /* ---- fighters and their fire ----
-           Only when nobody else is running them. */
+        /* ---- THE FIGHT IS THE SERVER'S ----
+           Nothing here simulates it. There is one game and it runs in one
+           place; the cockpit flies the ship, draws what it is told and asks
+           for shots. This used to fall back to running the whole fight
+           locally whenever the connection was not up, which meant two copies
+           of every feature and, for anything hooked up to only one of them,
+           a bug that appeared or vanished depending on the network: the
+           tower resupply, torpedoes and the cheat keys all landed that way.
+           Geoff, 2026-Sep-12: "there's only ONE game, and it's always
+           multiplayer... There shouldn't be two different single or
+           multiplayer game modes." */
         const tCombat = performance.now();
-        if (!inRoom) stepCombat(combat, dt, {
-          tips: tipList,
-          playerPos: flight.pos,
-          playerFwd: flight.fwd,
-          /* In third person the HULL is the target, fitted from the model's own
-             geometry. In the cockpit there is nothing on screen to judge a near
-             miss against, so the single radius round the camera is both fairer
-             and cheaper. */
-          players: hullWorld.length > 0
-            ? [{ id: "", pos: flight.pos, fwd: flight.fwd, hull: hullWorld, reach: shipReach }]
-            : undefined,
-          reach: shipReach,
-          damageScale: damageScale(),
-        });
+        tellBonus();
 
         /* One button does both jobs. If a torpedo is already in the air the
            press sets it off; otherwise it launches the next one. That is what
@@ -1642,38 +1670,24 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             placeRearCamera(rearCamera, flight);
             const aim = rearAim(rearCamera, cursor);
             const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
-            if (inRoom && room) { room.fire("torp", tail, aim); torpSentAt = performance.now(); }
-            else { flight.torpedoes -= 1; fireTorpedo(combat, tail, aim); }
+            room?.fire("torp", tail, aim);
+            torpSentAt = performance.now();
             playTorpedoSound();
           }
         } else if (res.heavyPress) {
           const slot = weaponAt("secondary", weapons.secondary);
           if (slot && !slot.ready) {
             setHud({ note: `${slot.name}: not yet fitted`, noteAt: performance.now() });
-          } else if (inRoom && room) {
-            /* ---- in company the torpedo is the room's ----
-               It flies in the room's simulation and comes back on the wire
-               to be drawn. It used to be launched locally here, where nothing
-               stepped it: a flash at the nose, then the next press blew it
-               up on the spot, and the rack count came straight back from the
-               room untouched (Geoff, 2026-Sep-12). Press once to launch,
-               again while one of yours is in the air to set it off. */
-            const mineInAir = performance.now() - torpSentAt < TORPEDO_FUSE * 1000 && combat.torpedoes.length > 0;
-            if (mineInAir) { room.detonate(); torpSentAt = 0; }
-            else if (flight.torpedoes > 0) {
-              room.fire("torp", shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
-              torpSentAt = performance.now();
-              playTorpedoSound();
-            }
           } else {
-            const w = {
-              tips: tipList, playerPos: flight.pos, playerFwd: flight.fwd,
-              wanted: 0, damageScale: damageScale(),
-            };
-            if (!detonateOldest(combat, w) && flight.torpedoes > 0) {
-              flight.torpedoes -= 1;
-              /* Out of the tube at the nose, not out of the camera. */
-              fireTorpedo(combat, shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
+            /* ---- the torpedo is the server's ----
+               It flies there and comes back on the wire to be drawn. Press
+               once to launch, again while one of yours is still in the air to
+               set it off. */
+            const mineInAir = performance.now() - torpSentAt < TORPEDO_FUSE * 1000 && combat.torpedoes.length > 0;
+            if (mineInAir) { room?.detonate(); torpSentAt = 0; }
+            else if (flight.torpedoes > 0) {
+              room?.fire("torp", shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
+              torpSentAt = performance.now();
               playTorpedoSound();
             }
           }
@@ -1714,22 +1728,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           } else if (ev.kind === "enemyDown") {
             fx.boom(ev.at, 3, "hot");
             playShipExplosion();
-            /* ---- the flock tally, alone ----
-               In a room the room decides. Alone, the same rule is kept here
-               so the count on the HUD means the same thing: over half of a
-               fleet's members, and the kill lands when its last one falls.
-               Nothing here reaches the ledger. */
-            if (!inRoom && ev.fleet !== undefined && (ev.worth ?? 0) > 0) {
-              flockTally.set(ev.fleet, (flockTally.get(ev.fleet) ?? 0) + 1);
-              if ((ev.fleetLeft ?? 1) === 0) {
-                const mine = flockTally.get(ev.fleet) ?? 0;
-                flockTally.delete(ev.fleet);
-                if ((ev.fleetTotal ?? 0) > 0 && mine > (ev.fleetTotal ?? 0) / 2) {
-                  flocks += 1;
-                  setHud({ flocks, note: `FLOCK DOWN: ${mine} of ${ev.fleetTotal}`, noteAt: performance.now() });
-                }
-              }
-            }
+            /* The flock kill itself is the server's: it is the only thing
+               that sees every member and every shooter, and it arrives as its
+               own event (flockDown), below. */
             if (ev.tier) {
               lifetimeTiers[ev.tier - 1] = (lifetimeTiers[ev.tier - 1] ?? 0) + 1;
               setHud({ tierKills: lifetimeTiers.slice() });
@@ -1966,7 +1967,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             kills: Math.floor(combat.kills),
             score,
             junk: combat.junk.length,
-            bonus: damageScale() > 1,
+            bonus: (room?.gauges?.bonus ?? 0) > 0,
             docked: flight.dock >= 1,
             nearTower,
             dockBlock,
@@ -2001,6 +2002,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       setHud({ points: spendable() });
       /* What the account has, folded in: a reinstall or a second machine gets
          its guns back. Then every change goes up. */
+      if (!stopArmouryWatch) {
+        /* A gun bought, a sphere opened or four things forged changes what
+           this ship carries, and the server has to be told or it takes
+           effect only on the next launch. */
+        stopArmouryWatch = subscribeArmoury(() => {
+          setHud({ points: spendable() });
+          room?.gear(gearKeys(loadShip()).filter((k) => k !== "pulse"), shipReach);
+        });
+      }
       if (!stopLoadoutWatch) {
         stopLoadoutWatch = watchLoadout();
         void loadLoadoutRemote().then((moved) => { if (moved) setHud({ points: spendable() }); });
@@ -2031,6 +2041,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         tipList = ipList.map((ip) => api.tips.get(ip)!.clone());
         selfIp = api.selfIp ?? "";
         homeIndex = api.selfIp ? ipList.indexOf(api.selfIp) : -1;
+        /* ---- ONE GAME ----
+           The server runs the fight. It is joined the moment the map hands
+           over its scene, not when LAUNCH is pressed, so the connection is
+           up and settled before anybody flies. See the note on connectRoom.
+        */
+        connectRoom();
 
         savedNear = camera.near;
         savedFar = camera.far;
@@ -2318,6 +2334,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     hud: () => hud,
     subscribe(fn) { listeners.add(fn); fn(hud); return () => { listeners.delete(fn); }; },
     launch() {
+      /* No server, no game. There is one fight and it is not here. */
+      if (!room || room.status() !== "live") {
+        setHud({ note: "CONNECTING TO THE FIGHT", noteAt: performance.now() });
+        return;
+      }
       flying = true;
       /* ---- THE WORLD GETS BIGGER ----
          Every tower drops to half its size the moment a game starts, and the
@@ -2335,7 +2356,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         const tips = scaleTowers(WORLD_SCALE);
         tipList = ipList.map((ip) => tips.get(ip)?.clone() ?? new THREE.Vector3());
       }
-      if (!combat.wave) startWave(combat, 1);
       /* This is a real click, which is the only thing a webview will start
          audio from. Decoding began back at attach; this is what lets it be
          heard. */
@@ -2369,8 +2389,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     },
     respawn() {
       if (respawnAt > performance.now()) return;
+      if (!room || room.status() !== "live") {
+        setHud({ note: "CONNECTING TO THE FIGHT", noteAt: performance.now() });
+        return;
+      }
       score = 0;
-      if (!combat.wave) startWave(combat, 1);
       playGameplay();
       startAt(homeIndex);
       flying = true;
@@ -2386,6 +2409,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       endSuspended();
       stopLoadoutWatch?.();
       stopLoadoutWatch = null;
+      stopArmouryWatch?.();
+      stopArmouryWatch = null;
     },
   };
 }

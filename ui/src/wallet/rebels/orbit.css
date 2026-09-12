@@ -947,3 +947,17 @@
 }
 .orbit-rear.aiming span { color: #ff45d0; }
 .orbit-cross.rear::before, .orbit-cross.rear::after { background: #ff45d0; }
+
+/* Connection lost mid-flight. The fight is the server's; without it the sky
+   is empty rather than peaceful, so it says so. */
+.orbit-offline {
+  position: absolute; left: 50%; top: 18%; transform: translateX(-50%);
+  padding: 7px 16px;
+  font: 700 13px/1 var(--font-mono); letter-spacing: 0.2em;
+  color: #ffd83a; background: rgb(20 10 0 / 0.55);
+  border: 1px solid rgb(255 216 58 / 0.5); border-radius: 4px;
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  pointer-events: none; z-index: 13;
+  animation: orbit-offline-pulse 1.4s ease-in-out infinite;
+}
+@keyframes orbit-offline-pulse { 0%, 100% { opacity: 0.95; } 50% { opacity: 0.5; } }

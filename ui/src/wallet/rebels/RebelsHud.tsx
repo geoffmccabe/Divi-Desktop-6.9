@@ -317,6 +317,14 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         <div className="orbit-note">{hud.note}</div>
       )}
 
+      {/* The connection, when it is not there. The fight is the server's, so
+          this is the difference between a quiet sky and a lost one. */}
+      {hud.launched && !hud.broken && hud.room !== "live" && (
+        <div className="orbit-offline">
+          {hud.room === "refused" ? "LOST THE FIGHT: RETRYING" : "RECONNECTING"}
+        </div>
+      )}
+
       <RebelsHealthBar />
 
       {help && <RebelsControls onClose={() => setHelp(false)} extras={flightExtras(loadShip())} />}
@@ -345,8 +353,17 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
             </div>
           </div>
           <div className="orbit-buttons">
-            <button type="button" onClick={() => ctl.launch()} disabled={!hud.ready}>
-              {hud.ready ? "LAUNCH" : slow ? "GLOBE NOT READY" : "FINDING YOUR NODE…"}
+            {/* ---- ONE GAME ----
+                The fight runs on the server and nowhere else, so there is
+                nothing to launch into until the connection is up. */}
+            <button type="button" onClick={() => ctl.launch()} disabled={!hud.ready || hud.room !== "live"}>
+              {!hud.ready
+                ? (slow ? "GLOBE NOT READY" : "FINDING YOUR NODE…")
+                : hud.room === "live"
+                  ? "LAUNCH"
+                  : hud.room === "refused"
+                    ? "CANNOT REACH THE FIGHT"
+                    : "CONNECTING TO THE FIGHT…"}
             </button>
             <button type="button" className="orbit-secondary" onClick={() => setScores(true)}>
               HIGH SCORES
@@ -373,9 +390,11 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
             <button
               type="button"
               onClick={() => ctl.respawn()}
-              disabled={hud.respawnIn > 0}
+              disabled={hud.respawnIn > 0 || hud.room !== "live"}
             >
-              {hud.respawnIn > 0 ? `REJOIN IN ${Math.ceil(hud.respawnIn)}` : "LAUNCH AGAIN"}
+              {hud.respawnIn > 0
+                ? `REJOIN IN ${Math.ceil(hud.respawnIn)}`
+                : hud.room === "live" ? "LAUNCH AGAIN" : "CONNECTING TO THE FIGHT…"}
             </button>
             <button type="button" className="orbit-secondary" onClick={() => setScores(true)}>
               HIGH SCORES

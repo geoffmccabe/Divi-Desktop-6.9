@@ -89,11 +89,25 @@ export interface UseIn { t: "use"; k: "recharge" | "supercharge" }
 /** The resupply at a tower finished. The room checks the ship is at one. */
 export interface DockIn { t: "dock" }
 
+/** What this ship carries, when it changes mid-flight: a gun bought, a sphere
+ *  opened, four things forged. Without this the server only ever knew what was
+ *  declared on join, and anything bought while flying did nothing. */
+export interface GearIn { t: "gear"; gear: string[]; reach?: number }
+
+/** The cockpit's flight model says the ship hit the ground or a tower, and by
+ *  how much. See the room's onHurt for what is and is not trusted here. */
+export interface HurtIn { t: "hurt"; d: number }
+
+/** This node just won a stake, which is worth a minute of triple damage.
+ *  The client's word, as the gear is, so the room caps how often it counts. */
+export interface BonusIn { t: "bonus" }
+
 /** A test cheat ("21" the dragon, "1x" a flock of tier x). Marked to remove
  *  with the cockpit's cheat key. */
 export interface CheatIn { t: "cheat"; code: string }
 
-export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn | DockIn | CheatIn;
+export type ClientMessage =
+  JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn | DockIn | CheatIn | BonusIn | GearIn | HurtIn;
 
 /* ---- room to cockpit ---- */
 
@@ -149,6 +163,8 @@ export interface YouOut {
   kills: number;
   /** Whole DIVI earned and not yet claimed. */
   divi: number;
+  /** Seconds of triple damage left, when there are any. */
+  bonus?: number;
   dead?: 1;
   /** Seconds until they can fly again. */
   respawn?: number;

@@ -428,3 +428,39 @@ phase ships on its own with tests, docs and a version.
   prototype's bones, which are nowhere in the scene, so the mesh was drawn
   at the origin, inside the planet. Cloned with its skeleton now
   (`unitCopy(..., { skinned: true })`).
+
+## ONE GAME (2026-Sep-12, v69.9.32)
+
+Geoff: "there's only ONE game, and it's always multiplayer... There
+shouldn't be two different single or multiplayer game modes." He was right,
+and the second copy is gone.
+
+- The cockpit no longer simulates the fight at all. `stepCombat` is not
+  called there; the enemies, bullets, torpedoes, coins, gems, drops, waves
+  and the dragon are the server's, and the cockpit flies the ship, draws
+  what it is told and asks for shots. The compiler found the rest: every
+  local `fireGuns`, `fireMini`, `fireTorpedo`, `fireBeam`, `spawnFleet`,
+  `spawnDragon`, `startWave` and `detonateOldest` call is deleted.
+- The connection opens at attach, not at launch, and LAUNCH is refused
+  until it is live ("CONNECTING TO THE FIGHT"). A drop mid-flight shows
+  "RECONNECTING" over the cockpit.
+- Four things were broken BECAUSE of the two copies, all fixed by the move:
+  gear bought or forged mid-flight never reached the server (new `gear`
+  message, maxima move but the magazine does not refill); the stake
+  bonus, three times damage for a minute, applied only in the dead copy
+  (declared with a `bonus` message, per seat, capped to one claim every
+  five minutes, and the fight now asks for the scale per shooter); flying
+  into the planet did nothing, since the flight model's damage was
+  overwritten by the server's hull (any self-inflicted loss is now sent
+  with `hurt`, capped per second); and a death decided by the server was
+  never noticed by the cockpit at all (it honours `dead` and `respawn`).
+- Streaks behind rounds are back: the cockpit has no history of a round it
+  did not fire, so a trail is drawn from where each one was a fortieth of
+  a second ago (`STREAK_SECONDS`), rebuilt from the wire every tick.
+- The cockpit's own test now runs the REAL server in the same process over
+  a pair of sockets, so a shot travels the wire it travels in the app. It
+  is the one file excluded from the ui typecheck, because it pulls in the
+  worker; the server's project checks its own half.
+- STILL MISSING, found by this: wreckage. Dead fighters used to come apart
+  into three tumbling pieces, which only ever happened in the copy that is
+  gone. It is decoration, driven by the enemyDown event, and wants doing.

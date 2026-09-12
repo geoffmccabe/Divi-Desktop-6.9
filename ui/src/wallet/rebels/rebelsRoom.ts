@@ -62,6 +62,8 @@ export interface RoomGauges {
   divi: number;
   dead: boolean;
   respawn: number;
+  /** Seconds of triple damage left. */
+  bonus: number;
 }
 
 export interface RoomEvent {
@@ -131,6 +133,12 @@ export interface Room {
   dock(): void;
   /** Test cheats, so the shared fight has the same ones as the solo one. */
   cheat(code: string): void;
+  /** This node won a stake: a minute of triple damage, if the room allows it. */
+  bonus(): void;
+  /** What the ship carries, when it changes: a gun bought, a sphere opened. */
+  gear(list: string[], reach?: number): void;
+  /** The flight model hit the ground or a tower, and by how much. */
+  hurt(amount: number): void;
   /** Ask to be paid what is banked, to this address. The answer comes back
    *  as a purse, with `why` set if it was refused. */
   claim(to: string): void;
@@ -221,6 +229,9 @@ export function joinRoom(opts: Opts): Room {
     use(k) { send({ t: "use", k }); },
     dock() { send({ t: "dock" }); },
     cheat(code) { send({ t: "cheat", code }); },
+    bonus() { send({ t: "bonus" }); },
+    gear(list, reach) { send({ t: "gear", gear: list, ...(reach ? { reach: Math.round(reach * 100) / 100 } : {}) }); },
+    hurt(amount) { send({ t: "hurt", d: Math.round(amount * 100) / 100 }); },
     claim(to) { send({ t: "claim", to }); },
     askPurse() { send({ t: "purse" }); },
     purse: null,
@@ -413,6 +424,7 @@ export function joinRoom(opts: Opts): Room {
           divi: Number(m.divi) || 0,
           dead: m.dead === 1,
           respawn: Number(m.respawn) || 0,
+          bonus: Number(m.bonus) || 0,
         };
         return;
 

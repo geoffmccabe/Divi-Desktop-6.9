@@ -542,7 +542,7 @@ const home: [number, number, number] = [0, 0, R + 8];
   const [l, r] = room.combat.bullets.slice(-2);
   const across = l.pos.clone().sub(r.pos);
   const expectRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0)).normalize();
-  ok("a rolled ship's muzzles follow its own up", Math.abs(Math.abs(across.clone().normalize().dot(expectRight)) - 1) < 1e-6, across.toArray().map((n) => n.toFixed(2)).join(","));
+  ok("a rolled ship's muzzles follow its own up", Math.abs(Math.abs(across.clone().normalize().dot(expectRight)) - 1) < 1e-6, across.toArray().map((n: number) => n.toFixed(2)).join(","));
   ok("without an up the room falls back to away-from-the-planet", (() => {
     room.combat.bullets.length = 0;
     room.now += 1;
@@ -582,6 +582,36 @@ const home: [number, number, number] = [0, 0, R + 8];
   ok("one at a time", room.combat.enemies.filter((e: any) => e.dragon).length === 1);
   ws.deliver(JSON.stringify({ t: "cheat", code: "13" }));
   ok("a flock cheat too, worth nothing", room.combat.enemies.some((e: any) => e.drone && e.cheat));
+  room.stop();
+}
+
+// The stake bonus belongs to a seat, is the client's word, and is capped.
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const wsA = new FakeSocket(), wsB = new FakeSocket();
+  const a = join(room, wsA, "a-node");
+  const b = join(room, wsB, "b-node");
+  const { spawnFleet, hurtEnemy } = await import("../../../ui/src/wallet/rebels/rebelsCombat");
+  wsA.deliver(JSON.stringify({ t: "bonus" }));
+  ok("the seat that asked has it", a.bonusUntil > room.now && b.bonusUntil < room.now);
+  ok("and is told how long is left", wsA.last("you").bonus > 0 && !wsB.last("you").bonus);
+
+  /* The fight asks per shooter, which is the whole point: one number for
+     the world would give everyone in the room somebody else's bonus. */
+  const scale = room.world.damageScale;
+  ok("the fight asks per shooter", typeof scale === "function");
+  ok("triple for the one with it, ordinary for the other", scale(a.id) === 3 && scale(b.id) === 1, `${scale(a.id)} ${scale(b.id)}`);
+  ok("and for nobody at all", scale("") === 1);
+  void spawnFleet; void hurtEnemy;
+
+  a.bonusUntil = -99;
+  wsA.deliver(JSON.stringify({ t: "bonus" }));
+  ok("asking again straight away gets nothing", a.bonusUntil < room.now);
+  room.now += 400;
+  wsA.deliver(JSON.stringify({ t: "bonus" }));
+  ok("after five minutes it can be claimed again", a.bonusUntil > room.now);
   room.stop();
 }
 

@@ -450,6 +450,16 @@ export const WARN_RANGE = 34;
 export const PLAYER_HIT_R = 1.4;
 
 export const TRACER_LIFE = 3;
+/**
+ * How long a streak is, in seconds of the round's own flight.
+ *
+ * The cockpit does not run the fight, so it has no history of any round: it
+ * is handed a list of positions and velocities once a tick. A trail from
+ * where a round was a moment ago to where it is now needs no history, which
+ * is why it is measured in time rather than kept as state. At the round's
+ * speed this is about ten units, ten fighters long.
+ */
+export const STREAK_SECONDS = 0.04;
 export const TRACER_MAX = 220;
 
 export interface Tracer {
@@ -735,6 +745,11 @@ export function rollLaserDamage(): number {
  * Also does the knockback and the tumble, because they are the same event and
  * splitting them apart is how one of them ends up forgotten at a call site.
  */
+/** The damage multiplier for one shooter. */
+export function scaleFor(w: CombatWorld, owner: string): number {
+  return typeof w.damageScale === "function" ? w.damageScale(owner) : w.damageScale;
+}
+
 export function hurtEnemy(
   c: CombatState,
   e: Enemy,
@@ -1526,9 +1541,15 @@ export interface CombatWorld {
   players?: PlayerBody[];
   /** The solo ship's capture reach (see clampReach). */
   reach?: number;
-  /** Multiplies everything the player's guns do. Three for a minute after
-   *  winning a stake on your node. */
-  damageScale: number;
+  /**
+   * Multiplies everything a player's guns do. Three for a minute after
+   * winning a stake on your node.
+   *
+   * A FUNCTION when more than one ship is in the fight, because the bonus
+   * belongs to a player and not to the world: the server passes one that
+   * looks up the shooter's seat. A plain number is the one-ship case.
+   */
+  damageScale: number | ((owner: string) => number);
 }
 
 /* The roster, with the solo case folded in. Reused rather than rebuilt, since
@@ -1645,7 +1666,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
         const e = c.enemies[j];
         if (!segmentHit(from, b.pos, e.pos, enemyRadius(e))) continue;
         spent = true;
-        const scale = (b.mini ? MINI_DAMAGE : 1) * w.damageScale;
+        const scale = (b.mini ? MINI_DAMAGE : 1) * scaleFor(w, b.owner ?? "");
         hurtEnemy(c, e, rollLaserDamage() * scale, from, b.owner ?? "");
       }
       /* Wreckage is solid: shoot a piece and it goes. */

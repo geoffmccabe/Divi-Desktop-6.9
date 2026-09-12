@@ -31,11 +31,11 @@ import {
   createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
   setDropRandomForTests, clampReach, spawnDragon, spawnFleet,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
-  MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE,
+  MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE, STAKE_BONUS, STAKE_BONUS_MS,
   type CombatState, type CombatWorld, type PlayerBody,
 } from "../../../ui/src/wallet/rebels/rebelsCombat";
 import {
-  MAX_SHIELD, MAX_AMMO, MAX_TORPEDOES, MAX_GUARDS, GUARD_SECONDS, GUARD_ABSORB,
+  MAX_SHIELD, MAX_AMMO, MAX_TORPEDOES, MAX_GUARDS, GUARD_SECONDS, GUARD_ABSORB, CRASH_DAMAGE,
   BOOST,
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
@@ -102,8 +102,16 @@ interface Seat {
   extras: Extras;
   /** Room clock of the last Y, so a client cannot pour recharges in. */
   lastUse: number;
-  /** And of the last tower resupply. */
+  /** And of the last tower resupply, and of the last gear declaration. */
   lastDock: number;
+  lastGear: number;
+  /** Self-inflicted damage allowed in the current second. */
+  hurtWindow: number;
+  hurtSpent: number;
+  /** Room clock until which this seat does triple damage, and when it last
+   *  claimed the bonus, so the claim cannot simply be repeated. */
+  bonusUntil: number;
+  lastBonus: number;
   /** The most this ship can move in a second, from its gear. */
   topSpeed: number;
   lastBeam: number;
@@ -177,7 +185,8 @@ export class RebelsRoom {
       playerPos: new THREE.Vector3(),
       playerFwd: new THREE.Vector3(0, 0, 1),
       players: [],
-      damageScale: 1,
+      /* Per shooter: the stake bonus belongs to a seat. */
+      damageScale: (owner: string) => (this.seats.get(owner)?.bonusUntil ?? -99) > this.now ? STAKE_BONUS : 1,
     };
   }
 
@@ -215,7 +224,10 @@ export class RebelsRoom {
       id, ws, node: "", name: "", ship: "", paint: undefined,
       account: from, lastClaim: -99,
       gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, shieldMax: MAX_SHIELD, topSpeed: topSpeedFor(), lastBeam: -99,
-      extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99, lastDock: -99,
+      extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99, lastDock: -99, lastGear: -99, hurtWindow: -99, hurtSpent: 0, bonusUntil: -99,
+      /* Far enough back that the first claim in a fresh room is not inside
+         the five-minute gap: the room clock starts at zero. */
+      lastBonus: -1e9,
       tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0], items: {},
       home: new THREE.Vector3(0, 0, R),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
@@ -571,6 +583,9 @@ export class RebelsRoom {
       case "use": return this.onUse(seat, msg);
       case "dock": return this.onDock(seat);
       case "cheat": return this.onCheat(seat, msg);
+      case "bonus": return this.onBonus(seat);
+      case "gear": return this.onGear(seat, msg);
+      case "hurt": return this.onHurt(seat, msg);
       case "claim": { void this.onClaim(seat, msg); return; }
       case "purse": {
         /* Rate-limited the same way: a panel that polls is fine, a loop that
@@ -613,24 +628,7 @@ export class RebelsRoom {
     seat.body.reach = clampReach(Number(m.reach));
     /* Gear: known keys only, bounded, and the magazine and rack sized from
        the items in it exactly as the solo game sizes them. */
-    seat.gear = new Set(
-      (Array.isArray(m.gear) ? m.gear : []).slice(0, 32)
-        .filter((k): k is string => typeof k === "string" && (!!weaponByKey(k) || ALL_ITEMS.some((i) => i.key === k))),
-    );
-    const gearList = [...seat.gear];
-    const extras: Extras = {
-      torpedoes: torpedoBonus(gearList), magazine: magBonus(gearList),
-      superMult: superBoostMult(gearList, SUPER_BOOST_MULT), strafeMult: strafeMult(gearList),
-      vstrafeMult: vstrafeMult(gearList), hullMult: hullMult(gearList),
-    };
-    seat.extras = extras;
-    seat.ammoMax = ammoFor(extras);
-    seat.torpsMax = torpedoesFor(extras);
-    seat.shieldMax = shieldMaxFor(extras);
-    seat.topSpeed = topSpeedFor(extras);
-    seat.ammo = seat.ammoMax;
-    seat.torps = seat.torpsMax;
-    seat.shield = seat.shieldMax;
+    this.applyGear(seat, Array.isArray(m.gear) ? m.gear : [], true);
     seat.home.copy(home).normalize().multiplyScalar(R);
     seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 8);
     seat.joined = true;
@@ -803,7 +801,7 @@ export class RebelsRoom {
       if (seat.ammo < BEAM_AMMO) return;
       seat.lastBeam = this.now;
       seat.ammo -= BEAM_AMMO;
-      fireBeam(this.combat, spec, from, f, seat.id);
+      fireBeam(this.combat, spec, from, f, seat.id, seat.bonusUntil > this.now ? STAKE_BONUS : 1);
     } else {
       return this.strike(seat, "unknown weapon");
     }
@@ -834,6 +832,88 @@ export class RebelsRoom {
     seat.ammo = Math.max(seat.ammo, seat.ammoMax);
     seat.torps = Math.max(seat.torps, seat.torpsMax);
     seat.guards = Math.max(seat.guards, MAX_GUARDS);
+    this.sendYou(seat);
+  }
+
+  /* ---- what the ship carries ----
+     Declared on join and again whenever it changes, because a gun bought or
+     a sphere opened in the middle of a flight has to take effect without
+     relaunching. The maxima move; what is in the magazine right now does
+     NOT, or buying a bigger magazine would be a free refill. */
+  private applyGear(seat: Seat, list: unknown[], refill: boolean): void {
+    seat.gear = new Set(
+      list.slice(0, 64)
+        .filter((k): k is string => typeof k === "string" && (!!weaponByKey(k) || ALL_ITEMS.some((i) => i.key === k))),
+    );
+    const gearList = [...seat.gear];
+    const extras: Extras = {
+      torpedoes: torpedoBonus(gearList), magazine: magBonus(gearList),
+      superMult: superBoostMult(gearList, SUPER_BOOST_MULT), strafeMult: strafeMult(gearList),
+      vstrafeMult: vstrafeMult(gearList), hullMult: hullMult(gearList),
+    };
+    seat.extras = extras;
+    seat.ammoMax = ammoFor(extras);
+    seat.torpsMax = torpedoesFor(extras);
+    seat.shieldMax = shieldMaxFor(extras);
+    seat.topSpeed = topSpeedFor(extras);
+    if (refill) {
+      seat.ammo = seat.ammoMax;
+      seat.torps = seat.torpsMax;
+      seat.shield = seat.shieldMax;
+    }
+  }
+
+  static GEAR_GAP = 1;
+  private onGear(seat: Seat, m: Extract<ClientMessage, { t: "gear" }>): void {
+    if (!seat.joined) return;
+    if (this.now - seat.lastGear < RebelsRoom.GEAR_GAP) return;
+    seat.lastGear = this.now;
+    this.applyGear(seat, Array.isArray(m.gear) ? m.gear : [], false);
+    if (m.reach !== undefined) seat.body.reach = clampReach(Number(m.reach));
+    this.sendYou(seat);
+  }
+
+  /* ---- flying into things ----
+     The ground and the towers are the FLIGHT MODEL's business: it owns the
+     bounce, the drag along the surface and how much a given angle and speed
+     costs, and there is one copy of that and it runs in the cockpit. So the
+     cockpit reports the damage and the room applies it to the seat, which is
+     the only place a hull number is kept.
+
+     Stated plainly, because it is the one damage in the game the shooter
+     declares: a client that never sent this would never take crash damage.
+     It cannot gain anything by it, only decline to be hurt, which is the
+     same standing the gear has. The amount is capped per second so a broken
+     or malicious client cannot empty its own hull either. */
+  static HURT_PER_SECOND = CRASH_DAMAGE * 4;
+  private onHurt(seat: Seat, m: Extract<ClientMessage, { t: "hurt" }>): void {
+    if (!seat.joined || seat.dead) return;
+    const d = Number(m.d);
+    if (!Number.isFinite(d) || d <= 0) return;
+    if (this.now - seat.hurtWindow > 1) { seat.hurtWindow = this.now; seat.hurtSpent = 0; }
+    const room = Math.max(0, RebelsRoom.HURT_PER_SECOND - seat.hurtSpent);
+    const take = Math.min(d, room);
+    if (take <= 0) return;
+    seat.hurtSpent += take;
+    seat.shield -= take;
+    this.combat.events.push({ kind: "playerHit", at: seat.body.pos.clone(), power: 1.4, who: seat.id, damage: take });
+    if (seat.shield <= 0) this.down(seat);
+    else this.sendYou(seat);
+  }
+
+  /* ---- the stake bonus ----
+     Winning a stake on your own node is worth a minute of triple damage.
+     Only the wallet knows it happened, so it says so and the room takes it
+     on trust, the same trust the gear gets. What the room does NOT do is
+     take its word on how OFTEN: a fresh minute can be claimed no more than
+     once every five, which is about the fastest an honest node could win,
+     so a client repeating the message gains nothing much. */
+  static BONUS_GAP = 300;
+  private onBonus(seat: Seat): void {
+    if (!seat.joined) return;
+    if (this.now - seat.lastBonus < RebelsRoom.BONUS_GAP) return;
+    seat.lastBonus = this.now;
+    seat.bonusUntil = this.now + STAKE_BONUS_MS / 1000;
     this.sendYou(seat);
   }
 
@@ -922,6 +1002,7 @@ export class RebelsRoom {
       score: seat.score,
       kills: seat.kills,
       divi: Math.floor(seat.divi),
+      ...(seat.bonusUntil > this.now ? { bonus: Math.ceil(seat.bonusUntil - this.now) } : {}),
       ...(seat.dead ? { dead: 1 as const, respawn: Math.ceil(seat.respawn) } : {}),
     });
   }
