@@ -781,6 +781,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
   function onMove(e: PointerEvent) {
     if (!dom || !flying) return;
+    /* ---- A PANEL HAS THE MOUSE ----
+       While one is open the pointer is a cursor for it, not a stick: moving
+       it must not fly the ship. Without this, freeing the pointer so the
+       help card could be hovered simply meant that hovering it flew you into
+       a planet, and with the pointer still locked there was no cursor to
+       hover with at all. Geoff, 2026-Sep-12: the help card "isn't
+       interactive like I asked for". */
+    if (panelOpen) return;
     const r = dom.getBoundingClientRect();
     if (locked) {
       /* With the rear window open the crosshair may go all the way into the
@@ -839,6 +847,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
   function setPanelOpen(on: boolean): void {
     panelOpen = on;
+    /* Centred either way: opening freezes the stick where it cannot turn,
+       and closing hands back a neutral one rather than whatever corner the
+       cursor was left in. */
+    cursor.x = 0.5;
+    cursor.y = 0.5;
+    aimFromCursor();
     if (typeof document === "undefined") return;
     if (on) {
       if (document.pointerLockElement === dom) document.exitPointerLock();

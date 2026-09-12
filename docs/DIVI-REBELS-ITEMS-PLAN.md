@@ -528,3 +528,38 @@ and the second copy is gone.
   Comes out with the other test cheats.
 - NOT done: enemies still aim at ships rather than choosing wingmen as
   targets; a wingman is hit only when it happens to be in the line of fire.
+
+## Audit: the help card (2026-Sep-12, v69.9.35)
+
+Geoff asked for: "show the keyboard layout on the top, and when mouse-over
+the various keys, it puts in bold the explanations below. The explanations
+should be in groups like WASD all highlight together. QE together, RC
+together, and TAB/SHIFT as 2x and 1x Boost."
+
+What was wrong, and is now fixed:
+
+1. **The hovering could not work at all in flight.** The card opens while
+   the pointer is locked to the game, so there was no cursor to hover with,
+   and mouse movement flew the ship instead. It now frees the pointer the
+   way the inventory does. Freeing it alone was not enough: an unlocked
+   pointer STEERS, so hovering the card would have flown you into a planet.
+   While any panel is open the pointer no longer touches the stick, and the
+   aim is centred as it opens and closes. That bug was in the inventory too.
+2. **WASD was two groups**, throttle and slide, so hovering W lit only W and
+   S. It is one group now, as asked.
+3. **SHIFT and TAB were two groups.** One now, giving 1x and 2x in one line.
+4. **The R and C line quoted the wrong number.** It was still reporting the
+   horizontal strafe multiplier after Vertical Strafe items landed, so a
+   player with a 2x horizontal and no vertical was told the wrong figure.
+5. **The mouse had no cap on the keyboard**, so its line was the one thing
+   on the card that nothing above could light.
+6. Live caps and lines now show a pointer cursor, and the hovered line gets
+   a bar and a tint as well as bold, which is findable in a list this long.
+
+QE and RC were already correct. The long list itself is per the brief ("the
+explanations below" that hovering bolds), so it stays: what was broken was
+the interaction, not the presence of the list.
+
+Covered by scripts/run-rebels-controls-tests.sh, which asserts the four
+groupings by name, that every line has a cap that lights it, and that a 2x
+strafe, a 3x vertical strafe and a 3x boost item each change the words.

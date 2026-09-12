@@ -12,7 +12,7 @@
 // together, and TAB/SHIFT as 2x and 1x Boost."
 
 import { useState } from "react";
-import { BOOST, CRUISE, STRAFE_SPEED, type Extras, NO_EXTRAS } from "./orbitFlight";
+import { BOOST, CRUISE, STRAFE_SPEED, vstrafeOf, type Extras, NO_EXTRAS } from "./orbitFlight";
 
 /** What the words need to know about this player's ship. */
 export interface ControlsContext {
@@ -34,18 +34,17 @@ const x = (n: number) => (Number.isInteger(n) ? `${n}` : n.toFixed(1));
 export const CONTROL_GROUPS: ControlGroup[] = [
   { id: "mouse", keys: ["MOUSE"], label: "MOUSE",
     what: () => "Move the crosshair. The ship turns toward it and the mini gun fires AT it." },
-  { id: "throttle", keys: ["w", "s"], label: "W / S",
-    what: () => "Throttle up and down. Below zero it reverses." },
-  { id: "strafe", keys: ["a", "d"], label: "A / D",
-    what: (c) => `Slide left and right without turning, at ${x(STRAFE_SPEED * c.extras.strafeMult)} units a second${c.extras.strafeMult > 1 ? ` (${x(c.extras.strafeMult)}x)` : ""}.` },
+  /* WASD is ONE group: Geoff asked for "WASD all highlight together", and
+     hovering any of the four lights all four and bolds this line. */
+  { id: "move", keys: ["w", "a", "s", "d"], label: "W / A / S / D",
+    what: (c) => `W and S throttle up and down; below zero it reverses. A and D slide left and right without turning, at ${x(STRAFE_SPEED * c.extras.strafeMult)} units a second${c.extras.strafeMult > 1 ? ` (${x(c.extras.strafeMult)}x)` : ""}.` },
   { id: "lift", keys: ["r", "c"], label: "R / C",
-    what: (c) => `Slide up and down without turning, the same ${x(STRAFE_SPEED * c.extras.strafeMult)} units a second.` },
+    what: (c) => `Slide up and down without turning, at ${x(STRAFE_SPEED * vstrafeOf(c.extras))} units a second${vstrafeOf(c.extras) > 1 ? ` (${x(vstrafeOf(c.extras))}x)` : ""}.` },
   { id: "roll", keys: ["q", "e"], label: "Q / E",
     what: () => "Roll left and right." },
-  { id: "boost", keys: ["shift"], label: "SHIFT",
-    what: () => `Boost, 1x: ${x(BOOST)} units a second against a cruise of ${x(CRUISE)}. Ignores the throttle.` },
-  { id: "super", keys: ["tab"], label: "TAB",
-    what: (c) => `Super boost, ${x(c.extras.superMult)}x: ${x(BOOST * c.extras.superMult)} units a second, burning fuel ${x(c.extras.superMult)}x as fast.` },
+  /* And SHIFT with TAB, as "2x and 1x Boost", which is how he put it. */
+  { id: "boost", keys: ["shift", "tab"], label: "SHIFT / TAB",
+    what: (c) => `Boost. SHIFT is 1x, ${x(BOOST)} units a second against a cruise of ${x(CRUISE)}. TAB is ${x(c.extras.superMult)}x, ${x(BOOST * c.extras.superMult)} a second, burning fuel ${x(c.extras.superMult)}x as fast. Both ignore the throttle.` },
   { id: "stop", keys: ["x"], label: "X", what: () => "Full stop." },
   { id: "fire", keys: ["LEFT CLICK", " "], label: "LEFT CLICK / SPACE",
     what: () => "Primary weapon. Only the left button fires." },
@@ -96,7 +95,17 @@ const KEYBOARD: Cap[][] = [
   [["SHIFT", "shift", 2.1], ["A", "a"], ["S", "s"], ["D", "d"], ["F", "f"], ["G", null]],
   [["Z", null, 1.2], ["X", "x"], ["C", "c"], ["V", "v"], ["SPACE", " ", 3.2]],
 ];
-const EXTRA_CAPS: Cap[] = [["ARROWS", "arrowup", 1.8], ["L CLICK", "LEFT CLICK", 1.8], ["R CLICK", "RIGHT CLICK", 1.8], ["?", "?"], ["#", "#"]];
+/* Everything that is not a key, so that every line below can be reached from
+   the picture above: the mouse itself had no cap at all, which left its line
+   the one thing on the card with no way to light it. */
+const EXTRA_CAPS: Cap[] = [
+  ["MOUSE", "MOUSE", 1.8], ["ARROWS", "arrowup", 1.8],
+  ["L CLICK", "LEFT CLICK", 1.8], ["R CLICK", "RIGHT CLICK", 1.8], ["?", "?"], ["#", "#"],
+];
+
+/** Every cap on the picture, rows and extras together, so a test can check
+ *  that each explanation below has something above it that lights it. */
+export const KEYBOARD_CAPS: Cap[] = [...KEYBOARD.flat(), ...EXTRA_CAPS];
 
 export function Keyboard({ active, onHover }: { active: string | null; onHover: (group: string | null) => void }) {
   const cap = ([text, key, w]: Cap) => {

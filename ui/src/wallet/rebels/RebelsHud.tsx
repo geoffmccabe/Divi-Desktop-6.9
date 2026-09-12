@@ -39,7 +39,10 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
   const [inv, setInv] = useState(false);
   /* The inventory needs the mouse: tell the controller so letting go of the
      pointer lock does not read as Escape, and it is taken back on close. */
-  useEffect(() => { ctl.panel(inv); }, [ctl, inv]);
+  /* Both of these are hovered and clicked, so both need the mouse. The help
+     card used to open with the pointer still captured by the game, which is
+     why hovering its keyboard did nothing: there was no cursor. */
+  useEffect(() => { ctl.panel(inv || help); }, [ctl, inv, help]);
 
   /* The hit flash: everything behind the cockpit inverts for a tenth of a
      second. Driven by a timestamp rather than a boolean so two hits in quick

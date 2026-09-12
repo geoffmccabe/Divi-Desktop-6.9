@@ -2038,11 +2038,19 @@ code, .mono { font-family: var(--font-mono); }
   color: hsl(var(--rebels-hud) / 0.35); background: hsl(var(--rebels-hud) / 0.04);
   white-space: nowrap; overflow: hidden; text-overflow: clip;
 }
-.orbit-key.live { color: hsl(var(--rebels-hud)); border-color: hsl(var(--rebels-hud) / 0.55); background: hsl(var(--rebels-hud) / 0.1); cursor: default; }
+/* A live cap invites the pointer: it is the thing to hover. */
+.orbit-key.live { color: hsl(var(--rebels-hud)); border-color: hsl(var(--rebels-hud) / 0.55); background: hsl(var(--rebels-hud) / 0.1); cursor: pointer; }
 .orbit-key.live.on { color: hsl(var(--rebels-ocean)); background: hsl(var(--rebels-hud)); border-color: hsl(var(--rebels-hud)); }
 .orbit-controls dl > div.on dt { color: hsl(var(--rebels-hud)); }
 .orbit-controls dl > div.on dd { opacity: 1; font-weight: 700; color: hsl(var(--rebels-hud)); }
-.orbit-controls dl > div { cursor: default; }
+.orbit-controls dl > div { cursor: pointer; }
+/* The hovered line is bold AND set off from the rest, so it is findable in a
+   list this long rather than a slightly heavier grey among greys. */
+.orbit-controls dl > div.on {
+  background: hsl(var(--rebels-hud) / 0.08);
+  border-left: 2px solid hsl(var(--rebels-hud));
+  margin-left: -8px; padding: 2px 0 2px 6px;
+}
 /* Super boost on the gauge. */
 .orbit-super { font-style: normal; color: #ff5c5c; font-weight: 700; }
 .orbit-meter.boost.super i { background: #ff5c5c; }
