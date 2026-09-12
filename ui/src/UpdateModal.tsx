@@ -1,36 +1,72 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "./tauri";
-import { securityTools, type UpdateInfo } from "./wallet/api";
+import { securityTools, updateInstall, type UpdateInfo } from "./wallet/api";
 
 // The center modal opened from the flashing "UPDATE TO vX.Y.Z" in the sidebar.
-// Built on the app's own modal shell (poe-modal-*, the same one PoeInfoModal
-// uses) so it matches every other dialog in the wallet. It shows the version
-// jump, warns about any firewall/antivirus that might prompt when the new build
-// runs, and offers the download.
+// Built on the app's own modal shell (poe-modal-*) so it matches every other
+// dialog in the wallet.
 //
-// NOTE: the seamless in-place download WITH a live KB/MB progress bar is the
-// next slice — it needs the Tauri updater (signing key + CI manifest) so the app
-// can replace itself without re-triggering the OS "unidentified app" block.
-// Until that lands, this hands the user the correct installer for their OS. The
-// firewall pre-warning is the part that's fully live now.
+// The update installs IN PLACE via the Tauri updater: no browser download, so
+// macOS never re-applies the quarantine tag and the user doesn't have to
+// re-approve the app. Every byte is verified against our public key first.
+// Progress arrives as `dd69://update-progress` events while it downloads.
+//
+// A manual download stays available as a fallback if the in-place update fails.
+
+type Phase = "idle" | "working" | "ready" | "failed";
+
+const mb = (n: number) => `${(n / 1_048_576).toFixed(1)} MB`;
 
 export function UpdateModal({ info, onClose }: { info: UpdateInfo; onClose: () => void }) {
   const [tools, setTools] = useState<string[] | null>(null);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [got, setGot] = useState(0);
+  const [total, setTotal] = useState<number | null>(null);
+  const [err, setErr] = useState("");
+  const unlisten = useRef<Array<() => void>>([]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && phase !== "working" && onClose();
     window.addEventListener("keydown", onKey);
     securityTools().then(setTools).catch(() => setTools([]));
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+
+    // Subscribe to the updater's progress. Uses the global Tauri event API
+    // (withGlobalTauri); guarded so a missing API can never break the modal.
+    const ev = (window as unknown as { __TAURI__?: { event?: { listen: (n: string, cb: (e: { payload: unknown }) => void) => Promise<() => void> } } }).__TAURI__?.event;
+    if (ev) {
+      ev.listen("dd69://update-progress", (e) => {
+        const p = e.payload as { downloaded?: number; total?: number | null };
+        if (typeof p?.downloaded === "number") setGot(p.downloaded);
+        setTotal(typeof p?.total === "number" ? p.total : null);
+      }).then((u) => unlisten.current.push(u)).catch(() => {});
+      ev.listen("dd69://update-ready", () => setPhase("ready"))
+        .then((u) => unlisten.current.push(u)).catch(() => {});
+    }
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      unlisten.current.forEach((u) => { try { u(); } catch { /* already gone */ } });
+      unlisten.current = [];
+    };
+  }, [onClose, phase]);
+
+  const run = async () => {
+    setPhase("working"); setErr(""); setGot(0);
+    try {
+      await updateInstall();
+      setPhase("ready");
+    } catch (e) {
+      setErr(String(e)); setPhase("failed");
+    }
+  };
 
   const isMac = info.os === "mac";
   const isWin = info.os === "windows";
   const url = info.downloadUrl;
+  const pct = total && total > 0 ? Math.min(100, (got / total) * 100) : null;
 
   return createPortal(
-    <div className="poe-modal-backdrop" onClick={onClose} role="presentation">
+    <div className="poe-modal-backdrop" onClick={() => phase !== "working" && onClose()} role="presentation">
       <div
         className="poe-modal upd-modal"
         onClick={(e) => e.stopPropagation()}
@@ -39,8 +75,10 @@ export function UpdateModal({ info, onClose }: { info: UpdateInfo; onClose: () =
         aria-label="Software update"
       >
         <div className="poe-modal-head">
-          <h3>Update available</h3>
-          <button className="wl-btn poe-modal-x" onClick={onClose} aria-label="Close">✕</button>
+          <h3>{phase === "ready" ? "Update installed" : "Update available"}</h3>
+          {phase !== "working" && (
+            <button className="wl-btn poe-modal-x" onClick={onClose} aria-label="Close">✕</button>
+          )}
         </div>
 
         <div className="poe-modal-body">
@@ -50,42 +88,70 @@ export function UpdateModal({ info, onClose }: { info: UpdateInfo; onClose: () =
             <span className="upd-new">v{info.latest}</span>
           </div>
 
-          {/* Firewall / antivirus pre-warning — the live part. */}
-          {tools && tools.length > 0 && (
-            <div className="upd-warn">
-              <b>Heads up:</b> you have <strong>{tools.join(", ")}</strong> installed. When the
-              updated app first runs, it may ask about network access — choose <strong>Allow</strong>
-              {" "}so the wallet can reach the Divi network. That's expected, not a problem.
+          {phase === "ready" ? (
+            <p className="wl-note">
+              Version {info.latest} is installed. <strong>Quit and reopen Divi Desktop</strong> to
+              finish — your node keeps running in the meantime.
+            </p>
+          ) : (
+            <>
+              {/* Firewall / antivirus pre-warning. */}
+              {tools && tools.length > 0 && (
+                <div className="upd-warn">
+                  <b>Heads up:</b> you have <strong>{tools.join(", ")}</strong> installed. It may ask
+                  about network access after the update — choose <strong>Allow</strong> so the wallet
+                  can reach the Divi network. That's expected.
+                </div>
+              )}
+              {isMac && (
+                <p className="wl-note">
+                  This updates in place, so macOS won't ask you to approve the app again.
+                </p>
+              )}
+              {isWin && (
+                <p className="wl-note">
+                  This updates in place. Windows may show a permission prompt for the installer —
+                  that's normal.
+                </p>
+              )}
+            </>
+          )}
+
+          {/* Live download progress. */}
+          {phase === "working" && (
+            <div className="upd-prog">
+              <div className="upd-bar">
+                <div className="upd-bar-fill" style={pct == null ? { width: "100%", opacity: 0.5 } : { width: `${pct}%` }} />
+              </div>
+              <span className="upd-prog-text">
+                {total ? `${mb(got)} of ${mb(total)}${pct != null ? ` · ${pct.toFixed(0)}%` : ""}` : `${mb(got)} downloaded…`}
+              </span>
             </div>
           )}
 
-          {/* OS-specific note. In-place updates usually skip the OS re-block; a
-              fresh download may prompt once. */}
-          {isMac && (
-            <p className="wl-note">
-              On macOS, if the download warns about an unidentified developer, open Terminal and
-              run the one-line unlock from the download page, then open it once.
-            </p>
-          )}
-          {isWin && (
-            <p className="wl-note">
-              On Windows, if SmartScreen shows a blue warning, click <strong>More info</strong> then{" "}
-              <strong>Run anyway</strong> — the build is unsigned but safe.
-            </p>
+          {phase === "failed" && (
+            <div className="upd-warn">
+              <b>The in-place update didn't work:</b> {err}
+              {url ? " You can still download it manually below." : ""}
+            </div>
           )}
 
           <div className="upd-actions">
-            {url ? (
-              <button className="upd-go" onClick={() => invoke("open_url", { url })}>
-                Download v{info.latest}
-              </button>
-            ) : (
-              <span className="wl-note">Couldn't reach the download server — try again shortly.</span>
+            {phase === "idle" && (
+              <button className="upd-go" onClick={run}>Update now</button>
             )}
-            <button className="wl-btn" onClick={onClose}>Later</button>
+            {phase === "working" && <span className="wl-note">Downloading and installing…</span>}
+            {phase === "failed" && url && (
+              <button className="upd-go" onClick={() => invoke("open_url", { url })}>
+                Download v{info.latest} manually
+              </button>
+            )}
+            {phase !== "working" && (
+              <button className="wl-btn" onClick={onClose}>
+                {phase === "ready" ? "Close" : "Later"}
+              </button>
+            )}
           </div>
-
-          <p className="upd-soon">One-click in-app update (with a live progress bar, no re-download) is coming next.</p>
         </div>
       </div>
     </div>,

@@ -114,12 +114,26 @@ jobs:
         with:
           projectPath: crates/app
           args: ${{ matrix.args }}
+        # Signs the updater artifacts with our private key (stored as a repo
+        # secret, never in the tree). The app verifies every update against the
+        # matching public key in tauri.conf.json, so a compromised download
+        # server cannot push a different binary to anyone.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      # The .sig files are the signatures the in-app updater checks before it
+      # installs anything, and the .tar.gz/.zip are the update payloads the
+      # updater downloads (distinct from the human-facing installers). Without
+      # these collected, the updater manifest can't be published.
       - name: Collect installers
         run: |
           mkdir -p out
           find target -type f \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \
-            -o -name '*.msi' -o -name '*-setup.exe' \) -exec cp {} out/ \; || true
+            -o -name '*.msi' -o -name '*-setup.exe' \
+            -o -name '*.sig' -o -name '*.app.tar.gz' -o -name '*-setup.nsis.zip' \) \
+            -exec cp {} out/ \; || true
+          echo "collected:"; ls -1 out/
         shell: bash
 
       - name: Upload installer

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Divi Desktop 69",
-  "version": "69.10.0",
+  "version": "69.10.1",
   "identifier": "io.diviproject.desktop69",
   "build": {
     "frontendDist": "../../ui/dist"
@@ -35,6 +35,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE2NjUyOEVDRUZEN0VBQUEKUldTcTZ0ZnY3Q2hscHBCY0QwU0RCem1ncEFMb0YwUlozSC9CbVdJeFU3cExNWXNxaEpjakl4ZloK",
+      "endpoints": [
+        "https://scan.divi.love/downloads/updater.json"
+      ]
+    }
   }
 }

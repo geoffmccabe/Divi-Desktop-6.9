@@ -9,6 +9,13 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# Official Tauri updater (tauri-apps/plugins-workspace). Drives the one-click
+# in-place update: it replaces the app without a browser download, so the OS
+# never re-applies the "unidentified developer" quarantine tag and the user
+# doesn't have to re-approve the app. Verified on crates.io before adding.
+# Used from Rust only — the UI reaches it through our own commands, so nothing
+# is added to package.json and `npm ci` stays in sync.
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 qrcode = "0.14"

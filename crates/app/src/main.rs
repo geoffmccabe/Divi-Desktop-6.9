@@ -1681,6 +1681,57 @@ async fn security_tools() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Download and install the newer build IN PLACE, reporting progress as it goes.
+///
+/// This is what makes an update painless: the app replaces itself rather than
+/// the user fetching an installer in a browser, so the OS never re-applies the
+/// "unidentified developer" quarantine tag and nothing has to be re-approved.
+/// Every byte is verified against our public key before anything is installed —
+/// a hijacked download server cannot push a different binary.
+///
+/// Emits `dd69://update-progress` ({downloaded, total}) so the modal can show a
+/// live KB/MB bar, then `dd69://update-ready` when the new version is in place.
+#[tauri::command]
+async fn update_install(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app
+        .updater_builder()
+        .build()
+        .map_err(|e| format!("could not start the updater: {e}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("could not check for an update: {e}"))?
+        .ok_or_else(|| "you're already on the newest version".to_string())?;
+
+    let version = update.version.clone();
+    let on_progress = app.clone();
+    let on_done = app.clone();
+    let mut downloaded: usize = 0;
+
+    update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk;
+                // total is None if the server sends no length; the UI then shows
+                // bytes downloaded without a percentage rather than a wrong one.
+                let _ = on_progress.emit(
+                    "dd69://update-progress",
+                    serde_json::json!({ "downloaded": downloaded, "total": total }),
+                );
+            },
+            move || {
+                let _ = on_done.emit("dd69://update-ready", ());
+            },
+        )
+        .await
+        .map_err(|e| format!("the update could not be installed: {e}"))?;
+
+    Ok(version)
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -2765,6 +2816,12 @@ async fn token_commit_ticker(
 
 fn main() {
     tauri::Builder::default()
+        // The official Tauri updater. It replaces the app IN PLACE, so an update
+        // never arrives via a browser download — which is what stamps the macOS
+        // quarantine tag — and the user therefore never has to re-approve the app
+        // or re-whitelist it. Every download is verified against our public key
+        // (see plugins.updater in tauri.conf.json) before it is installed.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Community apps load from divi-app://<id>/ so each one gets its own
         // origin and its own content policy. See crates/app/src/community.rs for
         // why inline frame content would not work here.
@@ -2905,6 +2962,7 @@ fn main() {
             set_node_name,
             update_check,
             security_tools,
+            update_install,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,

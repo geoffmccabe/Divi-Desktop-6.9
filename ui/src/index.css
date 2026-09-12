@@ -2247,4 +2247,19 @@ code, .mono { font-family: var(--font-mono); }
   border: 1px solid hsl(var(--primary) / 0.6); transition: background 0.15s;
 }
 .upd-go:hover { background: hsl(var(--primary) / 0.38); }
-.upd-soon { font-size: 0.75rem; color: hsl(var(--muted-foreground) / 0.8); margin: 2px 0 0; font-style: italic; }
+
+/* Live download progress inside the update modal. */
+.upd-prog { display: flex; flex-direction: column; gap: 6px; }
+.upd-bar {
+  height: 8px; border-radius: 999px; overflow: hidden;
+  background: hsl(var(--border));
+}
+.upd-bar-fill {
+  height: 100%; border-radius: 999px; transition: width 0.25s linear;
+  background: linear-gradient(90deg, hsl(var(--primary) / 0.8), hsl(var(--primary)));
+  box-shadow: 0 0 10px hsl(var(--primary) / 0.6);
+}
+.upd-prog-text {
+  font-size: 0.8rem; color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono);
+}

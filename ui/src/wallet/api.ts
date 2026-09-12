@@ -325,6 +325,10 @@ export interface UpdateInfo { current: string; latest: string | null; available:
 export const updateCheck = () => invoke<UpdateInfo>("update_check");
 // Firewalls / antivirus that might prompt about a freshly-updated binary.
 export const securityTools = () => invoke<string[]>("security_tools");
+// Download + install the newer build IN PLACE (no browser download, so the OS
+// never re-quarantines it). Progress arrives as dd69://update-progress events.
+// Resolves with the installed version; rejects with a plain-English reason.
+export const updateInstall = () => invoke<string>("update_install");
 // Latest DIVI/USD from the shared CMC feed (no per-user key) — used to price PoE.
 export const priceLatest = () => invoke<number | null>("price_latest");
 export interface StaleBlock {
