@@ -16,7 +16,7 @@ import {
   type Flight, type Stick,
 } from "./orbitFlight";
 import {
-  clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
+  clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE, spawnDragon,
   createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles, fireBeam,
   fireMini, miniMuzzle, spawnFleet,
   STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
@@ -45,7 +45,7 @@ import { droneClass } from "./rebelsFlock";
 import { respawnSeconds, itemByKey } from "./itemCatalog";
 import { fetchDropConfig } from "./dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "./dropCharts";
-import { addSphere, heldCount, takeHeld } from "./rebelsInventory";
+import { addSphere, addHeld, heldCount, takeHeld } from "./rebelsInventory";
 import { REAR_KEY, inRearWindow, placeRearCamera, rearAim, tailOf, rearViewport } from "./rearGun";
 import { GAME_KEYS } from "./RebelsControls";
 import { dflow } from "./rebelsDflow";
@@ -1002,9 +1002,26 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function runCheat(code: string) {
     const kind = code[1];
     const tier = Number(code[2]);
-    if (kind !== "1" || !(tier >= 1 && tier <= 6)) return;
     if (!flight) return;
-    spawnFleet(combat, tier, flight.pos, flight.fwd, { cheat: true });
+    if (kind === "1" && tier >= 1 && tier <= 6) {
+      spawnFleet(combat, tier, flight.pos, flight.fwd, { cheat: true });
+    } else if (kind === "2" && tier === 1) {
+      /* ---- TEST: !21, the dragon, in front of you ----
+         Thirty-five units ahead, crossing left to right so it can be seen
+         and chased. Solo only: in a room the room owns the enemies. It is a
+         REAL dragon (it leaves its egg), so this is a way to mint eggs and
+         must go, or be gated, before eggs are worth anything. Geoff asked
+         for it to test, 2026-Sep-11. */
+      if (room && room.status() === "live") { setHud({ note: "NOT IN A ROOM", noteAt: performance.now() }); return; }
+      const ahead = flight.pos.clone().addScaledVector(flight.fwd, 35);
+      const across = new THREE.Vector3().crossVectors(flight.fwd, flight.up).normalize();
+      spawnDragon(combat, ahead, across);
+    } else if (kind === "7" && tier === 7) {
+      /* ---- TEST: !77, a Rear Gun, opened, into the inventory ----
+         Same caveat: a free item, to be removed with the one above. */
+      addHeld("reargun", 1);
+      setHud({ note: "REAR GUN FITTED: PRESS 7", noteAt: performance.now() });
+    }
   }
   function onKeyDown(e: KeyboardEvent) {
     if (!flying) return;

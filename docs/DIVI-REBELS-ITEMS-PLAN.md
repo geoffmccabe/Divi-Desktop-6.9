@@ -374,3 +374,11 @@ phase ships on its own with tests, docs and a version.
   guns fire forward as before.
 - Tests: `scripts/run-rebels-reargun-tests.sh` (window, crosshair
   mapping, camera behind, aim back/right/up, tail, scissor rectangle).
+
+## TEST CHEATS TO REMOVE (2026-Sep-11, v69.9.29)
+
+- `!21` (solo only): a REAL dragon 35 units ahead, crossing left to right.
+  It leaves its egg, so this mints eggs. Remove or gate before eggs are
+  worth anything.
+- `!77`: an opened Rear Gun into the inventory. Same caveat.
+- The existing `!1x` flock cheat is harmless (worth nothing).
