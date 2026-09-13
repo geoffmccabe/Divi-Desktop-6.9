@@ -136,3 +136,23 @@ public page loses a balance when their address changes.
   released and reconnected)
 - web door: 35 (guest id kept, IndexedDB restoring a cleared guest)
 - Full suite: 29 green. tsc clean.
+
+### LIVE at https://divi.love/rebels/ (2026-Sep-13)
+- **Landing page backed up first:** /Users/geoffreymccabe/divi-love-site-backup/index-2026-09-13.html
+  (161,287 bytes, self-contained, no relative assets).
+- **Deployed:** the room (version 5b753dcf: overflow, room names, guest ids), and
+  the web Worker (version b0e87541) with routes `divi.love/rebels*` and
+  `www.divi.love/rebels*`. The worker's workers.dev address still answers.
+- **Checked live:**
+  - https://divi.love/ is byte-identical to the backup
+  - an unrelated path (/about) is still the landing page
+  - /rebels redirects to /rebels/, which is the game, on both divi.love and www
+  - /rebels/api/nodes gives 74 nodes
+  - an invented room name is 404
+- **In Geoff's real Chrome:** the launch card read "Launching from London,
+  United Kingdom." and LAUNCH came up. The connection took roughly 15 s while
+  the globe built its towers, which is for B5 (load time).
+- **Headless Chrome on this machine** (load average around 80) never finished
+  building the globe within 45 s: the main thread was busy the whole time,
+  shown by the 10 s "GLOBE NOT READY" timer never firing. That is not
+  representative of a real browser, as the run above shows.
