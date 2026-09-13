@@ -40,18 +40,22 @@ const near = (a: number, b: number, tol = 1e-6) => Math.abs(a - b) <= tol;
    * and some of those names end in a digit.
    */
   const callsOf = (src: string, names: string[]) => {
-    const body = src
-      .split("\n")
+    /* LINE BY LINE, and never across lines. Stripping quoted strings from the
+       whole file at once pairs the first quote of a header comment with the
+       next one anywhere below it and eats everything between, which quietly
+       emptied this comparison the moment a comment gained a quotation mark. */
+    const lines = src.split("\n")
       .filter((l) => !/function\s|=>\s*\{/.test(l))
-      .join("\n")
-      .replace(/"[^"]*"/g, "")
-      .replace(/'[^']*'/g, "");
+      .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+      .map((l) => l.replace(/"[^"\n]*"/g, "").replace(/'[^'\n]*'/g, ""));
     const found: string[] = [];
     for (const name of names) {
       const re = new RegExp(`\\b${name}\\(([^)]*)\\)`, "g");
-      for (const m of body.matchAll(re)) {
-        const nums = [...m[1].matchAll(/-?\d+(?:\.\d+)?/g)].map((x) => Number(x[0]));
-        if (nums.length) found.push(nums.join(","));
+      for (const line of lines) {
+        for (const m of line.matchAll(re)) {
+          const nums = [...m[1].matchAll(/-?\d+(?:\.\d+)?/g)].map((x) => Number(x[0]));
+          if (nums.length) found.push(nums.join(","));
+        }
       }
     }
     return found.sort();
@@ -123,11 +127,19 @@ const near = (a: number, b: number, tol = 1e-6) => Math.abs(a - b) <= tol;
      spinning.map((r) => `${r.name}=${r.siteAv}`).join(" "));
   ok("counter-turning rings still counter-turn",
      spinning.some((r) => r.siteAv > 0) && spinning.some((r) => r.siteAv < 0));
-  ok("the still rings are gathered into as few draws as possible",
-     rings.filter((r) => r.siteAv === 0).length <= 2,
+  /* Still rings are merged, but per BAND: the sphere skin turns the website's
+     three groups at three different rates, so which group a ring belongs to
+     has to survive the merge. */
+  ok("the still rings are gathered into a handful of draws, not thirty",
+     rings.filter((r) => r.siteAv === 0).length <= 6,
      `${rings.filter((r) => r.siteAv === 0).length} still draws`);
   ok("and there is a ring for every moving part, not a mesh per petal",
-     rings.length <= 16, `${rings.length} draws`);
+     rings.length <= 20, `${rings.length} draws`);
+  ok("every ring knows which of the three groups it came from",
+     rings.every((r) => r.band === "outer" || r.band === "middle" || r.band === "inner"));
+  ok("and all three groups are represented",
+     new Set(rings.map((r) => r.band)).size === 3,
+     [...new Set(rings.map((r) => r.band))].join(","));
 }
 
 /* ---- half transparent, pale, and drawn over the fight ---- */
