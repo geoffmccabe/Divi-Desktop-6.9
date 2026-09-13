@@ -67,6 +67,7 @@ import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
   type Fx, type ShieldRig,
 } from "./rebelsFx";
+import { makeMandalaShield, type MandalaShield } from "./rebelsMandala";
 import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
@@ -325,6 +326,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* One shield rig per fighter model, hanging off it. */
   const enemyShields: ShieldRig[] = [];
   let guardShell: ReturnType<typeof makeGuardShell> | null = null;
+  /** The cockpit's own view of the shield. See rebelsMandala.ts. */
+  let mandala: MandalaShield | null = null;
   /** How much of its size a tower keeps once a game is running. */
   const WORLD_SCALE = 0.5;
   let space: ReturnType<typeof createSpace> | null = null;
@@ -465,6 +468,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       show(fx?.group);
       show(space?.group);
       show(guardShell?.mesh);
+      show(mandala?.group);
       show(peers?.group);
       for (const p of protos) show(p);
       if (dragonProto) show(dragonProto);
@@ -1583,10 +1587,30 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           s.up.x, s.up.y, s.up.z,
         );
 
-        /* The guard rides with the cockpit, since it is around the player. */
-        if (guardShell) {
-          guardShell.mesh.position.copy(flight.pos);
-          guardShell.step(performance.now() / 1000, Math.min(1, flight.guardFor / (GUARD_SECONDS * 0.6)));
+        /* ---- the shield ----
+           Two pictures of one thing, and only ever one of them at a time.
+
+           From the COCKPIT it is the mandala: pale, half transparent, turning,
+           hung on the eye so the pilot looks through it. From the chase camera
+           it is the red wire sphere it has always been, because that is the
+           shield as seen from OUTSIDE and Geoff asked for that to stay.
+
+           Both are driven by the same strength, so they fade in and out with
+           the charge in exactly the same way. */
+        {
+          const guardStrength = Math.min(1, flight.guardFor / (GUARD_SECONDS * 0.6));
+          const inside = flight.view <= 0.01;
+          if (guardShell) {
+            guardShell.mesh.position.copy(flight.pos);
+            guardShell.step(performance.now() / 1000, inside ? 0 : guardStrength);
+          }
+          if (mandala) {
+            mandala.step(
+              performance.now() / 1000,
+              inside ? guardStrength : 0,
+              camera as THREE.PerspectiveCamera,
+            );
+          }
         }
 
         /* ---- the sky, and what you are near ----
@@ -2379,6 +2403,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         sky = installSky(scene);
         guardShell = makeGuardShell();
         scene.add(guardShell.mesh);
+        mandala = makeMandalaShield();
+        scene.add(mandala.group);
         /* One prototype per tier, cloned per fighter. Seven models built once
            costs nothing and means a rare ship is the right colour from the
            frame it appears. */
@@ -2619,6 +2645,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (scene && guardShell) scene.remove(guardShell.mesh);
       guardShell?.dispose();
       guardShell = null;
+      if (scene && mandala) scene.remove(mandala.group);
+      mandala?.dispose();
+      mandala = null;
       if (scene) {
         for (const m of enemyMeshes) scene.remove(m);
         for (const r of enemyShields) scene.remove(r.group);

@@ -722,3 +722,44 @@ one geometry means carrying each stream's opacity as a per-vertex alpha, and
 the merged mesh would blend in one order rather than sorted per tube, so it is
 the change most likely to LOOK different. Worth doing, but worth measuring
 first: a fresh DFlow paste after the towers will say how much is left.
+
+## The cockpit shield is the AnamayOS mandala (2026-Sep-13, v69.9.43)
+
+Geoff: "change the shield effect, as seen from the cockpit. Look at how the
+screensaver mandala is drawn here: https://ao.anamaya.com/ in the anamayos
+project. I want the shield to duplicate this but make the mandalas spin 3x
+faster and make the lines much lighter and 50% transparent. So while the shield
+is activated, the user sees through this mandala energetic shield. From
+outside, it can still look like it does now."
+
+- **Source.** AnamayOS draws its screensaver as an SVG in
+  `/Users/geoffreymccabe/AnamayOS/src/components/shared/mandala-screensaver.tsx`.
+  The new `ui/src/wallet/rebels/rebelsMandala.ts` is that file's ring table,
+  ring for ring: the same radii, the same step counts, the same teardrop curve
+  (x = a·cos θ, y = b·sin θ·sin(θ/2)^m), the same spins. Its own test READS the
+  AnamayOS file off the disk and compares the two, so this is a copy that can
+  be shown to be a copy rather than one that merely looks like it.
+- **Three times the speed.** The site's base rate (15 degrees a second) is kept
+  as its own constant beside a multiplier of three, so what was taken and what
+  was changed are both visible. The relative rates are untouched: rings that
+  ran at half speed still do, and the ones that counter-rotate still do.
+- **Pale and half transparent.** Light rose for the strokes and a light
+  blue-white for the accents, at 0.5 opacity, additively blended so the mandala
+  only ever ADDS light and can never darken the fight behind it. Depth testing
+  is off: it hangs on the eye, and letting the ship's own nose cut holes in it
+  would read as a fault.
+- **It fills the frame at any window shape.** Placed 2.2 units in front of the
+  camera, square to it, and scaled every frame so its outer ring reaches the
+  CORNERS of the view. Sized to the height it would have left the sides of a
+  wide window bare.
+- **From outside it is unchanged.** The mandala is shown only in the cockpit
+  view; the chase camera still shows the red wire sphere, and the bubble other
+  ships wear is untouched. Both are driven by the same charge, so they fade in
+  and out identically. In the rear-gun window the mandala is culled rather than
+  smeared across it, which is why it is left cullable on purpose.
+- Drawing cost: one LineSegments per turning ring and one for everything that
+  stands still, so fourteen draws rather than one per petal, and only while the
+  shield is up. Circle detail follows the radius (16 to 128 steps): the outer
+  ring showed its corners at a flat 72, and the forty-eight beads of r=10 were
+  paying for smoothness nobody could see.
+- Tests: `scripts/run-rebels-mandala-tests.sh` (35 assertions).
