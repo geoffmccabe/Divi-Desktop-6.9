@@ -18,6 +18,7 @@ import {
 import {
   clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
   createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE, CONVERGE, JUNK_LIFE,
+  showBullet, dropBullet, stepShownBullets,
   miniMuzzle,
   STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS,
   type CombatState,
@@ -1722,10 +1723,20 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
             });
           }
-          combat.bullets.length = 0;
-          for (const b of room.bullets) {
-            combat.bullets.push({ pos: b.pos, vel: b.vel, life: 1, hostile: b.hostile, mini: b.mini });
+          /* ---- THE ROUNDS ARE FLOWN HERE ----
+             The room says what was fired and what stopped early; everything
+             in between is this cockpit flying the same rounds with the same
+             file the room uses. It used to be handed five hundred positions
+             twenty times a second, which was two thirds of the wire. */
+          for (const s of room.takeShots()) {
+            showBullet(combat, {
+              id: s.id, pos: s.pos, vel: s.vel, life: s.life,
+              hostile: s.hostile, mini: s.mini,
+              ...(s.orb ? { orb: true as const, phase: Math.random() * Math.PI * 2 } : {}),
+            });
           }
+          for (const id of room.takeSpent()) dropBullet(combat, id);
+          stepShownBullets(combat, dt);
           /* Beams too: yours and everyone else's, drawn from the room's list
              so a beam is seen by the whole room and hits what the room says. */
           /* ---- streaks ----

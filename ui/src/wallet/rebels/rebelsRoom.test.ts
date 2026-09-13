@@ -126,13 +126,16 @@ async function main() {
       t: "s", n: 5, w: 3,
       P: [["s1", 1, 2, 3, 0, 0, 1, 0, 900], ["s2", 10, 20, 30, 1, 0, 0, 1, 400]],
       E: [[5, 5, 5, 0, 0, 1, 2, 60, 130]],
-      B: [[1, 1, 1, 9, 0, 0, 1, 0]],
+      F: [[77, 1, 1, 1, 9, 0, 0, 1, 2.2]],
       C: [[7, 7, 7]],
     });
     ok("the wave comes from the room", room.wave === 3, `${room.wave}`);
     ok("so do the fighters", room.enemies.length === 1 && room.enemies[0].tier === 2);
     ok("and their shields", room.enemies[0].shield === 60 && room.enemies[0].shieldMax === 130);
-    ok("so do the rounds in the air", room.bullets.length === 1 && room.bullets[0].hostile);
+    /* Rounds arrive as SHOTS, once, and the cockpit flies them from there. */
+    const fired = room.takeShots();
+    ok("so do the rounds fired", fired.length === 1 && fired[0].hostile && fired[0].id === 77);
+    ok("and they are handed over only once", room.takeShots().length === 0);
     ok("and the coins", room.coins.length === 1);
 
     /* ---- the gauges, which are the whole reason the room exists ---- */
@@ -151,10 +154,10 @@ async function main() {
     const room = R.joinRoom({ node: "n", name: "me", home: new THREE.Vector3(0, 0, 100), ship: "x" });
     sock!.accept();
     sock!.deliver({ t: "hi", id: "s1", hz: 20 });
-    sock!.deliver({ t: "s", n: 1, w: 0, P: [["s2", 0, 0, 100, 0, 0, 1, 0, 100]], E: [], B: [], C: [] });
+    sock!.deliver({ t: "s", n: 1, w: 0, P: [["s2", 0, 0, 100, 0, 0, 1, 0, 100]], E: [], C: [] });
     room.step(1);                       /* let it settle at the first report */
     const a = room.others()[0].pos.clone();
-    sock!.deliver({ t: "s", n: 2, w: 0, P: [["s2", 0, 0, 140, 0, 0, 1, 0, 100]], E: [], B: [], C: [] });
+    sock!.deliver({ t: "s", n: 2, w: 0, P: [["s2", 0, 0, 140, 0, 0, 1, 0, 100]], E: [], C: [] });
 
     const straightAway = room.others()[0].pos.clone();
     ok("a new report does not teleport the ship", straightAway.distanceTo(a) < 1,
@@ -177,9 +180,9 @@ async function main() {
     const room = R.joinRoom({ node: "n", name: "me", home: new THREE.Vector3(0, 0, 100), ship: "x" });
     sock!.accept();
     sock!.deliver({ t: "hi", id: "s1", hz: 20 });
-    sock!.deliver({ t: "s", n: 1, w: 0, P: [["s2", 0, 0, 100, 0, 0, 1, 0, 100]], E: [], B: [], C: [] });
+    sock!.deliver({ t: "s", n: 1, w: 0, P: [["s2", 0, 0, 100, 0, 0, 1, 0, 100]], E: [], C: [] });
     ok("they are here", room.others().length === 1);
-    sock!.deliver({ t: "s", n: 2, w: 0, P: [], E: [], B: [], C: [] });
+    sock!.deliver({ t: "s", n: 2, w: 0, P: [], E: [], C: [] });
     ok("and then they are not", room.others().length === 0, `${room.others().length}`);
     room.close();
   }
@@ -271,13 +274,13 @@ async function main() {
     room.fire("beam", new THREE.Vector3(0, 0, 108), new THREE.Vector3(0, 1, 0), undefined, "beam1");
     const shot = last() as Record<string, unknown>;
     ok("a beam names its weapon", shot?.k === "beam" && shot?.w === "beam1", JSON.stringify(shot));
-    sock!.deliver({ t: "s", n: 1, w: 1, P: [], E: [], B: [], C: [],
+    sock!.deliver({ t: "s", n: 1, w: 1, P: [], E: [], C: [],
       M: [[0, 0, 108, 0, 1, 0, "beam2", 0.4]] });
     ok("beams arrive with the weapon's own cone, reach and colour",
        room.beams.length === 1 && room.beams[0].key === "beam2" && room.beams[0].life === 0.4
        && room.beams[0].reach > 90 && room.beams[0].half > 0 && room.beams[0].fwd.y === 1,
        JSON.stringify(room.beams[0] ?? null));
-    sock!.deliver({ t: "s", n: 2, w: 1, P: [], E: [], B: [], C: [] });
+    sock!.deliver({ t: "s", n: 2, w: 1, P: [], E: [], C: [] });
     ok("and are gone when the wire stops carrying them", room.beams.length === 0);
     room.close();
   }

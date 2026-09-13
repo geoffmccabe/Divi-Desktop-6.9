@@ -53,6 +53,28 @@ Nothing about authority changes. The server owns every outcome; the wire
 stops repeating what both ends already know.
 
 Expected: the 24-player busy snapshot from about 35 kB to about 12 kB.
+
+**BUILT 2026-Sep-12, v69.9.37, and measured on a real room** rather than
+estimated. `scripts/run-rebels-wire-tests.sh` seats real players, spawns real
+swarms, holds every trigger down and weighs the actual strings:
+
+| room | rounds in the air | bytes/tick | per player |
+|---|---|---|---|
+| 1 player | 48 | 1,255 | 25 kB/s |
+| 8 players | 240 | 4,254 | 85 kB/s |
+| 24 players | 722 | 9,595 | 192 kB/s |
+| 24 players, 3 wingmen each | ~900 | 15,574 | 311 kB/s |
+| 24 players, everything at once | 2,900 | 15,523 | 310 kB/s |
+
+The last row is the one that shows what changed: two thousand nine hundred
+rounds in the sky, and not one of them on the wire. Sent as positions they
+would have been about 130 kB a tick on their own. Server egress at 24
+players went from 16 MB/s to 4.6 MB/s.
+
+Those budgets are now a test that fails the build if a change puts them back.
+Coins, gems and wreckage are still streamed: they are three to seven numbers
+each rather than eight, and their motion follows the players, so they are
+phase 2's business rather than phase 1's.
 Risk: drift between a client's copy of a round and the server's. Bounded by
 the fact that a round lives about two seconds, and by the server's existing
 "spent" events. Test: fly the same seed on both sides for 600 ticks and

@@ -26,6 +26,17 @@ import { weaponByKey } from "./weaponCatalog";
 import { dflow } from "./rebelsDflow";
 
 /** Everything the cockpit needs to know about somebody else in the room. */
+/** One round, as the room announced it. */
+export interface Shot {
+  id: number;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  hostile: boolean;
+  mini: boolean;
+  orb: boolean;
+  life: number;
+}
+
 export interface RoomPlayer {
   id: string;
   name: string;
@@ -109,7 +120,11 @@ export interface Room {
   others(): RoomPlayer[];
   /** The fight, as the room sees it. Overwritten every tick. */
   enemies: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; tier: number; shield: number; shieldMax: number; drone?: boolean; dragon?: boolean; id?: number }>;
-  bullets: Array<{ pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean; mini: boolean }>;
+  /** Rounds fired since this was last drained, and rounds the room says
+   *  stopped early. The cockpit flies everything in between itself, with the
+   *  same simulation file the room uses. */
+  takeShots(): Shot[];
+  takeSpent(): number[];
   coins: Array<{ pos: THREE.Vector3 }>;
   /** Torpedoes in the air, the room's: drawn, never simulated here. */
   torpedoes: Array<{ pos: THREE.Vector3; vel: THREE.Vector3 }>;
@@ -213,7 +228,8 @@ export function joinRoom(opts: Opts): Room {
     me: () => seat,
     others: () => [...players.values()].filter((p) => p.id !== seat),
     enemies: [],
-    bullets: [],
+    takeShots() { const out = shots; shots = []; return out; },
+    takeSpent() { const out = spent; spent = []; return out; },
     coins: [],
     torpedoes: [],
     junk: [],
@@ -272,6 +288,11 @@ export function joinRoom(opts: Opts): Room {
     },
   };
 
+  /* Rounds the room has told us about but the cockpit has not picked up
+     yet. Drained once a frame; see takeShots. */
+  let shots: Shot[] = [];
+  let spent: number[] = [];
+
   const players_ = players;
 
   function setStatus(s: RoomStatus) {
@@ -321,7 +342,8 @@ export function joinRoom(opts: Opts): Room {
       if (ws === sock) ws = null;
       players.clear();
       room.enemies.length = 0;
-      room.bullets.length = 0;
+      shots.length = 0;
+      spent.length = 0;
       room.coins.length = 0;
       room.torpedoes.length = 0;
       room.junk.length = 0;
@@ -400,11 +422,21 @@ export function joinRoom(opts: Opts): Room {
           fwd: new THREE.Vector3(e[3], e[4], e[5]),
           tier: e[6], shield: e[7], shieldMax: e[8], drone: e[9] === 1, dragon: e[9] === 2, id: e[10] || 0,
         }));
-        room.bullets = ((m.B ?? []) as number[][]).map((b) => ({
-          pos: new THREE.Vector3(b[0], b[1], b[2]),
-          vel: new THREE.Vector3(b[3], b[4], b[5]),
-          hostile: b[6] === 1, mini: b[7] === 1,
-        }));
+        for (const f of (m.F ?? []) as number[][]) {
+          shots.push({
+            id: f[0],
+            pos: new THREE.Vector3(f[1], f[2], f[3]),
+            vel: new THREE.Vector3(f[4], f[5], f[6]),
+            hostile: (f[7] & 1) !== 0,
+            mini: (f[7] & 2) !== 0,
+            orb: (f[7] & 4) !== 0,
+            life: f[8],
+          });
+        }
+        for (const id of (m.X ?? []) as number[]) spent.push(id);
+        /* A long stall must not deliver a thousand rounds at once. */
+        while (shots.length > 400) shots.shift();
+        while (spent.length > 400) spent.shift();
         room.junk = ((m.J ?? []) as number[][]).map((j) => ({
           pos: new THREE.Vector3(j[0], j[1], j[2]),
           rot: new THREE.Vector3(j[3], j[4], j[5]),

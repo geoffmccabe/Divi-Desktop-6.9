@@ -133,8 +133,20 @@ export interface StateOut {
   P: Array<[string, number, number, number, number, number, number, number, number]>;
   /** [x,y,z, fx,fy,fz, tier, shield, shieldMax, kind (0 fighter, 1 drone, 2 dragon), id] */
   E: Array<[number, number, number, number, number, number, number, number, number, number?, number?]>;
-  /** [x,y,z, vx,vy,vz, hostile, mini] */
-  B: Array<[number, number, number, number, number, number, number, number]>;
+  /**
+   * Rounds FIRED this tick: id, where from, how fast, flags (1 hostile,
+   * 2 mini gun, 4 a swarm drone's orb), and how long it lives.
+   *
+   * Not where every round in the sky is, twenty times a second. A round has
+   * no decisions in it, and the cockpit runs the same simulation the server
+   * does, so it is told the shot and flies the round itself. This was two
+   * thirds of everything on the wire.
+   */
+  F?: Array<[number, number, number, number, number, number, number, number, number]>;
+  /** Rounds that stopped EARLY, by id: hit something, or went into the
+   *  planet. One that simply ran out of life needs no telling, since every
+   *  cockpit counts the same life down. */
+  X?: number[];
   /** [x,y,z] */
   C: Array<[number, number, number]>;
   /** Beams in the air: origin, direction, weapon key, seconds left. Absent

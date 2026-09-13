@@ -29,7 +29,8 @@
 import * as THREE from "three";
 import {
   createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
-  setDropRandomForTests, clampReach, spawnDragon, spawnFleet, type WingBody,
+  setDropRandomForTests, clampReach, spawnDragon, spawnFleet, pushBullet, takeSpentBullets, takeFreshBullets,
+  type WingBody, type Bullet,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE, STAKE_BONUS, STAKE_BONUS_MS,
   BULLET_SPEED, BULLET_LIFE, CONVERGE,
@@ -864,7 +865,7 @@ export class RebelsRoom {
         if (wing.hull <= 0 || wing.ammo < 1) continue;
         wing.ammo -= 1;
         const aim = _wingAim.copy(from).addScaledVector(f, CONVERGE).sub(wing.pos).normalize();
-        this.combat.bullets.push({
+        pushBullet(this.combat, {
           pos: wing.pos.clone(),
           vel: aim.clone().multiplyScalar(BULLET_SPEED),
           life: BULLET_LIFE,
@@ -1191,6 +1192,13 @@ export class RebelsRoom {
         ]);
       }
     }
+    /* ---- THE SHOT, NOT THE ROUND ----
+       Everything fired since the last tick, and everything that stopped
+       early. A round flies itself in every cockpit from here on, with this
+       same simulation file; the server still decides every hit and says
+       which rounds stopped. */
+    const fired: Bullet[] = takeFreshBullets(c);
+    const stopped: number[] = takeSpentBullets(c);
     const state = {
       t: "s" as const,
       n: this.tick,
@@ -1208,11 +1216,16 @@ export class RebelsRoom {
            to be told which. And WHICH enemy, so its hull model follows it. */
         e.dragon ? 2 : e.drone ? 1 : 0, e.id ?? 0,
       ]),
-      B: c.bullets.map((b) => [
-        r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
-        r1(b.vel.x), r1(b.vel.y), r1(b.vel.z),
-        b.hostile ? 1 : 0, b.mini ? 1 : 0,
-      ]),
+      ...(fired.length ? {
+        F: fired.map((b) => [
+          b.id ?? 0,
+          r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
+          r1(b.vel.x), r1(b.vel.y), r1(b.vel.z),
+          (b.hostile ? 1 : 0) | (b.mini ? 2 : 0) | (b.orb ? 4 : 0),
+          Math.round(b.life * 100) / 100,
+        ]),
+      } : {}),
+      ...(stopped.length ? { X: stopped } : {}),
       C: c.coins.map((k) => [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)]),
       ...(c.torpedoes.length ? {
         T: c.torpedoes.map((t) => [r1(t.pos.x), r1(t.pos.y), r1(t.pos.z), r1(t.vel.x), r1(t.vel.y), r1(t.vel.z)]),

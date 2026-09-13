@@ -475,6 +475,18 @@ export interface Tracer {
 }
 
 export interface Bullet {
+  /**
+   * This round, on the wire.
+   *
+   * A round has no decisions in it: it leaves a muzzle at a speed and flies
+   * straight until its life runs out or it hits something. So the server
+   * sends the SHOT once and every cockpit flies the round with this same
+   * file, instead of the server describing where five hundred rounds are
+   * twenty times a second. The id is what lets the server say "that one
+   * stopped early" when it hits something. See the room's broadcast and
+   * stepShownBullets below.
+   */
+  id?: number;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   life: number;
@@ -514,6 +526,89 @@ export interface Bullet {
    be at its index this frame. See the controller for what that was costing. */
 let nextEnemyId = 1;
 export function newEnemyId(): number { return nextEnemyId++; }
+
+/* Rounds are numbered in one place, so the number is never skipped or
+   reused, and so "everything fired since I last spoke" is a comparison
+   rather than a list. Sixteen bits, because that is what the wire will
+   eventually carry and a wrap after sixty-five thousand rounds is a
+   fraction of a second's confusion at worst. */
+let nextBulletId = 1;
+export function newBulletId(): number {
+  nextBulletId = (nextBulletId + 1) & 0xffff;
+  return nextBulletId || 1;
+}
+export function resetBulletIdsForTests(): void { nextBulletId = 1; }
+
+/** Put a round in the air: numbered, listed, trailing, and announced. */
+export function pushBullet(c: CombatState, b: Bullet): Bullet {
+  b.id = newBulletId();
+  c.bullets.push(b);
+  c.fresh.push(b);
+  addTracer(c, b);
+  return b;
+}
+
+/**
+ * Rounds fired since the last time this was drained.
+ *
+ * Drained by the room once a tick and put on the wire. Symmetrical with the
+ * spent list, and safe across the sixteen-bit wrap in a way that "everything
+ * numbered above the last one I sent" would not be.
+ */
+export function takeFreshBullets(c: CombatState): Bullet[] {
+  const out = c.fresh;
+  c.fresh = [];
+  return out;
+}
+
+/** A round a cockpit was TOLD about: the server's number, kept. */
+export function showBullet(c: CombatState, b: Bullet): void {
+  c.bullets.push(b);
+  while (c.bullets.length > 900) c.bullets.shift();
+}
+
+/**
+ * Rounds that stopped early, by id, since the last time this was drained.
+ *
+ * A round that simply runs out of life needs no telling: every cockpit is
+ * counting the same life down. One that hits a fighter, a tower, a coin or
+ * the planet has to be called back, or it carries on across the sky in
+ * every cockpit that is drawing it.
+ */
+export function takeSpentBullets(c: CombatState): number[] {
+  const out = c.spent;
+  c.spent = [];
+  return out;
+}
+
+/**
+ * Fly the rounds a cockpit was told about.
+ *
+ * The drawing half of the same rule the server runs: move, count down, drop
+ * the dead ones. No hits are decided here, ever; the server says what was
+ * hit and says which rounds stopped.
+ */
+export function stepShownBullets(c: CombatState, dt: number): void {
+  for (let i = c.bullets.length - 1; i >= 0; i--) {
+    const b = c.bullets[i];
+    b.pos.addScaledVector(b.vel, dt);
+    b.life -= dt;
+    if (b.tracer) b.tracer.to.copy(b.pos);
+    if (b.life <= 0) {
+      if (b.tracer) b.tracer.live = false;
+      c.bullets.splice(i, 1);
+    }
+  }
+}
+
+/** Take a round out of the sky by id, because the server said it stopped. */
+export function dropBullet(c: CombatState, id: number): void {
+  const i = c.bullets.findIndex((b) => b.id === id);
+  if (i < 0) return;
+  const b = c.bullets[i];
+  if (b.tracer) b.tracer.live = false;
+  c.bullets.splice(i, 1);
+}
 
 export interface Enemy {
   id?: number;
@@ -733,6 +828,10 @@ export interface CombatState {
   dragonClock: number;
   /** Gems in the world. In a room these are the room's and persist. */
   gems: Gem[];
+  /** Rounds that stopped early this tick, by id, and rounds fired this
+   *  tick. Both drained by the room and put on the wire. */
+  spent: number[];
+  fresh: Bullet[];
   /** What wrecks leave behind. The room and the cockpit both load the live
    *  charts over this default. */
   drops: DropConfig;
@@ -746,7 +845,7 @@ export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
     beams: [],
-    wave: null, flocks: [], flockClock: 0, dragonClock: 0, gems: [], drops: DEFAULT_DROP_CONFIG,
+    wave: null, flocks: [], flockClock: 0, dragonClock: 0, gems: [], spent: [], fresh: [], drops: DEFAULT_DROP_CONFIG,
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -1113,9 +1212,7 @@ export function fireGuns(
   const target = new THREE.Vector3().copy(pos).addScaledVector(fwd, CONVERGE);
   for (const muzzle of m) {
     const vel = target.clone().sub(muzzle).normalize().multiplyScalar(BULLET_SPEED);
-    const b: Bullet = { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, owner };
-    c.bullets.push(b);
-    addTracer(c, b);
+    pushBullet(c, { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, owner });
   }
   return m;
 }
@@ -1178,9 +1275,7 @@ export function fireMini(
 ): void {
   const target = aimFrom.clone().addScaledVector(aimDir, CONVERGE);
   const vel = target.sub(muzzle).normalize().multiplyScalar(BULLET_SPEED * MINI_SPEED_MULT);
-  const b: Bullet = { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true, owner };
-  c.bullets.push(b);
-  addTracer(c, b);
+  pushBullet(c, { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true, owner });
 }
 
 /* ---- how good a shot each tier is ----
@@ -1258,11 +1353,9 @@ export function scatterAim(
 export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
   const aim = scatterAim(e.pos, at, aimErrorFor(e.cls.tier));
   const vel = aim.sub(e.pos).normalize().multiplyScalar(BULLET_SPEED * 0.6);
-  const b: Bullet = {
+  pushBullet(c, {
     pos: e.pos.clone().addScaledVector(vel, 0.02), vel, life: BULLET_LIFE * 1.4, hostile: true,
-  };
-  c.bullets.push(b);
-  addTracer(c, b);
+  });
   /* Reported so it can be HEARD where it happened. A shot from behind is the
      only warning a player gets that something is on their tail. */
   c.events.push({ kind: "enemyShot", at: e.pos.clone(), power: 1 });
@@ -1277,15 +1370,13 @@ export function droneFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
   const aim = scatterAim(e.pos, at, aimErrorFor(e.cls.tier));
   const vel = aim.sub(e.pos).normalize()
     .multiplyScalar(BULLET_SPEED * DRONE_BULLET_SPEED);
-  const b: Bullet = {
+  pushBullet(c, {
     pos: e.pos.clone().addScaledVector(vel, 0.02), vel,
     /* Slower rounds need longer to cover the same ground, or they would wink
        out short of a player they were aimed squarely at. */
     life: BULLET_LIFE * 1.9, hostile: true, orb: true,
     phase: Math.random() * Math.PI * 2,
-  };
-  c.bullets.push(b);
-  addTracer(c, b);
+  });
   c.events.push({ kind: "enemyShot", at: e.pos.clone(), power: 1 });
 }
 
@@ -1674,6 +1765,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       /* The round is spent: its trail must start fading now, like any other
          round's. Left "live" it would never fade at all. */
       if (b.tracer) b.tracer.live = false;
+      if (b.id) c.spent.push(b.id);
       c.bullets.splice(i, 1);
       continue;
     }
@@ -1689,6 +1781,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
     if (coined) {
       if (b.tracer) b.tracer.live = false;
+      if (b.id) c.spent.push(b.id);
       c.bullets.splice(i, 1);
       continue;
     }
@@ -1797,6 +1890,10 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
     if (spent || b.life <= 0) {
       if (b.tracer) b.tracer.live = false;
+      /* Only the ones that stopped EARLY are worth telling anybody about:
+         a round that ran out of life ran out in every cockpit at the same
+         moment, because they are all counting the same seconds. */
+      if (spent && b.id) c.spent.push(b.id);
       c.bullets.splice(i, 1);
     }
   }
