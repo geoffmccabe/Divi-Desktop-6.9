@@ -1326,6 +1326,35 @@ async fn skin_buy(
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct SkinEntitlementDto {
+    skin_ref: String,
+    txid: String,
+    confirmations: i64,
+}
+
+/// Skins this wallet has paid for, by scanning its own outgoing transactions
+/// for the `SKINBUY1:` tag `skin_buy` attaches (see `skinbuy.rs`). Zero
+/// confirmations means the payment is still unconfirmed, not yet owned.
+#[tauri::command]
+async fn skin_entitlements(count: Option<i64>) -> Result<Vec<SkinEntitlementDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        skinbuy::entitlements(&cfg, count.unwrap_or(200)).map(|list| {
+            list.into_iter()
+                .map(|e| SkinEntitlementDto {
+                    skin_ref: e.skin_ref,
+                    txid: e.txid,
+                    confirmations: e.confirmations,
+                })
+                .collect()
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct PayReqDto {
     txid: String,
     pay_to: String,
@@ -2006,6 +2035,7 @@ fn main() {
             send_coins,
             fast_send,
             skin_buy,
+            skin_entitlements,
             tx_status,
             divi_prices,
             ai_set_key,
