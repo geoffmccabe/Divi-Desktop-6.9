@@ -78,3 +78,24 @@ playing if needed. Go ahead and start now."
   folder over as it is.
 - **Suite:** 29 suites, all green. tsc clean. The guard finds no ties for either
   the core or the web page.
+
+### B1 deployed (2026-Sep-13)
+- **Merged:** feat/rebels-web fast-forwarded into feat/divi-rebels (the gameplay
+  folder was clean) and pushed, so a later room deploy from either folder
+  carries the guest handling.
+- **Room Worker:** divi-rebels-room deployed with the guest change, version
+  7f07c156. /health answers ok. App clients send no door marker, so they are
+  unchanged.
+- **Web Worker:** divi-rebels-web deployed, version 7f81219a, at
+  https://divi-rebels-web.geoff-de3.workers.dev/rebels/. No route on divi.love.
+  Checked live:
+  - / redirects to /rebels/
+  - the page is 200 with no-cache and nosniff
+  - hashed files are cached for a year
+  - /rebels/api/nodes returns 74 located nodes from the Scanner
+- **Seen in headless Chrome on the live address:** the launch card reads
+  "Launching from London, United Kingdom." and the button reads LAUNCH, which
+  appears only once the room connection is up. So the page reached the real
+  room as a guest.
+- **Not yet seen:** flying, sound and the frame rate in a real browser. Geoff
+  is the test for those.
