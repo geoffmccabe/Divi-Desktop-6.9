@@ -12,7 +12,13 @@ too while we're doing this."
 
 Revision, Geoff: "for the web version YES they can still earn Divi like normal.
 We want them to have Divi, that's the point... adding new Divi fans and
-wallets. And yes we want it to work on a phone if possible, that would be
+wallets.
+
+Second revision, Geoff: "the first thing is to just get it on there but keep
+the mobile version in mind. I don't want to dumb-down the web version so that
+it works on mobile. I'd rather have a separate version for mobile after we get
+the web version done." How the code is split so that works:
+docs/DIVI-REBELS-SHARED-CORE-PLAN.md. And yes we want it to work on a phone if possible, that would be
 ideal, so it would be much easier to get lots of new players."
 
 ## The shape of it in one paragraph
@@ -24,9 +30,9 @@ or email, launch from the Scanner node tower in London, and fly in the SAME
 sky ("earth" room) as app players. The room server learns to tell the two kinds
 of player apart: app players stay exactly as they are today, web players are
 identified by their verified LW-SSO account. Web players earn DIVI like
-anyone else and cash it out, and the web version is built to be played on a
-phone as well as a computer, because the point is new DIVI holders and new
-wallets.
+anyone else and cash it out, because the point is new DIVI holders and new
+wallets. This version is for computers and is the FULL game; a separate phone
+version follows it, built on the same core.
 
 ## What the research found (facts, with where they came from)
 
@@ -205,7 +211,7 @@ divi.love to the SSO and back does not feel like leaving the game.
 - scores on the same leaderboard
 - earn and spend points
 - **earn DIVI and cash it out**, the same as app players
-- play on a computer, and on a phone (see "Phones")
+- the full game on a computer (phones get their own version later)
 
 Not at launch: buying points with DIVI from the browser (that needs a wallet to
 send from; see Later).
@@ -254,48 +260,25 @@ to set.
 Honest limit: these make farming costly and visible, they do not make it
 impossible. The daily budget is the hard ceiling.
 
-## Phones
+## Phones: a separate version, after this one
 
-Feasible, and more work than the computer version. My confidence it plays well
-on a mid-range phone is about 60%, mostly because of performance, not because
-anything is blocked.
+Not part of this version, and nothing in this version is reduced for phones.
+The phone version is its own door on the same core. It reuses this version's
+sign-in, towers, identity, price and cash-out modules, and adds touch controls,
+a phone detail setting and a phone layout. See
+docs/DIVI-REBELS-SHARED-CORE-PLAN.md.
 
-### What changes
-- **Controls.** Today the game is keyboard and mouse, with the pointer locked
-  to aim. A phone has neither. A DRAFT touch layout for Geoff to change:
-  - left thumb: a floating stick for throttle (up and down) and sideways strafe
-    (left and right), the WASD of the phone
-  - right thumb: drag anywhere on the right half to aim, like the mouse
-  - a large FIRE button near the right thumb (hold for the mini gun and beam)
-  - smaller TORPEDO and BOOST buttons beside it
+Notes kept for then:
+- **Draft touch layout**, a starting point for Geoff's design:
+  - left thumb: a stick for throttle and strafe
+  - right thumb: drag to aim
+  - large FIRE button, smaller TORPEDO and BOOST buttons
   - tap the weapon icon to cycle weapons
-  - lift, roll and the rear gun: small buttons, or left out of the phone layout
-    at first
-  The game already turns keys into actions through one table
-  (RebelsControls.tsx), so touch becomes a second way to feed the same actions
-  rather than a second game.
-- **Performance.** The globe was the frame-time cost in the DFlow reports, and
-  a phone has a fraction of a laptop's graphics power. A phone quality setting:
-  fewer node links, lighter planet detail, fewer particles, and a steady 30
-  frames a second where 60 is not reachable. DFlow works on the phone too, so
-  real phones get measured, not guessed.
-- **The screen.** Landscape only, with a "turn your phone" card in portrait.
-- **iPhone limits.**
-  - Safari on iPhone does not allow true full screen for a web page.
-    "Add to Home Screen" does, so the page is set up as an installable web app
-    and invites the player to add it.
-  - Sound only starts after the first tap, which the launch button provides.
-  - iPhones cut off web pages that use too much graphics memory, so the phone
-    setting also caps texture sizes.
-- **Panels.** Inventory, help, stores and cash-out get thumb-sized buttons and
-  work without hover.
-
-### Order
-Computers first, phones straight after: the computer version proves the shared
-sky, sign-in and cash-out on the fastest path, and the phone phase then only
-has to solve controls and performance. The groundwork (touch as a second input,
-the quality setting) is laid while building the computer version so nothing
-has to be redone.
+- **iPhone:** Safari does not allow true full screen for a web page, so the
+  phone version installs with "Add to Home Screen".
+- **Sound** starts on the first tap.
+- **Graphics memory:** iPhones cut off pages that use too much, so the phone
+  detail setting caps texture sizes.
 
 ## Phases
 
@@ -331,14 +314,18 @@ build the missing forgot-password page.
 - Deployed only after the app is re-tested against it, because app players are
   live on this server.
 
-**Phase 3: the web front door, computers** (same repo, ui).
+**Before Phase 3: Stage A of docs/DIVI-REBELS-SHARED-CORE-PLAN.md**, the app
+refactored into a core plus an app door, shipped as an ordinary app version
+with no visible change.
+
+**Phase 3: the web front door** (same repo, ui).
 - A second build entry that mounts the SAME game and globe with a small web host
   in place of the wallet's network map.
 - Towers come from the Scanner's list; home is the Scanner hangar.
 - A sign-in card, session handling, the stores, and cash-out with the three
   payout choices (DiviGo, any address, Divi Desktop).
-- Groundwork for phones: touch feeds the same control table, and a quality
-  setting exists even if only computers use it yet.
+- Built as the web door's handful of modules on the shared core; see the
+  shared core plan.
 - A normal multi-file build under /rebels/ so returning players load from cache.
 
 **Phase 4: hosting.** The `divi-rebels-web` Worker on `divi.love/rebels*`:
@@ -348,15 +335,11 @@ checked afterwards to confirm it is untouched.
 **Phase 5: the Scanner hangar in the app.** Permanent London tower on the app's
 globe so app players see where web players launch. App version bump and install.
 
-**Phase 6: phones.** Touch controls, the phone quality setting, landscape
-card, installable web app, thumb-sized panels. Measured on a real iPhone and a
-real Android phone through DFlow.
-
-**Phase 7: launch hardening.**
+**Phase 6: launch hardening.**
 - Load time on a first visit, and on a slower laptop.
 - Sound in Chrome and Safari.
-- A mixed soak: web players on computers and phones with app players, for
-  half an hour, read through DFlow.
+- A mixed soak: several web players and app players together for half an
+  hour, read through DFlow.
 - A trial run of the farm guards: several test accounts cashing out to one
   address must be held, not paid.
 - Remaining network plan phases if the player count grows, since a public page
@@ -366,7 +349,8 @@ real Android phone through DFlow.
 
 Made by Geoff, 2026-Sep-13:
 - Web players earn DIVI and cash out like everyone else.
-- Phones are in scope.
+- Phones: a separate version after the web version, on the same core. The web
+  version is the full game.
 
 Still open:
 1. **The farm guard numbers**: daily cash-out cap per account, how many
@@ -380,8 +364,6 @@ Still open:
 4. **Discord** also appears on the SSO login page. Keep it, or show only Google
    and email for Rebels?
 5. **Cheats on the web:** admins only (recommended), or off entirely?
-6. **The phone controls**: the draft layout above is a starting point for
-   Geoff's own design.
 
 ## Later, not in this plan
 - Linking an app node account to an SSO account.
