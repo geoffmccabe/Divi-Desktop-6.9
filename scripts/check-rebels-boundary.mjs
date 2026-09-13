@@ -27,6 +27,9 @@ const esbuild = require("esbuild");
 /* The entries a door mounts. */
 const ENTRIES = [
   { name: "the game core", file: "src/wallet/rebels/platform/coreEntry.ts" },
+  /* The web page itself, globe and theme included: the whole of what a
+     browser at divi.love/rebels will load. */
+  { name: "the web page", file: "src/web-rebels/main.tsx" },
 ];
 
 /* Files the game must never contain. Paths are relative to ui/. A trailing
@@ -49,6 +52,7 @@ const FORBIDDEN = [
    is a core, and any tie that appears from here on is a regression. */
 const KNOWN = {
   "the game core": [],
+  "the web page": [],
 };
 
 const forbidden = (f) => FORBIDDEN.some((x) => (x.endsWith("/") ? f.startsWith(x) : f === x));

@@ -1,6 +1,6 @@
 # Divi Rebels Refactor, Stage A: the core and the app door
 
-Written 2026-Sep-13. Status: IN PROGRESS (A0 to A4 done).
+Written 2026-Sep-13. Status: IN PROGRESS (A0 to A5 done; A6 is the merge, install and Geoff's check).
 
 Parent plan: docs/DIVI-REBELS-SHARED-CORE-PLAN.md. Geoff approved it and asked
 for "a detailed refactor plan first with prompts for yourself to use for each
@@ -378,3 +378,31 @@ before any refactor change.
 - **Suite:** 27 suites, all green, including the 101 cockpit checks that press
   keys and move the pointer through these very listeners. tsc clean. The guard
   still reports no ties.
+
+### A5 (2026-Sep-13)
+- **The proof page:** ui/web-rebels/index.html mounts ui/src/web-rebels/main.tsx.
+  It holds:
+  - a stand-in door: name "web pilot", no price, no wallet, desktop detail and
+    input
+  - the theme provider
+  - GlobeMap with four towers: the Scanner node in London as home, and three
+    stand-ins on the documentation address range (203.0.113.x) so no real node
+    is named
+  - RebelsHud over the globe
+  - The room address is a reserved name that never resolves, unless the page
+    is opened with ?room=1.
+- **The web build:** ui/vite.web.config.ts, multi-file under /rebels/, into
+  ui/dist-web (ignored by git), same version number. It built in 27 s:
+  - 3.9 MB in all
+  - JavaScript 2.59 MB, including three.js and the globe library
+  - CSS 128 KB, the night-earth texture 715 KB, two fonts, the sound effects
+  - For comparison, the app's single inlined file is 7.26 MB, the whole wallet
+    included.
+- **The guard** bundles the web page too: 87 of our files, no ties. It is
+  required to stay that way.
+- **Seen running:** served locally and opened in headless Chrome. The launch
+  card renders in the Rebels colours with the red panda, the keyboard help and
+  the buttons, and reads "Launching from London." (the Scanner tower is home).
+  The play button reads "CONNECTING TO THE FIGHT...", as designed, because the
+  stand-in points at no server. Not deployed anywhere.
+- tsc clean.
