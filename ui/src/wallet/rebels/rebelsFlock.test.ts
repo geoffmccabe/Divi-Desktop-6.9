@@ -368,9 +368,17 @@ type Bullet = never;
   spawnFleet(c, 1, home, new THREE.Vector3(1, 0, 0), { cheat: true });
   /* Warm the compiler up before timing anything. */
   for (let i = 0; i < 600; i++) { stepCombat(c, DT, w); clearEvents(c); }
-  const t0 = performance.now();
-  for (let i = 0; i < 1800; i++) { stepCombat(c, DT, w); clearEvents(c); }
-  const per = (performance.now() - t0) / 1800;
+  /* The FASTEST of six batches, not one long run. On a machine running other
+     work the scheduler lends this process a slice of a core at a time, so one
+     long timing measured the neighbours: the same code read 0.6ms with the
+     processor to itself and 1.7ms at a load average of eighty. The fastest
+     batch is the closest a wall clock gets to what the step itself costs. */
+  let per = Infinity;
+  for (let batch = 0; batch < 6; batch++) {
+    const t0 = performance.now();
+    for (let i = 0; i < 300; i++) { stepCombat(c, DT, w); clearEvents(c); }
+    per = Math.min(per, (performance.now() - t0) / 300);
+  }
   /* The whole combat step, not only the flocking, and node is slower at this
      than a release build. A frame is 16.7ms; a fifth of that would be a real
      problem and anything under a millisecond is not worth optimising. The

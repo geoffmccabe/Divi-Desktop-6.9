@@ -1,6 +1,6 @@
 # Divi Rebels Refactor, Stage A: the core and the app door
 
-Written 2026-Sep-13. Status: IN PROGRESS.
+Written 2026-Sep-13. Status: IN PROGRESS (A0 and A1 done).
 
 Parent plan: docs/DIVI-REBELS-SHARED-CORE-PLAN.md. Geoff approved it and asked
 for "a detailed refactor plan first with prompts for yourself to use for each
@@ -276,8 +276,41 @@ When Stage A is done:
 
 ## Baseline
 
-(filled in by A0)
+Taken 2026-Sep-13 in /Users/geoffreymccabe/dd69-rebels-core at commit 7786284,
+before any refactor change.
+
+- **Full suite:** 26 suites, all green except one: `a fleet of twenty-four is
+  cheap` (flock suite).
+  - That check timed one long run of the combat step and failed at a machine
+    load average of about 80 (other sessions building). The same untouched code
+    read 0.6 ms with the processor to itself and 1.1 to 1.7 ms under load,
+    against a 1.0 ms limit.
+  - Fixed in A0 by timing the FASTEST of six batches, which measures the step
+    and not the neighbours. It now reads 0.16 to 0.24 ms and passes three times
+    running.
+- **App UI bundle** (the one inlined index.html): 7,258,861 bytes. The build took
+  9 min 23 s of wall time at 17% CPU under that load, so builds are kept to a
+  minimum in this stage.
 
 ## Log
 
-(one entry per phase, with what moved, the guard's list, and the suite counts)
+### A0 + A1 (2026-Sep-13)
+- **Worktree:** /Users/geoffreymccabe/dd69-rebels-core, branch
+  refactor/rebels-core, with node_modules linked to the dd69-rebels installs.
+- **New files** in ui/src/wallet/rebels/platform/:
+  - platform.ts: the contract, types only
+  - defaults.ts: the room address and today's globe detail
+  - desktopInput.ts: the cockpit's listeners, copied verbatim, not yet used
+  - current.ts: setPlatform, platform, HEADLESS
+  - app/index.ts: the app door, calling exactly what the game calls today
+  - coreEntry.ts: what a door mounts
+- **Registration:** NetworkMap.tsx registers the app door as it loads. No game
+  file uses the door yet, so behaviour is unchanged by construction.
+- **The guard:** scripts/check-rebels-boundary.mjs and
+  scripts/run-rebels-boundary-tests.sh. It bundles the game (81 of our files)
+  and finds 7 ties, all known, each printed with the chain that pulls it in:
+  - points/PurchaseWithDivi.tsx and points/points.css, through PointsPanel
+  - tauri.ts, wallet/api.ts and wallet/value.ts, through WeaponStore
+  - wallet/exchanges.ts, through rebelsScores
+  - wallet/stakeWin.ts, through rebelsController
+- **Suite:** 27 suites (the guard is the new one), all green. tsc clean.
