@@ -2031,6 +2031,9 @@ code, .mono { font-family: var(--font-mono); }
 .orbit-keyboard { display: grid; gap: 4px; margin: 4px 0 14px; }
 .orbit-keyrow { display: flex; gap: 4px; }
 .orbit-keyrow-extra { margin-top: 6px; }
+/* Pads a short row so every row holds the same number of units and the
+   letters fall in true columns. Not a cap: nothing to see, nothing to hover. */
+.orbit-keygap { min-width: 0; }
 .orbit-key {
   flex: 1 0 0; min-width: 0; text-align: center;
   padding: 7px 0; font-size: 10px; letter-spacing: 0.06em;

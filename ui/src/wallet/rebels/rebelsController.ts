@@ -58,9 +58,10 @@ import {
 } from "../../sound";
 import { createPeers, paintFromWire, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
-import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
+import { weaponInSlot, weaponByKey, BEAM_SECONDS } from "./weaponCatalog";
 import {
   hasWeapon, owned, earnPoints, spendable, flightExtras, gearKeys, droneCounts, subscribeArmoury,
+  grant,
 } from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
@@ -1135,6 +1136,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          cheats and comes out with them. */
       addHeld(`drone${tier}`, 1);
       setHud({ note: `DRONE T${tier} FITTED`, noteAt: performance.now() });
+    } else if (kind === "3" && tier >= 1 && tier <= 4) {
+      /* ---- TEST: !3t, a Beam of tier t, owned ----
+         Geoff asked for a Tier 1 beam to test with, 2026-Sep-13, so "!31".
+         The line has to be walked in order for the number key to select it, so
+         everything below the tier asked for is granted too: the mini gun and
+         any lower beams. Goes with the other test cheats and comes out with
+         them: this is a free weapon and must be gated before weapons are worth
+         anything. */
+      grant(loadShip(), "mini");
+      for (let n = 1; n <= tier; n++) grant(loadShip(), `beam${n}`);
+      const spec = weaponByKey(`beam${tier}`);
+      setHud({ note: `${(spec?.name ?? "BEAM").toUpperCase()} FITTED: PRESS ${spec?.slot ?? 3}`, noteAt: performance.now() });
     } else if (kind === "7" && tier === 7) {
       /* ---- TEST: !77, a Rear Gun, opened, into the inventory ----
          Same caveat: a free item, to be removed with the one above. */

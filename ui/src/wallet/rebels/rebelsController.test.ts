@@ -485,9 +485,17 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("the dive ends at your own tower",
      g.camera.position.distanceTo(home) < 40,
      `${g.camera.position.distanceTo(home).toFixed(1)} from the tip`);
-  for (let i = 0; i < 60 * 3; i++) ctl.frame(1 / 60);
+  /* The resupply takes four seconds of FLYING and is then confirmed by the
+     room, and the room is only stepped when a position report goes out, which
+     is on a wall clock rather than a frame count. A fixed number of frames
+     therefore finished the resupply on a quiet machine and did not finish it
+     on a busy one: this block passed alone and failed in the full suite. So
+     fly until the gauges are full, with a real deadline as the backstop. */
+  const untilFull = Date.now() + 15_000;
+  while (ctl.hud().shields < MAX_SHIELD && Date.now() < untilFull) ctl.frame(1 / 60);
   const h = ctl.hud();
-  ok("shields and ammo start full", h.shields === MAX_SHIELD && h.ammo <= MAX_AMMO);
+  ok("shields and ammo start full", h.shields === MAX_SHIELD && h.ammo <= MAX_AMMO,
+     `shields ${h.shields} of ${MAX_SHIELD}, ammo ${h.ammo} of ${MAX_AMMO}`);
   ctl.detach();
   await settle();
 }
@@ -848,10 +856,20 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
     for (const ch of s) { press("keydown", { key: ch }); press("keyup", { key: ch }); }
   };
 
+  /* Wait for a thing to be TRUE rather than for a stopwatch to run out: the
+     room only steps when a position report goes out, and reports go out on a
+     wall clock, so a fixed 130ms settled a quiet machine and left a busy one
+     half way through the arriving fleet. */
+  const settleUntil = (done: () => boolean) => {
+    const until = Date.now() + 10_000;
+    while (!done() && Date.now() < until) ctl.frame(1 / 60);
+    settle();
+  };
+
   settle();
   const before = ctl.hud().contacts;
   type("!11");
-  settle();
+  settleUntil(() => ctl.hud().contacts - before >= 24);
   const after = ctl.hud().contacts;
   ok("!11 sends a fleet of twenty-four", after - before >= 24, `${before} -> ${after}`);
 

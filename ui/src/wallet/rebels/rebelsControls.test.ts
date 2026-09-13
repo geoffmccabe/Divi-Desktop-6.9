@@ -10,7 +10,9 @@
 // Boost." And: "Don't hardcode anything because we will add items such as a
 // 3x boost item to buy or 1.5x or 2x strafe."
 
-import { CONTROL_GROUPS, GROUP_OF_KEY, GAME_KEYS, KEYBOARD_CAPS, controlLines } from "./RebelsControls";
+import {
+  CONTROL_GROUPS, GROUP_OF_KEY, GAME_KEYS, KEYBOARD_CAPS, controlLines, capOffset,
+} from "./RebelsControls";
 import { NO_EXTRAS, BOOST, STRAFE_SPEED } from "./orbitFlight";
 
 /* Read rather than rendered: the card is React and these tests run in node,
@@ -99,6 +101,39 @@ const groupOf = (key: string) => GROUP_OF_KEY[key];
   ok("the launch screen and the ? panel render the same body", bodies.length === 2, `${bodies.length} uses`);
   ok("and only one of them draws the keyboard and the list",
      (src.match(/<Keyboard/g) ?? []).length === 1 && (src.match(/<dl>/g) ?? []).length === 1);
+}
+
+/* ---- the picture is a KEYBOARD ----
+   Geoff, 2026-Sep-13: "Shift is where Caps Lock should be. And Shift is too
+   wide. QAZ should all be stacked vertically in the design, not offset by
+   one." All three are geometry, so all three can be measured. */
+{
+  const src2 = readFileSync(`${process.cwd()}/src/wallet/rebels/RebelsControls.tsx`, "utf8");
+  ok("Q, A and Z stand in one column",
+     capOffset("Q") !== null && capOffset("Q") === capOffset("A") && capOffset("A") === capOffset("Z"),
+     `${capOffset("Q")} / ${capOffset("A")} / ${capOffset("Z")}`);
+  ok("caps lock holds the home row, not shift",
+     (capOffset("CAPS") ?? -1) === 0 && KEYBOARD_CAPS.some(([t]) => t === "CAPS"));
+  const rowOf = (t: string) => src2.split("\n").findIndex((l) => l.includes(`["${t}"`));
+  ok("shift is on the row BELOW caps lock", rowOf("SHIFT") > rowOf("CAPS"));
+  const widthOf = (t: string) => KEYBOARD_CAPS.find(([x]) => x === t)?.[2] ?? 1;
+  ok("shift is no wider than the other modifiers",
+     widthOf("SHIFT") <= widthOf("TAB"),
+     `SHIFT ${widthOf("SHIFT")} vs TAB ${widthOf("TAB")}`);
+  ok("the rows are padded to one width rather than by hand",
+     /ROW_UNITS - rowUnits\(row\)/.test(src2));
+}
+
+/* ---- the DFlow panel holds still ----
+   It is anchored to its bottom edge, so a row coming or going moved the whole
+   box while it was being read. */
+{
+  const dfl = readFileSync(`${process.cwd()}/src/wallet/rebels/DflowPanel.tsx`, "utf8");
+  const css = readFileSync(`${process.cwd()}/src/wallet/rebels/orbit.css`, "utf8");
+  ok("it always draws the same number of cost rows",
+     /const ROWS = \[0, 1, 2, 3, 4\]/.test(dfl) && !/live\.top\.slice/.test(dfl));
+  ok("and the panel itself has a fixed height",
+     /\.dflow \{[^}]*height: \d+px/s.test(css));
 }
 
 console.log(out.join("\n"));

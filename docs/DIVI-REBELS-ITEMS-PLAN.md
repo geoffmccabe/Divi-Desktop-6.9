@@ -381,6 +381,12 @@ phase ships on its own with tests, docs and a version.
   It leaves its egg, so this mints eggs. Remove or gate before eggs are
   worth anything.
 - `!77`: an opened Rear Gun into the inventory. Same caveat.
+- `!3t` (t = 1 to 4): a Beam of tier t, OWNED, with everything below it
+  on the line granted too so the number key can select it. Geoff asked
+  for a Tier 1 beam to test with, 2026-Sep-13, so `!31`. This is a free
+  weapon and is the one on this list that matters most: it must go, or
+  be gated, before weapons carry value.
+- `!8t`: one wingman of tier t, fitted. Press again for another.
 - The existing `!1x` flock cheat is harmless (worth nothing).
 
 ## Fixed after Geoff's test (2026-Sep-12, v69.9.30)
@@ -633,3 +639,39 @@ us; `deviceApi` is now recorded so that is provable rather than assumed.
   didn't see any indication that the server was refusing the dock. It showed
   it as docked." Refusals now show in the cockpit and go into the black box.
   That alone would have made the tower bug obvious in seconds.
+
+## Fixed: the keyboard picture and the DFlow panel (2026-Sep-13, v69.9.41)
+
+Geoff: "you have done the keyboard design wrong. Shift is where Caps Lock
+should be. And Shift is too wide. QAZ should all be stacked vertically in the
+design, not offset by one. Also give me a BEAM Tier 1 so I can test it. Also
+the dflow panel is jumping up and down because its height is shifting."
+
+- **The letters could never line up.** Each row is a flex row that stretches
+  to the full width of the card, so two rows only share a column when they
+  hold the same number of units, and they did not: the number row held ten,
+  the row under TAB held eight and a half, the home row six and a half. The
+  home row was therefore drawn with wider keys than the row above it and
+  every letter sat in its own place. Fixed by padding each row to ROW_UNITS
+  with a blank spacer, COMPUTED from the row rather than typed in, so a key
+  added later cannot knock the columns out again.
+- **SHIFT sat where CAPS LOCK belongs**, and was 2.1 units wide against 1.6
+  for TAB. There is now a dead CAPS cap holding the home row and SHIFT is on
+  the row below it, the same width as TAB, with Z beside it. Q, A and Z are
+  all 1.6 units from the left edge, which is what the test measures.
+- **The DFlow panel is anchored to its BOTTOM edge**, so every time the list
+  of costliest stages gained or lost a row the whole box moved up or down
+  under the eye. It now always draws five rows, empty ones included, and the
+  box itself has a fixed height and clips.
+- Tests: `scripts/run-rebels-controls-tests.sh` measures the three geometry
+  claims (one column, caps above shift, shift no wider than tab) and that
+  the panel holds its height.
+
+## Fixed: a test that raced (2026-Sep-13, v69.9.41)
+
+"Shields and ammo start full" passed on its own and failed inside the full
+suite. Not a game bug: the resupply is confirmed by the room, the room is
+only stepped when a position report goes out, and reports go out on a WALL
+CLOCK. So a fixed number of simulated frames finished the resupply on a quiet
+machine and did not finish it on a busy one. The block now flies until the
+gauges fill, with a real deadline as the backstop.

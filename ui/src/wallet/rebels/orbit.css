@@ -821,7 +821,11 @@
    Small, bottom-left, half-transparent and blurred so the fight stays
    visible through it; the HUD's colour and mono face. */
 .dflow {
+  /* A FIXED height as well as a fixed width: the contents are all single lines
+     of a known size, so the box can be nailed down and never move while it is
+     being read. Anything unexpected is clipped rather than allowed to push. */
   position: absolute; left: 16px; bottom: 52px; width: 300px;
+  height: 176px; box-sizing: border-box; overflow: hidden;
   padding: 8px 10px 7px;
   font: 500 10px/1.4 var(--font-mono);
   color: hsl(var(--rebels-hud) / 0.85);
@@ -847,6 +851,8 @@
 .dflow-row { display: grid; grid-template-columns: 78px 1fr 40px; align-items: center; gap: 5px; margin-top: 2px; }
 .dflow-row i { display: block; height: 4px; background: hsl(var(--rebels-hud) / 0.55); border-radius: 2px; min-width: 2px; }
 .dflow-row b { text-align: right; }
+/* A held-open row with nothing in it yet: takes its space, shows nothing. */
+.dflow-row.empty i { background: none; }
 
 /* Gems held, on the Items tab. */
 .gems-held { margin-top: 10px; }

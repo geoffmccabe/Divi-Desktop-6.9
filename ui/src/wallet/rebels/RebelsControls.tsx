@@ -91,12 +91,44 @@ export const GROUP_OF_KEY: Record<string, string> = Object.fromEntries(
    reads as a keyboard and not a list. A cap is [what is printed, the key it
    stands for]; a cap with no key is decoration. */
 type Cap = [string, string | null, number?];
+/* The picture of the keyboard.
+   Laid out so the letters sit in TRUE COLUMNS: every letter row is opened by
+   one modifier of the same width, so Q, A and Z line up one under the other
+   rather than stepping right as they do on a real board. Geoff, 2026-Sep-13:
+   "QAZ should all be stacked vertically in the design, not offset by one."
+   SHIFT is on its own row, under CAPS, where it belongs, and is no wider than
+   the other modifiers. CAPS is drawn dead: it is there to hold the column. */
+const MOD_W = 1.6;
 const KEYBOARD: Cap[][] = [
   [["ESC", "escape"], ["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"], ["6", "6"], ["7", "7"], ["8", null], ["0", "0"]],
-  [["TAB", "tab", 1.6], ["Q", "q"], ["W", "w"], ["E", "e"], ["R", "r"], ["T", null], ["Y", "y"], ["I", "i"]],
-  [["SHIFT", "shift", 2.1], ["A", "a"], ["S", "s"], ["D", "d"], ["F", "f"], ["G", null]],
-  [["Z", null, 1.2], ["X", "x"], ["C", "c"], ["V", "v"], ["SPACE", " ", 3.2]],
+  [["TAB", "tab", MOD_W], ["Q", "q"], ["W", "w"], ["E", "e"], ["R", "r"], ["T", null], ["Y", "y"], ["I", "i"]],
+  [["CAPS", null, MOD_W], ["A", "a"], ["S", "s"], ["D", "d"], ["F", "f"], ["G", null]],
+  [["SHIFT", "shift", MOD_W], ["Z", null], ["X", "x"], ["C", "c"], ["V", "v"], ["SPACE", " ", 3.2]],
 ];
+/* ---- the column grid ----
+   Every row stretches to the same width, so two rows only line up when they
+   hold the same number of units. They did not: the number row held ten and the
+   home row held six and a half, which is why the letters stepped sideways. So
+   a row is padded to ROW_UNITS with a blank spacer at the end, and the padding
+   is COMPUTED rather than typed, so a key added later cannot quietly knock the
+   columns out again. */
+const ROW_UNITS = 10;
+export function rowUnits(row: Cap[]): number {
+  return row.reduce((n, [, , w]) => n + (w ?? 1), 0);
+}
+/** How far from the left edge of the picture a cap sits, in units. This is the
+ *  number a test reads to prove Q, A and Z are in one column. */
+export function capOffset(text: string): number | null {
+  for (const row of KEYBOARD) {
+    let at = 0;
+    for (const [t, , w] of row) {
+      if (t === text) return at;
+      at += w ?? 1;
+    }
+  }
+  return null;
+}
+
 /* Everything that is not a key, so that every line below can be reached from
    the picture above: the mouse itself had no cap at all, which left its line
    the one thing on the card with no way to light it. */
@@ -132,7 +164,15 @@ export function Keyboard({ active, onHover, onPick }: {
   };
   return (
     <div className="orbit-keyboard" aria-hidden>
-      {KEYBOARD.map((row, i) => <div key={i} className="orbit-keyrow">{row.map(cap)}</div>)}
+      {KEYBOARD.map((row, i) => {
+        const rest = ROW_UNITS - rowUnits(row);
+        return (
+          <div key={i} className="orbit-keyrow">
+            {row.map(cap)}
+            {rest > 0.01 ? <span className="orbit-keygap" style={{ flex: `${rest} 0 0` }} /> : null}
+          </div>
+        );
+      })}
       <div className="orbit-keyrow orbit-keyrow-extra">{EXTRA_CAPS.map(cap)}</div>
     </div>
   );
