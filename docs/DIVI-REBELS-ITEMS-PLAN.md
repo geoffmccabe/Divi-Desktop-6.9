@@ -836,3 +836,41 @@ shading its expensive lit-window fragment shader before the globe covered it up.
   as the moving crosshair, never instead of it, so the two together read as how
   far off axis the aim is. Four ticks around an open middle plus a single pixel:
   a solid cross over the exact spot being shot at is a mark in the way.
+
+## The sealed spheres wear the mandala (2026-Sep-13)
+
+Geoff: "The spheres that are captured with loot inside, they have garbled Text
+on them. Put instead just the T1 or T2 on each one, on opposite sides, and
+don't put on any more text. Try to wrap our shield mandala on them and have it
+rotate, one on each hemisphere of these, so they'll have an interesting and
+beautiful skin on them that's moving and has beautiful patterns."
+
+- **Why the text was garbled.** The old skin printed "T1 D" at eighty-eight
+  pixels onto a canvas a hundred and twenty-eight tall, and that canvas was
+  stretched over the whole ball: 360 degrees across and 180 pole to pole.
+  Glyphs that tall ran from one pole to the other and smeared as they
+  converged. The label is now a fifth of the height, printed on the equator
+  where an equirectangular map has no stretch at all, and it says the tier and
+  nothing else: the one-letter mark that used to follow it is gone, as asked.
+  Twice, a quarter and three quarters of the way round, so one always faces you.
+- **The mandala is wrapped, not pasted.** Its centre goes to the pole and its
+  outer ring to the equator, so a distance from the middle of the picture
+  becomes an angle down from the pole. Drawn twice, once from each pole, so
+  both hemispheres carry one and there is no bare side. Lines that cross the
+  seam are drawn from a shifted copy, so they come out joined.
+- **It moves for nothing.** Turning the pattern about the polar axis is only
+  sliding the map sideways, so the canvas is never redrawn. The website's three
+  groups (outer, middle, inner) are baked into the RED, GREEN and BLUE channels
+  of one shared image and the shader samples each at its own offset: three
+  bands turning at three rates, the middle one against the other two, for three
+  texture reads and no CPU. The rates come from the shield's, so the two read
+  as the same object. The label is a second, small image which is NOT offset,
+  so it stays printed on the ball rather than sliding round it.
+- One image serves every tier, because only the ground colour differs and that
+  is a uniform; one material per tier, made on first use and kept.
+- `mandalaRings()` now tags each ring with which of the three groups it came
+  from, and merges the still rings per group rather than all together, because
+  the skin needs the grouping to survive.
+- New: `ui/src/wallet/rebels/rebelsMandalaSkin.ts`, tests
+  `scripts/run-rebels-skin-tests.sh` (41 assertions, with a canvas that records
+  what was drawn on it rather than rasterising it).

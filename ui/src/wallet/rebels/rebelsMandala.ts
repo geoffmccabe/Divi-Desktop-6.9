@@ -134,10 +134,17 @@ function ringVerts(steps: number, dist: number, shape: number[], initDeg: number
 /** A ring of the picture: what to draw, in which colour, and how fast it turns
  *  (in degrees a second, at the SITE's rate; the multiplier is applied once,
  *  where the rings are built). */
+export type Band = "outer" | "middle" | "inner";
+
 export interface RingSpec {
   /** For the tests and for anyone reading a diff. */
   name: string;
   accent?: boolean;
+  /** Which of the website's three groups this ring belongs to. The mandala is
+   *  built as an outer, a middle and an inner group there, and the sphere skin
+   *  turns those three at three different rates, so the grouping has to
+   *  survive out of this file. */
+  band: Band;
   /** Degrees a second on the website. Zero means it never turns. */
   siteAv: number;
   verts: number[];
@@ -153,29 +160,41 @@ export interface RingSpec {
 export function mandalaRings(): RingSpec[] {
   const B = SITE_ANGULAR_VELOCITY;
   const rings: RingSpec[] = [];
-  const still: number[] = [];
-  const stillAccent: number[] = [];
+  /* Everything that never moves, gathered per band and per colour so it is a
+     handful of draws rather than thirty, while still keeping which group it
+     belongs to. */
+  const still = new Map<string, number[]>();
+  const stillOf = (band: Band, accent: boolean) => {
+    const key = `${band}:${accent ? "a" : "s"}`;
+    const found = still.get(key);
+    if (found) return found;
+    const made: number[] = [];
+    still.set(key, made);
+    return made;
+  };
+  let band: Band = "outer";
 
   const addCircle = (r: number, accent = false) => {
-    strip(circlePoints(r), accent ? stillAccent : still, 0, 0, 0);
+    strip(circlePoints(r), stillOf(band, accent), 0, 0, 0);
   };
   /** A ring of little circles. None of these turn on the site. */
   const circleRing = (steps: number, dist: number, r: number) => {
     const v = ringVerts(steps, dist, circlePoints(r), 0);
-    for (const n of v) still.push(n);
+    const into = stillOf(band, false);
+    for (const n of v) into.push(n);
   };
   const lineRing = (name: string, steps: number, len: number, siteAv = 0) => {
     const verts = ringVerts(steps, 0, [0, 0, len, 0], 0);
-    if (siteAv === 0) { for (const n of verts) still.push(n); return; }
-    rings.push({ name, siteAv, verts });
+    if (siteAv === 0) { const into = stillOf(band, false); for (const n of verts) into.push(n); return; }
+    rings.push({ name, band, siteAv, verts });
   };
   const petalRing = (
     name: string, steps: number, dist: number,
     a: number, b: number, m: number, siteAv: number, initDeg: number, accent: boolean,
   ) => {
     const verts = ringVerts(steps, dist, petalPoints(a, b, m), initDeg);
-    if (siteAv === 0) { for (const n of verts) (accent ? stillAccent : still).push(n); return; }
-    rings.push({ name, siteAv, verts, accent });
+    if (siteAv === 0) { const into = stillOf(band, accent); for (const n of verts) into.push(n); return; }
+    rings.push({ name, band, siteAv, verts, accent });
   };
 
   /* ---- outer ---- */
@@ -192,6 +211,7 @@ export function mandalaRings(): RingSpec[] {
   circleRing(48, 330, 7);
 
   /* ---- middle ---- */
+  band = "middle";
   addCircle(300); addCircle(290);
   circleRing(24, 258, 30);
   addCircle(260); addCircle(250);
@@ -203,6 +223,7 @@ export function mandalaRings(): RingSpec[] {
   circleRing(12, 150, 10);
 
   /* ---- inner ---- */
+  band = "inner";
   addCircle(105); addCircle(95, true);
   petalRing("inner-petals-1", 6, 60, 40, 40, 2, 0, 30, true);
   petalRing("inner-petals-2", 6, 60, 40, 60, 1.5, B, 0, false);
@@ -211,9 +232,12 @@ export function mandalaRings(): RingSpec[] {
   lineRing("inner-spokes", 12, 45, B);
   addCircle(30, true); addCircle(20);
 
-  /* Everything that never moves is ONE draw rather than thirty. */
-  if (still.length) rings.unshift({ name: "still", siteAv: 0, verts: still });
-  if (stillAccent.length) rings.unshift({ name: "still-accent", siteAv: 0, verts: stillAccent, accent: true });
+  /* The still rings first, so the moving ones draw over them. */
+  for (const [key, verts] of [...still].reverse()) {
+    if (!verts.length) continue;
+    const [b, kind] = key.split(":");
+    rings.unshift({ name: `still-${key}`, band: b as Band, siteAv: 0, verts, accent: kind === "a" });
+  }
   return rings;
 }
 
