@@ -94,6 +94,40 @@
 .orbit-cross::before { left: 50%; top: 18px; width: 1.5px; height: 10px; margin-left: -0.75px; }
 .orbit-cross::after { top: 50%; left: 18px; height: 1.5px; width: 10px; margin-top: -0.75px; }
 
+/* ---- the boresight ----
+   Dead centre of the frame: where the nose is pointing, and so where the guns
+   send a round when the crosshair is brought home. Drawn as well as the moving
+   crosshair, never instead of it, so the two together read as "how far off
+   axis am I aiming". Geoff: "make it faint but helping to aim."
+
+   Four ticks around an open middle rather than a cross through it: a mark over
+   the exact pixel you are trying to shoot is a mark in the way. */
+.orbit-bore {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 26px; height: 26px;
+  margin: -13px 0 0 -13px;
+  pointer-events: none;
+  opacity: 0.28;
+}
+.orbit-bore i {
+  position: absolute; background: hsl(var(--rebels-hud));
+}
+/* Top, bottom, left, right: each a short tick pointing at the middle. */
+.orbit-bore i:nth-child(1) { left: 50%; top: 0; width: 1px; height: 7px; margin-left: -0.5px; }
+.orbit-bore i:nth-child(2) { left: 50%; bottom: 0; width: 1px; height: 7px; margin-left: -0.5px; }
+.orbit-bore i:nth-child(3) { top: 50%; left: 0; height: 1px; width: 7px; margin-top: -0.5px; }
+.orbit-bore i:nth-child(4) { top: 50%; right: 0; height: 1px; width: 7px; margin-top: -0.5px; }
+/* And a single pixel at the centre, so the point itself is findable. */
+.orbit-bore b {
+  position: absolute; left: 50%; top: 50%;
+  width: 2px; height: 2px; margin: -1px 0 0 -1px;
+  background: hsl(var(--rebels-hud)); border-radius: 50%;
+}
+/* Looking backwards the guns are the rear pair, so the mark changes colour
+   with the crosshair rather than claiming the nose is still the gun. */
+.orbit-bore.rear i, .orbit-bore.rear b { background: #ff45d0; }
+
 .orbit-dock {
   position: absolute;
   left: 50%; top: 62%;

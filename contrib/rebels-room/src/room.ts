@@ -203,6 +203,14 @@ interface Seat {
   tfCount: number;
   strikes: number;
   joined: boolean;
+  /**
+   * In the fight, as against merely seated.
+   *
+   * True only between LAUNCH and death. The roster the simulation runs on is
+   * built from this, not from `joined`, so a player reading the launch card is
+   * not a target and does not keep a wave alive. See FlyIn.
+   */
+  flying: boolean;
 }
 
 interface Env {
@@ -289,7 +297,7 @@ export class RebelsRoom {
       score: 0, kills: 0, divi: 0,
       dead: false, respawn: 0,
       lastMain: -99, lastMini: -99, lastTorp: -99,
-      tfWindow: 0, tfCount: 0, strikes: 0, joined: false,
+      tfWindow: 0, tfCount: 0, strikes: 0, joined: false, flying: false,
     };
     this.seats.set(id, seat);
 
@@ -303,6 +311,7 @@ export class RebelsRoom {
 
   private leave(seat: Seat): void {
     if (!this.seats.delete(seat.id)) return;
+    seat.flying = false;
     /* Whatever they earned is banked before the socket is forgotten, so
        closing the lid is not a way to lose someone else's money — or a way to
        keep yours out of the ledger's sight. */
@@ -343,7 +352,7 @@ export class RebelsRoom {
   private stepWings(): void {
     const bodies: WingBody[] = [];
     for (const s of this.seats.values()) {
-      if (!s.joined || s.dead || s.wings.length === 0) continue;
+      if (!s.flying || s.dead || s.wings.length === 0) continue;
       const alive = s.wings.filter((x) => x.hull > 0);
       const spin = wingSpin(this.now, alive.length);
       /* The ship's up, from its own frame: the room has no roll on the wire,
@@ -360,7 +369,7 @@ export class RebelsRoom {
 
   private refreshRoster(): void {
     const live: PlayerBody[] = [];
-    for (const s of this.seats.values()) if (s.joined && !s.dead) live.push(s.body);
+    for (const s of this.seats.values()) if (s.flying && !s.dead) live.push(s.body);
     this.world.players = live;
     /* The solo fields still have to point at something real: parts of the
        simulation fall back to them when the roster is empty. */
@@ -610,6 +619,12 @@ export class RebelsRoom {
 
   private down(s: Seat): void {
     s.dead = true;
+    /* Out of the fight until LAUNCH is pressed again. Reviving used to put the
+       seat straight back on the roster, so the waves carried on around a ship
+       parked on its pad while the player was still looking at the card, and
+       the next launch dropped them into a fight already in progress with
+       fighters on top of them. */
+    s.flying = false;
     s.respawn = s.gear.has("vip") ? RESPAWN_VIP : RESPAWN_SECONDS;
     s.shield = 0;
     s.guardFor = 0;
@@ -631,7 +646,7 @@ export class RebelsRoom {
        starts fresh (see start); this is the other half. Wave one, nothing in
        the air. The gems stay: they are property, not part of the fight. */
     let anyoneLeft = false;
-    for (const o of this.seats.values()) if (o.joined && !o.dead) anyoneLeft = true;
+    for (const o of this.seats.values()) if (o.flying && !o.dead) anyoneLeft = true;
     if (!anyoneLeft) this.resetFight();
   }
 
@@ -645,6 +660,23 @@ export class RebelsRoom {
 
   private revive(s: Seat): void {
     s.dead = false;
+    this.refill(s);
+    /* Back on your own pad, which is where a launch happens. */
+    s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
+    this.refreshRoster();
+  }
+
+  /**
+   * Full gauges, without moving the ship.
+   *
+   * Separate from revive because a LAUNCH is not always a respawn. On the first
+   * one the cockpit is already at its own pad and flying its dive, and putting
+   * the room's copy back on the pad underneath it opened a gap the room then
+   * corrected: the ship snapped backwards at the moment of launch. A seat that
+   * actually died is placed by revive; a seat that is merely starting a run is
+   * only filled up.
+   */
+  private refill(s: Seat): void {
     s.shield = s.shieldMax;
     s.ammo = s.ammoMax;
     s.torps = s.torpsMax;
@@ -652,9 +684,6 @@ export class RebelsRoom {
     /* Geoff: "drones get replenished along with your ship in the same way at
        the same time." */
     for (const wing of s.wings) { wing.hull = wing.hullMax; wing.ammo = wing.ammoMax; }
-    /* Back on your own pad, which is where a launch happens. */
-    s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
-    this.refreshRoster();
   }
 
   /* ---- the ledger ----
@@ -701,6 +730,7 @@ export class RebelsRoom {
       case "cheat": return this.onCheat(seat, msg);
       case "bonus": return this.onBonus(seat);
       case "gear": return this.onGear(seat, msg);
+      case "fly": return this.onFly(seat);
       case "hurt": return this.onHurt(seat, msg);
       case "claim": { void this.onClaim(seat, msg); return; }
       case "purse": {
@@ -755,6 +785,35 @@ export class RebelsRoom {
     this.sendYou(seat);
     this.sendRoster();
     void this.sendPurse(seat);
+  }
+
+  /**
+   * LAUNCH.
+   *
+   * The seat joins the fight here and nowhere else. If nobody else is in it,
+   * the fight starts over: a launch is a NEW GAME for a player flying alone,
+   * which is what Geoff asked for. Geoff, 2026-Sep-13: "when it restarts it
+   * seems to not restart fresh with all stats at zero and no enemies around...
+   * check that a restart is really a restart."
+   */
+  private onFly(seat: Seat): void {
+    if (!seat.joined || seat.flying) return;
+    /* A dead seat has to wait out its countdown; the cockpit does not offer
+       LAUNCH AGAIN before then, and this is the other half of that rule. */
+    if (seat.dead) return;
+    let othersFlying = false;
+    for (const o of this.seats.values()) if (o !== seat && o.flying && !o.dead) othersFlying = true;
+    if (!othersFlying) this.resetFight();
+    seat.flying = true;
+    /* Full gauges: this is the start of a run and no damage from the last one
+       may be carried into it. The ship is NOT moved, because on a first launch
+       the cockpit is already at its pad and flying its dive; a seat that
+       actually died was put back on its pad by revive when its countdown ran
+       out. */
+    this.refill(seat);
+    this.refreshRoster();
+    this.sendYou(seat);
+    this.sendRoster();
   }
 
   /* ---- cashing out ----

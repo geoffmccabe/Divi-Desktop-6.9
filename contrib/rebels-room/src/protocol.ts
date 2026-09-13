@@ -89,6 +89,22 @@ export interface PurseIn { t: "purse" }
  *  client's, as the gear is; the room only paces it. */
 export interface UseIn { t: "use"; k: "recharge" | "supercharge" }
 
+/**
+ * LAUNCH was pressed: this player is now in the fight.
+ *
+ * Joining a room and FLYING in it are two different things, and the room used
+ * to treat them as one. The cockpit joins the moment the map hands over its
+ * scene, because the connection has to be up and settled before anybody
+ * launches; but the seat was then counted as a player straight away, so the
+ * waves began, the fighters spawned and they all came for a ship parked on its
+ * pad while the human was still reading the launch card. Geoff, 2026-Sep-13:
+ * "when the game starts it seems to have the player taking damage almost
+ * instantly and I don't know why."
+ *
+ * So a seat is in the fight only between this message and its death.
+ */
+export interface FlyIn { t: "fly" }
+
 /** The resupply at a tower finished. The room checks the ship is at one. */
 export interface DockIn { t: "dock" }
 
@@ -110,7 +126,7 @@ export interface BonusIn { t: "bonus" }
 export interface CheatIn { t: "cheat"; code: string }
 
 export type ClientMessage =
-  JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn | DockIn | CheatIn | BonusIn | GearIn | HurtIn;
+  JoinIn | FlyIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn | DockIn | CheatIn | BonusIn | GearIn | HurtIn;
 
 /* ---- room to cockpit ---- */
 

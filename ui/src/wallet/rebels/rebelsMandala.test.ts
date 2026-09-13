@@ -149,7 +149,8 @@ const near = (a: number, b: number, tol = 1e-6) => Math.abs(a - b) <= tol;
     const l = o as THREE.LineSegments;
     if (l.isLineSegments) mats.push(l.material as THREE.LineBasicMaterial);
   });
-  ok("every line is half transparent", mats.length > 0 && mats.every((m) => near(m.opacity, 0.5)),
+  ok("every line is at the opacity asked for, a quarter",
+     mats.length > 0 && mats.every((m) => near(m.opacity, 0.25)),
      `${MANDALA_OPACITY} wanted, saw ${[...new Set(mats.map((m) => m.opacity))].join(",")}`);
   /* Judged in sRGB, which is what the colours were written in: three converts
      to its own linear working space on the way in, and a pale colour read back
@@ -174,7 +175,7 @@ const near = (a: number, b: number, tol = 1e-6) => Math.abs(a - b) <= tol;
 
   /* Fading with the charge, rather than snapping on. */
   shield.step(1, 0.5, cam);
-  ok("it fades in with the charge", mats.every((m) => near(m.opacity, 0.25)),
+  ok("it fades in with the charge", mats.every((m) => near(m.opacity, 0.125)),
      `${[...new Set(mats.map((m) => m.opacity))].join(",")}`);
 
   /* ---- three times the speed, measured on the object ---- */

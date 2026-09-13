@@ -763,3 +763,76 @@ outside, it can still look like it does now."
   ring showed its corners at a flat 72, and the forty-eight beads of r=10 were
   paying for smoothness nobody could see.
 - Tests: `scripts/run-rebels-mandala-tests.sh` (35 assertions).
+
+## Fixed: joining a room is not flying in it (2026-Sep-13, v69.9.44)
+
+Geoff: "when the game starts it seems to have the player taking damage almost
+instantly and I don't know why. And when it restarts it seems to not restart
+fresh with all stats at zero and no enemies around, but it's like going back
+into the same game. So check that a restart is really a restart."
+
+Both were one fault, and the DFlow notes showed its shape: the room going
+"off -> live" long before anything was flown.
+
+The cockpit opens its socket the moment the map hands over its scene, and it
+should: the connection has to be up and settled before anybody launches. But
+the room counted that seat as a PLAYER straight away. The roster the simulation
+runs on was built from `joined`, so the waves began, the fighters spawned, and
+they all came for a ship parked on its pad while the human was still reading
+the launch card. Pressing LAUNCH dropped the player into a fight that had been
+running for as long as they had been reading it, with fighters already on top
+of them. The same thing happened after a death: the countdown ran out, the
+seat was revived automatically, and the fight resumed around a parked ship.
+
+- A seat now has `flying` as well as `joined`, and it is true only between
+  LAUNCH and death. The roster, the wingmen and the "is anyone left alive"
+  test all read it.
+- A new `fly` message is what turns it on. Flying ALONE, it also resets the
+  fight: wave one, nothing in the sky. That is what makes a restart a restart.
+  With other players already in it, nothing is wiped: there is one game and it
+  is shared.
+- Death sets it false again, so nothing gathers around a ship whose pilot is
+  looking at the card.
+- A launch fills the gauges but does NOT move the ship. Moving it was a real
+  bug of its own: on a first launch the cockpit is already at its pad and
+  flying its dive, and putting the room's copy back underneath it opened a gap
+  the room then corrected, snapping the ship backwards at the moment of launch.
+  A seat that actually died is placed by revive when its countdown ends.
+- Tests: three new blocks in `contrib/rebels-room/test/room.test.ts` (joining
+  is not flying, a restart is a restart, and one player launching does not wipe
+  the sky out from under the others).
+
+## Perf: the towers again, and the compile (2026-Sep-13, v69.9.44)
+
+Instancing the towers cut the draw calls but cost more than it saved, and the
+next DFlow said so plainly: the frame time went from 16.8ms to 31.0ms and the
+triangle count from 108,188 to 184,640, while `gl.render` went from 4.12ms to
+9.19ms. An InstancedMesh has ONE bounding volume, so instancing threw away the
+per-tower culling that used to come free. Every tower on the planet was
+submitted every frame, the two hundred behind the Earth included, each one
+shading its expensive lit-window fragment shader before the globe covered it up.
+
+- **The horizon test.** A tower is drawn only when its direction, dotted with
+  the camera's, is more than R/|camera| less a tenth. Its matrix is worked out
+  once and kept, so a frame copies sixteen numbers rather than composing; and
+  the instance buffer is only touched when the answer CHANGES for at least one
+  tower, so flying straight costs a few hundred dot products and no upload.
+  Timed as `map.cull` in DFlow.
+- **A network tower's tip was five hundred and twenty triangles** for something
+  a couple of pixels across. Twelve by nine now, which is a third. Your own
+  tower is twice the size and the only one anybody flies up to, so it keeps the
+  full count.
+- **The whole-game compile froze the frame for over two seconds** (DFlow caught
+  a single gl.render of 2,234ms as the room went live). It now uses
+  compileAsync where the driver has the parallel-compile extension, falling
+  back to the blocking call.
+
+## The shield, and the boresight (2026-Sep-13, v69.9.44)
+
+- The mandala was too dark at half opacity: "reduce its opacity by 50% of
+  whatever you have now." A quarter now.
+- **A faint mark at the dead centre of the frame**, where the nose is pointing
+  and so where a round goes when the crosshair is brought home. Drawn as well
+  as the moving crosshair, never instead of it, so the two together read as how
+  far off axis the aim is. Four ticks around an open middle plus a single pixel:
+  a solid cross over the exact spot being shot at is a mark in the way.

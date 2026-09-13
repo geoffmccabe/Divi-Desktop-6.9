@@ -44,8 +44,13 @@ export const SITE_ANGULAR_VELOCITY = 15;
 export const SPIN_MULTIPLIER = 3;
 export const BASE_AV = SITE_ANGULAR_VELOCITY * SPIN_MULTIPLIER;
 
-/** Half transparent, as asked. */
-export const MANDALA_OPACITY = 0.5;
+/**
+ * A quarter, not the half it started at.
+ *
+ * Geoff asked for half transparent and then, having flown with it: "is too
+ * dark so reduce its opacity by 50% of whatever you have now." Half of a half.
+ */
+export const MANDALA_OPACITY = 0.25;
 /** Pale, not the site's terracotta: this is drawn over a fight. */
 export const STROKE_COLOUR = 0xffc2c2;
 export const ACCENT_COLOUR = 0xdCEBff;

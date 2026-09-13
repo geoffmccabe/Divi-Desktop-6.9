@@ -53,7 +53,27 @@ function ok(name: string, cond: boolean, extra = "") {
   ok("the winner coin's hidden tower is pushed through too",
      /winnerDeco\.visible = false;[\s\S]{0,240}?syncTowers\(\)/.test(map));
   ok("a hidden tower is written away rather than left standing",
-     /makeScale\(0, 0, 0\)/.test(map));
+     /set\.shown\[i\] = t\.visible \? 1 : 0/.test(map));
+
+  /* ---- and the far side of the planet is not drawn ----
+     An InstancedMesh has ONE bounding volume, so instancing threw away the
+     per-tower culling that used to come free: every tower on the planet was
+     submitted every frame, the two hundred behind the Earth included, each
+     one shading its lit-window fragment shader before the globe covered it.
+     DFlow caught it as the frame time doubling. */
+  ok("the horizon takes the far side out of the draw",
+     /function cullTowers/.test(map) && /R \/ len/.test(map));
+  ok("it runs every frame, after the camera has moved",
+     /dflow\.add\("map\.cull"/.test(map));
+  ok("and uploads nothing when nothing changed",
+     /if \(set\.drawn\[i\] === on\) continue;/.test(map)
+     && /if \(!changed\) continue;/.test(map));
+  ok("the matrices are worked out once, not composed every frame",
+     /_m\.toArray\(set\.base, i \* 16\)/.test(map));
+  ok("a network tower's tip is not five hundred triangles for two pixels",
+     /const rings = scale > 1 \? \[20, 14\] : \[12, 9\]/.test(map));
+  ok("the whole-game compile does not freeze the frame where it need not",
+     /compileAsync/.test(map));
   ok("your own tower stays a real group, because it carries the beam",
      /const solo = p\.kind === "self"/.test(map) && /if \(solo\) t\.add\(makeHomeBeacon/.test(map));
   ok("hovering an instanced tower still names the node it hit",

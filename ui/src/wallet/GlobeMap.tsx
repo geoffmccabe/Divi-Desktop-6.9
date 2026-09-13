@@ -222,8 +222,14 @@ function towerGeometries(scale: number): { cone: THREE.ConeGeometry; sph: THREE.
      into its geometry, so its local coordinates stay centred on itself. The
      spinning windows are wrapped using those coordinates and would smear if
      the origin sat down at the tower's foot. With instancing the offset moves
-     into the instance matrix, which keeps that property. */
-  const sph = new THREE.SphereGeometry(SPH_R * scale, 20, 14);
+     into the instance matrix, which keeps that property.
+
+     A NETWORK tower's tip is a third of a unit across on a globe two hundred
+     across: a couple of pixels, and it was being built from five hundred and
+     twenty triangles. Yours is twice the size and is the one anybody ever
+     flies up to, so it keeps the full count. */
+  const rings = scale > 1 ? [20, 14] : [12, 9];
+  const sph = new THREE.SphereGeometry(SPH_R * scale, rings[0], rings[1]);
   /* Marked the way the shared MATERIALS are: this pair outlives any one build
      of the scene, and the teardown below disposes everything it walks. Letting
      it dispose these would leave every tower missing the next time the map is
@@ -587,7 +593,19 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
        the scene; syncTowers copies what they say into the instance matrices.
        A hidden tower is written as a zero-size matrix, which is how an
        instance is taken out of a draw. */
-    interface Instanced { mesh: THREE.InstancedMesh; tip: THREE.InstancedMesh; towers: THREE.Group[]; nodes: GlobePoint[] }
+    interface Instanced {
+      mesh: THREE.InstancedMesh; tip: THREE.InstancedMesh;
+      towers: THREE.Group[]; nodes: GlobePoint[];
+      /** The matrices as they stand when a tower is drawn, worked out once. */
+      base: Float32Array; baseTip: Float32Array;
+      /** Which way each tower points out of the globe, for the horizon test. */
+      dirs: Float32Array;
+      /** 1 when the tower is meant to be seen at all (the winner's is not). */
+      shown: Uint8Array;
+      /** 1 when its matrix is currently WRITTEN, so an unchanged frame uploads
+       *  nothing. 2 is "unknown", which forces the next pass to write it. */
+      drawn: Uint8Array;
+    }
     const instanced: Instanced[] = [];
     const byKind = new Map<GlobePoint["kind"], { towers: THREE.Group[]; nodes: GlobePoint[] }>();
 
@@ -634,40 +652,107 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
          instanced hit reports a NUMBER, not an object. */
       mesh.userData.nodes = bucket.nodes;
       tip.userData.nodes = bucket.nodes;
+      /* One bounding volume for the lot, and the lot spans the planet, so
+         three can never cull any of it: the horizon test in cullTowers is what
+         stands in for the culling instancing took away. */
+      mesh.frustumCulled = false;
+      tip.frustumCulled = false;
       group.add(mesh); group.add(tip);
       towerObjs.push(mesh, tip);
-      instanced.push({ mesh, tip, towers: bucket.towers, nodes: bucket.nodes });
+      const dirs = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        const d = bucket.towers[i].position.clone().normalize();
+        dirs[i * 3] = d.x; dirs[i * 3 + 1] = d.y; dirs[i * 3 + 2] = d.z;
+      }
+      instanced.push({
+        mesh, tip, towers: bucket.towers, nodes: bucket.nodes,
+        base: new Float32Array(n * 16), baseTip: new Float32Array(n * 16),
+        dirs, shown: new Uint8Array(n).fill(1), drawn: new Uint8Array(n).fill(2),
+      });
     }
 
-    /* Copy what the tower Groups say into the instance matrices. Called after
-       building, and again whenever anything moves one: the game halving them
-       at launch, or the winner coin taking one out of the picture. */
+    /* ---- from the tower Groups to the instance matrices ----
+       Worked out ONCE and kept, because a tower only moves when the game
+       halves them at launch or the winner coin takes one out of the picture.
+       Every frame after that copies sixteen numbers rather than composing a
+       matrix. */
     const _m = new THREE.Matrix4();
-    const _gone = new THREE.Matrix4().makeScale(0, 0, 0);
     const _tipOff = new THREE.Vector3();
     const syncTowers = () => {
       for (const set of instanced) {
         for (let i = 0; i < set.towers.length; i++) {
           const t = set.towers[i];
-          if (!t.visible) {
-            set.mesh.setMatrixAt(i, _gone);
-            set.tip.setMatrixAt(i, _gone);
-            continue;
-          }
           _m.compose(t.position, t.quaternion, t.scale);
-          set.mesh.setMatrixAt(i, _m);
+          _m.toArray(set.base, i * 16);
           /* The tip rides at the top of the mast, and the mast's height goes
              up and down with the tower's own scale. */
           _tipOff.set(0, PYR_H * t.scale.y, 0).applyQuaternion(t.quaternion).add(t.position);
           _m.compose(_tipOff, t.quaternion, t.scale);
-          set.tip.setMatrixAt(i, _m);
+          _m.toArray(set.baseTip, i * 16);
+          /* A tower hidden by hand (the winner's) is out for good, not just
+             out while it faces away. */
+          set.shown[i] = t.visible ? 1 : 0;
         }
+        /* Force the next cull to write everything through. */
+        set.drawn.fill(2);
+      }
+      cullTowers(true);
+    };
+
+    /**
+     * Take the far side of the globe out of the draw.
+     *
+     * An InstancedMesh has ONE bounding volume, so instancing the towers threw
+     * away the per-tower culling that came free before: every tower on the
+     * planet was submitted every frame, including the two hundred behind the
+     * Earth, each shading its expensive lit-window fragment shader before the
+     * globe covered it up. DFlow caught it as the frame time doubling from
+     * 16.8ms to 31ms with the triangle count up seventy percent, so the horizon
+     * test is done here instead.
+     *
+     * A point on the sphere is over the horizon when its direction, dotted with
+     * the camera's, is less than R / |camera|. A margin of a tenth keeps towers
+     * just past the edge, whose masts still show.
+     *
+     * The instance buffer is only touched when the answer CHANGES for at least
+     * one tower, so flying in a straight line costs a few hundred dot products
+     * and no upload at all.
+     */
+    const _camDir = new THREE.Vector3();
+    function cullTowers(force = false): void {
+      if (!instanced.length) return;
+      const len = camera.position.length();
+      if (len < 1e-3) return;
+      _camDir.copy(camera.position).divideScalar(len);
+      /* Behind this the globe itself is in the way. */
+      const horizon = Math.min(0.999, R / len) - 0.1;
+      for (const set of instanced) {
+        let changed = force;
+        for (let i = 0; i < set.dirs.length / 3; i++) {
+          const on = set.shown[i] === 1
+            && set.dirs[i * 3] * _camDir.x + set.dirs[i * 3 + 1] * _camDir.y + set.dirs[i * 3 + 2] * _camDir.z > horizon
+            ? 1 : 0;
+          if (set.drawn[i] === on) continue;
+          set.drawn[i] = on;
+          changed = true;
+          const at = i * 16;
+          if (on) {
+            set.mesh.instanceMatrix.array.set(set.base.subarray(at, at + 16), at);
+            set.tip.instanceMatrix.array.set(set.baseTip.subarray(at, at + 16), at);
+          } else {
+            /* Zero scale: the instance is still there and costs one matrix,
+               but nothing of it survives to be rasterised. */
+            for (let k = 0; k < 16; k++) {
+              (set.mesh.instanceMatrix.array as Float32Array)[at + k] = 0;
+              (set.tip.instanceMatrix.array as Float32Array)[at + k] = 0;
+            }
+          }
+        }
+        if (!changed) continue;
         set.mesh.instanceMatrix.needsUpdate = true;
         set.tip.instanceMatrix.needsUpdate = true;
-        set.mesh.computeBoundingSphere();
-        set.tip.computeBoundingSphere();
       }
-    };
+    }
     syncTowers();
 
     const conns: { a: THREE.Vector3; b: THREE.Vector3; mesh: boolean }[] = [];
@@ -863,7 +948,25 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       /* Every shader the game will need, compiled now in one go rather than
          one stall at a time as each thing first appears. DFlow counted 62
          compiles across a flight, each a frame of 50 to 100ms. */
-      const prewarm = () => { try { renderer.compile(scene, camera); } catch { /* not fatal */ } };
+      /* Build every shader the visible scene needs.
+         ASYNCHRONOUSLY where the driver allows it: compiling the whole game in
+         one go froze the frame for over two seconds, which DFlow caught as a
+         single gl.render of 2,234ms at the moment the room went live.
+         compileAsync hands the work to the driver's parallel compiler and
+         returns; where that is not available it is the blocking call it always
+         was, which is still better than one stall per effect in a fight. */
+      const prewarm = () => {
+        try {
+          const r = renderer as unknown as {
+            compileAsync?: (s: THREE.Scene, c: THREE.Camera) => Promise<unknown>;
+          };
+          if (typeof r.compileAsync === "function") {
+            void r.compileAsync(scene, camera).catch(() => { /* not fatal */ });
+          } else {
+            renderer.compile(scene, camera);
+          }
+        } catch { /* not fatal */ }
+      };
       f.attach({
         afterRender: (fn) => { after = fn; },
         compile: () => prewarm(),
@@ -990,6 +1093,11 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       const tLights = performance.now();
       tickTowerLights(now / 1000);
       dflow.add("map.lights", performance.now() - tLights);
+      /* The far side of the planet, out of the draw. Done after the flight has
+         moved the camera, so it is this frame's horizon and not last one's. */
+      const tCull = performance.now();
+      cullTowers();
+      dflow.add("map.cull", performance.now() - tCull);
       const tHelix = performance.now();
 
       const cam = camera.position;

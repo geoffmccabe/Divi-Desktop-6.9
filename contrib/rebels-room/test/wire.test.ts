@@ -64,6 +64,9 @@ function busyRoom(players: number, fleets: number, wings: number) {
       t: "join", node: `n${i}`, name: `Pilot ${i}`, home,
       gear: ["mini"], reach: 4, drones: wings ? [0, 0, wings, 0, 0, 0, 0] : undefined,
     }));
+    /* Seated AND launched: the room only counts a seat as a player once
+       LAUNCH has been pressed. */
+    ws.deliver(JSON.stringify({ t: "fly" }));
     socks.push(ws);
     void id;
   }
@@ -137,6 +140,7 @@ function weigh(players: number, fleets: number, wings: number, ticks = 24) {
   for (const [ws, node] of [[here, "here"], [far, "far"]] as const) {
     room.seat(ws as never);
     ws.deliver(JSON.stringify({ t: "join", node, name: node, home: [0, 0, R + 6], reach: 4 }));
+    ws.deliver(JSON.stringify({ t: "fly" }));
   }
   const seats = [...room.seats.values()];
   seats[0].body.pos.set(0, 0, R + 20);
@@ -173,6 +177,7 @@ function weigh(players: number, fleets: number, wings: number, ticks = 24) {
   for (const [ws, node] of [[near, "near"], [far, "far"]] as const) {
     room.seat(ws as never);
     ws.deliver(JSON.stringify({ t: "join", node, name: node, home: [0, 0, R + 6] }));
+    ws.deliver(JSON.stringify({ t: "fly" }));
   }
   const seats = [...room.seats.values()];
   seats[0].body.pos.set(0, 0, R + 20);
@@ -216,6 +221,7 @@ function weigh(players: number, fleets: number, wings: number, ticks = 24) {
   const ws = new FakeSocket();
   room.seat(ws as never);
   ws.deliver(JSON.stringify({ t: "join", node: "h", name: "H", home: [0, 0, R + 6] }));
+  ws.deliver(JSON.stringify({ t: "fly" }));
   const seat = [...room.seats.values()][0];
   seat.body.pos.set(0, 0, 0);
   const fleet = spawnFleet(room.combat, 1, new THREE.Vector3(0, 0, R + 10), new THREE.Vector3(0, 1, 0), { count: 1 });

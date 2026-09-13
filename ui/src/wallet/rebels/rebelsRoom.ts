@@ -161,6 +161,17 @@ export interface Room {
   detonate(): void;
   /** Y: a held recharge or supercharge, applied by the room. */
   use(k: "recharge" | "supercharge"): void;
+  /**
+   * LAUNCH was pressed.
+   *
+   * Joining the room and FLYING in it are two different things. The socket
+   * opens when the map hands over its scene, so the connection is settled
+   * before anybody launches, but the fight must not count a seat until its
+   * player is actually in it, or the waves run around a ship parked on its pad
+   * while the human reads the launch card. Flying alone, this also starts the
+   * fight over, which is what makes a restart a restart.
+   */
+  fly(): void;
   /** The resupply finished at a tower: the room refills the seat, having
    *  checked the ship really is at one. */
   dock(): void;
@@ -266,6 +277,7 @@ export function joinRoom(opts: Opts): Room {
     },
     detonate() { send({ t: "det" }); },
     use(k) { send({ t: "use", k }); },
+    fly() { send({ t: "fly" }); },
     dock() { send({ t: "dock" }); },
     cheat(code) { send({ t: "cheat", code }); },
     bonus() { send({ t: "bonus" }); },
