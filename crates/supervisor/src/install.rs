@@ -349,11 +349,30 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                     .unwrap_or(false)
             });
             let fix_threads = !has_threads || weak_threads;
-            if ours && (has_allowip || !has_addressindex || fix_threads) {
+            //   4. rpcworkqueue is the OTHER half of that fix, and leaving it out
+            //      is why the node still froze. Threads do the work; the work
+            //      QUEUE is how many requests may wait for one. It defaults to
+            //      16, so once the interface's panels and the indexers have that
+            //      many calls outstanding, every further request — including a
+            //      send — simply waits. Measured on this machine: a plain
+            //      getblockcount, which touches no wallet and no lock, took 64
+            //      SECONDS while the queue was full, then 60ms once it drained.
+            //      That is the "dead" Send button and the minutes-long send.
+            let has_queue = text.lines().any(|l| l.trim_start().starts_with("rpcworkqueue="));
+            let weak_queue = text.lines().any(|l| {
+                l.trim_start()
+                    .strip_prefix("rpcworkqueue=")
+                    .and_then(|v| v.trim().parse::<u32>().ok())
+                    .map(|n| n < 64)
+                    .unwrap_or(false)
+            });
+            let fix_queue = !has_queue || weak_queue;
+            if ours && (has_allowip || !has_addressindex || fix_threads || fix_queue) {
                 let mut fixed: String = text
                     .lines()
                     .filter(|l| !l.trim_start().starts_with("rpcallowip="))
                     .filter(|l| !(fix_threads && l.trim_start().starts_with("rpcthreads=")))
+                    .filter(|l| !(fix_queue && l.trim_start().starts_with("rpcworkqueue=")))
                     .map(|l| format!("{l}\n"))
                     .collect();
                 if !has_addressindex {
@@ -362,9 +381,12 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                 if fix_threads {
                     fixed.push_str("rpcthreads=16\n");
                 }
+                if fix_queue {
+                    fixed.push_str("rpcworkqueue=64\n");
+                }
                 let _ = std::fs::write(&conf, fixed);
                 restrict_to_owner(&conf);
-                crate::setuplog::log("node settings: repaired existing divi.conf (updated one or more of: rpcallowip removed, addressindex, rpcthreads)");
+                crate::setuplog::log("node settings: repaired existing divi.conf (updated one or more of: rpcallowip removed, addressindex, rpcthreads, rpcworkqueue)");
             } else {
                 crate::setuplog::log("node settings: existing divi.conf is already correct");
             }
@@ -398,6 +420,7 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
          server=1\n\
          listen=1\n\
          rpcthreads=16\n\
+         rpcworkqueue=64\n\
          maxconnections=32\n\
          # addressindex lets the node report balances/UTXOs for ANY address, not\n\
          # just the wallet's own: the treasury + multisig displays and the\n\
