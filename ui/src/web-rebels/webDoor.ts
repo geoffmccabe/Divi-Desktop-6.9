@@ -9,15 +9,16 @@ import { DEFAULT_ROOM_BASE, DESKTOP_DETAIL } from "../wallet/rebels/platform/def
 import { desktopInput } from "../wallet/rebels/platform/desktopInput";
 import { isDiviAddress } from "./diviAddress";
 import { fetchWebPrices } from "./webPrice";
-import { guestName } from "./pilot";
+import { guestName, guestId } from "./pilot";
 
-export function createWebDoor(opts: { roomBase?: string; name?: () => string } = {}): RebelsPlatform {
+export function createWebDoor(opts: { roomBase?: string; name?: () => string; guest?: () => string } = {}): RebelsPlatform {
   const name = opts.name ?? (() => guestName());
+  const guest = opts.guest ?? (() => guestId());
   return {
     id: "web",
     identity: {
       name,
-      joinFields: () => ({ node: "web-guest", name: name(), door: "web" }),
+      joinFields: () => ({ node: "web-guest", name: name(), door: "web", guest: guest() }),
     },
     roomBase: opts.roomBase ?? DEFAULT_ROOM_BASE,
     /* No staking wallet on the web. */

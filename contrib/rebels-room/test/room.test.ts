@@ -1049,6 +1049,45 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
+// N. READY FOR A PUBLIC PAGE: overflow rooms, the names that may exist, guest ids.
+{
+  const { roomNameOk, nextRoom, guestIdOk } = await import("../src/protocol");
+  ok("earth is a room", roomNameOk("earth"));
+  ok("so are its overflow rooms, earth-2 to earth-16", roomNameOk("earth-2") && roomNameOk("earth-16"));
+  ok("but not earth-1, earth-17 or earth-02", !roomNameOk("earth-1") && !roomNameOk("earth-17") && !roomNameOk("earth-02x"));
+  ok("the planet shards p1 to p14 are held", roomNameOk("p1") && roomNameOk("p14") && !roomNameOk("p15"));
+  ok("an invented name is not a room", !roomNameOk("my-private-room") && !roomNameOk(""));
+  ok("a full earth sends you to earth-2", nextRoom("earth") === "earth-2");
+  ok("a full earth-7 sends you to earth-8", nextRoom("earth-7") === "earth-8");
+  ok("when earth-16 is full there is nowhere further", nextRoom("earth-16") === "");
+  ok("a guest id is long and plain", guestIdOk("3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c"));
+  ok("a short or strange one is not trusted", !guestIdOk("abc") && !guestIdOk("<script>alert(1)</script>xxxx") && !guestIdOk(42));
+
+  const room = newRoom();
+  const ID = "3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c";
+  const a = new FakeSocket();
+  room.seat(a as never, "203.0.113.50");
+  const aId = a.last("hi").id as string;
+  a.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Pilot 1", door: "web", guest: ID, home: [0, 0, R] }));
+  ok("a guest with an id banks under that id, not the address", room.seats.get(aId).account === `guest:${ID}`, room.seats.get(aId).account);
+  const b = new FakeSocket();
+  room.seat(b as never, "198.51.100.77");
+  const bId = b.last("hi").id as string;
+  b.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Pilot 1", door: "web", guest: ID, home: [0, 0, R] }));
+  ok("so the same guest on another connection reaches the same account", room.seats.get(bId).account === `guest:${ID}`);
+  const c = new FakeSocket();
+  room.seat(c as never, "198.51.100.78");
+  const cId = c.last("hi").id as string;
+  c.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Pilot 2", door: "web", guest: "bad", home: [0, 0, R] }));
+  ok("a guest id that fails the check falls back to the address", room.seats.get(cId).account === "web:198.51.100.78");
+  const app = new FakeSocket();
+  room.seat(app as never, "198.51.100.79");
+  const appId = app.last("hi").id as string;
+  app.deliver(JSON.stringify({ t: "join", node: "n", name: "App", guest: ID, home: [0, 0, R] }));
+  ok("an app player sending a guest id is still the app account it always was", room.seats.get(appId).account === "198.51.100.79");
+  room.stop();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

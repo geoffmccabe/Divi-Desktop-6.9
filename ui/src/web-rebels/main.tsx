@@ -16,6 +16,7 @@ import { createRebels, RebelsHud, setPlatform, type RebelsController } from "../
 import { prefetchMusic } from "../wallet/rebels/rebelsMusic";
 import { createWebDoor } from "./webDoor";
 import { loadTowers, SCANNER } from "./webNodes";
+import { restoreGuest } from "./pilot";
 
 setPlatform(createWebDoor());
 prefetchMusic();
@@ -30,9 +31,16 @@ function WebRebels() {
   useEffect(() => {
     let alive = true;
     const give = (t: GlobePoint[]) => { if (alive) setTowers((cur) => cur ?? t); };
-    const timer = setTimeout(() => give([SCANNER]), TOWER_WAIT_MS);
-    void loadTowers(import.meta.env.BASE_URL).then(give);
-    return () => { alive = false; clearTimeout(timer); };
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    /* The guest first, so a returning player is the same pilot, with the same
+       banked DIVI, before the game ever joins the room. Only then may a slow
+       node list be given up on. */
+    void restoreGuest().then(() => {
+      if (!alive) return;
+      timer = setTimeout(() => give([SCANNER]), TOWER_WAIT_MS);
+      return loadTowers(import.meta.env.BASE_URL).then(give);
+    });
+    return () => { alive = false; if (timer) clearTimeout(timer); };
   }, []);
 
   useEffect(() => {

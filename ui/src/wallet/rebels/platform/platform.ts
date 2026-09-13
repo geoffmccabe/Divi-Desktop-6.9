@@ -37,7 +37,7 @@ export interface RebelsIdentity {
    * apart from any app player on the same internet address; the app sends
    * none, exactly as before.
    */
-  joinFields(selfIp: string): { node: string; name: string; door?: "web" };
+  joinFields(selfIp: string): { node: string; name: string; door?: "web"; guest?: string };
 }
 
 /** The DIVI price, in the shape the wallet's price feed already returns:

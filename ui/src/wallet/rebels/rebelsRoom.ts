@@ -222,6 +222,8 @@ interface Opts {
   name: string;
   /** "web" when the player came in through divi.love/rebels. See JoinIn. */
   door?: "web";
+  /** A web guest's own id, which their banked DIVI is kept under. See JoinIn. */
+  guest?: string;
   home: THREE.Vector3;
   ship: string;
   paint?: number[][];
@@ -238,8 +240,40 @@ interface Opts {
   onPurse?: (p: Purse) => void;
 }
 
+/** How long a hidden tab keeps its seat. A page left open in a background tab
+ *  should not hold one of a room's places all afternoon; coming back to it
+ *  reconnects in about a second. */
+export const HIDDEN_RELEASE_MS = 3 * 60_000;
+
 export function joinRoom(opts: Opts): Room {
   let ws: WebSocket | null = null;
+  /* ---- which room ----
+     "earth" first, always. A full room answers with the overflow room to try
+     next (earth-2, earth-3...), and the socket goes straight there. After any
+     ordinary disconnect it starts again from earth, so the shared world fills
+     back up as people leave rather than everyone staying scattered. */
+  let roomName = ROOM_NAME;
+  let hopTo: string | null = null;
+  /* ---- a hidden tab gives its seat back ---- */
+  let resting = false;
+  let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
+  const onVisibility = () => {
+    if (typeof document === "undefined") return;
+    if (document.visibilityState === "hidden") {
+      if (hiddenTimer) return;
+      hiddenTimer = setTimeout(() => {
+        hiddenTimer = null;
+        resting = true;
+        try { ws?.close(); } catch { /* already gone */ }
+      }, HIDDEN_RELEASE_MS);
+    } else {
+      if (hiddenTimer) { clearTimeout(hiddenTimer); hiddenTimer = null; }
+      if (resting) { resting = false; retries = 0; retryAt = 0; }
+    }
+  };
+  if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+    document.addEventListener("visibilitychange", onVisibility);
+  }
   let status: RoomStatus = "connecting";
   let seat = "";
   let closed = false;
@@ -306,11 +340,15 @@ export function joinRoom(opts: Opts): Room {
         p.pos.lerpVectors(p.from, p.target, p.t);
         p.fwd.lerpVectors(p.fromFwd, p.targetFwd, p.t).normalize();
       }
-      if (closed) return;
+      if (closed || resting) return;
       if (!ws && performance.now() >= retryAt) open();
     },
     close() {
       closed = true;
+      if (hiddenTimer) { clearTimeout(hiddenTimer); hiddenTimer = null; }
+      if (typeof document !== "undefined" && typeof document.removeEventListener === "function") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
       setStatus("off");
       try { ws?.close(); } catch { /* already gone */ }
       ws = null;
@@ -343,7 +381,7 @@ export function joinRoom(opts: Opts): Room {
     setStatus(retries === 0 ? "connecting" : "retrying");
     let sock: WebSocket;
     try {
-      sock = new WebSocket(`${platform().roomBase}/room/${ROOM_NAME}`);
+      sock = new WebSocket(`${platform().roomBase}/room/${roomName}`);
     } catch {
       backoff();
       return;
@@ -359,6 +397,7 @@ export function joinRoom(opts: Opts): Room {
         home: xyz(opts.home),
         ship: opts.ship,
         ...(opts.door ? { door: opts.door } : {}),
+        ...(opts.guest ? { guest: opts.guest } : {}),
         ...(opts.paint ? { paint: opts.paint } : {}),
         ...(opts.gear ? { gear: opts.gear } : {}),
         ...(opts.reach ? { reach: Math.round(opts.reach * 100) / 100 } : {}),
@@ -384,7 +423,18 @@ export function joinRoom(opts: Opts): Room {
       room.beams.length = 0;
       room.gems.length = 0;
       room.gauges = null;
-      if (!closed) backoff();
+      if (closed) return;
+      if (hopTo) {
+        /* Sent on by a full room: go now, not after a backoff. */
+        roomName = hopTo;
+        hopTo = null;
+        retries = 0;
+        retryAt = 0;
+        return;
+      }
+      /* Anything else starts over from the shared world. */
+      roomName = ROOM_NAME;
+      if (!resting) backoff();
     };
   }
 
@@ -403,6 +453,14 @@ export function joinRoom(opts: Opts): Room {
 
   function onMessage(m: Record<string, unknown>): void {
     switch (m.t) {
+      case "full": {
+        /* This room is full. Try the one it names; if it names none, every
+           overflow room is taken, so wait and try earth again. */
+        const next = typeof m.next === "string" ? m.next : "";
+        hopTo = /^earth(-\d{1,2})?$/.test(next) ? next : null;
+        dflow.note(`room ${roomName} full${hopTo ? `, moving to ${hopTo}` : ", every room full"}`);
+        return;
+      }
       case "hi":
         seat = String(m.id ?? "");
         setStatus("live");

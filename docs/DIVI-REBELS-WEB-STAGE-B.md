@@ -99,3 +99,40 @@ playing if needed. Go ahead and start now."
   room as a guest.
 - **Not yet seen:** flying, sound and the frame rate in a real browser. Geoff
   is the test for those.
+
+### Multiplayer-ready for a public page (2026-Sep-13)
+Geoff: "put this onto divi.love/rebels since it's already playable, but ONLY if
+it's multi-layer-ready. if it isn't then do that and then add it to the
+website." (Read as multiplayer-ready.)
+
+**It was not.** Three problems, all fixed:
+1. **One room, 24 places, and every open page took one.** Someone sitting on the
+   launch card counts too. Twenty-four idle visitors on a public page would have
+   locked everyone else out, app players included, and the locked-out pages
+   retried forever, because a browser cannot read a refused websocket's status.
+   - **Fixed with overflow rooms.** A full room accepts the socket just long
+     enough to send `{t:"full", next}` and close. The client goes straight to the
+     next room: earth, then earth-2 up to earth-16. Every ordinary reconnect
+     starts from earth again, so the shared world refills as people leave.
+2. **Any room name created a new Durable Object.** The router now accepts only
+   earth, earth-2 to earth-16, and p1 to p14 (held for the planet shards).
+3. **A background tab held its seat forever.** A tab hidden for three minutes now
+   gives the seat back, and returning to it reconnects at once.
+
+**Also before going public:** a web guest's DIVI is banked under a private
+random id made in their browser (`guest:<id>`), not their internet address. So
+it follows them between visits and connections, and nobody who launched on the
+public page loses a balance when their address changes.
+- The id and the pilot name live in IndexedDB (ui/src/web-rebels/webStore.ts)
+  with a copy in localStorage.
+- restoreGuest() puts back whichever copy survived, before the game joins the
+  room.
+- An id that fails the room's check falls back to the address account.
+- An app player sending an id is still its address account.
+
+**Tests:**
+- room: 193 (overflow names, next room, guest ids)
+- room client: 65 (full hop with no backoff, an odd `next` ignored, hidden tab
+  released and reconnected)
+- web door: 35 (guest id kept, IndexedDB restoring a cleared guest)
+- Full suite: 29 green. tsc clean.

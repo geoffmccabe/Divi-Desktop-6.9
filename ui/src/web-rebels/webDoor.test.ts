@@ -5,7 +5,7 @@
 import { isDiviAddress } from "./diviAddress";
 import { towersFrom, loadTowers, SCANNER } from "./webNodes";
 import { fetchWebPrices, forgetWebPrice } from "./webPrice";
-import { guestName } from "./pilot";
+import { guestName, guestId, restoreGuest } from "./pilot";
 import { createWebDoor } from "./webDoor";
 
 const out: string[] = [];
@@ -91,9 +91,24 @@ function ok(name: string, cond: boolean, extra = "") {
   ok("and keeps that name on the next visit", guestName(storage, () => 0.9) === first);
   ok("without storage it is still a name", /^Pilot \d{4}$/.test(guestName(null)));
 
-  const door = createWebDoor({ name: () => "Pilot 1234" });
+  const id = guestId(storage);
+  ok("a guest has a private id, long and plain", /^[A-Za-z0-9-]{16,64}$/.test(id), id);
+  ok("which is the same on the next visit", guestId(storage) === id);
+
+  /* The quick copy cleared, IndexedDB still holding the guest: the guest comes
+     back, not a stranger with an empty purse. */
+  const wiped = new Map<string, string>();
+  const wipedStorage = { getItem: (k: string) => wiped.get(k) ?? null, setItem: (k: string, v: string) => { wiped.set(k, v); } };
+  const back = await restoreGuest(wipedStorage, async () => new Map([["rebels.web.guest", id], ["rebels.web.pilot", first]]));
+  ok("with localStorage cleared, IndexedDB brings the same guest back", back.id === id && back.name === first, JSON.stringify(back));
+  const empty = new Map<string, string>();
+  const fresh = await restoreGuest({ getItem: (k: string) => empty.get(k) ?? null, setItem: (k: string, v: string) => { empty.set(k, v); } }, async () => new Map());
+  ok("with nothing kept anywhere, a new guest is made", /^[A-Za-z0-9-]{16,64}$/.test(fresh.id));
+
+  const door = createWebDoor({ name: () => "Pilot 1234", guest: () => id });
   const join = door.identity.joinFields("");
   ok("the web door tells the room it is the web", join.door === "web" && join.name === "Pilot 1234", JSON.stringify(join));
+  ok("and hands it the guest's private id", join.guest === id);
   ok("no wallet here: no addresses offered", (await door.money.ownAddresses()).length === 0);
   ok("no DIVI can be sent from the page, so points are bought in the app", door.money.PayWithDivi === null);
   ok("no staking wallet, so no stake bonus", door.wonStakeRecently() === false);

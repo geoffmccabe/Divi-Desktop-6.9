@@ -53,7 +53,7 @@ import { DEFAULT_DROP_CONFIG, type DropConfig } from "../../../ui/src/wallet/reb
 import { ammoFor, torpedoesFor, topSpeedFor, shieldMaxFor, recharge, supercharge, SUPER_BOOST_MULT, type Extras } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
-  type PaintWire, type PaintPart,
+  type PaintWire, type PaintPart, nextRoom, guestIdOk,
 } from "./protocol";
 
 /** Twenty ticks a second. Fast enough for dogfighting, cheap enough to run
@@ -233,6 +233,9 @@ const GLOBAL_EVENTS = new Set(["waveStart", "dragon", "dragonGone"]);
 
 export class RebelsRoom {
   private seats = new Map<string, Seat>();
+  /** This room's own name ("earth", "earth-2"...), read from the address it is
+   *  reached at, so a full room can say which overflow room comes next. */
+  private roomName = "earth";
   private combat: CombatState = createCombat();
   private world: CombatWorld;
   private tips: THREE.Vector3[] = [];
@@ -257,6 +260,8 @@ export class RebelsRoom {
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    const named = /^\/room\/([A-Za-z0-9_-]{1,40})/.exec(url.pathname);
+    if (named) this.roomName = named[1];
 
     if (url.pathname.endsWith("/state")) {
       return Response.json({
@@ -271,7 +276,17 @@ export class RebelsRoom {
       return new Response("expected a websocket", { status: 426 });
     }
     if (this.seats.size >= MAX_SEATS) {
-      return new Response("room full", { status: 503 });
+      /* Full. Accepted just long enough to say where to go instead, because a
+         browser cannot read a refused websocket's status and would retry this
+         same full room forever. */
+      const turned = new WebSocketPair();
+      const [away, here] = Object.values(turned) as [WebSocket, WebSocket];
+      here.accept();
+      try {
+        here.send(JSON.stringify({ t: "full", next: nextRoom(this.roomName) }));
+        here.close(4001, "room full");
+      } catch { /* gone already */ }
+      return new Response(null, { status: 101, webSocket: away });
     }
 
     const pair = new WebSocketPair();
@@ -771,7 +786,9 @@ export class RebelsRoom {
        cash-out waits for a sign-in (see onClaim). */
     if (m.door === "web") {
       seat.guest = true;
-      seat.account = `web:${seat.account}`.slice(0, 80);
+      /* Banked under the guest's own id when it sends one, so their DIVI follows
+         them between visits and connections; by address only as a fallback. */
+      seat.account = (guestIdOk(m.guest) ? `guest:${m.guest}` : `web:${seat.account}`).slice(0, 80);
     }
     /* ---- what they look like ----
        Taken on trust, because it is paint: the worst a lie here can do is make

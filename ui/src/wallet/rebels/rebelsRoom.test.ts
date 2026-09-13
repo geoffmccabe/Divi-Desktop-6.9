@@ -338,6 +338,63 @@ async function main() {
   ok("a direction survives the wire to within a tenth of a degree", back.angleTo(v) < 0.002, `${(back.angleTo(v) * 180 / Math.PI).toFixed(3)} deg`);
 }
 
+// OVERFLOW AND A HIDDEN TAB: ready for a public page.
+  {
+    sent.length = 0; opened = 0;
+    const room = R.joinRoom({ node: "web-guest", name: "Pilot 1", home: new THREE.Vector3(0, 0, 100), ship: "space_SM_Ship_Fighter_01", door: "web", guest: "3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c" });
+    ok("the shared world is tried first", sock!.url.endsWith("/room/earth"), sock!.url);
+    sock!.accept();
+    ok("a web guest's join carries its door and private id", last().door === "web" && last().guest === "3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c");
+    const firstSock = sock!;
+    firstSock.deliver({ t: "full", next: "earth-2" });
+    firstSock.close();
+    const before = opened;
+    room.step(1 / 60);
+    ok("a full room sends it straight on, with no backoff", opened === before + 1 && sock!.url.endsWith("/room/earth-2"), sock!.url);
+    sock!.accept();
+    ok("and it joins there", last().t === "join");
+    ok("told to go nowhere it is not steered anywhere odd", (() => {
+      sock!.deliver({ t: "full", next: "javascript:alert(1)" });
+      sock!.close();
+      clock += 20_000;
+      room.step(1 / 60);
+      return sock!.url.endsWith("/room/earth");
+    })(), sock!.url);
+    room.close();
+  }
+  {
+    /* A document that can be hidden, and timers the test can run. */
+    const listeners: Record<string, Array<() => void>> = {};
+    const doc = { visibilityState: "visible", addEventListener: (k: string, fn: () => void) => { (listeners[k] ??= []).push(fn); }, removeEventListener: () => {} };
+    (globalThis as Record<string, unknown>).document = doc;
+    const timers: Array<() => void> = [];
+    const realSetTimeout = globalThis.setTimeout;
+    (globalThis as Record<string, unknown>).setTimeout = ((fn: () => void) => { timers.push(fn); return timers.length as unknown as ReturnType<typeof setTimeout>; }) as unknown as typeof setTimeout;
+    (globalThis as Record<string, unknown>).clearTimeout = () => {};
+    try {
+      opened = 0;
+      const room = R.joinRoom({ node: "n", name: "Tab", home: new THREE.Vector3(0, 0, 100), ship: "space_SM_Ship_Fighter_01" });
+      sock!.accept();
+      doc.visibilityState = "hidden";
+      for (const fn of listeners.visibilitychange ?? []) fn();
+      ok("hiding the tab starts the clock on giving the seat back", timers.length === 1);
+      timers.shift()!();
+      ok("when it runs out the seat is given back", sock!.readyState === 3);
+      clock += 60_000;
+      const was = opened;
+      room.step(1 / 60);
+      ok("and a hidden tab does not reconnect by itself", opened === was);
+      doc.visibilityState = "visible";
+      for (const fn of listeners.visibilitychange ?? []) fn();
+      room.step(1 / 60);
+      ok("coming back to the tab reconnects at once", opened === was + 1);
+      room.close();
+    } finally {
+      (globalThis as Record<string, unknown>).setTimeout = realSetTimeout;
+      delete (globalThis as Record<string, unknown>).document;
+    }
+  }
+
 console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);
 }

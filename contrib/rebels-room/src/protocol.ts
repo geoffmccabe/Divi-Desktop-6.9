@@ -30,6 +30,13 @@ export interface JoinIn {
    * hurts the liar: claiming "web" gives up cashing out.
    */
   door?: "web";
+  /**
+   * A web guest's own id: random, made once in their browser and kept there, and
+   * never shown to anyone. The guest's DIVI is banked under it, so it follows
+   * them between visits and between internet connections rather than being tied
+   * to an address that changes. Ignored unless `door` is "web".
+   */
+  guest?: string;
   /** Where their tower is, so the room can place them. */
   home: Vec;
   /** Which hull they fly, and how it is painted, so everyone else sees the
@@ -272,8 +279,48 @@ export interface PurseOut {
   items?: Record<string, number>;
 }
 
+/**
+ * This room is full: go to `next` instead. Sent the moment a socket arrives at a
+ * full room, just before it is closed. A browser cannot read the HTTP status of a
+ * refused websocket, so a plain refusal would only ever look like the network
+ * failing and be retried against the same full room forever.
+ */
+export interface FullOut {
+  t: "full";
+  /** The overflow room to try, or "" when every overflow room is taken too. */
+  next: string;
+}
+
 export type ServerMessage =
-  WelcomeOut | StateOut | EventOut | YouOut | DeniedOut | RosterOut | PurseOut;
+  WelcomeOut | StateOut | EventOut | YouOut | DeniedOut | RosterOut | PurseOut | FullOut;
+
+/**
+ * THE ROOMS THAT MAY EXIST.
+ *
+ * "earth" is the one shared world. When it is full, players overflow into
+ * "earth-2", then "earth-3", up to "earth-16": still multiplayer, and nobody is
+ * ever locked out. "p1" to "p14" are held for the planet shards (network plan,
+ * phase 7). Anything else is refused at the door, because every name is a Durable
+ * Object and a name anyone could invent is an object anyone could create.
+ */
+export const ROOM_OVERFLOW_MAX = 16;
+export function roomNameOk(name: string): boolean {
+  const m = /^earth(?:-(\d{1,2}))?$/.exec(name);
+  if (m) return m[1] === undefined || (Number(m[1]) >= 2 && Number(m[1]) <= ROOM_OVERFLOW_MAX);
+  const p = /^p(\d{1,2})$/.exec(name);
+  return !!p && Number(p[1]) >= 1 && Number(p[1]) <= 14;
+}
+/** Where to send someone when this room is full, or "" when there is nowhere. */
+export function nextRoom(name: string): string {
+  const m = /^earth(?:-(\d{1,2}))?$/.exec(name);
+  if (!m) return "";
+  const n = m[1] === undefined ? 1 : Number(m[1]);
+  return n < ROOM_OVERFLOW_MAX ? `earth-${n + 1}` : "";
+}
+/** A guest id worth trusting as a key: long, random-looking, nothing odd in it. */
+export function guestIdOk(id: unknown): id is string {
+  return typeof id === "string" && /^[A-Za-z0-9-]{16,64}$/.test(id);
+}
 
 /** Shorten a float for the wire. A tenth of a unit is six metres on this globe. */
 export const r1 = (n: number): number => Math.round(n * 10) / 10;

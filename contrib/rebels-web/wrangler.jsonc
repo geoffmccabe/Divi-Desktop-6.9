@@ -2,13 +2,19 @@
   "$schema": "../rebels-room/node_modules/wrangler/config-schema.json",
   /* Divi Rebels on the web: serves the game at /rebels/ and the one thing the
      page cannot fetch for itself, the Scanner's node list. The multiplayer
-     room is a separate Worker (contrib/rebels-room) and is not touched here.
-     No route yet: it answers on workers.dev until divi.love/rebels is pointed
-     at it. */
+     room is a separate Worker (contrib/rebels-room) and is not touched here. */
   "name": "divi-rebels-web",
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-01",
   "observability": { "enabled": true },
+  /* Only the /rebels path of Geoff's site. Everything else on divi.love is the
+     landing page (the Pages project "divilove") and is never touched: a Worker
+     route on a path answers before Pages does, for that path alone. */
+  "routes": [
+    { "pattern": "divi.love/rebels*", "zone_name": "divi.love" },
+    { "pattern": "www.divi.love/rebels*", "zone_name": "divi.love" }
+  ],
+  "workers_dev": true,
   "assets": {
     /* The web build (ui, vite.web.config.ts), which writes into a rebels/
        folder so every file is already at the path the page asks for. */

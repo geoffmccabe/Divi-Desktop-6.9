@@ -3,6 +3,7 @@
 
 import { RebelsRoom } from "./room";
 import { RebelsLedger } from "./ledger";
+import { roomNameOk } from "./protocol";
 
 export { RebelsRoom, RebelsLedger };
 
@@ -20,6 +21,8 @@ export default {
        "earth" is one shared fight and a private name is a private one. */
     const room = url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,40})(\/[a-z]*)?$/);
     if (room) {
+      /* Only the rooms that are meant to exist: see roomNameOk. */
+      if (!roomNameOk(room[1])) return new Response("no such room", { status: 404 });
       const id = env.ROOM.idFromName(room[1]);
       return env.ROOM.get(id).fetch(req);
     }
