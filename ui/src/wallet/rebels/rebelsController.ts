@@ -2726,6 +2726,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       primeGunSound();
       playGameplay();
       connectRoom();
+      /* ---- THE FIGHT STARTS HERE, NOT AT ATTACH ----
+         The socket has been up since the map handed over its scene, but the
+         room only puts this seat in the fight now. Flying alone that also
+         wipes the sky and starts at wave one, so pressing LAUNCH really is a
+         new game rather than a return to the one that was running while the
+         card was being read. */
+      room.fly();
       startAt(homeIndex);
       if (camera) {
         diveFromPos.copy(camera.position);

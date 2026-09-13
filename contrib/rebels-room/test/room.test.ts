@@ -11,7 +11,9 @@ import * as THREE from "three";
 import { RebelsRoom } from "../src/room";
 import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES, MAX_GUARDS } from "../../../ui/src/wallet/rebels/orbitFlight";
-import { setDropRandomForTests, setDragonRandomForTests, spawnDragon } from "../../../ui/src/wallet/rebels/rebelsCombat";
+import {
+  setDropRandomForTests, setDragonRandomForTests, spawnDragon, spawnFleet,
+} from "../../../ui/src/wallet/rebels/rebelsCombat";
 setDragonRandomForTests(() => 0.99);
 
 /* Wrecks roll for items. Pinned to "nothing" so a count of gems or storage
@@ -81,7 +83,22 @@ function newRoom() {
 }
 /** `home` is the TIP of the player's own tower, mast and all, which is what
  *  the cockpit sends and what docking is measured to. */
+/**
+ * Seat a player AND put them in the fight.
+ *
+ * Joining and flying are two messages now: the cockpit opens its socket when
+ * the map hands over its scene, and the room only counts the seat as a player
+ * once LAUNCH is pressed. Almost every test below wants a player in the fight,
+ * so the helper sends both; the ones that care about the difference are at the
+ * end of the file and send them apart.
+ */
 function join(room: any, ws: FakeSocket, node = "node-a", home: [number, number, number] = [0, 0, R + 6]) {
+  const seat = seatOnly(room, ws, node, home);
+  ws.deliver(JSON.stringify({ t: "fly" }));
+  return seat;
+}
+/** Seated, but still reading the launch card. */
+function seatOnly(room: any, ws: FakeSocket, node = "node-a", home: [number, number, number] = [0, 0, R + 6]) {
   room.seat(ws as never);
   const id = ws.last("hi").id as string;
   ws.deliver(JSON.stringify({ t: "join", node, name: "A Node", home }));
@@ -885,6 +902,102 @@ const home: [number, number, number] = [0, 0, R + 8];
   ok("a transform out of the world is corrected", ws.last("no")?.why === "outside the world", ws.last("no")?.why);
   ok("and the correction says where the room has the ship",
      Array.isArray(ws.last("no")?.p) && ws.last("no").p.length === 3, JSON.stringify(ws.last("no")?.p));
+  room.stop();
+}
+
+/* ---- JOINING IS NOT FLYING ----
+   Geoff, 2026-Sep-13: "when the game starts it seems to have the player taking
+   damage almost instantly and I don't know why. And when it restarts it seems
+   to not restart fresh with all stats at zero and no enemies around, but it's
+   like going back into the same game."
+
+   Both were the same fault. The cockpit opens its socket the moment the map
+   hands over its scene, so the connection is settled before anybody launches,
+   and the room counted that seat as a player straight away: the waves began,
+   the fighters spawned and they all came for a ship parked on its pad while
+   the human was still reading the launch card. Pressing LAUNCH then dropped
+   them into a fight that had been running for as long as they had been
+   reading. */
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = seatOnly(room, ws);
+  ok("a seated player is not yet in the fight", seat.joined && !seat.flying);
+  room.refreshRoster();
+  ok("so the simulation has nobody to run for", room.world.players.length === 0,
+     `${room.world.players.length} players`);
+  /* Two hundred ticks of reading the launch card. */
+  for (let i = 0; i < 200; i++) room.step();
+  ok("and no enemies come looking while the card is up", room.combat.enemies.length === 0,
+     `${room.combat.enemies.length} enemies`);
+  ok("nor is the wave clock running", (room.combat.wave?.n ?? 1) <= 1,
+     `wave ${room.combat.wave?.n}`);
+
+  ws.deliver(JSON.stringify({ t: "fly" }));
+  ok("LAUNCH puts them in the fight", seat.flying);
+  room.refreshRoster();
+  ok("and the simulation now has a player", room.world.players.length === 1);
+  ok("launching starts at wave one", room.combat.wave?.n === 1, `wave ${room.combat.wave?.n}`);
+  ok("with full gauges", seat.shield === seat.shieldMax && seat.ammo === seat.ammoMax);
+  room.stop();
+}
+
+/* ---- A RESTART IS A RESTART ---- */
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws);
+  /* Fly a while, and put something in the sky. */
+  for (let i = 0; i < 60; i++) room.step();
+  spawnFleet(room.combat, 3, seat.body.pos, seat.body.fwd, { count: 8 });
+  seat.score = 500; seat.kills = 7;
+  ok("there is a fight in progress", room.combat.enemies.length > 0,
+     `${room.combat.enemies.length} enemies`);
+
+  /* Die. */
+  room.down(seat);
+  ok("death takes them out of the fight", !seat.flying && seat.dead);
+  ok("and with nobody flying the sky is cleared", room.combat.enemies.length === 0,
+     `${room.combat.enemies.length} enemies`);
+  ok("the run's score is banked, not carried", seat.score === 0 && seat.kills === 0,
+     `${seat.score} score, ${seat.kills} kills`);
+
+  /* The countdown runs out and the seat is alive again, but STILL not in the
+     fight: nothing may happen until the player asks for it. */
+  seat.respawn = 0;
+  room.revive(seat);
+  ok("reviving alone does not put them back in the fight", !seat.dead && !seat.flying);
+  for (let i = 0; i < 200; i++) room.step();
+  ok("so nothing gathers around them while they decide",
+     room.combat.enemies.length === 0, `${room.combat.enemies.length} enemies`);
+
+  ws.deliver(JSON.stringify({ t: "fly" }));
+  ok("LAUNCH AGAIN is a NEW game: wave one", room.combat.wave?.n === 1,
+     `wave ${room.combat.wave?.n}`);
+  ok("nothing in the sky from the last one", room.combat.enemies.length === 0);
+  ok("full gauges", seat.shield === seat.shieldMax && seat.ammo === seat.ammoMax
+     && seat.torps === seat.torpsMax);
+  ok("and nothing scored yet", seat.score === 0 && seat.kills === 0);
+  room.stop();
+}
+
+/* ---- BUT NOT FOR EVERYONE ELSE ----
+   One player launching must not wipe the sky out from under the people already
+   in it. There is one game and it is shared. */
+{
+  const room = newRoom();
+  const a = new FakeSocket(), b = new FakeSocket();
+  const seatA = join(room, a, "node-a", [0, 0, R + 6]);
+  for (let i = 0; i < 40; i++) room.step();
+  spawnFleet(room.combat, 2, seatA.body.pos, seatA.body.fwd, { count: 6 });
+  const before = room.combat.enemies.length;
+  ok("the first player has a fight on", before > 0, `${before} enemies`);
+
+  const seatB = seatOnly(room, b, "node-b", [0, R + 6, 0]);
+  b.deliver(JSON.stringify({ t: "fly" }));
+  ok("the second player joins it", seatB.flying);
+  ok("without wiping it", room.combat.enemies.length === before,
+     `${before} -> ${room.combat.enemies.length}`);
   room.stop();
 }
 

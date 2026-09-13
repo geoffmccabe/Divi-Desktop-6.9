@@ -235,6 +235,13 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
           <span>REAR{hud.rearAim ? ": FIRING BACKWARDS" : ""}</span>
         </div>
       )}
+      {/* The boresight, then the crosshair over it: where the nose points and
+          where you are aiming, both at once. */}
+      {hud.launched && !hud.dead && !hud.broken && (
+        <div className={"orbit-bore" + (hud.rearAim ? " rear" : "")} aria-hidden>
+          <i /><i /><i /><i /><b />
+        </div>
+      )}
       {hud.launched && !hud.dead && !hud.broken && <div className={"orbit-cross" + (hud.rearAim ? " rear" : "")} ref={crossRef} />}
 
       {hud.launched && hud.dock > 0 && (
