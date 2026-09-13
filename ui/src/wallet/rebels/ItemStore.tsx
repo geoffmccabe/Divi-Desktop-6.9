@@ -12,7 +12,7 @@ import { priceInDivi } from "./weaponCatalog";
 import {
   owned, hasWeapon, spendable, blockedBecause, buyWithPoints, subscribeArmoury,
 } from "./rebelsArmoury";
-import { fetchPrices } from "../value";
+import { platform } from "./platform/current";
 
 export function ItemStore({ ship }: { ship: string }) {
   const [points, setPoints] = useState(() => spendable());
@@ -27,7 +27,7 @@ export function ItemStore({ ship }: { ship: string }) {
   useEffect(() => { setMine(owned(ship)); }, [ship]);
   useEffect(() => {
     let alive = true;
-    void fetchPrices().then((p) => { if (alive) setDiviUsd(p.prices.usd ?? null); }).catch(() => {});
+    void platform().prices.fetch().then((p) => { if (alive) setDiviUsd(p.prices.usd ?? null); }).catch(() => {});
     return () => { alive = false; };
   }, []);
 

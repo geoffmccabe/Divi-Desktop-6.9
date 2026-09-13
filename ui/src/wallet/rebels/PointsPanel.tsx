@@ -25,15 +25,12 @@ import {
   purse, spendable, convertDiviToPoints, pointsForDivi, creditPurchase,
 } from "./rebelsArmoury";
 import { totalDivi } from "./rebelsScores";
-import { fetchPrices } from "../value";
+import { platform } from "./platform/current";
 import { bankView, subscribeBank, claimDivi, refreshBank, type BankView } from "./rebelsBank";
-import { validateAddress, walletAddresses } from "../api";
 import {
   BUY_TIERS, bonusFor, pointsForPurchase, TREASURY_ADDRESS,
 } from "./weaponCatalog";
-import {
-  PurchaseWithDivi, type PurchaseOption, type PurchaseProgress,
-} from "../../points/PurchaseWithDivi";
+import type { PurchaseOption, PurchaseProgress } from "./platform/platform";
 
 /**
  * The least that may be cashed out, in DIVI.
@@ -67,7 +64,7 @@ export function PointsPanel() {
   }, []);
   useEffect(() => {
     let alive = true;
-    void fetchPrices().then((r) => { if (alive) setUsd(r.prices.usd ?? null); }).catch(() => {});
+    void platform().prices.fetch().then((r) => { if (alive) setUsd(r.prices.usd ?? null); }).catch(() => {});
     return () => { alive = false; };
   }, []);
 
@@ -115,6 +112,9 @@ function BuyBlock({ usd, onBought }: { usd: number | null; onBought: () => void 
   const [pick, setPick] = useState<number | null>(BUY_TIERS[0].divi);
   const [custom, setCustom] = useState("");
   const [buying, setBuying] = useState<PurchaseOption | null>(null);
+  /* The panel that sends DIVI, from the door. Null where this door has no
+     wallet to send from, and then the button says where points can be bought. */
+  const PayWithDivi = platform().money.PayWithDivi;
   const [note, setNote] = useState("");
 
   /* Whichever is chosen: a tier button, or the typed amount when the box has
@@ -180,17 +180,17 @@ function BuyBlock({ usd, onBought }: { usd: number | null; onBought: () => void 
       <button
         type="button"
         className="pts-go"
-        disabled={option === null}
+        disabled={option === null || PayWithDivi === null}
         onClick={() => option && setBuying(option)}
       >
-        {usd === null ? "NO DIVI PRICE" : tooSmall ? "AMOUNT TOO SMALL" : "BUY POINTS"}
+        {PayWithDivi === null ? "BUY POINTS IN THE APP" : usd === null ? "NO DIVI PRICE" : tooSmall ? "AMOUNT TOO SMALL" : "BUY POINTS"}
       </button>
       <em className="pts-small">
         {note || `${(1000).toLocaleString()} points to the dollar at the live DIVI price. Bonus points are extra, not a discount.`}
       </em>
 
-      {buying && (
-        <PurchaseWithDivi
+      {buying && PayWithDivi && (
+        <PayWithDivi
           options={[buying]}
           onPrepare={async (o) => ({ address: TREASURY_ADDRESS, amountDivi: o.amountDivi })}
           onSent={async (o, txid): Promise<PurchaseProgress> => {
@@ -304,7 +304,7 @@ function CashOutBlock({ usd, localDivi }: { usd: number | null; localDivi: numbe
      it elsewhere types elsewhere. */
   useEffect(() => {
     let alive = true;
-    void walletAddresses().then((list) => {
+    void platform().money.ownAddresses().then((list) => {
       if (!alive || to) return;
       const main = list.find((a) => a.isMain) ?? list[0];
       if (main) setTo(main.address);
@@ -323,7 +323,7 @@ function CashOutBlock({ usd, localDivi }: { usd: number | null; localDivi: numbe
     setNote("");
     setChecking(true);
     try {
-      const good = await validateAddress(to).catch(() => false);
+      const good = await platform().money.validateAddress(to).catch(() => false);
       if (!good) { setNote("That is not a valid DIVI address."); return; }
       if (!claimDivi(to)) { setNote("Not connected to the room."); return; }
       setNote("Asked. The treasury pays on its next round, usually within a couple of minutes.");

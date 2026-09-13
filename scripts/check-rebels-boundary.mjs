@@ -45,15 +45,10 @@ const FORBIDDEN = [
   "src/wallet/rebels/platform/app/",
 ];
 
-/* Ties that still exist. Each refactor phase deletes the ones it removes. */
+/* Ties that still exist. EMPTY since refactor phase A3 (2026-Sep-13): the game
+   is a core, and any tie that appears from here on is a regression. */
 const KNOWN = {
-  "the game core": [
-    "src/points/PurchaseWithDivi.tsx",
-    "src/points/points.css",
-    "src/tauri.ts",
-    "src/wallet/api.ts",
-    "src/wallet/value.ts",
-  ],
+  "the game core": [],
 };
 
 const forbidden = (f) => FORBIDDEN.some((x) => (x.endsWith("/") ? f.startsWith(x) : f === x));

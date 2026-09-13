@@ -1,6 +1,6 @@
 # Divi Rebels Refactor, Stage A: the core and the app door
 
-Written 2026-Sep-13. Status: IN PROGRESS (A0, A1, A2 done).
+Written 2026-Sep-13. Status: IN PROGRESS (A0 to A3 done).
 
 Parent plan: docs/DIVI-REBELS-SHARED-CORE-PLAN.md. Geoff approved it and asked
 for "a detailed refactor plan first with prompts for yourself to use for each
@@ -340,4 +340,21 @@ before any refactor change.
 - **The guard:** 5 ties left, all through the stores and the points panel
   (points/PurchaseWithDivi.tsx, points/points.css, tauri.ts, wallet/api.ts,
   wallet/value.ts). exchanges.ts and stakeWin.ts are gone from the game.
+- **Suite:** 27 suites, all green. tsc clean.
+
+### A3 (2026-Sep-13)
+- **Price:** PointsPanel.tsx, WeaponStore.tsx and ItemStore.tsx ask
+  `platform().prices.fetch()`. The app door calls the wallet's `fetchPrices`, so
+  the shape and the CoinMarketCap-only rule are the wallet's own, unchanged.
+- **Wallet actions:** PointsPanel.tsx asks `platform().money.ownAddresses()` and
+  `platform().money.validateAddress()`.
+- **Buying points:** PointsPanel.tsx renders `platform().money.PayWithDivi`. The
+  app door hands it the wallet's PurchaseWithDivi, so the app is identical.
+  Where a door has none, the button reads "BUY POINTS IN THE APP" and is
+  disabled.
+- **Types:** `PurchaseOption` and `PurchaseProgress` are declared in the
+  contract (same fields), so the game never imports points/.
+- **The guard's KNOWN list is EMPTY.** The game core bundles 72 of our files
+  (81 before the refactor) and none of them is the wallet or the app bridge.
+  From here on any tie is a failure.
 - **Suite:** 27 suites, all green. tsc clean.
