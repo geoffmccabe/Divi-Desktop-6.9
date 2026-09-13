@@ -1,6 +1,6 @@
 # Divi Rebels Refactor, Stage A: the core and the app door
 
-Written 2026-Sep-13. Status: IN PROGRESS (A0 to A3 done).
+Written 2026-Sep-13. Status: IN PROGRESS (A0 to A4 done).
 
 Parent plan: docs/DIVI-REBELS-SHARED-CORE-PLAN.md. Geoff approved it and asked
 for "a detailed refactor plan first with prompts for yourself to use for each
@@ -358,3 +358,23 @@ before any refactor change.
   (81 before the refactor) and none of them is the wallet or the app bridge.
   From here on any tie is a failure.
 - **Suite:** 27 suites, all green. tsc clean.
+
+### A4 (2026-Sep-13)
+- **Detail seam:** GlobeMap.tsx reads the peer link limit, the network link
+  limit and the pixel ratio from `platform().detail` at the moment it uses them.
+  `MAX_PEER`, `MAX_MESH` and `GAME_PIXEL_RATIO` are gone from the file. The
+  HEADLESS and app doors carry today's exact values: 24, 120 and 1.
+- **Input seam:** the eleven addEventListener calls in the cockpit's attach,
+  and their eleven removals in detach, are now platform/desktopInput.ts. It adds
+  the same events, on the same targets, with the same options. The cockpit
+  hands its handlers to `platform().input.attach` and keeps the returned
+  detach. The handlers did not move.
+  - One deliberate difference: a second attach first pulls the previous plug.
+    Before, a second attach on the SAME canvas was already harmless, because
+    the browser ignores a duplicate listener. The only case this changes is a
+    second attach on a NEW canvas without a detach in between, which GlobeMap
+    never does and which used to leave the old canvas listening.
+  - Leaving pointer lock stays in the cockpit's detach, where it was.
+- **Suite:** 27 suites, all green, including the 101 cockpit checks that press
+  keys and move the pointer through these very listeners. tsc clean. The guard
+  still reports no ties.

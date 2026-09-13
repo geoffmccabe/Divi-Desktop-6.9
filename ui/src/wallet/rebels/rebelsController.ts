@@ -276,6 +276,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const droneList: typeof combat.enemies = [];
   const orbList: typeof combat.bullets = [];
   let selfIp = "";
+  /** Pulls out the input the door plugged in at attach. */
+  let stopInput: (() => void) | null = null;
   let frameError = "";
   let frameErrors = 0;
   let diagAt = 0;
@@ -2438,19 +2440,24 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           approach = 0;
         }
 
-        dom.addEventListener("wheel", onWheel, { passive: false });
-        dom.addEventListener("pointerleave", onLeave);
-        dom.addEventListener("pointermove", onMove);
-        dom.addEventListener("pointerdown", onDown);
-        dom.addEventListener("contextmenu", onContextMenu);
-        window.addEventListener("pointerup", onUp);
-        window.addEventListener("keydown", onKeyDown);
-        window.addEventListener("keyup", onKeyUp);
-        window.addEventListener("blur", onBlur);
-        window.addEventListener("focus", onFocus);
-        if (typeof document !== "undefined") {
-          document.addEventListener("pointerlockchange", onLockChange);
-        }
+        /* The player's hands, plugged in by the door: keyboard and mouse in the
+           app and on the web (platform/desktopInput.ts), touch on a phone
+           later. The same handlers either way. A previous plug is pulled
+           first so a second attach can never leave two sets listening. */
+        stopInput?.();
+        stopInput = platform().input.attach(dom, {
+          wheel: onWheel,
+          pointerleave: onLeave,
+          pointermove: onMove,
+          pointerdown: onDown,
+          contextmenu: onContextMenu,
+          pointerup: onUp,
+          keydown: onKeyDown,
+          keyup: onKeyUp,
+          blur: onBlur,
+          focus: onFocus,
+          pointerlockchange: onLockChange,
+        });
 
         /* What this player has already killed, so the tallies are lifetime and
            not per session. Offline it falls back to the local copy. */
@@ -2622,20 +2629,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (flying && !hud.dead && !suspended) bank();
       stopRechargeSound();
       wasDocking = false;
-      if (dom) {
-        dom.removeEventListener("wheel", onWheel);
-        dom.removeEventListener("pointerleave", onLeave);
-        dom.removeEventListener("pointermove", onMove);
-        dom.removeEventListener("pointerdown", onDown);
-        dom.removeEventListener("contextmenu", onContextMenu);
-      }
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("blur", onBlur);
-      window.removeEventListener("focus", onFocus);
+      stopInput?.();
+      stopInput = null;
       if (typeof document !== "undefined") {
-        document.removeEventListener("pointerlockchange", onLockChange);
         if (document.pointerLockElement === dom) document.exitPointerLock();
       }
       locked = false;

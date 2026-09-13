@@ -6,6 +6,7 @@ import diviLogo from "../assets/divi-coin.webp";
 import { pulseTrigger, pulseHsl, pulseActiveUntil, makeLegs, legU, pingDone, type Leg } from "./activityPulse";
 import { useTheme } from "../theme/ThemeProvider";
 import { dflow } from "./rebels/rebelsDflow";
+import { platform } from "./rebels/platform/current";
 import { towerMaterials, tickTowerLights } from "./towerLights";
 import { createDetail, type DetailLayer } from "./globeDetail";
 import { createBorders, type Borders } from "./globeBorders";
@@ -99,8 +100,10 @@ export interface GlobeArc {
 }
 
 const R = 100;
-/** The renderer's pixel ratio while the game has the globe. See attachFlight. */
-const GAME_PIXEL_RATIO = 1;
+/* The renderer's pixel ratio while the game has the globe (see attachFlight),
+   and how many links are drawn, come from the door: platform().detail. The
+   app and the web use one ratio, 24 peer links and 120 network links; a phone
+   door can draw less without this file changing. */
 
 // Node Tower geometry — ALL dimensions 50% of the original (base, height, tip
 // sphere), which also halves the packed-cluster diameter.
@@ -123,8 +126,6 @@ const CH_CAP = 600;
 // curved arc with characters flowing back and forth on it.
 const NEAR_ANG = 500 / 6371;
 const BASE_FLOW = 0.062;
-const MAX_PEER = 24;
-const MAX_MESH = 120;
 
 let atlasTex: THREE.Texture | null = null;
 function getAtlas(): THREE.Texture {
@@ -676,7 +677,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
     if (selfTip) {
       let n = 0;
       for (const p of pts0) {
-        if (p.kind !== "peer" || n >= MAX_PEER) continue;
+        if (p.kind !== "peer" || n >= platform().detail.peerLinks) continue;
         const t = tipOf.get(p.ip);
         if (t) { conns.push({ a: selfTip, b: t, mesh: false }); n++; }
       }
@@ -709,7 +710,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         const key = i < c.j ? `${i}-${c.j}` : `${c.j}-${i}`;
         if (meshKeys.has(key)) continue;
         meshKeys.add(key);
-        if (conns.length < MAX_MESH + MAX_PEER) conns.push({ a: ci.tip, b: cities[c.j].tip, mesh: true });
+        if (conns.length < platform().detail.meshLinks + platform().detail.peerLinks) conns.push({ a: ci.tip, b: cities[c.j].tip, mesh: true });
       }
     }
 
@@ -845,7 +846,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
          three.js default and not the library's. */
       const renderer = g.renderer();
       ratioRef.current = renderer.getPixelRatio();
-      renderer.setPixelRatio(GAME_PIXEL_RATIO);
+      renderer.setPixelRatio(platform().detail.pixelRatio);
       /* ---- the renderer's own submit time, for DFlow ----
          gl.render is where the draw calls are issued, and it is the one cost
          the game cannot see from inside its own frame. Wrapped so it is timed
