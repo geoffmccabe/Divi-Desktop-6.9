@@ -13,7 +13,7 @@
 // later. So the table is one row per SHIP, and this is the client for it. The
 // marketplace itself is not built and nothing here pretends otherwise.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../exchanges";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
 import { playerName } from "./rebelsScores";
 import type { ShipPaint } from "./shipColours";
 

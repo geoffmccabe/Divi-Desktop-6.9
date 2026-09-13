@@ -24,8 +24,8 @@ import {
   type CombatState,
   type Enemy, type ShipClass,
 } from "./rebelsCombat";
-import { userWonRecently } from "../stakeWin";
-import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT, playerName } from "./rebelsScores";
+import { platform } from "./platform/current";
+import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import { installSky, skyTexture, type SkyHandle } from "./starfield";
@@ -611,7 +611,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      Sent once per win: the flag clears when the window closes. */
   let bonusTold = false;
   function tellBonus(): void {
-    const won = userWonRecently(STAKE_BONUS_MS);
+    const won = platform().wonStakeRecently(STAKE_BONUS_MS);
     if (won && !bonusTold) { room?.bonus(); bonusTold = true; }
     if (!won) bonusTold = false;
   }
@@ -1307,9 +1307,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       ? tipList[homeIndex].clone()
       : new THREE.Vector3(0, 0, R);
     const paint = loadPaint();
+    /* Who this player is, as the door answers it: the node and its chosen name
+       in the app. */
+    const who = platform().identity.joinFields(selfIp);
     room = joinRoom({
-      node: selfIp || playerName(),
-      name: playerName(),
+      node: who.node,
+      name: who.name,
       home,
       ship: loadShip(),
       /* What this ship carries, so the room arms it the same way the solo

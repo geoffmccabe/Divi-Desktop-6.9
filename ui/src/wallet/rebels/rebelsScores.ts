@@ -16,7 +16,8 @@
 // anything, and two runs finishing at once would lose one of them. Direct writes
 // are refused by policy; the function is the only way in.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../exchanges";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
+import { platform } from "./platform/current";
 
 const KEY = "dd69.rebels.scores";
 const KEEP = 100;
@@ -63,35 +64,12 @@ function write(t: Table): void {
 }
 
 /**
- * Who the player is.
- *
- * The node's own name when its owner has set one, because that is the name
- * they chose to be known by on the map. Otherwise the node's address and
- * country, which is what the map itself falls back to.
+ * Who the player is: the name others see, and the key the player's saved rows
+ * are filed under. Answered by the door the game runs behind (the app door reads
+ * the node's chosen name; see platform/app/identity.ts).
  */
 export function playerName(): string {
-  try {
-    const id = localStorage.getItem("dd69.nodeIdentity");
-    if (id) {
-      const parsed = JSON.parse(id) as { name?: string };
-      const name = (parsed.name ?? "").trim();
-      if (name) return name.slice(0, 32);
-    }
-  } catch {
-    /* fall through to the address */
-  }
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k || !k.startsWith("dd69.selfGeo.")) continue;
-      const g = JSON.parse(localStorage.getItem(k) || "{}") as
-        { ip?: string; country?: string };
-      if (g.ip) return [g.ip, g.country].filter(Boolean).join(" · ").slice(0, 40);
-    }
-  } catch {
-    /* nothing known */
-  }
-  return "this node";
+  return platform().identity.name();
 }
 
 /**

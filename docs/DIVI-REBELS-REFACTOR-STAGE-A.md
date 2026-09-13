@@ -1,6 +1,6 @@
 # Divi Rebels Refactor, Stage A: the core and the app door
 
-Written 2026-Sep-13. Status: IN PROGRESS (A0 and A1 done).
+Written 2026-Sep-13. Status: IN PROGRESS (A0, A1, A2 done).
 
 Parent plan: docs/DIVI-REBELS-SHARED-CORE-PLAN.md. Geoff approved it and asked
 for "a detailed refactor plan first with prompts for yourself to use for each
@@ -314,3 +314,30 @@ before any refactor change.
   - wallet/exchanges.ts, through rebelsScores
   - wallet/stakeWin.ts, through rebelsController
 - **Suite:** 27 suites (the guard is the new one), all green. tsc clean.
+
+### A2 (2026-Sep-13)
+- **Identity:** the body of `playerName()` moved unchanged to
+  platform/app/identity.ts as `nodePlayerName()`, beside `appIdentity`. That file
+  imports nothing from the wallet, so node tests can stand in for the app with
+  it. `playerName()` in rebelsScores.ts now asks the door, and its five callers
+  are untouched.
+- **Room join:** the cockpit's node and name come from
+  `platform().identity.joinFields(selfIp)`. The app door returns exactly what
+  the cockpit sent before.
+- **Stake flag:** `userWonRecently(STAKE_BONUS_MS)` became
+  `platform().wonStakeRecently(STAKE_BONUS_MS)`. The contract takes the same
+  optional time window.
+- **Room address:** the socket opens `platform().roomBase`. `ROOM_BASE` is still
+  exported (a room client test reads it) and now equals `DEFAULT_ROOM_BASE`.
+- **Supabase address:** moved to ui/src/supabaseProject.ts, copied
+  programmatically so the key could not be mistyped. wallet/exchanges.ts imports
+  and re-exports it. The five game files import the new file.
+- **Dead code:** orbitNodes.ts deleted. Nothing imported it, not even a test.
+- **Tests:** the cockpit test registers HEADLESS with the app's identity,
+  because it names players through the wallet's saved node identity.
+- **Caught by tsc:** a re-export alone does not make the names usable inside
+  exchanges.ts. Fixed with import-then-export.
+- **The guard:** 5 ties left, all through the stores and the points panel
+  (points/PurchaseWithDivi.tsx, points/points.css, tauri.ts, wallet/api.ts,
+  wallet/value.ts). exchanges.ts and stakeWin.ts are gone from the game.
+- **Suite:** 27 suites, all green. tsc clean.

@@ -24,6 +24,13 @@ import { MAX_SHIELD, MAX_AMMO } from "./orbitFlight";
 import { R } from "./orbitWorld";
 import { grant } from "./rebelsArmoury";
 import { loadShip } from "./shipChoice";
+import { setPlatform, HEADLESS } from "./platform/current";
+import { appIdentity } from "./platform/app/identity";
+/* These tests name the player through the node identity the WALLET saves
+   ("Test Node", "Quitter"), so the game runs behind the app's identity. The
+   rest of the app door (prices, the wallet) is not needed here and would pull
+   the desktop bridge into a node test. */
+setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity });
 
 /* The controller listens on window for key-up and focus loss. Node has no
    window, so stand one up; `document` is deliberately left undefined so the

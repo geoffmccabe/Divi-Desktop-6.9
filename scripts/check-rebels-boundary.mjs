@@ -52,8 +52,6 @@ const KNOWN = {
     "src/points/points.css",
     "src/tauri.ts",
     "src/wallet/api.ts",
-    "src/wallet/exchanges.ts",
-    "src/wallet/stakeWin.ts",
     "src/wallet/value.ts",
   ],
 };

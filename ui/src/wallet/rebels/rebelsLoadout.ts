@@ -10,7 +10,7 @@
 // It is the client's word, as the scores are. See the migration file for
 // what that means and what the next step is.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../exchanges";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
 import { playerName } from "./rebelsScores";
 import { loadoutSnapshot, mergeLoadout, subscribeArmoury, type Loadout } from "./rebelsArmoury";
 

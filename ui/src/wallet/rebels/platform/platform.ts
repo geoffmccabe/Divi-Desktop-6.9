@@ -128,7 +128,7 @@ export interface RebelsPlatform {
   roomBase: string;
   /** Whether this player's wallet just won a stake (it decks out their tower).
    *  Always false where there is no staking wallet. */
-  wonStakeRecently(): boolean;
+  wonStakeRecently(windowMs?: number): boolean;
   prices: { fetch(): Promise<RebelsPrices> };
   money: RebelsMoney;
   detail: RebelsDetail;

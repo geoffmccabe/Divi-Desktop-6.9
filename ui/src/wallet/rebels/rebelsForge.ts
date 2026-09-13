@@ -6,7 +6,7 @@
 // local copy and the account agree without a second round trip. Offline there
 // is no forging: the answer says so.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../exchanges";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
 import { playerName } from "./rebelsScores";
 import { saveLoadoutRemote } from "./rebelsLoadout";
 import { mergeHeld, heldCount } from "./rebelsInventory";

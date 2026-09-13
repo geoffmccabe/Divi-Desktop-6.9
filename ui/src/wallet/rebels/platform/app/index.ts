@@ -8,7 +8,7 @@
 import type { RebelsPlatform } from "../platform";
 import { DEFAULT_ROOM_BASE, DESKTOP_DETAIL } from "../defaults";
 import { desktopInput } from "../desktopInput";
-import { playerName } from "../../rebelsScores";
+import { appIdentity } from "./identity";
 import { userWonRecently } from "../../../stakeWin";
 import { fetchPrices } from "../../../value";
 import { validateAddress, walletAddresses } from "../../../api";
@@ -16,12 +16,9 @@ import { PurchaseWithDivi } from "../../../../points/PurchaseWithDivi";
 
 export const appPlatform: RebelsPlatform = {
   id: "app",
-  identity: {
-    name: () => playerName(),
-    joinFields: (selfIp: string) => ({ node: selfIp || playerName(), name: playerName() }),
-  },
+  identity: appIdentity,
   roomBase: DEFAULT_ROOM_BASE,
-  wonStakeRecently: () => userWonRecently(),
+  wonStakeRecently: (windowMs?: number) => userWonRecently(windowMs),
   prices: { fetch: () => fetchPrices() },
   money: {
     validateAddress: (address: string) => validateAddress(address),

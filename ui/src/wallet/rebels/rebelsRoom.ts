@@ -24,6 +24,8 @@
 import * as THREE from "three";
 import { weaponByKey } from "./weaponCatalog";
 import { dflow } from "./rebelsDflow";
+import { platform } from "./platform/current";
+import { DEFAULT_ROOM_BASE } from "./platform/defaults";
 
 /** Everything the cockpit needs to know about somebody else in the room. */
 /** One round, as the room announced it. */
@@ -184,8 +186,8 @@ export interface Room {
   close(): void;
 }
 
-/** Where the rooms live. */
-export const ROOM_BASE = "wss://divi-rebels-room.geoff-de3.workers.dev";
+/** Where the rooms live, unless the door says otherwise (platform().roomBase). */
+export const ROOM_BASE = DEFAULT_ROOM_BASE;
 /**
  * One world, not one per region.
  *
@@ -327,7 +329,7 @@ export function joinRoom(opts: Opts): Room {
     setStatus(retries === 0 ? "connecting" : "retrying");
     let sock: WebSocket;
     try {
-      sock = new WebSocket(`${ROOM_BASE}/room/${ROOM_NAME}`);
+      sock = new WebSocket(`${platform().roomBase}/room/${ROOM_NAME}`);
     } catch {
       backoff();
       return;
