@@ -381,11 +381,17 @@ phase ships on its own with tests, docs and a version.
   It leaves its egg, so this mints eggs. Remove or gate before eggs are
   worth anything.
 - `!77`: an opened Rear Gun into the inventory. Same caveat.
-- `!3t` (t = 1 to 4): a Beam of tier t, OWNED, with everything below it
+- `!9t` (t = 1 to 4): a Beam of tier t, OWNED, with everything below it
   on the line granted too so the number key can select it. Geoff asked
-  for a Tier 1 beam to test with, 2026-Sep-13, so `!31`. This is a free
+  for a Tier 1 beam to test with, 2026-Sep-13, so `!91`. This is a free
   weapon and is the one on this list that matters most: it must go, or
   be gated, before weapons carry value.
+
+**The leading digit is a namespace.** It says WHAT is being summoned, and
+the LOW digits belong to enemy kinds, one each: 1 is the fighter flock, 2
+is the dragon, and 3 is reserved for the third enemy type. Weapons and
+gear take the high digits instead. Geoff, 2026-Sep-13: "!31 should be for
+spawning our third enemy type."
 - `!8t`: one wingman of tier t, fitted. Press again for another.
 - The existing `!1x` flock cheat is harmless (worth nothing).
 
@@ -675,3 +681,44 @@ only stepped when a position report goes out, and reports go out on a WALL
 CLOCK. So a fixed number of simulated frames finished the resupply on a quiet
 machine and did not finish it on a busy one. The block now flies until the
 gauges fill, with a real deadline as the backstop.
+
+## Perf: the towers, and the shaders (2026-Sep-13, v69.9.42)
+
+From Geoff's DFlow paste of v69.9.40: 222 seconds, 12,448 frames, 16.8ms
+average (60fps), 95th percentile 24.1ms, 153 stalls over 40ms. The game's own
+code was 5.26ms of a 16.8ms frame, `gl.render` 4.12ms average with a 937ms
+maximum, draw calls swinging 13 to 479 with 108,188 triangles, and seven
+shader compiles of about 100ms each. The sky at the time held about five
+enemies and five bullets. So the cost was not the fight and not the network
+(23.5 messages a second, 10.9 KB/s, a 156-byte state): it was the MAP.
+
+- **Every node on the network was two draw calls.** A tower built its own cone
+  and its own sphere, so a few hundred nodes built a few hundred groups and a
+  few hundred pairs of identical geometries. The network towers are now two
+  InstancedMesh draws per colour, whatever the node count. Your own tower is
+  left alone: there is nothing to save on one object and it carries the beam.
+- **Nothing else in the file had to change.** Each tower keeps its Group; the
+  Group simply holds nothing to draw and is not in the scene. The hover, the
+  winner coin and the game's scaleTowers still read and write position,
+  quaternion, scale and visible exactly as they did, and syncTowers copies
+  what they say into the instance matrices. A hidden tower is written as a
+  zero-size matrix. Hovering reads the instance number and looks the node up.
+- **The tower shapes are shared and marked**, because the teardown disposes
+  everything it walks and a disposed shared geometry would blank every tower
+  the next time the map was opened. The materials already had this mark.
+- **The hidden effects now compile at the launch card.** A compile only reaches
+  what can be SEEN, and almost everything the game draws sits hidden until it
+  is used, so the first beam, the first torpedo and the first explosion each
+  cost about a tenth of a second in the middle of a fight. The map hands the
+  game its compile; the game shows everything for the length of one call,
+  including the things it keeps outside the scene, and puts it all back. The
+  dragon is warmed when its model lands.
+- Tests: `scripts/run-globe-draw-tests.sh`.
+
+### Not done yet, deliberately
+
+The helix and mesh tubes are the other 80 or so draw calls. Merging them into
+one geometry means carrying each stream's opacity as a per-vertex alpha, and
+the merged mesh would blend in one order rather than sorted per tube, so it is
+the change most likely to LOOK different. Worth doing, but worth measuring
+first: a fresh DFlow paste after the towers will say how much is left.

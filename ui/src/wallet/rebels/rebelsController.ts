@@ -434,6 +434,48 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
    *  is a detonate while it could still be flying. */
   let torpSentAt = 0;
   let afterRender: ((fn: ((r: THREE.WebGLRenderer, draw: (s: THREE.Scene, c: THREE.Camera) => void) => void) | null) => void) | null = null;
+  /* The map's compile, handed over so the game can warm its own shaders. */
+  let compileScene: (() => void) | null = null;
+  /**
+   * Compile every shader the game will need, now, while nothing is happening.
+   *
+   * A compile only reaches what can be SEEN, and almost everything the game
+   * draws sits hidden until it is used: the beam, the torpedo, the explosion,
+   * the drop, the tracer. So each one cost its own compile the first time it
+   * appeared, in the middle of a fight, and DFlow measured those at about a
+   * tenth of a second each. Here they are all shown for the length of one
+   * call, compiled together, and put back exactly as they were.
+   *
+   * Cheap to call twice: the second time finds every program already built.
+   */
+  function warmShaders(): void {
+    if (!compileScene || !scene) return;
+    const hidden: THREE.Object3D[] = [];
+    /* A compile walks the SCENE, so anything held to one side has to be put in
+       it for the call and taken out again. The fighter prototypes are exactly
+       that: seven models built once and cloned per enemy, never drawn
+       themselves. */
+    const lent: THREE.Object3D[] = [];
+    const show = (root: THREE.Object3D | null | undefined) => {
+      if (!root) return;
+      if (!root.parent && scene) { scene.add(root); lent.push(root); }
+      root.traverse((o) => { if (!o.visible) { o.visible = true; hidden.push(o); } });
+    };
+    try {
+      show(fx?.group);
+      show(space?.group);
+      show(guardShell?.mesh);
+      show(peers?.group);
+      for (const p of protos) show(p);
+      if (dragonProto) show(dragonProto);
+      compileScene();
+    } catch (e) {
+      dflow.note(`warm: ${String(e)}`);
+    } finally {
+      for (const o of hidden) o.visible = false;
+      for (const o of lent) scene?.remove(o);
+    }
+  }
   const rearCamera = new THREE.PerspectiveCamera(70, 1.6, 0.1, 4000);
   const _rearSize = new THREE.Vector2();
   function drawRearView(renderer: THREE.WebGLRenderer, draw: (s: THREE.Scene, c: THREE.Camera) => void): void {
@@ -1136,9 +1178,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          cheats and comes out with them. */
       addHeld(`drone${tier}`, 1);
       setHud({ note: `DRONE T${tier} FITTED`, noteAt: performance.now() });
-    } else if (kind === "3" && tier >= 1 && tier <= 4) {
-      /* ---- TEST: !3t, a Beam of tier t, owned ----
-         Geoff asked for a Tier 1 beam to test with, 2026-Sep-13, so "!31".
+    } else if (kind === "9" && tier >= 1 && tier <= 4) {
+      /* ---- TEST: !9t, a Beam of tier t, owned ----
+         Geoff asked for a Tier 1 beam to test with, 2026-Sep-13, so "!91".
+         NINE, not three: the leading digit says WHAT is being summoned and the
+         low digits are reserved for enemy kinds, one each. 1 is the fighter
+         flock and 2 is the dragon, so 3 belongs to the next enemy type Geoff
+         adds. Geoff: "!31 should be for spawning our third enemy type."
          The line has to be walked in order for the number key to select it, so
          everything below the tier asked for is granted too: the mini gun and
          any lower beams. Goes with the other test cheats and comes out with
@@ -2264,7 +2310,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         stopLoadoutWatch = watchLoadout();
         void loadLoadoutRemote().then((moved) => { if (moved) setHud({ points: spendable() }); });
       }
-      void loadModel("rebels_dragon").then((p) => { dragonProto = p; }).catch((e) => dflow.note(`dragon model: ${String(e)}`));
+      /* The dragon arrives long after the rest, so it gets its own warm: its
+         skinned shader is a different program again, and the one time anybody
+         meets a dragon is the worst moment to compile it. */
+      void loadModel("rebels_dragon")
+        .then((p) => { dragonProto = p; warmShaders(); })
+        .catch((e) => dflow.note(`dragon model: ${String(e)}`));
       void fetchDropConfig().then((r) => {
         drops = r.config;
         combat.drops = r.config;
@@ -2277,6 +2328,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         stats = api.stats ?? null;
         afterRender = api.afterRender ?? null;
         afterRender?.(null);
+        compileScene = api.compile ?? null;
         rearOn = false;
         setHud({ rear: false, rearAim: false });
         /* The version is a build-time define; tests run without one. */
@@ -2387,6 +2439,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           towers: tipList.length,
           homeName: homeIndex >= 0 ? labelFor(ipList[homeIndex]) : "no node located",
         });
+        /* Last, with the whole game in the scene: build every shader while the
+           launch card is still up, rather than one stall at a time in a
+           fight. */
+        warmShaders();
       } catch (err) {
         /* Never throw out of here. This runs inside the map's own effect, and
            an exception would take the Node Map down with it. */
@@ -2520,6 +2576,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
     },
     detach() {
+      /* The map's compile belongs to the map's renderer and the scene it was
+         handed; both go away here. */
+      compileScene = null;
       suspended = flying && !hud.dead && hud.launched;
       if (suspended) {
         if (endAt) clearTimeout(endAt);
