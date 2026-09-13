@@ -94,6 +94,9 @@ interface Wing {
   pos: THREE.Vector3;
 }
 
+/** The hull a web guest flies: the first one, the same as shipChoice's DEFAULT_SHIP. */
+const GUEST_SHIP = "space_SM_Ship_Fighter_01";
+
 /** What a web guest is told about cashing out, on every purse it is sent. */
 const GUEST_CASH_OUT = "Sign in to cash out DIVI earned on the web. It stays banked to you until you do.";
 
@@ -800,6 +803,13 @@ export class RebelsRoom {
        updating every time the pack grows. */
     seat.ship = /^space_SM_Ship_[A-Za-z0-9_]{1,60}$/.test(String(m.ship ?? ""))
       ? String(m.ship) : "";
+    /* A web guest flies the first hull, as it comes, until they sign up; the
+       room says so too, so a page that claims otherwise is shown the same ship
+       as everyone else sees. Its paint is the factory scheme. */
+    if (seat.guest) {
+      seat.ship = GUEST_SHIP;
+      m = { ...m, paint: undefined };
+    }
     seat.paint = cleanPaint(m.paint);
     /* The capture ball. The client measured its own wings; the room only
        keeps it within reason. */

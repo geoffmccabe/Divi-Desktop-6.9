@@ -10,7 +10,7 @@
 // which door they are behind register the one they mean.
 
 import type { RebelsPlatform } from "./platform";
-import { DEFAULT_ROOM_BASE, DESKTOP_DETAIL } from "./defaults";
+import { DEFAULT_ROOM_BASE, DESKTOP_DETAIL, LOCAL_STORAGE, NO_LIMITS } from "./defaults";
 import { desktopInput } from "./desktopInput";
 
 export const HEADLESS: RebelsPlatform = {
@@ -18,7 +18,10 @@ export const HEADLESS: RebelsPlatform = {
   identity: {
     name: () => "this node",
     joinFields: (selfIp: string) => ({ node: selfIp || "this node", name: "this node" }),
+    accountKey: () => "this node",
   },
+  storage: LOCAL_STORAGE,
+  limits: NO_LIMITS,
   roomBase: DEFAULT_ROOM_BASE,
   wonStakeRecently: () => false,
   prices: { fetch: () => Promise.resolve({ prices: {} }) },

@@ -12,6 +12,11 @@
 
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
 import { playerName } from "./rebelsScores";
+import { platform } from "./platform/current";
+
+/** The key the account row is filed under: the node's name in the app, a
+ *  guest's private id on the web. See RebelsIdentity.accountKey. */
+const accountKey = () => platform().identity.accountKey();
 import { loadoutSnapshot, mergeLoadout, subscribeArmoury, type Loadout } from "./rebelsArmoury";
 
 /* Tests run in node with a working fetch, and a test must not write to the
@@ -26,7 +31,7 @@ const headers = {
   "Content-Type": "application/json",
 };
 
-export async function saveLoadoutRemote(who = playerName()): Promise<boolean> {
+export async function saveLoadoutRemote(who = accountKey()): Promise<boolean> {
   if (!who || !remoteOn) return false;
   const l = loadoutSnapshot();
   try {
@@ -35,7 +40,7 @@ export async function saveLoadoutRemote(who = playerName()): Promise<boolean> {
       headers,
       body: JSON.stringify({
         p_owner_key: who,
-        p_owner_name: who,
+        p_owner_name: playerName(),
         p_points_earned: Math.round(l.earned * 10000) / 10000,
         p_points_spent: Math.round(l.spent * 10000) / 10000,
         p_owned: l.owned,
@@ -49,7 +54,7 @@ export async function saveLoadoutRemote(who = playerName()): Promise<boolean> {
   }
 }
 
-export async function loadLoadoutRemote(who = playerName()): Promise<boolean> {
+export async function loadLoadoutRemote(who = accountKey()): Promise<boolean> {
   if (!who || !remoteOn) return false;
   try {
     const res = await fetch(

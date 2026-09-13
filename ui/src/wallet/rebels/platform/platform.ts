@@ -38,6 +38,35 @@ export interface RebelsIdentity {
    * none, exactly as before.
    */
   joinFields(selfIp: string): { node: string; name: string; door?: "web"; guest?: string };
+  /**
+   * The key this player's saved rows are filed under on the account (loadout,
+   * ships, forge). The node's name in the app, exactly as before; a web guest's
+   * private id on the web, so two guests who happen to share a pilot number
+   * never share a loadout.
+   */
+  accountKey(): string;
+}
+
+/**
+ * Where the game keeps a player's progress on this device: points, bought gear,
+ * found items, the DIVI tally, scores, the ship, its paint, names and upgrades.
+ * Synchronous, because the game reads these in the middle of frames. The app
+ * keeps them in localStorage as it always has; the web keeps them in IndexedDB,
+ * loaded into memory before the game starts and written back on every change.
+ */
+export interface RebelsStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+/** What this player may do with ships. A guest flies the first hull as it
+ *  comes; signing up opens the rest. */
+export interface RebelsLimits {
+  /** Choose a hull, paint it, name it and fit upgrades to it. */
+  customiseShips: boolean;
+  /** Shown wherever a locked thing is tried. */
+  why: string;
 }
 
 /** The DIVI price, in the shape the wallet's price feed already returns:
@@ -127,6 +156,8 @@ export interface RebelsPlatform {
   /** Which door this is, for the DFlow report and nothing else. */
   id: string;
   identity: RebelsIdentity;
+  storage: RebelsStorage;
+  limits: RebelsLimits;
   /** The multiplayer server's address. */
   roomBase: string;
   /** Whether this player's wallet just won a stake (it decks out their tower).

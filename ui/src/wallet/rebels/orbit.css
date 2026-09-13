@@ -272,6 +272,32 @@
   margin: 12px 0 0; font-size: 12px; line-height: 1.5; opacity: 0.8;
 }
 
+/* The ship's own name, under its class: a thin box in the cockpit's colour. */
+.ship-market-name {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin: 10px auto 0; max-width: 320px;
+}
+.ship-market-name span { font: 600 10px/1 var(--font-mono); letter-spacing: 0.2em; color: hsl(var(--rebels-hud) / 0.7); }
+.ship-market-name input {
+  flex: 1 1 auto; min-width: 0;
+  padding: 6px 9px; font: 600 12px/1 var(--font-mono); letter-spacing: 0.06em;
+  color: hsl(var(--rebels-hud)); background: hsl(var(--rebels-hud) / 0.06);
+  border: 1px solid hsl(var(--rebels-hud) / 0.35); border-radius: 4px; outline: none;
+}
+.ship-market-name input:focus { border-color: hsl(var(--primary)); background: hsl(var(--rebels-hud) / 0.1); }
+.ship-market-name input:disabled { opacity: 0.5; cursor: not-allowed; }
+.ship-market-fitted {
+  margin: 8px 0 0; font: 600 10px/1.5 var(--font-mono); letter-spacing: 0.08em;
+  color: var(--rebels-points, #7fe3a0);
+}
+/* Where the paint shop would be, for a guest. */
+.ship-market-locked {
+  margin: 14px 0 0; padding: 10px 12px; font-size: 12px; line-height: 1.5;
+  color: hsl(var(--rebels-hud)); background: hsl(var(--rebels-hud) / 0.06);
+  border: 1px dashed hsl(var(--rebels-hud) / 0.4); border-radius: 5px;
+}
+.ship-market-tiers button:disabled { opacity: 0.3; cursor: not-allowed; }
+
 /* The left column: the specs, and the paint shop under them. Stacked, so the
    two cannot reach for the same pixels whatever the window does. */
 .ship-market-side {
@@ -909,6 +935,28 @@
   background: rgb(0 0 0 / 0.6);
   pointer-events: auto; cursor: pointer; z-index: 14;
 }
+/* "Apply to Ship? (y/n)": over the inventory, in the market's confirm style. */
+.orbit-inv-confirm {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(420px, calc(100% - 32px)); padding: 18px 20px; z-index: 5;
+  background: hsl(var(--rebels-ocean) / 0.96);
+  border: 1px solid hsl(var(--primary) / 0.6); border-radius: 8px;
+  box-shadow: 0 0 40px hsl(var(--primary) / 0.3);
+  text-align: center;
+}
+.orbit-inv-confirm h4 {
+  margin: 0 0 10px; font: 700 15px/1.2 var(--font-mono); letter-spacing: 0.14em;
+  color: hsl(var(--primary));
+}
+.orbit-inv-confirm p { margin: 0 0 14px; font-size: 12px; line-height: 1.5; color: hsl(var(--rebels-hud)); }
+.orbit-inv-confirm p b { color: hsl(var(--rebels-home)); }
+.orbit-inv-confirm div { display: flex; gap: 10px; justify-content: center; }
+.orbit-inv-confirm button {
+  padding: 8px 16px; font: 600 12px/1 var(--font-mono); letter-spacing: 0.1em; cursor: pointer;
+  color: hsl(var(--primary-foreground)); background: hsl(var(--primary));
+  border: 1px solid hsl(var(--primary)); border-radius: 4px;
+}
+.orbit-inv-confirm button.no { color: hsl(var(--rebels-hud)); background: transparent; border-color: hsl(var(--rebels-hud) / 0.5); }
 .orbit-inv {
   position: absolute; inset: 22px;
   display: flex; flex-direction: column;

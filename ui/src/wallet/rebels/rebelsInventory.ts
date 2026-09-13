@@ -17,6 +17,7 @@
 // the ledger so the two can be compared later.
 
 import { itemByKey } from "./itemCatalog";
+import { platform } from "./platform/current";
 
 const ITEMS_KEY = "dd69.rebels.items";
 export const INVENTORY_CHANGED = "dd69-rebels-armoury";
@@ -58,7 +59,7 @@ function clean(raw: unknown): Held {
 
 /** The two counters as saved: gained under the key, used under "used:key". */
 export function rawHeld(): Held {
-  try { return clean(JSON.parse(localStorage.getItem(ITEMS_KEY) || "null")); } catch { return {}; }
+  try { return clean(JSON.parse(platform().storage.getItem(ITEMS_KEY) || "null")); } catch { return {}; }
 }
 
 /** What is actually held: gained minus used, only the keys with something. */
@@ -74,7 +75,7 @@ export function heldItems(): Held {
 }
 
 function writeHeld(h: Held): void {
-  try { localStorage.setItem(ITEMS_KEY, JSON.stringify(h)); } catch { /* full */ }
+  try { platform().storage.setItem(ITEMS_KEY, JSON.stringify(h)); } catch { /* full */ }
   try { window.dispatchEvent(new Event(INVENTORY_CHANGED)); } catch { /* not a browser */ }
 }
 
@@ -156,5 +157,5 @@ export function spheresSorted(): Array<{ key: string; count: number }> {
 }
 
 export function resetInventoryForTests(): void {
-  try { localStorage.removeItem(ITEMS_KEY); } catch { /* fine */ }
+  try { platform().storage.removeItem(ITEMS_KEY); } catch { /* fine */ }
 }

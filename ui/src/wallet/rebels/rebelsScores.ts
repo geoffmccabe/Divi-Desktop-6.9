@@ -46,7 +46,7 @@ interface Table { rows: ScoreRow[] }
 
 function read(): Table {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = platform().storage.getItem(KEY);
     if (!raw) return { rows: [] };
     const v = JSON.parse(raw) as Table;
     return Array.isArray(v?.rows) ? v : { rows: [] };
@@ -57,7 +57,7 @@ function read(): Table {
 
 function write(t: Table): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(t));
+    platform().storage.setItem(KEY, JSON.stringify(t));
   } catch {
     /* Out of storage or blocked. A leaderboard is not worth an error. */
   }
@@ -210,7 +210,7 @@ const DIVI_KEY = "dd69.rebels.divi";
 
 export function totalDivi(): number {
   try {
-    const n = parseFloat(localStorage.getItem(DIVI_KEY) || "0");
+    const n = parseFloat(platform().storage.getItem(DIVI_KEY) || "0");
     return Number.isFinite(n) ? n : 0;
   } catch {
     return 0;
@@ -230,7 +230,7 @@ export function spendDivi(amount: number): number {
   const have = totalDivi();
   const take = Math.min(have, amount);
   try {
-    localStorage.setItem(DIVI_KEY, (have - take).toFixed(4));
+    platform().storage.setItem(DIVI_KEY, (have - take).toFixed(4));
   } catch {
     /* storage blocked; the number is still right for this session */
   }
@@ -241,7 +241,7 @@ export function addDivi(amount: number): number {
   if (!(amount > 0)) return totalDivi();
   const next = totalDivi() + amount;
   try {
-    localStorage.setItem(DIVI_KEY, next.toFixed(4));
+    platform().storage.setItem(DIVI_KEY, next.toFixed(4));
   } catch {
     /* storage blocked; the number is still right for this session */
   }

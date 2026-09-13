@@ -7,6 +7,8 @@
 // the choice does rather than on the next reload — the same pattern the wallet
 // already uses for the node's identity.
 
+import { platform } from "./platform/current";
+
 const KEY = "dd69.rebels.ship";
 const EVENT = "dd69-rebels-ship-changed";
 
@@ -14,8 +16,10 @@ const EVENT = "dd69-rebels-ship-changed";
 export const DEFAULT_SHIP = "space_SM_Ship_Fighter_01";
 
 export function loadShip(): string {
+  /* A guest flies the first hull, whatever was saved: see RebelsLimits. */
+  if (!platform().limits.customiseShips) return DEFAULT_SHIP;
   try {
-    const v = localStorage.getItem(KEY);
+    const v = platform().storage.getItem(KEY);
     if (v && /^space_SM_Ship_[A-Za-z0-9_]+$/.test(v)) return v;
   } catch {
     /* no storage; the default is fine */
@@ -24,7 +28,8 @@ export function loadShip(): string {
 }
 
 export function saveShip(id: string): void {
-  try { localStorage.setItem(KEY, id); } catch { /* storage full */ }
+  if (!platform().limits.customiseShips) return;
+  try { platform().storage.setItem(KEY, id); } catch { /* storage full */ }
   window.dispatchEvent(new Event(EVENT));
 }
 

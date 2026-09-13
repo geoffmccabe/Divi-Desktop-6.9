@@ -32,6 +32,7 @@
 // everywhere in it.
 
 import * as THREE from "three";
+import { platform } from "./platform/current";
 
 export type PartKey = "hull1" | "hull2" | "accent" | "highlight" | "engine";
 
@@ -132,8 +133,10 @@ export function chipColour(key: PartKey, paint: ShipPaint): string {
 const KEY = "dd69.rebels.paint";
 
 export function loadPaint(): ShipPaint {
+  /* A guest's ship is the factory scheme until they sign up. */
+  if (!platform().limits.customiseShips) return { ...FACTORY };
   try {
-    const v = JSON.parse(localStorage.getItem(KEY) || "null");
+    const v = JSON.parse(platform().storage.getItem(KEY) || "null");
     if (v && typeof v === "object") {
       const out = { ...FACTORY };
       for (const { key } of PARTS) {
@@ -156,7 +159,8 @@ export function loadPaint(): ShipPaint {
 }
 
 export function savePaint(p: ShipPaint): void {
-  try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* storage full */ }
+  if (!platform().limits.customiseShips) return;
+  try { platform().storage.setItem(KEY, JSON.stringify(p)); } catch { /* storage full */ }
 }
 
 function clamp(n: unknown, lo: number, hi: number): number {

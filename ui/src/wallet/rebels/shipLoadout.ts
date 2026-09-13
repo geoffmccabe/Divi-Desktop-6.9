@@ -24,6 +24,8 @@
 // doing nothing, because a key that appears to do nothing is indistinguishable
 // from a bug.
 
+import { platform } from "./platform/current";
+
 export type SlotKind = "primary" | "secondary";
 
 export interface Weapon {
@@ -60,11 +62,12 @@ export interface Loadout {
 
 export const DEFAULT_LOADOUT: Loadout = { primary: 0, secondary: 0 };
 
+
 const KEY = "dd69.rebels.loadout";
 
 export function loadLoadout(): Loadout {
   try {
-    const v = JSON.parse(localStorage.getItem(KEY) || "null");
+    const v = JSON.parse(platform().storage.getItem(KEY) || "null");
     if (v && typeof v === "object") {
       return {
         primary: pick(v.primary, PRIMARY),
@@ -78,7 +81,7 @@ export function loadLoadout(): Loadout {
 }
 
 export function saveLoadout(l: Loadout): void {
-  try { localStorage.setItem(KEY, JSON.stringify(l)); } catch { /* full */ }
+  try { platform().storage.setItem(KEY, JSON.stringify(l)); } catch { /* full */ }
 }
 
 /** A saved index is only usable if it points at a weapon that is fitted. */

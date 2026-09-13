@@ -13,6 +13,8 @@
 // Every function here fails soft. A browser that refuses IndexedDB (a private
 // window in some browsers) still plays; it just does not remember.
 
+import type { RebelsStorage } from "../wallet/rebels/platform/platform";
+
 const DB = "divi-rebels";
 const STORE = "kv";
 
@@ -76,4 +78,77 @@ export async function idbPut(key: string, value: string | null): Promise<void> {
       resolve();
     }
   });
+}
+
+/* ---- the game's progress, kept in IndexedDB ----
+   What the game calls storage (RebelsStorage): read from memory, written to
+   memory, to IndexedDB, and to localStorage as a second copy. */
+
+
+/** The keys that are a player's progress, as opposed to caches. */
+export function isProgressKey(key: string): boolean {
+  return key.startsWith("dd69.rebels.") && key !== "dd69.rebels.diag";
+}
+
+type Quick = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key"> & { length: number };
+
+/**
+ * A synchronous store over a snapshot of IndexedDB.
+ *
+ * `put` is where a change is written for good (IndexedDB in the page, a spy in a
+ * test). localStorage is kept as a second copy so a returning player whose
+ * IndexedDB was cleared, but not their localStorage, still finds their things.
+ */
+export function createWebStorage(
+  snapshot: Map<string, string>,
+  quick: Quick | null,
+  put: (key: string, value: string | null) => void = (k, v) => { void idbPut(k, v); },
+): RebelsStorage {
+  const mem = new Map(snapshot);
+  return {
+    getItem(key) {
+      return mem.has(key) ? mem.get(key)! : null;
+    },
+    setItem(key, value) {
+      mem.set(key, value);
+      try { quick?.setItem(key, value); } catch { /* full or blocked */ }
+      put(key, value);
+    },
+    removeItem(key) {
+      mem.delete(key);
+      try { quick?.removeItem(key); } catch { /* blocked */ }
+      put(key, null);
+    },
+  };
+}
+
+/**
+ * Before the game starts: everything IndexedDB holds, with anything only the
+ * localStorage copy still has put back into IndexedDB. IndexedDB wins where both
+ * hold a key, because it is the copy written last on every change and the one a
+ * browser keeps the longest.
+ */
+export async function hydrateWebStorage(
+  quick: Quick | null = safeQuick(),
+  all: () => Promise<Map<string, string>> = idbAll,
+  put: (key: string, value: string | null) => void = (k, v) => { void idbPut(k, v); },
+): Promise<RebelsStorage> {
+  const snapshot = await all().catch(() => new Map<string, string>());
+  if (quick) {
+    try {
+      for (let i = 0; i < quick.length; i++) {
+        const k = quick.key(i);
+        if (!k || !isProgressKey(k) || snapshot.has(k)) continue;
+        const v = quick.getItem(k);
+        if (v === null) continue;
+        snapshot.set(k, v);
+        put(k, v);
+      }
+    } catch { /* blocked */ }
+  }
+  return createWebStorage(snapshot, quick, put);
+}
+
+function safeQuick(): Quick | null {
+  try { return typeof localStorage === "undefined" ? null : localStorage; } catch { return null; }
 }

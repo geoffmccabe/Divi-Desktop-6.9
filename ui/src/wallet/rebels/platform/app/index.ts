@@ -6,7 +6,7 @@
 // the wallet. The web door (Stage B) answers the same questions differently.
 
 import type { RebelsPlatform } from "../platform";
-import { DEFAULT_ROOM_BASE, DESKTOP_DETAIL } from "../defaults";
+import { DEFAULT_ROOM_BASE, DESKTOP_DETAIL, LOCAL_STORAGE, NO_LIMITS } from "../defaults";
 import { desktopInput } from "../desktopInput";
 import { appIdentity } from "./identity";
 import { userWonRecently } from "../../../stakeWin";
@@ -17,6 +17,8 @@ import { PurchaseWithDivi } from "../../../../points/PurchaseWithDivi";
 export const appPlatform: RebelsPlatform = {
   id: "app",
   identity: appIdentity,
+  storage: LOCAL_STORAGE,
+  limits: NO_LIMITS,
   roomBase: DEFAULT_ROOM_BASE,
   wonStakeRecently: (windowMs?: number) => userWonRecently(windowMs),
   prices: { fetch: () => fetchPrices() },

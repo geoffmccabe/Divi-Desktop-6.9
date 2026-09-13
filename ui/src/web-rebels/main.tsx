@@ -17,6 +17,7 @@ import { prefetchMusic } from "../wallet/rebels/rebelsMusic";
 import { createWebDoor } from "./webDoor";
 import { loadTowers, SCANNER } from "./webNodes";
 import { restoreGuest } from "./pilot";
+import { hydrateWebStorage } from "./webStore";
 
 setPlatform(createWebDoor());
 prefetchMusic();
@@ -32,11 +33,12 @@ function WebRebels() {
     let alive = true;
     const give = (t: GlobePoint[]) => { if (alive) setTowers((cur) => cur ?? t); };
     let timer: ReturnType<typeof setTimeout> | null = null;
-    /* The guest first, so a returning player is the same pilot, with the same
-       banked DIVI, before the game ever joins the room. Only then may a slow
-       node list be given up on. */
-    void restoreGuest().then(() => {
+    /* The guest and their progress first, so a returning player is the same
+       pilot with the same points, items and banked DIVI before the game reads
+       anything or joins the room. Only then may a slow node list be given up on. */
+    void restoreGuest().then(() => hydrateWebStorage()).then((storage) => {
       if (!alive) return;
+      setPlatform(createWebDoor({ storage }));
       timer = setTimeout(() => give([SCANNER]), TOWER_WAIT_MS);
       return loadTowers(import.meta.env.BASE_URL).then(give);
     });

@@ -7,6 +7,10 @@
 // tier, name and what it does on the right. Right-click a sealed sphere to
 // open it (Geoff, 2026-Sep-11). A marketplace for unopened spheres comes
 // later; this is why they are kept sealed rather than opened on pickup.
+//
+// Right-click an opened UPGRADE (a strafe, a hull boost, a rear gun) and it asks
+// "Apply to Ship? (y/n)": yes fits it to the ship being flown for good, using the
+// item up (Geoff, 2026-Sep-13). Until then it does nothing; see shipFleet.ts.
 
 import { useEffect, useRef, useState } from "react";
 import { ITEMS, ITEM_TIER_NAMES, FORGE_COST, itemByKey, itemMark, itemTierColour, forgeable, type ItemSpec } from "./itemCatalog";
@@ -14,7 +18,9 @@ import { forge } from "./rebelsForge";
 import { heldSorted, spheresSorted, openSphere } from "./rebelsInventory";
 import { owned, subscribeArmoury } from "./rebelsArmoury";
 import { weaponByKey } from "./weaponCatalog";
-import { myFleet, type FleetShip } from "./rebelsShips";
+import { myFleet, saveFlyingShip, type FleetShip } from "./rebelsShips";
+import { applyToShip, isShipUpgrade, shipName, shipUpgrades } from "./shipFleet";
+import { platform } from "./platform/current";
 import { shipCatalog } from "./shipCatalog";
 import { loadShip } from "./shipChoice";
 import { showSphere } from "./sphereCards";
@@ -42,6 +48,42 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
     const spec = itemByKey(key);
     if (openSphere(key)) setNote(`OPENED: ${spec?.name ?? key}`);
   };
+
+  /* ---- fitting an upgrade to the ship ---- */
+  const limits = platform().limits;
+  const [fitting, setFitting] = useState<string | null>(null);
+  const flyingName = shipName(flying) || catalogue.find((c) => c.id === flying)?.name || flying;
+  const startFit = (key: string) => {
+    if (!isShipUpgrade(key)) return;
+    if (!limits.customiseShips) { setNote(limits.why); return; }
+    setFitting(key);
+  };
+  const answerFit = (yes: boolean) => {
+    const key = fitting;
+    setFitting(null);
+    if (!key || !yes) return;
+    const r = applyToShip(flying, key);
+    if (r.ok) {
+      setNote(`FITTED: ${itemByKey(key)?.name ?? key} to ${flyingName}`);
+      void saveFlyingShip(flying);
+    } else {
+      setNote(`NOT FITTED: ${r.why}`);
+    }
+  };
+  /* Y and N answer the question. Caught before the game's own keys (Y is also
+     "use a recharge", and Escape would leave the game), so the answer is only an
+     answer. */
+  useEffect(() => {
+    if (!fitting) return;
+    const onKey = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if (k === "y" || k === "enter") { e.preventDefault(); e.stopPropagation(); answerFit(true); }
+      else if (k === "n" || k === "escape") { e.preventDefault(); e.stopPropagation(); answerFit(false); }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fitting]);
   const [forging, setForging] = useState<string | null>(null);
   const doForge = async (key: string) => {
     if (forging) return;
@@ -66,16 +108,26 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
             <h4>SHIPS</h4>
             <div className="orbit-inv-rows">
               {fleet === null && <span className="orbit-inv-dim">reading your fleet</span>}
-              {fleet && fleet.length === 0 && <span className="orbit-inv-dim">Only the default hull so far.</span>}
-              {fleet && fleet.map((s) => {
-                const cls = catalogue.find((c) => c.id === s.model) ?? null;
-                return (
-                  <div key={s.id} className={"orbit-inv-row" + (s.model === flying ? " on" : "")}>
-                    <b>{s.name || cls?.name || s.model}</b>
-                    <em>tier {s.tier}{cls ? ` ${cls.role}` : ""}{s.model === flying ? "  FLYING" : ""}</em>
-                  </div>
-                );
-              })}
+              {fleet && (() => {
+                /* The ship being flown is always listed, named and fitted as this
+                   device has it, even before the account has a row for it. */
+                const models = [flying, ...fleet.map((s) => s.model).filter((m) => m !== flying)];
+                return models.map((model) => {
+                  const row = fleet.find((s) => s.model === model);
+                  const cls = catalogue.find((c) => c.id === model) ?? null;
+                  const name = shipName(model) || row?.name || cls?.name || model;
+                  const fittedNames = shipUpgrades(model).map((k) => itemByKey(k)?.name ?? k);
+                  return (
+                    <div key={model} className={"orbit-inv-row" + (model === flying ? " on" : "")}>
+                      <b>{name}</b>
+                      <em>
+                        {cls ? `${cls.name} · tier ${cls.tier}` : `tier ${row?.tier ?? 1}`}{model === flying ? "  FLYING" : ""}
+                        {fittedNames.length ? ` · fitted: ${fittedNames.join(", ")}` : ""}
+                      </em>
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </section>
 
@@ -118,7 +170,12 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
                 return (
                   <SphereCard key={s.key} tier={spec.tier} count={s.count} label={`T${spec.tier} ${itemMark(spec)}`} oval={spec.kind === "egg"}
                     title={spec.name}
-                    text={spec.consumable ? `${spec.note} Press Y in flight to use one.` : spec.note}
+                    text={spec.consumable
+                      ? `${spec.note} Press Y in flight to use one.`
+                      : isShipUpgrade(s.key)
+                        ? `${spec.note} Right-click to fit it to your ship for good.`
+                        : spec.note}
+                    onOpen={isShipUpgrade(s.key) ? () => startFit(s.key) : undefined}
                     action={canForge ? {
                       label: forging === s.key ? "FORGING" : `FORGE ${FORGE_COST} INTO 1`,
                       hint: "90% next tier, 9% two up, 1% three up",
@@ -130,9 +187,23 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
           </section>
 
           <p className="orbit-inv-foot">
-            {ITEMS.length} things sold in the store; everything else is found. Strafe and Hull items apply on your next launch; four of a kind can be forged into one of the next tier.
+            {ITEMS.length} things sold in the store; everything else is found. Strafe, Hull and Rear Gun items work once fitted to a ship (right-click one), from your next launch; four of a kind can be forged into one of the next tier.
           </p>
         </div>
+
+        {fitting && (
+          <div className="orbit-inv-confirm" role="dialog" aria-label="Apply to Ship">
+            <h4>Apply to Ship? (y/n)</h4>
+            <p>
+              <b>{itemByKey(fitting)?.name ?? fitting}</b> goes onto <b>{flyingName}</b> for good.
+              The item is used up, and this ship keeps the benefit.
+            </p>
+            <div>
+              <button type="button" onClick={() => answerFit(true)}>Y  APPLY</button>
+              <button type="button" className="no" onClick={() => answerFit(false)}>N  KEEP IT</button>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

@@ -1064,10 +1064,17 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
 
   const INV = await import("./rebelsInventory");
   INV.addHeld("reargun", 1);
+  press("keydown", { key: "7" });
+  press("keyup", { key: "7" });
+  ok("held but not fitted, seven says to fit it", /NOT FITTED/.test(ctl.hud().note) && !ctl.hud().rear, ctl.hud().note);
+  /* A rear gun works once it is FITTED to the ship ("Apply to Ship? y"). */
+  const FLEET = await import("./shipFleet");
+  const CHOICE = await import("./shipChoice");
+  ok("(setup) fitted to the ship being flown", FLEET.applyToShip(CHOICE.loadShip(), "reargun").ok);
   for (let i = 0; i < 60; i++) ctl.frame(1 / 60);      /* the gear reaches the server */
   press("keydown", { key: "7" });
   press("keyup", { key: "7" });
-  ok("with one, seven opens the window", ctl.hud().rear);
+  ok("with one fitted, seven opens the window", ctl.hud().rear);
 
   /* The crosshair into the top-right corner, where the window is. */
   g.fire("pointermove", { clientX: 700, clientY: 90 });
@@ -1271,6 +1278,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
     identity: {
       name: () => "Pilot 4242",
       joinFields: () => ({ node: "web-guest", name: "Pilot 4242", door: "web" as const }),
+      accountKey: () => "guest:test",
     },
   });
   const g = stubGlobe([["109.228.38.104", home]]);

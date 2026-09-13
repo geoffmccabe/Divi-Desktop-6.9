@@ -96,7 +96,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         setInv((v) => !v);
         return;
       }
-      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+      if ((e.key === "?" || (e.key === "/" && e.shiftKey)) && !(e.target instanceof HTMLInputElement)) {
         e.preventDefault();
         setHelp((v) => !v);
       }
@@ -222,6 +222,13 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       </div>
 
       {flashing && <div className="orbit-invert" />}
+
+      {/* Death, said so it cannot be missed. Geoff, 2026-Sep-13: "when I died
+          there was no notification of that. It should say YOU HAVE DIED in large
+          letters." Up for as long as the ship is lost, over the recovery card. */}
+      {!hud.broken && hud.dead && (
+        <div className="orbit-died" role="alert">YOU HAVE DIED</div>
+      )}
 
       {/* The wave title: three seconds at full, then two fading out. */}
       {waveShown > 0 && (
@@ -400,9 +407,8 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       )}
 
       {!hud.broken && hud.dead && !scores && (
-        <div className="orbit-card">
-          <h2>SHIP LOST</h2>
-          <p>Recovered to {hud.homeName}.</p>
+        <div className="orbit-card orbit-card-died">
+          <p>Your ship is lost. Recovered to {hud.homeName}.</p>
           <p className="orbit-keys">Run filed. Score resets from here.</p>
           <div className="orbit-buttons">
             <button

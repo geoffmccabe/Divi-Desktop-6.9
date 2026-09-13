@@ -42,4 +42,6 @@ export function nodePlayerName(): string {
 export const appIdentity: RebelsIdentity = {
   name: () => nodePlayerName(),
   joinFields: (selfIp: string) => ({ node: selfIp || nodePlayerName(), name: nodePlayerName() }),
+  /* The node's name: what the account rows have always been filed under. */
+  accountKey: () => nodePlayerName(),
 };

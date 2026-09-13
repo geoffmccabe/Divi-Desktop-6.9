@@ -1085,6 +1085,20 @@ const home: [number, number, number] = [0, 0, R + 8];
   const appId = app.last("hi").id as string;
   app.deliver(JSON.stringify({ t: "join", node: "n", name: "App", guest: ID, home: [0, 0, R] }));
   ok("an app player sending a guest id is still the app account it always was", room.seats.get(appId).account === "198.51.100.79");
+  const g = new FakeSocket();
+  room.seat(g as never, "198.51.100.80");
+  const gId = g.last("hi").id as string;
+  g.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Pilot 3", door: "web", guest: ID,
+    ship: "space_SM_Ship_Cruiser_05", paint: [[10, 1, 1, 0], [10, 1, 1, 0], [10, 1, 1, 0], [10, 1, 1, 0], [10, 1, 1, 0]], home: [0, 0, R] }));
+  ok("a guest is shown in the first hull whatever its page claims", room.seats.get(gId).ship === "space_SM_Ship_Fighter_01", room.seats.get(gId).ship);
+  ok("in the factory paint", room.seats.get(gId).paint === undefined, JSON.stringify(room.seats.get(gId).paint));
+  ok("an app player keeps the hull it chose", (() => {
+    const a2 = new FakeSocket();
+    room.seat(a2 as never, "198.51.100.81");
+    const a2Id = a2.last("hi").id as string;
+    a2.deliver(JSON.stringify({ t: "join", node: "n2", name: "App 2", ship: "space_SM_Ship_Cruiser_05", home: [0, 0, R] }));
+    return room.seats.get(a2Id).ship === "space_SM_Ship_Cruiser_05";
+  })());
   room.stop();
 }
 

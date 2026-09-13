@@ -2068,6 +2068,26 @@ code, .mono { font-family: var(--font-mono); }
 .orbit-launch-keys b { color: hsl(var(--rebels-home)); font-weight: 600; letter-spacing: 0.08em; }
 .orbit-launch-keys span { opacity: 0.85; }
 
+/* YOU HAVE DIED: the wave title's size, in the warning red, above the card. */
+.orbit-died {
+  position: absolute; left: 50%; top: 9%;
+  transform: translateX(-50%);
+  font-family: var(--font-heading);
+  font-size: clamp(40px, 9vw, 128px);
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #ff5c5c;
+  text-shadow: 0 0 44px rgb(255 92 92 / 0.75), 0 4px 30px hsl(var(--rebels-ocean));
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 4;
+  animation: orbit-died-in 0.6s ease-out both;
+}
+@keyframes orbit-died-in {
+  from { opacity: 0; transform: translateX(-50%) scale(1.25); }
+  to { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) { .orbit-died { animation: none; } }
 .orbit-wave {
   position: absolute; left: 50%; top: 30%;
   transform: translateX(-50%);

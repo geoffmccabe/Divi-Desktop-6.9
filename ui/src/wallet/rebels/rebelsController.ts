@@ -52,6 +52,8 @@ import { WING_SCALE } from "./rebelsWings";
 import { GAME_KEYS } from "./RebelsControls";
 import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
+import { pullFleet } from "./rebelsShips";
+import { applyToShip } from "./shipFleet";
 import {
   watchAudio, audioHealth, settleAudioFromGesture, watchOutputDevices, requestAudioRebuild, noteLevel,
   resetAudioNow,
@@ -1204,11 +1206,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       /* ---- TEST: !77, a Rear Gun, opened, into the inventory ----
          Same caveat: a free item, to be removed with the one above. */
       addHeld("reargun", 1);
-      setHud({ note: "REAR GUN FITTED: PRESS 7", noteAt: performance.now() });
+      /* Ship upgrades work once FITTED (shipFleet.ts), so the test gun goes on the
+         ship being flown straight away, as a found one would after "Apply to Ship". */
+      const fit = applyToShip(loadShip(), "reargun");
+      setHud({ note: fit.ok ? "REAR GUN FITTED: PRESS 7" : `REAR GUN IN INVENTORY: ${fit.why.toUpperCase()}`, noteAt: performance.now() });
     }
   }
+  /** Typing in a box (a ship's name) is typing, not flying. */
+  function typing(e: KeyboardEvent): boolean {
+    const t = e.target as { tagName?: string; isContentEditable?: boolean } | null;
+    return !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || !!t.isContentEditable);
+  }
   function onKeyDown(e: KeyboardEvent) {
-    if (!flying) return;
+    if (!flying || typing(e)) return;
     wakeAudio();
     const k = e.key.toLowerCase();
 
@@ -1257,7 +1267,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     }
     if (k === REAR_KEY && flying) {
       if (!gearKeys(loadShip()).includes("reargun")) {
-        setHud({ note: "NO REAR GUN: FIND ONE AND OPEN IT (I)", noteAt: performance.now() });
+        setHud({
+          note: heldCount("reargun") > 0
+            ? "REAR GUN NOT FITTED: RIGHT-CLICK IT IN THE INVENTORY (I)"
+            : "NO REAR GUN: FIND ONE, OPEN IT AND FIT IT (I)",
+          noteAt: performance.now(),
+        });
       } else setRear(!rearOn);
     }
     if (k === "v" && flight) {
@@ -2340,6 +2355,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (!stopLoadoutWatch) {
         stopLoadoutWatch = watchLoadout();
         void loadLoadoutRemote().then((moved) => { if (moved) setHud({ points: spendable() }); });
+        /* The ships' names and fitted upgrades from the account, so a second
+           machine or a cleared browser gets them back. */
+        void pullFleet();
       }
       /* The dragon arrives long after the rest, so it gets its own warm: its
          skinned shader is a different program again, and the one time anybody
