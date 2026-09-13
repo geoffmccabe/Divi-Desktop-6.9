@@ -1315,6 +1315,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     room = joinRoom({
       node: who.node,
       name: who.name,
+      ...(who.door ? { door: who.door } : {}),
       home,
       ship: loadShip(),
       /* What this ship carries, so the room arms it the same way the solo

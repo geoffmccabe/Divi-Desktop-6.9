@@ -1,62 +1,70 @@
-// Divi Rebels on the web: the PROOF page for refactor phase A5.
+// Divi Rebels at divi.love/rebels.
 //
-// Not the web version. It exists to prove that the same game the app runs can
-// be mounted outside the app with nothing but a door: a globe, a HUD, and a
-// stand-in that answers the door's questions. The real web door (LW-SSO
-// sign-in, the Scanner's node list, cash-out) replaces the stand-in in Stage B.
-// See docs/DIVI-REBELS-REFACTOR-STAGE-A.md.
-//
-// It never joins the live room unless the address carries ?room=1, so opening
-// it by accident can never put a pretend player into the real sky.
+// The same game the app runs, mounted behind the web door (webDoor.ts). The page
+// finds the Divi network as the Scanner has seen it, draws it on the globe with
+// the Scanner in London as home, and opens straight onto the game's own launch
+// card: LAUNCH is the play button, no account needed. Signing in comes next and
+// will be offered, never required.
 
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import "../index.css";
+import "./web.css";
 import { ThemeProvider } from "../theme/ThemeProvider";
 import { GlobeMap, type GlobePoint } from "../wallet/GlobeMap";
-import { createRebels, RebelsHud, setPlatform, HEADLESS, type RebelsController } from "../wallet/rebels/platform/coreEntry";
-import { DEFAULT_ROOM_BASE } from "../wallet/rebels/platform/defaults";
+import { createRebels, RebelsHud, setPlatform, type RebelsController } from "../wallet/rebels/platform/coreEntry";
+import { prefetchMusic } from "../wallet/rebels/rebelsMusic";
+import { createWebDoor } from "./webDoor";
+import { loadTowers, SCANNER } from "./webNodes";
 
-/** The Scanner node in London: where web players will launch from. */
-const SCANNER_IP = "109.228.38.104";
+setPlatform(createWebDoor());
+prefetchMusic();
 
-/* Four towers: the Scanner as home, and three stand-ins far apart on the
-   documentation address range, so nothing here names a real node. */
-const TOWERS: GlobePoint[] = [
-  { ip: SCANNER_IP, lat: 51.5074, lng: -0.1278, kind: "self", city: "London", country: "United Kingdom" },
-  { ip: "203.0.113.10", lat: 40.7128, lng: -74.006, kind: "peer", city: "New York", country: "United States" },
-  { ip: "203.0.113.20", lat: 1.3521, lng: 103.8198, kind: "peer", city: "Singapore", country: "Singapore" },
-  { ip: "203.0.113.30", lat: -23.5505, lng: -46.6333, kind: "peer", city: "Sao Paulo", country: "Brazil" },
-];
-
-const joinLive = new URLSearchParams(location.search).get("room") === "1";
-
-setPlatform({
-  ...HEADLESS,
-  id: "web-standin",
-  identity: {
-    name: () => "web pilot",
-    joinFields: (selfIp: string) => ({ node: selfIp || "web pilot", name: "web pilot" }),
-  },
-  /* A reserved name that never resolves, unless asked for the real room. */
-  roomBase: joinLive ? DEFAULT_ROOM_BASE : "wss://room.invalid",
-});
-
-const labelFor = (ip: string): string => TOWERS.find((t) => t.ip === ip)?.city ?? ip;
+/** How long to wait for the node list before opening with the Scanner alone. */
+const TOWER_WAIT_MS = 6000;
 
 function WebRebels() {
+  const [towers, setTowers] = useState<GlobePoint[] | null>(null);
   const [ctl, setCtl] = useState<RebelsController | null>(null);
+
   useEffect(() => {
-    const c = createRebels(labelFor);
+    let alive = true;
+    const give = (t: GlobePoint[]) => { if (alive) setTowers((cur) => cur ?? t); };
+    const timer = setTimeout(() => give([SCANNER]), TOWER_WAIT_MS);
+    void loadTowers(import.meta.env.BASE_URL).then(give);
+    return () => { alive = false; clearTimeout(timer); };
+  }, []);
+
+  useEffect(() => {
+    if (!towers) return;
+    const c = createRebels((ip) => {
+      const t = towers.find((p) => p.ip === ip);
+      return t?.city ? `${t.city}${t.country ? `, ${t.country}` : ""}` : ip;
+    });
     setCtl(c);
     return () => c.dispose();
-  }, []);
+  }, [towers]);
+
+  /* Leaving the cockpit on the web goes back to the launch card: a fresh game
+     on the same globe. */
+  const again = () => setCtl((cur) => {
+    cur?.dispose();
+    return createRebels((ip) => towers?.find((p) => p.ip === ip)?.city ?? ip);
+  });
+
+  if (!towers) {
+    return (
+      <div className="web-rebels-wait">
+        <span>FINDING THE DIVI NETWORK</span>
+      </div>
+    );
+  }
   return (
-    <div style={{ position: "fixed", inset: 0, overflow: "hidden" }}>
-      <GlobeMap points={TOWERS} arcs={[]} center={{ lat: 51.5074, lon: -0.1278 }} flight={ctl} />
+    <div className="web-rebels">
+      <GlobeMap points={towers} arcs={[]} center={{ lat: SCANNER.lat, lon: SCANNER.lng }} flight={ctl} />
       {ctl && (
         <div className="netmap-game">
-          <RebelsHud ctl={ctl} onExit={() => { /* nowhere to go back to on this page */ }} />
+          <RebelsHud ctl={ctl} onExit={again} />
         </div>
       )}
     </div>

@@ -21,7 +21,9 @@ export default defineConfig({
   clearScreen: false,
   build: {
     target: "safari15",
-    outDir: fileURLToPath(new URL("./dist-web", import.meta.url)),
+    /* Into a rebels/ folder, so the files sit at the same paths the page asks
+       for (/rebels/...) and the server can hand the folder over as it is. */
+    outDir: fileURLToPath(new URL("./dist-web/rebels", import.meta.url)),
     emptyOutDir: true,
   },
   define: { __APP_VERSION__: JSON.stringify(APP_VERSION) },

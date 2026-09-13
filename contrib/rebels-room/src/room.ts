@@ -94,6 +94,9 @@ interface Wing {
   pos: THREE.Vector3;
 }
 
+/** What a web guest is told about cashing out, on every purse it is sent. */
+const GUEST_CASH_OUT = "Sign in to cash out DIVI earned on the web. It stays banked to you until you do.";
+
 interface Seat {
   id: string;
   ws: WebSocket;
@@ -108,6 +111,9 @@ interface Seat {
      The cost is honest: two players behind one home router share an account,
      and a VPN moves yours. Both are stated in the panel. */
   account: string;
+  /** Came in through divi.love/rebels without signing in. Banked to its own
+   *  account (see onJoin) and cannot cash out until signed in. */
+  guest: boolean;
   /** When the last cash-out was asked for, so the ledger is not hammered. */
   lastClaim: number;
   /* ---- what they bought ----
@@ -281,7 +287,7 @@ export class RebelsRoom {
     const id = `s${this.nextSeat++}`;
     const seat: Seat = {
       id, ws, node: "", name: "", ship: "", paint: undefined,
-      account: from, lastClaim: -99,
+      account: from, guest: false, lastClaim: -99,
       gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, shieldMax: MAX_SHIELD, topSpeed: topSpeedFor(), lastBeam: -99,
       extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99, lastDock: -99, lastGear: -99, hurtWindow: -99, hurtSpent: 0, bonusUntil: -99,
       sawShips: new Set(), sawEnemies: new Set(),
@@ -758,6 +764,15 @@ export class RebelsRoom {
     /* No connecting address (a local run, a test) falls back to the declared
        one. Live, through Cloudflare, there always is one. */
     if (!seat.account) seat.account = seat.node;
+    /* ---- a web guest ----
+       Kept to an account of its own, so a player on divi.love/rebels and an app
+       player behind the same home router never share a balance. Everything a
+       guest earns is banked there exactly as it is for anyone else; only the
+       cash-out waits for a sign-in (see onClaim). */
+    if (m.door === "web") {
+      seat.guest = true;
+      seat.account = `web:${seat.account}`.slice(0, 80);
+    }
     /* ---- what they look like ----
        Taken on trust, because it is paint: the worst a lie here can do is make
        somebody's ship the wrong colour on somebody else's screen. It is still
@@ -828,6 +843,13 @@ export class RebelsRoom {
     seat.lastClaim = now;
     const to = typeof m.to === "string" ? m.to.slice(0, 40) : "";
     await this.bank(seat);
+    /* A web guest's DIVI is real and stays banked, but paying it out waits for
+       a signed-in account: a guest costs nothing to make, and a cash-out is
+       money leaving the treasury. */
+    if (seat.guest) {
+      await this.sendPurse(seat);
+      return;
+    }
     try {
       const id = this.env.LEDGER.idFromName("v1");
       const r = await this.env.LEDGER.get(id).fetch("https://ledger/request", {
@@ -844,7 +866,7 @@ export class RebelsRoom {
     }
   }
 
-  private async sendPurse(seat: Seat): Promise<void> {
+  private async sendPurse(seat: Seat, why?: string): Promise<void> {
     if (!seat.joined) return;
     try {
       const id = this.env.LEDGER.idFromName("v1");
@@ -853,6 +875,13 @@ export class RebelsRoom {
       );
       const purse = await r.json() as Record<string, unknown>;
       if (typeof purse.divi !== "number") return;
+      /* A guest sees what is banked, never an amount offered to cash out, and
+         always sees why. */
+      if (seat.guest) {
+        purse.claimable = 0;
+        purse.why = GUEST_CASH_OUT;
+      }
+      if (why) purse.why = why;
       this.send(seat, { t: "purse", ...(purse as object) } as ServerMessage);
     } catch {
       /* Nothing to show yet. The panel asks again when it opens. */

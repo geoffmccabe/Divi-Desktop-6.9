@@ -220,6 +220,8 @@ const SMOOTH = 0.075;
 interface Opts {
   node: string;
   name: string;
+  /** "web" when the player came in through divi.love/rebels. See JoinIn. */
+  door?: "web";
   home: THREE.Vector3;
   ship: string;
   paint?: number[][];
@@ -356,6 +358,7 @@ export function joinRoom(opts: Opts): Room {
         name: opts.name,
         home: xyz(opts.home),
         ship: opts.ship,
+        ...(opts.door ? { door: opts.door } : {}),
         ...(opts.paint ? { paint: opts.paint } : {}),
         ...(opts.gear ? { gear: opts.gear } : {}),
         ...(opts.reach ? { reach: Math.round(opts.reach * 100) / 100 } : {}),

@@ -1262,6 +1262,32 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   await settle();
 }
 
+// W. Behind the WEB door, the cockpit arrives at the room as a web guest.
+//    The same game, the same server: only the door is different.
+{
+  setPlatform({
+    ...HEADLESS,
+    id: "test-web",
+    identity: {
+      name: () => "Pilot 4242",
+      joinFields: () => ({ node: "web-guest", name: "Pilot 4242", door: "web" as const }),
+    },
+  });
+  const g = stubGlobe([["109.228.38.104", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "109.228.38.104" });
+  flushRoom();
+  ctl.launch();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  const seats = [...((server as unknown as { seats: Map<string, { name: string; guest: boolean; account: string }> })?.seats.values() ?? [])];
+  const me = seats.find((s) => s.name === "Pilot 4242");
+  ok("a web cockpit joins the same room under its guest name", !!me, seats.map((s) => s.name).join(","));
+  ok("and the room knows it came through the web door", me?.guest === true && (me?.account ?? "").startsWith("web:"), me?.account);
+  ctl.detach();
+  await settle();
+  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity });
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

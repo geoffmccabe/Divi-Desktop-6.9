@@ -21,6 +21,15 @@ export interface JoinIn {
    *  that pays out is settled without the ledger checking it again. */
   node: string;
   name: string;
+  /**
+   * "web" when the player came in through divi.love/rebels rather than the
+   * app. Their ledger account is kept apart from the address's app account
+   * (two people in one house, one on each, must not share a balance), and a
+   * web guest cannot cash out until they sign in. Absent from the app, which
+   * is therefore exactly as before. Taken on the client's word, and a lie only
+   * hurts the liar: claiming "web" gives up cashing out.
+   */
+  door?: "web";
   /** Where their tower is, so the room can place them. */
   home: Vec;
   /** Which hull they fly, and how it is painted, so everyone else sees the

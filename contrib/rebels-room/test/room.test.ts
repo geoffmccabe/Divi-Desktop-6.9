@@ -1001,6 +1001,54 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
+// N. A WEB GUEST: its own account, banked like anyone, cash-out held for sign-in.
+//    Geoff, 2026-Sep-13: web players earn DIVI like normal, and signing in is
+//    offered but not required to play.
+{
+  const room = newRoom();
+  const SAME_HOUSE = "198.51.100.9";
+
+  const app = new FakeSocket();
+  room.seat(app as never, SAME_HOUSE);
+  const appId = app.last("hi").id as string;
+  app.deliver(JSON.stringify({ t: "join", node: "house-node", name: "App Pilot", home: [0, 0, R] }));
+  const appSeat = room.seats.get(appId);
+
+  const web = new FakeSocket();
+  room.seat(web as never, SAME_HOUSE);
+  const webId = web.last("hi").id as string;
+  web.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Guest Pilot", door: "web", home: [0, 0, R] }));
+  const webSeat = room.seats.get(webId);
+
+  ok("an app player's account is unchanged by the web door", appSeat.account === SAME_HOUSE && !appSeat.guest, appSeat.account);
+  ok("a web guest on the same address gets an account of its own",
+     webSeat.guest === true && webSeat.account === `web:${SAME_HOUSE}` && webSeat.account !== appSeat.account, webSeat.account);
+  ok("both are in the same room, seeing each other", room.seats.size === 2);
+
+  await new Promise((r) => setTimeout(r, 0));
+  ok("a guest is told on joining, before asking, that cashing out needs a sign-in",
+     /sign in/i.test(String(web.last("purse")?.why ?? "")) && !app.last("purse")?.why, JSON.stringify(web.last("purse")));
+  requests.length = 0;
+  credits.length = 0;
+  webSeat.kills = 2; webSeat.divi = 0.4; webSeat.score = 20;
+  web.deliver(JSON.stringify({ t: "claim", to: "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt" }));
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  ok("a guest's run is still banked, to the guest's own account",
+     credits.length === 1 && credits[0].node === `web:${SAME_HOUSE}` && credits[0].divi > 0, JSON.stringify(credits));
+  ok("but no cash-out is asked of the ledger", requests.length === 0, JSON.stringify(requests));
+  const said = web.last("purse");
+  ok("the guest is told to sign in to cash out", typeof said?.why === "string" && /sign in/i.test(said.why), JSON.stringify(said));
+  ok("and is never offered an amount to cash out", said?.claimable === 0);
+  ok("asking is not a strike", webSeat.strikes === 0);
+
+  requests.length = 0;
+  app.deliver(JSON.stringify({ t: "claim", to: "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt" }));
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  ok("the app player in the same house still cashes out as before",
+     requests.length === 1 && requests[0].node === SAME_HOUSE, JSON.stringify(requests));
+  room.stop();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

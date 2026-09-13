@@ -32,9 +32,12 @@ export interface RebelsIdentity {
   name(): string;
   /**
    * What the room is told when this player joins. `selfIp` is the tower the
-   * globe marked as this player's own, or "" when there is none.
+   * globe marked as this player's own, or "" when there is none. `door` is
+   * "web" for a player on divi.love/rebels, so the room keeps their account
+   * apart from any app player on the same internet address; the app sends
+   * none, exactly as before.
    */
-  joinFields(selfIp: string): { node: string; name: string };
+  joinFields(selfIp: string): { node: string; name: string; door?: "web" };
 }
 
 /** The DIVI price, in the shape the wallet's price feed already returns:
