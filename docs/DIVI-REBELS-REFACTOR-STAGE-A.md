@@ -1,6 +1,6 @@
 # Divi Rebels Refactor, Stage A: the core and the app door
 
-Written 2026-Sep-13. Status: IN PROGRESS (A0 to A5 done; A6 is the merge, install and Geoff's check).
+Written 2026-Sep-13. Status: INSTALLED as v69.9.45, waiting for Geoff to play it and paste a DFlow report.
 
 Parent plan: docs/DIVI-REBELS-SHARED-CORE-PLAN.md. Geoff approved it and asked
 for "a detailed refactor plan first with prompts for yourself to use for each
@@ -424,3 +424,25 @@ before any refactor change.
   3. Merge into feat/divi-rebels, run the full suite again, then install and
      push.
   4. Geoff plays and pastes a DFlow report.
+
+### A6: merged and installed (2026-Sep-13)
+- **Merge in:** the gameplay session committed de10085. It was merged into
+  refactor/rebels-core with NO conflicts across 14 files.
+- **Nothing reintroduced:** checked by hand that none of the moved names came
+  back (listener calls, stake flag, player name, room address, globe link
+  limits).
+- **Refactor branch:** the full suite passed, 27 suites, including the gameplay
+  session's new tests (globe drawing 24, room 169). tsc clean. The guard found
+  no ties for either the core or the web page.
+- **Merge out:** feat/divi-rebels was fast-forwarded to the merged branch in
+  /Users/geoffreymccabe/dd69-rebels, whose tree was confirmed clean first. The
+  full suite passed there too, 27 of 27.
+- **Install:**
+  - Build files scanned first. The only flag was the long security-policy line
+    in tauri.conf.json, whose one match is the standard 'wasm-unsafe-eval'
+    permission already there.
+  - scripts/install-local.sh bumped 69.9.44 to 69.9.45, built, installed and
+    relaunched. `strings` on the installed binary reads 69.9.45.
+- **Left for Geoff:** play as usual and paste a DFlow report. Compare it with
+  the last report before the refactor (v69.9.40: 16.8 ms average frame,
+  24.1 ms 95th percentile).
