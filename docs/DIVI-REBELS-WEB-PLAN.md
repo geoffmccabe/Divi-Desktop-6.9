@@ -1,6 +1,7 @@
 # Divi Rebels on the Web: divi.love/rebels
 
-Written 2026-Sep-13. Status: PLAN, nothing built.
+Written 2026-Sep-13, revised the same day after Geoff's answers. Status: PLAN,
+nothing built.
 
 Geoff's brief: "make a plan to build this at /rebels and they should log in
 using lw-sso auth system... Users who don't have a node can log in with Google
@@ -8,6 +9,11 @@ or with email. They will launch from the Scanner node, which is in the UK for
 now. It's important that this works with Multiplayer along with the app-based
 game too." And: "We should be greenlighting all of scan.divi.love and divi.love
 too while we're doing this."
+
+Revision, Geoff: "for the web version YES they can still earn Divi like normal.
+We want them to have Divi, that's the point... adding new Divi fans and
+wallets. And yes we want it to work on a phone if possible, that would be
+ideal, so it would be much easier to get lots of new players."
 
 ## The shape of it in one paragraph
 
@@ -17,7 +23,10 @@ fix to the game lands in both. Web players sign in through LW-SSO with Google
 or email, launch from the Scanner node tower in London, and fly in the SAME
 sky ("earth" room) as app players. The room server learns to tell the two kinds
 of player apart: app players stay exactly as they are today, web players are
-identified by their verified LW-SSO account.
+identified by their verified LW-SSO account. Web players earn DIVI like
+anyone else and cash it out, and the web version is built to be played on a
+phone as well as a computer, because the point is new DIVI holders and new
+wallets.
 
 ## What the research found (facts, with where they came from)
 
@@ -167,7 +176,8 @@ The web page does NOT copy colours by hand. It loads the SAME stylesheets
 values, so the cockpit, launch card, help keyboard and panels are identical to
 the app and stay identical when either changes.
 
-The new pieces (sign-in card, "play on a computer" notice, loading screen) are
+The new pieces (sign-in card, cash-out and wallet choice, "turn your phone"
+card, loading screen) are
 built from the Rebels palette:
 
 | Role | Colour |
@@ -188,26 +198,110 @@ The SSO login page itself can wear these colours: the app row has a theme
 setting and the login address accepts colour overrides, so the step from
 divi.love to the SSO and back does not feel like leaving the game.
 
-## What web players can and cannot do at launch
+## What web players can do at launch
 
-Can:
 - fly, fight, waves, dragons, loot, items and inventory
 - see and fight alongside app players in the same sky
-- scores on the same leaderboard, marked as web players
-- earn and spend POINTS
+- scores on the same leaderboard
+- earn and spend points
+- **earn DIVI and cash it out**, the same as app players
+- play on a computer, and on a phone (see "Phones")
 
-Cannot (proposed, needs Geoff's decision below):
-- earn or cash out DIVI
-- buy anything with DIVI (that needs a wallet)
-- play on a phone (keyboard and mouse only; phones get a friendly notice)
+Not at launch: buying points with DIVI from the browser (that needs a wallet to
+send from; see Later).
 
-The pitch on every screen where a web player hits a limit: get the app, run a
-node, earn DIVI.
+## DIVI for web players
+
+### Where their DIVI goes
+A new player usually has no wallet, and turning them into a wallet holder is
+the goal. At cash-out they get three choices, easiest first:
+
+1. **DiviGo, in Telegram or WhatsApp.** DiviGo is the custodial messaging
+   wallet that LW-SSO already links to (repo /Users/geoffreymccabe/sso, docs
+   DIVIGO-INTEGRATION.md). Linking takes a tap: the player opens the DiviGo bot
+   from a button or QR code and taps Start. DiviGo creates the wallet if they
+   do not have one. This is the natural fit for phone players.
+2. **Any DIVI address** they already have, pasted in and checked.
+3. **Divi Desktop**, for players who want their own full wallet and node, which
+   also brings them into the app door.
+
+The SSO's DiviGo code already has an `award` call described as "credit DiviGo
+balance (game rewards)". It is not used anywhere yet. Before relying on it we
+must confirm with DiviGo which pool it pays from and whether it can be funded
+from the Rebels treasury. Until then, DiviGo players are paid the ordinary way:
+the London payout service sends DIVI to their DiviGo deposit address.
+
+### Keeping farms out
+Web accounts are free to make, and DIVI is real money, so a web door that pays
+needs guards an app door does not. None of these stop a normal player; each
+makes a farm of fake accounts slower or more obvious. The numbers are Geoff's
+to set.
+
+- **A bot check** (Cloudflare Turnstile, invisible for most people) when an
+  account is first used for Rebels and at every cash-out.
+- **A verified login before the first cash-out**: Google counts as verified;
+  email accounts must have confirmed their address.
+- **The existing 100 DIVI minimum** per cash-out stays.
+- **A daily cash-out cap per account.**
+- **One payout address, few accounts**: when many accounts cash out to the same
+  address, the extra claims are held.
+- **A daily DIVI budget for all web cash-outs combined**, so no farm can drain
+  the treasury in a day.
+- **Held, not refused**: anything that trips a guard waits in the payout
+  service's existing review queue (it can already reserve, confirm and reject a
+  claim) instead of paying automatically, so Geoff decides.
+
+Honest limit: these make farming costly and visible, they do not make it
+impossible. The daily budget is the hard ceiling.
+
+## Phones
+
+Feasible, and more work than the computer version. My confidence it plays well
+on a mid-range phone is about 60%, mostly because of performance, not because
+anything is blocked.
+
+### What changes
+- **Controls.** Today the game is keyboard and mouse, with the pointer locked
+  to aim. A phone has neither. A DRAFT touch layout for Geoff to change:
+  - left thumb: a floating stick for throttle (up and down) and sideways strafe
+    (left and right), the WASD of the phone
+  - right thumb: drag anywhere on the right half to aim, like the mouse
+  - a large FIRE button near the right thumb (hold for the mini gun and beam)
+  - smaller TORPEDO and BOOST buttons beside it
+  - tap the weapon icon to cycle weapons
+  - lift, roll and the rear gun: small buttons, or left out of the phone layout
+    at first
+  The game already turns keys into actions through one table
+  (RebelsControls.tsx), so touch becomes a second way to feed the same actions
+  rather than a second game.
+- **Performance.** The globe was the frame-time cost in the DFlow reports, and
+  a phone has a fraction of a laptop's graphics power. A phone quality setting:
+  fewer node links, lighter planet detail, fewer particles, and a steady 30
+  frames a second where 60 is not reachable. DFlow works on the phone too, so
+  real phones get measured, not guessed.
+- **The screen.** Landscape only, with a "turn your phone" card in portrait.
+- **iPhone limits.**
+  - Safari on iPhone does not allow true full screen for a web page.
+    "Add to Home Screen" does, so the page is set up as an installable web app
+    and invites the player to add it.
+  - Sound only starts after the first tap, which the launch button provides.
+  - iPhones cut off web pages that use too much graphics memory, so the phone
+    setting also caps texture sizes.
+- **Panels.** Inventory, help, stores and cash-out get thumb-sized buttons and
+  work without hover.
+
+### Order
+Computers first, phones straight after: the computer version proves the shared
+sky, sign-in and cash-out on the fastest path, and the phone phase then only
+has to solve controls and performance. The groundwork (touch as a second input,
+the quality setting) is laid while building the computer version so nothing
+has to be redone.
 
 ## Phases
 
 Each phase ends with the full test suite green and the app still working for
-app players.
+app players. The farm guards ship in Phase 2 with the rest of the room change,
+never after web cash-outs are switched on.
 
 **Phase 0: safety and greenlight.** Back up the live landing page. Geoff does
 the two greenlight steps above. Create the `divi-rebels` app row with the Rebels
@@ -222,22 +316,29 @@ build the missing forgot-password page.
 - Joining with a verified SSO session gives an `sso:` account.
 - Such a player spawns at the Scanner hangar, carries their SSO display name,
   and does not need a node.
-- DIVI crediting and cash-out are refused for `sso:` accounts (per the decision
-  below).
+- DIVI crediting and cash-out work for `sso:` accounts exactly as for app
+  accounts, through the same London payout service, with the safeguards in
+  "DIVI for web players" below.
 - Cheats are admin-only for them.
 - The room only accepts connections from the app and from divi.love.
 - New tests: an app seat and a web seat in the same room see each other's ships,
   shots and enemies; two players on one internet address keep separate
-  accounts; a web seat cannot cash out; an app seat behaves exactly as before.
+  accounts; a web seat is credited and cashes out like an app seat; an app seat
+  behaves exactly as before.
+- The farm guards: per-account daily cap, shared-address hold, daily web
+  budget, bot check at cash-out, verified login before the first cash-out.
+- A test that a held claim waits in the review queue and is not paid.
 - Deployed only after the app is re-tested against it, because app players are
   live on this server.
 
-**Phase 3: the web front door** (same repo, ui).
+**Phase 3: the web front door, computers** (same repo, ui).
 - A second build entry that mounts the SAME game and globe with a small web host
   in place of the wallet's network map.
 - Towers come from the Scanner's list; home is the Scanner hangar.
-- A sign-in card, session handling, and the points and weapon stores with the
-  DIVI parts hidden.
+- A sign-in card, session handling, the stores, and cash-out with the three
+  payout choices (DiviGo, any address, Divi Desktop).
+- Groundwork for phones: touch feeds the same control table, and a quality
+  setting exists even if only computers use it yet.
 - A normal multi-file build under /rebels/ so returning players load from cache.
 
 **Phase 4: hosting.** The `divi-rebels-web` Worker on `divi.love/rebels*`:
@@ -247,29 +348,44 @@ checked afterwards to confirm it is untouched.
 **Phase 5: the Scanner hangar in the app.** Permanent London tower on the app's
 globe so app players see where web players launch. App version bump and install.
 
-**Phase 6: launch hardening.**
+**Phase 6: phones.** Touch controls, the phone quality setting, landscape
+card, installable web app, thumb-sized panels. Measured on a real iPhone and a
+real Android phone through DFlow.
+
+**Phase 7: launch hardening.**
 - Load time on a first visit, and on a slower laptop.
 - Sound in Chrome and Safari.
-- The phone notice.
-- A mixed soak: several web players and the app together for half an hour,
-  read through DFlow.
+- A mixed soak: web players on computers and phones with app players, for
+  half an hour, read through DFlow.
+- A trial run of the farm guards: several test accounts cashing out to one
+  address must be held, not paid.
 - Remaining network plan phases if the player count grows, since a public page
   brings more players than the app does.
 
-## Decisions Geoff needs to make
+## Decisions
 
-1. **DIVI for web players?** Recommendation: not at launch. Email accounts are
-   free to make in bulk, and DIVI is real money. Points and scores yes. DIVI is
-   the reason to get the app.
-2. **Keep web and app progress separate at first?** Recommendation: yes. Later a
-   player can link their SSO account inside the app so both doors share one
-   inventory.
-3. **Discord** also appears on the SSO login page. Keep it, or show only Google
+Made by Geoff, 2026-Sep-13:
+- Web players earn DIVI and cash out like everyone else.
+- Phones are in scope.
+
+Still open:
+1. **The farm guard numbers**: daily cash-out cap per account, how many
+   accounts may share one payout address, and the daily budget for all web
+   cash-outs.
+2. **DiviGo `award`**: worth asking DiviGo whether game rewards can be paid
+   straight into a player's DiviGo balance from the Rebels treasury.
+3. **Keep web and app progress separate at first?** Recommendation: yes. Later a
+   player links their SSO account inside the app so both doors share one
+   inventory and one DIVI balance.
+4. **Discord** also appears on the SSO login page. Keep it, or show only Google
    and email for Rebels?
-4. **Cheats on the web:** admins only (recommended), or off entirely?
+5. **Cheats on the web:** admins only (recommended), or off entirely?
+6. **The phone controls**: the draft layout above is a starting point for
+   Geoff's own design.
 
 ## Later, not in this plan
 - Linking an app node account to an SSO account.
-- Phone and touch controls.
+- Buying points with DIVI from the browser, through a DiviGo transfer the player
+  approves in Telegram.
 - DIVI address sign-in for node owners on the web.
 - Moving the room onto a divi.love address instead of workers.dev.
