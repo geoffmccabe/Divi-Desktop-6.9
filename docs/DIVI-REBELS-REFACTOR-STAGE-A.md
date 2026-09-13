@@ -406,3 +406,21 @@ before any refactor change.
   The play button reads "CONNECTING TO THE FIGHT...", as designed, because the
   stand-in points at no server. Not deployed anywhere.
 - tsc clean.
+
+### A6: waiting on the gameplay session (2026-Sep-13)
+- feat/divi-rebels has had NO new commits since the refactor branched
+  (7786284), so there is nothing to merge in yet.
+- /Users/geoffreymccabe/dd69-rebels has UNCOMMITTED gameplay work in 12 files
+  (401 lines added), including three the refactor also changed: GlobeMap.tsx,
+  rebelsController.ts and rebelsRoom.ts. Per the plan, nothing is merged into or
+  installed from a tree with someone else's uncommitted work.
+- A read-only look at their changes found none on the lines the refactor
+  moved: no listener calls, stake flag, player name, room join, room address or
+  globe link limits. The merge is expected to be clean, or to conflict only
+  where edits sit next to each other.
+- **Resumes when that work is committed:**
+  1. Merge feat/divi-rebels into refactor/rebels-core.
+  2. Run the full suite, tsc and the guard.
+  3. Merge into feat/divi-rebels, run the full suite again, then install and
+     push.
+  4. Geoff plays and pastes a DFlow report.
