@@ -102,28 +102,64 @@ function weigh(players: number, fleets: number, wings: number, ticks = 24) {
    the number of players again for what leaves the room. */
 {
   const solo = weigh(1, 2, 0);
-  ok("one player in a fight stays small", solo.bytes < 3000,
+  ok("one player in a fight stays small", solo.bytes < 2000,
      `${solo.bytes} bytes, ${solo.enemies} fighters, ${solo.rounds} rounds in the air`);
 
   const eight = weigh(8, 6, 0);
-  ok("eight players stay under six kilobytes", eight.bytes < 6000,
+  ok("eight players stay under three kilobytes", eight.bytes < 3000,
      `${eight.bytes} bytes, ${eight.enemies} fighters, ${eight.rounds} rounds`);
 
   const twoDozen = weigh(24, 12, 0);
-  ok("two dozen players stay under twelve kilobytes", twoDozen.bytes < 12000,
+  ok("two dozen players stay under five kilobytes", twoDozen.bytes < 5000,
      `${twoDozen.bytes} bytes, ${twoDozen.enemies} fighters, ${twoDozen.rounds} rounds`);
 
   const withWings = weigh(24, 12, 3);
-  ok("and with three wingmen each, under sixteen", withWings.bytes < 16000,
+  ok("and with three wingmen each, under eleven", withWings.bytes < 11000,
      `${withWings.bytes} bytes`);
 
   /* The point of the whole exercise: rounds are no longer on the wire. */
   const heavy = weigh(24, 20, 3, 40);
   ok("a sky full of rounds does not appear in the snapshot",
-     heavy.rounds > 200 && heavy.bytes < 20000,
+     heavy.rounds > 200 && heavy.bytes < 12000,
      `${heavy.rounds} rounds in the air, ${heavy.bytes} bytes on the wire`);
   ok("which is what it would have cost to send them",
      heavy.rounds * 45 > heavy.bytes, `${heavy.rounds} rounds is about ${heavy.rounds * 45} bytes of positions`);
+}
+
+/* ---- AND A FIGHT YOU CANNOT SEE COSTS YOU NOTHING ----
+   The other half of the point. One player at Earth, one out at a planet
+   thousands of units away, each in their own fight. */
+{
+  storage.map.clear();
+  const room = new RebelsRoom({ storage } as never, env) as any;
+  room.setDropsForTests(null, () => 0.99);
+  const here = new FakeSocket(), far = new FakeSocket();
+  for (const [ws, node] of [[here, "here"], [far, "far"]] as const) {
+    room.seat(ws as never);
+    ws.deliver(JSON.stringify({ t: "join", node, name: node, home: [0, 0, R + 6], reach: 4 }));
+  }
+  const seats = [...room.seats.values()];
+  seats[0].body.pos.set(0, 0, R + 20);
+  /* Out past the third planet, which is a few thousand units away. */
+  seats[1].body.pos.set(0, 0, 3000);
+  spawnFleet(room.combat, 3, seats[0].body.pos, seats[0].body.fwd, { count: 20 });
+  spawnFleet(room.combat, 3, seats[1].body.pos, seats[1].body.fwd, { count: 20 });
+  here.sent.length = 0; far.sent.length = 0;
+  room.now += 1 / 20;
+  room.step();
+  const a = JSON.parse(here.states()[0]);
+  const b = JSON.parse(far.states()[0]);
+  ok("each of them is sent about half the fighters", a.E.length > 5 && a.E.length < 30 && b.E.length > 5 && b.E.length < 30,
+     `${a.E.length} and ${b.E.length} of ${room.combat.enemies.length}`);
+  ok("and neither is sent the other's", (() => {
+    const mineFar = a.E.some((e: number[]) => e[2] > 1000);
+    const theirsNear = b.E.some((e: number[]) => e[2] < 1000);
+    return !mineFar && !theirsNear;
+  })());
+  ok("nor the other ship", !a.P.some((p: unknown[]) => p[0] === seats[1].id) && !b.P.some((p: unknown[]) => p[0] === seats[0].id));
+  ok("each message is a fraction of the pair of fights", here.states()[0].length < 2500 && far.states()[0].length < 2500,
+     `${here.states()[0].length} and ${far.states()[0].length} bytes`);
+  room.stop();
 }
 
 console.log(out.join("\n"));

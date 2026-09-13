@@ -99,6 +99,53 @@ Expected: about 12 kB to about 4 kB at 24 players.
 Watch for: things popping in at the edge of the range. Fix with a little
 hysteresis, and by keeping ships in view further out than everything else.
 
+**BUILT 2026-Sep-12, v69.9.38, and measured.**
+
+The first attempt saved nothing at all, and the reason is worth writing
+down. The ranges were picked from the size of the WORLD: ships at nine
+hundred units, fighters at seven hundred. But the shell of sky around Earth
+where everybody actually fights is only about seven hundred units across, so
+every player could still see every other player and every fighter, and not
+one row was dropped. Ranges have to come from the size of a FIGHT, not the
+size of the map. A fighter shoots at seventy units, a swarm hunts from two
+hundred and twenty, and a rival's name plate stops being drawn at four
+hundred and twenty. The ranges are now four hundred and fifty for ships,
+three hundred and forty for fighters, and two hundred and ten for coins,
+gems and wreckage, which are specks at that distance anyway.
+
+| room | after phase 1 | after phase 2 | saved |
+|---|---|---|---|
+| 1 player | 1,255 | 1,261 | nothing, and rightly |
+| 8 players | 4,254 | 2,101 | 51% |
+| 24 players | 9,595 | 3,450 | 64% |
+| 24 with wingmen | 15,574 | 9,404 | 40% |
+| 24, everything at once | 15,523 | 9,402 | 39% |
+
+Against where this started, two dozen players went from about 35,000 bytes a
+tick to 3,450: a tenth. Each player is now sent 69 kB/s instead of 682, and
+a room of two dozen sends 1.7 MB/s instead of 16.
+
+And a fight you cannot see costs nothing: one player at Earth and one out at
+a planet three thousand units away are each sent about half the fighters and
+a thousand bytes, and neither is told the other exists. That is the property
+that makes a big world affordable, and it is what phase 7's shards are built
+on top of.
+
+One range had to be split rather than tightened, and the test caught it. A
+flock's gem is left wherever its last member fell, which measured three
+hundred and twenty units from where the player had been fighting: inside the
+old range, outside the new one. Coins and gems are not the same kind of
+thing. Coins scatter at your feet, there are hundreds, and you fly through
+them seconds later; a gem is rare, it persists, and going to fetch it is the
+point. Coins stay at two hundred and ten. Gems and dropped spheres see seven
+hundred, which costs almost nothing because there are only ever a handful in
+the sky.
+
+Not done here, deliberately: hysteresis at the edge of a range. Something
+crossing four hundred and fifty units will pop in and out if it hovers
+exactly there. It needs the per-player memory that phase 3 introduces
+anyway, so it belongs with the deltas rather than on its own.
+
 ## Phase 3: delta snapshots
 
 Send what CHANGED since the last snapshot that player actually received.

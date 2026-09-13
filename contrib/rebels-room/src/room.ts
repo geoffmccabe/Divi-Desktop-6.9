@@ -41,6 +41,7 @@ import {
   BOOST,
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
+import { VIEW, inRange } from "../../../ui/src/wallet/rebels/rebelsView";
 import {
   WING_MAX, wingPosition, wingSpin, wingShare, wingRounds, wingTiers,
 } from "../../../ui/src/wallet/rebels/rebelsWings";
@@ -1199,59 +1200,123 @@ export class RebelsRoom {
        which rounds stopped. */
     const fired: Bullet[] = takeFreshBullets(c);
     const stopped: number[] = takeSpentBullets(c);
-    const state = {
-      t: "s" as const,
-      n: this.tick,
-      w: c.wave?.n ?? 0,
-      P: [...this.seats.values()].filter((s) => s.joined).map((s) => [
-        s.id, r1(s.body.pos.x), r1(s.body.pos.y), r1(s.body.pos.z),
-        r1(s.body.fwd.x), r1(s.body.fwd.y), r1(s.body.fwd.z),
-        s.body.guard ? 1 : 0, Math.max(0, Math.round(s.shield)),
-      ]),
-      E: c.enemies.map((e) => [
+    /* ---- ONE ROW PER THING, BUILT ONCE ----
+       The rounding and the shaping happen here, not once per player: with two
+       dozen seats that would be two dozen times the work for the same answer.
+       Each row is kept beside the point it is at, and each seat then takes
+       only the rows its own eyes reach. */
+    interface Row<T> { at: THREE.Vector3; row: T; only?: string; always?: true }
+    const pick = <T>(rows: Array<Row<T>>, eye: THREE.Vector3, range: number, id: string): T[] => {
+      const out: T[] = [];
+      for (const r of rows) {
+        if (r.only && r.only !== id) continue;
+        if (r.always || r.only === id || inRange(eye, r.at, range)) out.push(r.row);
+      }
+      return out;
+    };
+
+    const players: Array<Row<unknown>> = [];
+    for (const s of this.seats.values()) {
+      if (!s.joined) continue;
+      players.push({
+        at: s.body.pos,
+        row: [
+          s.id, r1(s.body.pos.x), r1(s.body.pos.y), r1(s.body.pos.z),
+          r1(s.body.fwd.x), r1(s.body.fwd.y), r1(s.body.fwd.z),
+          s.body.guard ? 1 : 0, Math.max(0, Math.round(s.shield)),
+        ],
+      });
+    }
+    const enemies: Array<Row<unknown>> = c.enemies.map((e) => ({
+      at: e.pos,
+      /* The dragon is an apparition the size of a house and it is there for
+         ten seconds a minute at most: everybody sees it, wherever they are. */
+      ...(e.dragon ? { always: true as const } : {}),
+      row: [
         r1(e.pos.x), r1(e.pos.y), r1(e.pos.z),
         r1(e.fwd.x), r1(e.fwd.y), r1(e.fwd.z),
         e.cls.tier, Math.max(0, Math.round(e.shield)), e.cls.shieldMax,
         /* A drone is drawn as a sphere, a fighter as a hull: the cockpit has
            to be told which. And WHICH enemy, so its hull model follows it. */
         e.dragon ? 2 : e.drone ? 1 : 0, e.id ?? 0,
-      ]),
-      ...(fired.length ? {
-        F: fired.map((b) => [
-          b.id ?? 0,
-          r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
-          r1(b.vel.x), r1(b.vel.y), r1(b.vel.z),
-          (b.hostile ? 1 : 0) | (b.mini ? 2 : 0) | (b.orb ? 4 : 0),
-          Math.round(b.life * 100) / 100,
-        ]),
-      } : {}),
-      ...(stopped.length ? { X: stopped } : {}),
-      C: c.coins.map((k) => [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)]),
-      ...(c.torpedoes.length ? {
-        T: c.torpedoes.map((t) => [r1(t.pos.x), r1(t.pos.y), r1(t.pos.z), r1(t.vel.x), r1(t.vel.y), r1(t.vel.z)]),
-      } : {}),
-      ...(c.junk.length ? {
-        J: c.junk.map((j) => [
-          r1(j.pos.x), r1(j.pos.y), r1(j.pos.z),
-          Math.round(j.rot.x * 100) / 100, Math.round(j.rot.y * 100) / 100, Math.round(j.rot.z * 100) / 100,
-          j.kind === "wingL" ? 1 : j.kind === "wingR" ? 2 : 0,
-        ]),
-      } : {}),
-      ...(wings.length ? { W: wings } : {}),
-      ...(shared.length ? { G: shared.map(gemWire) } : {}),
-      ...(c.beams.length ? {
-        M: c.beams.map((b) => [
-          r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
-          Math.round(b.fwd.x * 1000) / 1000, Math.round(b.fwd.y * 1000) / 1000, Math.round(b.fwd.z * 1000) / 1000,
-          b.key, r1(b.life),
-        ]),
-      } : {}),
-    };
-    const wire = JSON.stringify(state);
+      ],
+    }));
+    const shots: Array<Row<unknown>> = fired.map((b) => ({
+      at: b.pos,
+      /* Your own rounds always reach you, however far the shot was taken
+         from: you pulled the trigger and the flash has already gone off. */
+      ...(b.owner ? { only: undefined } : {}),
+      row: [
+        b.id ?? 0,
+        r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
+        r1(b.vel.x), r1(b.vel.y), r1(b.vel.z),
+        (b.hostile ? 1 : 0) | (b.mini ? 2 : 0) | (b.orb ? 4 : 0),
+        Math.round(b.life * 100) / 100,
+      ],
+      owner: b.owner,
+    } as Row<unknown> & { owner?: string }));
+    const coins: Array<Row<unknown>> = c.coins.map((k) => ({
+      at: k.pos, row: [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)],
+    }));
+    const torps: Array<Row<unknown>> = c.torpedoes.map((t) => ({
+      at: t.pos,
+      row: [r1(t.pos.x), r1(t.pos.y), r1(t.pos.z), r1(t.vel.x), r1(t.vel.y), r1(t.vel.z)],
+    }));
+    const junk: Array<Row<unknown>> = c.junk.map((j) => ({
+      at: j.pos,
+      row: [
+        r1(j.pos.x), r1(j.pos.y), r1(j.pos.z),
+        Math.round(j.rot.x * 100) / 100, Math.round(j.rot.y * 100) / 100, Math.round(j.rot.z * 100) / 100,
+        j.kind === "wingL" ? 1 : j.kind === "wingR" ? 2 : 0,
+      ],
+    }));
+    const beams: Array<Row<unknown>> = c.beams.map((b) => ({
+      at: b.pos,
+      row: [
+        r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
+        Math.round(b.fwd.x * 1000) / 1000, Math.round(b.fwd.y * 1000) / 1000, Math.round(b.fwd.z * 1000) / 1000,
+        b.key, r1(b.life),
+      ],
+    }));
+    const gemRows: Array<Row<unknown>> = [
+      ...shared.map((g) => ({ at: g.pos, row: gemWire(g) })),
+      /* A dropped item in its private minute goes to its owner and to nobody
+         else: not out of range, out of existence. */
+      ...[...mine.entries()].flatMap(([owner, list]) =>
+        list.map((g) => ({ at: g.pos, row: gemWire(g), only: owner }))),
+    ];
+    const wingRows: Array<Row<unknown>> = wings.map((w) => ({
+      at: new THREE.Vector3(w[2], w[3], w[4]), row: w,
+    }));
+
+    /* ---- AND ONE MESSAGE PER PLAYER ----
+       Which is the whole change: everybody used to be handed the same string
+       describing the whole world, including fights on the far side of a
+       planet they could not see. */
     for (const s of this.seats.values()) {
-      const own = mine.get(s.id);
-      const text = own ? JSON.stringify({ ...state, G: [...shared, ...own].map(gemWire) }) : wire;
-      try { s.ws.send(text); } catch { this.leave(s); }
+      const eye = s.body.pos;
+      const state = {
+        t: "s" as const,
+        n: this.tick,
+        w: c.wave?.n ?? 0,
+        P: pick(players, eye, VIEW.ships, s.id),
+        E: pick(enemies, eye, VIEW.enemies, s.id),
+        ...(() => {
+          const f = shots.filter((r) => {
+            const own = (r as Row<unknown> & { owner?: string }).owner === s.id;
+            return own || inRange(eye, r.at, VIEW.shots);
+          }).map((r) => r.row);
+          return f.length ? { F: f } : {};
+        })(),
+        ...(stopped.length ? { X: stopped } : {}),
+        C: pick(coins, eye, VIEW.loot, s.id),
+        ...(() => { const t = pick(torps, eye, VIEW.torpedoes, s.id); return t.length ? { T: t } : {}; })(),
+        ...(() => { const j = pick(junk, eye, VIEW.junk, s.id); return j.length ? { J: j } : {}; })(),
+        ...(() => { const w = pick(wingRows, eye, VIEW.ships, s.id); return w.length ? { W: w } : {}; })(),
+        ...(() => { const g = pick(gemRows, eye, VIEW.gems, s.id); return g.length ? { G: g } : {}; })(),
+        ...(() => { const m = pick(beams, eye, VIEW.beams, s.id); return m.length ? { M: m } : {}; })(),
+      };
+      try { s.ws.send(JSON.stringify(state)); } catch { this.leave(s); }
     }
     /* Gauges every half second rather than every tick: they change slowly and
        they are the one message that is different for every player. */
