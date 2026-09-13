@@ -730,6 +730,9 @@ export interface CombatEvent {
   item?: string;
   /** wingHit / wingDown: which of the owner's eight places it was. */
   slot?: number;
+  /** denied only: `at` is where the room says this ship really is, and it is
+   *  to be obeyed. Room-originated, like the event kind itself. */
+  snap?: true;
   /** enemyHit only: damage actually landed, which is what scores. */
   damage?: number;
   /** enemyDown only: which of the seven it was. */

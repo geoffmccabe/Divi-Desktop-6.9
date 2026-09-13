@@ -162,6 +162,101 @@ function weigh(players: number, fleets: number, wings: number, ticks = 24) {
   room.stop();
 }
 
+/* ---- YOU HEAR WHAT YOU CAN SEE ----
+   A bang beyond the horizon used to be sent to everybody, so a player alone
+   at a planet heard every explosion at Earth. */
+{
+  storage.map.clear();
+  const room = new RebelsRoom({ storage } as never, env) as any;
+  room.setDropsForTests(null, () => 0.99);
+  const near = new FakeSocket(), far = new FakeSocket();
+  for (const [ws, node] of [[near, "near"], [far, "far"]] as const) {
+    room.seat(ws as never);
+    ws.deliver(JSON.stringify({ t: "join", node, name: node, home: [0, 0, R + 6] }));
+  }
+  const seats = [...room.seats.values()];
+  seats[0].body.pos.set(0, 0, R + 20);
+  seats[1].body.pos.set(0, 0, 3000);
+  const events = (ws: FakeSocket) => ws.sent
+    .map((t) => JSON.parse(t))
+    .filter((m) => m.t === "e")
+    .flatMap((m) => m.v as Array<Record<string, unknown>>);
+
+  near.sent.length = 0; far.sent.length = 0;
+  room.combat.events.push({ kind: "enemyDown", at: seats[0].body.pos.clone(), power: 3, tier: 1, who: "" });
+  room.step();
+  ok("a bang nearby is heard", events(near).some((e) => e.k === "enemyDown"));
+  ok("and the same bang three thousand units away is not", !events(far).some((e) => e.k === "enemyDown"));
+
+  /* A wave arriving is everybody's business, wherever they are. */
+  near.sent.length = 0; far.sent.length = 0;
+  room.combat.events.push({ kind: "waveStart", at: seats[0].body.pos.clone(), power: 1, wave: 4 });
+  room.combat.events.push({ kind: "dragon", at: seats[0].body.pos.clone(), power: 2 });
+  room.step();
+  ok("a wave arriving reaches everyone", events(far).some((e) => e.k === "waveStart"));
+  ok("and so does the dragon", events(far).some((e) => e.k === "dragon"));
+
+  /* And anything that happened to YOU reaches you, wherever you are. */
+  near.sent.length = 0; far.sent.length = 0;
+  /* Out where the far player is, which is where their pickup would happen. */
+  room.combat.events.push({ kind: "gem", at: seats[1].body.pos.clone(), power: 1, tier: 2, who: seats[1].id });
+  room.step();
+  ok("your own pickup reaches you from across the world", events(far).some((e) => e.k === "gem"));
+  ok("and is not somebody else's business", !events(near).some((e) => e.k === "gem"));
+  room.stop();
+}
+
+/* ---- NOTHING FLICKERS AT THE EDGE ----
+   Something already in view is kept in view a fifth further out, or a
+   fighter hovering at the limit is sent on one tick and not the next. */
+{
+  storage.map.clear();
+  const room = new RebelsRoom({ storage } as never, env) as any;
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  room.seat(ws as never);
+  ws.deliver(JSON.stringify({ t: "join", node: "h", name: "H", home: [0, 0, R + 6] }));
+  const seat = [...room.seats.values()][0];
+  seat.body.pos.set(0, 0, 0);
+  const fleet = spawnFleet(room.combat, 1, new THREE.Vector3(0, 0, R + 10), new THREE.Vector3(0, 1, 0), { count: 1 });
+  const e = fleet[0];
+  const sees = () => {
+    ws.sent.length = 0;
+    room.step();
+    const st = JSON.parse(ws.states()[0]);
+    return (st.E as number[][]).some((row) => row[10] === e.id);
+  };
+  e.pos.set(0, 0, 360);
+  ok("a fighter past the range is not sent", !sees(), "360 units");
+  e.pos.set(0, 0, 300);
+  ok("inside it, it is", sees(), "300 units");
+  e.pos.set(0, 0, 370);
+  ok("and drifting a little past the range it is kept, not dropped", sees(), "370 units");
+  e.pos.set(0, 0, 430);
+  ok("far enough past it and it goes", !sees(), "430 units");
+  e.pos.set(0, 0, 370);
+  ok("and having gone, it does not come back until it is properly in range", !sees(), "370 units again");
+  room.stop();
+}
+
+/* ---- THE RANGES HAVE TO AGREE WITH EACH OTHER ----
+   Three rules that are not obvious from any single number, and that a
+   careless tweak would break silently. */
+{
+  const { VIEW } = await import("../../../ui/src/wallet/rebels/rebelsView");
+  const { ENEMY_FIRE_RANGE } = await import("../../../ui/src/wallet/rebels/rebelsCombat");
+  const { DRONE_FIRE_RANGE } = await import("../../../ui/src/wallet/rebels/rebelsFlock");
+  ok("if you can see who fired, you can see what they fired", VIEW.shots >= VIEW.ships,
+     `shots ${VIEW.shots}, ships ${VIEW.ships}`);
+  ok("nothing can shoot you from outside your own view",
+     VIEW.enemies > ENEMY_FIRE_RANGE * 2 && VIEW.enemies > DRONE_FIRE_RANGE * 2,
+     `enemies ${VIEW.enemies}, fighters fire at ${ENEMY_FIRE_RANGE}, swarms at ${DRONE_FIRE_RANGE}`);
+  ok("you can hear anything you can see", VIEW.events >= VIEW.enemies,
+     `events ${VIEW.events}, enemies ${VIEW.enemies}`);
+  ok("and a gem is visible from further than the coins it fell among",
+     VIEW.gems > VIEW.loot, `gems ${VIEW.gems}, loot ${VIEW.loot}`);
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

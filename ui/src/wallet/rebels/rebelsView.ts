@@ -37,7 +37,13 @@ export const VIEW = {
    * into view before it arrives. Shorter would mean invisible incoming fire,
    * which is the one saving worth refusing.
    */
-  shots: 330,
+  /* Just past the range a ship is visible at, which is the invariant that
+     matters: if you can see who fired, you can see what they fired. At three
+     hundred and thirty a rival four hundred units away could put rounds
+     through you that were never drawn. Rounds cost almost nothing at this
+     range because a shot is announced once, on the tick it is taken, and not
+     twenty times a second for its whole flight. */
+  shots: 470,
   /** Torpedoes: slower, bigger, and worth seeing early. */
   torpedoes: 430,
   /** Coins. They scatter where you killed something, you fly through them
@@ -56,6 +62,16 @@ export const VIEW = {
   gems: 700,
   /** Wreckage. Small, and solid, so it matters only where you are flying. */
   junk: 210,
+  /**
+   * How far away something can happen and still be worth hearing.
+   *
+   * Explosions are big and bright, so this is generous: further than you can
+   * see a coin, about as far as you can spot a gem. Beyond it a bang is a
+   * sound from nowhere, which is what every player got when every event went
+   * to everybody. Anything that happened to you or by you reaches you at any
+   * distance, and a wave arriving or the dragon appearing reaches everyone.
+   */
+  events: 700,
 } as const;
 
 /** Cheap enough to run per player per entity: no square roots. */

@@ -91,6 +91,14 @@ const groupOf = (key: string) => GROUP_OF_KEY[key];
   ok("the launch screen shows the keyboard, not a list of two dozen lines",
      /<ControlsBoard/.test(hudSource) && !/controlLines\(/.test(hudSource),
      hudSource.match(/controlLines\([^)]*\)/)?.[0] ?? "no list");
+  /* ---- AND THE TWO HELP VIEWS ARE ONE COMPONENT ----
+     They were two and they drifted: the opening screen stopped matching the
+     ? panel. There is nothing to keep in step if there is only one of them. */
+  const src = readFileSync(`${process.cwd()}/src/wallet/rebels/RebelsControls.tsx`, "utf8");
+  const bodies = src.match(/<ControlsBody/g) ?? [];
+  ok("the launch screen and the ? panel render the same body", bodies.length === 2, `${bodies.length} uses`);
+  ok("and only one of them draws the keyboard and the list",
+     (src.match(/<Keyboard/g) ?? []).length === 1 && (src.match(/<dl>/g) ?? []).length === 1);
 }
 
 console.log(out.join("\n"));

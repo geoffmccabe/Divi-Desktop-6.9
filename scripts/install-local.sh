@@ -85,8 +85,17 @@ cp target/release/divi-desktop-69 "$BIN"
 
 # Belt and braces: the whole point of this script is that what he launches is
 # what was just built.
-if ! cmp -s target/release/divi-desktop-69 "$BIN"; then
-  echo "the binary did not copy across; not launching a build you cannot trust"
+# Compared by SIZE and HASH rather than by cmp, which reads both files byte by
+# byte: on a fifteen megabyte binary under memory pressure macOS killed it
+# outright, the check read as a failed copy, and the script stopped after
+# replacing the binary but BEFORE re-signing the bundle. An unsigned bundle
+# will not launch at all (launchd error 162), so a killed comparison left the
+# app broken rather than merely un-relaunched.
+BUILT_SUM=$(shasum -a 256 target/release/divi-desktop-69 | cut -d" " -f1)
+LIVE_SUM=$(shasum -a 256 "$BIN" | cut -d" " -f1)
+if [ "$BUILT_SUM" != "$LIVE_SUM" ]; then
+  echo "the binary did not copy across; re-signing what is there and not launching"
+  codesign --force --deep -s - "$APP" 2>/dev/null || true
   exit 1
 fi
 codesign --force --deep -s - "$APP" 2>/dev/null || true

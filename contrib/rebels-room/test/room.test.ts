@@ -158,11 +158,16 @@ const home: [number, number, number] = [0, 0, R + 8];
   const seat = join(room, ws);
   seat.body.pos.set(0, 0, R + 8);
   const before = room.combat.bullets.length;
-  /* Sniping from the far side of the planet. */
+  /* Sniping from the far side of the planet. The shot HAPPENS, because a
+     shot is never thrown away, but it leaves from where the room has this
+     ship and not from where the message claimed. Claiming to be somewhere
+     else therefore gains nothing, which is the whole point. */
   ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [0, 0, -(R + 8)], f: [0, 1, 0] }));
-  ok("a shot from somewhere else is refused", room.combat.bullets.length === before,
-     `${room.combat.bullets.length}`);
-  ok("and the player is told why", ws.last("no")?.why === "shot from elsewhere", ws.last("no")?.why);
+  ok("a shot claiming to come from across the planet still fires",
+     room.combat.bullets.length === before + 2, `${room.combat.bullets.length}`);
+  ok("but from where the room has the ship, not from where it claimed",
+     room.combat.bullets[room.combat.bullets.length - 1].pos.distanceTo(seat.body.pos) < 10,
+     `${room.combat.bullets[room.combat.bullets.length - 1].pos.distanceTo(seat.body.pos).toFixed(1)} away`);
   room.stop();
 }
 
@@ -830,6 +835,57 @@ const home: [number, number, number] = [0, 0, R + 8];
   const back = room2.combat.gems.find((g: any) => g.item === second.item);
   ok("it is there after a restart, and now anyone's", !!back && back.hidden === 0 && back.owner === "", JSON.stringify(back && { hidden: back.hidden, owner: back.owner }));
   room2.stop();
+}
+
+/* ---- A SHOT IS NEVER THROWN AWAY FOR BEING A FEW UNITS OUT ----
+   The room's copy of a position is up to a report behind, and a ship at
+   super boost covers several units in that time. Refusing the shot meant a
+   player's guns stopped working: one rejected transform left the room's copy
+   behind for good, and every shot after it was "fired from elsewhere". */
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "s-node");
+  const p = seat.body.pos.clone();
+
+  room.now += 1;
+  room.combat.bullets.length = 0;
+  const near = p.clone().add(new THREE.Vector3(4, 0, 0));
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [near.x, near.y, near.z], f: [0, 1, 0], u: [0, 0, 1] }));
+  ok("a shot four units out fires, from where the cockpit said", room.combat.bullets.length === 2
+     && room.combat.bullets[0].pos.distanceTo(near) < 4, `${room.combat.bullets.length}`);
+
+  /* Far enough out that the room does not believe the origin, but the shot
+     still happens: from where the room thinks the ship is. */
+  room.now += 1;
+  room.combat.bullets.length = 0;
+  const off = p.clone().add(new THREE.Vector3(80, 0, 0));
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [off.x, off.y, off.z], f: [0, 1, 0], u: [0, 0, 1] }));
+  ok("a shot eighty units out still fires", room.combat.bullets.length === 2, `${room.combat.bullets.length}`);
+  ok("but from the room's own position, not the cockpit's",
+     room.combat.bullets[0].pos.distanceTo(p) < 10 && room.combat.bullets[0].pos.distanceTo(off) > 40,
+     `${room.combat.bullets[0].pos.distanceTo(p).toFixed(1)} from the ship`);
+
+  /* And a shot from genuinely across the map is still refused, which is what
+     the check was ever for. */
+  room.now += 1;
+  room.combat.bullets.length = 0;
+  ws.sent.length = 0;
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [0, 2000, 0], f: [0, 1, 0], u: [0, 0, 1] }));
+  ok("even a shot claiming to be two thousand units away fires", room.combat.bullets.length === 2);
+  ok("from the room's position, so the claim buys nothing",
+     room.combat.bullets[0].pos.distanceTo(p) < 10,
+     `${room.combat.bullets[0].pos.distanceTo(p).toFixed(1)} from the ship`);
+  /* A transform out of the world is still corrected, and the correction
+     carries the position so the cockpit can obey it. */
+  ws.sent.length = 0;
+  ws.deliver(JSON.stringify({ t: "tf", p: [0, 0, 99999], f: [0, 1, 0] }));
+  ok("a transform out of the world is corrected", ws.last("no")?.why === "outside the world", ws.last("no")?.why);
+  ok("and the correction says where the room has the ship",
+     Array.isArray(ws.last("no")?.p) && ws.last("no").p.length === 3, JSON.stringify(ws.last("no")?.p));
+  room.stop();
 }
 
 console.log(out.join("\n"));

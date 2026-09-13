@@ -151,27 +151,52 @@ export function Keyboard({ active, onHover, onPick }: {
  *
  * Clicking a key holds its line up, so it reads without a steady hand.
  */
-export function ControlsBoard({ extras = NO_EXTRAS }: { extras?: Extras }) {
+/**
+ * The keyboard and the explanations under it: ONE component, used by the
+ * launch screen and by the ? panel.
+ *
+ * They were two, and they drifted, which is exactly what Geoff found:
+ * "The help menu on the opening screen isn't updated to match the ? menu."
+ * There is nothing to keep in step now because there is only one of them.
+ */
+export function ControlsBody({ extras = NO_EXTRAS }: { extras?: Extras }) {
   const [hover, setHover] = useState<string | null>(null);
   const [pinned, setPinned] = useState<string | null>(null);
   const active = hover ?? pinned;
-  const group = CONTROL_GROUPS.find((g) => g.id === active) ?? null;
+  const ctx = { extras };
   return (
-    <div className="orbit-board">
+    <>
       <Keyboard
         active={active}
         onHover={setHover}
         onPick={(g) => setPinned((p) => (p === g ? null : g))}
       />
-      <div className={"orbit-board-read" + (group ? " on" : "")}>
-        <b>{group ? group.label : "THE CONTROLS"}</b>
-        <span>{group ? group.what({ extras }) : "Point at a key to see what it does. Click one to hold it."}</span>
-      </div>
-      <div className="orbit-board-notes">
-        {DOCKING_NOTES.map((d) => (
-          <div key={d.label}><b>{d.label}</b><span>{d.what}</span></div>
+      <dl>
+        {CONTROL_GROUPS.map((g) => (
+          <div
+            key={g.id}
+            className={g.id === active ? "on" : ""}
+            onMouseEnter={() => setHover(g.id)}
+            onMouseLeave={() => setHover(null)}
+            onClick={() => setPinned((p) => (p === g.id ? null : g.id))}
+          >
+            <dt>{g.label}</dt>
+            <dd>{g.what(ctx)}</dd>
+          </div>
         ))}
-      </div>
+        {DOCKING_NOTES.map((d) => (
+          <div key={d.label}><dt>{d.label}</dt><dd>{d.what}</dd></div>
+        ))}
+      </dl>
+    </>
+  );
+}
+
+/** The launch screen's copy, beside the logo. */
+export function ControlsBoard({ extras = NO_EXTRAS }: { extras?: Extras }) {
+  return (
+    <div className="orbit-board orbit-controls">
+      <ControlsBody extras={extras} />
     </div>
   );
 }
@@ -185,8 +210,6 @@ export function controlLines(ctx: ControlsContext): Array<{ keys: string; what: 
 }
 
 export function RebelsControls({ onClose, extras = NO_EXTRAS }: { onClose?: () => void; extras?: Extras }) {
-  const [active, setActive] = useState<string | null>(null);
-  const ctx = { extras };
   return (
     <>
       {/* A plain black wash over the game behind the panel. The panel had a
@@ -197,23 +220,7 @@ export function RebelsControls({ onClose, extras = NO_EXTRAS }: { onClose?: () =
       <div className="orbit-controls-scrim" onClick={onClose} />
       <div className="orbit-controls">
         <h3>CONTROLS</h3>
-        <Keyboard active={active} onHover={setActive} />
-        <dl>
-          {CONTROL_GROUPS.map((g) => (
-            <div
-              key={g.id}
-              className={g.id === active ? "on" : ""}
-              onMouseEnter={() => setActive(g.id)}
-              onMouseLeave={() => setActive(null)}
-            >
-              <dt>{g.label}</dt>
-              <dd>{g.what(ctx)}</dd>
-            </div>
-          ))}
-          {DOCKING_NOTES.map((d) => (
-            <div key={d.label}><dt>{d.label}</dt><dd>{d.what}</dd></div>
-          ))}
-        </dl>
+        <ControlsBody extras={extras} />
         {onClose && (
           <button type="button" onClick={onClose}>CLOSE</button>
         )}

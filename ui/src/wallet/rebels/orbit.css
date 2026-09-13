@@ -967,9 +967,17 @@
    This is what the launch screen shows beside the logo. The readout has a
    floor under its height so that moving along a row does not shuffle the
    card about underneath the pointer. */
-.orbit-board { display: grid; gap: 8px; text-align: left; }
-.orbit-board .orbit-keyboard { margin: 0; }
+/* Beside the logo, the same component the ? panel uses, in a column that
+   scrolls rather than one that grows the card. */
+.orbit-board {
+  position: static; inset: auto; width: auto;
+  max-height: min(52vh, 420px); overflow-y: auto;
+  text-align: left; padding: 10px 12px;
+}
+.orbit-board .orbit-keyboard { margin: 0 0 10px; }
 .orbit-board .orbit-key { font-size: 9px; padding: 6px 0; }
+.orbit-board dl > div { margin-bottom: 7px; }
+.orbit-board dd { font-size: 11px; }
 .orbit-board-read {
   display: grid; gap: 3px; min-height: 52px;
   padding: 8px 10px;

@@ -90,6 +90,9 @@ export interface RoomEvent {
   /** gem / drop of an item: its catalogue key, and the gem's id. */
   item?: string;
   id?: string;
+  /** denied only: `at` is where the room says this ship really is, and the
+   *  cockpit is to move there. */
+  snap?: true;
 }
 
 export type RoomStatus = "off" | "connecting" | "live" | "retrying" | "refused";
@@ -118,6 +121,15 @@ export interface Room {
   me(): string;
   /** Everybody else. */
   others(): RoomPlayer[];
+  /**
+   * How many ships are in this world, including yours.
+   *
+   * From the ROSTER, not from what is on screen. Since the room started
+   * sending each player only what is near them, the drawing list holds the
+   * ships in view and nothing else, and counting that told a player flying
+   * alone in a busy world that they were alone.
+   */
+  crew(): number;
   /** The fight, as the room sees it. Overwritten every tick. */
   enemies: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; tier: number; shield: number; shieldMax: number; drone?: boolean; dragon?: boolean; id?: number }>;
   /** Rounds fired since this was last drained, and rounds the room says
@@ -228,6 +240,7 @@ export function joinRoom(opts: Opts): Room {
     me: () => seat,
     others: () => [...players.values()].filter((p) => p.id !== seat),
     enemies: [],
+    crew() { return Math.max(1, roster.size); },
     takeShots() { const out = shots; shots = []; return out; },
     takeSpent() { const out = spent; spent = []; return out; },
     coins: [],
@@ -290,6 +303,9 @@ export function joinRoom(opts: Opts): Room {
 
   /* Rounds the room has told us about but the cockpit has not picked up
      yet. Drained once a frame; see takeShots. */
+  /** Everyone in the world, by id: name, node, hull, paint. Outlives being
+   *  out of view. */
+  const roster = new Map<string, { id: string; name: string; node: string; ship: string; paint?: number[][] }>();
   let shots: Shot[] = [];
   let spent: number[] = [];
 
@@ -376,19 +392,29 @@ export function joinRoom(opts: Opts): Room {
         return;
 
       case "who": {
+        /* ---- THE ROSTER, WHICH IS NOT THE DRAWING LIST ----
+           Who is in the world, with their name, hull and paint. It arrives
+           when somebody joins or leaves, which is about once a session, so
+           it cannot be rebuilt from what happens to be in view: a player who
+           flies out of range and back would return with no name and the
+           default grey ship until the next person joined. */
         const list = Array.isArray(m.players) ? m.players : [];
         const keep = new Set<string>();
         for (const raw of list as Array<Record<string, unknown>>) {
           const id = String(raw.id ?? "");
           if (!id) continue;
           keep.add(id);
-          const p = players_.get(id) ?? blank(id);
-          p.name = String(raw.name ?? "").slice(0, 40);
-          p.node = String(raw.node ?? "");
-          p.ship = String(raw.ship ?? "");
-          p.paint = Array.isArray(raw.paint) ? (raw.paint as number[][]) : undefined;
-          players_.set(id, p);
+          const who = roster.get(id) ?? { id, name: "", node: "", ship: "", paint: undefined as number[][] | undefined };
+          who.name = String(raw.name ?? "").slice(0, 40);
+          who.node = String(raw.node ?? "");
+          who.ship = String(raw.ship ?? "");
+          who.paint = Array.isArray(raw.paint) ? (raw.paint as number[][]) : undefined;
+          roster.set(id, who);
+          /* And anyone already on screen takes the new details at once. */
+          const drawn = players_.get(id);
+          if (drawn) { drawn.name = who.name; drawn.node = who.node; drawn.ship = who.ship; drawn.paint = who.paint; }
         }
+        for (const id of [...roster.keys()]) if (!keep.has(id)) roster.delete(id);
         for (const id of [...players_.keys()]) if (!keep.has(id)) players_.delete(id);
         return;
       }
@@ -542,24 +568,35 @@ export function joinRoom(opts: Opts): Room {
         return;
       }
 
-      case "no":
-        /* The room refusing something. Kept quiet rather than swallowed
-           entirely: it is where cheating and bugs look the same, and the black
-           box is the right place for it. */
+      case "no": {
+        /* ---- THE ROOM REFUSING SOMETHING ----
+           And, when it comes with a position, TELLING YOU WHERE YOU ARE. That
+           has to be obeyed. The room is the authority on where a ship is, and
+           a cockpit that ignored the correction flew on while the room's copy
+           of it stood still: the gap only ever grew, and every shot after
+           that was refused for being fired from somewhere else. */
+        const at = Array.isArray(m.p) ? (m.p as number[]) : null;
         events.push({
-          kind: "denied", at: new THREE.Vector3(), power: 1,
+          kind: "denied", power: 1,
+          at: at ? new THREE.Vector3(at[0], at[1], at[2]) : new THREE.Vector3(),
           who: String(m.why ?? ""),
+          ...(at ? { snap: true as const } : {}),
         });
         return;
+      }
     }
   }
 
   function blank(id: string): RoomPlayer {
+    /* Their name and paint come from the roster, which outlives being out of
+       view; only where they are is ephemeral. */
+    const who = roster.get(id);
     return {
-      id, name: "", node: "", ship: "",
+      id, name: who?.name ?? "", node: who?.node ?? "", ship: who?.ship ?? "",
       pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1),
       from: new THREE.Vector3(), fromFwd: new THREE.Vector3(0, 0, 1),
       target: new THREE.Vector3(), targetFwd: new THREE.Vector3(0, 0, 1),
+      paint: who?.paint,
       t: 1, guard: false, shield: 0, seen: true,
     };
   }

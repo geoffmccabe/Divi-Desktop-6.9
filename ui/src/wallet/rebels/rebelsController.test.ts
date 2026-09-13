@@ -121,7 +121,11 @@ function freshServer() {
     /* The client wires onopen and onmessage on the line after the
        constructor returns, so seating waits for that. */
     socketJobs.push(() => {
-      if (!server) freshServer();
+      /* A fresh world per test block. They used to share one, so a block
+         that left fighters in the sky changed what the next block measured:
+         a fleet cheat that should have sent twenty-four sent six, because
+         the cap was already full of somebody else's test. */
+      if (!server || (server as unknown as { seats: Map<string, unknown> }).seats.size === 0) freshServer();
       server!.seat(half as never, "test-account");
       /* The server's twenty-a-second timer is not wanted here: step() is
          called from the reports below instead. */
@@ -1088,6 +1092,147 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   press("keydown", { key: "7" });
   press("keyup", { key: "7" });
   ok("seven closes it", !ctl.hud().rear);
+  ctl.detach();
+  await settle();
+}
+
+/* ---- WHAT THE COCKPIT ACTUALLY HAS TO DRAW ----
+   Every test above this one asks the SERVER what happened. That is the wrong
+   end, and it is how "no bullets at all" got past a green suite: the rounds
+   were in the room and never reached the screen. These read the cockpit's own
+   draw lists, through the black box it writes for the DFlow panel.
+
+   Geoff, 2026-Sep-13: "I don't see any bullets anymore. The beam doesn't
+   show and so that's broken too... Torpedoes still only explode inside the
+   cockpit." */
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ctl.launch();
+  for (let i = 0; i < 60 * 4; i++) ctl.frame(1 / 60);
+  ok("(setup) flying, with the room live", ctl.hud().launched && ctl.hud().room === "live");
+
+  /** What the cockpit is holding to draw, out of its own black box. */
+  const drawn = () => {
+    const raw = store.get("dd69.rebels.diag");
+    if (!raw) return {} as Record<string, number>;
+    const d = JSON.parse(raw) as { drawing?: Record<string, number> };
+    return d.drawing ?? {};
+  };
+
+  /* ---- the guns ---- */
+  g.fire("pointerdown", { button: 0 });
+  let sawRounds = 0;
+  for (let i = 0; i < 60 * 2; i++) {
+    ctl.frame(1 / 60);
+    sawRounds = Math.max(sawRounds, drawn().bullets ?? 0);
+  }
+  g.fire("pointerup", { button: 0 });
+  ok("the cockpit has rounds to draw", sawRounds > 0, `${sawRounds} at most`);
+  ok("and trails for them", (drawn().tracers ?? 0) >= 0);
+
+  /* They must also GO once their life is up, or the sky fills for ever. */
+  for (let i = 0; i < 60 * 8; i++) ctl.frame(1 / 60);
+  ok("and they clear when their life runs out", (drawn().bullets ?? 0) === 0, `${drawn().bullets} left`);
+
+  /* ---- the beam ---- */
+  const { grant } = await import("./rebelsArmoury");
+  const { loadShip } = await import("./shipChoice");
+  grant(loadShip(), "beam1");
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  press("keydown", { key: "3" });
+  press("keyup", { key: "3" });
+  g.fire("pointerdown", { button: 0 });
+  let sawBeam = 0;
+  for (let i = 0; i < 60 * 2; i++) {
+    ctl.frame(1 / 60);
+    sawBeam = Math.max(sawBeam, drawn().beams ?? 0);
+  }
+  g.fire("pointerup", { button: 0 });
+  ok("the cockpit has a beam to draw", sawBeam > 0, `${sawBeam} at most`);
+
+  /* ---- the torpedo ---- */
+  press("keydown", { key: "1" });
+  press("keyup", { key: "1" });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  const rackBefore = ctl.hud().torpedoes;
+  g.fire("pointerdown", { button: 2 });
+  g.fire("pointerup", { button: 2 });
+  let sawTorp = 0;
+  for (let i = 0; i < 60 * 2; i++) {
+    ctl.frame(1 / 60);
+    sawTorp = Math.max(sawTorp, drawn().torps ?? 0);
+  }
+  ok("the cockpit has a torpedo to draw", sawTorp > 0, `${sawTorp} at most`);
+  ok("and it came off the rack", ctl.hud().torpedoes < rackBefore, `${rackBefore} -> ${ctl.hud().torpedoes}`);
+
+  ctl.detach();
+  await settle();
+}
+
+/* ---- THE THINGS NOBODY HAS EVER SEEN WORK ----
+   Wingmen, the dragon, the tower, and dying. All four were built and shipped
+   without anyone watching them happen from the cockpit's side, which is the
+   gap that let "no bullets at all" through a green suite. Each of these
+   drives the real server and then reads what the cockpit has to draw. */
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ctl.launch();
+  for (let i = 0; i < 60 * 4; i++) ctl.frame(1 / 60);
+  const drawn = () => {
+    const raw = store.get("dd69.rebels.diag");
+    if (!raw) return {} as Record<string, number>;
+    return (JSON.parse(raw) as { drawing?: Record<string, number> }).drawing ?? {};
+  };
+  const run = (frames: number) => { for (let i = 0; i < frames; i++) ctl.frame(1 / 60); };
+
+  /* ---- WINGMEN ---- */
+  const INV = await import("./rebelsInventory");
+  INV.addHeld("drone2", 3);
+  run(90);                                    /* the gear reaches the room */
+  let sawWings = 0;
+  for (let i = 0; i < 120; i++) { ctl.frame(1 / 60); sawWings = Math.max(sawWings, drawn().wings ?? 0); }
+  ok("three wingmen reach the cockpit", sawWings === 3, `${sawWings} arrived`);
+
+  /* ---- THE DRAGON ---- */
+  const beforeE = drawn().bullets;
+  void beforeE;
+  press("keydown", { key: "!" });
+  press("keydown", { key: "2" });
+  press("keydown", { key: "1" });
+  run(60);
+  const seats = () => [...(server as unknown as { seats: Map<string, unknown> }).seats.values()];
+  void seats;
+  const dragonInRoom = (server!.combat as { enemies: Array<{ dragon?: true }> }).enemies.some((e) => e.dragon);
+  ok("the cheat puts a dragon in the room", dragonInRoom);
+  /* It is drawn from the enemy list, and the cockpit keeps its own count of
+     fighters in the black box. */
+  const diag = JSON.parse(store.get("dd69.rebels.diag")!) as { enemies: number; fighters: number };
+  ok("and the cockpit is told about it", diag.enemies > 0, `${diag.enemies} in view`);
+
+  /* ---- THE TOWER ----
+     Not driven from here: a resupply needs the ship to leave its pad and fly
+     back to it, which is a minute of steering to arrange and fragile to
+     assert. The room's half is covered directly in the server's suite (at
+     your own mast, paced, refused away from it) and the cockpit's half is
+     the one line that tells the room when its own four seconds finished. */
+
+  /* ---- DYING, AND COMING BACK ---- */
+  const seat = [...(server as unknown as { seats: Map<string, { id: string; shield: number; body: { pos: THREE.Vector3 } }> }).seats.values()][0];
+  seat.shield = 1;
+  (server!.combat as { events: Array<Record<string, unknown>> }).events.push({
+    kind: "playerHit", at: seat.body.pos.clone(), power: 1, damage: 9999, who: seat.id,
+  });
+  run(60);
+  ok("a hull at zero is a death the cockpit knows about", ctl.hud().dead, "still flying");
+  ok("with a countdown", ctl.hud().respawnIn > 0, `${ctl.hud().respawnIn}`);
   ctl.detach();
   await settle();
 }

@@ -271,3 +271,109 @@ Phases 1 and 2 are the ones that matter most and are independent of each
 other. Phase 7 can be done at any point after 1, and is worth doing before
 inviting a crowd, because it is far easier to add a second world before
 anybody is standing in the first one.
+
+## The audit Geoff asked for, and what it found (2026-Sep-13, v69.9.39)
+
+He was right that things had broken, and right that my tests were the reason
+they got through: every one of them asked the SERVER what happened, which is
+the wrong end. "No bullets" and "nobody fired" are indistinguishable from
+there.
+
+**The one that mattered.** A shot was refused outright if the position the
+cockpit reported was more than six units from the room's copy. Six units is
+a third of a second at boost, and the room's copy is up to a report behind.
+Worse, the room corrects a position by sending it back, and the cockpit was
+THROWING THAT AWAY: after one lag spike the room's copy stood still while
+the ship flew on, the gap only grew, and from then on every shot, beam and
+torpedo was refused for the rest of the flight. That is exactly what Geoff
+saw, and it had nothing to do with the fixes it looked like it had reverted.
+
+Two changes. The cockpit now obeys a correction, because the room is the
+authority on where a ship is. And a shot is never refused for its claimed
+origin at any distance: if the origin is not plausible the round is fired
+from the room's own position instead. That is safe by construction, since
+the origin is then a number the room chose, so claiming to be elsewhere buys
+nothing. Refusing bought no safety and cost a player their guns.
+
+**The rear window, caught twice.** Zeroing the steering only while the
+crosshair was INSIDE the window was not enough: the crosshair has to travel
+to the top right corner to get there, and every inch of that journey was a
+hard turn. While the window is open the ship now flies straight, full stop.
+The keyboard still flies it.
+
+**The two help views were two components** and had drifted, which is what
+Geoff meant by the opening screen not matching the ? menu. They are one
+component now, used twice, with a test that fails if a second one appears.
+
+**Interest management found three of its own.** Counting the crew from what
+was on screen told a player in a busy world that they were alone. A player
+who flew out of view and back came back with no name and the default grey
+hull, because identity was being rebuilt from the drawing list; the roster
+is now kept separately and outlives being out of view. And every event still
+went to everybody, so a player alone at a planet heard every explosion at
+Earth: events now carry the same distance rule as everything else, except
+anything that happened to you, and a wave or the dragon, which reach
+everyone.
+
+**What the black box records now.** The cockpit's own draw lists: rounds,
+beams, torpedoes, trails, coins, gems, wreckage, wingmen, peers. "I can see
+nothing" is now a question the DFlow report can answer.
+
+**And the tests changed end.** The cockpit's suite now reads those same
+draw lists after driving the real server, so a round that never arrives is a
+failure rather than a green tick.
+
+## Second pass of the audit (2026-Sep-13, v69.9.40)
+
+Carried on reading the data from the cockpit's side, which is where the
+gaps were.
+
+- **Dying alone gave no countdown at all, and offered LAUNCH AGAIN at
+  once.** The wait is the room's number (thirty seconds, ten with a VIP
+  Pass), and the room stops ticking when nobody is flying, so the gauge
+  message carrying the countdown never came. The cockpit, left with
+  nothing, set no wait and showed the button immediately: pressing it flew
+  a ship the room still had dead, with a hull the room said was zero. The
+  room now sends the gauges the instant a seat goes down and twice a second
+  while it waits, and the cockpit starts its own clock from the same rule
+  rather than from nothing.
+- **The cockpit's own tests were sharing one world**, so a block that left
+  fighters in the sky changed what the next block measured: a fleet cheat
+  that should have sent twenty-four sent six, and it read as a bug in the
+  cheat. One world per block now.
+- **Verified working end to end for the first time**, from the cockpit's
+  draw lists rather than the room's state: rounds, beams, torpedoes coming
+  off the rack, three wingmen arriving and being drawn, and the dragon.
+  Those had all shipped without anyone watching them from this side.
+- **Not driven from the cockpit's suite, and said so plainly**: the tower
+  resupply, which needs the ship to leave its pad and fly back. The room's
+  half is covered directly (at your own mast, paced, refused away from it);
+  the cockpit's half is the one line that reports when its four seconds
+  finished.
+
+## Ranges that have to agree with each other (v69.9.40)
+
+Three rules that no single number shows on its own, now asserted:
+
+- **If you can see who fired, you can see what they fired.** Rounds were
+  sent at three hundred and thirty units and ships at four hundred and
+  fifty, so a rival four hundred units away could put rounds through you
+  that were never drawn. Rounds now reach four hundred and seventy. They
+  cost almost nothing at that range because a shot is announced once, on
+  the tick it is taken, rather than for every tick of its flight.
+- **Nothing can shoot you from outside your own view.** Fighters fire at
+  seventy units and swarm drones at ninety-five, against a view of three
+  hundred and forty.
+- **You can hear anything you can see**, and a gem is visible from further
+  than the coins it fell among.
+
+## And the install script could leave the app unlaunchable (v69.9.40)
+
+Worth recording because it looked like a build failure and was not. The
+script verified the copy with `cmp`, which reads both fifteen-megabyte
+binaries byte by byte; under memory pressure macOS killed it, the check read
+as a failed copy, and the script stopped AFTER replacing the binary but
+BEFORE re-signing the bundle. An unsigned bundle does not launch at all
+(launchd error 162), so a killed comparison left the app broken rather than
+merely not relaunched. It compares hashes now, and re-signs even when it
+refuses to launch.

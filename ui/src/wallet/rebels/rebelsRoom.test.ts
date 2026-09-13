@@ -108,12 +108,37 @@ async function main() {
         paint: [[10, 1, 1, 0], [20, 1, 1, 0], [30, 1, 1, 0], [40, 1, 1, 0], [50, 1, 1, 0]] },
     ] });
 
+    /* ---- THE ROSTER IS NOT THE DRAWING LIST ----
+       Who is in the world comes from "who" and outlives being out of view.
+       What is DRAWN comes from the state message, which since the room
+       started sending each player only what is near them holds the ships in
+       range and nothing else. */
+    ok("the crew count is everyone in the world", room.crew() === 2, `${room.crew()}`);
+    ok("nothing is drawn until a state message says where they are", room.others().length === 0);
+
+    sock!.deliver({ t: "s", n: 1, w: 0, E: [], C: [], P: [
+      ["s1", 0, 0, 100, 0, 0, 1, 0, 100],
+      ["s2", 0, 0, 120, 0, 0, 1, 0, 90],
+    ] });
     const others = room.others();
-    ok("everyone else is listed", others.length === 1, `${others.length}`);
+    ok("everyone else in view is listed", others.length === 1, `${others.length}`);
     ok("but not this ship itself", !others.some((p) => p.id === "s1"));
-    ok("with their name", others[0].name === "Alice", others[0].name);
+    ok("with their name, which came from the roster", others[0].name === "Alice", others[0].name);
     ok("their hull", others[0].ship === "space_SM_Ship_Stealth_02", others[0].ship);
     ok("and their paint", Array.isArray(others[0].paint) && others[0].paint!.length === 5);
+
+    /* Out of view and back again: they keep their name, which is the bug
+       this split was written for. */
+    sock!.deliver({ t: "s", n: 2, w: 0, E: [], C: [], P: [["s1", 0, 0, 100, 0, 0, 1, 0, 100]] });
+    ok("out of view, nothing is drawn for them", room.others().length === 0);
+    ok("and they are still counted as being in the world", room.crew() === 2);
+    sock!.deliver({ t: "s", n: 3, w: 0, E: [], C: [], P: [
+      ["s1", 0, 0, 100, 0, 0, 1, 0, 100],
+      ["s2", 0, 0, 120, 0, 0, 1, 0, 90],
+    ] });
+    ok("back in view, they still have their name and paint",
+       room.others()[0]?.name === "Alice" && Array.isArray(room.others()[0]?.paint),
+       room.others()[0]?.name);
     room.close();
   }
 

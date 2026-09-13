@@ -148,6 +148,10 @@ interface Seat {
   /** Self-inflicted damage allowed in the current second. */
   hurtWindow: number;
   hurtSpent: number;
+  /** What this seat was told about last tick, so something at the edge of a
+   *  range is kept rather than flickering. See KEEP in broadcastState. */
+  sawShips: Set<string | number>;
+  sawEnemies: Set<string | number>;
   /** Room clock until which this seat does triple damage, and when it last
    *  claimed the bonus, so the claim cannot simply be repeated. */
   bonusUntil: number;
@@ -208,6 +212,10 @@ interface Env {
 
 /* Scratch for the wingmen's aim, which is worked out once per round fired. */
 const _wingAim = new THREE.Vector3();
+/* And for weighing up how far away something happened. */
+const _evAt = new THREE.Vector3();
+/** The few things everybody is told about, wherever they are. */
+const GLOBAL_EVENTS = new Set(["waveStart", "dragon", "dragonGone"]);
 
 export class RebelsRoom {
   private seats = new Map<string, Seat>();
@@ -268,6 +276,7 @@ export class RebelsRoom {
       account: from, lastClaim: -99,
       gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, shieldMax: MAX_SHIELD, topSpeed: topSpeedFor(), lastBeam: -99,
       extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99, lastDock: -99, lastGear: -99, hurtWindow: -99, hurtSpent: 0, bonusUntil: -99,
+      sawShips: new Set(), sawEnemies: new Set(),
       /* Far enough back that the first claim in a fresh room is not inside
          the five-minute gap: the room clock starts at zero. */
       lastBonus: -1e9,
@@ -380,6 +389,10 @@ export class RebelsRoom {
       if (s.dead) {
         s.respawn -= DT;
         if (s.respawn <= 0) this.revive(s);
+        /* Twice a second while they wait, because this is the one message a
+           dead player needs and the rest of the tick is skipped when nobody
+           is flying. */
+        else if (this.tick % (HZ / 2) === 0) this.sendYou(s);
       }
     }
 
@@ -471,12 +484,23 @@ export class RebelsRoom {
     }
 
     if (evs.length > 0) {
-      /* Warnings are private: only the ship a round is aimed at hears its own.
-         Everything else goes to everybody. */
-      const shared = evs.filter((e) => e.k !== "incoming");
+      /* ---- YOU HEAR WHAT YOU CAN SEE ----
+         Three rules. Anything that happened TO you or BY you reaches you
+         wherever you are: a warning that a round is on its way, a hit you
+         took, a gem you picked up. A handful of things are the whole world's
+         business: a wave arriving, and the dragon. Everything else is a bang
+         somewhere, and a bang beyond the horizon is a sound from nowhere: it
+         used to be sent to everybody, so a player alone at a planet heard
+         every explosion at Earth. */
       for (const s of this.seats.values()) {
-        const mine = evs.filter((e) => e.k === "incoming" && e.who === s.id);
-        const list = mine.length > 0 ? [...shared, ...mine] : shared;
+        const eye = s.body.pos;
+        const list = evs.filter((e) => {
+          if (e.who === s.id) return true;
+          if (e.k === "incoming") return false;
+          if (GLOBAL_EVENTS.has(String(e.k))) return true;
+          const at = e.at as [number, number, number];
+          return inRange(eye, _evAt.set(at[0], at[1], at[2]), VIEW.events);
+        });
         if (list.length > 0) this.send(s, { t: "e", v: list as never });
       }
     }
@@ -593,6 +617,13 @@ export class RebelsRoom {
     /* Earnings survive death, as promised. Only the ship is lost. */
     void this.bank(s);
     this.refreshRoster();
+    /* ---- AND TELL THEM AT ONCE ----
+       The wait is the room's number, so the cockpit cannot know it until it
+       is sent. Without this the last player alive got no countdown at all:
+       the room stops ticking when nobody is flying, so the next gauge
+       message never came, and the cockpit offered LAUNCH AGAIN immediately
+       while the room still had the seat dead. */
+    this.sendYou(s);
     /* ---- EVERYONE DOWN: THE FIGHT STARTS OVER ----
        Geoff: "the game resets once all the players have died, or if no one
        is playing, it will start over. Otherwise the waves will just keep
@@ -840,13 +871,29 @@ export class RebelsRoom {
     if (!p || !f || f.lengthSq() < 1e-6) return this.strike(seat, "bad shot");
     f.normalize();
 
-    /* Fired from where the message says, PROVIDED that is within a few units
-       of where the room thinks they are. The room's copy of the position is
-       up to a report behind, and a round that leaves from where the ship
-       was fifty milliseconds ago reads as a gun that is off. A shot from
-       across the map is still refused. */
-    if (p.distanceTo(seat.body.pos) > 6) return this.snapBack(seat, "shot from elsewhere");
-    const from = p;
+    /* ---- WHERE A SHOT COMES FROM ----
+       From where the cockpit says, when that is anywhere near where the room
+       thinks the ship is, because the room's copy is up to a report behind
+       and a round that leaves from fifty milliseconds ago reads as a gun
+       that is off.
+ 
+       When it is NOT near, the shot is fired from the room's own position
+       rather than refused. Refusing was a disaster: the check was six units,
+       a ship at super boost covers two in a report and four more in a lag
+       spike, and one refused transform left the room's copy of the position
+       behind for good. From then on every shot, beam and torpedo was thrown
+       away with "shot from elsewhere", and a player watched their guns stop
+       working for the rest of the flight. Geoff, 2026-Sep-13: "I don't see
+       any bullets anymore. The beam doesn't show and so that's broken too...
+       Torpedoes still only explode inside the cockpit."
+ 
+       And it is never refused, at any distance. Firing from the room's own
+       position is always safe: the origin is a number the room chose, so a
+       client claiming to be anywhere gains nothing at all by it. Refusing
+       bought no safety and cost a player their guns. Where a ship IS gets
+       corrected in onTransform, which is where that belongs. */
+    const slack = Math.max(12, seat.topSpeed * 0.4);
+    const from = p.distanceTo(seat.body.pos) <= slack ? p : seat.body.pos.clone();
 
     /* The ship's own up when given, else away from the planet. */
     const shipUp = vec(m.u);
@@ -1205,7 +1252,30 @@ export class RebelsRoom {
        dozen seats that would be two dozen times the work for the same answer.
        Each row is kept beside the point it is at, and each seat then takes
        only the rows its own eyes reach. */
-    interface Row<T> { at: THREE.Vector3; row: T; only?: string; always?: true }
+    interface Row<T> { at: THREE.Vector3; row: T; only?: string; always?: true; key?: string | number }
+    /**
+     * Something already in view is kept in view a fifth further out.
+     *
+     * Without it, anything hovering at the edge of a range is sent on one
+     * tick and not the next, and a ship or a fighter at that distance
+     * flickers in and out. The seat remembers what it was told about last
+     * tick, which is all the memory this needs.
+     */
+    const KEEP = 1.2;
+    const sticky = <T>(rows: Array<Row<T>>, eye: THREE.Vector3, range: number, held: Set<string | number>) => {
+      const out: T[] = [];
+      const seen = new Set<string | number>();
+      for (const r of rows) {
+        const key = r.key;
+        const near = inRange(eye, r.at, range)
+          || (key !== undefined && held.has(key) && inRange(eye, r.at, range * KEEP));
+        if (r.always || near) {
+          out.push(r.row);
+          if (key !== undefined) seen.add(key);
+        }
+      }
+      return { out, seen };
+    };
     const pick = <T>(rows: Array<Row<T>>, eye: THREE.Vector3, range: number, id: string): T[] => {
       const out: T[] = [];
       for (const r of rows) {
@@ -1220,6 +1290,7 @@ export class RebelsRoom {
       if (!s.joined) continue;
       players.push({
         at: s.body.pos,
+        key: s.id,
         row: [
           s.id, r1(s.body.pos.x), r1(s.body.pos.y), r1(s.body.pos.z),
           r1(s.body.fwd.x), r1(s.body.fwd.y), r1(s.body.fwd.z),
@@ -1229,6 +1300,7 @@ export class RebelsRoom {
     }
     const enemies: Array<Row<unknown>> = c.enemies.map((e) => ({
       at: e.pos,
+      key: e.id ?? undefined,
       /* The dragon is an apparition the size of a house and it is there for
          ten seconds a minute at most: everybody sees it, wherever they are. */
       ...(e.dragon ? { always: true as const } : {}),
@@ -1295,12 +1367,16 @@ export class RebelsRoom {
        planet they could not see. */
     for (const s of this.seats.values()) {
       const eye = s.body.pos;
+      const pickedP = sticky(players, eye, VIEW.ships, s.sawShips);
+      const pickedE = sticky(enemies, eye, VIEW.enemies, s.sawEnemies);
+      s.sawShips = pickedP.seen;
+      s.sawEnemies = pickedE.seen;
       const state = {
         t: "s" as const,
         n: this.tick,
         w: c.wave?.n ?? 0,
-        P: pick(players, eye, VIEW.ships, s.id),
-        E: pick(enemies, eye, VIEW.enemies, s.id),
+        P: pickedP.out,
+        E: pickedE.out,
         ...(() => {
           const f = shots.filter((r) => {
             const own = (r as Row<unknown> & { owner?: string }).owner === s.id;

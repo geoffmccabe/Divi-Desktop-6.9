@@ -618,17 +618,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        and the whole thing starts again at wave one with no waiting. With others
        still flying it will instead be a ten second count, which is the room's
        decision to make rather than this one's. */
-    const everyoneDown = true;
-    if (everyoneDown) {
-      combat.enemies.length = 0;
-      combat.bullets.length = 0;
-      combat.torpedoes.length = 0;
-      combat.wave = null;
-      respawnAt = 0;
-      setHud({ wave: 0, respawnIn: 0 });
-    } else {
-      respawnAt = performance.now() + respawnWait() * 1000;
-    }
+    /* ---- THE WAIT IS THE ROOM'S TO SET ----
+       It clears its own sky when the last player alive goes down, and it
+       counts the seconds. The cockpit starts its own clock from the same
+       rule so the countdown is there immediately, and takes the room's
+       figure the moment it arrives. It used to set no wait at all, which
+       offered LAUNCH AGAIN straight away while the room still had the seat
+       dead: the ship then flew with a hull the room said was zero. */
+    combat.enemies.length = 0;
+    combat.bullets.length = 0;
+    combat.torpedoes.length = 0;
+    combat.wave = null;
+    respawnAt = performance.now() + respawnWait() * 1000;
+    setHud({ wave: 0, respawnIn: respawnWait() });
     setHud({ dead: true, score: 0 });
     if (rearOn) setRear(false);
     if (typeof document !== "undefined" && document.pointerLockElement === dom) {
@@ -777,15 +779,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (a <= AIM_DEAD) return 0;
       return Math.sign(v) * Math.min(1, (a - AIM_DEAD) / (AIM_FULL - AIM_DEAD));
     };
-    /* ---- THE REAR WINDOW DOES NOT STEER ----
-       While the crosshair is in it the ship flies straight, because the
-       crosshair is over its shoulder, not out in front. Without this,
-       looking behind you pushed the stick into the top right corner and the
-       ship spun. Geoff, 2026-Sep-12: "It needs to move straight forward
-       when the cursor is in the rear gun window." */
-    const aiming = rearOn && inRearWindow(cursor);
-    stick.aimX = aiming ? 0 : shape(cursor.x * 2 - 1);
-    stick.aimY = aiming ? 0 : -shape(cursor.y * 2 - 1);
+    /* ---- WHILE YOU ARE LOOKING BEHIND, YOU FLY STRAIGHT ----
+       The whole time the rear window is open, not just while the crosshair
+       is inside it. Zeroing it only inside the window was not enough and
+       Geoff caught it twice: the crosshair has to TRAVEL to the top right
+       corner to get there, and every inch of that journey was a hard turn
+       up and to the right. "Moving the mouse into the rear-view panel still
+       spins the ship around even though I told you to fix that."
+
+       The keyboard still flies the ship: arrows to steer, A and D, R and C,
+       Q and E. Pressing 7 again gives the mouse back. */
+    stick.aimX = rearOn ? 0 : shape(cursor.x * 2 - 1);
+    stick.aimY = rearOn ? 0 : -shape(cursor.y * 2 - 1);
   }
 
   function onMove(e: PointerEvent) {
@@ -1785,6 +1790,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             kind: e.kind as never, at: e.at, power: e.power, who: e.who,
             tier: e.tier, shield: e.shield, damage: e.damage, wave: e.wave,
             guarded: e.guarded, item: e.item, id: e.id,
+            /* Carried through, or a correction from the room would be
+               dropped on the way to the handler that obeys it. */
+            snap: (e as { snap?: true }).snap,
           })));
 
           /* ---- ANTI-CHEAT: THE GAUGES ARE THE ROOM'S ----
@@ -1838,7 +1846,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           /* Once. others() builds a fresh array each call. */
           const crew = room.others();
           if (peers) peers.draw(crew, camera);
-          setHud({ crew: crew.length + 1 });
+          /* How many are in the WORLD, not how many are on screen. */
+          setHud({ crew: room.crew() });
         } else if (peers) {
           peers.draw([], camera);
         }
@@ -1945,6 +1954,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               setHud({ flocks, note: "FLOCK DOWN", noteAt: performance.now() });
             }
           } else if (ev.kind === "denied") {
+            /* ---- WHERE THE ROOM SAYS YOU ARE ----
+               Obeyed, not argued with. Ignoring it left the room's copy of
+               the ship behind after any lag spike, and from then on every
+               shot was refused for being fired from somewhere else: the guns
+               simply stopped working. */
+            if ((ev as { snap?: true }).snap && flight) {
+              flight.pos.copy(ev.at);
+              flight.alt = flight.pos.length() - R;
+            }
             /* ---- THE SERVER SAID NO ----
                And the cockpit used to say nothing at all: the refusal was
                turned into an event that nothing handled, so a resupply the
@@ -2451,7 +2469,23 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
                stopped spawning. */
             dead: hud.dead,
             room: roomStatus,
-            crew: room ? room.others().length + 1 : 0,
+            crew: room ? room.crew() : 0,
+            /* ---- WHAT THE COCKPIT HAS TO DRAW ----
+               Not what the room has: what arrived and is in the lists the
+               drawing reads. "I don't see any bullets" is otherwise
+               indistinguishable from "nobody fired", and the two have very
+               different causes. */
+            drawing: {
+              bullets: combat.bullets.length,
+              beams: combat.beams.length,
+              torps: combat.torpedoes.length,
+              tracers: combat.tracers.length,
+              coins: combat.coins.length,
+              gems: combat.gems.length,
+              junk: combat.junk.length,
+              wings: room ? room.wings.length : 0,
+              peers: room ? room.others().length : 0,
+            },
             respawnIn: respawnAt > performance.now()
               ? Math.round((respawnAt - performance.now()) / 1000) : 0,
             audio: audioState(),
