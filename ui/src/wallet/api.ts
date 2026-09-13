@@ -608,6 +608,17 @@ export const fastSend = (address: string, amount: number, passphrase?: string) =
 export const buySkin = (payToAddress: string, amount: number, skinRef: string, passphrase?: string) =>
   invoke<string>("skin_buy", { payToAddress, amount, skinRef, passphrase: passphrase ?? null });
 
+// Skins this wallet has paid for, found by scanning its own outgoing
+// transactions for the tag `buySkin` attaches. `confirmations` of 0 means
+// the payment hasn't landed in a block yet.
+export interface SkinEntitlement {
+  skinRef: string;
+  txid: string;
+  confirmations: number;
+}
+export const skinEntitlements = (count?: number) =>
+  invoke<SkinEntitlement[]>("skin_entitlements", { count: count ?? null });
+
 // Live status of one wallet transaction, for the Fast Send tracker. Negative
 // `confirmations` means the node sees a conflicting (double-spent) transaction.
 export interface TxStatus {

@@ -133,3 +133,93 @@ pub fn buy(
 
     result
 }
+
+/// One purchase found while scanning the wallet's own outgoing transactions.
+#[derive(Debug, Clone)]
+pub struct SkinEntitlement {
+    pub skin_ref: String,
+    pub txid: String,
+    pub confirmations: i64,
+}
+
+/// Skins this wallet has paid for, newest first.
+///
+/// Walks recent SENT transactions and reads back the `SKINBUY1:` tag `buy()`
+/// attaches. A purchase is money WE sent out, unlike `payreq::inbox`'s
+/// notification-output trick for money coming IN, so this filters on "send"
+/// where that filters on "receive" -- otherwise the same shape: only
+/// transactions the wallet itself already knows about are examined, so this
+/// needs no chain scan and no `txindex`.
+pub fn entitlements(cfg: &NodeConfig, count: i64) -> Result<Vec<SkinEntitlement>, String> {
+    let rpc = RpcClient::new(cfg);
+    let txs = rpc.call("listtransactions", json!(["*", count.clamp(1, 500), 0]))?;
+    let empty = vec![];
+    let arr = txs.as_array().unwrap_or(&empty);
+
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for t in arr.iter().rev() {
+        if t["category"].as_str() != Some("send") {
+            continue;
+        }
+        let txid = match t["txid"].as_str() {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        if seen.contains(&txid) {
+            continue;
+        }
+        seen.push(txid.clone());
+
+        let full = match rpc.call("getrawtransaction", json!([txid, 1])) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let Some(vout) = full["vout"].as_array() else { continue };
+        let Some(skin_ref) = vout
+            .iter()
+            .find_map(|o| parse_memo(o["scriptPubKey"]["hex"].as_str().unwrap_or("")))
+        else {
+            continue;
+        };
+        out.push(SkinEntitlement {
+            skin_ref,
+            txid,
+            confirmations: t["confirmations"].as_i64().unwrap_or(0),
+        });
+    }
+    out.reverse();
+    Ok(out)
+}
+
+/// Pull a skin-purchase tag out of an OP_RETURN scriptPubKey, or None for
+/// anything that isn't one of ours. Mirrors `payreq::parse_request`'s
+/// push-length handling (single-byte push, or `OP_PUSHDATA1`).
+fn parse_memo(script_hex: &str) -> Option<String> {
+    if !script_hex.starts_with("6a") || script_hex.len() < 4 {
+        return None;
+    }
+    let payload_hex = match &script_hex[2..4] {
+        "4c" => {
+            if script_hex.len() < 6 {
+                return None;
+            }
+            &script_hex[6..]
+        }
+        _ => &script_hex[4..],
+    };
+    let bytes = unhex(payload_hex)?;
+    String::from_utf8_lossy(&bytes)
+        .strip_prefix(TAG)
+        .map(str::to_string)
+}
+
+fn unhex(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
