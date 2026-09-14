@@ -4,7 +4,7 @@
 // be reached or holds something the validator refuses, so a bad save can
 // never stop items dropping altogether.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../exchanges";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
 import { DEFAULT_DROP_CONFIG, validateDropConfig, type DropConfig } from "./dropCharts";
 
 const headers = {

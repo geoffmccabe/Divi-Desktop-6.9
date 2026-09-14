@@ -14,7 +14,10 @@ import {
   type FlockGroup,
 } from "./rebelsFlock";
 
-export const BULLET_SPEED = 120;      /* globe units per second */
+/* Doubled from 120 (Geoff, 2026-Sep-12: "make the bullets all 2x the current
+   velocity so they move faster and it's easier to hit things"). Every round
+   scales from this: the mini gun, the fighters', the drones'. */
+export const BULLET_SPEED = 240;      /* globe units per second */
 export const BULLET_LIFE = 2.2;
 export const BULLET_R = 0.16;         /* what it hits with */
 export const CONVERGE = 55;           /* where the two guns cross, in units ahead */
@@ -30,6 +33,8 @@ export const MINI_AMMO = 0.25;
 /** It keeps firing while the trigger is held, twenty times a second. */
 export const MINI_INTERVAL = 0.05;
 export const ENEMY_R = 1.05;          /* hit radius of a fighter */
+/** And of a wingman, which is drawn at half a ship. */
+export const WING_HIT_R = 0.9;
 export const DRAGON_R = 3.6;          /* and of the dragon: it is big */
 /** What a round has to come within. */
 export function enemyRadius(e: { drone?: true; dragon?: true }): number {
@@ -447,6 +452,16 @@ export const WARN_RANGE = 34;
 export const PLAYER_HIT_R = 1.4;
 
 export const TRACER_LIFE = 3;
+/**
+ * How long a streak is, in seconds of the round's own flight.
+ *
+ * The cockpit does not run the fight, so it has no history of any round: it
+ * is handed a list of positions and velocities once a tick. A trail from
+ * where a round was a moment ago to where it is now needs no history, which
+ * is why it is measured in time rather than kept as state. At the round's
+ * speed this is about ten units, ten fighters long.
+ */
+export const STREAK_SECONDS = 0.04;
 export const TRACER_MAX = 220;
 
 export interface Tracer {
@@ -460,6 +475,18 @@ export interface Tracer {
 }
 
 export interface Bullet {
+  /**
+   * This round, on the wire.
+   *
+   * A round has no decisions in it: it leaves a muzzle at a speed and flies
+   * straight until its life runs out or it hits something. So the server
+   * sends the SHOT once and every cockpit flies the round with this same
+   * file, instead of the server describing where five hundred rounds are
+   * twenty times a second. The id is what lets the server say "that one
+   * stopped early" when it hits something. See the room's broadcast and
+   * stepShownBullets below.
+   */
+  id?: number;
   pos: THREE.Vector3;
   vel: THREE.Vector3;
   life: number;
@@ -475,6 +502,14 @@ export interface Bullet {
    * be closest when the fighter comes apart.
    */
   owner?: string;
+  /**
+   * What this round does, against what the gun that fired it would do.
+   *
+   * A WINGMAN's rounds, at its tier's share: half of a whole one at T1, one
+   * and seven tenths at T5. Its owner is still credited with the kill, so
+   * this cannot be read off the owner. Absent means a whole round's worth.
+   */
+  scale?: number;
   /** From the mini gun: quarter damage, drawn smaller. */
   mini?: boolean;
   /** From a swarm drone: drawn as a pulsing red energy sphere rather than as a
@@ -491,6 +526,89 @@ export interface Bullet {
    be at its index this frame. See the controller for what that was costing. */
 let nextEnemyId = 1;
 export function newEnemyId(): number { return nextEnemyId++; }
+
+/* Rounds are numbered in one place, so the number is never skipped or
+   reused, and so "everything fired since I last spoke" is a comparison
+   rather than a list. Sixteen bits, because that is what the wire will
+   eventually carry and a wrap after sixty-five thousand rounds is a
+   fraction of a second's confusion at worst. */
+let nextBulletId = 1;
+export function newBulletId(): number {
+  nextBulletId = (nextBulletId + 1) & 0xffff;
+  return nextBulletId || 1;
+}
+export function resetBulletIdsForTests(): void { nextBulletId = 1; }
+
+/** Put a round in the air: numbered, listed, trailing, and announced. */
+export function pushBullet(c: CombatState, b: Bullet): Bullet {
+  b.id = newBulletId();
+  c.bullets.push(b);
+  c.fresh.push(b);
+  addTracer(c, b);
+  return b;
+}
+
+/**
+ * Rounds fired since the last time this was drained.
+ *
+ * Drained by the room once a tick and put on the wire. Symmetrical with the
+ * spent list, and safe across the sixteen-bit wrap in a way that "everything
+ * numbered above the last one I sent" would not be.
+ */
+export function takeFreshBullets(c: CombatState): Bullet[] {
+  const out = c.fresh;
+  c.fresh = [];
+  return out;
+}
+
+/** A round a cockpit was TOLD about: the server's number, kept. */
+export function showBullet(c: CombatState, b: Bullet): void {
+  c.bullets.push(b);
+  while (c.bullets.length > 900) c.bullets.shift();
+}
+
+/**
+ * Rounds that stopped early, by id, since the last time this was drained.
+ *
+ * A round that simply runs out of life needs no telling: every cockpit is
+ * counting the same life down. One that hits a fighter, a tower, a coin or
+ * the planet has to be called back, or it carries on across the sky in
+ * every cockpit that is drawing it.
+ */
+export function takeSpentBullets(c: CombatState): number[] {
+  const out = c.spent;
+  c.spent = [];
+  return out;
+}
+
+/**
+ * Fly the rounds a cockpit was told about.
+ *
+ * The drawing half of the same rule the server runs: move, count down, drop
+ * the dead ones. No hits are decided here, ever; the server says what was
+ * hit and says which rounds stopped.
+ */
+export function stepShownBullets(c: CombatState, dt: number): void {
+  for (let i = c.bullets.length - 1; i >= 0; i--) {
+    const b = c.bullets[i];
+    b.pos.addScaledVector(b.vel, dt);
+    b.life -= dt;
+    if (b.tracer) b.tracer.to.copy(b.pos);
+    if (b.life <= 0) {
+      if (b.tracer) b.tracer.live = false;
+      c.bullets.splice(i, 1);
+    }
+  }
+}
+
+/** Take a round out of the sky by id, because the server said it stopped. */
+export function dropBullet(c: CombatState, id: number): void {
+  const i = c.bullets.findIndex((b) => b.id === id);
+  if (i < 0) return;
+  const b = c.bullets[i];
+  if (b.tracer) b.tracer.live = false;
+  c.bullets.splice(i, 1);
+}
 
 export interface Enemy {
   id?: number;
@@ -584,6 +702,11 @@ export interface CombatEvent {
   kind: "enemyDown" | "towerHit" | "playerHit" | "bulletSpent" | "torpedoBlast"
       | "enemyHit" | "junkGone" | "enemyShot" | "coin" | "coinLost" | "coinHit" | "waveStart"
             | "flockDown" | "gem" | "gemHit" | "drop" | "dragon" | "dragonGone"
+      | "wingHit" | "wingDown"
+      /* Not the simulation's: the room refusing something a cockpit asked
+         for. It travels the same pipeline so that one place draws and
+         announces everything that happens to a player. */
+      | "denied"
       | "incoming" | "blocked";
   at: THREE.Vector3;
   /** How big a bang. 1 is a bullet strike, 3 is a fighter coming apart. */
@@ -605,6 +728,11 @@ export interface CombatEvent {
   id?: string;
   /** gem / drop of an ITEM: its catalogue key. */
   item?: string;
+  /** wingHit / wingDown: which of the owner's eight places it was. */
+  slot?: number;
+  /** denied only: `at` is where the room says this ship really is, and it is
+   *  to be obeyed. Room-originated, like the event kind itself. */
+  snap?: true;
   /** enemyHit only: damage actually landed, which is what scores. */
   damage?: number;
   /** enemyDown only: which of the seven it was. */
@@ -703,6 +831,10 @@ export interface CombatState {
   dragonClock: number;
   /** Gems in the world. In a room these are the room's and persist. */
   gems: Gem[];
+  /** Rounds that stopped early this tick, by id, and rounds fired this
+   *  tick. Both drained by the room and put on the wire. */
+  spent: number[];
+  fresh: Bullet[];
   /** What wrecks leave behind. The room and the cockpit both load the live
    *  charts over this default. */
   drops: DropConfig;
@@ -716,7 +848,7 @@ export function createCombat(): CombatState {
   return {
     bullets: [], torpedoes: [], enemies: [], junk: [], coins: [], tracers: [], events: [],
     beams: [],
-    wave: null, flocks: [], flockClock: 0, dragonClock: 0, gems: [], drops: DEFAULT_DROP_CONFIG,
+    wave: null, flocks: [], flockClock: 0, dragonClock: 0, gems: [], spent: [], fresh: [], drops: DEFAULT_DROP_CONFIG,
     kills: 0, tierKills: TIERS.map(() => 0), spawnAt: 2,
   };
 }
@@ -732,6 +864,11 @@ export function rollLaserDamage(): number {
  * Also does the knockback and the tumble, because they are the same event and
  * splitting them apart is how one of them ends up forgotten at a call site.
  */
+/** The damage multiplier for one shooter. */
+export function scaleFor(w: CombatWorld, owner: string): number {
+  return typeof w.damageScale === "function" ? w.damageScale(owner) : w.damageScale;
+}
+
 export function hurtEnemy(
   c: CombatState,
   e: Enemy,
@@ -824,7 +961,8 @@ export function hurtEnemy(
    dragon is the cockpit's. */
 export const DRAGON_CHECK_SECONDS = 60;
 export const DRAGON_CHANCE = 0.1;
-export const DRAGON_LIFE = 10;
+/* Geoff, 2026-Sep-12: "make the dragon last 1 minute so it lasts longer." */
+export const DRAGON_LIFE = 60;
 export const DRAGON_HP = 2000;
 export const DRAGON_SPEED = 2.5;
 export const DRAGON_ALT = [14, 40];
@@ -1077,9 +1215,7 @@ export function fireGuns(
   const target = new THREE.Vector3().copy(pos).addScaledVector(fwd, CONVERGE);
   for (const muzzle of m) {
     const vel = target.clone().sub(muzzle).normalize().multiplyScalar(BULLET_SPEED);
-    const b: Bullet = { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, owner };
-    c.bullets.push(b);
-    addTracer(c, b);
+    pushBullet(c, { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, owner });
   }
   return m;
 }
@@ -1142,9 +1278,7 @@ export function fireMini(
 ): void {
   const target = aimFrom.clone().addScaledVector(aimDir, CONVERGE);
   const vel = target.sub(muzzle).normalize().multiplyScalar(BULLET_SPEED * MINI_SPEED_MULT);
-  const b: Bullet = { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true, owner };
-  c.bullets.push(b);
-  addTracer(c, b);
+  pushBullet(c, { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true, owner });
 }
 
 /* ---- how good a shot each tier is ----
@@ -1222,11 +1356,9 @@ export function scatterAim(
 export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
   const aim = scatterAim(e.pos, at, aimErrorFor(e.cls.tier));
   const vel = aim.sub(e.pos).normalize().multiplyScalar(BULLET_SPEED * 0.6);
-  const b: Bullet = {
+  pushBullet(c, {
     pos: e.pos.clone().addScaledVector(vel, 0.02), vel, life: BULLET_LIFE * 1.4, hostile: true,
-  };
-  c.bullets.push(b);
-  addTracer(c, b);
+  });
   /* Reported so it can be HEARD where it happened. A shot from behind is the
      only warning a player gets that something is on their tail. */
   c.events.push({ kind: "enemyShot", at: e.pos.clone(), power: 1 });
@@ -1241,15 +1373,13 @@ export function droneFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
   const aim = scatterAim(e.pos, at, aimErrorFor(e.cls.tier));
   const vel = aim.sub(e.pos).normalize()
     .multiplyScalar(BULLET_SPEED * DRONE_BULLET_SPEED);
-  const b: Bullet = {
+  pushBullet(c, {
     pos: e.pos.clone().addScaledVector(vel, 0.02), vel,
     /* Slower rounds need longer to cover the same ground, or they would wink
        out short of a player they were aimed squarely at. */
     life: BULLET_LIFE * 1.9, hostile: true, orb: true,
     phase: Math.random() * Math.PI * 2,
-  };
-  c.bullets.push(b);
-  addTracer(c, b);
+  });
   c.events.push({ kind: "enemyShot", at: e.pos.clone(), power: 1 });
 }
 
@@ -1506,6 +1636,16 @@ export interface PlayerBody {
   hull?: Array<{ at: THREE.Vector3; r: number }>;
 }
 
+/** One wingman, as the fight sees it. */
+export interface WingBody {
+  /** The seat it flies for. */
+  owner: string;
+  /** Which of the eight places, so one hit can be told from another's. */
+  slot: number;
+  pos: THREE.Vector3;
+  hull: number;
+}
+
 export interface CombatWorld {
   /** Tower tips, straight off the map. */
   tips: THREE.Vector3[];
@@ -1521,11 +1661,25 @@ export interface CombatWorld {
    * shot whom, and the disagreement always favours whoever is lying.
    */
   players?: PlayerBody[];
+  /**
+   * The wingmen in the fight, so rounds can hit them.
+   *
+   * Positions only: the room holds the hull and does the taking-off, which
+   * is the same division of labour as for players. Absent when nobody flies
+   * any, which is most of the time.
+   */
+  wings?: WingBody[];
   /** The solo ship's capture reach (see clampReach). */
   reach?: number;
-  /** Multiplies everything the player's guns do. Three for a minute after
-   *  winning a stake on your node. */
-  damageScale: number;
+  /**
+   * Multiplies everything a player's guns do. Three for a minute after
+   * winning a stake on your node.
+   *
+   * A FUNCTION when more than one ship is in the fight, because the bonus
+   * belongs to a player and not to the world: the server passes one that
+   * looks up the shooter's seat. A plain number is the one-ship case.
+   */
+  damageScale: number | ((owner: string) => number);
 }
 
 /* The roster, with the solo case folded in. Reused rather than rebuilt, since
@@ -1614,6 +1768,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
       /* The round is spent: its trail must start fading now, like any other
          round's. Left "live" it would never fade at all. */
       if (b.tracer) b.tracer.live = false;
+      if (b.id) c.spent.push(b.id);
       c.bullets.splice(i, 1);
       continue;
     }
@@ -1629,6 +1784,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
     if (coined) {
       if (b.tracer) b.tracer.live = false;
+      if (b.id) c.spent.push(b.id);
       c.bullets.splice(i, 1);
       continue;
     }
@@ -1642,7 +1798,7 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
         const e = c.enemies[j];
         if (!segmentHit(from, b.pos, e.pos, enemyRadius(e))) continue;
         spent = true;
-        const scale = (b.mini ? MINI_DAMAGE : 1) * w.damageScale;
+        const scale = (b.mini ? MINI_DAMAGE : 1) * (b.scale ?? 1) * scaleFor(w, b.owner ?? "");
         hurtEnemy(c, e, rollLaserDamage() * scale, from, b.owner ?? "");
       }
       /* Wreckage is solid: shoot a piece and it goes. */
@@ -1672,6 +1828,21 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
           who: pl.id, guarded: !!pl.guard,
         });
         break;
+      }
+      /* ---- and the wingmen ----
+         A drone flying formation is a real body: a round meant for the ship
+         hits it instead when it is in the way, which is half of what having
+         one is for. The room holds their hulls, so this only says what was
+         hit and lets the room take it off. */
+      for (const wing of w.wings ?? []) {
+        if (spent) break;
+        if (wing.hull <= 0) continue;
+        if (!segmentHit(from, b.pos, wing.pos, WING_HIT_R)) continue;
+        spent = true;
+        c.events.push({
+          kind: "wingHit", at: b.pos.clone(), power: 1.2, damage: rollLaserDamage(),
+          who: wing.owner, slot: wing.slot,
+        });
       }
     }
 
@@ -1722,6 +1893,10 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
     if (spent || b.life <= 0) {
       if (b.tracer) b.tracer.live = false;
+      /* Only the ones that stopped EARLY are worth telling anybody about:
+         a round that ran out of life ran out in every cockpit at the same
+         moment, because they are all counting the same seconds. */
+      if (spent && b.id) c.spent.push(b.id);
       c.bullets.splice(i, 1);
     }
   }

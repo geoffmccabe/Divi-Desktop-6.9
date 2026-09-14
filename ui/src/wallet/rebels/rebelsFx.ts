@@ -10,7 +10,8 @@ import * as THREE from "three";
 import diviLogo from "../../assets/divi-coin.webp";
 import { DRONE_SIZE, droneClass, SHAPE_COUNTS, DRONE_TIERS } from "./rebelsFlock";
 import { SHIELD_SHOW, COIN_RADIUS } from "./rebelsCombat";
-import { itemByKey, itemMark, itemTierColour } from "./itemCatalog";
+import { itemByKey, itemTierColour } from "./itemCatalog";
+import { dropSkinMaterial, stepDropSkins } from "./rebelsMandalaSkin";
 
 const BULLET_CAP = 160;
 const SHARD_CAP = 320;
@@ -188,6 +189,8 @@ export interface Fx {
 
 export function createFx(): Fx {
   const group = new THREE.Group();
+  /** Seconds since this flight began, for the sealed spheres' pattern. */
+  let skinClock = 0;
   const bin: { dispose(): void }[] = [];
   const tex = glowTexture();
   bin.push(tex);
@@ -529,54 +532,29 @@ export function createFx(): Fx {
   gemGlow.renderOrder = 2;
   bin.push(gemGeo, gemMat, gemMesh, gemGlowMat, gemGlow);
 
-  /* ---- dropped items: the placeholders ----
-     Geoff: "like the Divi spheres, with T1 / T2 printed on them in the tier
-     colour." A ball the coin's size, the tier colour as its ground, the
-     tier and a one-letter mark printed round it, a glow behind it. One
-     texture per (tier, mark), made on first use and kept; one small pool
-     of meshes, because a screen never has more than a few dozen in view. */
+  /* ---- dropped items: the sealed spheres ----
+     A ball the coin's size, the tier colour as its ground, the SHIELD MANDALA
+     wrapped over both hemispheres and turning, and the tier printed twice on
+     opposite sides. See rebelsMandalaSkin.ts for how the pattern is wrapped
+     and how it moves for nothing.
+
+     What was here before printed "T1 D" at eighty-eight pixels onto a canvas
+     a hundred and twenty-eight tall and stretched it over the whole ball, so
+     the glyphs ran pole to pole and smeared. Geoff: "they have garbled Text on
+     them. Put instead just the T1 or T2 on each one, on opposite sides, and
+     don't put on any more text."
+
+     One material per tier, made on first use and kept; one small pool of
+     meshes, because a screen never has more than a few dozen in view. */
   const DROP_CAP = 48;
-  const dropGeo = new THREE.SphereGeometry(COIN_RADIUS * 1.25, 20, 14);
+  const dropGeo = new THREE.SphereGeometry(COIN_RADIUS * 1.25, 28, 20);
   const dropGlowGeo = new THREE.IcosahedronGeometry(1, 1);
-  const dropMats = new Map<string, THREE.MeshBasicMaterial>();
-  const dropMatFor = (tier: number, mark: string): THREE.MeshBasicMaterial => {
-    const id = `${tier}:${mark}`;
-    let m = dropMats.get(id);
-    if (m) return m;
-    const col = new THREE.Color(itemTierColour(tier));
-    if (typeof document === "undefined") {
-      m = new THREE.MeshBasicMaterial({ color: col });
-    } else {
-      const size = 256;
-      const canvas = document.createElement("canvas");
-      canvas.width = size; canvas.height = size / 2;
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.fillStyle = `#${col.getHexString()}`;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        /* Dark print on the light tiers, light print on the dark ones. */
-        const lum = col.r * 0.3 + col.g * 0.59 + col.b * 0.11;
-        ctx.fillStyle = lum > 0.55 ? "#101418" : "#f6f8ff";
-        ctx.font = "bold 88px system-ui, sans-serif";
-        ctx.textAlign = "center"; ctx.textBaseline = "middle";
-        /* Twice round, so a label faces the pilot whichever way it turns. */
-        ctx.fillText(`T${tier} ${mark}`, size * 0.25, size * 0.25);
-        ctx.fillText(`T${tier} ${mark}`, size * 0.75, size * 0.25);
-      }
-      const t = new THREE.CanvasTexture(canvas);
-      t.colorSpace = THREE.SRGBColorSpace;
-      bin.push(t);
-      m = new THREE.MeshBasicMaterial({ map: t, color: 0xffffff });
-    }
-    bin.push(m);
-    dropMats.set(id, m);
-    return m;
-  };
+  const dropMatFor = (tier: number): THREE.Material => dropSkinMaterial(tier);
   const dropPool: Array<{ ball: THREE.Mesh; glow: THREE.Mesh; glowMat: THREE.MeshBasicMaterial }> = [];
   const dropAt = (i: number) => {
     while (dropPool.length <= i) {
       const glowMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false });
-      const ball = new THREE.Mesh(dropGeo, dropMatFor(1, "?"));
+      const ball = new THREE.Mesh(dropGeo, dropMatFor(1));
       const glow = new THREE.Mesh(dropGlowGeo, glowMat);
       glow.renderOrder = 2;
       ball.visible = glow.visible = false;
@@ -942,7 +920,7 @@ export function createFx(): Fx {
         if (!g.item) continue;
         const spec = itemByKey(g.item);
         const slot = dropAt(n++);
-        slot.ball.material = dropMatFor(g.tier, spec ? itemMark(spec) : "?");
+        slot.ball.material = dropMatFor(g.tier);
         slot.ball.position.copy(g.pos);
         slot.ball.rotation.set(0, g.spin, 0);
         /* The egg is an oval; everything else a ball. */
@@ -1056,6 +1034,10 @@ export function createFx(): Fx {
 
     step(dt, camera) {
       lamp.position.copy(camera.position);
+      /* The mandala on every sealed sphere, moved on. One number, whatever is
+         in the sky: the pattern turns in the shader. */
+      skinClock += dt;
+      stepDropSkins(skinClock);
 
       /* debris */
       let live = 0;

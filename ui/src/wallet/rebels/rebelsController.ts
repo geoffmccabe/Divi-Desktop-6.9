@@ -11,25 +11,26 @@ import * as THREE from "three";
 import type { GlobeFlight } from "../GlobeMap";
 import {
   createFlight, stepFlight, MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS, MAX_VIEW,
-  shieldMaxFor, recharge, supercharge, isFull,
+  shieldMaxFor, isFull,
   GUARD_ABSORB, GUARD_SECONDS,
   type Flight, type Stick,
 } from "./orbitFlight";
 import {
   clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
-  createCombat, stepCombat, clearEvents, fireGuns, fireTorpedo, detonateOldest, gunMuzzles, fireBeam,
-  fireMini, miniMuzzle, spawnFleet,
-  STAKE_BONUS, STAKE_BONUS_MS, TIERS, TRACER_LIFE, startWave,
+  createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE, CONVERGE, JUNK_LIFE,
+  showBullet, dropBullet, stepShownBullets,
+  miniMuzzle,
+  STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS,
   type CombatState,
   type Enemy, type ShipClass,
 } from "./rebelsCombat";
-import { userWonRecently } from "../stakeWin";
-import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT, playerName } from "./rebelsScores";
+import { platform } from "./platform/current";
+import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import { installSky, skyTexture, type SkyHandle } from "./starfield";
 import { loadModel, unitCopy, modelClips } from "./spaceAssets";
-import { loadShip } from "./shipChoice";
+import { loadShip, DEFAULT_SHIP } from "./shipChoice";
 import { loadPaint, makeRepaintable, type PaintHandle } from "./shipColours";
 import {
   fitCollider, fitMounts, halfSpan, type Mounts, placeCollider, noseOf, HULL_FORWARD, HULL_UP, type HitSphere,
@@ -45,28 +46,34 @@ import { droneClass } from "./rebelsFlock";
 import { respawnSeconds, itemByKey } from "./itemCatalog";
 import { fetchDropConfig } from "./dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "./dropCharts";
-import { addSphere, heldCount, takeHeld } from "./rebelsInventory";
+import { addSphere, addHeld, heldCount, takeHeld } from "./rebelsInventory";
 import { REAR_KEY, inRearWindow, placeRearCamera, rearAim, tailOf, rearViewport } from "./rearGun";
+import { WING_SCALE } from "./rebelsWings";
 import { GAME_KEYS } from "./RebelsControls";
 import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
+import { pullFleet } from "./rebelsShips";
+import { applyToShip } from "./shipFleet";
 import {
   watchAudio, audioHealth, settleAudioFromGesture, watchOutputDevices, requestAudioRebuild, noteLevel,
+  resetAudioNow,
 } from "../../sound";
-import { createPeers, type Peers } from "./rebelsPeers";
+import { createPeers, paintFromWire, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
-import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
+import { weaponInSlot, weaponByKey, BEAM_SECONDS } from "./weaponCatalog";
 import {
-  hasWeapon, owned, earnPoints, spendable, flightExtras, gearKeys,
+  hasWeapon, owned, earnPoints, spendable, flightExtras, gearKeys, droneCounts, subscribeArmoury,
+  grant,
 } from "./rebelsArmoury";
 import {
   createFx, makeFighter, makeShieldRig, makeGuardShell,
   type Fx, type ShieldRig,
 } from "./rebelsFx";
+import { makeMandalaShield, type MandalaShield } from "./rebelsMandala";
 import {
   playGunSound, primeGunSound, startRechargeSound, stopRechargeSound,
   playTorpedoSound, playTorpedoBlast, playShipExplosion, resumeAudio,
-  playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce, audioState,
+  playMiniSound, playShotAt, setListener, playIncomingWarning, playBounce, playCoin, audioState,
   startBoostSound, stopBoostSound, setBoostPitch,
 } from "./rebelsAudio";
 import {
@@ -228,7 +235,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let dragonProto: THREE.Group | null = null;
   function ensureDragonRig(): void {
     if (dragonRig || !dragonProto || !scene) return;
-    const group = unitCopy(dragonProto);
+    const group = unitCopy(dragonProto, { skinned: true });
     group.scale.setScalar(DRAGON_SIZE);
     group.traverse((o) => {
       const m = o as THREE.Mesh;
@@ -271,6 +278,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const droneList: typeof combat.enemies = [];
   const orbList: typeof combat.bullets = [];
   let selfIp = "";
+  /** Pulls out the input the door plugged in at attach. */
+  let stopInput: (() => void) | null = null;
   let frameError = "";
   let frameErrors = 0;
   let diagAt = 0;
@@ -297,8 +306,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      released, and the next attach puts them back into the new scene. */
   let suspended = false;
   let attachCount = 0;
-  /* Flock members downed by this player, by fleet, when flying alone. */
-  const flockTally = new Map<number, number>();
   let flocks = 0;
   /* The map re-attaches within the same tick when it rebuilds, so a detach
      that is NOT followed by an attach almost at once was the panel closing,
@@ -306,6 +313,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      stopped. Nothing else can tell the two apart at detach time. */
   let endAt: ReturnType<typeof setTimeout> | null = null;
   let stopLoadoutWatch: (() => void) | null = null;
+  let stopArmouryWatch: (() => void) | null = null;
 
   /** The run has ended for real (the panel closed mid-flight). */
   function endSuspended(): void {
@@ -322,6 +330,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* One shield rig per fighter model, hanging off it. */
   const enemyShields: ShieldRig[] = [];
   let guardShell: ReturnType<typeof makeGuardShell> | null = null;
+  /** The cockpit's own view of the shield. See rebelsMandala.ts. */
+  let mandala: MandalaShield | null = null;
   /** How much of its size a tower keeps once a game is running. */
   const WORLD_SCALE = 0.5;
   let space: ReturnType<typeof createSpace> | null = null;
@@ -351,8 +361,129 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      into the top-right window from a camera behind the ship looking back;
      with the crosshair in the window, the trigger fires the double shot out
      of the tail through the crosshair, and the right button a torpedo. */
+  /* Wreckage and wingmen come off the wire ready to draw and are never moved
+     here, so one shared zero stands in for the fields the drawing ignores. */
+  const _zero = new THREE.Vector3();
+  /** The room's last word on the hull, so a drop during a resupply is not
+   *  hidden by the animation. */
+  let lastRoomShield = -1;
+  /** When the last refusal was shown, so a repeated one does not shout. */
+  let deniedAt = 0;
+  /** The wave the cockpit last announced, so a change is noticed once. */
+  let lastWaveSeen = -1;
+
+  /* ---- THE WINGMEN ----
+     Half-size copies of the hull they fly with, one model per owner and
+     place, kept between frames and hidden when their wingman is gone. The
+     server decides where they are and whether they are still there; this
+     only puts a model at the position it was given, facing the way its
+     owner faces (Geoff: "they always point in the same direction as you
+     do"). */
+  interface WingRig { group: THREE.Group; forModel: string }
+  const wingRigs = new Map<string, WingRig>();
+  const wingProtos = new Map<string, THREE.Group | null>();
+  function wingProto(model: string): THREE.Group | null {
+    const have = wingProtos.get(model);
+    if (have !== undefined) return have;
+    wingProtos.set(model, null);                  /* asked for; not here yet */
+    void loadModel(model)
+      .then((p) => { wingProtos.set(model, p); })
+      .catch(() => { wingProtos.delete(model); });
+    return null;
+  }
+  function drawWings(): void {
+    if (!scene || !room) { return; }
+    const seen = new Set<string>();
+    for (const wing of room.wings) {
+      /* Which hull it is a copy of, and which way that hull is pointing. */
+      const mine = wing.owner === room.me();
+      const owner = mine ? null : room.others().find((p) => p.id === wing.owner);
+      const model = mine ? loadShip() : owner?.ship || DEFAULT_SHIP;
+      const facing = mine ? flight?.fwd : owner?.fwd;
+      if (!facing) continue;
+      const key = `${wing.owner}:${wing.slot}`;
+      seen.add(key);
+      let rig = wingRigs.get(key);
+      if (rig && rig.forModel !== model) {
+        scene.remove(rig.group);
+        wingRigs.delete(key);
+        rig = undefined;
+      }
+      if (!rig) {
+        const proto = wingProto(model);
+        if (!proto) continue;                     /* still loading */
+        const group = unitCopy(proto);
+        /* Painted like the ship it flies with, which is the point of it
+           being a copy. */
+        try {
+          makeRepaintable(group).apply(mine ? loadPaint() : paintFromWire(owner?.paint));
+        } catch { /* an unpainted wingman is better than none */ }
+        group.scale.setScalar(SHIP_LENGTH * WING_SCALE);
+        scene.add(group);
+        rig = { group, forModel: model };
+        wingRigs.set(key, rig);
+      }
+      rig.group.visible = true;
+      rig.group.position.copy(wing.pos);
+      scratch.target.copy(wing.pos).addScaledVector(facing, 10);
+      scratch.m4.lookAt(wing.pos, scratch.target, wing.pos.clone().normalize());
+      rig.group.quaternion.setFromRotationMatrix(scratch.m4);
+    }
+    for (const [key, rig] of wingRigs) {
+      if (seen.has(key)) continue;
+      rig.group.visible = false;
+      scene.remove(rig.group);
+      wingRigs.delete(key);
+    }
+  }
   let rearOn = false;
+  /** When this cockpit last asked the room for a torpedo, so the next press
+   *  is a detonate while it could still be flying. */
+  let torpSentAt = 0;
   let afterRender: ((fn: ((r: THREE.WebGLRenderer, draw: (s: THREE.Scene, c: THREE.Camera) => void) => void) | null) => void) | null = null;
+  /* The map's compile, handed over so the game can warm its own shaders. */
+  let compileScene: (() => void) | null = null;
+  /**
+   * Compile every shader the game will need, now, while nothing is happening.
+   *
+   * A compile only reaches what can be SEEN, and almost everything the game
+   * draws sits hidden until it is used: the beam, the torpedo, the explosion,
+   * the drop, the tracer. So each one cost its own compile the first time it
+   * appeared, in the middle of a fight, and DFlow measured those at about a
+   * tenth of a second each. Here they are all shown for the length of one
+   * call, compiled together, and put back exactly as they were.
+   *
+   * Cheap to call twice: the second time finds every program already built.
+   */
+  function warmShaders(): void {
+    if (!compileScene || !scene) return;
+    const hidden: THREE.Object3D[] = [];
+    /* A compile walks the SCENE, so anything held to one side has to be put in
+       it for the call and taken out again. The fighter prototypes are exactly
+       that: seven models built once and cloned per enemy, never drawn
+       themselves. */
+    const lent: THREE.Object3D[] = [];
+    const show = (root: THREE.Object3D | null | undefined) => {
+      if (!root) return;
+      if (!root.parent && scene) { scene.add(root); lent.push(root); }
+      root.traverse((o) => { if (!o.visible) { o.visible = true; hidden.push(o); } });
+    };
+    try {
+      show(fx?.group);
+      show(space?.group);
+      show(guardShell?.mesh);
+      show(mandala?.group);
+      show(peers?.group);
+      for (const p of protos) show(p);
+      if (dragonProto) show(dragonProto);
+      compileScene();
+    } catch (e) {
+      dflow.note(`warm: ${String(e)}`);
+    } finally {
+      for (const o of hidden) o.visible = false;
+      for (const o of lent) scene?.remove(o);
+    }
+  }
   const rearCamera = new THREE.PerspectiveCamera(70, 1.6, 0.1, 4000);
   const _rearSize = new THREE.Vector2();
   function drawRearView(renderer: THREE.WebGLRenderer, draw: (s: THREE.Scene, c: THREE.Camera) => void): void {
@@ -380,6 +511,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function setRear(on: boolean): void {
     rearOn = on;
     afterRender?.(on ? drawRearView : null);
+    /* Closing the window with the crosshair still in the corner would hand
+       the stick a hard turn, so the aim is worked out again either way. */
+    aimFromCursor();
     setHud({ rear: on, rearAim: false });
   }
   /* Hull models by enemy id, and pools of hidden ones by tier. */
@@ -475,7 +609,16 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let hudAt = 0;
   /* Winning a stake on your own node makes your guns hit three times as hard
      for a minute. The map already tracks the win; this just asks it. */
-  const damageScale = () => (userWonRecently(STAKE_BONUS_MS) ? STAKE_BONUS : 1);
+  /* ---- the stake bonus ----
+     Only this wallet knows its node won a block, so it tells the server,
+     which grants the minute of triple damage and caps how often it will.
+     Sent once per win: the flag clears when the window closes. */
+  let bonusTold = false;
+  function tellBonus(): void {
+    const won = platform().wonStakeRecently(STAKE_BONUS_MS);
+    if (won && !bonusTold) { room?.bonus(); bonusTold = true; }
+    if (!won) bonusTold = false;
+  }
   /* Last frame's docking progress, so the station sound starts and stops on
      the edges rather than being re-triggered sixty times a second. */
   let wasDocking = false;
@@ -526,17 +669,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        and the whole thing starts again at wave one with no waiting. With others
        still flying it will instead be a ten second count, which is the room's
        decision to make rather than this one's. */
-    const everyoneDown = true;
-    if (everyoneDown) {
-      combat.enemies.length = 0;
-      combat.bullets.length = 0;
-      combat.torpedoes.length = 0;
-      combat.wave = null;
-      respawnAt = 0;
-      setHud({ wave: 0, respawnIn: 0 });
-    } else {
-      respawnAt = performance.now() + respawnWait() * 1000;
-    }
+    /* ---- THE WAIT IS THE ROOM'S TO SET ----
+       It clears its own sky when the last player alive goes down, and it
+       counts the seconds. The cockpit starts its own clock from the same
+       rule so the countdown is there immediately, and takes the room's
+       figure the moment it arrives. It used to set no wait at all, which
+       offered LAUNCH AGAIN straight away while the room still had the seat
+       dead: the ship then flew with a hull the room said was zero. */
+    combat.enemies.length = 0;
+    combat.bullets.length = 0;
+    combat.torpedoes.length = 0;
+    combat.wave = null;
+    respawnAt = performance.now() + respawnWait() * 1000;
+    setHud({ wave: 0, respawnIn: respawnWait() });
     setHud({ dead: true, score: 0 });
     if (rearOn) setRear(false);
     if (typeof document !== "undefined" && document.pointerLockElement === dom) {
@@ -685,12 +830,30 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (a <= AIM_DEAD) return 0;
       return Math.sign(v) * Math.min(1, (a - AIM_DEAD) / (AIM_FULL - AIM_DEAD));
     };
-    stick.aimX = shape(cursor.x * 2 - 1);
-    stick.aimY = -shape(cursor.y * 2 - 1);
+    /* ---- WHILE YOU ARE LOOKING BEHIND, YOU FLY STRAIGHT ----
+       The whole time the rear window is open, not just while the crosshair
+       is inside it. Zeroing it only inside the window was not enough and
+       Geoff caught it twice: the crosshair has to TRAVEL to the top right
+       corner to get there, and every inch of that journey was a hard turn
+       up and to the right. "Moving the mouse into the rear-view panel still
+       spins the ship around even though I told you to fix that."
+
+       The keyboard still flies the ship: arrows to steer, A and D, R and C,
+       Q and E. Pressing 7 again gives the mouse back. */
+    stick.aimX = rearOn ? 0 : shape(cursor.x * 2 - 1);
+    stick.aimY = rearOn ? 0 : -shape(cursor.y * 2 - 1);
   }
 
   function onMove(e: PointerEvent) {
     if (!dom || !flying) return;
+    /* ---- A PANEL HAS THE MOUSE ----
+       While one is open the pointer is a cursor for it, not a stick: moving
+       it must not fly the ship. Without this, freeing the pointer so the
+       help card could be hovered simply meant that hovering it flew you into
+       a planet, and with the pointer still locked there was no cursor to
+       hover with at all. Geoff, 2026-Sep-12: the help card "isn't
+       interactive like I asked for". */
+    if (panelOpen) return;
     const r = dom.getBoundingClientRect();
     if (locked) {
       /* With the rear window open the crosshair may go all the way into the
@@ -732,9 +895,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     if (!key) { setHud({ note: "NOTHING TO USE: OPEN A SPHERE IN YOUR INVENTORY (I)", noteAt: performance.now() }); return; }
     if (key === "recharge" && full) { setHud({ note: "ALREADY FULL", noteAt: performance.now() }); return; }
     if (!takeHeld(key, 1)) return;
-    if (room && room.status() === "live") room.use(key);
-    else if (key === "recharge") recharge(flight, flight.extras);
-    else supercharge(flight, flight.extras);
+    room?.use(key);
     playBounce();
     setHud({ note: key === "recharge" ? "INSTANT RECHARGE" : "SUPERCHARGE", noteAt: performance.now() });
   }
@@ -751,6 +912,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   }
   function setPanelOpen(on: boolean): void {
     panelOpen = on;
+    /* Centred either way: opening freezes the stick where it cannot turn,
+       and closing hands back a neutral one rather than whatever corner the
+       cursor was left in. */
+    cursor.x = 0.5;
+    cursor.y = 0.5;
+    aimFromCursor();
     if (typeof document === "undefined") return;
     if (on) {
       if (document.pointerLockElement === dom) document.exitPointerLock();
@@ -1002,12 +1169,56 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function runCheat(code: string) {
     const kind = code[1];
     const tier = Number(code[2]);
-    if (kind !== "1" || !(tier >= 1 && tier <= 6)) return;
     if (!flight) return;
-    spawnFleet(combat, tier, flight.pos, flight.fwd, { cheat: true });
+    /* The fight is the server's, so the server spawns these. */
+    if (kind === "1" && tier >= 1 && tier <= 6) {
+      room?.cheat(code.slice(1));
+    } else if (kind === "2" && tier === 1) {
+      /* ---- TEST: !21, the dragon, in front of you ----
+         Thirty-five units ahead, crossing left to right so it can be seen
+         and chased. It is a REAL dragon (it leaves its egg), so this is a
+         way to mint eggs and must go, or be gated, before eggs are worth
+         anything. Geoff asked for it to test, 2026-Sep-11. */
+      room?.cheat("21");
+    } else if (kind === "8" && tier >= 1 && tier <= 5) {
+      /* ---- TEST: !8t, one wingman of tier t, opened ----
+         Press it again for another, up to eight. Goes with the other test
+         cheats and comes out with them. */
+      addHeld(`drone${tier}`, 1);
+      setHud({ note: `DRONE T${tier} FITTED`, noteAt: performance.now() });
+    } else if (kind === "9" && tier >= 1 && tier <= 4) {
+      /* ---- TEST: !9t, a Beam of tier t, owned ----
+         Geoff asked for a Tier 1 beam to test with, 2026-Sep-13, so "!91".
+         NINE, not three: the leading digit says WHAT is being summoned and the
+         low digits are reserved for enemy kinds, one each. 1 is the fighter
+         flock and 2 is the dragon, so 3 belongs to the next enemy type Geoff
+         adds. Geoff: "!31 should be for spawning our third enemy type."
+         The line has to be walked in order for the number key to select it, so
+         everything below the tier asked for is granted too: the mini gun and
+         any lower beams. Goes with the other test cheats and comes out with
+         them: this is a free weapon and must be gated before weapons are worth
+         anything. */
+      grant(loadShip(), "mini");
+      for (let n = 1; n <= tier; n++) grant(loadShip(), `beam${n}`);
+      const spec = weaponByKey(`beam${tier}`);
+      setHud({ note: `${(spec?.name ?? "BEAM").toUpperCase()} FITTED: PRESS ${spec?.slot ?? 3}`, noteAt: performance.now() });
+    } else if (kind === "7" && tier === 7) {
+      /* ---- TEST: !77, a Rear Gun, opened, into the inventory ----
+         Same caveat: a free item, to be removed with the one above. */
+      addHeld("reargun", 1);
+      /* Ship upgrades work once FITTED (shipFleet.ts), so the test gun goes on the
+         ship being flown straight away, as a found one would after "Apply to Ship". */
+      const fit = applyToShip(loadShip(), "reargun");
+      setHud({ note: fit.ok ? "REAR GUN FITTED: PRESS 7" : `REAR GUN IN INVENTORY: ${fit.why.toUpperCase()}`, noteAt: performance.now() });
+    }
+  }
+  /** Typing in a box (a ship's name) is typing, not flying. */
+  function typing(e: KeyboardEvent): boolean {
+    const t = e.target as { tagName?: string; isContentEditable?: boolean } | null;
+    return !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || !!t.isContentEditable);
   }
   function onKeyDown(e: KeyboardEvent) {
-    if (!flying) return;
+    if (!flying || typing(e)) return;
     wakeAudio();
     const k = e.key.toLowerCase();
 
@@ -1043,9 +1254,25 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        and the secondary stays where the genre puts it: the right button. */
     if (k >= "1" && k <= "6") selectWeapon("primary", Number(k) - 1);
     if (k === "y") useHeld();
+    if (k === "0") {
+      /* ---- THE SOUND, FROM SCRATCH ----
+         There is one silence the game cannot measure (see resetAudioNow),
+         and this is the cure that used to mean quitting the app. A keypress
+         is a gesture, which is what a webview wants before it will let a new
+         context make a noise. */
+      resetAudioNow();
+      primeMusic();
+      pumpMusic();
+      setHud({ note: "SOUND RESTARTED", noteAt: performance.now() });
+    }
     if (k === REAR_KEY && flying) {
       if (!gearKeys(loadShip()).includes("reargun")) {
-        setHud({ note: "NO REAR GUN: FIND ONE AND OPEN IT (I)", noteAt: performance.now() });
+        setHud({
+          note: heldCount("reargun") > 0
+            ? "REAR GUN NOT FITTED: RIGHT-CLICK IT IN THE INVENTORY (I)"
+            : "NO REAR GUN: FIND ONE, OPEN IT AND FIT IT (I)",
+          noteAt: performance.now(),
+        });
       } else setRear(!rearOn);
     }
     if (k === "v" && flight) {
@@ -1068,6 +1295,17 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stick.guard = false; stick.fullStop = false;
     stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.lift = 0; stick.superBoost = false; stick.throttle = 0;
     stick.aimX = 0; stick.aimY = 0;
+    blurredAt = performance.now();
+  }
+  let blurredAt = 0;
+  /* ---- COMING BACK FROM SOMETHING ELSE ----
+     A call, a video, another app: that is when a machine moves its audio
+     output, and this webview gets no event to say so. Anyone away for more
+     than a moment gets a fresh context at their next press, which costs a
+     blink and is the difference between sound and none. */
+  function onFocus() {
+    if (blurredAt && performance.now() - blurredAt > 4000) requestAudioRebuild();
+    blurredAt = 0;
   }
 
   /**
@@ -1086,15 +1324,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       ? tipList[homeIndex].clone()
       : new THREE.Vector3(0, 0, R);
     const paint = loadPaint();
+    /* Who this player is, as the door answers it: the node and its chosen name
+       in the app. */
+    const who = platform().identity.joinFields(selfIp);
     room = joinRoom({
-      node: selfIp || playerName(),
-      name: playerName(),
+      node: who.node,
+      name: who.name,
+      ...(who.door ? { door: who.door } : {}),
+      ...(who.guest ? { guest: who.guest } : {}),
       home,
       ship: loadShip(),
       /* What this ship carries, so the room arms it the same way the solo
          game does: the minigun, the beams, the extra tubes and magazine. */
       gear: gearKeys(loadShip()).filter((k) => k !== "pulse"),
       reach: shipReach,
+      drones: droneCounts(),
       /* Flattened in the order the shader keeps the parts, which is the order
          the other end puts them back in. */
       paint: PART_ORDER.map((k) => [
@@ -1241,11 +1485,28 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           secondary: false, guard: false, mini: false,
         };
         const tFlight = performance.now();
+        const shieldsWere = flight.shields;
         const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
         dflow.add("flight", performance.now() - tFlight);
+        /* ---- flying into things ----
+           The ground and the towers are the flight model's rule: it owns the
+           bounce, the angle, the speed and the cost of grinding along the
+           surface, and there is one copy of that rule and it is here. The
+           HULL, though, is the server's number, so whatever the flight model
+           just took off is handed over and the local figure put back. Any
+           loss, not only the bang: most of what killing yourself on a planet
+           costs is the dragging afterwards, which raises no impact. */
+        const selfHurt = shieldsWere - flight.shields;
+        if (selfHurt > 0) {
+          flight.shields = shieldsWere;
+          room?.hurt(selfHurt);
+        }
         if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
         nearTower = res.nearTower;
         dockBlock = res.dockBlock;
+        /* The resupply finished: in company the room holds the gauges, so it
+           is told, checks the ship is at a tower, and refills. */
+        if (res.docked) room?.dock();
 
         /* ---- the ship you can see, and the camera behind it ----
            The hull sits at the flight position and the CAMERA pulls back from
@@ -1348,10 +1609,30 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           s.up.x, s.up.y, s.up.z,
         );
 
-        /* The guard rides with the cockpit, since it is around the player. */
-        if (guardShell) {
-          guardShell.mesh.position.copy(flight.pos);
-          guardShell.step(performance.now() / 1000, Math.min(1, flight.guardFor / (GUARD_SECONDS * 0.6)));
+        /* ---- the shield ----
+           Two pictures of one thing, and only ever one of them at a time.
+
+           From the COCKPIT it is the mandala: pale, half transparent, turning,
+           hung on the eye so the pilot looks through it. From the chase camera
+           it is the red wire sphere it has always been, because that is the
+           shield as seen from OUTSIDE and Geoff asked for that to stay.
+
+           Both are driven by the same strength, so they fade in and out with
+           the charge in exactly the same way. */
+        {
+          const guardStrength = Math.min(1, flight.guardFor / (GUARD_SECONDS * 0.6));
+          const inside = flight.view <= 0.01;
+          if (guardShell) {
+            guardShell.mesh.position.copy(flight.pos);
+            guardShell.step(performance.now() / 1000, inside ? 0 : guardStrength);
+          }
+          if (mandala) {
+            mandala.step(
+              performance.now() / 1000,
+              inside ? guardStrength : 0,
+              camera as THREE.PerspectiveCamera,
+            );
+          }
         }
 
         /* ---- the sky, and what you are near ----
@@ -1378,6 +1659,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            Fired from the edges of the frame at eye level, converging on the
            crosshair, which is why the muzzles come from the camera's frustum
            rather than from a fixed offset. */
+        /* ---- WHICH WAY THE GUNS POINT ----
+           Every primary weapon fires through the crosshair, and while the
+           crosshair is in the rear window the crosshair is BEHIND you, so
+           they all fire backwards: the pulse gun, the mini gun and the
+           beams alike. Only the pulse gun used to honour it, so a player
+           with the mini gun or a beam armed pressed the trigger in the rear
+           window and watched rounds leave the nose. Geoff, 2026-Sep-12:
+           "The rear gun doesn't seem to work." */
+        const rearAiming = rearOn && inRearWindow(cursor);
+        if (rearAiming !== hud.rearAim) setHud({ rearAim: rearAiming });
+        if (rearAiming) placeRearCamera(rearCamera, flight);
+        const backwards = rearAiming ? rearAim(rearCamera, cursor) : null;
+
         /* The mini gun: one round from the top right, along the line the
            POINTER is on rather than the ship's own axis. The ray is taken
            straight from the camera through the crosshair, so what is under the
@@ -1404,9 +1698,23 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              whether this ship had a round left, whether it may fire yet, and
              what it hits. Firing locally as well would put a round in the air
              that nobody else can see and that scores nothing. */
-          if (inRoom && room) room.fire("mini", muzzle, flight.fwd, aimDir);
-          else fireMini(combat, muzzle, camera.position, aimDir);
-          fx.muzzle(muzzle);
+          /* ---- WHERE THE MINI GUN IS AIMED ----
+             At the point under the crosshair, expressed from the SHIP, since
+             that is where the server fires from. It used to send the muzzle
+             as the position and the camera's own aim, so the server measured
+             the convergence from a point already a couple of units up and
+             out at the corner of the frame, and the stream landed up and to
+             the right of the crosshair. Geoff, 2026-Sep-12. */
+          if (backwards) {
+            /* Out of the tail, down the rear window's own line. */
+            const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
+            room?.fire("mini", tail, backwards, backwards, undefined, s.up);
+            fx.muzzle(tail);
+          } else {
+            const mark = camera.position.clone().addScaledVector(aimDir, CONVERGE);
+            room?.fire("mini", flight.pos, flight.fwd, mark.sub(flight.pos).normalize(), undefined, s.up);
+            fx.muzzle(muzzle);
+          }
           playMiniSound();
         }
 
@@ -1421,26 +1729,29 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           if (stick.firing && beamAt <= 0 && flight.ammo >= 1) {
             beamAt = BEAM_SECONDS;
             flight.ammo -= 1;
-            const from = shipNose(flight);
-            if (inRoom && room) room.fire("beam", from, flight.fwd, undefined, armed.key);
-            else fireBeam(combat, armed, from, flight.fwd, "", damageScale());
+            const from = backwards ? tailOf(flight.pos, flight.fwd, SHIP_LENGTH) : shipNose(flight);
+            room?.fire("beam", from, backwards ?? flight.fwd, undefined, armed.key);
             fx.muzzle(from);
             playGunSound();
           }
         }
 
-        const rearAiming = rearOn && inRearWindow(cursor);
-        if (rearAiming !== hud.rearAim) setHud({ rearAim: rearAiming });
-        if (res.fired && rearAiming) {
+        if (res.fired && backwards) {
           /* ---- the rear gun ----
-             The double shot leaves the tail and goes through the crosshair's
-             spot in the rear window. The room takes any direction; it fires
-             from where it knows the ship is. */
-          const aim = rearAim(rearCamera, cursor);
-          const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
-          if (inRoom && room) room.fire("main", flight.pos, aim);
-          else fireGuns(combat, tail, aim, flight.up, camera.fov, camera.aspect);
-          fx.muzzle(tail);
+             Geoff: "fire from the two sides of the mini-screen and go
+             towards wherever the mouse pointer is." So the muzzles are the
+             edges of the REAR camera's frame, as the main guns are the edges
+             of the main one, and the two streams cross on the crosshair's
+             spot in the window. The room is given the rear camera's place
+             (three units behind the ship, within its tolerance), the aim,
+             and the ship's up. */
+          const aim = backwards;
+          const rearUp = new THREE.Vector3(0, 1, 0).applyQuaternion(rearCamera.quaternion);
+          const muzzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
+          gunMuzzles(rearCamera.position, aim, rearUp, rearCamera.fov, rearCamera.aspect, muzzles);
+          room?.fire("main", rearCamera.position, aim, undefined, undefined, rearUp);
+          fx.muzzle(muzzles[0]);
+          fx.muzzle(muzzles[1]);
           playGunSound();
         } else if (res.fired) {
           /* ---- where the guns are ----
@@ -1469,8 +1780,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             muzzles = [new THREE.Vector3(), new THREE.Vector3()];
             gunMuzzles(flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, muzzles);
           }
-          if (inRoom && room) room.fire("main", flight.pos, flight.fwd);
-          else fireGuns(combat, flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, "", at);
+          room?.fire("main", flight.pos, flight.fwd, undefined, undefined, s.up);
           fx.muzzle(muzzles[0]);
           fx.muzzle(muzzles[1]);
           playGunSound();
@@ -1523,12 +1833,48 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
               escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
             });
           }
-          combat.bullets.length = 0;
-          for (const b of room.bullets) {
-            combat.bullets.push({ pos: b.pos, vel: b.vel, life: 1, hostile: b.hostile, mini: b.mini });
+          /* ---- THE ROUNDS ARE FLOWN HERE ----
+             The room says what was fired and what stopped early; everything
+             in between is this cockpit flying the same rounds with the same
+             file the room uses. It used to be handed five hundred positions
+             twenty times a second, which was two thirds of the wire. */
+          for (const s of room.takeShots()) {
+            showBullet(combat, {
+              id: s.id, pos: s.pos, vel: s.vel, life: s.life,
+              hostile: s.hostile, mini: s.mini,
+              ...(s.orb ? { orb: true as const, phase: Math.random() * Math.PI * 2 } : {}),
+            });
           }
+          for (const id of room.takeSpent()) dropBullet(combat, id);
+          stepShownBullets(combat, dt);
           /* Beams too: yours and everyone else's, drawn from the room's list
              so a beam is seen by the whole room and hits what the room says. */
+          /* ---- streaks ----
+             Every round in the air gets a line from where it was a fortieth
+             of a second ago to where it is now. Rebuilt each tick from the
+             wire rather than tracked, because the cockpit has no history of
+             a round it did not fire and cannot recognise one from one tick
+             to the next. */
+          combat.tracers.length = 0;
+          for (const b of combat.bullets) {
+            combat.tracers.push({
+              from: b.pos.clone().addScaledVector(b.vel, -STREAK_SECONDS),
+              to: b.pos,
+              life: TRACER_LIFE, hostile: b.hostile, mini: !!b.mini, live: true,
+            });
+          }
+          combat.torpedoes.length = 0;
+          for (const t of room.torpedoes) combat.torpedoes.push({ pos: t.pos, vel: t.vel, life: 1 });
+          /* Wreckage is the room's too, and it is SOLID: a round that hits a
+             piece is spent, so a cockpit that did not draw it watched shots
+             disappear against nothing. */
+          combat.junk.length = 0;
+          for (const j of room.junk) {
+            combat.junk.push({
+              pos: j.pos, rot: j.rot, vel: _zero, spin: _zero,
+              life: JUNK_LIFE, kind: j.kind as never,
+            });
+          }
           combat.beams.length = 0;
           for (const b of room.beams) combat.beams.push(b);
           /* Gems are the room's: drawn from its list, never simulated here.
@@ -1549,6 +1895,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             kind: e.kind as never, at: e.at, power: e.power, who: e.who,
             tier: e.tier, shield: e.shield, damage: e.damage, wave: e.wave,
             guarded: e.guarded, item: e.item, id: e.id,
+            /* Carried through, or a correction from the room would be
+               dropped on the way to the handler that obeys it. */
+            snap: (e as { snap?: true }).snap,
           })));
 
           /* ---- ANTI-CHEAT: THE GAUGES ARE THE ROOM'S ----
@@ -1558,51 +1907,81 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
              the whole reason the room exists is that it settles those numbers
              where nobody can reach them. */
           const g = room.gauges;
-          if (g) {
+          /* Not while a resupply is running: the gauges climb locally over
+             the four seconds and the room refills at the end, so taking the
+             room's numbers mid-way would pin them at empty until then.
+             DAMAGE is the exception. Anything that takes the hull down while
+             the animation is playing has to be shown, or a player can be
+             shot to pieces behind a bar that reads full and only find out
+             when they leave. */
+          const docking = flight.dock > 0 && flight.dock < 1;
+          const hurtWhileDocking = !!g && lastRoomShield >= 0 && g.shield < lastRoomShield - 0.5;
+          if (g) lastRoomShield = g.shield;
+          if (g && (!docking || hurtWhileDocking)) {
             flight.shields = g.shield;
             flight.ammo = g.ammo;
             flight.torpedoes = g.torps;
             flight.guards = g.guards;
             score = g.score;
             divi = g.divi;
+            /* ---- THE SERVER DECIDES WHEN YOU ARE DEAD ----
+               It holds the hull, so it is the only thing that can say. The
+               cockpit used to work this out from its own copy inside the
+               hit-event handler, which missed every death the handler did
+               not see: flying into the planet, for one, whose damage the
+               flight model works out and the server applies. */
+            if (g.dead && !hud.dead) die();
+            if (g.respawn > 0) respawnAt = performance.now() + g.respawn * 1000;
+          }
+          /* ---- WHICH WAVE IT IS ----
+             Read from the room's own state every tick rather than from the
+             announcement, because an announcement can be missed. When the
+             last player alive goes down the fight starts over at wave one,
+             and that reset happens on a tick with nobody flying, whose
+             events are cleared without being sent: the cockpit was never
+             told, and went on showing the wave it died in. Geoff,
+             2026-Sep-12: "instead of restarting the game like it should
+             have, it went directly to Wave 2." */
+          if (room.wave !== lastWaveSeen) {
+            lastWaveSeen = room.wave;
+            setHud(room.wave > 0
+              ? { wave: room.wave, waveAt: performance.now() }
+              : { wave: 0 });
           }
           /* Once. others() builds a fresh array each call. */
           const crew = room.others();
           if (peers) peers.draw(crew, camera);
-          setHud({ crew: crew.length + 1 });
+          /* How many are in the WORLD, not how many are on screen. */
+          setHud({ crew: room.crew() });
         } else if (peers) {
           peers.draw([], camera);
         }
 
         dflow.add("room", performance.now() - tRoom);
-        /* ---- fighters and their fire ----
-           Only when nobody else is running them. */
+        /* ---- THE FIGHT IS THE SERVER'S ----
+           Nothing here simulates it. There is one game and it runs in one
+           place; the cockpit flies the ship, draws what it is told and asks
+           for shots. This used to fall back to running the whole fight
+           locally whenever the connection was not up, which meant two copies
+           of every feature and, for anything hooked up to only one of them,
+           a bug that appeared or vanished depending on the network: the
+           tower resupply, torpedoes and the cheat keys all landed that way.
+           Geoff, 2026-Sep-12: "there's only ONE game, and it's always
+           multiplayer... There shouldn't be two different single or
+           multiplayer game modes." */
         const tCombat = performance.now();
-        if (!inRoom) stepCombat(combat, dt, {
-          tips: tipList,
-          playerPos: flight.pos,
-          playerFwd: flight.fwd,
-          /* In third person the HULL is the target, fitted from the model's own
-             geometry. In the cockpit there is nothing on screen to judge a near
-             miss against, so the single radius round the camera is both fairer
-             and cheaper. */
-          players: hullWorld.length > 0
-            ? [{ id: "", pos: flight.pos, fwd: flight.fwd, hull: hullWorld, reach: shipReach }]
-            : undefined,
-          reach: shipReach,
-          damageScale: damageScale(),
-        });
+        tellBonus();
 
         /* One button does both jobs. If a torpedo is already in the air the
            press sets it off; otherwise it launches the next one. That is what
            "control-click again to detonate" means with a single control. */
-        if (res.heavyPress && rearAiming) {
+        if (res.heavyPress && backwards) {
           /* A torpedo backwards, out of the tail. */
           if (flight.torpedoes > 0) {
-            const aim = rearAim(rearCamera, cursor);
+            const aim = backwards;
             const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
-            if (inRoom && room) { room.fire("torp", flight.pos, aim); }
-            else { flight.torpedoes -= 1; fireTorpedo(combat, tail, aim); }
+            room?.fire("torp", tail, aim);
+            torpSentAt = performance.now();
             playTorpedoSound();
           }
         } else if (res.heavyPress) {
@@ -1610,14 +1989,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           if (slot && !slot.ready) {
             setHud({ note: `${slot.name}: not yet fitted`, noteAt: performance.now() });
           } else {
-            const w = {
-              tips: tipList, playerPos: flight.pos, playerFwd: flight.fwd,
-              wanted: 0, damageScale: damageScale(),
-            };
-            if (!detonateOldest(combat, w) && flight.torpedoes > 0) {
-              flight.torpedoes -= 1;
-              /* Out of the tube at the nose, not out of the camera. */
-              fireTorpedo(combat, shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
+            /* ---- the torpedo is the server's ----
+               It flies there and comes back on the wire to be drawn. Press
+               once to launch, again while one of yours is still in the air to
+               set it off. */
+            const mineInAir = performance.now() - torpSentAt < TORPEDO_FUSE * 1000 && combat.torpedoes.length > 0;
+            if (mineInAir) { room?.detonate(); torpSentAt = 0; }
+            else if (flight.torpedoes > 0) {
+              room?.fire("torp", shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
+              torpSentAt = performance.now();
               playTorpedoSound();
             }
           }
@@ -1658,22 +2038,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           } else if (ev.kind === "enemyDown") {
             fx.boom(ev.at, 3, "hot");
             playShipExplosion();
-            /* ---- the flock tally, alone ----
-               In a room the room decides. Alone, the same rule is kept here
-               so the count on the HUD means the same thing: over half of a
-               fleet's members, and the kill lands when its last one falls.
-               Nothing here reaches the ledger. */
-            if (!inRoom && ev.fleet !== undefined && (ev.worth ?? 0) > 0) {
-              flockTally.set(ev.fleet, (flockTally.get(ev.fleet) ?? 0) + 1);
-              if ((ev.fleetLeft ?? 1) === 0) {
-                const mine = flockTally.get(ev.fleet) ?? 0;
-                flockTally.delete(ev.fleet);
-                if ((ev.fleetTotal ?? 0) > 0 && mine > (ev.fleetTotal ?? 0) / 2) {
-                  flocks += 1;
-                  setHud({ flocks, note: `FLOCK DOWN: ${mine} of ${ev.fleetTotal}`, noteAt: performance.now() });
-                }
-              }
-            }
+            /* The flock kill itself is the server's: it is the only thing
+               that sees every member and every shooter, and it arrives as its
+               own event (flockDown), below. */
             if (ev.tier) {
               lifetimeTiers[ev.tier - 1] = (lifetimeTiers[ev.tier - 1] ?? 0) + 1;
               setHud({ tierKills: lifetimeTiers.slice() });
@@ -1690,6 +2057,38 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             if (ev.who && room && ev.who === room.me()) {
               flocks += 1;
               setHud({ flocks, note: "FLOCK DOWN", noteAt: performance.now() });
+            }
+          } else if (ev.kind === "denied") {
+            /* ---- WHERE THE ROOM SAYS YOU ARE ----
+               Obeyed, not argued with. Ignoring it left the room's copy of
+               the ship behind after any lag spike, and from then on every
+               shot was refused for being fired from somewhere else: the guns
+               simply stopped working. */
+            if ((ev as { snap?: true }).snap && flight) {
+              flight.pos.copy(ev.at);
+              flight.alt = flight.pos.length() - R;
+            }
+            /* ---- THE SERVER SAID NO ----
+               And the cockpit used to say nothing at all: the refusal was
+               turned into an event that nothing handled, so a resupply the
+               server threw away still looked and sounded like a resupply.
+               Geoff, 2026-Sep-12: "I didn't see any indication that the
+               server was refusing the dock. It showed it as docked." Shown
+               now, and written down, because this is exactly where a bug
+               and a cheat look the same. */
+            const why = ev.who ?? "";
+            dflow.note(`refused: ${why}`);
+            if (performance.now() - deniedAt > 2000) {
+              deniedAt = performance.now();
+              setHud({ note: `REFUSED: ${why.toUpperCase()}`, noteAt: performance.now() });
+            }
+          } else if (ev.kind === "wingHit") {
+            fx.boom(ev.at, 0.9, "cold");
+          } else if (ev.kind === "wingDown") {
+            fx.boom(ev.at, 2.2, "hot");
+            playShipExplosion(0.8);
+            if (room && ev.who === room.me()) {
+              setHud({ note: "DRONE DOWN", noteAt: performance.now() });
             }
           } else if (ev.kind === "dragon") {
             playTorpedoBlast();
@@ -1718,10 +2117,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             }
           } else if (ev.kind === "coinHit" || ev.kind === "gemHit") {
             fx.boom(ev.at, 0.5, "cold");
-          } else if (ev.kind === "waveStart") {
-            /* Shown big for three seconds, then two seconds of fading. */
-            setHud({ wave: ev.wave ?? 0, waveAt: performance.now() });
           } else if (ev.kind === "coin") {
+            playCoin();
             /* Picked up. Kept for ever, not for this life: earnings survive
                being shot down. */
             divi += ev.value ?? 0;
@@ -1879,6 +2276,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         dflow.time("draw.tracers", () => fx!.drawTracers(combat.tracers, TRACER_LIFE));
         dflow.time("draw.coins", () => fx!.drawCoins(combat.coins));
         dflow.time("draw.gems", () => { fx!.drawGems(combat.gems); fx!.drawDrops(combat.gems); });
+        dflow.time("draw.wings", () => drawWings());
         const tDock = performance.now();
         /* The tether, drawn only while a resupply is running. */
         fx.drawDockLink(
@@ -1910,7 +2308,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
             kills: Math.floor(combat.kills),
             score,
             junk: combat.junk.length,
-            bonus: damageScale() > 1,
+            bonus: (room?.gauges?.bonus ?? 0) > 0,
             docked: flight.dock >= 1,
             nearTower,
             dockBlock,
@@ -1945,11 +2343,28 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       setHud({ points: spendable() });
       /* What the account has, folded in: a reinstall or a second machine gets
          its guns back. Then every change goes up. */
+      if (!stopArmouryWatch) {
+        /* A gun bought, a sphere opened or four things forged changes what
+           this ship carries, and the server has to be told or it takes
+           effect only on the next launch. */
+        stopArmouryWatch = subscribeArmoury(() => {
+          setHud({ points: spendable() });
+          room?.gear(gearKeys(loadShip()).filter((k) => k !== "pulse"), shipReach, droneCounts());
+        });
+      }
       if (!stopLoadoutWatch) {
         stopLoadoutWatch = watchLoadout();
         void loadLoadoutRemote().then((moved) => { if (moved) setHud({ points: spendable() }); });
+        /* The ships' names and fitted upgrades from the account, so a second
+           machine or a cleared browser gets them back. */
+        void pullFleet();
       }
-      void loadModel("rebels_dragon").then((p) => { dragonProto = p; }).catch((e) => dflow.note(`dragon model: ${String(e)}`));
+      /* The dragon arrives long after the rest, so it gets its own warm: its
+         skinned shader is a different program again, and the one time anybody
+         meets a dragon is the worst moment to compile it. */
+      void loadModel("rebels_dragon")
+        .then((p) => { dragonProto = p; warmShaders(); })
+        .catch((e) => dflow.note(`dragon model: ${String(e)}`));
       void fetchDropConfig().then((r) => {
         drops = r.config;
         combat.drops = r.config;
@@ -1962,6 +2377,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         stats = api.stats ?? null;
         afterRender = api.afterRender ?? null;
         afterRender?.(null);
+        compileScene = api.compile ?? null;
         rearOn = false;
         setHud({ rear: false, rearAim: false });
         /* The version is a build-time define; tests run without one. */
@@ -1975,6 +2391,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         tipList = ipList.map((ip) => api.tips.get(ip)!.clone());
         selfIp = api.selfIp ?? "";
         homeIndex = api.selfIp ? ipList.indexOf(api.selfIp) : -1;
+        /* ---- ONE GAME ----
+           The server runs the fight. It is joined the moment the map hands
+           over its scene, not when LAUNCH is pressed, so the connection is
+           up and settled before anybody flies. See the note on connectRoom.
+        */
+        connectRoom();
 
         savedNear = camera.near;
         savedFar = camera.far;
@@ -2006,6 +2428,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         sky = installSky(scene);
         guardShell = makeGuardShell();
         scene.add(guardShell.mesh);
+        mandala = makeMandalaShield();
+        scene.add(mandala.group);
         /* One prototype per tier, cloned per fighter. Seven models built once
            costs nothing and means a rare ship is the right colour from the
            frame it appears. */
@@ -2036,18 +2460,24 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           approach = 0;
         }
 
-        dom.addEventListener("wheel", onWheel, { passive: false });
-        dom.addEventListener("pointerleave", onLeave);
-        dom.addEventListener("pointermove", onMove);
-        dom.addEventListener("pointerdown", onDown);
-        dom.addEventListener("contextmenu", onContextMenu);
-        window.addEventListener("pointerup", onUp);
-        window.addEventListener("keydown", onKeyDown);
-        window.addEventListener("keyup", onKeyUp);
-        window.addEventListener("blur", onBlur);
-        if (typeof document !== "undefined") {
-          document.addEventListener("pointerlockchange", onLockChange);
-        }
+        /* The player's hands, plugged in by the door: keyboard and mouse in the
+           app and on the web (platform/desktopInput.ts), touch on a phone
+           later. The same handlers either way. A previous plug is pulled
+           first so a second attach can never leave two sets listening. */
+        stopInput?.();
+        stopInput = platform().input.attach(dom, {
+          wheel: onWheel,
+          pointerleave: onLeave,
+          pointermove: onMove,
+          pointerdown: onDown,
+          contextmenu: onContextMenu,
+          pointerup: onUp,
+          keydown: onKeyDown,
+          keyup: onKeyUp,
+          blur: onBlur,
+          focus: onFocus,
+          pointerlockchange: onLockChange,
+        });
 
         /* What this player has already killed, so the tallies are lifetime and
            not per session. Offline it falls back to the local copy. */
@@ -2065,6 +2495,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           towers: tipList.length,
           homeName: homeIndex >= 0 ? labelFor(ipList[homeIndex]) : "no node located",
         });
+        /* Last, with the whole game in the scene: build every shader while the
+           launch card is still up, rather than one stall at a time in a
+           fight. */
+        warmShaders();
       } catch (err) {
         /* Never throw out of here. This runs inside the map's own effect, and
            an exception would take the Node Map down with it. */
@@ -2142,7 +2576,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         const mus = musicState() as { playing?: string | null };
         noteLevel();
         dflow.audio((audioHealth() as { level: number }).level);
-        lastWatch = watchAudio(!!mus.playing && !hud.dead, 2);
+        /* ---- WHAT COUNTS AS "SOMETHING SHOULD BE AUDIBLE" ----
+           Flying, and not mid-death-fade. It used to be whether the MUSIC
+           reported itself playing, which is the one thing that cannot be
+           relied on here: when the whole bus died the music died with it,
+           `playing` went quiet, and the watchdog concluded that silence was
+           expected and went to sleep for the rest of the session. The
+           cockpit is never meant to be silent while a game is on. */
+        lastWatch = watchAudio((flying || !!mus.playing) && !hud.dead, 2);
         try {
           localStorage.setItem("dd69.rebels.diag", JSON.stringify({
             at: new Date().toISOString(),
@@ -2153,7 +2594,23 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
                stopped spawning. */
             dead: hud.dead,
             room: roomStatus,
-            crew: room ? room.others().length + 1 : 0,
+            crew: room ? room.crew() : 0,
+            /* ---- WHAT THE COCKPIT HAS TO DRAW ----
+               Not what the room has: what arrived and is in the lists the
+               drawing reads. "I don't see any bullets" is otherwise
+               indistinguishable from "nobody fired", and the two have very
+               different causes. */
+            drawing: {
+              bullets: combat.bullets.length,
+              beams: combat.beams.length,
+              torps: combat.torpedoes.length,
+              tracers: combat.tracers.length,
+              coins: combat.coins.length,
+              gems: combat.gems.length,
+              junk: combat.junk.length,
+              wings: room ? room.wings.length : 0,
+              peers: room ? room.others().length : 0,
+            },
             respawnIn: respawnAt > performance.now()
               ? Math.round((respawnAt - performance.now()) / 1000) : 0,
             audio: audioState(),
@@ -2175,6 +2632,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
     },
     detach() {
+      /* The map's compile belongs to the map's renderer and the scene it was
+         handed; both go away here. */
+      compileScene = null;
       suspended = flying && !hud.dead && hud.launched;
       if (suspended) {
         if (endAt) clearTimeout(endAt);
@@ -2189,19 +2649,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (flying && !hud.dead && !suspended) bank();
       stopRechargeSound();
       wasDocking = false;
-      if (dom) {
-        dom.removeEventListener("wheel", onWheel);
-        dom.removeEventListener("pointerleave", onLeave);
-        dom.removeEventListener("pointermove", onMove);
-        dom.removeEventListener("pointerdown", onDown);
-        dom.removeEventListener("contextmenu", onContextMenu);
-      }
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("blur", onBlur);
+      stopInput?.();
+      stopInput = null;
       if (typeof document !== "undefined") {
-        document.removeEventListener("pointerlockchange", onLockChange);
         if (document.pointerLockElement === dom) document.exitPointerLock();
       }
       locked = false;
@@ -2214,6 +2664,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (scene && guardShell) scene.remove(guardShell.mesh);
       guardShell?.dispose();
       guardShell = null;
+      if (scene && mandala) scene.remove(mandala.group);
+      mandala?.dispose();
+      mandala = null;
       if (scene) {
         for (const m of enemyMeshes) scene.remove(m);
         for (const r of enemyShields) scene.remove(r.group);
@@ -2246,6 +2699,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       });
       fx = null; protos = [];
       dragonRig = null;
+      wingRigs.clear();
+      wingProtos.clear();
       if (!suspended) {
         combat = freshCombat();
         flight = null;
@@ -2262,6 +2717,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     hud: () => hud,
     subscribe(fn) { listeners.add(fn); fn(hud); return () => { listeners.delete(fn); }; },
     launch() {
+      /* No server, no game. There is one fight and it is not here. */
+      if (!room || room.status() !== "live") {
+        setHud({ note: "CONNECTING TO THE FIGHT", noteAt: performance.now() });
+        return;
+      }
       flying = true;
       /* ---- THE WORLD GETS BIGGER ----
          Every tower drops to half its size the moment a game starts, and the
@@ -2279,7 +2739,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         const tips = scaleTowers(WORLD_SCALE);
         tipList = ipList.map((ip) => tips.get(ip)?.clone() ?? new THREE.Vector3());
       }
-      if (!combat.wave) startWave(combat, 1);
       /* This is a real click, which is the only thing a webview will start
          audio from. Decoding began back at attach; this is what lets it be
          heard. */
@@ -2287,6 +2746,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       primeGunSound();
       playGameplay();
       connectRoom();
+      /* ---- THE FIGHT STARTS HERE, NOT AT ATTACH ----
+         The socket has been up since the map handed over its scene, but the
+         room only puts this seat in the fight now. Flying alone that also
+         wipes the sky and starts at wave one, so pressing LAUNCH really is a
+         new game rather than a return to the one that was running while the
+         card was being read. */
+      room.fly();
       startAt(homeIndex);
       if (camera) {
         diveFromPos.copy(camera.position);
@@ -2313,8 +2779,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     },
     respawn() {
       if (respawnAt > performance.now()) return;
+      if (!room || room.status() !== "live") {
+        setHud({ note: "CONNECTING TO THE FIGHT", noteAt: performance.now() });
+        return;
+      }
       score = 0;
-      if (!combat.wave) startWave(combat, 1);
       playGameplay();
       startAt(homeIndex);
       flying = true;
@@ -2330,6 +2799,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       endSuspended();
       stopLoadoutWatch?.();
       stopLoadoutWatch = null;
+      stopArmouryWatch?.();
+      stopArmouryWatch = null;
     },
   };
 }

@@ -31,7 +31,12 @@ export function audioContext(): AudioContext | null {
 function getCtx(): AudioContext | null {
   try {
     if (!ctx) ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    if (ctx.state === "suspended") void ctx.resume();
+    /* Not just "suspended". WebKit has a state of its own, "interrupted",
+       which it uses when something else on the machine took the audio
+       hardware: a call, another app, the screen locking. A context left in
+       it renders nothing and never comes back on its own, and every
+       measurement on this side still looks healthy. */
+    if (ctx.state !== "running") void ctx.resume();
     return ctx;
   } catch {
     return null;
@@ -87,6 +92,10 @@ let rebuilds = 0;
 let silentFor = 0;
 let lastKickAt = 0;
 let lastRebuildAt = 0;
+/** The audio clock at the last check, and how often it has been found
+ *  stopped. See watchAudio. */
+let lastClock = -1;
+let stalls = 0;
 
 /** Seconds of expected-but-absent sound before the context is kicked, and
  *  before it is rebuilt. The kick is cheap; the rebuild re-decodes everything. */
@@ -111,7 +120,13 @@ export function kickAudio(): void {
   const c = ctx;
   if (!c) return;
   kicks++;
-  try { void c.suspend().then(() => c.resume()); } catch { /* then rebuild */ }
+  try {
+    /* A context that is not running wants resuming, not suspending: asking a
+       suspended or interrupted one to suspend is a no-op and the resume
+       never happens. */
+    if (c.state !== "running") void c.resume();
+    else void c.suspend().then(() => c.resume());
+  } catch { /* then rebuild */ }
 }
 
 /** Throw the context away and start again. Everyone who registered decodes
@@ -120,6 +135,11 @@ export function rebuildAudio(): void {
   rebuilds++;
   const old = ctx;
   ctx = null; master = null; analyser = null; samples = null;
+  /* The new context starts its clock at zero, so the old reading would look
+     like a clock that had gone backwards and the watchdog would call it a
+     stall and rebuild again, for ever. */
+  lastClock = -1;
+  silentFor = 0;
   try { void old?.close(); } catch { /* gone anyway */ }
   for (const fn of rebuildListeners) { try { fn(); } catch { /* one bad listener is not all of them */ } }
 }
@@ -140,7 +160,39 @@ let pendingFix: "none" | "kick" | "rebuild" = "none";
  * itself waits for settleAudioFromGesture().
  */
 export function watchAudio(expectSound: boolean, dtSeconds: number, nowSeconds = Date.now() / 1000): "none" | "kick" | "rebuild" {
-  if (!expectSound || !ctx) { silentFor = 0; return "none"; }
+  if (!expectSound || !ctx) {
+    silentFor = 0;
+    lastClock = ctx ? ctx.currentTime : -1;
+    return "none";
+  }
+
+  /* ---- THE AUDIO CLOCK IS THE HONEST WITNESS ----
+     A context's currentTime advances only while the stream behind it is
+     actually being rendered. If it stops while the context still says
+     "running", the stream has died: nothing will be heard again, and this is
+     the one failure the meter cannot see, because the graph is still
+     producing samples and they are going nowhere. Measured rather than
+     guessed at, which is what was missing when the sound kept dying in long
+     sessions. Geoff, 2026-Sep-12: "The sounds seems to disappear if the game
+     has been on for a while. If I restart it, then it comes back." */
+  const clock = ctx.currentTime;
+  const ran = lastClock >= 0 ? clock - lastClock : dtSeconds;
+  lastClock = clock;
+  if (ctx.state === "running" && ran < dtSeconds * 0.25) {
+    stalls++;
+    lastRebuildAt = nowSeconds;
+    silentFor = 0;
+    pendingFix = "rebuild";
+    return "rebuild";
+  }
+  /* And a context that has been taken away from us wants waking, now, not in
+     eight seconds of measured silence. */
+  if (ctx.state !== "running") {
+    lastKickAt = nowSeconds;
+    pendingFix = "kick";
+    return "kick";
+  }
+
   const level = outputLevel();
   if (level > 1e-4) { silentFor = 0; pendingFix = "none"; return "none"; }
   silentFor += dtSeconds;
@@ -173,6 +225,28 @@ export function watchOutputDevices(): void {
   } catch { /* no such thing here */ }
 }
 
+/**
+ * Throw the sound away and start again, NOW, from a gesture.
+ *
+ * There is one silence nothing here can measure. The meter sits on the bus,
+ * one node before the speakers, so it reads the graph rather than what comes
+ * out of the machine; the context can be running, its clock advancing, real
+ * varying signal arriving, and the sound still going nowhere, because
+ * something below the destination has moved. Geoff's black box read exactly
+ * that on 2026-Sep-12: running, level 0.0236 and changing, no stalls, no
+ * device changes, eighteen minutes of clock, and not a sound in the room.
+ *
+ * A webview usually has no device-change event to tell us, so this is the
+ * honest answer: a key the player can press that does what restarting the
+ * app did. Everything that decoded a sample decodes it again and whatever
+ * was playing starts again.
+ */
+export function resetAudioNow(): void {
+  rebuildAudio();
+  const c = getCtx();
+  if (c && c.state !== "running") void c.resume();
+}
+
 /** Ask for a fresh context at the next gesture, without a reason the meter
  *  can see. The game does this when its panel is reopened: if the sound had
  *  died in a way nothing here can measure, coming back to the game gets a
@@ -196,7 +270,7 @@ export function settleAudioFromGesture(): "none" | "kick" | "rebuild" {
   pendingFix = "none";
   if (did === "kick") kickAudio();
   else if (did === "rebuild") rebuildAudio();
-  else if (ctx && ctx.state === "suspended") void ctx.resume();
+  else if (ctx && ctx.state !== "running") void ctx.resume();
   return did;
 }
 
@@ -206,7 +280,15 @@ export function audioHealth(): Record<string, unknown> {
     state: ctx ? ctx.state : "none",
     level: Math.round(outputLevel() * 10000) / 10000,
     silentFor: Math.round(silentFor),
-    kicks, rebuilds,
+    kicks, rebuilds, stalls,
+    /* Whether this webview can even tell us the speakers changed. When it
+       cannot, deviceChanges being zero means nothing. */
+    deviceApi: typeof navigator !== "undefined" && !!navigator.mediaDevices,
+    /* What the machine says about its own output. On a dead sink these tend
+       to go to zero, which is the only hint from below the destination. */
+    outLatency: Math.round(((ctx as unknown as { outputLatency?: number })?.outputLatency ?? 0) * 10000) / 10000,
+    baseLatency: Math.round((ctx?.baseLatency ?? 0) * 10000) / 10000,
+    channels: ctx?.destination?.maxChannelCount ?? 0,
     pending: pendingFix,
     deviceChanges,
     history: history.slice(),
@@ -218,6 +300,8 @@ export function audioHealth(): Record<string, unknown> {
 
 /** Test hook. */
 export function resetSoundForTests(): void {
+  lastClock = -1;
+  stalls = 0;
   ctx = null; master = null; analyser = null; samples = null;
   kicks = 0; rebuilds = 0; silentFor = 0; lastKickAt = 0; lastRebuildAt = 0;
   pendingFix = "none"; deviceChanges = 0; history.length = 0;

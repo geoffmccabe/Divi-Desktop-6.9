@@ -16,7 +16,8 @@
 // anything, and two runs finishing at once would lose one of them. Direct writes
 // are refused by policy; the function is the only way in.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../exchanges";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
+import { platform } from "./platform/current";
 
 const KEY = "dd69.rebels.scores";
 const KEEP = 100;
@@ -45,7 +46,7 @@ interface Table { rows: ScoreRow[] }
 
 function read(): Table {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = platform().storage.getItem(KEY);
     if (!raw) return { rows: [] };
     const v = JSON.parse(raw) as Table;
     return Array.isArray(v?.rows) ? v : { rows: [] };
@@ -56,42 +57,19 @@ function read(): Table {
 
 function write(t: Table): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify(t));
+    platform().storage.setItem(KEY, JSON.stringify(t));
   } catch {
     /* Out of storage or blocked. A leaderboard is not worth an error. */
   }
 }
 
 /**
- * Who the player is.
- *
- * The node's own name when its owner has set one, because that is the name
- * they chose to be known by on the map. Otherwise the node's address and
- * country, which is what the map itself falls back to.
+ * Who the player is: the name others see, and the key the player's saved rows
+ * are filed under. Answered by the door the game runs behind (the app door reads
+ * the node's chosen name; see platform/app/identity.ts).
  */
 export function playerName(): string {
-  try {
-    const id = localStorage.getItem("dd69.nodeIdentity");
-    if (id) {
-      const parsed = JSON.parse(id) as { name?: string };
-      const name = (parsed.name ?? "").trim();
-      if (name) return name.slice(0, 32);
-    }
-  } catch {
-    /* fall through to the address */
-  }
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i);
-      if (!k || !k.startsWith("dd69.selfGeo.")) continue;
-      const g = JSON.parse(localStorage.getItem(k) || "{}") as
-        { ip?: string; country?: string };
-      if (g.ip) return [g.ip, g.country].filter(Boolean).join(" · ").slice(0, 40);
-    }
-  } catch {
-    /* nothing known */
-  }
-  return "this node";
+  return platform().identity.name();
 }
 
 /**
@@ -232,7 +210,7 @@ const DIVI_KEY = "dd69.rebels.divi";
 
 export function totalDivi(): number {
   try {
-    const n = parseFloat(localStorage.getItem(DIVI_KEY) || "0");
+    const n = parseFloat(platform().storage.getItem(DIVI_KEY) || "0");
     return Number.isFinite(n) ? n : 0;
   } catch {
     return 0;
@@ -252,7 +230,7 @@ export function spendDivi(amount: number): number {
   const have = totalDivi();
   const take = Math.min(have, amount);
   try {
-    localStorage.setItem(DIVI_KEY, (have - take).toFixed(4));
+    platform().storage.setItem(DIVI_KEY, (have - take).toFixed(4));
   } catch {
     /* storage blocked; the number is still right for this session */
   }
@@ -263,7 +241,7 @@ export function addDivi(amount: number): number {
   if (!(amount > 0)) return totalDivi();
   const next = totalDivi() + amount;
   try {
-    localStorage.setItem(DIVI_KEY, next.toFixed(4));
+    platform().storage.setItem(DIVI_KEY, next.toFixed(4));
   } catch {
     /* storage blocked; the number is still right for this session */
   }

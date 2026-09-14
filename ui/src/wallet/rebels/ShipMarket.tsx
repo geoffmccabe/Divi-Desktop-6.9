@@ -14,7 +14,12 @@ import { ShipPreview } from "./ShipPreview";
 import {
   PARTS, FACTORY, OVERLAYS, chipColour, loadPaint, savePaint, type PartKey, type ShipPaint,
 } from "./shipColours";
-import { loadShip, saveShip } from "./shipChoice";
+import { loadShip, saveShip, DEFAULT_SHIP } from "./shipChoice";
+import { shipName, setShipName, shipUpgrades, SHIP_NAME_MAX } from "./shipFleet";
+import { saveFlyingShip } from "./rebelsShips";
+import { itemByKey } from "./itemCatalog";
+import { platform } from "./platform/current";
+import { subscribeArmoury } from "./rebelsArmoury";
 import { WeaponStore } from "./WeaponStore";
 import { TestFire } from "./TestFire";
 import { ItemStore } from "./ItemStore";
@@ -27,13 +32,33 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
   /* Opens on the ship the player already flies rather than on the first in the
      list, so the Market is where their ship is rather than where the catalogue
      starts. */
-  const [pick, setPick] = useState(() => {
-    const want = loadShip();
+  /* A guest flies the first hull as it comes: no other hull, no paint, no name,
+     no upgrades, until they sign up (RebelsLimits). */
+  const limits = platform().limits;
+  const locked = !limits.customiseShips;
+  const [pick, setPickRaw] = useState(() => {
+    const want = locked ? DEFAULT_SHIP : loadShip();
     const i = all.findIndex((s) => s.id === want);
     return i >= 0 ? i : 0;
   });
+  const setPick = (i: number) => { if (!locked) setPickRaw(i); };
   const ship: Ship = all[pick] ?? all[0];
   useEffect(() => { saveShip(ship.id); }, [ship.id]);
+
+  /* ---- the ship's own name ----
+     Each hull the player flies can be named, apart from the player's own name.
+     Saved on this device as it is typed and to the account when the box is left. */
+  const [, bumpFleet] = useState(0);
+  useEffect(() => subscribeArmoury(() => bumpFleet((n) => n + 1)), []);
+  const [nameDraft, setNameDraft] = useState(() => shipName(ship.id));
+  useEffect(() => { setNameDraft(shipName(ship.id)); }, [ship.id]);
+  const commitName = () => {
+    if (locked) return;
+    const r = setShipName(ship.id, nameDraft);
+    if (r.ok) { setNameDraft(shipName(ship.id)); void saveFlyingShip(ship.id); }
+  };
+  const fitted = shipUpgrades(ship.id).map((k) => itemByKey(k)?.name ?? k);
+  const customName = shipName(ship.id);
 
 
   /* The paint. One scheme for the whole fleet rather than one per hull: every
@@ -56,7 +81,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
      their fleet. Debounced, because this fires on every frame of a slider drag
      and the row only has to end up right, not to be right at every instant. */
   useEffect(() => {
-    const t = setTimeout(() => { void saveShipRemote(ship.id, ship.tier, paint); }, 900);
+    const t = setTimeout(() => { void saveShipRemote(ship.id, ship.tier, paint, shipName(ship.id), shipUpgrades(ship.id)); }, 900);
     return () => clearTimeout(t);
   }, [ship.id, ship.tier, paint]);
 
@@ -107,9 +132,28 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
             window gets, so the failure is not available any more. */}
         <div className="ship-market-ship">
           <div className="ship-market-head">
-            <h2>{ship.name}</h2>
-            <div className="ship-market-tier">TIER {ship.tier}</div>
+            <h2>{customName || ship.name}</h2>
+            <div className="ship-market-tier">{customName ? `${ship.name.toUpperCase()} · ` : ""}TIER {ship.tier}</div>
             <p className="ship-market-role">{ship.role}</p>
+            <label className="ship-market-name">
+              <span>SHIP NAME</span>
+              <input
+                id="ship-market-name"
+                type="text"
+                value={nameDraft}
+                maxLength={SHIP_NAME_MAX}
+                placeholder={locked ? "Sign up to name your ship" : "Name this ship"}
+                disabled={locked}
+                onChange={(e) => setNameDraft(e.target.value)}
+                onBlur={commitName}
+                onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+              />
+            </label>
+            <p className="ship-market-fitted">
+              {fitted.length
+                ? <>FITTED: {fitted.join(" · ")}</>
+                : locked ? limits.why : "No upgrades fitted. Right-click an item in your inventory (I) to fit it to this ship."}
+            </p>
           </div>
 
           <div className="ship-market-stage">
@@ -187,7 +231,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
               hull, the dark panelling under it, the orange trim, the light edges
               and the engine glow. Not a guess — the atlas was sampled through a
               fighter's, a cruiser's and a station's own UVs to find out. */}
-          <div className="ship-paint">
+          {locked ? <p className="ship-market-locked">{limits.why}</p> : <div className="ship-paint">
             <div className="ship-paint-parts">
               {PARTS.map((part) => (
                 <button
@@ -263,7 +307,7 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
             )}
-          </div>
+          </div>}
           </>}
 
         </div>
@@ -284,7 +328,8 @@ export function ShipMarket({ onClose }: { onClose: () => void }) {
                       key={s.id}
                       className={i === pick ? "on" : ""}
                       onClick={() => setPick(i)}
-                      title={s.name}
+                      disabled={locked && s.id !== DEFAULT_SHIP}
+                      title={locked && s.id !== DEFAULT_SHIP ? limits.why : s.name}
                     >
                       {ships.length > 1 ? s.tier : "•"}
                     </button>

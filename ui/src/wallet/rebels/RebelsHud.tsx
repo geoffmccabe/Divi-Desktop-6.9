@@ -10,7 +10,7 @@ import { MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS } from "./orbitFlight";
 import { TIERS } from "./rebelsCombat";
 import type { RebelsController, HudState } from "./rebelsController";
 import { RebelsScoreboard } from "./RebelsScoreboard";
-import { RebelsControls, controlLines } from "./RebelsControls";
+import { RebelsControls, ControlsBoard } from "./RebelsControls";
 import { flightExtras } from "./rebelsArmoury";
 import { loadShip } from "./shipChoice";
 import { ShipMarket } from "./ShipMarket";
@@ -39,7 +39,10 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
   const [inv, setInv] = useState(false);
   /* The inventory needs the mouse: tell the controller so letting go of the
      pointer lock does not read as Escape, and it is taken back on close. */
-  useEffect(() => { ctl.panel(inv); }, [ctl, inv]);
+  /* Both of these are hovered and clicked, so both need the mouse. The help
+     card used to open with the pointer still captured by the game, which is
+     why hovering its keyboard did nothing: there was no cursor. */
+  useEffect(() => { ctl.panel(inv || help); }, [ctl, inv, help]);
 
   /* The hit flash: everything behind the cockpit inverts for a tenth of a
      second. Driven by a timestamp rather than a boolean so two hits in quick
@@ -93,7 +96,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         setInv((v) => !v);
         return;
       }
-      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+      if ((e.key === "?" || (e.key === "/" && e.shiftKey)) && !(e.target instanceof HTMLInputElement)) {
         e.preventDefault();
         setHelp((v) => !v);
       }
@@ -131,14 +134,24 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
      arriving while the last title is still up simply replaces it. */
   const [waveShown, setWaveShown] = useState(0);
   const [waveOpacity, setWaveOpacity] = useState(0);
+  /* ---- ON THE ANNOUNCEMENT, AND NOTHING ELSE ----
+     This used to watch the wave NUMBER as well. React runs the old effect's
+     cleanup before the new one, so the moment the number changed to zero
+     (which it does the instant you die, and between waves) the pending
+     timers were cancelled and the new run bailed out at the guard above
+     without setting any. The title then sat at full opacity for the rest of
+     the session. Geoff, 2026-Sep-12: "the WAVE 2 text in the middle of the
+     screen stayed there, blocking my view and didn't ever go away." */
+  const waveNow = useRef(0);
+  waveNow.current = hud.wave;
   useEffect(() => {
-    if (!hud.waveAt || !hud.wave) return;
-    setWaveShown(hud.wave);
+    if (!hud.waveAt || !waveNow.current) return;
+    setWaveShown(waveNow.current);
     setWaveOpacity(1);
     const hold = setTimeout(() => setWaveOpacity(0), 3000);
     const gone = setTimeout(() => setWaveShown(0), 5000);
     return () => { clearTimeout(hold); clearTimeout(gone); };
-  }, [hud.waveAt, hud.wave]);
+  }, [hud.waveAt]);
 
   const pct = (v: number) => `${Math.round(Math.max(0, Math.min(1, v)) * 100)}%`;
   /* One globe unit is about 64 km of real Earth, which is what makes this a
@@ -210,6 +223,13 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
 
       {flashing && <div className="orbit-invert" />}
 
+      {/* Death, said so it cannot be missed. Geoff, 2026-Sep-13: "when I died
+          there was no notification of that. It should say YOU HAVE DIED in large
+          letters." Up for as long as the ship is lost, over the recovery card. */}
+      {!hud.broken && hud.dead && (
+        <div className="orbit-died" role="alert">YOU HAVE DIED</div>
+      )}
+
       {/* The wave title: three seconds at full, then two fading out. */}
       {waveShown > 0 && (
         <div className="orbit-wave" key={hud.waveAt} style={{ opacity: waveOpacity }}>
@@ -220,6 +240,13 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       {hud.launched && !hud.dead && !hud.broken && hud.rear && (
         <div className={"orbit-rear" + (hud.rearAim ? " aiming" : "")}>
           <span>REAR{hud.rearAim ? ": FIRING BACKWARDS" : ""}</span>
+        </div>
+      )}
+      {/* The boresight, then the crosshair over it: where the nose points and
+          where you are aiming, both at once. */}
+      {hud.launched && !hud.dead && !hud.broken && (
+        <div className={"orbit-bore" + (hud.rearAim ? " rear" : "")} aria-hidden>
+          <i /><i /><i /><i /><b />
         </div>
       )}
       {hud.launched && !hud.dead && !hud.broken && <div className={"orbit-cross" + (hud.rearAim ? " rear" : "")} ref={crossRef} />}
@@ -317,6 +344,14 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
         <div className="orbit-note">{hud.note}</div>
       )}
 
+      {/* The connection, when it is not there. The fight is the server's, so
+          this is the difference between a quiet sky and a lost one. */}
+      {hud.launched && !hud.broken && hud.room !== "live" && (
+        <div className="orbit-offline">
+          {hud.room === "refused" ? "LOST THE FIGHT: RETRYING" : "RECONNECTING"}
+        </div>
+      )}
+
       <RebelsHealthBar />
 
       {help && <RebelsControls onClose={() => setHelp(false)} extras={flightExtras(loadShip())} />}
@@ -338,15 +373,22 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
               <h2>DIVI REBELS</h2>
               <p>{hud.homeName === "no node located" ? "No node of your own found, launching from the network." : `Launching from ${hud.homeName}.`}</p>
             </div>
-            <div className="orbit-launch-keys">
-              {controlLines({ extras: flightExtras(loadShip()) }).map((c) => (
-                <div key={c.keys}><b>{c.keys}</b><span>{c.what}</span></div>
-              ))}
-            </div>
+            {/* The keyboard, pointed at, rather than two dozen lines of
+                text beside the logo. */}
+            <ControlsBoard extras={flightExtras(loadShip())} />
           </div>
           <div className="orbit-buttons">
-            <button type="button" onClick={() => ctl.launch()} disabled={!hud.ready}>
-              {hud.ready ? "LAUNCH" : slow ? "GLOBE NOT READY" : "FINDING YOUR NODE…"}
+            {/* ---- ONE GAME ----
+                The fight runs on the server and nowhere else, so there is
+                nothing to launch into until the connection is up. */}
+            <button type="button" onClick={() => ctl.launch()} disabled={!hud.ready || hud.room !== "live"}>
+              {!hud.ready
+                ? (slow ? "GLOBE NOT READY" : "FINDING YOUR NODE…")
+                : hud.room === "live"
+                  ? "LAUNCH"
+                  : hud.room === "refused"
+                    ? "CANNOT REACH THE FIGHT"
+                    : "CONNECTING TO THE FIGHT…"}
             </button>
             <button type="button" className="orbit-secondary" onClick={() => setScores(true)}>
               HIGH SCORES
@@ -365,17 +407,18 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       )}
 
       {!hud.broken && hud.dead && !scores && (
-        <div className="orbit-card">
-          <h2>SHIP LOST</h2>
-          <p>Recovered to {hud.homeName}.</p>
+        <div className="orbit-card orbit-card-died">
+          <p>Your ship is lost. Recovered to {hud.homeName}.</p>
           <p className="orbit-keys">Run filed. Score resets from here.</p>
           <div className="orbit-buttons">
             <button
               type="button"
               onClick={() => ctl.respawn()}
-              disabled={hud.respawnIn > 0}
+              disabled={hud.respawnIn > 0 || hud.room !== "live"}
             >
-              {hud.respawnIn > 0 ? `REJOIN IN ${Math.ceil(hud.respawnIn)}` : "LAUNCH AGAIN"}
+              {hud.respawnIn > 0
+                ? `REJOIN IN ${Math.ceil(hud.respawnIn)}`
+                : hud.room === "live" ? "LAUNCH AGAIN" : "CONNECTING TO THE FIGHT…"}
             </button>
             <button type="button" className="orbit-secondary" onClick={() => setScores(true)}>
               HIGH SCORES

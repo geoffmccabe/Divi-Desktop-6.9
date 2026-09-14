@@ -374,3 +374,503 @@ phase ships on its own with tests, docs and a version.
   guns fire forward as before.
 - Tests: `scripts/run-rebels-reargun-tests.sh` (window, crosshair
   mapping, camera behind, aim back/right/up, tail, scissor rectangle).
+
+## TEST CHEATS TO REMOVE (2026-Sep-11, v69.9.29)
+
+- `!21` (solo only): a REAL dragon 35 units ahead, crossing left to right.
+  It leaves its egg, so this mints eggs. Remove or gate before eggs are
+  worth anything.
+- `!77`: an opened Rear Gun into the inventory. Same caveat.
+- `!9t` (t = 1 to 4): a Beam of tier t, OWNED, with everything below it
+  on the line granted too so the number key can select it. Geoff asked
+  for a Tier 1 beam to test with, 2026-Sep-13, so `!91`. This is a free
+  weapon and is the one on this list that matters most: it must go, or
+  be gated, before weapons carry value.
+
+**The leading digit is a namespace.** It says WHAT is being summoned, and
+the LOW digits belong to enemy kinds, one each: 1 is the fighter flock, 2
+is the dragon, and 3 is reserved for the third enemy type. Weapons and
+gear take the high digits instead. Geoff, 2026-Sep-13: "!31 should be for
+spawning our third enemy type."
+- `!8t`: one wingman of tier t, fitted. Press again for another.
+- The existing `!1x` flock cheat is harmless (worth nothing).
+
+## Fixed after Geoff's test (2026-Sep-12, v69.9.30)
+
+- **Guns off course in company**: fire directions crossed the wire rounded
+  to a TENTH per axis (`xyz`), bending a unit vector by up to five degrees;
+  at the guns' convergence that is several ship lengths. Now `dir()` at
+  four decimals for every direction (fire, aim, heading). The room also
+  fires from the position the cockpit reports (within six units of its own
+  copy) rather than its copy, which is up to a report behind.
+- **Tower did not refill in company**: the room held the gauges and had no
+  resupply at all. Now the cockpit sends `dock` when its four-second
+  resupply completes; the room checks the seat is within reach of a tower
+  tip and refills (shield, ammo, torpedoes, guards), paced. While the
+  resupply runs the cockpit keeps its own climbing gauges instead of the
+  room's.
+- **Cheats in company**: `!21` and `!1x` go to the room, which spawns the
+  same thing, so the shared fight and the solo fight test the same way.
+  "NOT IN A ROOM" is gone.
+- **Rear Gun for Geoff**: put directly on the account row (`ash falcone`,
+  items reargun 1); `!77` also fits one.
+- What "the room" is: the multiplayer server. The wallet joins it whenever
+  it is reachable, so ordinary play IS company play; the intent is that it
+  never shows. Where they differ is a bug.
+
+## Fixed after Geoff's second test (2026-Sep-12, v69.9.31)
+
+- **Guns from strange angles when rolled**: the room placed the two muzzles
+  using "away from the planet" as up, so a rolled ship's guns did not roll
+  with it. Every fire message now carries the ship's up (`u`), and the
+  room uses it. Solo was already right.
+- **Rear gun fired nothing visible**: it now fires from the two EDGES of
+  the rear window (the rear camera's frame, as the main guns are the edges
+  of the main frame) and the two streams cross on the crosshair's spot in
+  the window. In company the room is given the rear camera's place, the
+  aim and the up.
+- **Bullets 2x**: `BULLET_SPEED` 120 to 240; the mini gun, fighters' and
+  drones' rounds scale from it.
+- **Torpedoes in company**: they were launched locally, where nothing
+  stepped them (a flash, then the next press blew it up on the spot; the
+  rack came back from the room untouched). Now the room launches, flies and
+  detonates them; they ride the wire (`T`) to be drawn; press once to
+  launch, again while yours is in the air to set it off.
+- **Dragon never seen**: it is a SKINNED model; a plain clone shares the
+  prototype's bones, which are nowhere in the scene, so the mesh was drawn
+  at the origin, inside the planet. Cloned with its skeleton now
+  (`unitCopy(..., { skinned: true })`).
+
+## ONE GAME (2026-Sep-12, v69.9.32)
+
+Geoff: "there's only ONE game, and it's always multiplayer... There
+shouldn't be two different single or multiplayer game modes." He was right,
+and the second copy is gone.
+
+- The cockpit no longer simulates the fight at all. `stepCombat` is not
+  called there; the enemies, bullets, torpedoes, coins, gems, drops, waves
+  and the dragon are the server's, and the cockpit flies the ship, draws
+  what it is told and asks for shots. The compiler found the rest: every
+  local `fireGuns`, `fireMini`, `fireTorpedo`, `fireBeam`, `spawnFleet`,
+  `spawnDragon`, `startWave` and `detonateOldest` call is deleted.
+- The connection opens at attach, not at launch, and LAUNCH is refused
+  until it is live ("CONNECTING TO THE FIGHT"). A drop mid-flight shows
+  "RECONNECTING" over the cockpit.
+- Four things were broken BECAUSE of the two copies, all fixed by the move:
+  gear bought or forged mid-flight never reached the server (new `gear`
+  message, maxima move but the magazine does not refill); the stake
+  bonus, three times damage for a minute, applied only in the dead copy
+  (declared with a `bonus` message, per seat, capped to one claim every
+  five minutes, and the fight now asks for the scale per shooter); flying
+  into the planet did nothing, since the flight model's damage was
+  overwritten by the server's hull (any self-inflicted loss is now sent
+  with `hurt`, capped per second); and a death decided by the server was
+  never noticed by the cockpit at all (it honours `dead` and `respawn`).
+- Streaks behind rounds are back: the cockpit has no history of a round it
+  did not fire, so a trail is drawn from where each one was a fortieth of
+  a second ago (`STREAK_SECONDS`), rebuilt from the wire every tick.
+- The cockpit's own test now runs the REAL server in the same process over
+  a pair of sockets, so a shot travels the wire it travels in the app. It
+  is the one file excluded from the ui typecheck, because it pulls in the
+  worker; the server's project checks its own half.
+- STILL MISSING, found by this: wreckage. Dead fighters used to come apart
+  into three tumbling pieces, which only ever happened in the copy that is
+  gone. It is decoration, driven by the enemyDown event, and wants doing.
+
+## Fixed after Geoff's third test (2026-Sep-12, v69.9.33)
+
+- **The sound kept dying in long sessions.** Two causes, both measured now.
+  The watchdog only listened while the MUSIC reported itself playing, so
+  when the whole bus died the music died with it and the watchdog concluded
+  that silence was expected and slept for the rest of the session: it now
+  expects sound whenever a game is on. And it had no way to see the failure
+  it was built for, since the meter reads the bus rather than the speakers:
+  it now reads the AUDIO CLOCK, which only advances while the stream behind
+  the context is really being rendered, so a clock that has stopped is a
+  rebuild even when everything else looks healthy. WebKit's own
+  "interrupted" state (a call, another app, the screen locking) is handled
+  as well; it used to leave a dead context that said it was fine.
+- **The mini gun fired up and to the right.** The cockpit sent the MUZZLE as
+  its position, a couple of units up and out at the corner of the frame, and
+  the server measured the convergence point from there, so the stream
+  crossed above and beside the crosshair. It now sends the ship's position
+  and an aim expressed from the ship. The server's muzzle was also on the
+  ship's left rather than its right (forward crossed with up is the left).
+- **The rear gun did nothing, and the cursor spun the ship.** Only the pulse
+  gun honoured the rear window, so with the mini gun or a beam armed the
+  trigger fired out of the nose. Every primary weapon now fires backwards
+  while the crosshair is in the window. And the crosshair no longer steers
+  while it is in there: it is over your shoulder, not out in front, so the
+  ship flies straight. Tested end to end through the real server.
+- **The dragon lasts a minute** rather than ten seconds.
+- **DIVI picked up sounds like DreadRoot's coin** (its own sample, copied
+  into ui/src/assets/coin_hit_sound.mp3).
+
+## Built: Phase 4, the Drones (2026-Sep-12, v69.9.34)
+
+- **The rules, in one place** (`ui/src/wallet/rebels/rebelsWings.ts`, 28
+  tests): eight places filled left, right, top, bottom, then the corners; a
+  ring one and a half ship WIDTHS out (twice the half-span the capture ball
+  uses, kept between 5 and 26 units); one revolution every fifteen seconds
+  and only with two or more; half size; the tier shares (50 to 170% hull and
+  damage, 1 to 1.75x rounds), with a forged tier past the top carrying the
+  top's power.
+- **The server owns them.** The cockpit declares how many of each tier the
+  ACCOUNT holds (`drones` on join and on the gear message: counts, because
+  two T3 drones are two wingmen and a set of keys cannot say that). The room
+  builds the formation best tier first, places it every tick, and streams it
+  as `W`. A wingman already in a place keeps what is left of it when the
+  declaration has not changed, so a player cannot heal the formation by
+  saying the same thing twice.
+- **In unison**: one trigger, one round from each wingman with a round left,
+  from where it is, at the point its owner is aiming at, carrying its tier's
+  share as the new per-round `scale`. Credited to the owner. The mini gun and
+  the beams stay the player's alone: eight streams at twenty rounds a second
+  is a wall, not a wingman.
+- **They are real bodies**: a hostile round that would have hit the ship hits
+  the wingman when it is in the way (`wingHit`), the room takes it off that
+  wingman's hull, and at zero it is gone (`wingDown`). They come back whole
+  with the ship on respawn.
+- **Drawn** as a half-size copy of the owner's hull in the owner's paint,
+  pointing where the owner points.
+- **Also fixed here**: wreckage. The room's junk is SOLID (a round that hits
+  a piece is spent) and was never sent, so shots died against nothing the
+  player could see. It rides the wire now as `J` and is drawn.
+- Test cheat `!8t` fits one wingman of tier t; press again for another.
+  Comes out with the other test cheats.
+- NOT done: enemies still aim at ships rather than choosing wingmen as
+  targets; a wingman is hit only when it happens to be in the line of fire.
+
+## Audit: the help card (2026-Sep-12, v69.9.35)
+
+Geoff asked for: "show the keyboard layout on the top, and when mouse-over
+the various keys, it puts in bold the explanations below. The explanations
+should be in groups like WASD all highlight together. QE together, RC
+together, and TAB/SHIFT as 2x and 1x Boost."
+
+What was wrong, and is now fixed:
+
+1. **The hovering could not work at all in flight.** The card opens while
+   the pointer is locked to the game, so there was no cursor to hover with,
+   and mouse movement flew the ship instead. It now frees the pointer the
+   way the inventory does. Freeing it alone was not enough: an unlocked
+   pointer STEERS, so hovering the card would have flown you into a planet.
+   While any panel is open the pointer no longer touches the stick, and the
+   aim is centred as it opens and closes. That bug was in the inventory too.
+2. **WASD was two groups**, throttle and slide, so hovering W lit only W and
+   S. It is one group now, as asked.
+3. **SHIFT and TAB were two groups.** One now, giving 1x and 2x in one line.
+4. **The R and C line quoted the wrong number.** It was still reporting the
+   horizontal strafe multiplier after Vertical Strafe items landed, so a
+   player with a 2x horizontal and no vertical was told the wrong figure.
+5. **The mouse had no cap on the keyboard**, so its line was the one thing
+   on the card that nothing above could light.
+6. Live caps and lines now show a pointer cursor, and the hovered line gets
+   a bar and a tint as well as bold, which is findable in a list this long.
+
+QE and RC were already correct. The long list itself is per the brief ("the
+explanations below" that hovering bolds), so it stays: what was broken was
+the interaction, not the presence of the list.
+
+Covered by scripts/run-rebels-controls-tests.sh, which asserts the four
+groupings by name, that every line has a cap that lights it, and that a 2x
+strafe, a 3x vertical strafe and a 3x boost item each change the words.
+
+## Fixed: the tower was not really refilling anything (2026-Sep-12, v69.9.36)
+
+Geoff: "I ran out of ammo so I went back and recharged on my node tower.
+Then I flew away from the tower and suddenly it said SHIP LOST... I should
+have been at 100% hull." And: "the charging happens with sound and visuals
+but it's not actually replenishing my stats."
+
+The room measured docking against its OWN tower list, and NOTHING has ever
+filled that list in: `setTips` exists on the server and no code anywhere
+calls it, so the list was empty, every dock was refused with "not at a
+tower", and the resupply a player watched was the cockpit's four-second
+animation and nothing else. The moment the animation stopped suppressing
+the gauges, the server's real numbers came back: the same empty magazine
+and the same battered hull the player had flown in with. Fly away from
+there and the next hit is the last one.
+
+- Docking is now measured to the tip of the player's OWN tower, which they
+  report when they join, and to its foot as well, since launching halves
+  every mast under them. That is also the rule the flight model already
+  follows: nodes cluster, so "the nearest tower" is often a neighbour's.
+- The room never needs the whole map for this, which is thousands of
+  towers and not something to put on a wire.
+- And damage during a resupply is no longer hidden: the cockpit ignores the
+  room's gauges while the animation climbs, but takes them at once if the
+  hull DROPS, so nobody is shot to pieces behind a bar that reads full.
+- Still true, and separate: the room has no tower geometry, so enemy fire
+  never hits a tower and the map's masts are not obstacles in the shared
+  fight. Worth a wire message one day; it is not what killed anybody.
+
+## Also: the sound, one more time (2026-Sep-12, v69.9.36)
+
+The black box from Geoff's silent session read: context running, clock
+advanced 1110 seconds, level 0.0236 and varying, no stalls, no kicks, no
+rebuilds, no device changes. Everything the game can measure was alive, so
+the silence is below the last point it can see, between the audio
+destination and the speakers. This webview appears to have no
+device-change API at all, so a machine moving its output is invisible to
+us; `deviceApi` is now recorded so that is provable rather than assumed.
+
+- `0` restarts the sound from scratch: a brand new context, every sample
+  decoded again, the music restarted. What quitting the app used to do.
+- Coming back from another application after more than a few seconds arms
+  a rebuild for the next keypress, since that is when a machine moves its
+  audio and we get no event to say so.
+- A rebuild now clears the audio clock it watches, or the fresh context's
+  clock starting at zero would read as a stall and rebuild for ever.
+
+## Fixed: the wave, and silent refusals (2026-Sep-12, v69.9.36)
+
+- **The WAVE title stuck on screen for the rest of the session.** Its timers
+  were hung off the wave NUMBER as well as the announcement. React runs the
+  previous effect's cleanup before the next one, so the instant the number
+  changed to zero (which it does the moment you die, and between waves) the
+  pending timers were cancelled and the next run bailed out at its guard
+  without setting new ones. It now hangs off the announcement alone.
+- **The cockpit never read the room's wave number.** It only ever learned it
+  from an announcement, and the announcement that matters most is the one it
+  cannot receive: when the last player alive goes down the fight starts over
+  at wave one, on a tick with nobody flying, whose events are cleared without
+  being broadcast. So after dying alone a player carried on being shown the
+  wave they died in. The number is now read from the room's state every tick,
+  which is authoritative and cannot be missed, and any change flashes the
+  title.
+- **A refusal from the room reached nobody.** It was turned into an event
+  that no handler in the cockpit matched, so it vanished: a resupply the room
+  threw away still looked and sounded exactly like a resupply. Geoff: "I
+  didn't see any indication that the server was refusing the dock. It showed
+  it as docked." Refusals now show in the cockpit and go into the black box.
+  That alone would have made the tower bug obvious in seconds.
+
+## Fixed: the keyboard picture and the DFlow panel (2026-Sep-13, v69.9.41)
+
+Geoff: "you have done the keyboard design wrong. Shift is where Caps Lock
+should be. And Shift is too wide. QAZ should all be stacked vertically in the
+design, not offset by one. Also give me a BEAM Tier 1 so I can test it. Also
+the dflow panel is jumping up and down because its height is shifting."
+
+- **The letters could never line up.** Each row is a flex row that stretches
+  to the full width of the card, so two rows only share a column when they
+  hold the same number of units, and they did not: the number row held ten,
+  the row under TAB held eight and a half, the home row six and a half. The
+  home row was therefore drawn with wider keys than the row above it and
+  every letter sat in its own place. Fixed by padding each row to ROW_UNITS
+  with a blank spacer, COMPUTED from the row rather than typed in, so a key
+  added later cannot knock the columns out again.
+- **SHIFT sat where CAPS LOCK belongs**, and was 2.1 units wide against 1.6
+  for TAB. There is now a dead CAPS cap holding the home row and SHIFT is on
+  the row below it, the same width as TAB, with Z beside it. Q, A and Z are
+  all 1.6 units from the left edge, which is what the test measures.
+- **The DFlow panel is anchored to its BOTTOM edge**, so every time the list
+  of costliest stages gained or lost a row the whole box moved up or down
+  under the eye. It now always draws five rows, empty ones included, and the
+  box itself has a fixed height and clips.
+- Tests: `scripts/run-rebels-controls-tests.sh` measures the three geometry
+  claims (one column, caps above shift, shift no wider than tab) and that
+  the panel holds its height.
+
+## Fixed: a test that raced (2026-Sep-13, v69.9.41)
+
+"Shields and ammo start full" passed on its own and failed inside the full
+suite. Not a game bug: the resupply is confirmed by the room, the room is
+only stepped when a position report goes out, and reports go out on a WALL
+CLOCK. So a fixed number of simulated frames finished the resupply on a quiet
+machine and did not finish it on a busy one. The block now flies until the
+gauges fill, with a real deadline as the backstop.
+
+## Perf: the towers, and the shaders (2026-Sep-13, v69.9.42)
+
+From Geoff's DFlow paste of v69.9.40: 222 seconds, 12,448 frames, 16.8ms
+average (60fps), 95th percentile 24.1ms, 153 stalls over 40ms. The game's own
+code was 5.26ms of a 16.8ms frame, `gl.render` 4.12ms average with a 937ms
+maximum, draw calls swinging 13 to 479 with 108,188 triangles, and seven
+shader compiles of about 100ms each. The sky at the time held about five
+enemies and five bullets. So the cost was not the fight and not the network
+(23.5 messages a second, 10.9 KB/s, a 156-byte state): it was the MAP.
+
+- **Every node on the network was two draw calls.** A tower built its own cone
+  and its own sphere, so a few hundred nodes built a few hundred groups and a
+  few hundred pairs of identical geometries. The network towers are now two
+  InstancedMesh draws per colour, whatever the node count. Your own tower is
+  left alone: there is nothing to save on one object and it carries the beam.
+- **Nothing else in the file had to change.** Each tower keeps its Group; the
+  Group simply holds nothing to draw and is not in the scene. The hover, the
+  winner coin and the game's scaleTowers still read and write position,
+  quaternion, scale and visible exactly as they did, and syncTowers copies
+  what they say into the instance matrices. A hidden tower is written as a
+  zero-size matrix. Hovering reads the instance number and looks the node up.
+- **The tower shapes are shared and marked**, because the teardown disposes
+  everything it walks and a disposed shared geometry would blank every tower
+  the next time the map was opened. The materials already had this mark.
+- **The hidden effects now compile at the launch card.** A compile only reaches
+  what can be SEEN, and almost everything the game draws sits hidden until it
+  is used, so the first beam, the first torpedo and the first explosion each
+  cost about a tenth of a second in the middle of a fight. The map hands the
+  game its compile; the game shows everything for the length of one call,
+  including the things it keeps outside the scene, and puts it all back. The
+  dragon is warmed when its model lands.
+- Tests: `scripts/run-globe-draw-tests.sh`.
+
+### Not done yet, deliberately
+
+The helix and mesh tubes are the other 80 or so draw calls. Merging them into
+one geometry means carrying each stream's opacity as a per-vertex alpha, and
+the merged mesh would blend in one order rather than sorted per tube, so it is
+the change most likely to LOOK different. Worth doing, but worth measuring
+first: a fresh DFlow paste after the towers will say how much is left.
+
+## The cockpit shield is the AnamayOS mandala (2026-Sep-13, v69.9.43)
+
+Geoff: "change the shield effect, as seen from the cockpit. Look at how the
+screensaver mandala is drawn here: https://ao.anamaya.com/ in the anamayos
+project. I want the shield to duplicate this but make the mandalas spin 3x
+faster and make the lines much lighter and 50% transparent. So while the shield
+is activated, the user sees through this mandala energetic shield. From
+outside, it can still look like it does now."
+
+- **Source.** AnamayOS draws its screensaver as an SVG in
+  `/Users/geoffreymccabe/AnamayOS/src/components/shared/mandala-screensaver.tsx`.
+  The new `ui/src/wallet/rebels/rebelsMandala.ts` is that file's ring table,
+  ring for ring: the same radii, the same step counts, the same teardrop curve
+  (x = a·cos θ, y = b·sin θ·sin(θ/2)^m), the same spins. Its own test READS the
+  AnamayOS file off the disk and compares the two, so this is a copy that can
+  be shown to be a copy rather than one that merely looks like it.
+- **Three times the speed.** The site's base rate (15 degrees a second) is kept
+  as its own constant beside a multiplier of three, so what was taken and what
+  was changed are both visible. The relative rates are untouched: rings that
+  ran at half speed still do, and the ones that counter-rotate still do.
+- **Pale and half transparent.** Light rose for the strokes and a light
+  blue-white for the accents, at 0.5 opacity, additively blended so the mandala
+  only ever ADDS light and can never darken the fight behind it. Depth testing
+  is off: it hangs on the eye, and letting the ship's own nose cut holes in it
+  would read as a fault.
+- **It fills the frame at any window shape.** Placed 2.2 units in front of the
+  camera, square to it, and scaled every frame so its outer ring reaches the
+  CORNERS of the view. Sized to the height it would have left the sides of a
+  wide window bare.
+- **From outside it is unchanged.** The mandala is shown only in the cockpit
+  view; the chase camera still shows the red wire sphere, and the bubble other
+  ships wear is untouched. Both are driven by the same charge, so they fade in
+  and out identically. In the rear-gun window the mandala is culled rather than
+  smeared across it, which is why it is left cullable on purpose.
+- Drawing cost: one LineSegments per turning ring and one for everything that
+  stands still, so fourteen draws rather than one per petal, and only while the
+  shield is up. Circle detail follows the radius (16 to 128 steps): the outer
+  ring showed its corners at a flat 72, and the forty-eight beads of r=10 were
+  paying for smoothness nobody could see.
+- Tests: `scripts/run-rebels-mandala-tests.sh` (35 assertions).
+
+## Fixed: joining a room is not flying in it (2026-Sep-13, v69.9.44)
+
+Geoff: "when the game starts it seems to have the player taking damage almost
+instantly and I don't know why. And when it restarts it seems to not restart
+fresh with all stats at zero and no enemies around, but it's like going back
+into the same game. So check that a restart is really a restart."
+
+Both were one fault, and the DFlow notes showed its shape: the room going
+"off -> live" long before anything was flown.
+
+The cockpit opens its socket the moment the map hands over its scene, and it
+should: the connection has to be up and settled before anybody launches. But
+the room counted that seat as a PLAYER straight away. The roster the simulation
+runs on was built from `joined`, so the waves began, the fighters spawned, and
+they all came for a ship parked on its pad while the human was still reading
+the launch card. Pressing LAUNCH dropped the player into a fight that had been
+running for as long as they had been reading it, with fighters already on top
+of them. The same thing happened after a death: the countdown ran out, the
+seat was revived automatically, and the fight resumed around a parked ship.
+
+- A seat now has `flying` as well as `joined`, and it is true only between
+  LAUNCH and death. The roster, the wingmen and the "is anyone left alive"
+  test all read it.
+- A new `fly` message is what turns it on. Flying ALONE, it also resets the
+  fight: wave one, nothing in the sky. That is what makes a restart a restart.
+  With other players already in it, nothing is wiped: there is one game and it
+  is shared.
+- Death sets it false again, so nothing gathers around a ship whose pilot is
+  looking at the card.
+- A launch fills the gauges but does NOT move the ship. Moving it was a real
+  bug of its own: on a first launch the cockpit is already at its pad and
+  flying its dive, and putting the room's copy back underneath it opened a gap
+  the room then corrected, snapping the ship backwards at the moment of launch.
+  A seat that actually died is placed by revive when its countdown ends.
+- Tests: three new blocks in `contrib/rebels-room/test/room.test.ts` (joining
+  is not flying, a restart is a restart, and one player launching does not wipe
+  the sky out from under the others).
+
+## Perf: the towers again, and the compile (2026-Sep-13, v69.9.44)
+
+Instancing the towers cut the draw calls but cost more than it saved, and the
+next DFlow said so plainly: the frame time went from 16.8ms to 31.0ms and the
+triangle count from 108,188 to 184,640, while `gl.render` went from 4.12ms to
+9.19ms. An InstancedMesh has ONE bounding volume, so instancing threw away the
+per-tower culling that used to come free. Every tower on the planet was
+submitted every frame, the two hundred behind the Earth included, each one
+shading its expensive lit-window fragment shader before the globe covered it up.
+
+- **The horizon test.** A tower is drawn only when its direction, dotted with
+  the camera's, is more than R/|camera| less a tenth. Its matrix is worked out
+  once and kept, so a frame copies sixteen numbers rather than composing; and
+  the instance buffer is only touched when the answer CHANGES for at least one
+  tower, so flying straight costs a few hundred dot products and no upload.
+  Timed as `map.cull` in DFlow.
+- **A network tower's tip was five hundred and twenty triangles** for something
+  a couple of pixels across. Twelve by nine now, which is a third. Your own
+  tower is twice the size and the only one anybody flies up to, so it keeps the
+  full count.
+- **The whole-game compile froze the frame for over two seconds** (DFlow caught
+  a single gl.render of 2,234ms as the room went live). It now uses
+  compileAsync where the driver has the parallel-compile extension, falling
+  back to the blocking call.
+
+## The shield, and the boresight (2026-Sep-13, v69.9.44)
+
+- The mandala was too dark at half opacity: "reduce its opacity by 50% of
+  whatever you have now." A quarter now.
+- **A faint mark at the dead centre of the frame**, where the nose is pointing
+  and so where a round goes when the crosshair is brought home. Drawn as well
+  as the moving crosshair, never instead of it, so the two together read as how
+  far off axis the aim is. Four ticks around an open middle plus a single pixel:
+  a solid cross over the exact spot being shot at is a mark in the way.
+
+## The sealed spheres wear the mandala (2026-Sep-13)
+
+Geoff: "The spheres that are captured with loot inside, they have garbled Text
+on them. Put instead just the T1 or T2 on each one, on opposite sides, and
+don't put on any more text. Try to wrap our shield mandala on them and have it
+rotate, one on each hemisphere of these, so they'll have an interesting and
+beautiful skin on them that's moving and has beautiful patterns."
+
+- **Why the text was garbled.** The old skin printed "T1 D" at eighty-eight
+  pixels onto a canvas a hundred and twenty-eight tall, and that canvas was
+  stretched over the whole ball: 360 degrees across and 180 pole to pole.
+  Glyphs that tall ran from one pole to the other and smeared as they
+  converged. The label is now a fifth of the height, printed on the equator
+  where an equirectangular map has no stretch at all, and it says the tier and
+  nothing else: the one-letter mark that used to follow it is gone, as asked.
+  Twice, a quarter and three quarters of the way round, so one always faces you.
+- **The mandala is wrapped, not pasted.** Its centre goes to the pole and its
+  outer ring to the equator, so a distance from the middle of the picture
+  becomes an angle down from the pole. Drawn twice, once from each pole, so
+  both hemispheres carry one and there is no bare side. Lines that cross the
+  seam are drawn from a shifted copy, so they come out joined.
+- **It moves for nothing.** Turning the pattern about the polar axis is only
+  sliding the map sideways, so the canvas is never redrawn. The website's three
+  groups (outer, middle, inner) are baked into the RED, GREEN and BLUE channels
+  of one shared image and the shader samples each at its own offset: three
+  bands turning at three rates, the middle one against the other two, for three
+  texture reads and no CPU. The rates come from the shield's, so the two read
+  as the same object. The label is a second, small image which is NOT offset,
+  so it stays printed on the ball rather than sliding round it.
+- One image serves every tier, because only the ground colour differs and that
+  is a uniform; one material per tier, made on first use and kept.
+- `mandalaRings()` now tags each ring with which of the three groups it came
+  from, and merges the still rings per group rather than all together, because
+  the skin needs the grouping to survive.
+- New: `ui/src/wallet/rebels/rebelsMandalaSkin.ts`, tests
+  `scripts/run-rebels-skin-tests.sh` (41 assertions, with a canvas that records
+  what was drawn on it rather than rasterising it).

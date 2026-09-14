@@ -29,16 +29,23 @@
 import * as THREE from "three";
 import {
   createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
-  setDropRandomForTests, clampReach,
+  setDropRandomForTests, clampReach, spawnDragon, spawnFleet, pushBullet, takeSpentBullets, takeFreshBullets,
+  type WingBody, type Bullet,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
-  MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE,
+  MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE, STAKE_BONUS, STAKE_BONUS_MS,
+  BULLET_SPEED, BULLET_LIFE, CONVERGE,
   type CombatState, type CombatWorld, type PlayerBody,
 } from "../../../ui/src/wallet/rebels/rebelsCombat";
 import {
-  MAX_SHIELD, MAX_AMMO, MAX_TORPEDOES, MAX_GUARDS, GUARD_SECONDS, GUARD_ABSORB,
+  MAX_SHIELD, MAX_AMMO, MAX_TORPEDOES, MAX_GUARDS, GUARD_SECONDS, GUARD_ABSORB, CRASH_DAMAGE,
   BOOST,
 } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
+import { VIEW, inRange } from "../../../ui/src/wallet/rebels/rebelsView";
+import {
+  WING_MAX, wingPosition, wingSpin, wingShare, wingRounds, wingTiers,
+} from "../../../ui/src/wallet/rebels/rebelsWings";
+import { distanceToTower, DOCK_RANGE, DOCK_SECONDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
 import { ALL_ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, superBoostMult, strafeMult, vstrafeMult, hullMult } from "../../../ui/src/wallet/rebels/itemCatalog";
 import { fetchDropConfig } from "../../../ui/src/wallet/rebels/dropConfigRemote";
@@ -46,7 +53,7 @@ import { DEFAULT_DROP_CONFIG, type DropConfig } from "../../../ui/src/wallet/reb
 import { ammoFor, torpedoesFor, topSpeedFor, shieldMaxFor, recharge, supercharge, SUPER_BOOST_MULT, type Extras } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
-  type PaintWire, type PaintPart,
+  type PaintWire, type PaintPart, nextRoom, guestIdOk,
 } from "./protocol";
 
 /** Twenty ticks a second. Fast enough for dogfighting, cheap enough to run
@@ -70,6 +77,29 @@ const KILLS_PER_PAYOUT = 1000;
 const DIVI_PER_PAYOUT = 100;
 
 /* ---- what the room believes about one player ---- */
+/**
+ * One wingman on one seat.
+ *
+ * Its hull and its magazine are shares of the ship it flies with, worked out
+ * from its tier when the gear is declared, so a bigger ship carries stronger
+ * drones without a second table anywhere.
+ */
+interface Wing {
+  slot: number;
+  tier: number;
+  hull: number;
+  hullMax: number;
+  ammo: number;
+  ammoMax: number;
+  pos: THREE.Vector3;
+}
+
+/** The hull a web guest flies: the first one, the same as shipChoice's DEFAULT_SHIP. */
+const GUEST_SHIP = "space_SM_Ship_Fighter_01";
+
+/** What a web guest is told about cashing out, on every purse it is sent. */
+const GUEST_CASH_OUT = "Sign in to cash out DIVI earned on the web. It stays banked to you until you do.";
+
 interface Seat {
   id: string;
   ws: WebSocket;
@@ -84,6 +114,9 @@ interface Seat {
      The cost is honest: two players behind one home router share an account,
      and a VPN moves yours. Both are stated in the panel. */
   account: string;
+  /** Came in through divi.love/rebels without signing in. Banked to its own
+   *  account (see onJoin) and cannot cash out until signed in. */
+  guest: boolean;
   /** When the last cash-out was asked for, so the ledger is not hammered. */
   lastClaim: number;
   /* ---- what they bought ----
@@ -99,8 +132,39 @@ interface Seat {
   torpsMax: number;
   shieldMax: number;
   extras: Extras;
+  /**
+   * The wingmen flying formation on this ship.
+   *
+   * The room's, entirely: what the client declares is how many of each tier
+   * the ACCOUNT holds, and everything after that (where they are, what they
+   * have left, whether they are still there) is decided here.
+   */
+  wings: Wing[];
   /** Room clock of the last Y, so a client cannot pour recharges in. */
   lastUse: number;
+  /**
+   * The tip of THIS player's own tower, as they reported it on joining.
+   *
+   * Docking is measured against it and nothing else, which is the same rule
+   * the flight model follows: nodes cluster, and "the nearest tower" is very
+   * often a neighbour's. It also means the room does not need the whole map,
+   * which is thousands of towers and not something to put on a wire.
+   */
+  homeTip: THREE.Vector3;
+  /** And of the last tower resupply, and of the last gear declaration. */
+  lastDock: number;
+  lastGear: number;
+  /** Self-inflicted damage allowed in the current second. */
+  hurtWindow: number;
+  hurtSpent: number;
+  /** What this seat was told about last tick, so something at the edge of a
+   *  range is kept rather than flickering. See KEEP in broadcastState. */
+  sawShips: Set<string | number>;
+  sawEnemies: Set<string | number>;
+  /** Room clock until which this seat does triple damage, and when it last
+   *  claimed the bonus, so the claim cannot simply be repeated. */
+  bonusUntil: number;
+  lastBonus: number;
   /** The most this ship can move in a second, from its gear. */
   topSpeed: number;
   lastBeam: number;
@@ -148,6 +212,14 @@ interface Seat {
   tfCount: number;
   strikes: number;
   joined: boolean;
+  /**
+   * In the fight, as against merely seated.
+   *
+   * True only between LAUNCH and death. The roster the simulation runs on is
+   * built from this, not from `joined`, so a player reading the launch card is
+   * not a target and does not keep a wave alive. See FlyIn.
+   */
+  flying: boolean;
 }
 
 interface Env {
@@ -155,8 +227,18 @@ interface Env {
   LEDGER: DurableObjectNamespace;
 }
 
+/* Scratch for the wingmen's aim, which is worked out once per round fired. */
+const _wingAim = new THREE.Vector3();
+/* And for weighing up how far away something happened. */
+const _evAt = new THREE.Vector3();
+/** The few things everybody is told about, wherever they are. */
+const GLOBAL_EVENTS = new Set(["waveStart", "dragon", "dragonGone"]);
+
 export class RebelsRoom {
   private seats = new Map<string, Seat>();
+  /** This room's own name ("earth", "earth-2"...), read from the address it is
+   *  reached at, so a full room can say which overflow room comes next. */
+  private roomName = "earth";
   private combat: CombatState = createCombat();
   private world: CombatWorld;
   private tips: THREE.Vector3[] = [];
@@ -174,12 +256,15 @@ export class RebelsRoom {
       playerPos: new THREE.Vector3(),
       playerFwd: new THREE.Vector3(0, 0, 1),
       players: [],
-      damageScale: 1,
+      /* Per shooter: the stake bonus belongs to a seat. */
+      damageScale: (owner: string) => (this.seats.get(owner)?.bonusUntil ?? -99) > this.now ? STAKE_BONUS : 1,
     };
   }
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    const named = /^\/room\/([A-Za-z0-9_-]{1,40})/.exec(url.pathname);
+    if (named) this.roomName = named[1];
 
     if (url.pathname.endsWith("/state")) {
       return Response.json({
@@ -194,7 +279,17 @@ export class RebelsRoom {
       return new Response("expected a websocket", { status: 426 });
     }
     if (this.seats.size >= MAX_SEATS) {
-      return new Response("room full", { status: 503 });
+      /* Full. Accepted just long enough to say where to go instead, because a
+         browser cannot read a refused websocket's status and would retry this
+         same full room forever. */
+      const turned = new WebSocketPair();
+      const [away, here] = Object.values(turned) as [WebSocket, WebSocket];
+      here.accept();
+      try {
+        here.send(JSON.stringify({ t: "full", next: nextRoom(this.roomName) }));
+        here.close(4001, "room full");
+      } catch { /* gone already */ }
+      return new Response(null, { status: 101, webSocket: away });
     }
 
     const pair = new WebSocketPair();
@@ -210,18 +305,23 @@ export class RebelsRoom {
     const id = `s${this.nextSeat++}`;
     const seat: Seat = {
       id, ws, node: "", name: "", ship: "", paint: undefined,
-      account: from, lastClaim: -99,
+      account: from, guest: false, lastClaim: -99,
       gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, shieldMax: MAX_SHIELD, topSpeed: topSpeedFor(), lastBeam: -99,
-      extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99,
-      tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0], items: {},
+      extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99, lastDock: -99, lastGear: -99, hurtWindow: -99, hurtSpent: 0, bonusUntil: -99,
+      sawShips: new Set(), sawEnemies: new Set(),
+      /* Far enough back that the first claim in a fresh room is not inside
+         the five-minute gap: the room clock starts at zero. */
+      lastBonus: -1e9,
+      tally: new Map(), flocks: 0, gems: [0, 0, 0, 0, 0, 0, 0], items: {}, wings: [],
       home: new THREE.Vector3(0, 0, R),
+      homeTip: new THREE.Vector3(0, 0, R + 6),
       body: { id, pos: new THREE.Vector3(0, 0, R + 8), fwd: new THREE.Vector3(0, 1, 0), guard: false },
       shield: MAX_SHIELD, ammo: MAX_AMMO, torps: MAX_TORPEDOES,
       guards: MAX_GUARDS, guardFor: 0, wantGuard: false,
       score: 0, kills: 0, divi: 0,
       dead: false, respawn: 0,
       lastMain: -99, lastMini: -99, lastTorp: -99,
-      tfWindow: 0, tfCount: 0, strikes: 0, joined: false,
+      tfWindow: 0, tfCount: 0, strikes: 0, joined: false, flying: false,
     };
     this.seats.set(id, seat);
 
@@ -235,6 +335,7 @@ export class RebelsRoom {
 
   private leave(seat: Seat): void {
     if (!this.seats.delete(seat.id)) return;
+    seat.flying = false;
     /* Whatever they earned is banked before the socket is forgotten, so
        closing the lid is not a way to lose someone else's money — or a way to
        keep yours out of the ledger's sight. */
@@ -266,9 +367,33 @@ export class RebelsRoom {
     void this.saveGems();
   }
 
+  /* ---- the wingmen ----
+     They fly formation and nothing else: the ring's places are fixed in the
+     ship's own frame and the whole ring rolls slowly when there are two or
+     more of them, so there is no flying to do, only placing. What makes
+     them matter is that they are real bodies (rounds hit them) and they
+     fire when their owner fires. */
+  private stepWings(): void {
+    const bodies: WingBody[] = [];
+    for (const s of this.seats.values()) {
+      if (!s.flying || s.dead || s.wings.length === 0) continue;
+      const alive = s.wings.filter((x) => x.hull > 0);
+      const spin = wingSpin(this.now, alive.length);
+      /* The ship's up, from its own frame: the room has no roll on the wire,
+         so away from the planet stands in, which is what level flight is. */
+      const up = s.body.pos.clone().normalize();
+      const frame = { pos: s.body.pos, fwd: s.body.fwd, up };
+      for (const wing of alive) {
+        wingPosition(frame, wing.slot, spin, s.body.reach ?? 2.2, wing.pos);
+        bodies.push({ owner: s.id, slot: wing.slot, pos: wing.pos, hull: wing.hull });
+      }
+    }
+    this.world.wings = bodies.length ? bodies : undefined;
+  }
+
   private refreshRoster(): void {
     const live: PlayerBody[] = [];
-    for (const s of this.seats.values()) if (s.joined && !s.dead) live.push(s.body);
+    for (const s of this.seats.values()) if (s.flying && !s.dead) live.push(s.body);
     this.world.players = live;
     /* The solo fields still have to point at something real: parts of the
        simulation fall back to them when the roster is empty. */
@@ -297,11 +422,16 @@ export class RebelsRoom {
       if (s.dead) {
         s.respawn -= DT;
         if (s.respawn <= 0) this.revive(s);
+        /* Twice a second while they wait, because this is the one message a
+           dead player needs and the rest of the tick is skipped when nobody
+           is flying. */
+        else if (this.tick % (HZ / 2) === 0) this.sendYou(s);
       }
     }
 
     this.refreshRoster();
     if (this.world.players!.length === 0) { clearEvents(this.combat); return; }
+    this.stepWings();
 
     stepCombat(this.combat, DT, this.world);
     /* Gems move; their saved positions should not go stale. */
@@ -347,6 +477,19 @@ export class RebelsRoom {
         /* A fighter is a kill; a flock member a fifth of one. */
         who.kills += ev.worth ?? 1;
         if (ev.fleet !== undefined && (ev.worth ?? 0) > 0) this.tallyFlock(who, ev);
+      } else if (ev.kind === "wingHit" && who && ev.slot !== undefined) {
+        /* A round that hit a wingman instead of the ship. The hull is the
+           room's, so it comes off here. */
+        const wing = who.wings.find((x) => x.slot === ev.slot);
+        if (wing && wing.hull > 0) {
+          wing.hull -= ev.damage ?? 25;
+          if (wing.hull <= 0) {
+            wing.hull = 0;
+            this.combat.events.push({
+              kind: "wingDown", at: wing.pos.clone(), power: 2, who: who.id, slot: wing.slot,
+            });
+          }
+        }
       } else if (ev.kind === "drop" && ev.id) {
         /* A wreck left something. The simulation put it in orbit; the room
            writes it down so a restart finds it. */
@@ -374,12 +517,23 @@ export class RebelsRoom {
     }
 
     if (evs.length > 0) {
-      /* Warnings are private: only the ship a round is aimed at hears its own.
-         Everything else goes to everybody. */
-      const shared = evs.filter((e) => e.k !== "incoming");
+      /* ---- YOU HEAR WHAT YOU CAN SEE ----
+         Three rules. Anything that happened TO you or BY you reaches you
+         wherever you are: a warning that a round is on its way, a hit you
+         took, a gem you picked up. A handful of things are the whole world's
+         business: a wave arriving, and the dragon. Everything else is a bang
+         somewhere, and a bang beyond the horizon is a sound from nowhere: it
+         used to be sent to everybody, so a player alone at a planet heard
+         every explosion at Earth. */
       for (const s of this.seats.values()) {
-        const mine = evs.filter((e) => e.k === "incoming" && e.who === s.id);
-        const list = mine.length > 0 ? [...shared, ...mine] : shared;
+        const eye = s.body.pos;
+        const list = evs.filter((e) => {
+          if (e.who === s.id) return true;
+          if (e.k === "incoming") return false;
+          if (GLOBAL_EVENTS.has(String(e.k))) return true;
+          const at = e.at as [number, number, number];
+          return inRange(eye, _evAt.set(at[0], at[1], at[2]), VIEW.events);
+        });
         if (list.length > 0) this.send(s, { t: "e", v: list as never });
       }
     }
@@ -489,6 +643,12 @@ export class RebelsRoom {
 
   private down(s: Seat): void {
     s.dead = true;
+    /* Out of the fight until LAUNCH is pressed again. Reviving used to put the
+       seat straight back on the roster, so the waves carried on around a ship
+       parked on its pad while the player was still looking at the card, and
+       the next launch dropped them into a fight already in progress with
+       fighters on top of them. */
+    s.flying = false;
     s.respawn = s.gear.has("vip") ? RESPAWN_VIP : RESPAWN_SECONDS;
     s.shield = 0;
     s.guardFor = 0;
@@ -496,6 +656,13 @@ export class RebelsRoom {
     /* Earnings survive death, as promised. Only the ship is lost. */
     void this.bank(s);
     this.refreshRoster();
+    /* ---- AND TELL THEM AT ONCE ----
+       The wait is the room's number, so the cockpit cannot know it until it
+       is sent. Without this the last player alive got no countdown at all:
+       the room stops ticking when nobody is flying, so the next gauge
+       message never came, and the cockpit offered LAUNCH AGAIN immediately
+       while the room still had the seat dead. */
+    this.sendYou(s);
     /* ---- EVERYONE DOWN: THE FIGHT STARTS OVER ----
        Geoff: "the game resets once all the players have died, or if no one
        is playing, it will start over. Otherwise the waves will just keep
@@ -503,7 +670,7 @@ export class RebelsRoom {
        starts fresh (see start); this is the other half. Wave one, nothing in
        the air. The gems stay: they are property, not part of the fight. */
     let anyoneLeft = false;
-    for (const o of this.seats.values()) if (o.joined && !o.dead) anyoneLeft = true;
+    for (const o of this.seats.values()) if (o.flying && !o.dead) anyoneLeft = true;
     if (!anyoneLeft) this.resetFight();
   }
 
@@ -517,13 +684,30 @@ export class RebelsRoom {
 
   private revive(s: Seat): void {
     s.dead = false;
+    this.refill(s);
+    /* Back on your own pad, which is where a launch happens. */
+    s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
+    this.refreshRoster();
+  }
+
+  /**
+   * Full gauges, without moving the ship.
+   *
+   * Separate from revive because a LAUNCH is not always a respawn. On the first
+   * one the cockpit is already at its own pad and flying its dive, and putting
+   * the room's copy back on the pad underneath it opened a gap the room then
+   * corrected: the ship snapped backwards at the moment of launch. A seat that
+   * actually died is placed by revive; a seat that is merely starting a run is
+   * only filled up.
+   */
+  private refill(s: Seat): void {
     s.shield = s.shieldMax;
     s.ammo = s.ammoMax;
     s.torps = s.torpsMax;
     s.guards = MAX_GUARDS;
-    /* Back on your own pad, which is where a launch happens. */
-    s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
-    this.refreshRoster();
+    /* Geoff: "drones get replenished along with your ship in the same way at
+       the same time." */
+    for (const wing of s.wings) { wing.hull = wing.hullMax; wing.ammo = wing.ammoMax; }
   }
 
   /* ---- the ledger ----
@@ -566,6 +750,12 @@ export class RebelsRoom {
       case "fire": return this.onFire(seat, msg);
       case "det": return this.onDetonate(seat);
       case "use": return this.onUse(seat, msg);
+      case "dock": return this.onDock(seat);
+      case "cheat": return this.onCheat(seat, msg);
+      case "bonus": return this.onBonus(seat);
+      case "gear": return this.onGear(seat, msg);
+      case "fly": return this.onFly(seat);
+      case "hurt": return this.onHurt(seat, msg);
       case "claim": { void this.onClaim(seat, msg); return; }
       case "purse": {
         /* Rate-limited the same way: a panel that polls is fine, a loop that
@@ -592,6 +782,17 @@ export class RebelsRoom {
     /* No connecting address (a local run, a test) falls back to the declared
        one. Live, through Cloudflare, there always is one. */
     if (!seat.account) seat.account = seat.node;
+    /* ---- a web guest ----
+       Kept to an account of its own, so a player on divi.love/rebels and an app
+       player behind the same home router never share a balance. Everything a
+       guest earns is banked there exactly as it is for anyone else; only the
+       cash-out waits for a sign-in (see onClaim). */
+    if (m.door === "web") {
+      seat.guest = true;
+      /* Banked under the guest's own id when it sends one, so their DIVI follows
+         them between visits and connections; by address only as a fallback. */
+      seat.account = (guestIdOk(m.guest) ? `guest:${m.guest}` : `web:${seat.account}`).slice(0, 80);
+    }
     /* ---- what they look like ----
        Taken on trust, because it is paint: the worst a lie here can do is make
        somebody's ship the wrong colour on somebody else's screen. It is still
@@ -602,37 +803,59 @@ export class RebelsRoom {
        updating every time the pack grows. */
     seat.ship = /^space_SM_Ship_[A-Za-z0-9_]{1,60}$/.test(String(m.ship ?? ""))
       ? String(m.ship) : "";
+    /* A web guest flies the first hull, as it comes, until they sign up; the
+       room says so too, so a page that claims otherwise is shown the same ship
+       as everyone else sees. Its paint is the factory scheme. */
+    if (seat.guest) {
+      seat.ship = GUEST_SHIP;
+      m = { ...m, paint: undefined };
+    }
     seat.paint = cleanPaint(m.paint);
     /* The capture ball. The client measured its own wings; the room only
        keeps it within reason. */
     seat.body.reach = clampReach(Number(m.reach));
     /* Gear: known keys only, bounded, and the magazine and rack sized from
        the items in it exactly as the solo game sizes them. */
-    seat.gear = new Set(
-      (Array.isArray(m.gear) ? m.gear : []).slice(0, 32)
-        .filter((k): k is string => typeof k === "string" && (!!weaponByKey(k) || ALL_ITEMS.some((i) => i.key === k))),
-    );
-    const gearList = [...seat.gear];
-    const extras: Extras = {
-      torpedoes: torpedoBonus(gearList), magazine: magBonus(gearList),
-      superMult: superBoostMult(gearList, SUPER_BOOST_MULT), strafeMult: strafeMult(gearList),
-      vstrafeMult: vstrafeMult(gearList), hullMult: hullMult(gearList),
-    };
-    seat.extras = extras;
-    seat.ammoMax = ammoFor(extras);
-    seat.torpsMax = torpedoesFor(extras);
-    seat.shieldMax = shieldMaxFor(extras);
-    seat.topSpeed = topSpeedFor(extras);
-    seat.ammo = seat.ammoMax;
-    seat.torps = seat.torpsMax;
-    seat.shield = seat.shieldMax;
+    this.applyGear(seat, Array.isArray(m.gear) ? m.gear : [], true, m.drones);
     seat.home.copy(home).normalize().multiplyScalar(R);
+    /* Kept as sent, mast and all: the surface point alone cannot say how
+       tall the thing is, and docking is measured to the mast. */
+    seat.homeTip.copy(home);
     seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 8);
     seat.joined = true;
     this.refreshRoster();
     this.sendYou(seat);
     this.sendRoster();
     void this.sendPurse(seat);
+  }
+
+  /**
+   * LAUNCH.
+   *
+   * The seat joins the fight here and nowhere else. If nobody else is in it,
+   * the fight starts over: a launch is a NEW GAME for a player flying alone,
+   * which is what Geoff asked for. Geoff, 2026-Sep-13: "when it restarts it
+   * seems to not restart fresh with all stats at zero and no enemies around...
+   * check that a restart is really a restart."
+   */
+  private onFly(seat: Seat): void {
+    if (!seat.joined || seat.flying) return;
+    /* A dead seat has to wait out its countdown; the cockpit does not offer
+       LAUNCH AGAIN before then, and this is the other half of that rule. */
+    if (seat.dead) return;
+    let othersFlying = false;
+    for (const o of this.seats.values()) if (o !== seat && o.flying && !o.dead) othersFlying = true;
+    if (!othersFlying) this.resetFight();
+    seat.flying = true;
+    /* Full gauges: this is the start of a run and no damage from the last one
+       may be carried into it. The ship is NOT moved, because on a first launch
+       the cockpit is already at its pad and flying its dive; a seat that
+       actually died was put back on its pad by revive when its countdown ran
+       out. */
+    this.refill(seat);
+    this.refreshRoster();
+    this.sendYou(seat);
+    this.sendRoster();
   }
 
   /* ---- cashing out ----
@@ -647,6 +870,13 @@ export class RebelsRoom {
     seat.lastClaim = now;
     const to = typeof m.to === "string" ? m.to.slice(0, 40) : "";
     await this.bank(seat);
+    /* A web guest's DIVI is real and stays banked, but paying it out waits for
+       a signed-in account: a guest costs nothing to make, and a cash-out is
+       money leaving the treasury. */
+    if (seat.guest) {
+      await this.sendPurse(seat);
+      return;
+    }
     try {
       const id = this.env.LEDGER.idFromName("v1");
       const r = await this.env.LEDGER.get(id).fetch("https://ledger/request", {
@@ -663,7 +893,7 @@ export class RebelsRoom {
     }
   }
 
-  private async sendPurse(seat: Seat): Promise<void> {
+  private async sendPurse(seat: Seat, why?: string): Promise<void> {
     if (!seat.joined) return;
     try {
       const id = this.env.LEDGER.idFromName("v1");
@@ -672,6 +902,13 @@ export class RebelsRoom {
       );
       const purse = await r.json() as Record<string, unknown>;
       if (typeof purse.divi !== "number") return;
+      /* A guest sees what is banked, never an amount offered to cash out, and
+         always sees why. */
+      if (seat.guest) {
+        purse.claimable = 0;
+        purse.why = GUEST_CASH_OUT;
+      }
+      if (why) purse.why = why;
       this.send(seat, { t: "purse", ...(purse as object) } as ServerMessage);
     } catch {
       /* Nothing to show yet. The panel asks again when it opens. */
@@ -749,18 +986,57 @@ export class RebelsRoom {
     if (!p || !f || f.lengthSq() < 1e-6) return this.strike(seat, "bad shot");
     f.normalize();
 
-    /* Fired from where the room thinks they are, not from where the message
-       says. Otherwise a shot could be taken from across the map. */
-    if (p.distanceTo(seat.body.pos) > 6) return this.snapBack(seat, "shot from elsewhere");
-    const from = seat.body.pos;
+    /* ---- WHERE A SHOT COMES FROM ----
+       From where the cockpit says, when that is anywhere near where the room
+       thinks the ship is, because the room's copy is up to a report behind
+       and a round that leaves from fifty milliseconds ago reads as a gun
+       that is off.
+ 
+       When it is NOT near, the shot is fired from the room's own position
+       rather than refused. Refusing was a disaster: the check was six units,
+       a ship at super boost covers two in a report and four more in a lag
+       spike, and one refused transform left the room's copy of the position
+       behind for good. From then on every shot, beam and torpedo was thrown
+       away with "shot from elsewhere", and a player watched their guns stop
+       working for the rest of the flight. Geoff, 2026-Sep-13: "I don't see
+       any bullets anymore. The beam doesn't show and so that's broken too...
+       Torpedoes still only explode inside the cockpit."
+ 
+       And it is never refused, at any distance. Firing from the room's own
+       position is always safe: the origin is a number the room chose, so a
+       client claiming to be anywhere gains nothing at all by it. Refusing
+       bought no safety and cost a player their guns. Where a ship IS gets
+       corrected in onTransform, which is where that belongs. */
+    const slack = Math.max(12, seat.topSpeed * 0.4);
+    const from = p.distanceTo(seat.body.pos) <= slack ? p : seat.body.pos.clone();
 
+    /* The ship's own up when given, else away from the planet. */
+    const shipUp = vec(m.u);
+    const up = shipUp && shipUp.lengthSq() > 1e-6 ? shipUp.normalize() : from.clone().normalize();
     if (m.k === "main") {
       if (this.now - seat.lastMain < 0.075) return;   /* the gun's own cooldown */
       if (seat.ammo < 1) return;
       seat.lastMain = this.now;
       seat.ammo -= 1;
-      const up = from.clone().normalize();
       fireGuns(this.combat, from, f, up, 70, 1.6, seat.id);
+      /* ---- IN UNISON ----
+         Every wingman with a round left fires from where it is, at what its
+         owner is aiming at, for its tier's share of a round's damage. The
+         mini gun and the beams are the player's alone: eight streams at
+         twenty rounds a second would be a wall rather than a wingman. */
+      for (const wing of seat.wings) {
+        if (wing.hull <= 0 || wing.ammo < 1) continue;
+        wing.ammo -= 1;
+        const aim = _wingAim.copy(from).addScaledVector(f, CONVERGE).sub(wing.pos).normalize();
+        pushBullet(this.combat, {
+          pos: wing.pos.clone(),
+          vel: aim.clone().multiplyScalar(BULLET_SPEED),
+          life: BULLET_LIFE,
+          hostile: false,
+          owner: seat.id,
+          scale: wingShare(wing.tier),
+        });
+      }
     } else if (m.k === "mini") {
       if (!seat.gear.has("mini")) return this.send(seat, { t: "no", why: "no minigun on this ship" });
       if (this.now - seat.lastMini < MINI_INTERVAL * 0.9) return;
@@ -768,8 +1044,10 @@ export class RebelsRoom {
       seat.lastMini = this.now;
       seat.ammo -= MINI_AMMO;
       const aim = vec(m.a) ?? f;
-      const up = from.clone().normalize();
-      const right = new THREE.Vector3().crossVectors(f, up).normalize();
+      /* The ship's RIGHT: up crossed with forward. It was forward crossed
+         with up, which is the left, so the stream came from the wrong
+         corner of the frame. */
+      const right = new THREE.Vector3().crossVectors(up, f).normalize();
       const muzzle = new THREE.Vector3();
       /* The helper measures the corner in a camera frame; the room has no
          camera, so the ship's own frame stands in. It was being called with
@@ -794,7 +1072,7 @@ export class RebelsRoom {
       if (seat.ammo < BEAM_AMMO) return;
       seat.lastBeam = this.now;
       seat.ammo -= BEAM_AMMO;
-      fireBeam(this.combat, spec, from, f, seat.id);
+      fireBeam(this.combat, spec, from, f, seat.id, seat.bonusUntil > this.now ? STAKE_BONUS : 1);
     } else {
       return this.strike(seat, "unknown weapon");
     }
@@ -804,6 +1082,176 @@ export class RebelsRoom {
   private onDetonate(seat: Seat): void {
     if (!seat.joined || seat.dead) return;
     detonateOldest(this.combat, this.world, seat.id);
+  }
+
+  /* ---- the tower ----
+     The cockpit runs the docking (the approach, the four seconds, the
+     tether) and says when it finished; the room refills the seat if the ship
+     is indeed beside a tower. The room's numbers are the ones the cockpit
+     shows in company, so without this a resupply refilled nothing: Geoff,
+     "going to my tower didn't replenish my ammo... my tower stopped
+     working." Generous on the distance, because the room's position is a
+     report behind. */
+  private onDock(seat: Seat): void {
+    if (!seat.joined || seat.dead) return;
+    if (this.now - seat.lastDock < DOCK_SECONDS * 0.8) return;
+    /* ---- YOUR OWN TOWER ----
+       Measured to the mast of the tower this player joined from. It used to
+       be measured against the room's own tower list, which NOTHING has ever
+       filled in: setTips exists and nobody calls it, so the list was always
+       empty, every dock was refused, and the resupply a player watched was
+       the cockpit's animation and nothing more. Their real hull and ammo
+       came back the moment the animation stopped hiding the gauges, which
+       is why a trip to the tower could be followed by dying in clear sky.
+       Geoff, 2026-Sep-12. */
+    const near = Math.min(
+      distanceToTower(seat.body.pos, seat.homeTip),
+      /* A launch halves every tower, so the mast reported before launch is
+         twice the height of the one being flown to. Measuring to the foot as
+         well covers both, and erring generous here costs nothing: the worst
+         case is a resupply granted a few units early at your own front
+         door. */
+      seat.body.pos.distanceTo(seat.home),
+    );
+    if (near > DOCK_RANGE * 2.5) return this.send(seat, { t: "no", why: "not at a tower" });
+    seat.lastDock = this.now;
+    seat.shield = Math.max(seat.shield, seat.shieldMax);
+    seat.ammo = Math.max(seat.ammo, seat.ammoMax);
+    seat.torps = Math.max(seat.torps, seat.torpsMax);
+    seat.guards = Math.max(seat.guards, MAX_GUARDS);
+    this.sendYou(seat);
+  }
+
+  /* ---- what the ship carries ----
+     Declared on join and again whenever it changes, because a gun bought or
+     a sphere opened in the middle of a flight has to take effect without
+     relaunching. The maxima move; what is in the magazine right now does
+     NOT, or buying a bigger magazine would be a free refill. */
+  private applyGear(seat: Seat, list: unknown[], refill: boolean, drones?: unknown): void {
+    seat.gear = new Set(
+      list.slice(0, 64)
+        .filter((k): k is string => typeof k === "string" && (!!weaponByKey(k) || ALL_ITEMS.some((i) => i.key === k))),
+    );
+    const gearList = [...seat.gear];
+    const extras: Extras = {
+      torpedoes: torpedoBonus(gearList), magazine: magBonus(gearList),
+      superMult: superBoostMult(gearList, SUPER_BOOST_MULT), strafeMult: strafeMult(gearList),
+      vstrafeMult: vstrafeMult(gearList), hullMult: hullMult(gearList),
+    };
+    seat.extras = extras;
+    seat.ammoMax = ammoFor(extras);
+    seat.torpsMax = torpedoesFor(extras);
+    seat.shieldMax = shieldMaxFor(extras);
+    seat.topSpeed = topSpeedFor(extras);
+    if (refill) {
+      seat.ammo = seat.ammoMax;
+      seat.torps = seat.torpsMax;
+      seat.shield = seat.shieldMax;
+    }
+    this.fitWings(seat, drones, refill);
+  }
+
+  /**
+   * Give this seat the wingmen its account holds.
+   *
+   * A wingman already in a place keeps what is left of it when the
+   * declaration has not changed that place, or a player could heal the
+   * formation by saying the same thing twice. Anything new starts whole.
+   */
+  private fitWings(seat: Seat, drones: unknown, refill: boolean): void {
+    const counts: Record<string, number> = {};
+    if (Array.isArray(drones)) {
+      for (let i = 0; i < Math.min(7, drones.length); i++) {
+        const n = Number(drones[i]);
+        if (Number.isFinite(n) && n > 0) counts[`drone${i + 1}`] = Math.min(WING_MAX, Math.floor(n));
+      }
+    }
+    const tiers = wingTiers(counts);
+    const was = seat.wings;
+    seat.wings = tiers.map((tier, slot) => {
+      const hullMax = Math.round(seat.shieldMax * wingShare(tier));
+      const ammoMax = Math.round(seat.ammoMax * wingRounds(tier));
+      const before = was.find((x) => x.slot === slot && x.tier === tier);
+      return {
+        slot, tier, hullMax, ammoMax,
+        hull: before && !refill ? Math.min(before.hull, hullMax) : hullMax,
+        ammo: before && !refill ? Math.min(before.ammo, ammoMax) : ammoMax,
+        pos: before ? before.pos : new THREE.Vector3().copy(seat.body.pos),
+      };
+    });
+  }
+
+  static GEAR_GAP = 1;
+  private onGear(seat: Seat, m: Extract<ClientMessage, { t: "gear" }>): void {
+    if (!seat.joined) return;
+    if (this.now - seat.lastGear < RebelsRoom.GEAR_GAP) return;
+    seat.lastGear = this.now;
+    if (m.reach !== undefined) seat.body.reach = clampReach(Number(m.reach));
+    this.applyGear(seat, Array.isArray(m.gear) ? m.gear : [], false, m.drones);
+    this.sendYou(seat);
+  }
+
+  /* ---- flying into things ----
+     The ground and the towers are the FLIGHT MODEL's business: it owns the
+     bounce, the drag along the surface and how much a given angle and speed
+     costs, and there is one copy of that and it runs in the cockpit. So the
+     cockpit reports the damage and the room applies it to the seat, which is
+     the only place a hull number is kept.
+
+     Stated plainly, because it is the one damage in the game the shooter
+     declares: a client that never sent this would never take crash damage.
+     It cannot gain anything by it, only decline to be hurt, which is the
+     same standing the gear has. The amount is capped per second so a broken
+     or malicious client cannot empty its own hull either. */
+  static HURT_PER_SECOND = CRASH_DAMAGE * 4;
+  private onHurt(seat: Seat, m: Extract<ClientMessage, { t: "hurt" }>): void {
+    if (!seat.joined || seat.dead) return;
+    const d = Number(m.d);
+    if (!Number.isFinite(d) || d <= 0) return;
+    if (this.now - seat.hurtWindow > 1) { seat.hurtWindow = this.now; seat.hurtSpent = 0; }
+    const room = Math.max(0, RebelsRoom.HURT_PER_SECOND - seat.hurtSpent);
+    const take = Math.min(d, room);
+    if (take <= 0) return;
+    seat.hurtSpent += take;
+    seat.shield -= take;
+    this.combat.events.push({ kind: "playerHit", at: seat.body.pos.clone(), power: 1.4, who: seat.id, damage: take });
+    if (seat.shield <= 0) this.down(seat);
+    else this.sendYou(seat);
+  }
+
+  /* ---- the stake bonus ----
+     Winning a stake on your own node is worth a minute of triple damage.
+     Only the wallet knows it happened, so it says so and the room takes it
+     on trust, the same trust the gear gets. What the room does NOT do is
+     take its word on how OFTEN: a fresh minute can be claimed no more than
+     once every five, which is about the fastest an honest node could win,
+     so a client repeating the message gains nothing much. */
+  static BONUS_GAP = 300;
+  private onBonus(seat: Seat): void {
+    if (!seat.joined) return;
+    if (this.now - seat.lastBonus < RebelsRoom.BONUS_GAP) return;
+    seat.lastBonus = this.now;
+    seat.bonusUntil = this.now + STAKE_BONUS_MS / 1000;
+    this.sendYou(seat);
+  }
+
+  /* ---- test cheats ----
+     The same ones the solo game has, so the shared fight and the solo fight
+     are the same game to test. "21" is a REAL dragon ahead of the seat
+     (it leaves its egg): to remove or gate before eggs are worth anything.
+     "1x" is a flock of tier x, worth nothing, as in the cockpit. */
+  private onCheat(seat: Seat, m: Extract<ClientMessage, { t: "cheat" }>): void {
+    if (!seat.joined || seat.dead) return;
+    const code = String(m.code ?? "");
+    if (code === "21") {
+      if (this.combat.enemies.some((e) => e.dragon)) return;
+      const ahead = seat.body.pos.clone().addScaledVector(seat.body.fwd, 35);
+      const up = seat.body.pos.clone().normalize();
+      const across = new THREE.Vector3().crossVectors(seat.body.fwd, up).normalize();
+      spawnDragon(this.combat, ahead, across);
+    } else if (/^1[1-6]$/.test(code)) {
+      spawnFleet(this.combat, Number(code[1]), seat.body.pos, seat.body.fwd, { cheat: true });
+    }
   }
 
   /* Y: a held Instant Recharge or Supercharge. The room does not hold the
@@ -872,6 +1320,7 @@ export class RebelsRoom {
       score: seat.score,
       kills: seat.kills,
       divi: Math.floor(seat.divi),
+      ...(seat.bonusUntil > this.now ? { bonus: Math.ceil(seat.bonusUntil - this.now) } : {}),
       ...(seat.dead ? { dead: 1 as const, respawn: Math.ceil(seat.respawn) } : {}),
     });
   }
@@ -893,43 +1342,172 @@ export class RebelsRoom {
       r1(g.pos.x), r1(g.pos.y), r1(g.pos.z), g.tier, Math.round(g.spin * 100) / 100, g.id,
       ...(g.item ? [g.item, g.owner ?? "", Math.round(g.hidden ?? 0)] : []),
     ];
-    const state = {
-      t: "s" as const,
-      n: this.tick,
-      w: c.wave?.n ?? 0,
-      P: [...this.seats.values()].filter((s) => s.joined).map((s) => [
-        s.id, r1(s.body.pos.x), r1(s.body.pos.y), r1(s.body.pos.z),
-        r1(s.body.fwd.x), r1(s.body.fwd.y), r1(s.body.fwd.z),
-        s.body.guard ? 1 : 0, Math.max(0, Math.round(s.shield)),
-      ]),
-      E: c.enemies.map((e) => [
+    /* The wingmen, whose and where. They point where their owner points, so
+       the cockpit takes the heading from the ship they belong to. */
+    const wings: Array<[string, number, number, number, number, number, number, number]> = [];
+    for (const s of this.seats.values()) {
+      if (!s.joined || s.dead) continue;
+      for (const wing of s.wings) {
+        if (wing.hull <= 0) continue;
+        wings.push([
+          s.id, wing.slot, r1(wing.pos.x), r1(wing.pos.y), r1(wing.pos.z),
+          Math.max(0, Math.round(wing.hull)), wing.hullMax, wing.tier,
+        ]);
+      }
+    }
+    /* ---- THE SHOT, NOT THE ROUND ----
+       Everything fired since the last tick, and everything that stopped
+       early. A round flies itself in every cockpit from here on, with this
+       same simulation file; the server still decides every hit and says
+       which rounds stopped. */
+    const fired: Bullet[] = takeFreshBullets(c);
+    const stopped: number[] = takeSpentBullets(c);
+    /* ---- ONE ROW PER THING, BUILT ONCE ----
+       The rounding and the shaping happen here, not once per player: with two
+       dozen seats that would be two dozen times the work for the same answer.
+       Each row is kept beside the point it is at, and each seat then takes
+       only the rows its own eyes reach. */
+    interface Row<T> { at: THREE.Vector3; row: T; only?: string; always?: true; key?: string | number }
+    /**
+     * Something already in view is kept in view a fifth further out.
+     *
+     * Without it, anything hovering at the edge of a range is sent on one
+     * tick and not the next, and a ship or a fighter at that distance
+     * flickers in and out. The seat remembers what it was told about last
+     * tick, which is all the memory this needs.
+     */
+    const KEEP = 1.2;
+    const sticky = <T>(rows: Array<Row<T>>, eye: THREE.Vector3, range: number, held: Set<string | number>) => {
+      const out: T[] = [];
+      const seen = new Set<string | number>();
+      for (const r of rows) {
+        const key = r.key;
+        const near = inRange(eye, r.at, range)
+          || (key !== undefined && held.has(key) && inRange(eye, r.at, range * KEEP));
+        if (r.always || near) {
+          out.push(r.row);
+          if (key !== undefined) seen.add(key);
+        }
+      }
+      return { out, seen };
+    };
+    const pick = <T>(rows: Array<Row<T>>, eye: THREE.Vector3, range: number, id: string): T[] => {
+      const out: T[] = [];
+      for (const r of rows) {
+        if (r.only && r.only !== id) continue;
+        if (r.always || r.only === id || inRange(eye, r.at, range)) out.push(r.row);
+      }
+      return out;
+    };
+
+    const players: Array<Row<unknown>> = [];
+    for (const s of this.seats.values()) {
+      if (!s.joined) continue;
+      players.push({
+        at: s.body.pos,
+        key: s.id,
+        row: [
+          s.id, r1(s.body.pos.x), r1(s.body.pos.y), r1(s.body.pos.z),
+          r1(s.body.fwd.x), r1(s.body.fwd.y), r1(s.body.fwd.z),
+          s.body.guard ? 1 : 0, Math.max(0, Math.round(s.shield)),
+        ],
+      });
+    }
+    const enemies: Array<Row<unknown>> = c.enemies.map((e) => ({
+      at: e.pos,
+      key: e.id ?? undefined,
+      /* The dragon is an apparition the size of a house and it is there for
+         ten seconds a minute at most: everybody sees it, wherever they are. */
+      ...(e.dragon ? { always: true as const } : {}),
+      row: [
         r1(e.pos.x), r1(e.pos.y), r1(e.pos.z),
         r1(e.fwd.x), r1(e.fwd.y), r1(e.fwd.z),
         e.cls.tier, Math.max(0, Math.round(e.shield)), e.cls.shieldMax,
         /* A drone is drawn as a sphere, a fighter as a hull: the cockpit has
            to be told which. And WHICH enemy, so its hull model follows it. */
         e.dragon ? 2 : e.drone ? 1 : 0, e.id ?? 0,
-      ]),
-      B: c.bullets.map((b) => [
+      ],
+    }));
+    const shots: Array<Row<unknown>> = fired.map((b) => ({
+      at: b.pos,
+      /* Your own rounds always reach you, however far the shot was taken
+         from: you pulled the trigger and the flash has already gone off. */
+      ...(b.owner ? { only: undefined } : {}),
+      row: [
+        b.id ?? 0,
         r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
         r1(b.vel.x), r1(b.vel.y), r1(b.vel.z),
-        b.hostile ? 1 : 0, b.mini ? 1 : 0,
-      ]),
-      C: c.coins.map((k) => [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)]),
-      ...(shared.length ? { G: shared.map(gemWire) } : {}),
-      ...(c.beams.length ? {
-        M: c.beams.map((b) => [
-          r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
-          Math.round(b.fwd.x * 1000) / 1000, Math.round(b.fwd.y * 1000) / 1000, Math.round(b.fwd.z * 1000) / 1000,
-          b.key, r1(b.life),
-        ]),
-      } : {}),
-    };
-    const wire = JSON.stringify(state);
+        (b.hostile ? 1 : 0) | (b.mini ? 2 : 0) | (b.orb ? 4 : 0),
+        Math.round(b.life * 100) / 100,
+      ],
+      owner: b.owner,
+    } as Row<unknown> & { owner?: string }));
+    const coins: Array<Row<unknown>> = c.coins.map((k) => ({
+      at: k.pos, row: [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)],
+    }));
+    const torps: Array<Row<unknown>> = c.torpedoes.map((t) => ({
+      at: t.pos,
+      row: [r1(t.pos.x), r1(t.pos.y), r1(t.pos.z), r1(t.vel.x), r1(t.vel.y), r1(t.vel.z)],
+    }));
+    const junk: Array<Row<unknown>> = c.junk.map((j) => ({
+      at: j.pos,
+      row: [
+        r1(j.pos.x), r1(j.pos.y), r1(j.pos.z),
+        Math.round(j.rot.x * 100) / 100, Math.round(j.rot.y * 100) / 100, Math.round(j.rot.z * 100) / 100,
+        j.kind === "wingL" ? 1 : j.kind === "wingR" ? 2 : 0,
+      ],
+    }));
+    const beams: Array<Row<unknown>> = c.beams.map((b) => ({
+      at: b.pos,
+      row: [
+        r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
+        Math.round(b.fwd.x * 1000) / 1000, Math.round(b.fwd.y * 1000) / 1000, Math.round(b.fwd.z * 1000) / 1000,
+        b.key, r1(b.life),
+      ],
+    }));
+    const gemRows: Array<Row<unknown>> = [
+      ...shared.map((g) => ({ at: g.pos, row: gemWire(g) })),
+      /* A dropped item in its private minute goes to its owner and to nobody
+         else: not out of range, out of existence. */
+      ...[...mine.entries()].flatMap(([owner, list]) =>
+        list.map((g) => ({ at: g.pos, row: gemWire(g), only: owner }))),
+    ];
+    const wingRows: Array<Row<unknown>> = wings.map((w) => ({
+      at: new THREE.Vector3(w[2], w[3], w[4]), row: w,
+    }));
+
+    /* ---- AND ONE MESSAGE PER PLAYER ----
+       Which is the whole change: everybody used to be handed the same string
+       describing the whole world, including fights on the far side of a
+       planet they could not see. */
     for (const s of this.seats.values()) {
-      const own = mine.get(s.id);
-      const text = own ? JSON.stringify({ ...state, G: [...shared, ...own].map(gemWire) }) : wire;
-      try { s.ws.send(text); } catch { this.leave(s); }
+      const eye = s.body.pos;
+      const pickedP = sticky(players, eye, VIEW.ships, s.sawShips);
+      const pickedE = sticky(enemies, eye, VIEW.enemies, s.sawEnemies);
+      s.sawShips = pickedP.seen;
+      s.sawEnemies = pickedE.seen;
+      const state = {
+        t: "s" as const,
+        n: this.tick,
+        w: c.wave?.n ?? 0,
+        P: pickedP.out,
+        E: pickedE.out,
+        ...(() => {
+          const f = shots.filter((r) => {
+            const own = (r as Row<unknown> & { owner?: string }).owner === s.id;
+            return own || inRange(eye, r.at, VIEW.shots);
+          }).map((r) => r.row);
+          return f.length ? { F: f } : {};
+        })(),
+        ...(stopped.length ? { X: stopped } : {}),
+        C: pick(coins, eye, VIEW.loot, s.id),
+        ...(() => { const t = pick(torps, eye, VIEW.torpedoes, s.id); return t.length ? { T: t } : {}; })(),
+        ...(() => { const j = pick(junk, eye, VIEW.junk, s.id); return j.length ? { J: j } : {}; })(),
+        ...(() => { const w = pick(wingRows, eye, VIEW.ships, s.id); return w.length ? { W: w } : {}; })(),
+        ...(() => { const g = pick(gemRows, eye, VIEW.gems, s.id); return g.length ? { G: g } : {}; })(),
+        ...(() => { const m = pick(beams, eye, VIEW.beams, s.id); return m.length ? { M: m } : {}; })(),
+      };
+      try { s.ws.send(JSON.stringify(state)); } catch { this.leave(s); }
     }
     /* Gauges every half second rather than every tick: they change slowly and
        they are the one message that is different for every player. */

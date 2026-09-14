@@ -11,7 +11,9 @@ import * as THREE from "three";
 import { RebelsRoom } from "../src/room";
 import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES, MAX_GUARDS } from "../../../ui/src/wallet/rebels/orbitFlight";
-import { setDropRandomForTests, setDragonRandomForTests, spawnDragon } from "../../../ui/src/wallet/rebels/rebelsCombat";
+import {
+  setDropRandomForTests, setDragonRandomForTests, spawnDragon, spawnFleet,
+} from "../../../ui/src/wallet/rebels/rebelsCombat";
 setDragonRandomForTests(() => 0.99);
 
 /* Wrecks roll for items. Pinned to "nothing" so a count of gems or storage
@@ -79,10 +81,27 @@ function newRoom() {
   const room = new RebelsRoom(fakeState, fakeEnv) as any;
   return room;
 }
-function join(room: any, ws: FakeSocket, node = "node-a") {
+/** `home` is the TIP of the player's own tower, mast and all, which is what
+ *  the cockpit sends and what docking is measured to. */
+/**
+ * Seat a player AND put them in the fight.
+ *
+ * Joining and flying are two messages now: the cockpit opens its socket when
+ * the map hands over its scene, and the room only counts the seat as a player
+ * once LAUNCH is pressed. Almost every test below wants a player in the fight,
+ * so the helper sends both; the ones that care about the difference are at the
+ * end of the file and send them apart.
+ */
+function join(room: any, ws: FakeSocket, node = "node-a", home: [number, number, number] = [0, 0, R + 6]) {
+  const seat = seatOnly(room, ws, node, home);
+  ws.deliver(JSON.stringify({ t: "fly" }));
+  return seat;
+}
+/** Seated, but still reading the launch card. */
+function seatOnly(room: any, ws: FakeSocket, node = "node-a", home: [number, number, number] = [0, 0, R + 6]) {
   room.seat(ws as never);
   const id = ws.last("hi").id as string;
-  ws.deliver(JSON.stringify({ t: "join", node, name: "A Node", home: [0, 0, R] }));
+  ws.deliver(JSON.stringify({ t: "join", node, name: "A Node", home }));
   return room.seats.get(id);
 }
 const home: [number, number, number] = [0, 0, R + 8];
@@ -156,11 +175,16 @@ const home: [number, number, number] = [0, 0, R + 8];
   const seat = join(room, ws);
   seat.body.pos.set(0, 0, R + 8);
   const before = room.combat.bullets.length;
-  /* Sniping from the far side of the planet. */
+  /* Sniping from the far side of the planet. The shot HAPPENS, because a
+     shot is never thrown away, but it leaves from where the room has this
+     ship and not from where the message claimed. Claiming to be somewhere
+     else therefore gains nothing, which is the whole point. */
   ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [0, 0, -(R + 8)], f: [0, 1, 0] }));
-  ok("a shot from somewhere else is refused", room.combat.bullets.length === before,
-     `${room.combat.bullets.length}`);
-  ok("and the player is told why", ws.last("no")?.why === "shot from elsewhere", ws.last("no")?.why);
+  ok("a shot claiming to come from across the planet still fires",
+     room.combat.bullets.length === before + 2, `${room.combat.bullets.length}`);
+  ok("but from where the room has the ship, not from where it claimed",
+     room.combat.bullets[room.combat.bullets.length - 1].pos.distanceTo(seat.body.pos) < 10,
+     `${room.combat.bullets[room.combat.bullets.length - 1].pos.distanceTo(seat.body.pos).toFixed(1)} away`);
   room.stop();
 }
 
@@ -519,6 +543,230 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
+// A shot leaves from where the cockpit says, not from the room's older copy;
+// the tower refills the seat, only at a tower, only every few seconds; the
+// test cheats work in company too.
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "s-node");
+  const near = seat.body.pos.clone().add(new THREE.Vector3(0, 3, 0));
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [near.x, near.y, near.z], f: [0, 1, 0] }));
+  const b = room.combat.bullets[room.combat.bullets.length - 1];
+  ok("a round leaves from the reported position when it is close enough", !!b && b.pos.distanceTo(near) < 4 && b.pos.distanceTo(seat.body.pos) > b.pos.distanceTo(near), `${b?.pos.distanceTo(near).toFixed(2)} vs ${b?.pos.distanceTo(seat.body.pos).toFixed(2)}`);
+
+  /* The two muzzles sit at the SHIP's sides: right is forward crossed with
+     the up the cockpit sends, however the ship is rolled. */
+  room.combat.bullets.length = 0;
+  const p0 = seat.body.pos;
+  room.now += 1;
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [p0.x, p0.y, p0.z], f: [0, 1, 0], u: [1, 0, 0] }));
+  const [l, r] = room.combat.bullets.slice(-2);
+  const across = l.pos.clone().sub(r.pos);
+  const expectRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(1, 0, 0)).normalize();
+  ok("a rolled ship's muzzles follow its own up", Math.abs(Math.abs(across.clone().normalize().dot(expectRight)) - 1) < 1e-6, across.toArray().map((n: number) => n.toFixed(2)).join(","));
+  ok("without an up the room falls back to away-from-the-planet", (() => {
+    room.combat.bullets.length = 0;
+    room.now += 1;
+    ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [p0.x, p0.y, p0.z], f: [0, 1, 0] }));
+    const [a, c] = room.combat.bullets.slice(-2);
+    const d = a.pos.clone().sub(c.pos).normalize();
+    const radialRight = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), p0.clone().normalize()).normalize();
+    return Math.abs(Math.abs(d.dot(radialRight)) - 1) < 1e-6;
+  })());
+
+  /* ---- THE MINI GUN MEETS THE CROSSHAIR ----
+     Its muzzle is a corner of the frame, so the round does not travel along
+     the aim: it travels to where the aim POINTS, fifty-five units out, and
+     crosses it there. What went wrong was the cockpit sending the muzzle as
+     its position, which moved that crossing point up and out with it. */
+  {
+    room.combat.bullets.length = 0;
+    room.now += 2;
+    /* The mini gun has to be declared, as any gun does. */
+    ws.deliver(JSON.stringify({ t: "gear", gear: ["mini"] }));
+    room.now += 1;
+    const eye = seat.body.pos.clone();
+    const aim = new THREE.Vector3(0.2, 0.9, 0.3).normalize();
+    ws.deliver(JSON.stringify({
+      t: "fire", k: "mini", p: [eye.x, eye.y, eye.z], f: [0, 1, 0],
+      a: [aim.x, aim.y, aim.z], u: [0, 0, 1],
+    }));
+    const shot = room.combat.bullets[room.combat.bullets.length - 1];
+    const mark = eye.clone().addScaledVector(aim, 55);
+    /* Closest approach of the round's line to the point under the crosshair. */
+    const dir = shot.vel.clone().normalize();
+    const along = mark.clone().sub(shot.pos).dot(dir);
+    const miss = mark.distanceTo(shot.pos.clone().addScaledVector(dir, along));
+    ok("a mini round crosses the point under the crosshair", miss < 1.5, `${miss.toFixed(2)} units off`);
+    ok("and it leaves from beside the ship, not from the crosshair", shot.pos.distanceTo(eye) < 6 && shot.pos.distanceTo(eye) > 0.5,
+       `${shot.pos.distanceTo(eye).toFixed(2)}`);
+  }
+
+  /* A torpedo is the room's, and comes back on the wire to be drawn. */
+  room.now += 1;
+  ws.deliver(JSON.stringify({ t: "fire", k: "torp", p: [p0.x, p0.y, p0.z], f: [0, 1, 0] }));
+  room.step();
+  const st1 = ws.last("s");
+  ok("a launched torpedo is on the wire", Array.isArray(st1.T) && st1.T.length === 1 && st1.T[0].length === 6, JSON.stringify(st1.T));
+  ok("and off the rack", seat.torps === seat.torpsMax - 1);
+
+  /* ---- THE TOWER ----
+     Measured to the player's OWN mast, reported when they joined. The room's
+     own tower list is deliberately not consulted: nothing has ever filled it
+     in, so every dock used to be refused and the resupply a player watched
+     was their cockpit's animation and nothing else. */
+  seat.ammo = 0; seat.shield = 10; seat.torps = 0;
+  seat.body.pos.set(0, 0, R + 8);
+  ok("(setup) the room has no tower list at all", room.tips.length === 0);
+  ws.deliver(JSON.stringify({ t: "dock" }));
+  ok("at your own tower, the dock refills the seat", seat.ammo === seat.ammoMax && seat.shield === seat.shieldMax && seat.torps === seat.torpsMax, `${seat.ammo} ${seat.shield}`);
+  ok("and the gauges go back", ws.last("you").ammo === seat.ammoMax);
+  seat.ammo = 0;
+  ws.deliver(JSON.stringify({ t: "dock" }));
+  ok("not again inside the resupply time", seat.ammo === 0);
+  room.now += 10;
+  seat.body.pos.set(0, R + 8, 0);          /* a quarter of the way round the world */
+  ws.deliver(JSON.stringify({ t: "dock" }));
+  ok("away from your own tower it is refused", seat.ammo === 0 && ws.last("no")?.why === "not at a tower");
+  /* And it still works after a launch, which halves every mast under you. */
+  room.now += 10;
+  seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 3);
+  ws.deliver(JSON.stringify({ t: "dock" }));
+  ok("and at a tower half its old height, since launching shrinks them", seat.ammo === seat.ammoMax, `${seat.ammo}`);
+
+  ws.deliver(JSON.stringify({ t: "cheat", code: "21" }));
+  const d = room.combat.enemies.find((e: any) => e.dragon);
+  ok("the dragon cheat works in company", !!d && d.pos.distanceTo(seat.body.pos) > 30, `${d?.pos.distanceTo(seat.body.pos).toFixed(1)}`);
+  ws.deliver(JSON.stringify({ t: "cheat", code: "21" }));
+  ok("one at a time", room.combat.enemies.filter((e: any) => e.dragon).length === 1);
+  ws.deliver(JSON.stringify({ t: "cheat", code: "13" }));
+  ok("a flock cheat too, worth nothing", room.combat.enemies.some((e: any) => e.drone && e.cheat));
+  room.stop();
+}
+
+// The stake bonus belongs to a seat, is the client's word, and is capped.
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const wsA = new FakeSocket(), wsB = new FakeSocket();
+  const a = join(room, wsA, "a-node");
+  const b = join(room, wsB, "b-node");
+  const { spawnFleet, hurtEnemy } = await import("../../../ui/src/wallet/rebels/rebelsCombat");
+  wsA.deliver(JSON.stringify({ t: "bonus" }));
+  ok("the seat that asked has it", a.bonusUntil > room.now && b.bonusUntil < room.now);
+  ok("and is told how long is left", wsA.last("you").bonus > 0 && !wsB.last("you").bonus);
+
+  /* The fight asks per shooter, which is the whole point: one number for
+     the world would give everyone in the room somebody else's bonus. */
+  const scale = room.world.damageScale;
+  ok("the fight asks per shooter", typeof scale === "function");
+  ok("triple for the one with it, ordinary for the other", scale(a.id) === 3 && scale(b.id) === 1, `${scale(a.id)} ${scale(b.id)}`);
+  ok("and for nobody at all", scale("") === 1);
+  void spawnFleet; void hurtEnemy;
+
+  a.bonusUntil = -99;
+  wsA.deliver(JSON.stringify({ t: "bonus" }));
+  ok("asking again straight away gets nothing", a.bonusUntil < room.now);
+  room.now += 400;
+  wsA.deliver(JSON.stringify({ t: "bonus" }));
+  ok("after five minutes it can be claimed again", a.bonusUntil > room.now);
+  room.stop();
+}
+
+// ---- THE WINGMEN ----
+// Declared as counts, built by the room, flown in formation, firing in
+// unison at their tier's share, hit like anything else, and back with the
+// ship when it respawns.
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "w-node");
+  ok("nobody flies wingmen by default", seat.wings.length === 0);
+
+  /* Two T2 and one T4: the best comes first. */
+  room.now += 2;
+  ws.deliver(JSON.stringify({ t: "gear", gear: [], reach: 4, drones: [0, 2, 0, 1, 0, 0, 0] }));
+  ok("three wingmen, best tier first", seat.wings.map((w: any) => w.tier).join(",") === "4,2,2",
+     seat.wings.map((w: any) => w.tier).join(","));
+  ok("their hulls are shares of the ship's",
+     seat.wings[0].hullMax === Math.round(seat.shieldMax * 1.4) && seat.wings[1].hullMax === Math.round(seat.shieldMax * 0.8),
+     `${seat.wings[0].hullMax} ${seat.wings[1].hullMax}`);
+  ok("and their magazines too", seat.wings[0].ammoMax === Math.round(seat.ammoMax * 1.5));
+  ok("eight at most", (() => {
+    room.now += 2;
+    ws.deliver(JSON.stringify({ t: "gear", gear: [], drones: [20, 0, 0, 0, 0, 0, 0] }));
+    return seat.wings.length === 8;
+  })());
+  room.now += 2;
+  ws.deliver(JSON.stringify({ t: "gear", gear: [], reach: 4, drones: [0, 2, 0, 1, 0, 0, 0] }));
+
+  /* In formation: a ring round the ship, none of them on its nose or tail. */
+  room.step();
+  const ring = seat.wings.map((w: any) => w.pos.distanceTo(seat.body.pos));
+  ok("they sit in a ring around the ship", ring.every((d: number) => Math.abs(d - 12) < 0.001), ring.map((d: number) => d.toFixed(1)).join(","));
+  ok("none on the nose or the tail", seat.wings.every((w: any) => Math.abs(w.pos.clone().sub(seat.body.pos).dot(seat.body.fwd)) < 0.001));
+  ok("and they are on the wire", (() => {
+    const st = ws.last("s");
+    return Array.isArray(st.W) && st.W.length === 3 && st.W[0][0] === seat.id && st.W[0][7] === 4;
+  })(), JSON.stringify(ws.last("s").W?.[0]));
+
+  /* With two or more the ring turns: a revolution every fifteen seconds. */
+  const before = seat.wings[0].pos.clone();
+  for (let i = 0; i < 20 * 4; i++) room.step();          /* four seconds */
+  ok("the ring turns slowly", seat.wings[0].pos.distanceTo(before) > 3 && seat.wings[0].pos.distanceTo(before) < 24,
+     `${seat.wings[0].pos.distanceTo(before).toFixed(1)} units in four seconds`);
+
+  /* ---- IN UNISON ----
+     One trigger, four streams: the player's two and one from each wingman. */
+  room.combat.bullets.length = 0;
+  room.now += 1;
+  const p0 = seat.body.pos;
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [p0.x, p0.y, p0.z], f: [0, 1, 0], u: [0, 0, 1] }));
+  const fired = room.combat.bullets;
+  ok("the wingmen fire with their owner", fired.length === 5, `${fired.length} rounds`);
+  ok("each round is credited to the owner", fired.every((b: any) => b.owner === seat.id));
+  const shares = fired.map((b: any) => b.scale ?? 1).sort();
+  ok("and carries its own tier's share", shares.join(",") === "0.8,0.8,1,1,1.4", shares.join(","));
+  ok("their magazines empty, not the ship's", seat.wings.every((w: any) => w.ammo === w.ammoMax - 1));
+
+  /* Hit: the hull comes off the wingman, not the ship. */
+  const hull = seat.wings[0].hull;
+  const shield = seat.shield;
+  room.combat.events.push({
+    kind: "wingHit", at: seat.wings[0].pos.clone(), power: 1, damage: 40,
+    who: seat.id, slot: seat.wings[0].slot,
+  });
+  room.step();
+  ok("a hit takes the wingman's hull, not the ship's", seat.wings[0].hull === hull - 40 && seat.shield === shield,
+     `${seat.wings[0].hull} of ${hull}`);
+  room.combat.events.push({
+    kind: "wingHit", at: seat.wings[0].pos.clone(), power: 1, damage: 99999,
+    who: seat.id, slot: seat.wings[0].slot,
+  });
+  room.step();
+  ok("enough of them and it is gone", seat.wings[0].hull === 0);
+  ok("everyone is told", ws.all("e").some((m: any) => (m.v as any[]).some((v) => v.k === "wingDown")));
+  ok("and it leaves the wire", (ws.last("s").W as any[]).length === 2);
+  room.combat.bullets.length = 0;
+  room.now += 1;
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [p0.x, p0.y, p0.z], f: [0, 1, 0], u: [0, 0, 1] }));
+  ok("a dead wingman does not fire", room.combat.bullets.length === 4, `${room.combat.bullets.length}`);
+
+  /* Respawn brings them back with the ship. */
+  seat.shield = 0;
+  room.down(seat);
+  seat.respawn = 0;
+  room.revive(seat);
+  ok("they come back with the ship", seat.wings.every((w: any) => w.hull === w.hullMax && w.ammo === w.ammoMax));
+  room.stop();
+}
+
 // The dragon goes over the wire as kind 2, with its two thousand.
 {
   storage.clear();
@@ -604,6 +852,254 @@ const home: [number, number, number] = [0, 0, R + 8];
   const back = room2.combat.gems.find((g: any) => g.item === second.item);
   ok("it is there after a restart, and now anyone's", !!back && back.hidden === 0 && back.owner === "", JSON.stringify(back && { hidden: back.hidden, owner: back.owner }));
   room2.stop();
+}
+
+/* ---- A SHOT IS NEVER THROWN AWAY FOR BEING A FEW UNITS OUT ----
+   The room's copy of a position is up to a report behind, and a ship at
+   super boost covers several units in that time. Refusing the shot meant a
+   player's guns stopped working: one rejected transform left the room's copy
+   behind for good, and every shot after it was "fired from elsewhere". */
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  const seat = join(room, ws, "s-node");
+  const p = seat.body.pos.clone();
+
+  room.now += 1;
+  room.combat.bullets.length = 0;
+  const near = p.clone().add(new THREE.Vector3(4, 0, 0));
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [near.x, near.y, near.z], f: [0, 1, 0], u: [0, 0, 1] }));
+  ok("a shot four units out fires, from where the cockpit said", room.combat.bullets.length === 2
+     && room.combat.bullets[0].pos.distanceTo(near) < 4, `${room.combat.bullets.length}`);
+
+  /* Far enough out that the room does not believe the origin, but the shot
+     still happens: from where the room thinks the ship is. */
+  room.now += 1;
+  room.combat.bullets.length = 0;
+  const off = p.clone().add(new THREE.Vector3(80, 0, 0));
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [off.x, off.y, off.z], f: [0, 1, 0], u: [0, 0, 1] }));
+  ok("a shot eighty units out still fires", room.combat.bullets.length === 2, `${room.combat.bullets.length}`);
+  ok("but from the room's own position, not the cockpit's",
+     room.combat.bullets[0].pos.distanceTo(p) < 10 && room.combat.bullets[0].pos.distanceTo(off) > 40,
+     `${room.combat.bullets[0].pos.distanceTo(p).toFixed(1)} from the ship`);
+
+  /* And a shot from genuinely across the map is still refused, which is what
+     the check was ever for. */
+  room.now += 1;
+  room.combat.bullets.length = 0;
+  ws.sent.length = 0;
+  ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [0, 2000, 0], f: [0, 1, 0], u: [0, 0, 1] }));
+  ok("even a shot claiming to be two thousand units away fires", room.combat.bullets.length === 2);
+  ok("from the room's position, so the claim buys nothing",
+     room.combat.bullets[0].pos.distanceTo(p) < 10,
+     `${room.combat.bullets[0].pos.distanceTo(p).toFixed(1)} from the ship`);
+  /* A transform out of the world is still corrected, and the correction
+     carries the position so the cockpit can obey it. */
+  ws.sent.length = 0;
+  ws.deliver(JSON.stringify({ t: "tf", p: [0, 0, 99999], f: [0, 1, 0] }));
+  ok("a transform out of the world is corrected", ws.last("no")?.why === "outside the world", ws.last("no")?.why);
+  ok("and the correction says where the room has the ship",
+     Array.isArray(ws.last("no")?.p) && ws.last("no").p.length === 3, JSON.stringify(ws.last("no")?.p));
+  room.stop();
+}
+
+/* ---- JOINING IS NOT FLYING ----
+   Geoff, 2026-Sep-13: "when the game starts it seems to have the player taking
+   damage almost instantly and I don't know why. And when it restarts it seems
+   to not restart fresh with all stats at zero and no enemies around, but it's
+   like going back into the same game."
+
+   Both were the same fault. The cockpit opens its socket the moment the map
+   hands over its scene, so the connection is settled before anybody launches,
+   and the room counted that seat as a player straight away: the waves began,
+   the fighters spawned and they all came for a ship parked on its pad while
+   the human was still reading the launch card. Pressing LAUNCH then dropped
+   them into a fight that had been running for as long as they had been
+   reading. */
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = seatOnly(room, ws);
+  ok("a seated player is not yet in the fight", seat.joined && !seat.flying);
+  room.refreshRoster();
+  ok("so the simulation has nobody to run for", room.world.players.length === 0,
+     `${room.world.players.length} players`);
+  /* Two hundred ticks of reading the launch card. */
+  for (let i = 0; i < 200; i++) room.step();
+  ok("and no enemies come looking while the card is up", room.combat.enemies.length === 0,
+     `${room.combat.enemies.length} enemies`);
+  ok("nor is the wave clock running", (room.combat.wave?.n ?? 1) <= 1,
+     `wave ${room.combat.wave?.n}`);
+
+  ws.deliver(JSON.stringify({ t: "fly" }));
+  ok("LAUNCH puts them in the fight", seat.flying);
+  room.refreshRoster();
+  ok("and the simulation now has a player", room.world.players.length === 1);
+  ok("launching starts at wave one", room.combat.wave?.n === 1, `wave ${room.combat.wave?.n}`);
+  ok("with full gauges", seat.shield === seat.shieldMax && seat.ammo === seat.ammoMax);
+  room.stop();
+}
+
+/* ---- A RESTART IS A RESTART ---- */
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws);
+  /* Fly a while, and put something in the sky. */
+  for (let i = 0; i < 60; i++) room.step();
+  spawnFleet(room.combat, 3, seat.body.pos, seat.body.fwd, { count: 8 });
+  seat.score = 500; seat.kills = 7;
+  ok("there is a fight in progress", room.combat.enemies.length > 0,
+     `${room.combat.enemies.length} enemies`);
+
+  /* Die. */
+  room.down(seat);
+  ok("death takes them out of the fight", !seat.flying && seat.dead);
+  ok("and with nobody flying the sky is cleared", room.combat.enemies.length === 0,
+     `${room.combat.enemies.length} enemies`);
+  ok("the run's score is banked, not carried", seat.score === 0 && seat.kills === 0,
+     `${seat.score} score, ${seat.kills} kills`);
+
+  /* The countdown runs out and the seat is alive again, but STILL not in the
+     fight: nothing may happen until the player asks for it. */
+  seat.respawn = 0;
+  room.revive(seat);
+  ok("reviving alone does not put them back in the fight", !seat.dead && !seat.flying);
+  for (let i = 0; i < 200; i++) room.step();
+  ok("so nothing gathers around them while they decide",
+     room.combat.enemies.length === 0, `${room.combat.enemies.length} enemies`);
+
+  ws.deliver(JSON.stringify({ t: "fly" }));
+  ok("LAUNCH AGAIN is a NEW game: wave one", room.combat.wave?.n === 1,
+     `wave ${room.combat.wave?.n}`);
+  ok("nothing in the sky from the last one", room.combat.enemies.length === 0);
+  ok("full gauges", seat.shield === seat.shieldMax && seat.ammo === seat.ammoMax
+     && seat.torps === seat.torpsMax);
+  ok("and nothing scored yet", seat.score === 0 && seat.kills === 0);
+  room.stop();
+}
+
+/* ---- BUT NOT FOR EVERYONE ELSE ----
+   One player launching must not wipe the sky out from under the people already
+   in it. There is one game and it is shared. */
+{
+  const room = newRoom();
+  const a = new FakeSocket(), b = new FakeSocket();
+  const seatA = join(room, a, "node-a", [0, 0, R + 6]);
+  for (let i = 0; i < 40; i++) room.step();
+  spawnFleet(room.combat, 2, seatA.body.pos, seatA.body.fwd, { count: 6 });
+  const before = room.combat.enemies.length;
+  ok("the first player has a fight on", before > 0, `${before} enemies`);
+
+  const seatB = seatOnly(room, b, "node-b", [0, R + 6, 0]);
+  b.deliver(JSON.stringify({ t: "fly" }));
+  ok("the second player joins it", seatB.flying);
+  ok("without wiping it", room.combat.enemies.length === before,
+     `${before} -> ${room.combat.enemies.length}`);
+  room.stop();
+}
+
+// N. A WEB GUEST: its own account, banked like anyone, cash-out held for sign-in.
+//    Geoff, 2026-Sep-13: web players earn DIVI like normal, and signing in is
+//    offered but not required to play.
+{
+  const room = newRoom();
+  const SAME_HOUSE = "198.51.100.9";
+
+  const app = new FakeSocket();
+  room.seat(app as never, SAME_HOUSE);
+  const appId = app.last("hi").id as string;
+  app.deliver(JSON.stringify({ t: "join", node: "house-node", name: "App Pilot", home: [0, 0, R] }));
+  const appSeat = room.seats.get(appId);
+
+  const web = new FakeSocket();
+  room.seat(web as never, SAME_HOUSE);
+  const webId = web.last("hi").id as string;
+  web.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Guest Pilot", door: "web", home: [0, 0, R] }));
+  const webSeat = room.seats.get(webId);
+
+  ok("an app player's account is unchanged by the web door", appSeat.account === SAME_HOUSE && !appSeat.guest, appSeat.account);
+  ok("a web guest on the same address gets an account of its own",
+     webSeat.guest === true && webSeat.account === `web:${SAME_HOUSE}` && webSeat.account !== appSeat.account, webSeat.account);
+  ok("both are in the same room, seeing each other", room.seats.size === 2);
+
+  await new Promise((r) => setTimeout(r, 0));
+  ok("a guest is told on joining, before asking, that cashing out needs a sign-in",
+     /sign in/i.test(String(web.last("purse")?.why ?? "")) && !app.last("purse")?.why, JSON.stringify(web.last("purse")));
+  requests.length = 0;
+  credits.length = 0;
+  webSeat.kills = 2; webSeat.divi = 0.4; webSeat.score = 20;
+  web.deliver(JSON.stringify({ t: "claim", to: "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt" }));
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  ok("a guest's run is still banked, to the guest's own account",
+     credits.length === 1 && credits[0].node === `web:${SAME_HOUSE}` && credits[0].divi > 0, JSON.stringify(credits));
+  ok("but no cash-out is asked of the ledger", requests.length === 0, JSON.stringify(requests));
+  const said = web.last("purse");
+  ok("the guest is told to sign in to cash out", typeof said?.why === "string" && /sign in/i.test(said.why), JSON.stringify(said));
+  ok("and is never offered an amount to cash out", said?.claimable === 0);
+  ok("asking is not a strike", webSeat.strikes === 0);
+
+  requests.length = 0;
+  app.deliver(JSON.stringify({ t: "claim", to: "D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt" }));
+  for (let i = 0; i < 4; i++) await new Promise((r) => setTimeout(r, 0));
+  ok("the app player in the same house still cashes out as before",
+     requests.length === 1 && requests[0].node === SAME_HOUSE, JSON.stringify(requests));
+  room.stop();
+}
+
+// N. READY FOR A PUBLIC PAGE: overflow rooms, the names that may exist, guest ids.
+{
+  const { roomNameOk, nextRoom, guestIdOk } = await import("../src/protocol");
+  ok("earth is a room", roomNameOk("earth"));
+  ok("so are its overflow rooms, earth-2 to earth-16", roomNameOk("earth-2") && roomNameOk("earth-16"));
+  ok("but not earth-1, earth-17 or earth-02", !roomNameOk("earth-1") && !roomNameOk("earth-17") && !roomNameOk("earth-02x"));
+  ok("the planet shards p1 to p14 are held", roomNameOk("p1") && roomNameOk("p14") && !roomNameOk("p15"));
+  ok("an invented name is not a room", !roomNameOk("my-private-room") && !roomNameOk(""));
+  ok("a full earth sends you to earth-2", nextRoom("earth") === "earth-2");
+  ok("a full earth-7 sends you to earth-8", nextRoom("earth-7") === "earth-8");
+  ok("when earth-16 is full there is nowhere further", nextRoom("earth-16") === "");
+  ok("a guest id is long and plain", guestIdOk("3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c"));
+  ok("a short or strange one is not trusted", !guestIdOk("abc") && !guestIdOk("<script>alert(1)</script>xxxx") && !guestIdOk(42));
+
+  const room = newRoom();
+  const ID = "3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c";
+  const a = new FakeSocket();
+  room.seat(a as never, "203.0.113.50");
+  const aId = a.last("hi").id as string;
+  a.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Pilot 1", door: "web", guest: ID, home: [0, 0, R] }));
+  ok("a guest with an id banks under that id, not the address", room.seats.get(aId).account === `guest:${ID}`, room.seats.get(aId).account);
+  const b = new FakeSocket();
+  room.seat(b as never, "198.51.100.77");
+  const bId = b.last("hi").id as string;
+  b.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Pilot 1", door: "web", guest: ID, home: [0, 0, R] }));
+  ok("so the same guest on another connection reaches the same account", room.seats.get(bId).account === `guest:${ID}`);
+  const c = new FakeSocket();
+  room.seat(c as never, "198.51.100.78");
+  const cId = c.last("hi").id as string;
+  c.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Pilot 2", door: "web", guest: "bad", home: [0, 0, R] }));
+  ok("a guest id that fails the check falls back to the address", room.seats.get(cId).account === "web:198.51.100.78");
+  const app = new FakeSocket();
+  room.seat(app as never, "198.51.100.79");
+  const appId = app.last("hi").id as string;
+  app.deliver(JSON.stringify({ t: "join", node: "n", name: "App", guest: ID, home: [0, 0, R] }));
+  ok("an app player sending a guest id is still the app account it always was", room.seats.get(appId).account === "198.51.100.79");
+  const g = new FakeSocket();
+  room.seat(g as never, "198.51.100.80");
+  const gId = g.last("hi").id as string;
+  g.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Pilot 3", door: "web", guest: ID,
+    ship: "space_SM_Ship_Cruiser_05", paint: [[10, 1, 1, 0], [10, 1, 1, 0], [10, 1, 1, 0], [10, 1, 1, 0], [10, 1, 1, 0]], home: [0, 0, R] }));
+  ok("a guest is shown in the first hull whatever its page claims", room.seats.get(gId).ship === "space_SM_Ship_Fighter_01", room.seats.get(gId).ship);
+  ok("in the factory paint", room.seats.get(gId).paint === undefined, JSON.stringify(room.seats.get(gId).paint));
+  ok("an app player keeps the hull it chose", (() => {
+    const a2 = new FakeSocket();
+    room.seat(a2 as never, "198.51.100.81");
+    const a2Id = a2.last("hi").id as string;
+    a2.deliver(JSON.stringify({ t: "join", node: "n2", name: "App 2", ship: "space_SM_Ship_Cruiser_05", home: [0, 0, R] }));
+    return room.seats.get(a2Id).ship === "space_SM_Ship_Cruiser_05";
+  })());
+  room.stop();
 }
 
 console.log(out.join("\n"));

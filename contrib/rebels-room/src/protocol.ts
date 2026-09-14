@@ -21,6 +21,22 @@ export interface JoinIn {
    *  that pays out is settled without the ledger checking it again. */
   node: string;
   name: string;
+  /**
+   * "web" when the player came in through divi.love/rebels rather than the
+   * app. Their ledger account is kept apart from the address's app account
+   * (two people in one house, one on each, must not share a balance), and a
+   * web guest cannot cash out until they sign in. Absent from the app, which
+   * is therefore exactly as before. Taken on the client's word, and a lie only
+   * hurts the liar: claiming "web" gives up cashing out.
+   */
+  door?: "web";
+  /**
+   * A web guest's own id: random, made once in their browser and kept there, and
+   * never shown to anyone. The guest's DIVI is banked under it, so it follows
+   * them between visits and between internet connections rather than being tied
+   * to an address that changes. Ignored unless `door` is "web".
+   */
+  guest?: string;
   /** Where their tower is, so the room can place them. */
   home: Vec;
   /** Which hull they fly, and how it is painted, so everyone else sees the
@@ -35,6 +51,9 @@ export interface JoinIn {
   /** Half the hull's wingspan in world units: how far out a gem or sphere is
    *  captured. Clamped by the room. */
   reach?: number;
+  /** How many wingmen of each tier this account holds, tier one first. Counts
+   *  rather than keys, because two T3 drones are two wingmen. */
+  drones?: number[];
 }
 
 /**
@@ -65,6 +84,10 @@ export interface FireIn {
   a?: Vec;
   /** Beam only: which one, a weapon key such as "beam2". */
   w?: string;
+  /** The ship's up, so the two muzzles sit at the ship's sides however it
+   *  is rolled. Without it the room used "away from the planet", and a
+   *  rolled ship's guns fired from two strange angles (Geoff). */
+  u?: Vec;
 }
 
 export interface DetonateIn { t: "det" }
@@ -82,7 +105,44 @@ export interface PurseIn { t: "purse" }
  *  client's, as the gear is; the room only paces it. */
 export interface UseIn { t: "use"; k: "recharge" | "supercharge" }
 
-export type ClientMessage = JoinIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn;
+/**
+ * LAUNCH was pressed: this player is now in the fight.
+ *
+ * Joining a room and FLYING in it are two different things, and the room used
+ * to treat them as one. The cockpit joins the moment the map hands over its
+ * scene, because the connection has to be up and settled before anybody
+ * launches; but the seat was then counted as a player straight away, so the
+ * waves began, the fighters spawned and they all came for a ship parked on its
+ * pad while the human was still reading the launch card. Geoff, 2026-Sep-13:
+ * "when the game starts it seems to have the player taking damage almost
+ * instantly and I don't know why."
+ *
+ * So a seat is in the fight only between this message and its death.
+ */
+export interface FlyIn { t: "fly" }
+
+/** The resupply at a tower finished. The room checks the ship is at one. */
+export interface DockIn { t: "dock" }
+
+/** What this ship carries, when it changes mid-flight: a gun bought, a sphere
+ *  opened, four things forged. Without this the server only ever knew what was
+ *  declared on join, and anything bought while flying did nothing. */
+export interface GearIn { t: "gear"; gear: string[]; reach?: number; drones?: number[] }
+
+/** The cockpit's flight model says the ship hit the ground or a tower, and by
+ *  how much. See the room's onHurt for what is and is not trusted here. */
+export interface HurtIn { t: "hurt"; d: number }
+
+/** This node just won a stake, which is worth a minute of triple damage.
+ *  The client's word, as the gear is, so the room caps how often it counts. */
+export interface BonusIn { t: "bonus" }
+
+/** A test cheat ("21" the dragon, "1x" a flock of tier x). Marked to remove
+ *  with the cockpit's cheat key. */
+export interface CheatIn { t: "cheat"; code: string }
+
+export type ClientMessage =
+  JoinIn | FlyIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn | DockIn | CheatIn | BonusIn | GearIn | HurtIn;
 
 /* ---- room to cockpit ---- */
 
@@ -105,13 +165,35 @@ export interface StateOut {
   P: Array<[string, number, number, number, number, number, number, number, number]>;
   /** [x,y,z, fx,fy,fz, tier, shield, shieldMax, kind (0 fighter, 1 drone, 2 dragon), id] */
   E: Array<[number, number, number, number, number, number, number, number, number, number?, number?]>;
-  /** [x,y,z, vx,vy,vz, hostile, mini] */
-  B: Array<[number, number, number, number, number, number, number, number]>;
+  /**
+   * Rounds FIRED this tick: id, where from, how fast, flags (1 hostile,
+   * 2 mini gun, 4 a swarm drone's orb), and how long it lives.
+   *
+   * Not where every round in the sky is, twenty times a second. A round has
+   * no decisions in it, and the cockpit runs the same simulation the server
+   * does, so it is told the shot and flies the round itself. This was two
+   * thirds of everything on the wire.
+   */
+  F?: Array<[number, number, number, number, number, number, number, number, number]>;
+  /** Rounds that stopped EARLY, by id: hit something, or went into the
+   *  planet. One that simply ran out of life needs no telling, since every
+   *  cockpit counts the same life down. */
+  X?: number[];
   /** [x,y,z] */
   C: Array<[number, number, number]>;
   /** Beams in the air: origin, direction, weapon key, seconds left. Absent
    *  when there are none, which is nearly always. */
   M?: Array<[number, number, number, number, number, number, string, number]>;
+  /** Torpedoes in the air: position and velocity. Absent when none. */
+  T?: Array<[number, number, number, number, number, number]>;
+  /** Wreckage in orbit: where, how it is turned, and which piece (0 body,
+   *  1 left wing, 2 right wing). It is solid, so a round that hits it is
+   *  spent: the cockpit has to draw it or shots vanish against nothing. */
+  J?: Array<[number, number, number, number, number, number, number]>;
+  /** Wingmen: whose, which of the eight places, where, hull, hull max, tier.
+   *  They always point where their owner points, so no heading is sent.
+   *  Absent when nobody in the room flies any. */
+  W?: Array<[string, number, number, number, number, number, number, number]>;
   /** Gems in the world: position, tier, spin, id, and for a dropped ITEM its
    *  catalogue key, owner seat and seconds it stays theirs alone. A private
    *  drop is sent only to its owner. Absent when there are none. */
@@ -136,6 +218,8 @@ export interface YouOut {
   kills: number;
   /** Whole DIVI earned and not yet claimed. */
   divi: number;
+  /** Seconds of triple damage left, when there are any. */
+  bonus?: number;
   dead?: 1;
   /** Seconds until they can fly again. */
   respawn?: number;
@@ -195,8 +279,48 @@ export interface PurseOut {
   items?: Record<string, number>;
 }
 
+/**
+ * This room is full: go to `next` instead. Sent the moment a socket arrives at a
+ * full room, just before it is closed. A browser cannot read the HTTP status of a
+ * refused websocket, so a plain refusal would only ever look like the network
+ * failing and be retried against the same full room forever.
+ */
+export interface FullOut {
+  t: "full";
+  /** The overflow room to try, or "" when every overflow room is taken too. */
+  next: string;
+}
+
 export type ServerMessage =
-  WelcomeOut | StateOut | EventOut | YouOut | DeniedOut | RosterOut | PurseOut;
+  WelcomeOut | StateOut | EventOut | YouOut | DeniedOut | RosterOut | PurseOut | FullOut;
+
+/**
+ * THE ROOMS THAT MAY EXIST.
+ *
+ * "earth" is the one shared world. When it is full, players overflow into
+ * "earth-2", then "earth-3", up to "earth-16": still multiplayer, and nobody is
+ * ever locked out. "p1" to "p14" are held for the planet shards (network plan,
+ * phase 7). Anything else is refused at the door, because every name is a Durable
+ * Object and a name anyone could invent is an object anyone could create.
+ */
+export const ROOM_OVERFLOW_MAX = 16;
+export function roomNameOk(name: string): boolean {
+  const m = /^earth(?:-(\d{1,2}))?$/.exec(name);
+  if (m) return m[1] === undefined || (Number(m[1]) >= 2 && Number(m[1]) <= ROOM_OVERFLOW_MAX);
+  const p = /^p(\d{1,2})$/.exec(name);
+  return !!p && Number(p[1]) >= 1 && Number(p[1]) <= 14;
+}
+/** Where to send someone when this room is full, or "" when there is nowhere. */
+export function nextRoom(name: string): string {
+  const m = /^earth(?:-(\d{1,2}))?$/.exec(name);
+  if (!m) return "";
+  const n = m[1] === undefined ? 1 : Number(m[1]);
+  return n < ROOM_OVERFLOW_MAX ? `earth-${n + 1}` : "";
+}
+/** A guest id worth trusting as a key: long, random-looking, nothing odd in it. */
+export function guestIdOk(id: unknown): id is string {
+  return typeof id === "string" && /^[A-Za-z0-9-]{16,64}$/.test(id);
+}
 
 /** Shorten a float for the wire. A tenth of a unit is six metres on this globe. */
 export const r1 = (n: number): number => Math.round(n * 10) / 10;

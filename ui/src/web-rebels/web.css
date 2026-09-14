@@ -1,0 +1,13 @@
+/* The page around the game at divi.love/rebels. The game brings its own look
+   (orbit.css and the Rebels theme); this only gives it the whole window. */
+html, body, #root { height: 100%; margin: 0; background: hsl(var(--rebels-ocean, 250 40% 4%)); }
+.web-rebels { position: fixed; inset: 0; overflow: hidden; }
+.web-rebels-wait {
+  position: fixed; inset: 0; display: grid; place-items: center;
+  font: 600 13px/1 var(--font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  letter-spacing: 0.24em; color: hsl(var(--rebels-hud, 260 70% 75%));
+  background: hsl(var(--rebels-ocean, 250 40% 4%));
+}
+.web-rebels-wait span { animation: web-rebels-breathe 1.6s ease-in-out infinite; }
+@keyframes web-rebels-breathe { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .web-rebels-wait span { animation: none; } }

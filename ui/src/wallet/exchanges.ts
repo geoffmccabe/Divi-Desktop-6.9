@@ -1,13 +1,14 @@
 // Reads the exchange catalog from the DD69 Supabase project ("Divi-Desktop-6.9").
 // This is the list of exchanges the Market Maker feature supports — names,
-// endpoints, trading pairs and fees. No secrets live here: the key below is the
+// endpoints, trading pairs and fees. No secrets live here: the key it uses is the
 // PUBLIC anon key (safe to ship), and row-level security only ever lets it read
 // exchanges marked enabled. Adding/editing exchanges happens through a separate,
 // privileged admin path — never with this key.
 
-export const SUPABASE_URL = "https://nbnhjstexdlvtwcxopqk.supabase.co";
-// Public anon key — intentionally shipped; protected by row-level security.
-export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0";
+// The project's address and public anon key live in ../supabaseProject.ts, shared
+// with Divi Rebels. Re-exported so every existing import keeps working.
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../supabaseProject";
+export { SUPABASE_URL, SUPABASE_ANON_KEY };
 
 export interface Exchange {
   id: string;

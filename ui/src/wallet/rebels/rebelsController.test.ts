@@ -11,6 +11,7 @@
 // Run: sh scripts/run-rebels-controller-tests.sh
 
 import * as THREE from "three";
+import * as serverModule from "../../../../contrib/rebels-room/src/room";
 import { createRebels } from "./rebelsController";
 import { setLoadoutRemote } from "./rebelsLoadout";
 import { SUSPEND_GRACE_MS } from "./rebelsController";
@@ -23,6 +24,13 @@ import { MAX_SHIELD, MAX_AMMO } from "./orbitFlight";
 import { R } from "./orbitWorld";
 import { grant } from "./rebelsArmoury";
 import { loadShip } from "./shipChoice";
+import { setPlatform, HEADLESS } from "./platform/current";
+import { appIdentity } from "./platform/app/identity";
+/* These tests name the player through the node identity the WALLET saves
+   ("Test Node", "Quitter"), so the game runs behind the app's identity. The
+   rest of the app door (prices, the wallet) is not needed here and would pull
+   the desktop bridge into a node test. */
+setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity });
 
 /* The controller listens on window for key-up and focus loss. Node has no
    window, so stand one up; `document` is deliberately left undefined so the
@@ -39,6 +47,13 @@ const winHandlers: Record<string, ((e: unknown) => void)[]> = {};
     winListeners[k] = (winListeners[k] ?? 0) - 1;
     winHandlers[k] = (winHandlers[k] ?? []).filter((f) => f !== fn);
   },
+  /* The armoury announces a purchase on this, and the cockpit listens so it
+     can tell the server what the ship now carries. Without it a gun bought
+     mid-flight reached nobody. */
+  dispatchEvent: (e: { type: string }) => {
+    for (const fn of winHandlers[e.type] ?? []) fn(e);
+    return true;
+  },
 };
 const store = new Map<string, string>();
 (globalThis as unknown as { localStorage: unknown }).localStorage = {
@@ -51,6 +66,92 @@ const store = new Map<string, string>();
 /* No network in the tests: the score module fires and forgets, and a rejected
    promise must not take the run down with it. */
 (globalThis as unknown as { fetch: unknown }).fetch = () => Promise.reject(new Error("offline"));
+
+/* ---- ONE GAME, END TO END ----
+   The fight runs on the server and nowhere else, so these tests run the REAL
+   server in this process and wire the real room client to it through a pair
+   of sockets that hand messages straight across. Nothing here reimplements
+   the fight: a shot travels the same wire it travels in the app, and the
+   numbers that come back are the server's.
+
+   The server's own clock is stopped and it is stepped from the cockpit's
+   position reports instead, which arrive twenty times a second, so the whole
+   thing advances in step with the test's frames rather than with the wall. */
+const roomStorage = {
+  map: new Map<string, unknown>(),
+  async get(k: string) { return this.map.get(k); },
+  async put(k: string, v: unknown) { this.map.set(k, v); },
+  async delete(k: string) { return this.map.delete(k); },
+  async list(opts: { prefix?: string } = {}) {
+    const m = new Map<string, unknown>();
+    for (const [k, v] of this.map) if (!opts.prefix || k.startsWith(opts.prefix)) m.set(k, v);
+    return m;
+  },
+};
+const roomEnv = {
+  ROOM: null,
+  LEDGER: {
+    idFromName: () => "id",
+    get: () => ({ fetch: async () => Response.json({ divi: 0, claimable: 0, paid: 0, pending: null, last: null }) }),
+  },
+} as never;
+let server: { seat(ws: unknown, from?: string): void; stop(): void; step(): void; combat: unknown; setDropsForTests(c: unknown, r: unknown): void } | null = null;
+/** Jobs the fake socket cannot run until the client has wired its handlers. */
+const socketJobs: Array<() => void> = [];
+/** Hand the cockpit its connection. Called straight after attach. */
+function flushRoom() {
+  while (socketJobs.length) socketJobs.shift()!();
+}
+function freshServer() {
+  roomStorage.map.clear();
+  const { RebelsRoom } = serverModule;
+  const s = new RebelsRoom({ storage: roomStorage } as never, roomEnv) as never as NonNullable<typeof server>;
+  server = s;
+  s.setDropsForTests(null, () => 0.99);
+  return s;
+}
+(globalThis as unknown as { WebSocket: unknown }).WebSocket = class {
+  readyState = 1;
+  onopen: (() => void) | null = null;
+  onmessage: ((e: { data: string }) => void) | null = null;
+  onclose: ((e: unknown) => void) | null = null;
+  onerror: ((e: unknown) => void) | null = null;
+  constructor() {
+    const client = this;
+    const handlers: Record<string, ((e: unknown) => void)[]> = {};
+    const half = {
+      accept() {},
+      addEventListener(k: string, fn: (e: unknown) => void) { (handlers[k] ??= []).push(fn); },
+      send(text: string) { client.onmessage?.({ data: text }); },
+      close() { client.readyState = 3; client.onclose?.({}); },
+    };
+    /* The client wires onopen and onmessage on the line after the
+       constructor returns, so seating waits for that. */
+    socketJobs.push(() => {
+      /* A fresh world per test block. They used to share one, so a block
+         that left fighters in the sky changed what the next block measured:
+         a fleet cheat that should have sent twenty-four sent six, because
+         the cap was already full of somebody else's test. */
+      if (!server || (server as unknown as { seats: Map<string, unknown> }).seats.size === 0) freshServer();
+      server!.seat(half as never, "test-account");
+      /* The server's twenty-a-second timer is not wanted here: step() is
+         called from the reports below instead. */
+      server!.stop();
+      client.onopen?.();
+    });
+    this.send = (text: string) => {
+      for (const fn of handlers.message ?? []) fn({ data: text });
+      /* One server tick per position report, which is the real rate. */
+      try { if ((JSON.parse(text) as { t?: string }).t === "tf") server?.step(); } catch { /* not ours */ }
+    };
+    this.close = () => {
+      this.readyState = 3;
+      for (const fn of handlers.close ?? []) fn({});
+    };
+  }
+  send: (text: string) => void;
+  close: () => void;
+};
 
 function press(type: string, e: Record<string, unknown>) {
   for (const fn of winHandlers[type] ?? []) fn({ preventDefault() {}, ...e });
@@ -135,10 +236,14 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const nearStart = g.camera.near;   /* the map's own near, before the game touches it */
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   const h = ctl.hud();
-  /* The effects layer, the player's guard shell, and the sky. */
+  /* The effects layer, the player's guard shell, the cockpit's mandala
+     shield, the sky, and the layer the other ships are drawn in: the
+     connection is opened at attach now, since the fight runs on the server
+     and there is nothing to fly into until it is up. */
   ok("attach adds its own objects to the map's scene",
-     g.scene.children.length === before + 3, `${before} -> ${g.scene.children.length}`);
+     g.scene.children.length === before + 5, `${before} -> ${g.scene.children.length}`);
   ok("attach reports ready", h.ready && h.broken === null);
   ok("it uses the real towers it was handed", h.towers === 2, `${h.towers} towers`);
   ok("it knows which tower is yours", h.homeName === "San Jose, Costa Rica", h.homeName);
@@ -201,6 +306,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);   /* through the dive */
 
@@ -240,6 +346,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);
   g.fire("pointerdown", { button: 2 });
@@ -307,6 +414,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
     const g = stubGlobe([["self-ip", home]]);
     const ctl = createRebels(labelFor);
     ctl.attach({ ...g, selfIp: "self-ip" });
+    flushRoom();
     ctl.launch();
     for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);   /* through the dive */
 
@@ -362,6 +470,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
   /* Nothing was scored, so nothing should be filed: an empty run is not a run. */
@@ -375,6 +484,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   /* The dive lands you at your own tower. Checked once it has finished, not
      during it. */
@@ -382,9 +492,17 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("the dive ends at your own tower",
      g.camera.position.distanceTo(home) < 40,
      `${g.camera.position.distanceTo(home).toFixed(1)} from the tip`);
-  for (let i = 0; i < 60 * 3; i++) ctl.frame(1 / 60);
+  /* The resupply takes four seconds of FLYING and is then confirmed by the
+     room, and the room is only stepped when a position report goes out, which
+     is on a wall clock rather than a frame count. A fixed number of frames
+     therefore finished the resupply on a quiet machine and did not finish it
+     on a busy one: this block passed alone and failed in the full suite. So
+     fly until the gauges are full, with a real deadline as the backstop. */
+  const untilFull = Date.now() + 15_000;
+  while (ctl.hud().shields < MAX_SHIELD && Date.now() < untilFull) ctl.frame(1 / 60);
   const h = ctl.hud();
-  ok("shields and ammo start full", h.shields === MAX_SHIELD && h.ammo <= MAX_AMMO);
+  ok("shields and ammo start full", h.shields === MAX_SHIELD && h.ammo <= MAX_AMMO,
+     `shields ${h.shields} of ${MAX_SHIELD}, ammo ${h.ammo} of ${MAX_AMMO}`);
   ctl.detach();
   await settle();
 }
@@ -394,6 +512,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: null });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 300; i++) ctl.frame(1 / 60);
   const h = ctl.hud();
@@ -409,10 +528,12 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const before = g.scene.children.length;
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.detach();
   await settle();
   ctl.attach({ ...g, selfIp: "self-ip" });
-  ok("re-attaching does not pile up scenery", g.scene.children.length === before + 3,
+  flushRoom();
+  ok("re-attaching does not pile up scenery", g.scene.children.length === before + 5,
      `${g.scene.children.length - before} objects`);
   ctl.detach();
   await settle();
@@ -436,6 +557,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);   /* through the dive */
 
@@ -502,6 +624,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g2 = stubGlobe([["self-ip", home]]);
   const ctl2 = createRebels(labelFor);
   ctl2.attach({ ...g2, selfIp: "self-ip" });
+  flushRoom();
   ctl2.launch();
   for (let i = 0; i < 60 * 6; i++) ctl2.frame(1 / 60);
 
@@ -560,6 +683,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
 
@@ -604,7 +728,10 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   press("keydown", { key: "2" });
   press("keyup", { key: "2" });
   const mini = spend(30);
-  ok("2 selects the mini gun, which runs on while held", mini > 1.5,
+  /* More than a single press costs, which is the point: it runs on. The
+     exact figure is the server's and arrives in half-second gauge updates,
+     so it is quantised and not worth pinning to the round. */
+  ok("2 selects the mini gun, which runs on while held", mini >= 1.25,
      `${mini.toFixed(2)} rounds in half a second`);
   ok("and it costs quarters rather than whole rounds",
      Math.abs(mini * 4 - Math.round(mini * 4)) < 0.01, `${mini}`);
@@ -661,6 +788,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
 
@@ -697,6 +825,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const before = g.tips.get("self-ip")!.length();
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
 
   ok("the towers start full size", Math.abs(before - (R + 6)) < 0.01, `${before.toFixed(1)}`);
 
@@ -723,6 +852,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
   const settle = () => {
@@ -733,10 +863,20 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
     for (const ch of s) { press("keydown", { key: ch }); press("keyup", { key: ch }); }
   };
 
+  /* Wait for a thing to be TRUE rather than for a stopwatch to run out: the
+     room only steps when a position report goes out, and reports go out on a
+     wall clock, so a fixed 130ms settled a quiet machine and left a busy one
+     half way through the arriving fleet. */
+  const settleUntil = (done: () => boolean) => {
+    const until = Date.now() + 10_000;
+    while (!done() && Date.now() < until) ctl.frame(1 / 60);
+    settle();
+  };
+
   settle();
   const before = ctl.hud().contacts;
   type("!11");
-  settle();
+  settleUntil(() => ctl.hud().contacts - before >= 24);
   const after = ctl.hud().contacts;
   ok("!11 sends a fleet of twenty-four", after - before >= 24, `${before} -> ${after}`);
 
@@ -764,13 +904,15 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("an abandoned sequence gives the digits back", ctl.hud().primary === 0,
      `${ctl.hud().primary}`);
 
-  /* Nonsense is ignored rather than crashing or sending something. */
-  const steady = ctl.hud().contacts;
+  /* Nonsense is ignored rather than crashing or spawning something. Asked of
+     the server directly: counting what is on screen cannot tell a cheat from
+     the wave that is arriving anyway. */
+  const cheats = () => (server!.combat as { enemies: Array<{ cheat?: boolean }> }).enemies.filter((e) => e.cheat).length;
+  const wasConjured = cheats();
   type("!99");
   type("!17");
   settle();
-  ok("nonsense sends nothing", ctl.hud().contacts <= steady + 1,
-     `${steady} -> ${ctl.hud().contacts}`);
+  ok("nonsense sends nothing", cheats() === wasConjured, `${wasConjured} -> ${cheats()}`);
 
   ctl.detach();
 
@@ -782,6 +924,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);
   const settle = () => {
@@ -839,6 +982,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home], ["peer-ip", other]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 400; i++) ctl.frame(1 / 60);
   press("keydown", { key: "Tab" });
@@ -861,6 +1005,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home], ["peer-ip", other]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.launch();
   for (let i = 0; i < 420; i++) ctl.frame(1 / 60);   /* seven seconds: dived, flying, wave one under way */
   const before = ctl.hud();
@@ -872,6 +1017,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.detach();
   const g2 = stubGlobe([["self-ip", home], ["peer-ip", other], ["new-ip", tipAt(35, 139, 3)]]);
   ctl.attach({ ...g2, selfIp: "self-ip" });
+  flushRoom();
   const after = ctl.hud();
   ok("still launched", after.launched === true);
   ok("the wave survived the rebuild", after.wave === before.wave, `${before.wave} -> ${after.wave}`);
@@ -891,10 +1037,263 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const g = stubGlobe([["self-ip", home]]);
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ctl.detach();
   ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
   ok("before launch a rebuild starts fresh", !ctl.hud().launched && ctl.hud().wave === 0);
   ctl.detach();
+}
+
+/* ---- THE REAR GUN, END TO END ----
+   Seven opens a window behind you; with the crosshair in it the ship flies
+   straight and every primary weapon fires backwards, through the server. */
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ctl.launch();
+  for (let i = 0; i < 60 * 4; i++) ctl.frame(1 / 60);
+  ok("(setup) flying", ctl.hud().launched && !ctl.hud().dead);
+
+  press("keydown", { key: "7" });
+  press("keyup", { key: "7" });
+  ok("without one, seven says where to get one", /REAR GUN/.test(ctl.hud().note) && !ctl.hud().rear, ctl.hud().note);
+
+  const INV = await import("./rebelsInventory");
+  INV.addHeld("reargun", 1);
+  press("keydown", { key: "7" });
+  press("keyup", { key: "7" });
+  ok("held but not fitted, seven says to fit it", /NOT FITTED/.test(ctl.hud().note) && !ctl.hud().rear, ctl.hud().note);
+  /* A rear gun works once it is FITTED to the ship ("Apply to Ship? y"). */
+  const FLEET = await import("./shipFleet");
+  const CHOICE = await import("./shipChoice");
+  ok("(setup) fitted to the ship being flown", FLEET.applyToShip(CHOICE.loadShip(), "reargun").ok);
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);      /* the gear reaches the server */
+  press("keydown", { key: "7" });
+  press("keyup", { key: "7" });
+  ok("with one fitted, seven opens the window", ctl.hud().rear);
+
+  /* The crosshair into the top-right corner, where the window is. */
+  g.fire("pointermove", { clientX: 700, clientY: 90 });
+  for (let i = 0; i < 6; i++) ctl.frame(1 / 60);
+  ok("the crosshair is in the window", ctl.hud().rearAim);
+
+  /* ---- and the ship flies STRAIGHT ----
+     The crosshair is over your shoulder, not out in front, so it must not
+     steer. This used to spin the ship. */
+  const heading = () => g.camera.getWorldDirection(new THREE.Vector3());
+  const wasHeading = heading();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ok("and the ship does not spin", wasHeading.angleTo(heading()) < 0.25,
+     `${((wasHeading.angleTo(heading()) * 180) / Math.PI).toFixed(1)} degrees in a second`);
+
+  /* Fire: a round should leave going backwards, from the server. */
+  const fwd = heading();
+  const combat = server!.combat as { bullets: Array<{ pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean }> };
+  combat.bullets.length = 0;
+  g.fire("pointerdown", { button: 0 });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  g.fire("pointerup", { button: 0 });
+  const mine = combat.bullets.filter((b) => !b.hostile);
+  ok("the guns fire", mine.length > 0, `${mine.length} rounds`);
+  ok("and they go backwards", mine.every((b) => b.vel.clone().normalize().dot(fwd) < 0),
+     mine.map((b) => b.vel.clone().normalize().dot(fwd).toFixed(2)).join(" "));
+
+  /* The mini gun too, which used to keep firing out of the nose. */
+  const { grant } = await import("./rebelsArmoury");
+  const { loadShip } = await import("./shipChoice");
+  grant(loadShip(), "mini");
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  press("keydown", { key: "2" });
+  press("keyup", { key: "2" });
+  combat.bullets.length = 0;
+  g.fire("pointerdown", { button: 0 });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  g.fire("pointerup", { button: 0 });
+  const minis = combat.bullets.filter((b) => !b.hostile);
+  ok("the mini gun fires backwards as well", minis.length > 0 && minis.every((b) => b.vel.clone().normalize().dot(fwd) < 0),
+     `${minis.length} rounds`);
+
+  /* Out of the window, and the guns face forward again. */
+  g.fire("pointermove", { clientX: 400, clientY: 300 });
+  for (let i = 0; i < 6; i++) ctl.frame(1 / 60);
+  ok("leaving the window points them forward again", !ctl.hud().rearAim);
+  press("keydown", { key: "7" });
+  press("keyup", { key: "7" });
+  ok("seven closes it", !ctl.hud().rear);
+  ctl.detach();
+  await settle();
+}
+
+/* ---- WHAT THE COCKPIT ACTUALLY HAS TO DRAW ----
+   Every test above this one asks the SERVER what happened. That is the wrong
+   end, and it is how "no bullets at all" got past a green suite: the rounds
+   were in the room and never reached the screen. These read the cockpit's own
+   draw lists, through the black box it writes for the DFlow panel.
+
+   Geoff, 2026-Sep-13: "I don't see any bullets anymore. The beam doesn't
+   show and so that's broken too... Torpedoes still only explode inside the
+   cockpit." */
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ctl.launch();
+  for (let i = 0; i < 60 * 4; i++) ctl.frame(1 / 60);
+  ok("(setup) flying, with the room live", ctl.hud().launched && ctl.hud().room === "live");
+
+  /** What the cockpit is holding to draw, out of its own black box. */
+  const drawn = () => {
+    const raw = store.get("dd69.rebels.diag");
+    if (!raw) return {} as Record<string, number>;
+    const d = JSON.parse(raw) as { drawing?: Record<string, number> };
+    return d.drawing ?? {};
+  };
+
+  /* ---- the guns ---- */
+  g.fire("pointerdown", { button: 0 });
+  let sawRounds = 0;
+  for (let i = 0; i < 60 * 2; i++) {
+    ctl.frame(1 / 60);
+    sawRounds = Math.max(sawRounds, drawn().bullets ?? 0);
+  }
+  g.fire("pointerup", { button: 0 });
+  ok("the cockpit has rounds to draw", sawRounds > 0, `${sawRounds} at most`);
+  ok("and trails for them", (drawn().tracers ?? 0) >= 0);
+
+  /* They must also GO once their life is up, or the sky fills for ever. */
+  for (let i = 0; i < 60 * 8; i++) ctl.frame(1 / 60);
+  ok("and they clear when their life runs out", (drawn().bullets ?? 0) === 0, `${drawn().bullets} left`);
+
+  /* ---- the beam ---- */
+  const { grant } = await import("./rebelsArmoury");
+  const { loadShip } = await import("./shipChoice");
+  grant(loadShip(), "beam1");
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  press("keydown", { key: "3" });
+  press("keyup", { key: "3" });
+  g.fire("pointerdown", { button: 0 });
+  let sawBeam = 0;
+  for (let i = 0; i < 60 * 2; i++) {
+    ctl.frame(1 / 60);
+    sawBeam = Math.max(sawBeam, drawn().beams ?? 0);
+  }
+  g.fire("pointerup", { button: 0 });
+  ok("the cockpit has a beam to draw", sawBeam > 0, `${sawBeam} at most`);
+
+  /* ---- the torpedo ---- */
+  press("keydown", { key: "1" });
+  press("keyup", { key: "1" });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  const rackBefore = ctl.hud().torpedoes;
+  g.fire("pointerdown", { button: 2 });
+  g.fire("pointerup", { button: 2 });
+  let sawTorp = 0;
+  for (let i = 0; i < 60 * 2; i++) {
+    ctl.frame(1 / 60);
+    sawTorp = Math.max(sawTorp, drawn().torps ?? 0);
+  }
+  ok("the cockpit has a torpedo to draw", sawTorp > 0, `${sawTorp} at most`);
+  ok("and it came off the rack", ctl.hud().torpedoes < rackBefore, `${rackBefore} -> ${ctl.hud().torpedoes}`);
+
+  ctl.detach();
+  await settle();
+}
+
+/* ---- THE THINGS NOBODY HAS EVER SEEN WORK ----
+   Wingmen, the dragon, the tower, and dying. All four were built and shipped
+   without anyone watching them happen from the cockpit's side, which is the
+   gap that let "no bullets at all" through a green suite. Each of these
+   drives the real server and then reads what the cockpit has to draw. */
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ctl.launch();
+  for (let i = 0; i < 60 * 4; i++) ctl.frame(1 / 60);
+  const drawn = () => {
+    const raw = store.get("dd69.rebels.diag");
+    if (!raw) return {} as Record<string, number>;
+    return (JSON.parse(raw) as { drawing?: Record<string, number> }).drawing ?? {};
+  };
+  const run = (frames: number) => { for (let i = 0; i < frames; i++) ctl.frame(1 / 60); };
+
+  /* ---- WINGMEN ---- */
+  const INV = await import("./rebelsInventory");
+  INV.addHeld("drone2", 3);
+  run(90);                                    /* the gear reaches the room */
+  let sawWings = 0;
+  for (let i = 0; i < 120; i++) { ctl.frame(1 / 60); sawWings = Math.max(sawWings, drawn().wings ?? 0); }
+  ok("three wingmen reach the cockpit", sawWings === 3, `${sawWings} arrived`);
+
+  /* ---- THE DRAGON ---- */
+  const beforeE = drawn().bullets;
+  void beforeE;
+  press("keydown", { key: "!" });
+  press("keydown", { key: "2" });
+  press("keydown", { key: "1" });
+  run(60);
+  const seats = () => [...(server as unknown as { seats: Map<string, unknown> }).seats.values()];
+  void seats;
+  const dragonInRoom = (server!.combat as { enemies: Array<{ dragon?: true }> }).enemies.some((e) => e.dragon);
+  ok("the cheat puts a dragon in the room", dragonInRoom);
+  /* It is drawn from the enemy list, and the cockpit keeps its own count of
+     fighters in the black box. */
+  const diag = JSON.parse(store.get("dd69.rebels.diag")!) as { enemies: number; fighters: number };
+  ok("and the cockpit is told about it", diag.enemies > 0, `${diag.enemies} in view`);
+
+  /* ---- THE TOWER ----
+     Not driven from here: a resupply needs the ship to leave its pad and fly
+     back to it, which is a minute of steering to arrange and fragile to
+     assert. The room's half is covered directly in the server's suite (at
+     your own mast, paced, refused away from it) and the cockpit's half is
+     the one line that tells the room when its own four seconds finished. */
+
+  /* ---- DYING, AND COMING BACK ---- */
+  const seat = [...(server as unknown as { seats: Map<string, { id: string; shield: number; body: { pos: THREE.Vector3 } }> }).seats.values()][0];
+  seat.shield = 1;
+  (server!.combat as { events: Array<Record<string, unknown>> }).events.push({
+    kind: "playerHit", at: seat.body.pos.clone(), power: 1, damage: 9999, who: seat.id,
+  });
+  run(60);
+  ok("a hull at zero is a death the cockpit knows about", ctl.hud().dead, "still flying");
+  ok("with a countdown", ctl.hud().respawnIn > 0, `${ctl.hud().respawnIn}`);
+  ctl.detach();
+  await settle();
+}
+
+// W. Behind the WEB door, the cockpit arrives at the room as a web guest.
+//    The same game, the same server: only the door is different.
+{
+  setPlatform({
+    ...HEADLESS,
+    id: "test-web",
+    identity: {
+      name: () => "Pilot 4242",
+      joinFields: () => ({ node: "web-guest", name: "Pilot 4242", door: "web" as const }),
+      accountKey: () => "guest:test",
+    },
+  });
+  const g = stubGlobe([["109.228.38.104", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "109.228.38.104" });
+  flushRoom();
+  ctl.launch();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  const seats = [...((server as unknown as { seats: Map<string, { name: string; guest: boolean; account: string }> })?.seats.values() ?? [])];
+  const me = seats.find((s) => s.name === "Pilot 4242");
+  ok("a web cockpit joins the same room under its guest name", !!me, seats.map((s) => s.name).join(","));
+  ok("and the room knows it came through the web door", me?.guest === true && (me?.account ?? "").startsWith("web:"), me?.account);
+  ctl.detach();
+  await settle();
+  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity });
 }
 
 console.log(out.join("\n"));

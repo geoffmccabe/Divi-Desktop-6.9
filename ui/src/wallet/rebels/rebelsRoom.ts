@@ -24,8 +24,21 @@
 import * as THREE from "three";
 import { weaponByKey } from "./weaponCatalog";
 import { dflow } from "./rebelsDflow";
+import { platform } from "./platform/current";
+import { DEFAULT_ROOM_BASE } from "./platform/defaults";
 
 /** Everything the cockpit needs to know about somebody else in the room. */
+/** One round, as the room announced it. */
+export interface Shot {
+  id: number;
+  pos: THREE.Vector3;
+  vel: THREE.Vector3;
+  hostile: boolean;
+  mini: boolean;
+  orb: boolean;
+  life: number;
+}
+
 export interface RoomPlayer {
   id: string;
   name: string;
@@ -62,6 +75,8 @@ export interface RoomGauges {
   divi: number;
   dead: boolean;
   respawn: number;
+  /** Seconds of triple damage left. */
+  bonus: number;
 }
 
 export interface RoomEvent {
@@ -77,6 +92,9 @@ export interface RoomEvent {
   /** gem / drop of an item: its catalogue key, and the gem's id. */
   item?: string;
   id?: string;
+  /** denied only: `at` is where the room says this ship really is, and the
+   *  cockpit is to move there. */
+  snap?: true;
 }
 
 export type RoomStatus = "off" | "connecting" | "live" | "retrying" | "refused";
@@ -105,17 +123,38 @@ export interface Room {
   me(): string;
   /** Everybody else. */
   others(): RoomPlayer[];
+  /**
+   * How many ships are in this world, including yours.
+   *
+   * From the ROSTER, not from what is on screen. Since the room started
+   * sending each player only what is near them, the drawing list holds the
+   * ships in view and nothing else, and counting that told a player flying
+   * alone in a busy world that they were alone.
+   */
+  crew(): number;
   /** The fight, as the room sees it. Overwritten every tick. */
   enemies: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; tier: number; shield: number; shieldMax: number; drone?: boolean; dragon?: boolean; id?: number }>;
-  bullets: Array<{ pos: THREE.Vector3; vel: THREE.Vector3; hostile: boolean; mini: boolean }>;
+  /** Rounds fired since this was last drained, and rounds the room says
+   *  stopped early. The cockpit flies everything in between itself, with the
+   *  same simulation file the room uses. */
+  takeShots(): Shot[];
+  takeSpent(): number[];
   coins: Array<{ pos: THREE.Vector3 }>;
+  /** Torpedoes in the air, the room's: drawn, never simulated here. */
+  torpedoes: Array<{ pos: THREE.Vector3; vel: THREE.Vector3 }>;
+  /** Wreckage, which is solid: a round that hits a piece is spent, so it has
+   *  to be drawn or shots disappear against nothing. */
+  junk: Array<{ pos: THREE.Vector3; rot: THREE.Vector3; kind: string }>;
+  /** The wingmen flying formation on every ship in the room, this one's
+   *  included. They point where their owner points. */
+  wings: Array<{ owner: string; slot: number; pos: THREE.Vector3; hull: number; hullMax: number; tier: number }>;
   wave: number;
   gauges: RoomGauges | null;
   /** Anything that happened this tick, for sound and sparks. Drained. */
   takeEvents(): RoomEvent[];
   /** Say where this ship is. Rate-limited inside. */
   report(pos: THREE.Vector3, fwd: THREE.Vector3, guard: boolean): void;
-  fire(kind: "main" | "mini" | "torp" | "beam", pos: THREE.Vector3, fwd: THREE.Vector3, aim?: THREE.Vector3, weapon?: string): void;
+  fire(kind: "main" | "mini" | "torp" | "beam", pos: THREE.Vector3, fwd: THREE.Vector3, aim?: THREE.Vector3, weapon?: string, up?: THREE.Vector3): void;
   /** Beams in the air, as the room sees them. Overwritten every tick. */
   beams: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; life: number; half: number; reach: number; colour: number; key: string }>;
   /** Gems in the world. The room's; they persist there. A dropped item
@@ -124,6 +163,28 @@ export interface Room {
   detonate(): void;
   /** Y: a held recharge or supercharge, applied by the room. */
   use(k: "recharge" | "supercharge"): void;
+  /**
+   * LAUNCH was pressed.
+   *
+   * Joining the room and FLYING in it are two different things. The socket
+   * opens when the map hands over its scene, so the connection is settled
+   * before anybody launches, but the fight must not count a seat until its
+   * player is actually in it, or the waves run around a ship parked on its pad
+   * while the human reads the launch card. Flying alone, this also starts the
+   * fight over, which is what makes a restart a restart.
+   */
+  fly(): void;
+  /** The resupply finished at a tower: the room refills the seat, having
+   *  checked the ship really is at one. */
+  dock(): void;
+  /** Test cheats, so the shared fight has the same ones as the solo one. */
+  cheat(code: string): void;
+  /** This node won a stake: a minute of triple damage, if the room allows it. */
+  bonus(): void;
+  /** What the ship carries, when it changes: a gun bought, a sphere opened. */
+  gear(list: string[], reach?: number, drones?: number[]): void;
+  /** The flight model hit the ground or a tower, and by how much. */
+  hurt(amount: number): void;
   /** Ask to be paid what is banked, to this address. The answer comes back
    *  as a purse, with `why` set if it was refused. */
   claim(to: string): void;
@@ -136,8 +197,8 @@ export interface Room {
   close(): void;
 }
 
-/** Where the rooms live. */
-export const ROOM_BASE = "wss://divi-rebels-room.geoff-de3.workers.dev";
+/** Where the rooms live, unless the door says otherwise (platform().roomBase). */
+export const ROOM_BASE = DEFAULT_ROOM_BASE;
 /**
  * One world, not one per region.
  *
@@ -159,6 +220,10 @@ const SMOOTH = 0.075;
 interface Opts {
   node: string;
   name: string;
+  /** "web" when the player came in through divi.love/rebels. See JoinIn. */
+  door?: "web";
+  /** A web guest's own id, which their banked DIVI is kept under. See JoinIn. */
+  guest?: string;
   home: THREE.Vector3;
   ship: string;
   paint?: number[][];
@@ -166,6 +231,8 @@ interface Opts {
   gear?: string[];
   /** The hull's capture reach, half its wingspan in world units. */
   reach?: number;
+  /** How many wingmen of each tier the account holds, tier one first. */
+  drones?: number[];
   /** Told when the connection comes up or goes down, for the cockpit's own
    *  display. */
   onStatus?: (s: RoomStatus) => void;
@@ -173,8 +240,40 @@ interface Opts {
   onPurse?: (p: Purse) => void;
 }
 
+/** How long a hidden tab keeps its seat. A page left open in a background tab
+ *  should not hold one of a room's places all afternoon; coming back to it
+ *  reconnects in about a second. */
+export const HIDDEN_RELEASE_MS = 3 * 60_000;
+
 export function joinRoom(opts: Opts): Room {
   let ws: WebSocket | null = null;
+  /* ---- which room ----
+     "earth" first, always. A full room answers with the overflow room to try
+     next (earth-2, earth-3...), and the socket goes straight there. After any
+     ordinary disconnect it starts again from earth, so the shared world fills
+     back up as people leave rather than everyone staying scattered. */
+  let roomName = ROOM_NAME;
+  let hopTo: string | null = null;
+  /* ---- a hidden tab gives its seat back ---- */
+  let resting = false;
+  let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
+  const onVisibility = () => {
+    if (typeof document === "undefined") return;
+    if (document.visibilityState === "hidden") {
+      if (hiddenTimer) return;
+      hiddenTimer = setTimeout(() => {
+        hiddenTimer = null;
+        resting = true;
+        try { ws?.close(); } catch { /* already gone */ }
+      }, HIDDEN_RELEASE_MS);
+    } else {
+      if (hiddenTimer) { clearTimeout(hiddenTimer); hiddenTimer = null; }
+      if (resting) { resting = false; retries = 0; retryAt = 0; }
+    }
+  };
+  if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+    document.addEventListener("visibilitychange", onVisibility);
+  }
   let status: RoomStatus = "connecting";
   let seat = "";
   let closed = false;
@@ -190,8 +289,13 @@ export function joinRoom(opts: Opts): Room {
     me: () => seat,
     others: () => [...players.values()].filter((p) => p.id !== seat),
     enemies: [],
-    bullets: [],
+    crew() { return Math.max(1, roster.size); },
+    takeShots() { const out = shots; shots = []; return out; },
+    takeSpent() { const out = spent; spent = []; return out; },
     coins: [],
+    torpedoes: [],
+    junk: [],
+    wings: [],
     beams: [],
     gems: [],
     wave: 0,
@@ -201,16 +305,28 @@ export function joinRoom(opts: Opts): Room {
       if (!ws || status !== "live") return;
       if (sinceReport < 1 / REPORT_HZ) return;
       sinceReport = 0;
-      send({ t: "tf", p: xyz(pos), f: xyz(fwd), ...(guard ? { g: 1 as const } : {}) });
+      send({ t: "tf", p: xyz(pos), f: dir(fwd), ...(guard ? { g: 1 as const } : {}) });
     },
-    fire(kind, pos, fwd, aim, weapon) {
+    fire(kind, pos, fwd, aim, weapon, up) {
       send({
-        t: "fire", k: kind, p: xyz(pos), f: xyz(fwd),
-        ...(aim ? { a: xyz(aim) } : {}), ...(weapon ? { w: weapon } : {}),
+        t: "fire", k: kind, p: xyz(pos), f: dir(fwd),
+        ...(aim ? { a: dir(aim) } : {}), ...(weapon ? { w: weapon } : {}), ...(up ? { u: dir(up) } : {}),
       });
     },
     detonate() { send({ t: "det" }); },
     use(k) { send({ t: "use", k }); },
+    fly() { send({ t: "fly" }); },
+    dock() { send({ t: "dock" }); },
+    cheat(code) { send({ t: "cheat", code }); },
+    bonus() { send({ t: "bonus" }); },
+    gear(list, reach, drones) {
+      send({
+        t: "gear", gear: list,
+        ...(reach ? { reach: Math.round(reach * 100) / 100 } : {}),
+        ...(drones ? { drones } : {}),
+      });
+    },
+    hurt(amount) { send({ t: "hurt", d: Math.round(amount * 100) / 100 }); },
     claim(to) { send({ t: "claim", to }); },
     askPurse() { send({ t: "purse" }); },
     purse: null,
@@ -224,16 +340,28 @@ export function joinRoom(opts: Opts): Room {
         p.pos.lerpVectors(p.from, p.target, p.t);
         p.fwd.lerpVectors(p.fromFwd, p.targetFwd, p.t).normalize();
       }
-      if (closed) return;
+      if (closed || resting) return;
       if (!ws && performance.now() >= retryAt) open();
     },
     close() {
       closed = true;
+      if (hiddenTimer) { clearTimeout(hiddenTimer); hiddenTimer = null; }
+      if (typeof document !== "undefined" && typeof document.removeEventListener === "function") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
       setStatus("off");
       try { ws?.close(); } catch { /* already gone */ }
       ws = null;
     },
   };
+
+  /* Rounds the room has told us about but the cockpit has not picked up
+     yet. Drained once a frame; see takeShots. */
+  /** Everyone in the world, by id: name, node, hull, paint. Outlives being
+   *  out of view. */
+  const roster = new Map<string, { id: string; name: string; node: string; ship: string; paint?: number[][] }>();
+  let shots: Shot[] = [];
+  let spent: number[] = [];
 
   const players_ = players;
 
@@ -253,7 +381,7 @@ export function joinRoom(opts: Opts): Room {
     setStatus(retries === 0 ? "connecting" : "retrying");
     let sock: WebSocket;
     try {
-      sock = new WebSocket(`${ROOM_BASE}/room/${ROOM_NAME}`);
+      sock = new WebSocket(`${platform().roomBase}/room/${roomName}`);
     } catch {
       backoff();
       return;
@@ -268,9 +396,12 @@ export function joinRoom(opts: Opts): Room {
         name: opts.name,
         home: xyz(opts.home),
         ship: opts.ship,
+        ...(opts.door ? { door: opts.door } : {}),
+        ...(opts.guest ? { guest: opts.guest } : {}),
         ...(opts.paint ? { paint: opts.paint } : {}),
         ...(opts.gear ? { gear: opts.gear } : {}),
         ...(opts.reach ? { reach: Math.round(opts.reach * 100) / 100 } : {}),
+        ...(opts.drones && opts.drones.some((n) => n > 0) ? { drones: opts.drones } : {}),
       });
     };
     sock.onmessage = (ev) => {
@@ -283,12 +414,27 @@ export function joinRoom(opts: Opts): Room {
       if (ws === sock) ws = null;
       players.clear();
       room.enemies.length = 0;
-      room.bullets.length = 0;
+      shots.length = 0;
+      spent.length = 0;
       room.coins.length = 0;
+      room.torpedoes.length = 0;
+      room.junk.length = 0;
+      room.wings.length = 0;
       room.beams.length = 0;
       room.gems.length = 0;
       room.gauges = null;
-      if (!closed) backoff();
+      if (closed) return;
+      if (hopTo) {
+        /* Sent on by a full room: go now, not after a backoff. */
+        roomName = hopTo;
+        hopTo = null;
+        retries = 0;
+        retryAt = 0;
+        return;
+      }
+      /* Anything else starts over from the shared world. */
+      roomName = ROOM_NAME;
+      if (!resting) backoff();
     };
   }
 
@@ -307,25 +453,43 @@ export function joinRoom(opts: Opts): Room {
 
   function onMessage(m: Record<string, unknown>): void {
     switch (m.t) {
+      case "full": {
+        /* This room is full. Try the one it names; if it names none, every
+           overflow room is taken, so wait and try earth again. */
+        const next = typeof m.next === "string" ? m.next : "";
+        hopTo = /^earth(-\d{1,2})?$/.test(next) ? next : null;
+        dflow.note(`room ${roomName} full${hopTo ? `, moving to ${hopTo}` : ", every room full"}`);
+        return;
+      }
       case "hi":
         seat = String(m.id ?? "");
         setStatus("live");
         return;
 
       case "who": {
+        /* ---- THE ROSTER, WHICH IS NOT THE DRAWING LIST ----
+           Who is in the world, with their name, hull and paint. It arrives
+           when somebody joins or leaves, which is about once a session, so
+           it cannot be rebuilt from what happens to be in view: a player who
+           flies out of range and back would return with no name and the
+           default grey ship until the next person joined. */
         const list = Array.isArray(m.players) ? m.players : [];
         const keep = new Set<string>();
         for (const raw of list as Array<Record<string, unknown>>) {
           const id = String(raw.id ?? "");
           if (!id) continue;
           keep.add(id);
-          const p = players_.get(id) ?? blank(id);
-          p.name = String(raw.name ?? "").slice(0, 40);
-          p.node = String(raw.node ?? "");
-          p.ship = String(raw.ship ?? "");
-          p.paint = Array.isArray(raw.paint) ? (raw.paint as number[][]) : undefined;
-          players_.set(id, p);
+          const who = roster.get(id) ?? { id, name: "", node: "", ship: "", paint: undefined as number[][] | undefined };
+          who.name = String(raw.name ?? "").slice(0, 40);
+          who.node = String(raw.node ?? "");
+          who.ship = String(raw.ship ?? "");
+          who.paint = Array.isArray(raw.paint) ? (raw.paint as number[][]) : undefined;
+          roster.set(id, who);
+          /* And anyone already on screen takes the new details at once. */
+          const drawn = players_.get(id);
+          if (drawn) { drawn.name = who.name; drawn.node = who.node; drawn.ship = who.ship; drawn.paint = who.paint; }
         }
+        for (const id of [...roster.keys()]) if (!keep.has(id)) roster.delete(id);
         for (const id of [...players_.keys()]) if (!keep.has(id)) players_.delete(id);
         return;
       }
@@ -359,10 +523,34 @@ export function joinRoom(opts: Opts): Room {
           fwd: new THREE.Vector3(e[3], e[4], e[5]),
           tier: e[6], shield: e[7], shieldMax: e[8], drone: e[9] === 1, dragon: e[9] === 2, id: e[10] || 0,
         }));
-        room.bullets = ((m.B ?? []) as number[][]).map((b) => ({
-          pos: new THREE.Vector3(b[0], b[1], b[2]),
-          vel: new THREE.Vector3(b[3], b[4], b[5]),
-          hostile: b[6] === 1, mini: b[7] === 1,
+        for (const f of (m.F ?? []) as number[][]) {
+          shots.push({
+            id: f[0],
+            pos: new THREE.Vector3(f[1], f[2], f[3]),
+            vel: new THREE.Vector3(f[4], f[5], f[6]),
+            hostile: (f[7] & 1) !== 0,
+            mini: (f[7] & 2) !== 0,
+            orb: (f[7] & 4) !== 0,
+            life: f[8],
+          });
+        }
+        for (const id of (m.X ?? []) as number[]) spent.push(id);
+        /* A long stall must not deliver a thousand rounds at once. */
+        while (shots.length > 400) shots.shift();
+        while (spent.length > 400) spent.shift();
+        room.junk = ((m.J ?? []) as number[][]).map((j) => ({
+          pos: new THREE.Vector3(j[0], j[1], j[2]),
+          rot: new THREE.Vector3(j[3], j[4], j[5]),
+          kind: j[6] === 1 ? "wingL" : j[6] === 2 ? "wingR" : "body",
+        }));
+        room.wings = ((m.W ?? []) as Array<[string, number, number, number, number, number, number, number]>).map((v) => ({
+          owner: String(v[0]), slot: Number(v[1]) || 0,
+          pos: new THREE.Vector3(v[2], v[3], v[4]),
+          hull: Number(v[5]) || 0, hullMax: Number(v[6]) || 1, tier: Number(v[7]) || 1,
+        }));
+        room.torpedoes = ((m.T ?? []) as number[][]).map((t) => ({
+          pos: new THREE.Vector3(t[0], t[1], t[2]),
+          vel: new THREE.Vector3(t[3], t[4], t[5]),
         }));
         room.coins = ((m.C ?? []) as number[][]).map((k) => ({
           pos: new THREE.Vector3(k[0], k[1], k[2]),
@@ -398,6 +586,7 @@ export function joinRoom(opts: Opts): Room {
           divi: Number(m.divi) || 0,
           dead: m.dead === 1,
           respawn: Number(m.respawn) || 0,
+          bonus: Number(m.bonus) || 0,
         };
         return;
 
@@ -454,24 +643,35 @@ export function joinRoom(opts: Opts): Room {
         return;
       }
 
-      case "no":
-        /* The room refusing something. Kept quiet rather than swallowed
-           entirely: it is where cheating and bugs look the same, and the black
-           box is the right place for it. */
+      case "no": {
+        /* ---- THE ROOM REFUSING SOMETHING ----
+           And, when it comes with a position, TELLING YOU WHERE YOU ARE. That
+           has to be obeyed. The room is the authority on where a ship is, and
+           a cockpit that ignored the correction flew on while the room's copy
+           of it stood still: the gap only ever grew, and every shot after
+           that was refused for being fired from somewhere else. */
+        const at = Array.isArray(m.p) ? (m.p as number[]) : null;
         events.push({
-          kind: "denied", at: new THREE.Vector3(), power: 1,
+          kind: "denied", power: 1,
+          at: at ? new THREE.Vector3(at[0], at[1], at[2]) : new THREE.Vector3(),
           who: String(m.why ?? ""),
+          ...(at ? { snap: true as const } : {}),
         });
         return;
+      }
     }
   }
 
   function blank(id: string): RoomPlayer {
+    /* Their name and paint come from the roster, which outlives being out of
+       view; only where they are is ephemeral. */
+    const who = roster.get(id);
     return {
-      id, name: "", node: "", ship: "",
+      id, name: who?.name ?? "", node: who?.node ?? "", ship: who?.ship ?? "",
       pos: new THREE.Vector3(), fwd: new THREE.Vector3(0, 0, 1),
       from: new THREE.Vector3(), fromFwd: new THREE.Vector3(0, 0, 1),
       target: new THREE.Vector3(), targetFwd: new THREE.Vector3(0, 0, 1),
+      paint: who?.paint,
       t: 1, guard: false, shield: 0, seen: true,
     };
   }
@@ -494,3 +694,11 @@ function xyz(v: THREE.Vector3): [number, number, number] {
   return [round1(v.x), round1(v.y), round1(v.z)];
 }
 const round1 = (n: number) => Math.round(n * 10) / 10;
+/* A DIRECTION is a unit vector: rounding it to a tenth per axis bends it by
+   up to five degrees, which at the guns' convergence distance is a miss of
+   several ship lengths. Geoff: "far off course." Four decimals is a tenth of
+   a degree and three bytes more. */
+export function dir(v: THREE.Vector3): [number, number, number] {
+  return [round4(v.x), round4(v.y), round4(v.z)];
+}
+const round4 = (n: number) => Math.round(n * 10000) / 10000;

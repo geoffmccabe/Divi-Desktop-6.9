@@ -13,9 +13,12 @@
 // later. So the table is one row per SHIP, and this is the client for it. The
 // marketplace itself is not built and nothing here pretends otherwise.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../exchanges";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
 import { playerName } from "./rebelsScores";
-import type { ShipPaint } from "./shipColours";
+import { platform } from "./platform/current";
+import { loadPaint, type ShipPaint } from "./shipColours";
+import { shipName, shipUpgrades, mergeFleet } from "./shipFleet";
+import { shipCatalog } from "./shipCatalog";
 
 const headers = {
   apikey: SUPABASE_ANON_KEY,
@@ -30,6 +33,8 @@ export interface FleetShip {
   /** What the owner calls it, or empty for "whatever the class is". */
   name: string;
   paint: ShipPaint | Record<string, never>;
+  /** Item keys fitted to this hull for good (shipFleet.ts). */
+  upgrades: string[];
   isActive: boolean;
   /** Marketplace, for later. Never set by this client yet. */
   forSale: boolean;
@@ -49,8 +54,9 @@ export async function saveShip(
   tier: number,
   paint: ShipPaint,
   name = "",
+  upgrades: string[] = [],
 ): Promise<void> {
-  const who = playerName();
+  const who = platform().identity.accountKey();
   if (!who) return;
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/rpc/rebels_ship_save`, {
@@ -58,11 +64,12 @@ export async function saveShip(
       headers,
       body: JSON.stringify({
         p_owner_key: who,
-        p_owner_name: who,
+        p_owner_name: playerName(),
         p_model: model,
         p_tier: tier,
         p_name: name,
         p_paint: paint,
+        p_upgrades: upgrades,
       }),
     });
   } catch {
@@ -71,13 +78,13 @@ export async function saveShip(
 }
 
 /** Every ship this player owns, newest first. Empty when offline. */
-export async function myFleet(who = playerName()): Promise<FleetShip[]> {
+export async function myFleet(who = platform().identity.accountKey()): Promise<FleetShip[]> {
   if (!who) return [];
   try {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/rebels_ships` +
         `?owner_key=eq.${encodeURIComponent(who.toLowerCase())}` +
-        `&select=id,model,tier,name,paint,is_active,for_sale,price_divi` +
+        `&select=id,model,tier,name,paint,upgrades,is_active,for_sale,price_divi` +
         `&order=acquired_at.desc`,
       { headers },
     );
@@ -89,6 +96,7 @@ export async function myFleet(who = playerName()): Promise<FleetShip[]> {
       tier: Number(r.tier) || 1,
       name: String(r.name ?? ""),
       paint: (r.paint ?? {}) as ShipPaint,
+      upgrades: Array.isArray(r.upgrades) ? (r.upgrades as unknown[]).filter((k): k is string => typeof k === "string") : [],
       isActive: !!r.is_active,
       forSale: !!r.for_sale,
       priceDivi: r.price_divi === null || r.price_divi === undefined ? null : Number(r.price_divi),
@@ -96,4 +104,18 @@ export async function myFleet(who = playerName()): Promise<FleetShip[]> {
   } catch {
     return [];
   }
+}
+
+/** Save the ship being flown, as it is now on this device: hull, paint, name and
+ *  fitted upgrades. Called after a rename or a fitting, and by the Market. */
+export async function saveFlyingShip(model: string): Promise<void> {
+  const tier = shipCatalog().find((s) => s.id === model)?.tier ?? 1;
+  await saveShip(model, tier, loadPaint(), shipName(model), shipUpgrades(model));
+}
+
+/** Read the account's fleet and fold its names and upgrades into this device.
+ *  True if anything changed. */
+export async function pullFleet(): Promise<boolean> {
+  const fleet = await myFleet();
+  return fleet.length ? mergeFleet(fleet) : false;
 }

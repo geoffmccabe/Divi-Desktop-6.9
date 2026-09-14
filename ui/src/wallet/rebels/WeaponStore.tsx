@@ -19,7 +19,7 @@ import {
 import {
   owned, hasWeapon, spendable, blockedBecause, buyWithPoints, subscribeArmoury,
 } from "./rebelsArmoury";
-import { fetchPrices } from "../value";
+import { platform } from "./platform/current";
 
 /** What a gun's row is doing right now. */
 type Standing =
@@ -53,13 +53,14 @@ export function WeaponStore({ ship, onTest }: {
   }), [ship]);
   useEffect(() => { setMine(owned(ship)); }, [ship]);
 
-  /* The DIVI price, from the wallet's own shared feed so the store and the
-     header can never disagree. It is CoinMarketCap or it is nothing: see
-     wallet/value.ts. A missing price shows no DIVI figure at all rather than
+  /* The DIVI price, from the door's price feed (in the app, the wallet's own
+     shared feed, so the store and the header can never disagree). It is
+     CoinMarketCap or it is nothing, in every door. A missing price shows no
+     DIVI figure at all rather than
      a made-up one, because this is a button that spends real money. */
   useEffect(() => {
     let alive = true;
-    void fetchPrices()
+    void platform().prices.fetch()
       .then((p) => { if (alive) setDiviUsd(p.prices.usd ?? null); })
       .catch(() => { /* no price; the DIVI column simply says so */ });
     return () => { alive = false; };

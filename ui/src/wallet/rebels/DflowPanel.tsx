@@ -8,6 +8,9 @@
 import { useEffect, useState } from "react";
 import { dflow } from "./rebelsDflow";
 
+/** The panel shows this many cost rows, always, so its height never moves. */
+const ROWS = [0, 1, 2, 3, 4];
+
 export function DflowPanel({ onClose }: { onClose: () => void }) {
   const [live, setLive] = useState(() => dflow.live());
   const [copied, setCopied] = useState<"" | "ok" | "fail">("");
@@ -55,13 +58,24 @@ export function DflowPanel({ onClose }: { onClose: () => void }) {
       <div className="dflow-line">stalls <b className={live.stalls ? "warn" : ""}>{live.stalls}</b> · compiles <b className={live.compiles ? "warn" : ""}>{live.compiles}</b> · calls <b>{r.calls}</b> · progs <b>{r.programs}</b></div>
       <div className="dflow-line">enemies <b>{c.enemies}</b> · drones <b>{c.drones}</b> · bullets <b>{c.bullets}</b> · coins <b>{c.coins}</b> · gems <b>{c.gems}</b></div>
       <div className="dflow-line">room <b>{live.room}</b> · {live.net.msgs} msg/½s · {f(live.net.bytes / 1024)} KB · audio {f(live.audio, 3)}</div>
-      {live.top.slice(0, 5).map(([name, ms]) => (
-        <div key={name} className="dflow-row">
-          <span>{name}</span>
-          <i style={{ width: `${Math.min(100, ms * 12)}%` }} />
-          <b>{f(ms, 2)}</b>
-        </div>
-      ))}
+      {/* Always FIVE rows, even when fewer than five things are being timed.
+          The panel is anchored to its bottom edge, so a row appearing or going
+          moved the whole thing up and down while it was being read. Geoff,
+          2026-Sep-13: "the dflow panel is jumping up and down because its
+          height is shifting... keep it steady vertical height." A missing row
+          is drawn empty rather than left out. */}
+      {ROWS.map((i) => {
+        const row = live.top[i];
+        if (!row) return <div key={i} className="dflow-row empty"><span /><i style={{ width: 0 }} /><b /></div>;
+        const [name, ms] = row;
+        return (
+          <div key={i} className="dflow-row">
+            <span>{name}</span>
+            <i style={{ width: `${Math.min(100, ms * 12)}%` }} />
+            <b>{f(ms, 2)}</b>
+          </div>
+        );
+      })}
     </div>
   );
 }

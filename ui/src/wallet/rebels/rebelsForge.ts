@@ -6,8 +6,8 @@
 // local copy and the account agree without a second round trip. Offline there
 // is no forging: the answer says so.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../exchanges";
-import { playerName } from "./rebelsScores";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
+import { platform } from "./platform/current";
 import { saveLoadoutRemote } from "./rebelsLoadout";
 import { mergeHeld, heldCount } from "./rebelsInventory";
 import { itemByKey, forgeable, FORGE_COST } from "./itemCatalog";
@@ -20,7 +20,7 @@ const headers = {
 
 export type ForgeAnswer = { ok: true; result: string } | { ok: false; why: string };
 
-export async function forge(key: string, who = playerName(), fetchFn: typeof fetch = fetch): Promise<ForgeAnswer> {
+export async function forge(key: string, who = platform().identity.accountKey(), fetchFn: typeof fetch = fetch): Promise<ForgeAnswer> {
   const spec = itemByKey(key);
   if (!spec || !forgeable(spec)) return { ok: false, why: "that cannot be forged" };
   if (heldCount(key) < FORGE_COST) return { ok: false, why: `needs ${FORGE_COST}` };

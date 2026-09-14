@@ -19,10 +19,12 @@
 
 import { STARTING_WEAPONS, weaponByKey, type WeaponSpec } from "./weaponCatalog";
 import { itemByKey, torpedoBonus, magBonus, superBoostMult, strafeMult, vstrafeMult, hullMult, type ItemSpec } from "./itemCatalog";
-import { rawHeld, heldKeys, mergeHeld, type Held } from "./rebelsInventory";
+import { rawHeld, heldKeys, heldItems, mergeHeld, type Held } from "./rebelsInventory";
 import { SUPER_BOOST_MULT, type Extras } from "./orbitFlight";
 import { USD_PER_POINT } from "./weaponCatalog";
 import { spendDivi } from "./rebelsScores";
+import { platform } from "./platform/current";
+import { isShipUpgrade, shipUpgrades } from "./shipFleet";
 
 /** Anything that can be bought. Guns and gear are the same transaction. */
 export type Buyable = WeaponSpec | ItemSpec;
@@ -44,7 +46,7 @@ export interface Purse {
 
 export function purse(): Purse {
   try {
-    const v = JSON.parse(localStorage.getItem(POINTS_KEY) || "null");
+    const v = JSON.parse(platform().storage.getItem(POINTS_KEY) || "null");
     if (v && typeof v === "object") {
       return {
         earned: num(v.earned),
@@ -65,7 +67,7 @@ export function spendable(p = purse()): number {
 }
 
 function writePurse(p: Purse, announce = true): void {
-  try { localStorage.setItem(POINTS_KEY, JSON.stringify(p)); } catch { /* storage full */ }
+  try { platform().storage.setItem(POINTS_KEY, JSON.stringify(p)); } catch { /* storage full */ }
   if (announce) changed();
 }
 
@@ -103,7 +105,7 @@ type OwnedMap = Record<string, string[]>;
 function readOwned(): string[] {
   let map: OwnedMap = {};
   try {
-    const v = JSON.parse(localStorage.getItem(OWNED_KEY) || "null");
+    const v = JSON.parse(platform().storage.getItem(OWNED_KEY) || "null");
     if (v && typeof v === "object" && !Array.isArray(v)) map = v as OwnedMap;
   } catch {
     /* nothing saved yet */
@@ -118,7 +120,7 @@ function readOwned(): string[] {
 }
 
 function writeOwned(list: string[]): void {
-  try { localStorage.setItem(OWNED_KEY, JSON.stringify({ [ALL]: list })); } catch { /* full */ }
+  try { platform().storage.setItem(OWNED_KEY, JSON.stringify({ [ALL]: list })); } catch { /* full */ }
 }
 
 /** Every weapon and item the player owns, including the ones a ship comes
@@ -236,7 +238,7 @@ export function mergeLoadout(remote: Partial<Loadout>): boolean {
     moved = true;
   }
   if (moved) {
-    try { localStorage.setItem(PURCHASES_KEY, JSON.stringify(have)); } catch { /* full */ }
+    try { platform().storage.setItem(PURCHASES_KEY, JSON.stringify(have)); } catch { /* full */ }
     changed();
   }
   if (remote.items && mergeHeld(remote.items)) moved = true;
@@ -308,7 +310,7 @@ export interface Purchase {
 
 export function purchases(): Purchase[] {
   try {
-    const v = JSON.parse(localStorage.getItem(PURCHASES_KEY) || "[]");
+    const v = JSON.parse(platform().storage.getItem(PURCHASES_KEY) || "[]");
     return Array.isArray(v) ? v : [];
   } catch {
     return [];
@@ -336,7 +338,7 @@ export function creditPurchase(txid: string, divi: number, points: number): bool
   const all = purchases();
   if (all.some((x) => x.txid === txid)) return false;
   all.push({ txid, divi, points, at: new Date().toISOString() });
-  try { localStorage.setItem(PURCHASES_KEY, JSON.stringify(all)); } catch { /* full */ }
+  try { platform().storage.setItem(PURCHASES_KEY, JSON.stringify(all)); } catch { /* full */ }
   const p = purse();
   p.earned += points;
   writePurse(p);
@@ -358,10 +360,27 @@ export function extraMagazine(ship: string): number {
 }
 
 /** Everything the flight model needs to know about what the player owns. */
-/** Everything that changes how the ship flies: bought gear AND opened found
- *  items. What the flight model reads, and what is declared to the room. */
+/**
+ * How many wingmen of each tier this account holds, tier one first.
+ *
+ * Counts, not keys, because two T3 drones are two wingmen and the owned set
+ * cannot say that. Declared to the server, which builds the formation.
+ */
+export function droneCounts(): number[] {
+  const held = heldItems();
+  const out: number[] = [];
+  for (let tier = 1; tier <= 7; tier++) out.push(Math.max(0, Math.floor(held[`drone${tier}`] ?? 0)));
+  return out;
+}
+
+/** Everything that changes how the ship flies: bought gear, the upgrades FITTED
+ *  to this hull, and the found items that work from the inventory (wingmen and
+ *  the like). An upgrade that is only held does nothing until it is fitted to a
+ *  ship (shipFleet.ts). What the flight model reads, and what is declared to the
+ *  room. */
 export function gearKeys(ship: string): string[] {
-  return [...new Set([...owned(ship), ...heldKeys()])];
+  const carried = heldKeys().filter((k) => !isShipUpgrade(k));
+  return [...new Set([...owned(ship), ...shipUpgrades(ship), ...carried])];
 }
 
 export function flightExtras(ship: string): Extras {
@@ -379,8 +398,8 @@ export function flightExtras(ship: string): Extras {
 /** Test hook. */
 export function resetArmouryForTests(): void {
   try {
-    localStorage.removeItem(POINTS_KEY);
-    localStorage.removeItem(OWNED_KEY);
-    localStorage.removeItem(PURCHASES_KEY);
+    platform().storage.removeItem(POINTS_KEY);
+    platform().storage.removeItem(OWNED_KEY);
+    platform().storage.removeItem(PURCHASES_KEY);
   } catch { /* nothing to clear */ }
 }

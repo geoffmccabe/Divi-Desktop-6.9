@@ -6,6 +6,13 @@ import { emitPeerCount } from "./peerEvents";
 import { BlockChainViz } from "./BlockChainViz";
 import { createRebels, type RebelsController } from "./rebels/rebelsController";
 import { RebelsHud } from "./rebels/RebelsHud";
+import { setPlatform } from "./rebels/platform/current";
+import { appPlatform } from "./rebels/platform/app";
+
+/* Divi Rebels runs behind a door that answers who the player is, what DIVI is
+   worth and what the wallet can do. Inside the app, that door is the wallet.
+   Set once, as this module loads, which is before any game can be created. */
+setPlatform(appPlatform);
 import { PrimerLove } from "./PrimerLove";
 import { usePrimer } from "./primerStore";
 import { FastestNodes, type FastCandidate } from "./FastestNodes";

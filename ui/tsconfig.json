@@ -15,5 +15,13 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  /* ---- one exception ----
+     The cockpit's own test runs the REAL server in the same process, so that
+     a shot travels the wire it travels in the app instead of being checked
+     against a second copy of the fight. That pulls contrib/rebels-room into
+     the program, and the server needs Cloudflare's types, which this project
+     has no business carrying. The file is still compiled by esbuild and run
+     in full on every suite, which is the check that matters for a test. */
+  "exclude": ["src/wallet/rebels/rebelsController.test.ts"]
 }

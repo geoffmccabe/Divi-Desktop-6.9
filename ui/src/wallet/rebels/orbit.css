@@ -94,6 +94,40 @@
 .orbit-cross::before { left: 50%; top: 18px; width: 1.5px; height: 10px; margin-left: -0.75px; }
 .orbit-cross::after { top: 50%; left: 18px; height: 1.5px; width: 10px; margin-top: -0.75px; }
 
+/* ---- the boresight ----
+   Dead centre of the frame: where the nose is pointing, and so where the guns
+   send a round when the crosshair is brought home. Drawn as well as the moving
+   crosshair, never instead of it, so the two together read as "how far off
+   axis am I aiming". Geoff: "make it faint but helping to aim."
+
+   Four ticks around an open middle rather than a cross through it: a mark over
+   the exact pixel you are trying to shoot is a mark in the way. */
+.orbit-bore {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 26px; height: 26px;
+  margin: -13px 0 0 -13px;
+  pointer-events: none;
+  opacity: 0.28;
+}
+.orbit-bore i {
+  position: absolute; background: hsl(var(--rebels-hud));
+}
+/* Top, bottom, left, right: each a short tick pointing at the middle. */
+.orbit-bore i:nth-child(1) { left: 50%; top: 0; width: 1px; height: 7px; margin-left: -0.5px; }
+.orbit-bore i:nth-child(2) { left: 50%; bottom: 0; width: 1px; height: 7px; margin-left: -0.5px; }
+.orbit-bore i:nth-child(3) { top: 50%; left: 0; height: 1px; width: 7px; margin-top: -0.5px; }
+.orbit-bore i:nth-child(4) { top: 50%; right: 0; height: 1px; width: 7px; margin-top: -0.5px; }
+/* And a single pixel at the centre, so the point itself is findable. */
+.orbit-bore b {
+  position: absolute; left: 50%; top: 50%;
+  width: 2px; height: 2px; margin: -1px 0 0 -1px;
+  background: hsl(var(--rebels-hud)); border-radius: 50%;
+}
+/* Looking backwards the guns are the rear pair, so the mark changes colour
+   with the crosshair rather than claiming the nose is still the gun. */
+.orbit-bore.rear i, .orbit-bore.rear b { background: #ff45d0; }
+
 .orbit-dock {
   position: absolute;
   left: 50%; top: 62%;
@@ -237,6 +271,32 @@
 .ship-market-role {
   margin: 12px 0 0; font-size: 12px; line-height: 1.5; opacity: 0.8;
 }
+
+/* The ship's own name, under its class: a thin box in the cockpit's colour. */
+.ship-market-name {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  margin: 10px auto 0; max-width: 320px;
+}
+.ship-market-name span { font: 600 10px/1 var(--font-mono); letter-spacing: 0.2em; color: hsl(var(--rebels-hud) / 0.7); }
+.ship-market-name input {
+  flex: 1 1 auto; min-width: 0;
+  padding: 6px 9px; font: 600 12px/1 var(--font-mono); letter-spacing: 0.06em;
+  color: hsl(var(--rebels-hud)); background: hsl(var(--rebels-hud) / 0.06);
+  border: 1px solid hsl(var(--rebels-hud) / 0.35); border-radius: 4px; outline: none;
+}
+.ship-market-name input:focus { border-color: hsl(var(--primary)); background: hsl(var(--rebels-hud) / 0.1); }
+.ship-market-name input:disabled { opacity: 0.5; cursor: not-allowed; }
+.ship-market-fitted {
+  margin: 8px 0 0; font: 600 10px/1.5 var(--font-mono); letter-spacing: 0.08em;
+  color: var(--rebels-points, #7fe3a0);
+}
+/* Where the paint shop would be, for a guest. */
+.ship-market-locked {
+  margin: 14px 0 0; padding: 10px 12px; font-size: 12px; line-height: 1.5;
+  color: hsl(var(--rebels-hud)); background: hsl(var(--rebels-hud) / 0.06);
+  border: 1px dashed hsl(var(--rebels-hud) / 0.4); border-radius: 5px;
+}
+.ship-market-tiers button:disabled { opacity: 0.3; cursor: not-allowed; }
 
 /* The left column: the specs, and the paint shop under them. Stacked, so the
    two cannot reach for the same pixels whatever the window does. */
@@ -821,7 +881,11 @@
    Small, bottom-left, half-transparent and blurred so the fight stays
    visible through it; the HUD's colour and mono face. */
 .dflow {
+  /* A FIXED height as well as a fixed width: the contents are all single lines
+     of a known size, so the box can be nailed down and never move while it is
+     being read. Anything unexpected is clipped rather than allowed to push. */
   position: absolute; left: 16px; bottom: 52px; width: 300px;
+  height: 176px; box-sizing: border-box; overflow: hidden;
   padding: 8px 10px 7px;
   font: 500 10px/1.4 var(--font-mono);
   color: hsl(var(--rebels-hud) / 0.85);
@@ -847,6 +911,8 @@
 .dflow-row { display: grid; grid-template-columns: 78px 1fr 40px; align-items: center; gap: 5px; margin-top: 2px; }
 .dflow-row i { display: block; height: 4px; background: hsl(var(--rebels-hud) / 0.55); border-radius: 2px; min-width: 2px; }
 .dflow-row b { text-align: right; }
+/* A held-open row with nothing in it yet: takes its space, shows nothing. */
+.dflow-row.empty i { background: none; }
 
 /* Gems held, on the Items tab. */
 .gems-held { margin-top: 10px; }
@@ -869,6 +935,28 @@
   background: rgb(0 0 0 / 0.6);
   pointer-events: auto; cursor: pointer; z-index: 14;
 }
+/* "Apply to Ship? (y/n)": over the inventory, in the market's confirm style. */
+.orbit-inv-confirm {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(420px, calc(100% - 32px)); padding: 18px 20px; z-index: 5;
+  background: hsl(var(--rebels-ocean) / 0.96);
+  border: 1px solid hsl(var(--primary) / 0.6); border-radius: 8px;
+  box-shadow: 0 0 40px hsl(var(--primary) / 0.3);
+  text-align: center;
+}
+.orbit-inv-confirm h4 {
+  margin: 0 0 10px; font: 700 15px/1.2 var(--font-mono); letter-spacing: 0.14em;
+  color: hsl(var(--primary));
+}
+.orbit-inv-confirm p { margin: 0 0 14px; font-size: 12px; line-height: 1.5; color: hsl(var(--rebels-hud)); }
+.orbit-inv-confirm p b { color: hsl(var(--rebels-home)); }
+.orbit-inv-confirm div { display: flex; gap: 10px; justify-content: center; }
+.orbit-inv-confirm button {
+  padding: 8px 16px; font: 600 12px/1 var(--font-mono); letter-spacing: 0.1em; cursor: pointer;
+  color: hsl(var(--primary-foreground)); background: hsl(var(--primary));
+  border: 1px solid hsl(var(--primary)); border-radius: 4px;
+}
+.orbit-inv-confirm button.no { color: hsl(var(--rebels-hud)); background: transparent; border-color: hsl(var(--rebels-hud) / 0.5); }
 .orbit-inv {
   position: absolute; inset: 22px;
   display: flex; flex-direction: column;
@@ -947,3 +1035,52 @@
 }
 .orbit-rear.aiming span { color: #ff45d0; }
 .orbit-cross.rear::before, .orbit-cross.rear::after { background: #ff45d0; }
+
+/* Connection lost mid-flight. The fight is the server's; without it the sky
+   is empty rather than peaceful, so it says so. */
+.orbit-offline {
+  position: absolute; left: 50%; top: 18%; transform: translateX(-50%);
+  padding: 7px 16px;
+  font: 700 13px/1 var(--font-mono); letter-spacing: 0.2em;
+  color: #ffd83a; background: rgb(20 10 0 / 0.55);
+  border: 1px solid rgb(255 216 58 / 0.5); border-radius: 4px;
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  pointer-events: none; z-index: 13;
+  animation: orbit-offline-pulse 1.4s ease-in-out infinite;
+}
+@keyframes orbit-offline-pulse { 0%, 100% { opacity: 0.95; } 50% { opacity: 0.5; } }
+
+/* ---- the controls board ----
+   The keyboard, and under it the one line for whatever the pointer is on.
+   This is what the launch screen shows beside the logo. The readout has a
+   floor under its height so that moving along a row does not shuffle the
+   card about underneath the pointer. */
+/* Beside the logo, the same component the ? panel uses, in a column that
+   scrolls rather than one that grows the card. */
+.orbit-board {
+  position: static; inset: auto; width: auto;
+  max-height: min(52vh, 420px); overflow-y: auto;
+  text-align: left; padding: 10px 12px;
+}
+.orbit-board .orbit-keyboard { margin: 0 0 10px; }
+.orbit-board .orbit-key { font-size: 9px; padding: 6px 0; }
+.orbit-board dl > div { margin-bottom: 7px; }
+.orbit-board dd { font-size: 11px; }
+.orbit-board-read {
+  display: grid; gap: 3px; min-height: 52px;
+  padding: 8px 10px;
+  border: 1px solid hsl(var(--rebels-hud) / 0.2);
+  border-left: 2px solid hsl(var(--rebels-hud) / 0.35);
+  border-radius: 5px;
+  background: hsl(var(--rebels-hud) / 0.05);
+}
+.orbit-board-read.on { border-left-color: hsl(var(--rebels-hud)); background: hsl(var(--rebels-hud) / 0.1); }
+.orbit-board-read b {
+  font-size: 10.5px; letter-spacing: 0.12em; font-weight: 700;
+  color: hsl(var(--rebels-home));
+}
+.orbit-board-read.on b { color: hsl(var(--rebels-hud)); }
+.orbit-board-read span { font-size: 11.5px; line-height: 1.4; opacity: 0.9; }
+.orbit-board-notes { display: grid; gap: 3px; font-size: 10px; line-height: 1.35; opacity: 0.75; }
+.orbit-board-notes > div { display: grid; grid-template-columns: 128px 1fr; gap: 8px; }
+.orbit-board-notes b { color: hsl(var(--rebels-home)); font-weight: 600; letter-spacing: 0.06em; }

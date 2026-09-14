@@ -6,6 +6,7 @@ import diviLogo from "../assets/divi-coin.webp";
 import { pulseTrigger, pulseHsl, pulseActiveUntil, makeLegs, legU, pingDone, type Leg } from "./activityPulse";
 import { useTheme } from "../theme/ThemeProvider";
 import { dflow } from "./rebels/rebelsDflow";
+import { platform } from "./rebels/platform/current";
 import { towerMaterials, tickTowerLights } from "./towerLights";
 import { createDetail, type DetailLayer } from "./globeDetail";
 import { createBorders, type Borders } from "./globeBorders";
@@ -73,6 +74,17 @@ export interface GlobeFlight {
     /** A second pass after each frame's render, for the rear-gun window.
      *  `draw` is the renderer's own render, unpatched. Null clears it. */
     afterRender?: (fn: ((renderer: THREE.WebGLRenderer, draw: (s: THREE.Scene, c: THREE.Camera) => void) => void) | null) => void;
+    /**
+     * Compile every shader the VISIBLE scene needs, now.
+     *
+     * The map already does this once after the game attaches, but a compile
+     * only reaches what can be seen at that moment, and most of the game's
+     * effects sit hidden until they are used: the first beam, the first
+     * torpedo, the first explosion each cost their compile in the middle of a
+     * fight, around a tenth of a second each. So the game is handed the
+     * compile and shows its hidden things for the length of one call.
+     */
+    compile?: () => void;
   }): void;
   /** Every frame while flying. Move the camera here. */
   frame(dt: number): void;
@@ -88,8 +100,10 @@ export interface GlobeArc {
 }
 
 const R = 100;
-/** The renderer's pixel ratio while the game has the globe. See attachFlight. */
-const GAME_PIXEL_RATIO = 1;
+/* The renderer's pixel ratio while the game has the globe (see attachFlight),
+   and how many links are drawn, come from the door: platform().detail. The
+   app and the web use one ratio, 24 peer links and 120 network links; a phone
+   door can draw less without this file changing. */
 
 // Node Tower geometry — ALL dimensions 50% of the original (base, height, tip
 // sphere), which also halves the packed-cluster diameter.
@@ -112,8 +126,6 @@ const CH_CAP = 600;
 // curved arc with characters flowing back and forth on it.
 const NEAR_ANG = 500 / 6371;
 const BASE_FLOW = 0.062;
-const MAX_PEER = 24;
-const MAX_MESH = 120;
 
 let atlasTex: THREE.Texture | null = null;
 function getAtlas(): THREE.Texture {
@@ -195,18 +207,47 @@ function makeHomeBeacon(colour: THREE.ColorRepresentation, height: number): THRE
   return new THREE.Mesh(geo, mat);
 }
 
-function makeTower(color: THREE.ColorRepresentation, scale = 1): THREE.Group {
+/* ---- one pair of shapes per size, not per tower ----
+   A tower used to build its own cone and its own sphere, so a network of four
+   hundred nodes built eight hundred geometries that were all identical. They
+   are cached by size instead, which is also what lets the towers be drawn as
+   instances: an instanced draw needs ONE geometry. */
+const towerGeoCache = new Map<number, { cone: THREE.ConeGeometry; sph: THREE.SphereGeometry }>();
+function towerGeometries(scale: number): { cone: THREE.ConeGeometry; sph: THREE.SphereGeometry } {
+  const found = towerGeoCache.get(scale);
+  if (found) return found;
   const h = PYR_H * scale;
-  /* Shared materials, one pair per colour, carrying the window shader. See
-     towerLights.ts for why this is not a texture and not a per-tower anything. */
-  const { spire, beacon } = towerMaterials(color, h, PYR_CIRC * scale, SPH_R * scale);
   const cone = new THREE.ConeGeometry(PYR_CIRC * scale, h, 4);
   cone.translate(0, h / 2, 0);
   /* The sphere is POSITIONED at the tip rather than having the offset baked
      into its geometry, so its local coordinates stay centred on itself. The
      spinning windows are wrapped using those coordinates and would smear if
-     the origin sat down at the tower's foot. */
-  const sph = new THREE.SphereGeometry(SPH_R * scale, 20, 14);
+     the origin sat down at the tower's foot. With instancing the offset moves
+     into the instance matrix, which keeps that property.
+
+     A NETWORK tower's tip is a third of a unit across on a globe two hundred
+     across: a couple of pixels, and it was being built from five hundred and
+     twenty triangles. Yours is twice the size and is the one anybody ever
+     flies up to, so it keeps the full count. */
+  const rings = scale > 1 ? [20, 14] : [12, 9];
+  const sph = new THREE.SphereGeometry(SPH_R * scale, rings[0], rings[1]);
+  /* Marked the way the shared MATERIALS are: this pair outlives any one build
+     of the scene, and the teardown below disposes everything it walks. Letting
+     it dispose these would leave every tower missing the next time the map is
+     opened. */
+  cone.userData.shared = true;
+  sph.userData.shared = true;
+  const pair = { cone, sph };
+  towerGeoCache.set(scale, pair);
+  return pair;
+}
+
+function makeTower(color: THREE.ColorRepresentation, scale = 1): THREE.Group {
+  const h = PYR_H * scale;
+  /* Shared materials, one pair per colour, carrying the window shader. See
+     towerLights.ts for why this is not a texture and not a per-tower anything. */
+  const { spire, beacon } = towerMaterials(color, h, PYR_CIRC * scale, SPH_R * scale);
+  const { cone, sph } = towerGeometries(scale);
   const g = new THREE.Group();
   g.add(new THREE.Mesh(cone, spire));
   const tip = new THREE.Mesh(sph, beacon);
@@ -538,6 +579,37 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
     const tipOf = new Map<string, THREE.Vector3>();
     const towerObjs: THREE.Object3D[] = []; // for hover raycasting
     const towerByIp = new Map<string, THREE.Group>(); // for the stake-winner coin
+
+    /* ---- TOWERS ARE DRAWN AS INSTANCES ----
+       Every network tower is the same two shapes in one of two colours, and
+       there are as many of them as the network has nodes: four hundred towers
+       were eight hundred draw calls, which DFlow measured as most of a frame
+       that was otherwise nearly empty. They are now two instanced draws per
+       colour however many there are.
+
+       Each tower KEEPS its own Group, and every other part of this file goes
+       on talking to that Group: the hover, the winner coin and the game's
+       scaleTowers all read and write position, quaternion, scale and visible
+       exactly as before. The Groups simply hold nothing to draw and are not in
+       the scene; syncTowers copies what they say into the instance matrices.
+       A hidden tower is written as a zero-size matrix, which is how an
+       instance is taken out of a draw. */
+    interface Instanced {
+      mesh: THREE.InstancedMesh; tip: THREE.InstancedMesh;
+      towers: THREE.Group[]; nodes: GlobePoint[];
+      /** The matrices as they stand when a tower is drawn, worked out once. */
+      base: Float32Array; baseTip: Float32Array;
+      /** Which way each tower points out of the globe, for the horizon test. */
+      dirs: Float32Array;
+      /** 1 when the tower is meant to be seen at all (the winner's is not). */
+      shown: Uint8Array;
+      /** 1 when its matrix is currently WRITTEN, so an unchanged frame uploads
+       *  nothing. 2 is "unknown", which forces the next pass to write it. */
+      drawn: Uint8Array;
+    }
+    const instanced: Instanced[] = [];
+    const byKind = new Map<GlobePoint["kind"], { towers: THREE.Group[]; nodes: GlobePoint[] }>();
+
     for (const grp of groups.values()) {
       const offs = packOffsets(grp.length);
       grp.forEach((p, i) => {
@@ -546,18 +618,143 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         const { east, north } = tangent(dir);
         const d2 = base.clone().add(east.multiplyScalar(offs[i][0])).add(north.multiplyScalar(offs[i][1])).normalize();
         const scale = p.kind === "self" ? 2 : 1; // your node is twice the size
-        const t = makeTower(COLORS[p.kind], scale);
-        /* Only yours gets a beam. Two hundred of them would be a forest. */
-        if (p.kind === "self") t.add(makeHomeBeacon(COLORS.self, PYR_H * scale));
+        /* Yours is one tower and carries a beam nobody else has, so it stays a
+           real group in the scene: there is nothing to save by instancing a
+           single object, and the beam would not come with it. */
+        const solo = p.kind === "self";
+        const t = solo ? makeTower(COLORS[p.kind], scale) : new THREE.Group();
+        if (solo) t.add(makeHomeBeacon(COLORS.self, PYR_H * scale));
         t.position.copy(d2.clone().multiplyScalar(R));
         t.quaternion.setFromUnitVectors(UP, d2);
         t.userData.node = p; // for hover
-        group.add(t);
-        towerObjs.push(t);
+        if (solo) {
+          group.add(t);
+          towerObjs.push(t);
+        } else {
+          const bucket = byKind.get(p.kind) ?? { towers: [], nodes: [] };
+          bucket.towers.push(t); bucket.nodes.push(p);
+          byKind.set(p.kind, bucket);
+        }
         towerByIp.set(p.ip, t);
         tipOf.set(p.ip, d2.clone().multiplyScalar(R + PYR_H * scale)); // connect at the sphere centre
       });
     }
+
+    for (const [kind, bucket] of byKind) {
+      const n = bucket.towers.length;
+      if (!n) continue;
+      const { spire, beacon } = towerMaterials(COLORS[kind], PYR_H, PYR_CIRC, SPH_R);
+      const { cone, sph } = towerGeometries(1);
+      const mesh = new THREE.InstancedMesh(cone, spire, n);
+      const tip = new THREE.InstancedMesh(sph, beacon, n);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      tip.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      /* Which node each slot belongs to, so a hover can name what it hit: an
+         instanced hit reports a NUMBER, not an object. */
+      mesh.userData.nodes = bucket.nodes;
+      tip.userData.nodes = bucket.nodes;
+      /* One bounding volume for the lot, and the lot spans the planet, so
+         three can never cull any of it: the horizon test in cullTowers is what
+         stands in for the culling instancing took away. */
+      mesh.frustumCulled = false;
+      tip.frustumCulled = false;
+      group.add(mesh); group.add(tip);
+      towerObjs.push(mesh, tip);
+      const dirs = new Float32Array(n * 3);
+      for (let i = 0; i < n; i++) {
+        const d = bucket.towers[i].position.clone().normalize();
+        dirs[i * 3] = d.x; dirs[i * 3 + 1] = d.y; dirs[i * 3 + 2] = d.z;
+      }
+      instanced.push({
+        mesh, tip, towers: bucket.towers, nodes: bucket.nodes,
+        base: new Float32Array(n * 16), baseTip: new Float32Array(n * 16),
+        dirs, shown: new Uint8Array(n).fill(1), drawn: new Uint8Array(n).fill(2),
+      });
+    }
+
+    /* ---- from the tower Groups to the instance matrices ----
+       Worked out ONCE and kept, because a tower only moves when the game
+       halves them at launch or the winner coin takes one out of the picture.
+       Every frame after that copies sixteen numbers rather than composing a
+       matrix. */
+    const _m = new THREE.Matrix4();
+    const _tipOff = new THREE.Vector3();
+    const syncTowers = () => {
+      for (const set of instanced) {
+        for (let i = 0; i < set.towers.length; i++) {
+          const t = set.towers[i];
+          _m.compose(t.position, t.quaternion, t.scale);
+          _m.toArray(set.base, i * 16);
+          /* The tip rides at the top of the mast, and the mast's height goes
+             up and down with the tower's own scale. */
+          _tipOff.set(0, PYR_H * t.scale.y, 0).applyQuaternion(t.quaternion).add(t.position);
+          _m.compose(_tipOff, t.quaternion, t.scale);
+          _m.toArray(set.baseTip, i * 16);
+          /* A tower hidden by hand (the winner's) is out for good, not just
+             out while it faces away. */
+          set.shown[i] = t.visible ? 1 : 0;
+        }
+        /* Force the next cull to write everything through. */
+        set.drawn.fill(2);
+      }
+      cullTowers(true);
+    };
+
+    /**
+     * Take the far side of the globe out of the draw.
+     *
+     * An InstancedMesh has ONE bounding volume, so instancing the towers threw
+     * away the per-tower culling that came free before: every tower on the
+     * planet was submitted every frame, including the two hundred behind the
+     * Earth, each shading its expensive lit-window fragment shader before the
+     * globe covered it up. DFlow caught it as the frame time doubling from
+     * 16.8ms to 31ms with the triangle count up seventy percent, so the horizon
+     * test is done here instead.
+     *
+     * A point on the sphere is over the horizon when its direction, dotted with
+     * the camera's, is less than R / |camera|. A margin of a tenth keeps towers
+     * just past the edge, whose masts still show.
+     *
+     * The instance buffer is only touched when the answer CHANGES for at least
+     * one tower, so flying in a straight line costs a few hundred dot products
+     * and no upload at all.
+     */
+    const _camDir = new THREE.Vector3();
+    function cullTowers(force = false): void {
+      if (!instanced.length) return;
+      const len = camera.position.length();
+      if (len < 1e-3) return;
+      _camDir.copy(camera.position).divideScalar(len);
+      /* Behind this the globe itself is in the way. */
+      const horizon = Math.min(0.999, R / len) - 0.1;
+      for (const set of instanced) {
+        let changed = force;
+        for (let i = 0; i < set.dirs.length / 3; i++) {
+          const on = set.shown[i] === 1
+            && set.dirs[i * 3] * _camDir.x + set.dirs[i * 3 + 1] * _camDir.y + set.dirs[i * 3 + 2] * _camDir.z > horizon
+            ? 1 : 0;
+          if (set.drawn[i] === on) continue;
+          set.drawn[i] = on;
+          changed = true;
+          const at = i * 16;
+          if (on) {
+            set.mesh.instanceMatrix.array.set(set.base.subarray(at, at + 16), at);
+            set.tip.instanceMatrix.array.set(set.baseTip.subarray(at, at + 16), at);
+          } else {
+            /* Zero scale: the instance is still there and costs one matrix,
+               but nothing of it survives to be rasterised. */
+            for (let k = 0; k < 16; k++) {
+              (set.mesh.instanceMatrix.array as Float32Array)[at + k] = 0;
+              (set.tip.instanceMatrix.array as Float32Array)[at + k] = 0;
+            }
+          }
+        }
+        if (!changed) continue;
+        set.mesh.instanceMatrix.needsUpdate = true;
+        set.tip.instanceMatrix.needsUpdate = true;
+      }
+    }
+    syncTowers();
 
     const conns: { a: THREE.Vector3; b: THREE.Vector3; mesh: boolean }[] = [];
     const selfIp = pts0.find((p) => p.kind === "self")?.ip;
@@ -565,7 +762,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
     if (selfTip) {
       let n = 0;
       for (const p of pts0) {
-        if (p.kind !== "peer" || n >= MAX_PEER) continue;
+        if (p.kind !== "peer" || n >= platform().detail.peerLinks) continue;
         const t = tipOf.get(p.ip);
         if (t) { conns.push({ a: selfTip, b: t, mesh: false }); n++; }
       }
@@ -598,7 +795,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         const key = i < c.j ? `${i}-${c.j}` : `${c.j}-${i}`;
         if (meshKeys.has(key)) continue;
         meshKeys.add(key);
-        if (conns.length < MAX_MESH + MAX_PEER) conns.push({ a: ci.tip, b: cities[c.j].tip, mesh: true });
+        if (conns.length < platform().detail.meshLinks + platform().detail.peerLinks) conns.push({ a: ci.tip, b: cities[c.j].tip, mesh: true });
       }
     }
 
@@ -734,7 +931,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
          three.js default and not the library's. */
       const renderer = g.renderer();
       ratioRef.current = renderer.getPixelRatio();
-      renderer.setPixelRatio(GAME_PIXEL_RATIO);
+      renderer.setPixelRatio(platform().detail.pixelRatio);
       /* ---- the renderer's own submit time, for DFlow ----
          gl.render is where the draw calls are issued, and it is the one cost
          the game cannot see from inside its own frame. Wrapped so it is timed
@@ -752,9 +949,28 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       /* Every shader the game will need, compiled now in one go rather than
          one stall at a time as each thing first appears. DFlow counted 62
          compiles across a flight, each a frame of 50 to 100ms. */
-      const prewarm = () => { try { renderer.compile(scene, camera); } catch { /* not fatal */ } };
+      /* Build every shader the visible scene needs.
+         ASYNCHRONOUSLY where the driver allows it: compiling the whole game in
+         one go froze the frame for over two seconds, which DFlow caught as a
+         single gl.render of 2,234ms at the moment the room went live.
+         compileAsync hands the work to the driver's parallel compiler and
+         returns; where that is not available it is the blocking call it always
+         was, which is still better than one stall per effect in a fight. */
+      const prewarm = () => {
+        try {
+          const r = renderer as unknown as {
+            compileAsync?: (s: THREE.Scene, c: THREE.Camera) => Promise<unknown>;
+          };
+          if (typeof r.compileAsync === "function") {
+            void r.compileAsync(scene, camera).catch(() => { /* not fatal */ });
+          } else {
+            renderer.compile(scene, camera);
+          }
+        } catch { /* not fatal */ }
+      };
       f.attach({
         afterRender: (fn) => { after = fn; },
+        compile: () => prewarm(),
         stats: () => ({
           calls: renderer.info.render.calls,
           triangles: renderer.info.render.triangles,
@@ -777,6 +993,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
             /* The tip is the top of the mast, so it comes down with it. */
             tipOf.set(ip, t.position.clone().normalize().multiplyScalar(R + PYR_H * built * s));
           }
+          syncTowers();
           return tipOf;
         },
       });
@@ -809,6 +1026,11 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       let hit: GlobePoint | null = null;
       for (const h of raycaster.intersectObjects(towerObjs, true)) {
         if (h.point.distanceTo(camera.position) >= camLen) continue; // far side
+        /* Instanced towers report WHICH instance was hit, not an object with
+           a node on it, so the slot is looked up in the list built beside the
+           mesh. Your own tower is still a real group and still walks up. */
+        const slots = h.object.userData.nodes as GlobePoint[] | undefined;
+        if (slots && h.instanceId != null) { hit = slots[h.instanceId] ?? null; if (hit) break; continue; }
         let o: THREE.Object3D | null = h.object;
         while (o && !o.userData.node) o = o.parent;
         if (o) { hit = o.userData.node as GlobePoint; break; }
@@ -872,6 +1094,11 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       const tLights = performance.now();
       tickTowerLights(now / 1000);
       dflow.add("map.lights", performance.now() - tLights);
+      /* The far side of the planet, out of the draw. Done after the flight has
+         moved the camera, so it is this frame's horizon and not last one's. */
+      const tCull = performance.now();
+      cullTowers();
+      dflow.add("map.cull", performance.now() - tCull);
       const tHelix = performance.now();
 
       const cam = camera.position;
@@ -888,6 +1115,10 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
           t.visible = false;
           winnerDeco.visible = true;
         } else winnerDeco.visible = false;
+        /* The winner's own tower is taken out of the picture and the last
+           one put back, and for an instanced tower that means rewriting its
+           matrix. */
+        syncTowers();
       }
       if (winnerDeco.visible) {
         const ts = now / 1000;
@@ -1015,7 +1246,11 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       scene.remove(group);
       group.traverse((o) => {
         const m = o as THREE.Mesh;
-        if (m.geometry) m.geometry.dispose();
+        /* The instanced towers hold GPU buffers of their own, beyond the
+           geometry they share with every other build. */
+        const inst = o as THREE.InstancedMesh;
+        if (inst.isInstancedMesh) inst.dispose();
+        if (m.geometry && !m.geometry.userData?.shared) m.geometry.dispose();
         const mat = m.material as THREE.Material | THREE.Material[] | undefined;
         /* Shared tower materials outlive any one scene build. Disposing one
            here would blank every tower the next time the map is opened. */
