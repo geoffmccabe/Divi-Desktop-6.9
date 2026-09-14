@@ -65,7 +65,7 @@ fn main() {
 
     // Read through the same query layer the explorer uses.
     let shown = index.read(|o| {
-        let tokens = query::all_tokens(o);
+        let tokens = query::all_tokens(o, 100);
         let mut out = String::new();
         for t in &tokens {
             out.push_str(&format!(
