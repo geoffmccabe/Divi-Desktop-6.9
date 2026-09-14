@@ -1726,6 +1726,9 @@ code, .mono { font-family: var(--font-mono); }
 
 /* The 3D globe fills the map area, behind the overlay panels (which are z>=6). */
 .netmap-globe { position: absolute; inset: 0; z-index: 1; }
+/* The v2 animation layer sits over the WebGL globe and must never swallow a
+   drag, a node click, or the game's controls. */
+.netmap-globe-anim { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; }
 .globe-tip {
   background: rgba(0, 0, 0, 0.8); border: 1px solid hsl(210 85% 62% / 0.6); border-radius: 6px;
   padding: 4px 7px; font-size: 0.72rem; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums;
