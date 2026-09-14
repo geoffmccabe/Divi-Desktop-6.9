@@ -1,0 +1,152 @@
+# Divi Rebels modularization: the game part
+
+Written 2026-Sep-14. Owned by the game session (this document's author). The
+build and versions half is docs/DIVI-REBELS-MODULAR-BUILD-AGENT.md, owned by the
+Claude Code build agent. The two documents share one ownership table and one
+order; read that one's section 2 for the rules both follow.
+
+Geoff: "when it comes to the game itself, I think that you can do it."
+
+Everything here is checked against the code as of app v69.9.47 (file sizes, call
+sites and duplications read from the source). How big each split turns out to
+be is an estimate from reading the structure.
+
+## What I own
+
+- The game: ui/src/wallet/rebels/** (after the build agent's package move, its
+  new home), except the doors.
+- The multiplayer server: contrib/rebels-room/** (including its deploys).
+- The game's styles.
+- The server-side check of signed-in players, and moving a guest's banked DIVI
+  into their account.
+
+I do not edit the version doors, build configs, CI, the globe split or
+contrib/rebels-web, which are the build agent's. The door contract
+(platform.ts) changes only by agreement, and only additively.
+
+## My tasks
+
+### G1. One shared message codec for the game and the server
+- **Found:** the server packs players, enemies, shots and loot into rows by
+  position, and the game unpacks them by position (row[0] is the id, row[1] to
+  row[3] the position, and so on), each with its own copy of the layout
+  (contrib/rebels-room/src/room.ts, ui/src/wallet/rebels/rebelsRoom.ts).
+  A mismatch has already happened once: every join was refused with "bad home".
+- **Do:** one module that both encode and decode, used by both sides, with a
+  round-trip test for every row kind and the byte budgets unchanged (the wire
+  suite).
+- **Done when:** the room, room-client, wire and cockpit suites are green, and a
+  deploy of the room plays identically in the app and on the web.
+
+### G2. Cheats as their own module
+- **Found:** test cheats spread through the controller (18 references) and the
+  room (5).
+- **Do:** one cheats module on each side that a door can leave out entirely.
+  Public web and Lovenode leave it out; the app keeps it for testing; admin-only
+  later with sign-in.
+- **Done when:** `!21`, `!77`, `!8t`, `!9t` and `!1x` behave as today in the app,
+  and the web build contains no cheat code (checked by the boundary guard).
+
+### G3. One small store for "something changed"
+- **Found:** browser-wide `window` events carry inventory, armoury and ship
+  changes, and the same "inventory changed" signal is defined twice under two
+  names in two files.
+- **Do:** one typed subscribe/notify module, testable in node without faking
+  `window`.
+
+### G4. The game's styles out of the wallet stylesheet
+- **Found:** about 60 Rebels rules live in the wallet's ui/src/index.css (2,224
+  lines), so the web page loads the whole wallet stylesheet.
+- **Do:** move them into the game's own stylesheet with a small game theme token
+  file. The wallet keeps importing what it uses.
+- **Done when:** the app and the web look identical (checked side by side) and
+  the web page no longer loads the wallet stylesheet.
+
+### G5. One account and data module
+- **Found:** ten direct Supabase calls across five files: scores 3, loadout 2,
+  ships 2, drop charts 2, forge 1. Each builds its own headers.
+- **Do:** one client for all account reads and writes, with the connection and
+  any sign-in credential supplied by the door. Sign-in on the web and Lovenode's
+  own identity then change one place.
+- **Done when:** same rows, same merges, all suites green; ready for the build
+  agent's sign-in (B6).
+
+### G6. The server's room split
+- **Found:** contrib/rebels-room/src/room.ts (1,568 lines) mixes several jobs:
+  - who a player is and what they may do (app address, web guest, soon signed-in)
+  - the money side (banking, purse, cash-out)
+  - the fight and the per-player broadcast
+  - discipline (rate limits, strikes, snap-backs)
+- **Do:** separate identity and permissions, economy, and simulation/broadcast
+  modules. Then add the signed-in identity (verified session to an `sso:`
+  account) and the guest-to-account merge, together with the build agent's B6.
+- **Done when:** the 196 room tests are green, plus new tests for signed-in
+  players and the merge. Deployed with app and web players checked.
+
+### G7. The cockpit controller split, and controls as actions (the big one)
+- **Found:** ui/src/wallet/rebels/rebelsController.ts is 2,807 lines.
+  - Its per-frame function alone is about 940 lines.
+  - About 500 lines are keyboard and mouse handlers that change the game
+    directly.
+  - The same file holds cheats, docking, death and respawn, the rear-gun view,
+    drawing wingmen, camera zoom, sound wake-ups and the server connection.
+  - The input seam from Stage A only swaps which listeners are attached; touch
+    needs more than that.
+- **Do, in small steps, each behind the 105 cockpit tests:**
+  - an ACTIONS layer (throttle, strafe, lift, roll, aim, fire, torpedo, boost,
+    weapon N, use, rear view, zoom), which keyboard and mouse produce today and
+    touch produces later
+  - flight and weapons stepping
+  - docking and resupply
+  - death, respawn and launch lifecycle
+  - the camera
+  - the rear-gun view
+  - wingmen drawing
+  - server sync
+  - diagnostics
+- **Done when:** the controller is a thin coordinator, each subsystem has its own
+  tests, and Geoff plays the app and web and notices nothing different (DFlow
+  frame time unchanged within noise).
+
+### G8. The cockpit screen in pieces
+- **Found:** ui/src/wallet/rebels/RebelsHud.tsx is both the cockpit layout and
+  the switchboard for the launch card, death card, help, market and inventory
+  (12 pieces of state).
+- **Do:** a cockpit state hook plus separate pieces (gauges, launch card, death
+  card, YOU HAVE DIED and wave banners, crosshair, corner badge), composed by a
+  desktop layout. A phone layout can then arrange the same pieces.
+
+### G9. Touch controls and the phone cockpit (after G7, G8 and the build agent's B5)
+- Touch produces the G7 actions:
+  - a left stick for throttle and strafe
+  - drag right to aim
+  - large fire button, smaller torpedo and boost buttons
+  - tap the weapon icon to cycle
+- Geoff designs the final layout; the draft is in docs/DIVI-REBELS-WEB-PLAN.md.
+- The phone layout arranges G8's pieces. Measured on a real iPhone and Android
+  through DFlow.
+
+### G10. The combat simulation in systems (later, opportunistic)
+- ui/src/wallet/rebels/rebelsCombat.ts (2,370 lines, 132 exports) covers waves,
+  the dragon, swarms, projectiles and loot.
+- It is well tested and also runs on the server, so it is split one system at a
+  time, only when that system is being changed anyway.
+
+## Order
+
+The same table as the build agent's document, section 4.
+- **Step 2:** I pause for its package move (B2) and globe split (B3). The
+  gameplay session pauses too.
+- **Step 3:** G1 to G4.
+- **Step 4:** G5 and G6, ready for sign-in.
+- **Step 5:** G7 and G8.
+- **Step 6:** G9, then G10 when it comes up.
+
+## Rules I hold myself to
+
+- The full suite and tsc before every push. The boundary guard stays empty.
+- No behaviour change unless the task says so; Geoff checks each step by playing.
+- Merge feat/divi-rebels in before merging out; never touch another session's
+  uncommitted work.
+- The room is live for app and web players: every room deploy is tested against
+  both.
