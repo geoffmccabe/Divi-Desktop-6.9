@@ -125,6 +125,21 @@ BRIDGE-IN (2b) transferring the NFD from `BRIDGE_DIVI` to `diviDest`.
 - **Phase 2 (gated on DIVA POAS):** `sig` becomes a 26/38 quorum; `BRIDGE_DIVI`
   becomes threshold-controlled. Same records, same authorizations, more signers.
 
+## 7a. Indexer undo obligation (reorg safety)
+
+The chain-repo `contrib/nfd-indexer` (overlay-scanner lane) has an undo log: every
+applied mutation journals its inverse, on SUCCESS only, and a reorg replays the log
+backwards. Divi hard-caps reorgs at 100 blocks. When the bridge records get wired
+into that indexer, each MUST journal its inverse or a reorg silently corrupts
+ownership:
+- **BRIDGE-OUT (0x07)** moves the NFD to `BRIDGE_DIVI`; its inverse restores the
+  prior owner (the address that funded the lock).
+- **BRIDGE-IN (0x08)** moves the NFD from `BRIDGE_DIVI` to `new_owner`; its inverse
+  restores `BRIDGE_DIVI`.
+A rejected bridge record MUST journal nothing (guarded by the indexer's
+`skipped_records_record_no_undo` test). As of 2026-Sep-06 neither subtype is wired
+into the indexer yet, so there is nothing to add there until that work happens.
+
 ## 8. Frozen vs still open
 
 Frozen by this doc: record subtypes 0x07/0x08 and their byte layouts, nfd_id and
