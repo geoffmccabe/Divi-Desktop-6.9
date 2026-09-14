@@ -3,6 +3,12 @@ import { networkPeers, probePeers, listNodes, nodeIdentity, type Peer, type Geo 
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, addMyIps, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
+/* v2 event-driven animation system. Runs alongside the old polling one and is
+   off unless the user flips it with Cmd-Shift-N — see mapAnimFlag.ts. Every
+   call below is behind isMapAnimV2(), so with the flag off this is inert. */
+import { beginProbeWave, emitMap, type ProbeTarget } from "./mapEvents";
+import { installMapAnimHotkey, isMapAnimV2, useMapAnimV2 } from "./mapAnimFlag";
+import { drawMapAnim } from "./mapAnimRender";
 import { BlockChainViz } from "./BlockChainViz";
 import { createRebels, type RebelsController } from "./rebels/rebelsController";
 import { RebelsHud } from "./rebels/RebelsHud";
@@ -464,6 +470,13 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   // Peers seen in the last 30 days (grey at startup), and the live probe result.
   const knownRef = useRef<Known>({});
   const probeRef = useRef<Map<string, ProbeState>>(new Map());
+  // v2: which IPs were peers on the LAST poll, so we can fire node.peer once on
+  // connect and node.lost once on disconnect, rather than every poll.
+  const peeredRef = useRef<Set<string>>(new Set());
+  // v2 switch. Cmd-Shift-N flips it live; the legend and the drawing layer both
+  // follow. Off by default, so the map behaves exactly as it always has.
+  const animV2 = useMapAnimV2();
+  useEffect(() => { installMapAnimHotkey(); }, []);
   const lastProbe = useRef(0); // last re-ping time (re-ping every 60s)
   const arcFx = useRef<Map<string, ArcFx>>(new Map()); // per-peer flex + colour state
   // Clicking our own node toggles "network only": hide the purple peer layer and
@@ -600,6 +613,11 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         const s = await networkPeers();
         if (!alive || !s) return;
         setSnap(s);
+        // v2: our own node just completed a real RPC round-trip. Gold rings at
+        // home mean "I asked my node and it answered", not "a timer fired".
+        if (isMapAnimV2() && selfRef.current) {
+          emitMap("self.ok", { lat: selfRef.current.lat, lon: selfRef.current.lon });
+        }
         // Tell the Peers counter what we just saw, so it ticks up (and flashes)
         // at the same moment the peer turns pink on the map rather than up to
         // five seconds later on its own poll.
@@ -626,9 +644,25 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           const kips = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
           if (kips.length) {
             for (const ip of kips) if (probeRef.current.get(ip) === "offline") probeRef.current.set(ip, "probing");
+            // v2: announce the wave we are ACTUALLY sending. Each node gets a
+            // green arc out, grey rings when it lands, then gold or red when
+            // its real answer arrives. resolveWave() carries the results back.
+            let resolveWave: ReturnType<typeof beginProbeWave> | null = null;
+            if (isMapAnimV2()) {
+              const targets: ProbeTarget[] = [];
+              for (const ip of kips) {
+                const kp = knownRef.current[ip];
+                // Only nodes whose location we actually know can be animated.
+                if (kp && typeof kp.lat === "number" && typeof kp.lon === "number") {
+                  targets.push({ ip, lat: kp.lat, lon: kp.lon });
+                }
+              }
+              resolveWave = beginProbeWave(targets);
+            }
             probePeers(kips)
               .then((res) => {
                 if (!alive) return;
+                resolveWave?.(res.map((r) => ({ ip: r.ip, online: r.online })));
                 for (const r of res) probeRef.current.set(r.ip, r.online ? "online" : "offline");
                 for (const ip of kips) if (probeRef.current.get(ip) === "probing") probeRef.current.set(ip, "offline");
                 // First search finished: fade the leftover green lines out one per
@@ -646,6 +680,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
                 }
               })
               .catch(() => {
+                // The whole wave failed, so every node in it is unanswered.
+                resolveWave?.(kips.map((ip) => ({ ip, online: false })));
                 for (const ip of kips) probeRef.current.set(ip, "offline");
               });
           }
@@ -685,6 +721,13 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             // Remember the client each peer advertises, so its TYPE persists in
             // the 90-day store even after it stops being a live peer.
             seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon, city: pg.city, country: pg.country, cc: pg.countryCode, subver: p.subver });
+            // v2: a node we are genuinely connected to is a PEER — fuchsia.
+            // Only fire on the transition, so a standing peer doesn't re-pulse
+            // every ten seconds.
+            if (isMapAnimV2() && !peeredRef.current.has(p.ip)) {
+              peeredRef.current.add(p.ip);
+              emitMap("node.peer", { lat: pg.lat, lon: pg.lon, ip: p.ip });
+            }
             probeRef.current.set(p.ip, "online"); // connected = definitely online
             if (!revealed.current.has(p.ip)) {
               // After a switch, reveal already-connected peers as settled (a past
@@ -694,6 +737,18 @@ export function NetworkMap({ onReturn, autoplay = false }: {
                 instantRevealRef.current ? performance.now() - 5000 : performance.now() + newIdx * 350,
               );
               newIdx++;
+            }
+          }
+          // v2: a peer that was in the last list and isn't in this one has
+          // genuinely dropped — grey rings where it used to be, and the Peers
+          // count falls by one at the same instant.
+          if (isMapAnimV2()) {
+            const liveNow = new Set(s.peers.map((p) => p.ip));
+            for (const ip of [...peeredRef.current]) {
+              if (liveNow.has(ip)) continue;
+              peeredRef.current.delete(ip);
+              const kp = knownRef.current[ip];
+              if (kp) emitMap("node.lost", { lat: kp.lat, lon: kp.lon, ip });
             }
           }
           // Always re-fold the authoritative stored list back in, so the map's
@@ -709,11 +764,22 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           for (const arr of takeUnannouncedArrivals(knownRef.current)) {
             arrivalFxRef.current.set(arr.ip, performance.now());
             playSound("receive");
+            // v2: an address this wallet has never seen before appears as a
+            // grey ghost. It stays grey until a probe actually answers.
+            if (isMapAnimV2()) {
+              const kp = knownRef.current[arr.ip];
+              if (kp) emitMap("node.discovered", { lat: kp.lat, lon: kp.lon, ip: arr.ip });
+            }
           }
           instantRevealRef.current = false; // only the first poll after a switch is instant
         });
       } catch {
         /* keep last */
+        // v2: the node did NOT answer. Red rings at home make an RPC stall
+        // visible immediately instead of the UI just quietly freezing.
+        if (isMapAnimV2() && selfRef.current) {
+          emitMap("self.fail", { lat: selfRef.current.lat, lon: selfRef.current.lon });
+        }
       }
     };
     poll();
@@ -1644,6 +1710,17 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         }
       }
 
+      // ── v2 animation layer ────────────────────────────────────────────────
+      // Drawn last, on top of everything, from the real event queue. Uses the
+      // map's own zoom/pan-aware projection so arcs and rings stay glued to
+      // their nodes while the user drags and zooms. Inert when the flag is off.
+      if (isMapAnimV2()) {
+        drawMapAnim(ctx, nowTs, {
+          project: (lat, lon) => P(lon, lat),
+          self: selfXY,
+        });
+      }
+
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
@@ -1741,10 +1818,27 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           <Icon name="overview" size={14} /> Return to Overview
         </button>
         <div className="netmap-legend">
-          <span className="nm-item"><span className="nm-dot nm-out" /> Active Peers</span>
-          <span className="nm-item"><span className="nm-dot nm-in" /> Reachable now</span>
-          <span className="nm-item"><span className="nm-dot nm-ghost" /> Seen before</span>
-          <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
+          {animV2 ? (
+            /* v2 legend: the live colour ladder, so what's on screen can be
+               read at a glance while testing. Cmd-Shift-N returns to the old
+               map and this legend with it. */
+            <>
+              <span className="nm-item nm-v2tag">LIVE v2</span>
+              <span className="nm-item"><span className="nm-dot nm-seek" /> Seeking</span>
+              <span className="nm-item"><span className="nm-dot nm-ghost" /> No answer yet</span>
+              <span className="nm-item"><span className="nm-dot nm-deadc" /> No answer</span>
+              <span className="nm-item"><span className="nm-dot nm-self" /> Alive</span>
+              <span className="nm-item"><span className="nm-dot nm-out" /> Peer</span>
+              <span className="nm-item"><span className="nm-dot nm-extc" /> Outside Divi</span>
+            </>
+          ) : (
+            <>
+              <span className="nm-item"><span className="nm-dot nm-out" /> Active Peers</span>
+              <span className="nm-item"><span className="nm-dot nm-in" /> Reachable now</span>
+              <span className="nm-item"><span className="nm-dot nm-ghost" /> Seen before</span>
+              <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
+            </>
+          )}
         </div>
         <div className="netmap-tools">
           {globe && (

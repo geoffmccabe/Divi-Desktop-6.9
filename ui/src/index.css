@@ -59,6 +59,10 @@
   --map-activity-pulse: 45 100% 55%;
   --map-new-node: 177 85% 58%;
   --map-stake-accent: 353 76% 50%;
+  /* v2 animation states: a node that refused or timed out, and traffic that
+     leaves the Divi network entirely (price feed, geolocation, updates). */
+  --map-dead: 0 85% 58%;
+  --map-external: 185 90% 55%;
   --map-background: 216 33% 6%;
   --map-atmosphere: 211 100% 68%;
 }
@@ -1027,6 +1031,20 @@ code, .mono { font-family: var(--font-mono); }
 .nm-in { background: hsl(210 85% 62%); } /* Full Network — matches the blue background mesh */
 .nm-self { background: hsl(var(--warning)); }
 .nm-ghost { background: hsl(var(--map-offline)); opacity: 0.55; } /* Seen before — remembered, not confirmed connected right now */
+/* v2 animation legend: the colour ladder a node walks as we learn about it. */
+.nm-seek { background: hsl(var(--map-discovery-pulse)); }
+.nm-deadc { background: hsl(var(--map-dead)); }
+.nm-extc { background: hsl(var(--map-external)); }
+.nm-v2tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: hsl(var(--map-discovery-pulse));
+  border: 1px solid hsl(var(--map-discovery-pulse) / 0.5);
+  background: hsl(var(--map-discovery-pulse) / 0.12);
+}
 /* Row below the topbar: optional install panel (left) + the map (right, flex:1).
    When no panel is open the map fills the whole row unchanged. */
 .netmap-body { flex: 1; display: flex; flex-direction: row; min-height: 0; gap: 12px; }

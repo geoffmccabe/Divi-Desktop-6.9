@@ -5,6 +5,10 @@ import { playSound } from "./sound";
 import { Icon } from "./Icon";
 import { loadKnown } from "./wallet/knownPeers";
 import { onPeerCount } from "./wallet/peerEvents";
+/* v2: the Nodes number is derived from the SAME events that drive the map
+   animations, so a number cannot move without an animation having fired. */
+import { onMapCounts } from "./wallet/mapEvents";
+import { useMapAnimV2 } from "./wallet/mapAnimFlag";
 
 // The node status block for the Overview tab. No glass wrapper — it nests
 // inside the wallet panel.
@@ -19,6 +23,13 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
   // Total nodes discovered across the network (peers + the 30-day known set).
   const [nodeCount, setNodeCount] = useState(0);
   const [reconnecting, setReconnecting] = useState(false);
+  // v2: nodes that have ACTUALLY answered us this session, counted straight off
+  // the map's event stream. Smaller and slower to climb than the cached figure
+  // below, which is the whole point — every increment is something that really
+  // happened and that you just watched happen on the map.
+  const animV2 = useMapAnimV2();
+  const [confirmedNodes, setConfirmedNodes] = useState(0);
+  useEffect(() => onMapCounts((c) => setConfirmedNodes(c.nodes)), []);
 
   // The Peers/Nodes numbers you SEE climb one-by-one toward their real totals, so
   // discovery reads as a live tally instead of snapping (0→79). Each step bumps a
@@ -91,7 +102,10 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
 
   // Targets the displayed counts climb toward (freshest reading, kept last-good).
   const peersTarget = lastPeers ?? status?.peers ?? 0;
-  const nodesTarget = nodeCount;
+  // OLD: every address in the 90-day cache, counted out one-by-one so it LOOKS
+  // like live discovery when it is really just a saved list being read.
+  // NEW: only nodes that answered a probe or became a peer, this session.
+  const nodesTarget = animV2 ? confirmedNodes : nodeCount;
 
   // Climb peers by one at a time; gold pulse on every step. The low click only on
   // a genuine single addition, not the startup rush.
@@ -173,7 +187,9 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
           <button
             type="button"
             className="glass-chip px-4 py-2 peers-chip"
-            title="All nodes discovered on the network (peers + 30-day known)"
+            title={animV2
+              ? "Nodes that have actually answered your node this session"
+              : "All nodes discovered on the network (peers + 30-day known)"}
             onClick={onOpenNetwork}
           >
             <span key={`nl${nodeTok}`} className={"chip-label chip-label-nodes" + (nodeTok ? " gold-flash" : "")}>Nodes</span>

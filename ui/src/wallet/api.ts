@@ -1,4 +1,8 @@
 import { invoke } from "../tauri";
+/* v2 map animation: shows calls that leave the Divi network (price, geo,
+   updates) in cyan. traceExternal returns the promise untouched and is a
+   no-op unless the v2 flag is on, so no caller is affected either way. */
+import { traceExternal } from "./mapExternal";
 
 export interface Balance {
   spendable: number;
@@ -312,7 +316,8 @@ export interface Geo {
   isp?: string;
 }
 export const networkPeers = () => invoke<PeerSnapshot | null>("network_peers");
-export const geolocateIps = (ips: string[]) => invoke<Geo[]>("geolocate_ips", { ips });
+export const geolocateIps = (ips: string[]) =>
+  traceExternal("geolocate", invoke<Geo[]>("geolocate_ips", { ips }));
 // Resolve the DIVI snapshot server's real IP (so the setup map can draw the
 // download firehose from its actual geographic location).
 export const snapshotSourceIp = () => invoke<string | null>("snapshot_source_ip");
@@ -342,7 +347,7 @@ export const setNodeName = (name: string, source = "custom") =>
 
 // Is a newer build published for this OS? Powers the "UPDATE TO vX.Y.Z" flash.
 export interface UpdateInfo { current: string; latest: string | null; available: boolean; os: string; downloadUrl: string | null }
-export const updateCheck = () => invoke<UpdateInfo>("update_check");
+export const updateCheck = () => traceExternal("update", invoke<UpdateInfo>("update_check"));
 // Firewalls / antivirus that might prompt about a freshly-updated binary.
 export const securityTools = () => invoke<string[]>("security_tools");
 // Download + install the newer build IN PLACE (no browser download, so the OS
@@ -350,7 +355,7 @@ export const securityTools = () => invoke<string[]>("security_tools");
 // Resolves with the installed version; rejects with a plain-English reason.
 export const updateInstall = () => invoke<string>("update_install");
 // Latest DIVI/USD from the shared CMC feed (no per-user key) — used to price PoE.
-export const priceLatest = () => invoke<number | null>("price_latest");
+export const priceLatest = () => traceExternal("price", invoke<number | null>("price_latest"));
 export interface StaleBlock {
   height: number;
   status: string;
