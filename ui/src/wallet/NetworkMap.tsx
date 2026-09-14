@@ -1715,10 +1715,16 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       // map's own zoom/pan-aware projection so arcs and rings stay glued to
       // their nodes while the user drags and zooms. Inert when the flag is off.
       if (isMapAnimV2()) {
+        // Reset the transform first. P() already returns final screen pixels,
+        // so if any earlier layer left a transform on the context our rings
+        // would land somewhere other than on their nodes.
+        ctx.save();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         drawMapAnim(ctx, nowTs, {
           project: (lat, lon) => P(lon, lat),
           self: selfXY,
         });
+        ctx.restore();
       }
 
       raf = requestAnimationFrame(draw);
