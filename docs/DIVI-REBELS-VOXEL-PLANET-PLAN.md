@@ -53,8 +53,10 @@ Three facts, all measured rather than guessed, make it work anyway:
    few thousand spikes cost about **36,000 triangles in one draw call**. The
    same trick draws the 24 spokes for 288 triangles.
 
-The one genuinely hard case is **the whole planet seen from far away**, which
-section 6 deals with and section 8 measures before anything else is built.
+The one genuinely hard case was **the whole planet seen from far away**, and
+Geoff's own two decisions closed it: at 200,000 units it is a sky body and never
+becomes geometry at all, and the space dust he asked for sets the render
+distance everywhere else. Section 6 has the detail.
 
 ---
 
@@ -135,11 +137,149 @@ scales from the one number, so the alternatives are cheap:
 - **400³ at 9 units**: 3,600 units, eighteen Earths, ninety seconds across the
   shell on boost. Same cube size, same feel flying, a quarter of the travel.
 
-The recommendation is **400³ at 9 units for the first one**, with the grid size
-as a single number so a 1000³ version is a different seed and a different
-planet rather than a rewrite. The reason is not performance: the rendering cost
-is the same either way, because it is set by what is on screen. It is that a
-twenty-minute crossing is a long way to fly to find out whether the maze is fun.
+**DECIDED, 2026-Sep-15: 1000³ at 9 units.** Geoff: "For the size, I want to do
+it 1000 not 400 so we don't need to redo it." So the planet is 9,000 units
+across and the twenty-minute crossing is accepted; the gate (section 3a) is how
+anyone actually gets there, and the test key is how it gets looked at.
+
+The rendering cost is the same either way, because it is set by what is on
+screen rather than by how much exists. What the size costs is travel, and the
+gate pays for that.
+
+---
+
+## 3a. Where it sits, and how anyone gets there
+
+**DECIDED, 2026-Sep-15.** Geoff: "It will sit far away from earth, at 1000
+earth diameters... visible and potential to fly there. But the portal we have
+floating in orbit now will be activated and when users fly into it they can
+teleport to spikeworld."
+
+- **Distance: 1,000 Earth diameters = 200,000 world units.** Earth is 200 units
+  across (`EARTH_D` in
+  `/Users/geoffreymccabe/dd69-rebels/ui/src/wallet/rebels/orbitWorld.ts`), so
+  the arithmetic is exact. For comparison the outermost existing planet sits at
+  3,600 units.
+- **It is clearly visible.** Nine thousand units across at two hundred thousand
+  away subtends 2.6 degrees, which is about five full moons side by side: an
+  unmistakable spiked disc, not a dot.
+- **It cannot be flown to today, and that is a separate decision.** The sky has
+  an edge at `MAX_ALT`, about 4,600 units from Earth's centre, so a ship cannot
+  currently leave the neighbourhood at all. Opening the edge to 200,000 would
+  make the trip about an hour on super boost. Worth doing one day as a real
+  voyage; not needed for any of this, and not in this plan.
+- **Drawn as a sky body at that distance.** It joins the planets and stations in
+  `spaceEnvironment.ts` rather than being real geometry: at two hundred thousand
+  units a depth buffer that also has to resolve a cockpit five centimetres away
+  has no precision left. Sky bodies are already drawn on their own terms, which
+  is the seam this uses.
+
+**The gate.** The portal Geoff means already exists and is already waiting for
+this. In `spaceEnvironment.ts`:
+
+> `space_SM_Veh_WarpGate_Outer_01`, "Threshold Gate", a warp gate 90 units
+> across, 8.2 Earth diameters out (1,640 units), described as
+> *"Warp gate · destination unset · do not approach under power"*.
+
+So the work is to set the destination:
+
+- Flying into the ring moves the player to the Spikeworld shard. Its detail line
+  changes from "destination unset" to naming the place, and "do not approach
+  under power" stops being a joke and becomes the instruction.
+- The gate is a fixed place in the world, so approaching it is a flight anybody
+  can make on their first sortie.
+- Coming back out is the same ring from the other side. A player must never be
+  stranded somewhere an hour from home.
+
+**The test key.** Geoff: "I also want a shortcut key of cmd-shift-| to teleport
+there immediately so I can see and test it."
+
+- Cmd + Shift + `\` (the `|` is that key with shift, so the chord is really
+  Cmd, Shift and backslash; it is matched on the physical key so a non-UK
+  keyboard behaves the same).
+- Goes straight to the Spikeworld shard from anywhere, and back again on a
+  second press.
+- It ships with **Phase 2**, the first phase where there is anything to look at.
+  Before that there is nothing on the other side of it.
+- It is a test key like `!21` and the rest, and it goes on the same list of
+  things to remove or gate before any of this carries value
+  (`docs/DIVI-REBELS-ITEMS-PLAN.md`, "TEST CHEATS TO REMOVE").
+
+---
+
+## 3b. The one thing left to decide: how big the rooms are
+
+Geoff: "About the 10-blob scale I don't understand the question so write for me
+a clearer explanation about what I'm deciding."
+
+Fair. Here it is without the jargon.
+
+### What the question actually is
+
+A quarter of the cubes are solid and three quarters are missing. That says HOW
+MUCH rock there is. It does not say how the rock is ARRANGED, and that is a
+separate choice with a big effect on how the place feels.
+
+Two planets can both be a quarter rock and be nothing like each other:
+
+- **Sprinkled.** The solid cubes are scattered about one at a time, like pepper.
+  The planet is a haze of separate blocks with gaps everywhere. No walls, no
+  rooms, no corridors: just fog made of cubes. You could fly in any direction
+  and keep going.
+- **Clumped.** The solid cubes stick together into masses, like Swiss cheese.
+  Now there are real walls, real caverns and real passages between them. You
+  have to find a way through, because most directions are blocked.
+
+You want clumped: that is what makes it a maze you find paths through rather
+than a cloud you fly past. (It is also twelve times cheaper to draw, which is a
+happy coincidence rather than the reason.)
+
+**So the question is only: how big are the clumps?** Which is the same as
+asking how big the rooms and the walls are inside your planet.
+
+### What each answer feels like
+
+One cube is 9 units, and a heavy fighter is 3 units wide, so a cube is three
+ships wide. Here is what the choice means to somebody flying it:
+
+| Clump size | A wall or a room is | In ships abreast | Time to cross a room at cruise | What it is like |
+|---|---|---|---|---|
+| 3 cubes | 27 units | 9 ships | 3 seconds | Rubble. Tight, twitchy, fiddly. Rooms too small to turn around in. |
+| **10 cubes** | **90 units** | **30 ships** | **11 seconds** | Caves. Chambers you can see the shape of, corridors you can fly down, junctions to choose at. |
+| 25 cubes | 225 units | 75 ships | 28 seconds | Cathedrals. Enormous halls and enormous slabs. Majestic, but only a few ways through, so more of a route than a maze. |
+| 60 cubes | 540 units | 180 ships | 68 seconds | Continents. Three or four vast tunnels through a nearly solid planet. Barely a maze at all. |
+
+### Which way each mistake goes wrong
+
+- **Too small** and it stops reading as architecture. From any distance it is
+  visual noise, it is hard to tell a dead end from a way through, and it is the
+  expensive end as well.
+- **Too big** and the maze stops being a maze. A handful of huge tunnels is a
+  corridor with scenery. Cheapest to draw, and the least to explore.
+
+Ten cubes is my recommendation because it is the size at which a room is a room:
+big enough to fly around inside, small enough that the planet holds thousands
+of them and choosing a turning matters.
+
+### You do not have to decide this from a table
+
+This is one number and it is changed in one place. The right way to settle it is
+Phase 2, when there is something on screen: I set up the same patch of planet at
+three or four clump sizes, you fly each one with the test key, and you pick. It
+will take you a minute and it will be obvious in the cockpit in a way it never
+will be in a document.
+
+What I need from you now is only whether ten is a sensible place to START from.
+If "caves" is roughly the picture in your head, say so and I will build the
+first one that way.
+
+### And it need not be one number everywhere
+
+Worth knowing for later, not for now: the clump size can change with depth. Fine
+rubble in the outer crust, proper caverns in the middle, vast halls near the
+cavity. That costs one extra line in the generator and gives the journey inward
+some shape. I would not do it in the first version, because it is much easier to
+judge one setting than three, but it is where this would go next.
 
 ---
 
@@ -242,25 +382,55 @@ drawn, and the view distance inside is short by design: this is the case the
 brief cares most about (finding a path to the centre) and it is the cheapest
 case in the whole plan.
 
-### The case that needs watching
+**6. Space dust, which is the load-bearing one.** Geoff: "I also think we can
+have some LoD on this to help reduce the need to render anything too far away?
+Space dust as a type of fog."
 
-The whole planet from far away. At full detail the visible half of the shell is
-fifteen hundred chunks, which is nine million triangles: not possible. At the
-coarsest ring it is a few dozen chunks and a few hundred thousand triangles,
-which is close to affordable but not obviously inside budget. Three answers, in
-the order they will be tried:
+Yes, and it does more than set a mood. It does two jobs, and the second is the
+one that matters:
 
-1. Coarser still: one cube standing for 16 or 32 at the outermost ring.
-2. A shell-only pass at distance: the outer surface alone, with no interior
-   faces generated, since none of them can be seen from out there.
-3. An impostor: past some distance, one sphere with a shader that fakes the
-   pitted, spiked silhouette. Cheapest, and the least honest; only if the first
-   two miss.
+- **It sets the render distance honestly.** Geometry that has faded into the
+  dust does not need to be drawn at all. The dust distance IS the budget dial:
+  turn it in and the planet gets cheaper, with the player seeing a reason for it
+  rather than a wall of nothing.
+- **It hides the seams between the detail rings.** The usual ugliness in this
+  kind of renderer is "popping": the moment a chunk swaps from coarse to fine,
+  the shape visibly changes. Fading the far rings into dust is the standard cure,
+  and it is why fog and LoD belong together rather than being two ideas. Without
+  the dust the rings would have to be much farther out, which costs triangles,
+  to keep the popping off screen.
 
-**This is measured in Phase 0, before anything is built**, because if the
-distant view cannot be made to fit then the planet needs to be smaller or
-farther from anywhere the player normally flies, and that is much better known
-first.
+Inside the shell it is dust in caverns and it justifies a short view. Outside it
+thins with altitude so the spiked silhouette still reads on approach: fog alone
+would hide the planet's shape, which would be a worse fault than a coarse LoD.
+So the two together: **the LoD keeps the silhouette, the dust hides that the
+silhouette is coarse.**
+
+### The case that needed watching, and why it is now closed
+
+The whole planet at full detail from far away is nine million triangles: not
+possible, and it was the one number left open when this plan was first written.
+Geoff's two decisions between then and now close it, which is worth setting out
+because it is the difference between this being buildable and not.
+
+- **From Earth, it is a sky body.** Two hundred thousand units away, it is a
+  2.6-degree disc drawn the way the other planets are. It never becomes a
+  million triangles because it never becomes geometry.
+- **Arriving through the gate puts the player near the surface**, not out in
+  space looking at the whole sphere. You come out of the ring close in, so the
+  view is a patch of crust and a forest of spikes: a few dozen chunks, which is
+  the affordable case all along.
+- **Inside the shell the dust closes the view** after twenty or thirty cubes,
+  and most of what is left is walled in and not drawn at all. The cheapest case
+  in the plan, and the one the brief cares most about.
+
+That leaves one band where the expensive view could still happen: far enough out
+inside the shard to see the whole planet, but not so far as to be a sky body. It
+is closed by a rule rather than by cleverness: **the shard's own sky edge sits
+close enough to the surface that the whole planet never fits in the frame at
+full detail**, and the coarse rings plus the dust cover the rest. Phase 0
+measures where that edge has to be, and that number is now the thing being
+measured rather than an open question about whether this works at all.
 
 ---
 
@@ -295,14 +465,15 @@ everyone. The plan is written now and built after the freeze.
 ## 8. The phases
 
 ### Phase 0. Measure, before building (half a day)
+- The remaining question is no longer "does this work" but "where does the
+  shard's sky edge have to sit", which is a number.
 - Turn the scratchpad script into a permanent test that generates real chunks
   across the shell (surface, mid-shell, cavity ceiling, near a spoke) and
   reports cubes, faces, merged quads and triangles at every detail level.
-- Answer the one open question: what the whole planet costs from outside, at
-  each of the three answers in section 6.
-- Report the numbers and the recommended grid size and cube size.
-- **Stop here for Geoff.** If the distant view cannot be made to fit a budget,
-  say so and what would have to change.
+- Find the altitude inside the shard at which the visible shell first exceeds
+  the triangle allowance, and set the shard's sky edge below it.
+- Find the dust distance that holds the inside view inside the allowance.
+- Report both numbers.
 
 ### Phase 1. The field
 - `solid(x, y, z, seed)` with the shell, the crust profile, the radius-corrected
@@ -312,8 +483,11 @@ everyone. The plan is written now and built after the freeze.
   (searched, not assumed); the same seed gives the same planet on both sides.
 - Nothing drawn yet. This phase is a pure function and a test.
 
-### Phase 2. One chunk on screen
+### Phase 2. On screen, and reachable
 - Worker generation, greedy meshing, one material, DFlow stages.
+- **The test key** (Cmd + Shift + backslash), so Geoff can get there.
+- **The same patch at three or four clump sizes**, switchable, so section 3b is
+  settled by flying it rather than by reading a table.
 - Fly to a fixed point and look at a hundred chunks. Read the frame.
 
 ### Phase 3. Rings and the budget
@@ -333,6 +507,14 @@ everyone. The plan is written now and built after the freeze.
   flyable by a heavy fighter (this is what the cube size was chosen for, so it
   is asserted rather than hoped for).
 
+### Phase 5a. The gate, and the sky
+- Spikeworld as a sky body at 200,000 units, so it can be seen from Earth orbit.
+- The Threshold Gate's destination set: fly into the ring, arrive near the
+  surface; fly into it from the other side, come home. Its description stops
+  saying "destination unset".
+- Tests: nobody can be left stranded on the far side, and the gate works the
+  same in the app and on the web.
+
 ### Phase 6. Making it a place
 - Where it sits, how it is approached, what is inside the cavity, and what the
   heart is for. Deliberately last: a maze is worth building only once it is
@@ -342,7 +524,14 @@ everyone. The plan is written now and built after the freeze.
 
 ## 9. What could still go wrong
 
-- **The distant view.** The one unresolved number, and the reason for Phase 0.
+- **The band between near and far.** Not whether it works, but where the shard's
+  sky edge has to sit to keep the whole planet out of one frame at full detail.
+  Phase 0 measures it. If that edge has to be uncomfortably close to the
+  surface, the answer is a coarser outermost ring rather than a smaller planet.
+- **Travel.** Twenty minutes to cross is accepted, but it makes the gate load
+  bearing: if the gate is fiddly to fly into, or drops the player somewhere
+  awkward, the planet is effectively out of reach. Phase 5a is where that is
+  tested, and the test key exists so it can be judged long before then.
 - **Worker build cost.** A 32³ chunk is 32,768 field calls. Rough arithmetic
   puts a chunk at a few milliseconds on a worker, so a hundred chunks is a
   fraction of a second of background work; if it is worse than that, chunks get
