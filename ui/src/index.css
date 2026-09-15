@@ -1033,6 +1033,13 @@ code, .mono { font-family: var(--font-mono); }
 .nm-ghost { background: hsl(var(--map-offline)); opacity: 0.55; }
 /* Shown instead of the fiat value while the node is still reading the chain,
    so a not-yet-counted balance is never presented as a settled zero. */
+/* "STILL SYNCING" replaces the figure entirely, so it must read as a status
+   rather than as a value: no monospace figure styling, no currency unit. */
+.bl-sync-amt {
+  color: hsl(var(--warning));
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+}
 .bl-syncing {
   font-size: 0.68rem;
   line-height: 1.35;

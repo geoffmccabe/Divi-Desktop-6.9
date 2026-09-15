@@ -45,30 +45,41 @@ export function BalanceCard() {
     <div className="balance-cards">
       <div className="balance-card">
         <span className="bl-label">Spendable</span>
-        <span className="bl-amt">
-          {b ? fmtDivi(b.spendable) : "—"} <em>DIVI</em>
-        </span>
+        {/* While syncing we show NO figure at all. A number the node cannot yet
+            stand behind is worse than no number: a zero reads as "your coins
+            are gone" when they are on chain and simply not counted yet. */}
+        {syncing ? (
+          <span className="bl-amt bl-sync-amt">STILL SYNCING…</span>
+        ) : (
+          <span className="bl-amt">
+            {b ? fmtDivi(b.spendable) : "—"} <em>DIVI</em>
+          </span>
+        )}
         {syncing ? (
           <span className="bl-syncing">
-            Still reading the chain, so this is not your final balance. Coins
-            already sent to you will appear as it catches up.
+            Your node is still reading the chain. Coins already sent to you will
+            appear here as it catches up.
           </span>
-        ) : spendableUsd.state === "ok" ? (
-          <span className="bl-usd">= {spendableUsd.value} {spendableUsd.code}</span>
         ) : (
-          <span className="bl-usd" style={{ fontSize: "0.7rem", opacity: 0.7 }}>
-            [{spendableUsd.state}
-            {spendableUsd.state === "unavailable" ? `: ${spendableUsd.reason}` : ""}]
-          </span>
+          /* The fiat line appears only when we have a real quote. No price
+             means no line, rather than a zero that looks like a valuation. */
+          spendableUsd.state === "ok" && (
+            <span className="bl-usd">= {spendableUsd.value} {spendableUsd.code}</span>
+          )
         )}
       </div>
       <div className="balance-card">
         <span className="bl-label">Staking</span>
-        <span className="bl-amt">
-          {b ? fmtDivi(b.staking) : "—"} <em>DIVI</em>
-        </span>
+        {syncing ? (
+          <span className="bl-amt bl-sync-amt">STILL SYNCING…</span>
+        ) : (
+          <span className="bl-amt">
+            {b ? fmtDivi(b.staking) : "—"} <em>DIVI</em>
+          </span>
+        )}
       </div>
-      {b && (b.pending > 0 || b.immature > 0) && (
+      {/* Equally incomplete mid-sync, so it stays hidden too. */}
+      {!syncing && b && (b.pending > 0 || b.immature > 0) && (
         <div className="bl-sub">
           {b.pending > 0 && <span>{fmtDivi(b.pending)} pending</span>}
           {b.immature > 0 && <span>{fmtDivi(b.immature)} maturing</span>}
