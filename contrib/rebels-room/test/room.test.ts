@@ -1126,6 +1126,20 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
+// N. identity.ts, directly: who a player is and what they may do.
+{
+  const I = await import("../src/identity");
+  const app = I.whoJoins("203.0.113.1", "node-a", {});
+  ok("an app player is its connecting address", app.account === "203.0.113.1" && !app.guest);
+  ok("with no address (a local run) the node stands in", I.whoJoins("", "node-a", {}).account === "node-a");
+  const guest = I.whoJoins("203.0.113.1", "web-guest", { door: "web", guest: "3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c" });
+  ok("a web guest is its private id", guest.account === "guest:3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c" && guest.guest);
+  ok("a guest with no sound id is its address, marked as the web's", I.whoJoins("203.0.113.1", "w", { door: "web", guest: "x" }).account === "web:203.0.113.1");
+  ok("an app player may cheat and cash out; a guest may do neither", I.mayCheat(app) && I.mayCashOut(app) && !I.mayCheat(guest) && !I.mayCashOut(guest));
+  ok("a guest is shown in the first hull; an app player in the one asked for",
+     I.shipFor(guest, "space_SM_Ship_Cruiser_05") === I.GUEST_SHIP && I.shipFor(app, "space_SM_Ship_Cruiser_05") === "space_SM_Ship_Cruiser_05");
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

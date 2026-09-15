@@ -261,3 +261,26 @@ The same table as the build agent's document, section 4.
    signed-in credential sends it as the bearer while the public key stays the
    api key, which is what sign-in (B6) needs.
 5. **Suite:** 34 green. tsc clean for ui/ and contrib/rebels-room/.
+
+### G6 done: the room split into identity, economy and broadcast (2026-Sep-15)
+contrib/rebels-room/src/room.ts went from 1,568 lines to 1,334. Three pieces were
+moved out verbatim:
+- **identity.ts** (55 lines): `whoJoins` (app address, guest id, or web-marked
+  address), `mayCheat`, `mayCashOut`, `shipFor`, GUEST_SHIP and GUEST_CASH_OUT.
+  This is where signed-in players go next.
+- **economy.ts** (77 lines): `bankRun` (report a run to the ledger, putting it
+  back if the ledger fails), `requestCashOut` and `readPurse`, over a typed
+  ledger binding.
+- **broadcast.ts** (194 lines): `stateMessages` builds each seat's state message
+  (rows, view ranges, stay-in-view memory). The room only sends them, and the
+  half-second gauges stay in the room.
+
+The room keeps the simulation, seats and the message handlers, and asks identity
+whether a guest may cheat or cash out.
+
+**Proof:**
+- the recording is still byte-identical (39 messages)
+- room 205 (6 new direct identity tests)
+- wire budgets 25, cockpit 105
+- tsc clean for contrib/rebels-room/ and ui/
+- **Suite:** 34 green.
