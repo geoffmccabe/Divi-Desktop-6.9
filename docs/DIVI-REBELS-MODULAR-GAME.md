@@ -217,4 +217,25 @@ The same table as the build agent's document, section 4.
   - boundary guard 4
   - wire recording unchanged
 - **Suite:** 33 green. tsc clean for ui/ and contrib/rebels-room/.
-- **Deployed:** see the next entry.
+- **Deployed 2026-Sep-15:**
+  - room version 134fc727. One status check returned Cloudflare error 1101 during
+    the few seconds the new version was starting; every check since returned
+    normally.
+  - web version f965cc48. The built page contains no cheat text.
+- **Live check:** a script joined the real room as a web guest. It got the
+  welcome, the game feed and the "Sign in to cash out" purse, and its !21 brought
+  no dragon.
+
+### G3 done: one store for "something changed" (2026-Sep-15)
+- **The store:** ui/src/wallet/rebels/rebelsSignals.ts has two signals.
+  "armoury" covers points, bought gear, found items, a ship's name and fitted
+  upgrades. "ship" is which hull is flown.
+- **Replaced:** the window events in rebelsArmoury.ts, rebelsInventory.ts,
+  shipFleet.ts and shipChoice.ts, including the one name defined twice
+  (CHANGED and INVENTORY_CHANGED). `subscribeArmoury` and `subscribeShip` keep
+  their names, so their callers did not change. Nothing outside the game
+  listened to the old events (checked).
+- **Tests:** fleet 39, adding that each change is heard on the right signal,
+  a throwing listener does not silence the others, and unsubscribing works.
+  dropCharts listens to the store instead of counting window events.
+- **Suite:** 33 green. tsc clean.

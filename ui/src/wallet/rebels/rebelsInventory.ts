@@ -18,9 +18,9 @@
 
 import { itemByKey } from "./itemCatalog";
 import { platform } from "./platform/current";
+import { notify } from "./rebelsSignals";
 
 const ITEMS_KEY = "dd69.rebels.items";
-export const INVENTORY_CHANGED = "dd69-rebels-armoury";
 
 export type Held = Record<string, number>;
 
@@ -76,7 +76,7 @@ export function heldItems(): Held {
 
 function writeHeld(h: Held): void {
   try { platform().storage.setItem(ITEMS_KEY, JSON.stringify(h)); } catch { /* full */ }
-  try { window.dispatchEvent(new Event(INVENTORY_CHANGED)); } catch { /* not a browser */ }
+  notify("armoury");
 }
 
 export function heldCount(key: string): number {
