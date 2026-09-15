@@ -8,3 +8,13 @@ export { createRebels, type RebelsController } from "../rebelsController";
 export { RebelsHud } from "../RebelsHud";
 export { setPlatform, platform, HEADLESS } from "./current";
 export type * from "./platform";
+
+/* For a phone door and its layout: touch in place of keyboard and mouse, and the
+   cockpit's state and pieces to arrange for a small screen (RebelsHud is the
+   desktop arrangement of the same pieces). */
+export { createTouchInput, TOUCH_ACTIONS, type TouchInput, type TouchPicture, type TouchStick } from "./touchInput";
+export { desktopInput } from "./desktopInput";
+export { useCockpit, type Cockpit } from "../cockpit/useCockpit";
+export { FlightReadout, CornerInfo, HeldRow, DockPanel, ScoreCorner, GaugeBars } from "../cockpit/readouts";
+export { HitFlash, DiedBanner, WaveBanner, AimMarks, ExitButton, NoteLine, OfflineBanner } from "../cockpit/overlays";
+export { NoLaunchCard, CockpitPanels, LaunchCard, DeathCard } from "../cockpit/cards";

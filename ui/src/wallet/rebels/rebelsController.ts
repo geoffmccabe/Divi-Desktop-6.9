@@ -711,6 +711,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /* What is in the two trigger slots. Saved, so a pilot who prefers the mini
      gun does not have to say so every time they launch. */
   const weapons: Loadout = loadLoadout();
+  /* The HUD starts from the saved choice, not from the first gun: nothing drew
+     it until touch, where the weapon button is the only way to see it. */
+  hud = { ...hud, primary: weapons.primary, secondary: weapons.secondary };
 
   /**
    * Choose a weapon.
@@ -1089,6 +1092,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       blurredAt = performance.now();
     },
     selectWeapon: (slot) => selectWeapon("primary", slot - 1),
+    /* Only the guns this ship owns are stepped through, so a touch button never
+       lands on a "buy it" note. With one gun owned it stays where it is. */
+    cycleWeapon: (dir) => {
+      const ship = loadShip();
+      for (let step = 1; step <= 6; step++) {
+        const index = (((weapons.primary + dir * step) % 6) + 6) % 6;
+        const spec = weaponInSlot(index + 1);
+        if (spec && hasWeapon(ship, spec.key)) {
+          if (index !== weapons.primary) selectWeapon("primary", index);
+          return;
+        }
+      }
+    },
     useHeld: () => useHeld(),
     toggleRear: () => {
       if (!flying) return;

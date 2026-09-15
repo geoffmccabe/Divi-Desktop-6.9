@@ -392,3 +392,44 @@ presses (the flash, the wave title fading, open panels). Those were moved
 without edits and are type-checked; worth a glance in play.
 
 **Suite:** 35 green (the new cockpit screen test added). tsc clean.
+
+### G9, step a: touch controls, the logic (2026-Sep-15)
+
+Built ahead of the build agent's phone door (B5) because it draws nothing: it is
+what thumbs MEAN, not how the controls look. The look stays Geoff's design.
+
+- ui/src/wallet/rebels/platform/touchInput.ts drives the same pilot as the
+  keyboard and mouse:
+  - left thumb, anywhere on the left half: a floating stick, up and down for
+    throttle, left and right for strafe, with a small dead zone
+  - right thumb, anywhere on the right half: a floating stick that moves the
+    reticle (the ship turns toward it, as with the mouse); lifting it stops the
+    turn
+  - buttons: any element the phone layout marks with data-rebels-touch. Held:
+    fire, torpedo, boost, super, guard, stop, liftUp, liftDown, rollLeft,
+    rollRight. Tapped: weapon, weaponBack, rear, view, held, zoomIn, zoomOut,
+    sound.
+  - a finger that lands on a button keeps it until it lifts; a second finger on
+    a stick already in use is ignored; panels, the launch card and ordinary page
+    buttons are left alone; losing the page lets go of everything.
+  - subscribe() reports where each thumb landed and is, so a layout can draw a
+    ring and knob.
+- The pilot gained cycleWeapon: step to the next (or previous) gun this ship
+  owns, never onto a "buy it" note.
+- Found and fixed on the way: the cockpit's record of the armed gun started at
+  the first gun even when the saved choice was another. Nothing displayed it
+  yet; a phone weapon icon would have.
+- The core entry now offers doors the touch module, the desktop input, and the
+  cockpit hook and pieces, so the phone door and layout import only from it.
+
+**Tests:**
+- ui/src/wallet/rebels/platform/touchInput.test.ts (52 checks, run by
+  scripts/run-rebels-touch-tests.sh).
+- Block T in rebelsController.test.ts flies the real game by touch alone: the
+  right thumb turns the ship 1.2 radians, the left thumb slows it, FIRE fires,
+  the weapon button steps forward and back (122 checks in all).
+
+**Waiting:** the phone layout itself (Geoff's design) and B5's phone door to plug
+it into. Then measure on a real iPhone and Android through DFlow.
+
+**Suite:** 36 green. tsc clean. Boundary check clean.

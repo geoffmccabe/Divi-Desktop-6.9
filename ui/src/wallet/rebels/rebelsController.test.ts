@@ -27,6 +27,7 @@ import { loadShip } from "./shipChoice";
 import { setPlatform, HEADLESS } from "./platform/current";
 import { appIdentity } from "./platform/app/identity";
 import { createCheats } from "./rebelsCheats";
+import { createTouchInput } from "./platform/touchInput";
 /* These tests name the player through the node identity the WALLET saves
    ("Test Node", "Quitter"), so the game runs behind the app's identity. The
    rest of the app door (prices, the wallet) is not needed here and would pull
@@ -1318,6 +1319,70 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   }
   ctl.detach();
   ok("detaching hands the input back", captured === null);
+  await settle();
+  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
+}
+
+// T. TOUCH: the real game flown by thumbs alone, through the touch module a
+//    phone door plugs in. No keys and no mouse anywhere in this block.
+{
+  const touch = createTouchInput();
+  setPlatform({ ...HEADLESS, id: "test-touch-input", identity: appIdentity, input: touch });
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ctl.launch();
+  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);   /* through the dive */
+  const finger = (kind: string, id: number, x: number, y: number, action = "") => {
+    const target = { closest: (sel: string) => (sel === "[data-rebels-touch]" && action ? { getAttribute: () => action } : null) };
+    const e = { changedTouches: [{ identifier: id, clientX: x, clientY: y, target }], cancelable: true, preventDefault: () => {} };
+    for (const fn of winHandlers[kind] ?? []) fn(e);
+  };
+  ok("the touch module is listening", (winHandlers.touchstart ?? []).length === 1);
+
+  /* Right thumb, slid up: the ship turns toward the reticle, as with the mouse. */
+  const aim = () => g.camera.getWorldDirection(new THREE.Vector3());
+  const aimBefore = aim();
+  finger("touchstart", 1, 600, 300);
+  finger("touchmove", 1, 600, 300 - 72);
+  ok("sliding the right thumb up moves the reticle up", ctl.cursor().y < 0.1, `${ctl.cursor().y.toFixed(2)}`);
+  for (let i = 0; i < 40; i++) ctl.frame(1 / 60);
+  ok("and turns the ship", aimBefore.angleTo(aim()) > 0.5, `${aimBefore.angleTo(aim()).toFixed(2)} radians`);
+  finger("touchend", 1, 0, 0);
+  ok("lifting the thumb centres the reticle", ctl.cursor().x === 0.5 && ctl.cursor().y === 0.5);
+
+  /* Left thumb, pulled down: the throttle comes back. */
+  const speed0 = ctl.hud().speed;
+  finger("touchstart", 2, 200, 300);
+  finger("touchmove", 2, 200, 300 + 72);
+  for (let i = 0; i < 60 * 2; i++) ctl.frame(1 / 60);
+  finger("touchend", 2, 0, 0);
+  const readBy = Date.now() + 400;
+  while (Date.now() < readBy) ctl.frame(1 / 60);
+  ok("pulling the left thumb back slows the ship", ctl.hud().speed < speed0, `${speed0.toFixed(1)} -> ${ctl.hud().speed.toFixed(1)}`);
+
+  /* FIRE, held. */
+  const ammo0 = ctl.hud().ammo;
+  finger("touchstart", 3, 750, 550, "fire");
+  const until = Date.now() + 10_000;
+  while (ctl.hud().ammo >= ammo0 && Date.now() < until) ctl.frame(1 / 60);
+  finger("touchend", 3, 750, 550);
+  ok("holding FIRE fires the guns", ctl.hud().ammo < ammo0, `${ammo0} -> ${ctl.hud().ammo}`);
+
+  /* The weapon button steps to the next gun the ship owns (earlier blocks
+     bought the mini gun and a beam), and never onto a "buy it" note. */
+  const p0 = ctl.hud().primary;
+  finger("touchstart", 4, 700, 50, "weapon");
+  finger("touchend", 4, 700, 50);
+  const p1 = ctl.hud().primary;
+  ok("the weapon button steps to another owned gun", p1 !== p0 && !/SPACESHIPS/.test(ctl.hud().note), `${p0} -> ${p1}, ${ctl.hud().note}`);
+  finger("touchstart", 5, 700, 50, "weaponBack");
+  finger("touchend", 5, 700, 50);
+  ok("and back again", ctl.hud().primary === p0, `${p1} -> ${ctl.hud().primary}`);
+  ctl.detach();
+  ok("detaching stops the touch listening", (winHandlers.touchstart ?? []).length === 0);
   await settle();
   setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
 }

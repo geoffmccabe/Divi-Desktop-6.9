@@ -166,6 +166,9 @@ export interface Pilot {
   releaseAll(): void;
   /** Weapon `slot` 1 to 6. */
   selectWeapon(slot: number): void;
+  /** The next weapon this ship owns (+1) or the one before (-1), wrapping round.
+   *  For hands with no number keys: one button steps through the guns. */
+  cycleWeapon(dir: 1 | -1): void;
   /** Use a held recharge or supercharge (Y). */
   useHeld(): void;
   /** Open or close the rear view (7). */
