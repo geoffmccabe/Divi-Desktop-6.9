@@ -9,6 +9,7 @@ pub mod chart;
 pub mod collectibles;
 pub mod collectibles_import;
 pub mod config;
+pub mod crawl;
 pub mod crypto_nfd;
 pub mod dex;
 pub mod dmt;
