@@ -1,3 +1,10 @@
+// NOT CURRENTLY MOUNTED. Nothing imports this, so it is tree-shaken out of the
+// build and none of it reaches the screen. The balance the user actually sees
+// is in HeaderBar.tsx.
+//
+// This note exists because a fix was once made here, shipped, and had no effect
+// at all — the change was real, the component was not. If you are about to edit
+// the balance display, check HeaderBar.tsx first.
 import { useEffect, useState } from "react";
 import { walletBalance, type Balance } from "./api";
 import { nodeStatus } from "../bridge";
