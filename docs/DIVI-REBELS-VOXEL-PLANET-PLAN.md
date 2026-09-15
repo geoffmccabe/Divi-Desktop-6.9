@@ -261,6 +261,17 @@ Ten cubes is my recommendation because it is the size at which a room is a room:
 big enough to fly around inside, small enough that the planet holds thousands
 of them and choosing a turning matters.
 
+### DECIDED, 2026-Sep-15: ten cubes
+
+Geoff: "10 cubes sounds right." So the first planet is built with rooms and
+walls about 90 units across, which is thirty ships abreast and eleven seconds to
+cross at cruise: caves, not rubble and not cathedrals.
+
+This is the setting Phase 1 generates and Phase 2 shows. The switch described
+below still gets built, because it costs almost nothing once the generator
+exists and it is the only honest way to confirm a look; but ten is the one that
+ships unless flying it says otherwise.
+
 ### You do not have to decide this from a table
 
 This is one number and it is changed in one place. The right way to settle it is
@@ -269,9 +280,8 @@ three or four clump sizes, you fly each one with the test key, and you pick. It
 will take you a minute and it will be obvious in the cockpit in a way it never
 will be in a document.
 
-What I need from you now is only whether ten is a sensible place to START from.
-If "caves" is roughly the picture in your head, say so and I will build the
-first one that way.
+Ten was confirmed from the table above; the switch is there to check it in the
+cockpit rather than to reopen it.
 
 ### And it need not be one number everywhere
 
