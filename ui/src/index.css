@@ -1035,6 +1035,26 @@ code, .mono { font-family: var(--font-mono); }
    so a not-yet-counted balance is never presented as a settled zero. */
 /* "STILL SYNCING" replaces the figure entirely, so it must read as a status
    rather than as a value: no monospace figure styling, no currency unit. */
+/* Settings -> Network: whether the outside world can reach this node. */
+.reach-panel { display: flex; flex-direction: column; gap: 16px; max-width: 46rem; }
+.reach-status { border-radius: 10px; padding: 12px 14px; border: 1px solid transparent; }
+.reach-status strong { display: block; margin-bottom: 4px; font-size: 0.95rem; }
+.reach-ok { border-color: hsl(var(--map-discovery-pulse) / 0.45); background: hsl(var(--map-discovery-pulse) / 0.08); }
+.reach-ok strong { color: hsl(var(--map-discovery-pulse)); }
+.reach-hidden { border-color: hsl(var(--warning) / 0.5); background: hsl(var(--warning) / 0.08); }
+.reach-hidden strong { color: hsl(var(--warning)); }
+.reach-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 8px 18px; }
+.reach-facts > div { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid hsl(var(--border) / 0.5); }
+.reach-facts span { color: hsl(var(--muted-foreground)); font-size: 0.8rem; }
+.reach-facts b { font-variant-numeric: tabular-nums; }
+.reach-toggle { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.reach-toggle input { margin-top: 3px; flex: none; }
+.reach-toggle strong { display: block; font-size: 0.9rem; }
+.reach-toggle em { display: block; font-style: normal; font-size: 0.78rem; color: hsl(var(--muted-foreground)); line-height: 1.45; margin-top: 3px; }
+.reach-restart { color: hsl(var(--map-discovery-pulse)); }
+.reach-err { color: hsl(var(--map-dead)); }
+.reach-help { border-left: 2px solid hsl(var(--border)); padding-left: 12px; }
+.reach-help strong { font-size: 0.85rem; }
 .bl-sync-amt {
   color: hsl(var(--warning));
   font-size: 1.15rem;

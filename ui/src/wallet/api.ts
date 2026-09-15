@@ -358,6 +358,21 @@ export const updateInstall = () => invoke<string>("update_install");
    disk but the OLD process keeps running, so the wallet looks unchanged and
    goes on advertising the same update. */
 export const updateRelaunch = () => invoke<void>("update_relaunch");
+
+/** Whether anything on the network can actually reach this node. */
+export interface Reachability {
+  reachable: boolean;
+  inbound: number;
+  outbound: number;
+  listening: boolean;
+  upnp: boolean;
+  port: number;
+  addresses: string[];
+  known: boolean;
+}
+export const nodeReachability = () => invoke<Reachability>("node_reachability");
+/** Ask the router to open the peer port (or stop asking). Applies on node restart. */
+export const setNodeUpnp = (enabled: boolean) => invoke<void>("set_node_upnp", { enabled });
 // Latest DIVI/USD from the shared CMC feed (no per-user key) — used to price PoE.
 export const priceLatest = () => traceExternal("price", invoke<number | null>("price_latest"));
 export interface StaleBlock {
