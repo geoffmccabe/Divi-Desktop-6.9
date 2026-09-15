@@ -2,6 +2,7 @@
 // that could not start, and the panels opened from keys or buttons (help,
 // high scores, the ship market, DFlow, the inventory).
 
+import type { ReactNode } from "react";
 import type { RebelsController, HudState } from "../rebelsController";
 import type { Cockpit } from "./useCockpit";
 import { RebelsScoreboard } from "../RebelsScoreboard";
@@ -41,7 +42,11 @@ export function CockpitPanels({ c }: { c: Cockpit }) {
 }
 
 /** Before launch: who is launching, how to fly, and the buttons. */
-export function LaunchCard({ ctl, c }: { ctl: RebelsController; c: Cockpit }) {
+export function LaunchCard({ ctl, c, howTo }: {
+  ctl: RebelsController; c: Cockpit;
+  /** How to fly, beside the logo. The keyboard by default; a phone shows its thumbs. */
+  howTo?: ReactNode;
+}) {
   const { hud, slow } = c;
   if (!(!hud.broken && !hud.launched && !c.scores && !c.market)) return null;
   return (
@@ -57,7 +62,7 @@ export function LaunchCard({ ctl, c }: { ctl: RebelsController; c: Cockpit }) {
         </div>
         {/* The keyboard, pointed at, rather than two dozen lines of
             text beside the logo. */}
-        <ControlsBoard extras={flightExtras(loadShip())} />
+        {howTo ?? <ControlsBoard extras={flightExtras(loadShip())} />}
       </div>
       <div className="orbit-buttons">
         {/* ---- ONE GAME ----

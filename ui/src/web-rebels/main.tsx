@@ -12,14 +12,21 @@ import "../index.css";
 import "./web.css";
 import { ThemeProvider } from "../theme/ThemeProvider";
 import { GlobeMap, type GlobePoint } from "../wallet/GlobeMap";
-import { createRebels, RebelsHud, setPlatform, type RebelsController } from "../wallet/rebels/platform/coreEntry";
+import { createRebels, RebelsHud, PhoneHud, createTouchInput, setPlatform, type RebelsController } from "../wallet/rebels/platform/coreEntry";
 import { prefetchMusic } from "../wallet/rebels/rebelsMusic";
 import { createWebDoor } from "./webDoor";
 import { loadTowers, SCANNER } from "./webNodes";
 import { restoreGuest } from "./pilot";
 import { hydrateWebStorage } from "./webStore";
 
-setPlatform(createWebDoor());
+/* ---- ?phone=1: A PREVIEW OF THE PHONE COCKPIT ----
+   Touch controls and the phone layout on this same page, for trying on a phone
+   before the phone version has its own door (the build agent's B5, which will
+   replace this switch with real phone detection and a phone detail setting).
+   Without the switch nothing here changes. */
+const touch = new URLSearchParams(window.location.search).has("phone") ? createTouchInput() : null;
+
+setPlatform(createWebDoor({ input: touch ?? undefined }));
 prefetchMusic();
 
 /** How long to wait for the node list before opening with the Scanner alone. */
@@ -38,7 +45,7 @@ function WebRebels() {
        anything or joins the room. Only then may a slow node list be given up on. */
     void restoreGuest().then(() => hydrateWebStorage()).then((storage) => {
       if (!alive) return;
-      setPlatform(createWebDoor({ storage }));
+      setPlatform(createWebDoor({ storage, input: touch ?? undefined }));
       timer = setTimeout(() => give([SCANNER]), TOWER_WAIT_MS);
       return loadTowers(import.meta.env.BASE_URL).then(give);
     });
@@ -74,7 +81,7 @@ function WebRebels() {
       <GlobeMap points={towers} arcs={[]} center={{ lat: SCANNER.lat, lon: SCANNER.lng }} flight={ctl} />
       {ctl && (
         <div className="netmap-game">
-          <RebelsHud ctl={ctl} onExit={again} />
+          {touch ? <PhoneHud ctl={ctl} touch={touch} onExit={again} /> : <RebelsHud ctl={ctl} onExit={again} />}
         </div>
       )}
     </div>

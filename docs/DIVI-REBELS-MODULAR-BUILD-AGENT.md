@@ -206,6 +206,12 @@ SHARED, changed only by agreement:
   clear place for them and use desktop input until then.
 - **Done when:** ?mobile=1 loads the game on a phone in landscape with the phone
   profile, and nothing changes for desktop web visitors.
+- **Already built by the game session (2026-Sep-15), ready to plug in:**
+  `createTouchInput()` and `PhoneHud` from ui/src/wallet/rebels/platform/coreEntry.ts.
+  A temporary `?phone=1` switch in ui/src/web-rebels/main.tsx and an `input`
+  option on `createWebDoor` show them today. Replace that switch with your phone
+  detection and door (keep passing the touch input to the door and to PhoneHud),
+  then remove the `?phone=1` lines.
 
 ### B6. LW-SSO sign-in for the web door (offered, never required)
 - **Background:** docs/DIVI-REBELS-WEB-PLAN.md (the greenlight section) and the

@@ -18,3 +18,4 @@ export { useCockpit, type Cockpit } from "../cockpit/useCockpit";
 export { FlightReadout, CornerInfo, HeldRow, DockPanel, ScoreCorner, GaugeBars } from "../cockpit/readouts";
 export { HitFlash, DiedBanner, WaveBanner, AimMarks, ExitButton, NoteLine, OfflineBanner } from "../cockpit/overlays";
 export { NoLaunchCard, CockpitPanels, LaunchCard, DeathCard } from "../cockpit/cards";
+export { PhoneHud } from "../cockpit/PhoneHud";

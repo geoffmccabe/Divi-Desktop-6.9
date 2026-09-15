@@ -433,3 +433,52 @@ what thumbs MEAN, not how the controls look. The look stays Geoff's design.
 it into. Then measure on a real iPhone and Android through DFlow.
 
 **Suite:** 36 green. tsc clean. Boundary check clean.
+
+### G9, step b: phone controls the way phone players know them (2026-Sep-15)
+
+Geoff has not played a shooter on a phone and asked for the familiar way. What
+the best-known phone games do:
+- **Galaxy on Fire 3 (space fighter):** a floating stick on the left steers,
+  push for boost and pull for brake, rolling on the right side, weapons fire
+  automatically, and aim assist snaps the reticle to nearby ships.
+  Sources: touchtapplay.com and gamezebo.com guides.
+- **Galaxy on Fire 2:** a virtual stick that follows the finger; hold FIRE, or
+  double-tap it for auto fire.
+- **Call of Duty Mobile (best-known phone shooter):** left stick, right side to
+  aim, and a default Simple mode that fires by itself when the crosshair turns
+  red on an enemy. Fully movable buttons. Source: Activision's controls post.
+- **Common advice:** big hit area for the most used action (FIRE), others in an
+  arc around it, dead zone on sticks, aim assist to make up for glass.
+
+**What ours now does (redesigned from step a):**
+- LEFT THUMB: floating stick that steers (moves the crosshair; the ship turns).
+- RIGHT THUMB: big FIRE, with TORP, AUTO, BOOST and BRAKE on an arc round it.
+- AUTO FIRE (on by default, remembered): guns fire while an enemy is under the
+  crosshair, which turns red.
+- AIM ASSIST: the crosshair eases onto an enemy close to it. Gentle on purpose,
+  since desktop players in the same fight have none.
+- BRAKE: held slows, released returns to the lever's speed.
+- Drag sideways on the empty right side: roll.
+- Top right: the gun's name (tap to change), RECHARGE when one is held, REAR,
+  VIEW, ITEMS, EXIT; score under them. Top left: speed. Bottom: gauges.
+- The launch card shows the thumb controls where the desktop shows the keyboard.
+
+**Files:**
+- ui/src/wallet/rebels/platform/touchInput.ts (the meaning of each thumb)
+- ui/src/wallet/rebels/cockpit/PhoneHud.tsx and cockpit/phone.css (the layout)
+- ui/src/wallet/rebels/rebelsController.ts: frameAssist (aim assist and auto
+  fire, off unless touch turns them on), brake, cycleWeapon, setAssist
+- Preview switch: divi.love/rebels?phone=1 (ui/src/web-rebels/main.tsx and
+  webDoor.ts). The build agent's B5 replaces it with real phone detection.
+
+**Tests:** touch 59 checks. Cockpit 129, including flying the real game by touch:
+steering, brake and restore, FIRE, gun stepping, the crosshair drawn onto a held
+fighter, auto fire shooting with no finger on FIRE, and AUTO off stopping it.
+Desktop drawing unchanged (the 23 recorded cockpit situations still identical).
+Looked at once at 844 by 390 (iPhone sideways) and fixed the score overlapping
+the top buttons, BRAKE running off the bottom, and LAUNCH needing a scroll.
+
+**Not known until played on a real phone:** stick size, dead zone, aim assist
+strength, and whether the globe runs smoothly (B5's phone detail setting).
+
+**Suite:** 36 green. tsc clean.

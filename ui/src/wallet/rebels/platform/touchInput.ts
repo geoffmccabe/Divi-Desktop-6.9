@@ -3,26 +3,32 @@
 // The phone's way of asking the same things desktopInput.ts asks with keys and a
 // mouse (see the Pilot in platform.ts). The game does not know which is in use.
 //
-// The draft layout (docs/DIVI-REBELS-WEB-PLAN.md, a starting point for Geoff's
-// design):
-//   LEFT THUMB   a stick wherever it lands on the left half: up and down is the
-//                throttle, left and right is strafe
-//   RIGHT THUMB  a stick wherever it lands on the right half: it moves the
-//                reticle, and the ship turns toward it, as the mouse does
-//   BUTTONS      fire, torpedo, boost and the rest
+// ---- THE LAYOUT PHONE PLAYERS ALREADY KNOW ----
+// Geoff had not played a shooter on a phone, so this follows the games that
+// phone players have: Galaxy on Fire 2 and 3 (the best known space fighters on
+// phones) and Call of Duty Mobile (the best known phone shooter). They agree:
+//   LEFT THUMB   a floating stick, appearing wherever the thumb lands: it steers
+//                (here it moves the crosshair, and the ship turns toward it)
+//   RIGHT THUMB  one big FIRE button, with the few other buttons it needs in
+//                an arc around it: TORPEDO, BOOST, BRAKE
+//   AUTO FIRE    on by default: the guns fire by themselves while an enemy is
+//                under the crosshair (Galaxy on Fire 3; Call of Duty Mobile's
+//                default mode). FIRE still fires by hand; AUTO turns it off.
+//   AIM ASSIST   the crosshair eases onto an enemy close to it
+//   ROLL         dragging sideways on the empty right side (Galaxy on Fire 3)
 //
 // This module draws nothing. A button is ANY element the phone layout marks with
-// data-rebels-touch="<action>" (the actions are TOUCH_ACTIONS below), so the
-// layout decides how buttons look and where they sit, and this decides what
-// they do. The sticks are reported through subscribe() so the layout can draw
-// a ring and a knob under each thumb.
+// data-rebels-touch="<action>" (TOUCH_ACTIONS below), so the layout decides how
+// buttons look and where they sit, and this decides what they do. The sticks
+// and the auto fire setting are reported through subscribe() so the layout can
+// draw a ring and knob under each thumb and light the AUTO button.
 
 import type { Pilot, RebelsInput } from "./platform";
 
 /** Held for as long as a finger is on them. */
-const HOLD_ACTIONS = ["fire", "torpedo", "boost", "super", "guard", "stop", "liftUp", "liftDown", "rollLeft", "rollRight"] as const;
+const HOLD_ACTIONS = ["fire", "torpedo", "boost", "super", "brake", "guard", "stop", "liftUp", "liftDown", "rollLeft", "rollRight"] as const;
 /** Done once, when the finger lands. */
-const TAP_ACTIONS = ["weapon", "weaponBack", "rear", "view", "held", "zoomIn", "zoomOut", "sound"] as const;
+const TAP_ACTIONS = ["weapon", "weaponBack", "rear", "view", "held", "zoomIn", "zoomOut", "sound", "auto"] as const;
 export const TOUCH_ACTIONS: readonly string[] = [...HOLD_ACTIONS, ...TAP_ACTIONS];
 type HoldAction = (typeof HOLD_ACTIONS)[number];
 
@@ -30,8 +36,9 @@ type HoldAction = (typeof HOLD_ACTIONS)[number];
 export const STICK_TRAVEL = 0.12;
 /** Near the middle of a stick is nothing, so a resting thumb does not drift the ship. */
 export const STICK_DEAD = 0.15;
-/** How far from the middle the reticle may go: the same as the mouse under a lock. */
+/** How far from the middle the crosshair may go: the same as the mouse under a lock. */
 const AIM_REACH = 0.45;
+const AUTO_KEY = "dd69.rebels.touch.autoFire";
 
 export interface TouchStick {
   /** Where the thumb landed and where it is now, in page pixels. */
@@ -42,10 +49,13 @@ export interface TouchStick {
 
 /** What a phone layout needs to draw the controls under the thumbs. */
 export interface TouchPicture {
-  move: TouchStick | null;
-  aim: TouchStick | null;
+  /** The left thumb's steering stick. */
+  steer: TouchStick | null;
+  /** A thumb rolling the ship on the empty right side. */
+  roll: TouchStick | null;
   /** The held buttons with a finger on them now. */
   held: string[];
+  autoFire: boolean;
 }
 
 export interface TouchInput extends RebelsInput {
@@ -64,9 +74,16 @@ export function shaped(v: number): number {
   return Math.sign(v) * Math.min(1, (a - STICK_DEAD) / (1 - STICK_DEAD));
 }
 
+function readAuto(): boolean {
+  try { return localStorage.getItem(AUTO_KEY) !== "off"; } catch { return true; }
+}
+function saveAuto(on: boolean) {
+  try { localStorage.setItem(AUTO_KEY, on ? "on" : "off"); } catch { /* private mode: this session only */ }
+}
+
 export function createTouchInput(): TouchInput {
   const listeners = new Set<(p: TouchPicture) => void>();
-  let current: TouchPicture = { move: null, aim: null, held: [] };
+  let current: TouchPicture = { steer: null, roll: null, held: [], autoFire: readAuto() };
   const publish = (p: TouchPicture) => {
     current = p;
     for (const fn of listeners) fn(p);
@@ -82,34 +99,34 @@ export function createTouchInput(): TouchInput {
     attach(dom: HTMLCanvasElement, pilot: Pilot): () => void {
       /* Each finger is one thing until it lifts: a stick or a button. A thumb
          that lands on FIRE and slides off it is still holding fire. */
-      type Role = { kind: "move" | "aim"; stick: TouchStick } | { kind: "hold"; action: HoldAction };
+      type Role = { kind: "steer" | "roll"; stick: TouchStick } | { kind: "hold"; action: HoldAction };
       const fingers = new Map<number, Role>();
+      let autoFire = readAuto();
+      pilot.setAssist({ autoFire, magnet: true });
 
       const heldNow = () => [...fingers.values()].flatMap((r) => (r.kind === "hold" ? [r.action] : []));
-      const stickOf = (kind: "move" | "aim") => {
+      const stickOf = (kind: "steer" | "roll") => {
         for (const r of fingers.values()) if (r.kind === kind) return r.stick;
         return null;
       };
-      const show = () => publish({ move: stickOf("move"), aim: stickOf("aim"), held: heldNow() });
+      const show = () => publish({ steer: stickOf("steer"), roll: stickOf("roll"), held: heldNow(), autoFire });
 
-      /** Everything the held buttons and the left stick say, together. */
+      /** Everything the held buttons and the roll drag say, together. */
       const applyHeld = () => {
         const h = new Set(heldNow());
-        const move = stickOf("move");
+        const roll = stickOf("roll");
         pilot.setControls({
-          strafe: move ? shaped(move.dx) : 0,
-          /* Up the screen is forward: pushing the thumb up opens the throttle. */
-          throttle: move ? -shaped(move.dy) : 0,
           lift: (h.has("liftUp") ? 1 : 0) - (h.has("liftDown") ? 1 : 0),
-          roll: (h.has("rollRight") ? 1 : 0) - (h.has("rollLeft") ? 1 : 0),
+          roll: roll ? shaped(roll.dx) : (h.has("rollRight") ? 1 : 0) - (h.has("rollLeft") ? 1 : 0),
           boost: h.has("boost"),
           superBoost: h.has("super"),
+          brake: h.has("brake"),
           guard: h.has("guard"),
           fullStop: h.has("stop"),
         });
       };
 
-      const aimFrom = (s: TouchStick) => {
+      const steerFrom = (s: TouchStick) => {
         const reach = pilot.state().rearOn ? 0.5 : AIM_REACH;
         pilot.moveCursor(0.5 + shaped(s.dx) * reach, 0.5 + shaped(s.dy) * reach);
       };
@@ -132,6 +149,11 @@ export function createTouchInput(): TouchInput {
           case "zoomIn": pilot.zoom(1); break;
           case "zoomOut": pilot.zoom(-1); break;
           case "sound": pilot.restartSound(); break;
+          case "auto":
+            autoFire = !autoFire;
+            saveAuto(autoFire);
+            pilot.setAssist({ autoFire });
+            break;
         }
       };
       const lift = (action: HoldAction) => {
@@ -161,7 +183,7 @@ export function createTouchInput(): TouchInput {
           if (target?.closest?.("button, input, select, textarea, a, [role='dialog']")) continue;
           const r = dom.getBoundingClientRect();
           if (t.clientX < r.left || t.clientX > r.left + r.width || t.clientY < r.top || t.clientY > r.top + r.height) continue;
-          const kind = t.clientX < r.left + r.width / 2 ? "move" : "aim";
+          const kind = t.clientX < r.left + r.width / 2 ? "steer" : "roll";
           /* One thumb per stick. A second finger on the same side is ignored
              rather than yanking the stick to where it landed. */
           if (stickOf(kind)) continue;
@@ -183,14 +205,14 @@ export function createTouchInput(): TouchInput {
           if (!role) continue;
           used = true;
           if (role.kind === "hold") continue;
-          /* Guarded: a touch without coordinates would put NaN in the reticle,
+          /* Guarded: a touch without coordinates would put NaN in the crosshair,
              then in the ship's heading, and nothing recovers from that. */
           if (!Number.isFinite(t.clientX) || !Number.isFinite(t.clientY)) continue;
           const s = role.stick, span = travel();
           s.x = t.clientX; s.y = t.clientY;
           s.dx = clamp((s.x - s.fromX) / span);
           s.dy = clamp((s.y - s.fromY) / span);
-          if (role.kind === "aim") aimFrom(s);
+          if (role.kind === "steer") steerFrom(s);
         }
         if (!used) return;
         if (e.cancelable !== false) e.preventDefault?.();
@@ -206,16 +228,16 @@ export function createTouchInput(): TouchInput {
           used = true;
           fingers.delete(t.identifier);
           if (role.kind === "hold") lift(role.action);
-          /* The aiming thumb lifted: stop turning, as the mouse leaving does. */
-          if (role.kind === "aim") pilot.centreCursor();
+          /* The steering thumb lifted: stop turning, as the mouse leaving does. */
+          if (role.kind === "steer") pilot.centreCursor();
         }
         if (!used) return;
         applyHeld();
         show();
       };
 
-      /* Losing the page (a call, the home button) must not leave the throttle
-         open or the guns firing. */
+      /* Losing the page (a call, the home button) must not leave the brake on,
+         the guns firing or the ship turning. */
       const blur = () => {
         fingers.clear();
         pilot.releaseAll();
@@ -233,6 +255,7 @@ export function createTouchInput(): TouchInput {
       /* No long-press menu on the canvas in the middle of a fight. */
       const contextmenu = (e: Event) => { e.preventDefault(); };
       dom.addEventListener("contextmenu", contextmenu);
+      show();
       return () => {
         window.removeEventListener("touchstart", touchstart as unknown as EventListener);
         window.removeEventListener("touchmove", touchmove as unknown as EventListener);
@@ -243,6 +266,7 @@ export function createTouchInput(): TouchInput {
         dom.removeEventListener("contextmenu", contextmenu);
         if (fingers.size > 0) pilot.releaseAll();
         fingers.clear();
+        pilot.setAssist({ autoFire: false, magnet: false });
         show();
       };
     },
