@@ -1270,6 +1270,58 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   await settle();
 }
 
+// P. THE PILOT: a ship flown with no keyboard and no mouse at all.
+//    A phone's touch controls will drive exactly this interface, so this is the
+//    proof the game does not need keys to fly.
+{
+  let captured: import("./platform/platform").Pilot | null = null;
+  setPlatform({
+    ...HEADLESS, id: "test-touch", identity: appIdentity,
+    input: { attach: (_dom, pilot) => { captured = pilot; return () => { captured = null; }; } },
+  });
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ctl.launch();
+  for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);
+  const pilot = captured as import("./platform/platform").Pilot | null;
+  ok("a door's own input is handed the pilot", !!pilot);
+  if (pilot) {
+    ok("the pilot knows the ship is flying", pilot.state().flying && pilot.state().hasFlight);
+    /* The throttle starts at full, so the pilot pulls it back. */
+    const speed0 = ctl.hud().speed;
+    pilot.setControls({ throttle: -1 });
+    for (let i = 0; i < 60 * 2; i++) ctl.frame(1 / 60);
+    pilot.setControls({ throttle: 0 });
+    /* The lever stays where it was put. The speed readout refreshes on a real
+       clock, so fly on for a moment of real time before reading it. */
+    const readBy = Date.now() + 400;
+    while (Date.now() < readBy) ctl.frame(1 / 60);
+    ok("pulling the throttle back through the pilot slows the ship", ctl.hud().speed < speed0, `${speed0.toFixed(1)} -> ${ctl.hud().speed.toFixed(1)}`);
+    const ammo0 = ctl.hud().ammo;
+    pilot.trigger("primary", true);
+    const until = Date.now() + 10_000;
+    while (ctl.hud().ammo >= ammo0 && Date.now() < until) ctl.frame(1 / 60);
+    pilot.trigger("primary", false);
+    ok("holding the trigger through the pilot fires the guns", ctl.hud().ammo < ammo0, `${ammo0} -> ${ctl.hud().ammo}`);
+    pilot.moveCursor(0.9, 0.5);
+    ok("moving the reticle is remembered", Math.abs(pilot.state().cursor.x - 0.9) < 1e-9);
+    pilot.centreCursor();
+    ok("and centring it puts it back", pilot.state().cursor.x === 0.5);
+    /* Slot 2 is the mini gun: selected if an earlier block's test cheat granted
+       it, and a "buy it" note if not. Either way it is exactly what key 2 does. */
+    pilot.selectWeapon(2);
+    ok("choosing a weapon through the pilot does what its key does",
+       ctl.hud().primary === 1 || /SPACESHIPS/.test(ctl.hud().note), `primary ${ctl.hud().primary}, note ${ctl.hud().note}`);
+  }
+  ctl.detach();
+  ok("detaching hands the input back", captured === null);
+  await settle();
+  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
+}
+
 // W. Behind the WEB door, the cockpit arrives at the room as a web guest.
 //    The same game, the same server: only the door is different.
 {

@@ -284,3 +284,38 @@ whether a guest may cheat or cash out.
 - wire budgets 25, cockpit 105
 - tsc clean for contrib/rebels-room/ and ui/
 - **Suite:** 34 green.
+
+### G7, step a: controls as a PILOT (2026-Sep-15)
+- **Found:** the flight model already reads a "stick" record (throttle, strafe,
+  lift, roll, aim, fire, boost, guard), not keys. The tangle was the ~500 lines
+  in rebelsController.ts turning key, mouse and wheel events into that record
+  plus commands, woven through the controller's own state.
+- **The pilot** (`Pilot` in platform.ts) is everything a pair of hands can ask of
+  the ship:
+  - read the pilot's state
+  - set the held controls
+  - press or release a trigger
+  - move or centre the reticle
+  - let go of everything
+  - pick a weapon, use a held item, toggle the rear view or camera, zoom
+  - restart sound, report a gesture, report focus or pointer-lock changes
+  - pass a possible cheat key
+  The input contract is now `attach(canvas, pilot)`.
+- **platform/desktopInput.ts** is now the whole keyboard-and-mouse module. It has
+  the key map, the typing guard, pointer movement (locked and unlocked), the
+  buttons, the Alt-wheel zoom, blur and focus, all moved from the controller with
+  the same events, targets and options. It drives the game only through the
+  pilot.
+- **The controller** builds the pilot from its existing functions. Its key and
+  mouse handlers are gone: 2,807 lines to 2,622.
+- **Tests:**
+  - cockpit 113. The existing 105 drive keys, clicks and pointer movement through
+    the new path unchanged.
+  - 8 new checks fly a ship with NO keyboard or mouse. A stand-in input
+    receives the pilot; pulling the throttle back slows the ship (8.0 to -2.8),
+    holding the trigger fires, the reticle moves and centres, choosing a weapon
+    does what its key does, and detaching hands the input back. This is what a
+    phone's touch module will do.
+- **Suite:** 34 green. tsc clean.
+- **For the build agent (B5):** a phone door plugs a touch module into
+  `input.attach(canvas, pilot)`. The touch controls themselves are G9.

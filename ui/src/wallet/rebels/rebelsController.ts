@@ -25,6 +25,7 @@ import {
   type Enemy, type ShipClass,
 } from "./rebelsCombat";
 import { platform } from "./platform/current";
+import type { Pilot } from "./platform/platform";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import { R, MAX_ALT } from "./orbitWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
@@ -47,9 +48,8 @@ import { respawnSeconds, itemByKey } from "./itemCatalog";
 import { fetchDropConfig } from "./dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "./dropCharts";
 import { addSphere, addHeld, heldCount, takeHeld } from "./rebelsInventory";
-import { REAR_KEY, inRearWindow, placeRearCamera, rearAim, tailOf, rearViewport } from "./rearGun";
+import { inRearWindow, placeRearCamera, rearAim, tailOf, rearViewport } from "./rearGun";
 import { WING_SCALE } from "./rebelsWings";
-import { GAME_KEYS } from "./RebelsControls";
 import { dflow } from "./rebelsDflow";
 import { loadLoadoutRemote, watchLoadout } from "./rebelsLoadout";
 import { pullFleet } from "./rebelsShips";
@@ -704,7 +704,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     throttle: 0, fullStop: false, boosting: false, firing: false,
     secondary: false, guard: false, mini: false,
   };
-  const keys: Record<string, boolean> = {};
 
   /* What is in the two trigger slots. Saved, so a pilot who prefers the mini
      gun does not have to say so every time they launch. */
@@ -740,7 +739,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     }
     weapons[kind] = index;
     saveLoadout(weapons);
-    applyKeys();
+    stick.mini = weapons.primary === 1;
     setHud({
       primary: weapons.primary,
       secondary: weapons.secondary,
@@ -821,8 +820,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
    *  last pixel to turn hard. */
   const AIM_DEAD = 0.06;
   const AIM_FULL = 0.42;
-  /** How far from the middle it may get. */
-  const AIM_REACH = 0.45;
 
   function aimFromCursor() {
     const shape = (v: number) => {
@@ -842,43 +839,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        Q and E. Pressing 7 again gives the mouse back. */
     stick.aimX = rearOn ? 0 : shape(cursor.x * 2 - 1);
     stick.aimY = rearOn ? 0 : -shape(cursor.y * 2 - 1);
-  }
-
-  function onMove(e: PointerEvent) {
-    if (!dom || !flying) return;
-    /* ---- A PANEL HAS THE MOUSE ----
-       While one is open the pointer is a cursor for it, not a stick: moving
-       it must not fly the ship. Without this, freeing the pointer so the
-       help card could be hovered simply meant that hovering it flew you into
-       a planet, and with the pointer still locked there was no cursor to
-       hover with at all. Geoff, 2026-Sep-12: the help card "isn't
-       interactive like I asked for". */
-    if (panelOpen) return;
-    const r = dom.getBoundingClientRect();
-    if (locked) {
-      /* With the rear window open the crosshair may go all the way into the
-         corner, or it could never reach the window's edge. */
-      const reach = rearOn ? 0.5 : AIM_REACH;
-      const lo = 0.5 - reach, hi = 0.5 + reach;
-      cursor.x = Math.max(lo, Math.min(hi, cursor.x + (e.movementX || 0) / r.width));
-      cursor.y = Math.max(lo, Math.min(hi, cursor.y + (e.movementY || 0) / r.height));
-    } else {
-      /* Guarded: an event without coordinates would put NaN in the cursor, the
-         stick and then the ship's heading, and nothing recovers from that. */
-      if (!Number.isFinite(e.clientX) || !Number.isFinite(e.clientY)) return;
-      cursor.x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-      cursor.y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
-    }
-    aimFromCursor();
-  }
-
-  /** Pointer gone from the canvas: stop turning, and put the reticle back in
-   *  the middle so it does not reappear mid-turn where it was left. */
-  function onLeave() {
-    stick.aimX = 0;
-    stick.aimY = 0;
-    cursor.x = 0.5;
-    cursor.y = 0.5;
   }
 
   /* ---- Y: a held Instant Recharge or Supercharge ----
@@ -925,33 +885,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       try { dom?.requestPointerLock?.(); } catch { /* not supported here */ }
     }
   }
-  function onDown(e: PointerEvent) {
-    e.preventDefault();
-    wakeAudio();
-    /* Right button is the SECONDARY weapon. It was the shield, which is the one
-       place in this scheme that was actively at odds with the genre: left
-       primary and right secondary is the most universal convention there is.
-       The shield is on F. */
-    if (e.button === 2) { stick.secondary = true; return; }
-    /* Control-click is the torpedo. Read off the event rather than trusting the
-       keydown listener, which misses the first one after the window regains
-       focus. Control-click no longer means anything: the secondary weapon is on
-       the right button, where the genre puts it. */
-    /* LEFT ONLY. Any button used to fire, so a click of the wheel emptied the
-       guns — and the middle button is wanted for something of its own. */
-    if (e.button !== 0) return;
-    stick.firing = true;
-  }
-  /* And no context menu in the middle of a dogfight. */
-  function onContextMenu(e: Event) { e.preventDefault(); }
-
-  /**
-   * Option and the wheel pulls the camera out of the cockpit.
-   *
-   * Option-qualified on purpose: the wheel on its own belongs to whatever the
-   * player has open, and a game that swallows every scroll is a game that fights
-   * the app it lives in. DreadRoot does the same thing for the same reason.
-   */
   /* ---- HOW FAR ONE NOTCH MOVES ----
      Proportionally, not by a fixed amount.
 
@@ -998,15 +931,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     /* The same gesture that wakes the sound is the one that lets the music
        start, so it is asked here rather than being left to wonder. */
     pumpMusic();
-  }
-
-  function onWheel(e: WheelEvent) {
-    if (!flying || !flight) return;
-    if (!e.altKey) return;
-    e.preventDefault();
-    flight.view = zoomStep(flight.view, -Math.sign(e.deltaY));
-    if (flight.view > 0) ensureShip();
-    setHud({ view: flight.view });
   }
 
   /** The tip of the hull in the world: where the guns and the tube are. */
@@ -1104,51 +1028,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       .catch(() => { /* no model, no third person: the cockpit still flies */ })
       .finally(() => { shipLoading = false; });
   }
-  function onUp(e: PointerEvent) {
-    if (e.button === 2) { stick.secondary = false; return; }
-    if (e.button !== 0) return;
-    stick.firing = false;
-  }
-
-  /* ---- THE KEY MAP ----
-     Everspace 2's layout, which is where the genre has settled, checked against
-     the shipped bindings of Elite, Star Citizen, Squadrons, X4, Freelancer and
-     Descent rather than guessed at.
-
-       W / S    throttle up and down, through zero into reverse
-       A / D    strafe
-       Q / E    roll
-       SHIFT    boost
-       X        full stop
-       F        shield
-       1-6      choose a weapon
-       V        cockpit or third person
-
-     Three of these were somewhere else and every one of the three was somewhere
-     no other space game puts it: the brake was on Z (Elite uses Z for flight
-     assist off), the torpedo was on control-click, and the mini gun was on a
-     held E, which is roll everywhere else. The arrow keys still pitch and yaw
-     for anyone who wants them. */
-  /* The keys the game claims are the help card's list, so the two cannot
-     drift: a key the card explains is a key the game swallows, and no other. */
-  const MAPPED = GAME_KEYS;
-
-  function applyKeys() {
-    /* The arrows still fly, for anyone who would rather not use the mouse.
-       ADDED to the mouse rather than overriding it, so reaching for one does
-       not kill the other. */
-    stick.x = (keys.arrowright ? 1 : 0) - (keys.arrowleft ? 1 : 0);
-    stick.y = (keys.arrowup ? 1 : 0) - (keys.arrowdown ? 1 : 0);
-    stick.roll = (keys.e ? 1 : 0) - (keys.q ? 1 : 0);
-    stick.strafe = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
-    stick.lift = (keys.r ? 1 : 0) - (keys.c ? 1 : 0);
-    stick.throttle = (keys.w ? 1 : 0) - (keys.s ? 1 : 0);
-    stick.fullStop = !!keys.x;
-    stick.boosting = !!keys.shift;
-    stick.superBoost = !!keys.tab;
-    stick.guard = !!keys.f;
-    stick.mini = weapons.primary === 1;
-  }
   /* ---- the test cheats ----
      Their own module now (rebelsCheats.ts), plugged in by the door: the app has
      them, the public web does not. The same small host either way. */
@@ -1161,46 +1040,55 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     ship: () => loadShip(),
     note: (text) => setHud({ note: text, noteAt: performance.now() }),
   });
-  /** Typing in a box (a ship's name) is typing, not flying. */
-  function typing(e: KeyboardEvent): boolean {
-    const t = e.target as { tagName?: string; isContentEditable?: boolean } | null;
-    return !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || !!t.isContentEditable);
-  }
-  function onKeyDown(e: KeyboardEvent) {
-    if (!flying || typing(e)) return;
-    wakeAudio();
-    const k = e.key.toLowerCase();
-
-    if (cheats?.onKey(k, performance.now())) {
-      e.preventDefault();
-      return;
-    }
-
-    if (MAPPED.includes(k)) e.preventDefault();
-    keys[k] = true;
-    if (k === " ") stick.firing = true;
-    /* 1-3 choose the primary, 4-6 the secondary. DIRECT, not cycled: Elite's
-       fire groups are the most criticised weapon interface in the genre and the
-       standard player workaround is pulling things out of the cycle onto their
-       own keys. Descent bound 1-5 in 1995 and nobody has complained since. */
-    /* ---- ONE LINE OF SIX ----
-       The keys used to be 1-3 for the primary and 4-6 for the secondary. The
-       six guns are now a single upgrade path, so all six numbers pick along it
-       and the secondary stays where the genre puts it: the right button. */
-    if (k >= "1" && k <= "6") selectWeapon("primary", Number(k) - 1);
-    if (k === "y") useHeld();
-    if (k === "0") {
-      /* ---- THE SOUND, FROM SCRATCH ----
-         There is one silence the game cannot measure (see resetAudioNow),
-         and this is the cure that used to mean quitting the app. A keypress
-         is a gesture, which is what a webview wants before it will let a new
-         context make a noise. */
-      resetAudioNow();
-      primeMusic();
-      pumpMusic();
-      setHud({ note: "SOUND RESTARTED", noteAt: performance.now() });
-    }
-    if (k === REAR_KEY && flying) {
+  /* ---- THE PILOT ----
+     Everything a pair of hands can ask of the ship (platform.ts). The keyboard
+     and mouse drive it from platform/desktopInput.ts; touch will drive the same
+     thing on a phone. Each of these is what the old key and mouse handlers did
+     here, moved behind a name. */
+  let blurredAt = 0;
+  const pilot: Pilot = {
+    state: () => ({ flying, hasFlight: !!flight, panelOpen, locked, rearOn, cursor: { x: cursor.x, y: cursor.y } }),
+    setControls: (c) => {
+      if (c.yaw !== undefined) stick.x = c.yaw;
+      if (c.pitch !== undefined) stick.y = c.pitch;
+      if (c.roll !== undefined) stick.roll = c.roll;
+      if (c.strafe !== undefined) stick.strafe = c.strafe;
+      if (c.lift !== undefined) stick.lift = c.lift;
+      if (c.throttle !== undefined) stick.throttle = c.throttle;
+      if (c.fullStop !== undefined) stick.fullStop = c.fullStop;
+      if (c.boost !== undefined) stick.boosting = c.boost;
+      if (c.superBoost !== undefined) stick.superBoost = c.superBoost;
+      if (c.guard !== undefined) stick.guard = c.guard;
+      stick.mini = weapons.primary === 1;
+    },
+    trigger: (which, down) => {
+      if (which === "secondary") stick.secondary = down;
+      else stick.firing = down;
+    },
+    moveCursor: (x, y) => {
+      cursor.x = x;
+      cursor.y = y;
+      aimFromCursor();
+    },
+    /* Pointer gone: stop turning, reticle back in the middle. */
+    centreCursor: () => {
+      stick.aimX = 0;
+      stick.aimY = 0;
+      cursor.x = 0.5;
+      cursor.y = 0.5;
+    },
+    /* Losing the window must not leave the throttle open or a key stuck down. */
+    releaseAll: () => {
+      stick.firing = false; stick.boosting = false; stick.secondary = false;
+      stick.guard = false; stick.fullStop = false;
+      stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.lift = 0; stick.superBoost = false; stick.throttle = 0;
+      stick.aimX = 0; stick.aimY = 0;
+      blurredAt = performance.now();
+    },
+    selectWeapon: (slot) => selectWeapon("primary", slot - 1),
+    useHeld: () => useHeld(),
+    toggleRear: () => {
+      if (!flying) return;
       if (!gearKeys(loadShip()).includes("reargun")) {
         setHud({
           note: heldCount("reargun") > 0
@@ -1209,39 +1097,43 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           noteAt: performance.now(),
         });
       } else setRear(!rearOn);
-    }
-    if (k === "v" && flight) {
+    },
+    toggleView: () => {
+      if (!flight) return;
       flight.view = flight.view > 0.01 ? 0 : 2;
       if (flight.view > 0) ensureShip();
       setHud({ view: flight.view });
-    }
-    applyKeys();
-  }
-  function onKeyUp(e: KeyboardEvent) {
-    const k = e.key.toLowerCase();
-    keys[k] = false;
-    if (k === " ") stick.firing = false;
-    applyKeys();
-  }
-  /* Losing the window must not leave the throttle open or a key stuck down. */
-  function onBlur() {
-    for (const k in keys) keys[k] = false;
-    stick.firing = false; stick.boosting = false; stick.secondary = false;
-    stick.guard = false; stick.fullStop = false;
-    stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.lift = 0; stick.superBoost = false; stick.throttle = 0;
-    stick.aimX = 0; stick.aimY = 0;
-    blurredAt = performance.now();
-  }
-  let blurredAt = 0;
-  /* ---- COMING BACK FROM SOMETHING ELSE ----
-     A call, a video, another app: that is when a machine moves its audio
-     output, and this webview gets no event to say so. Anyone away for more
-     than a moment gets a fresh context at their next press, which costs a
-     blink and is the difference between sound and none. */
-  function onFocus() {
-    if (blurredAt && performance.now() - blurredAt > 4000) requestAudioRebuild();
-    blurredAt = 0;
-  }
+    },
+    zoom: (dir) => {
+      if (!flying || !flight) return;
+      flight.view = zoomStep(flight.view, dir);
+      if (flight.view > 0) ensureShip();
+      setHud({ view: flight.view });
+    },
+    /* ---- THE SOUND, FROM SCRATCH ----
+       There is one silence the game cannot measure (see resetAudioNow), and this
+       is the cure that used to mean quitting the app. A keypress is a gesture,
+       which is what a webview wants before it will let a new context make a
+       noise. */
+    restartSound: () => {
+      resetAudioNow();
+      primeMusic();
+      pumpMusic();
+      setHud({ note: "SOUND RESTARTED", noteAt: performance.now() });
+    },
+    gesture: () => wakeAudio(),
+    /* ---- COMING BACK FROM SOMETHING ELSE ----
+       A call, a video, another app: that is when a machine moves its audio
+       output, and this webview gets no event to say so. Anyone away for more
+       than a moment gets a fresh context at their next press, which costs a
+       blink and is the difference between sound and none. */
+    focusReturned: () => {
+      if (blurredAt && performance.now() - blurredAt > 4000) requestAudioRebuild();
+      blurredAt = 0;
+    },
+    lockChanged: () => onLockChange(),
+    cheatKey: (k) => !!cheats?.onKey(k, performance.now()),
+  };
 
   /**
    * Join the shared world.
@@ -2400,19 +2292,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            later. The same handlers either way. A previous plug is pulled
            first so a second attach can never leave two sets listening. */
         stopInput?.();
-        stopInput = platform().input.attach(dom, {
-          wheel: onWheel,
-          pointerleave: onLeave,
-          pointermove: onMove,
-          pointerdown: onDown,
-          contextmenu: onContextMenu,
-          pointerup: onUp,
-          keydown: onKeyDown,
-          keyup: onKeyUp,
-          blur: onBlur,
-          focus: onFocus,
-          pointerlockchange: onLockChange,
-        });
+        stopInput = platform().input.attach(dom, pilot);
 
         /* What this player has already killed, so the tallies are lifetime and
            not per session. Offline it falls back to the local copy. */

@@ -136,19 +136,55 @@ export interface RebelsDetail {
   pixelRatio: number;
 }
 
-/** The cockpit's own handlers, one per event it listens to. */
-export interface CockpitHandlers {
-  wheel: (e: WheelEvent) => void;
-  pointerleave: (e: PointerEvent) => void;
-  pointermove: (e: PointerEvent) => void;
-  pointerdown: (e: PointerEvent) => void;
-  contextmenu: (e: Event) => void;
-  pointerup: (e: PointerEvent) => void;
-  keydown: (e: KeyboardEvent) => void;
-  keyup: (e: KeyboardEvent) => void;
-  blur: () => void;
-  focus: () => void;
-  pointerlockchange: () => void;
+/**
+ * The PILOT: everything a pair of hands can ask of the ship, whatever the hands
+ * are on. Keyboard and mouse drive it today (desktopInput.ts); touch will drive
+ * the very same interface on a phone, without the game changing.
+ */
+export interface Pilot {
+  /** What an input needs to know to read its device. */
+  state(): {
+    flying: boolean; hasFlight: boolean; panelOpen: boolean; locked: boolean; rearOn: boolean;
+    /** Where the reticle is now, 0 to 1 across and down. */
+    cursor: { x: number; y: number };
+  };
+  /** The held controls, each -1 to 1 or on and off. Only the ones given change.
+   *  pitch/yaw are the keyboard's (the arrows); aiming is `moveCursor`. */
+  setControls(c: Partial<{
+    pitch: number; yaw: number; roll: number; strafe: number; lift: number; throttle: number;
+    fullStop: boolean; boost: boolean; superBoost: boolean; guard: boolean;
+  }>): void;
+  /** Hold or release a trigger: the primary (left button, space) or the
+   *  secondary (right button). */
+  trigger(which: "primary" | "secondary", down: boolean): void;
+  /** Put the reticle at this point of the frame, 0 to 1 across and down. The
+   *  ship turns toward it and the mini gun fires at it. */
+  moveCursor(x: number, y: number): void;
+  /** The reticle back to the middle, and no turning (the pointer left). */
+  centreCursor(): void;
+  /** Everything let go (the window lost focus). */
+  releaseAll(): void;
+  /** Weapon `slot` 1 to 6. */
+  selectWeapon(slot: number): void;
+  /** Use a held recharge or supercharge (Y). */
+  useHeld(): void;
+  /** Open or close the rear view (7). */
+  toggleRear(): void;
+  /** Cockpit or chase camera (V). */
+  toggleView(): void;
+  /** Zoom the chase camera one notch: +1 in, -1 out. */
+  zoom(dir: number): void;
+  /** Start the sound again from scratch (0). */
+  restartSound(): void;
+  /** A real user gesture happened: the moment a webview allows sound to wake. */
+  gesture(): void;
+  /** The window came back from somewhere else. */
+  focusReturned(): void;
+  /** The pointer lock changed hands. */
+  lockChanged(): void;
+  /** A key that may be part of a test cheat. True when it was, and must not also
+   *  do its normal job. */
+  cheatKey(key: string): boolean;
 }
 
 /**
@@ -156,8 +192,8 @@ export interface CockpitHandlers {
  * (desktopInput.ts); a phone door plugs touch in here instead.
  */
 export interface RebelsInput {
-  /** Start listening. Returns the function that stops listening. */
-  attach(dom: HTMLCanvasElement, handlers: CockpitHandlers): () => void;
+  /** Start listening, driving the pilot. Returns the function that stops. */
+  attach(dom: HTMLCanvasElement, pilot: Pilot): () => void;
 }
 
 /** What the test cheats may ask of the game. Kept small on purpose: a cheat
