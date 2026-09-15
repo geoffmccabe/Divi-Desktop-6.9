@@ -7,7 +7,6 @@
 // map is this file's job, using the locations the map has already verified.
 
 import { emitMap, mapSelf, type MapTriggerName, CATALOG } from "./mapEvents";
-import { isMapAnimV2 } from "./mapAnimFlag";
 
 interface FeedPayload {
   trigger?: string;
@@ -35,9 +34,6 @@ export function startMapFeedBridge(
   let dead = false;
 
   ev.listen("dd69://map-event", (e) => {
-    // The flag is checked HERE rather than at subscribe time, so switching v2
-    // on mid-session starts showing supervisor events straight away.
-    if (!isMapAnimV2()) return;
     const p = (e.payload ?? {}) as FeedPayload;
     const trigger = p.trigger;
     // Only triggers the catalog actually knows. An unrecognised name from a

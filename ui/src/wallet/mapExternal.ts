@@ -11,7 +11,6 @@
 // rather than inventing a plausible-looking city and quietly misleading people.
 
 import { emitMap } from "./mapEvents";
-import { isMapAnimV2 } from "./mapAnimFlag";
 
 export type ExternalService = "price" | "geolocate" | "update" | "assets";
 
@@ -44,7 +43,6 @@ const ANCHORS: Record<ExternalService, ServiceAnchor> = {
  * wrapper cannot change behaviour or swallow an error.
  */
 export function traceExternal<T>(service: ExternalService, p: Promise<T>): Promise<T> {
-  if (!isMapAnimV2()) return p;
   const a = ANCHORS[service];
   emitMap("external.seek", { lat: a.lat, lon: a.lon, label: a.label });
   return p.then(

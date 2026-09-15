@@ -3,12 +3,10 @@ import { nodeStatus, type NodeStatus } from "./bridge";
 import { PHASE_COLOR, PHASE_LABEL } from "./status";
 import { playSound } from "./sound";
 import { Icon } from "./Icon";
-import { loadKnown } from "./wallet/knownPeers";
 import { onPeerCount } from "./wallet/peerEvents";
 /* v2: the Nodes number is derived from the SAME events that drive the map
    animations, so a number cannot move without an animation having fired. */
 import { onMapCounts } from "./wallet/mapEvents";
-import { useMapAnimV2 } from "./wallet/mapAnimFlag";
 
 // The node status block for the Overview tab. No glass wrapper — it nests
 // inside the wallet panel.
@@ -20,14 +18,11 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
   const [lastBlocks, setLastBlocks] = useState<number | null>(null);
   // Last peer count we actually read, so a slow RPC spell keeps showing it.
   const [lastPeers, setLastPeers] = useState<number | null>(null);
-  // Total nodes discovered across the network (peers + the 30-day known set).
-  const [nodeCount, setNodeCount] = useState(0);
   const [reconnecting, setReconnecting] = useState(false);
   // v2: nodes that have ACTUALLY answered us this session, counted straight off
   // the map's event stream. Smaller and slower to climb than the cached figure
   // below, which is the whole point — every increment is something that really
   // happened and that you just watched happen on the map.
-  const animV2 = useMapAnimV2();
   const [confirmedNodes, setConfirmedNodes] = useState(0);
   useEffect(() => onMapCounts((c) => setConfirmedNodes(c.nodes)), []);
 
@@ -58,7 +53,6 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
         const s = await nodeStatus();
         if (!alive) return;
         setError(false);
-        setNodeCount(Object.keys(loadKnown()).length); // grows as the map discovers nodes
         const answered = s.peers != null; // got real data back from the node
         const definitive = answered || s.phase === "stopped" || s.phase === "crashed";
         if (answered) lastGood.current = s;
@@ -102,10 +96,12 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
 
   // Targets the displayed counts climb toward (freshest reading, kept last-good).
   const peersTarget = lastPeers ?? status?.peers ?? 0;
-  // OLD: every address in the 90-day cache, counted out one-by-one so it LOOKS
-  // like live discovery when it is really just a saved list being read.
-  // NEW: only nodes that answered a probe or became a peer, this session.
-  const nodesTarget = animV2 ? confirmedNodes : nodeCount;
+  // Only nodes that actually answered us this session. Read off the same event
+  // stream that draws the animations, so a number cannot move without an
+  // animation having fired. It used to count every address in the 90-day cache,
+  // ticked out one-by-one so it LOOKED like live discovery when it was really a
+  // saved list being read back.
+  const nodesTarget = confirmedNodes;
 
   // Climb peers by one at a time; gold pulse on every step. The low click only on
   // a genuine single addition, not the startup rush.
@@ -187,9 +183,7 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
           <button
             type="button"
             className="glass-chip px-4 py-2 peers-chip"
-            title={animV2
-              ? "Nodes that have actually answered your node this session"
-              : "All nodes discovered on the network (peers + 30-day known)"}
+            title="Nodes that have actually answered your node this session"
             onClick={onOpenNetwork}
           >
             <span key={`nl${nodeTok}`} className={"chip-label chip-label-nodes" + (nodeTok ? " gold-flash" : "")}>Nodes</span>

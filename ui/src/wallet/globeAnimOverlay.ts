@@ -11,7 +11,6 @@
 
 import type { GlobeMethods } from "react-globe.gl";
 import { drawMapAnim } from "./mapAnimRender";
-import { isMapAnimV2 } from "./mapAnimFlag";
 
 export interface GlobeOverlayOpts {
   canvas: HTMLCanvasElement;
@@ -25,7 +24,6 @@ export interface GlobeOverlayOpts {
 export function createGlobeAnimOverlay(opts: GlobeOverlayOpts): () => void {
   let raf = 0;
   let lastFrame = 0;
-  let cleared = true;
 
   const frame = () => {
     raf = requestAnimationFrame(frame);
@@ -34,15 +32,6 @@ export function createGlobeAnimOverlay(opts: GlobeOverlayOpts): () => void {
     const { w, h } = opts.size();
     const ctx = opts.canvas.getContext("2d");
     if (!ctx || !g || w <= 0 || h <= 0) return;
-
-    // Flag off: wipe once, then stay idle. No per-frame cost while disabled.
-    if (!isMapAnimV2()) {
-      if (!cleared) {
-        ctx.clearRect(0, 0, opts.canvas.width, opts.canvas.height);
-        cleared = true;
-      }
-      return;
-    }
 
     const now = performance.now();
     if (now - lastFrame < 33) return; // 30fps, matching the flat map
@@ -57,7 +46,6 @@ export function createGlobeAnimOverlay(opts: GlobeOverlayOpts): () => void {
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    cleared = false;
 
     // The horizon test, same rule the tower culling uses: a point is on the
     // visible face when its direction dotted with the camera's exceeds

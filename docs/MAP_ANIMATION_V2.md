@@ -3,8 +3,9 @@
 **The rule:** every act of communication the app performs is drawn on the map,
 and nothing is drawn that isn't really happening.
 
-Status: flat map done, off by default. **Cmd-Shift-N** toggles it live.
-(Cmd-N was already taken by the new-install simulator.)
+Status: **this is how the map works.** There is no longer an old system or a
+toggle; the timer-driven animations it replaced have been deleted. If something
+here looks wrong, the fix is to correct it, not to fall back.
 
 ## The two grammars
 
@@ -33,7 +34,9 @@ machine actually answered.
 | `ui/src/wallet/mapEvents.ts` | The trigger catalog and the event bus. Producers emit, consumers read. |
 | `ui/src/wallet/mapAnimRender.ts` | One renderer, shared by every surface. |
 | `ui/src/wallet/mapExternal.ts` | Non-Divi calls (price, geolocation, updates). |
-| `ui/src/wallet/mapAnimFlag.ts` | The on/off switch. |
+| `ui/src/wallet/mapFeedBridge.ts` | Supervisor events (`dd69://map-event`) onto the map. |
+| `ui/src/wallet/globeAnimOverlay.ts` | The same renderer, over the WebGL globe. |
+| `crates/supervisor/src/mapfeed.rs` | What the Rust side reports about itself. |
 
 ## Adding a trigger
 
@@ -66,18 +69,25 @@ The renderer needs only a lat/lon to screen-point function and where our own
 node is, so every surface shares it.
 
 - **Flat map** (`NetworkMap.tsx`) — done. Uses the map's zoom/pan-aware `P()`.
-- **Globe** (`GlobeMap.tsx`) — next. It is WebGL, so the plan is a transparent
-  2D canvas over it using `globeRef.current.getScreenCoords(lat, lng)`
-  (confirmed present in react-globe.gl 2.38.0), returning null for points over
-  the horizon so the far side of the world doesn't draw through.
-- **In-game** (`rebels/orbitWorld.ts`) — after the globe, same approach.
+- **Globe** (`GlobeMap.tsx`) — done. A transparent 2D canvas over the WebGL
+  scene, projected with `getScreenCoords`, culled at the horizon so the far
+  side of the world doesn't draw through.
+- **In-game** (`rebels/orbitWorld.ts`) — Divi Rebels borrows this same globe
+  rather than building its own, so it inherits the overlay.
+
+## What was deleted
+
+The timer-driven green probe arcs and their staggered fade-out, the timer-driven
+"searching" rings at your own node, the dual legend, the Cmd-Shift-N switch, and
+the Nodes counter that read the 90-day cache. All of it is in git history if a
+comparison is ever needed.
+
+The self heartbeat looks much as it did, but it now fires on a real RPC
+round-trip rather than on a clock. If your node goes quiet, the gold stops and
+red appears. That is the point.
 
 ## Still to do
 
-- Globe and in-game surfaces.
-- Block-advance and transaction-broadcast triggers are in the catalog but not
-  yet emitted anywhere.
-- Rust-side events (`price.rs`, `updates.rs`, `rpc.rs`) so the supervisor's own
-  traffic is represented, not just what the interface initiates.
-- Phase 7: once approved, make v2 the only system and delete the old polling
-  colour logic and the cached Nodes count.
+- `tx.send` and `stake.win` are in the catalog but nothing emits them yet.
+- The price feed and geolocation service still animate to a symbolic anchor,
+  because we do not know where those servers actually are.
