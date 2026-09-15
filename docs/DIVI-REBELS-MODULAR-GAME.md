@@ -319,3 +319,42 @@ whether a guest may cheat or cash out.
 - **Suite:** 34 green. tsc clean.
 - **For the build agent (B5):** a phone door plugs a touch module into
   `input.attach(canvas, pilot)`. The touch controls themselves are G9.
+
+### G7, step b: one frame in named steps (2026-Sep-15)
+The per-frame function `runFrame` was 940 lines. It is now 20: a coordinator
+calling eleven named steps in the same order, each the original code moved
+verbatim.
+- **frameApproach:** easing the map's view in before launch
+- **frameDive:** the launch dive to the tower
+- **frameFlight:** the flight model's step, flying into things, docking; returns
+  the step's report
+- **frameShipAndCamera:** the hull leaning into turns, the cockpit camera, the
+  jolt, the listener
+- **frameShield:** the mandala from inside, the red sphere from outside
+- **frameSky:** the planets, and naming the one nearby
+- **frameGuns:** main guns, mini gun and beam, forwards or through the rear
+  window; returns the backwards aim
+- **frameRoom:** drawing the server's fight: enemies, rounds, streaks, torpedoes,
+  wreckage, beams, loot, gauges, wave, crew
+- **frameTorpedo:** the stake bonus, and the torpedo launched, detonated or fired
+  backwards
+- **frameEvents:** hits, kills, pickups and refusals, and what each looks and
+  sounds like
+- **frameDrawAndGauges:** enemy hulls and the dragon, thrust and dock sounds,
+  every draw call, the gauges
+
+**How it was done:**
+- Each step receives only the ship, camera, effects and scene it actually uses,
+  under the same names, so its code did not change.
+- The three values that cross between steps (the flight report, the backwards
+  aim, whether the room is live) are passed explicitly.
+- Checked that no step reassigns the objects it is handed.
+- The error guard around the frame still covers every step.
+
+**Not done yet, and deliberately:** moving these steps into files of their own.
+They share a lot of the controller's state (score, the room, the sounds, the HUD),
+so each would need a context object. That is worth doing one step at a time when
+a step is next changed. The phone work does not need it: it needs the pilot (step
+a) and the cockpit screen in pieces (G8).
+
+**Suite:** 34 green, including cockpit 113. tsc clean.

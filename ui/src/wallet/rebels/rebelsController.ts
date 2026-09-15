@@ -206,6 +206,9 @@ export interface RebelsController extends GlobeFlight {
   dispose(): void;
 }
 
+/** What one step of the flight model reports. */
+type FlightStep = ReturnType<typeof stepFlight>;
+
 export function createRebels(labelFor: (ip: string) => string): RebelsController {
   let hud: HudState = { ...BLANK };
   const listeners = new Set<(h: HudState) => void>();
@@ -1209,939 +1212,990 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
   /* The whole of a frame. A plain function rather than a method so the
      wrapper in frame() can call it inside a try. */
+  /* ---- ONE FRAME, IN STEPS ----
+     The per-frame work used to be one function of nine hundred and forty lines.
+     It is the same code in the same order, split into named steps (2026-Sep-15)
+     so each can be read, tested and later moved on its own. */
+  /** Before launch: the map's own view eased in or out until the globe fills the frame. */
+  function frameApproach(dt: number, camera: THREE.PerspectiveCamera, fx: Fx): boolean {
+    /* ---- before launch: ease the map's own view in or out until the
+           globe just fills the frame, keeping whatever direction it was
+           already looking from ---- */
+    if (phase === "approach") {
+      approach = Math.min(1, approach + dt / 3.2);
+      /* Smoothstep, so it starts and stops gently instead of lurching. */
+      const k = approach * approach * (3 - 2 * approach);
+      const fromLen = approachFrom.length() || approachTo;
+      const len = fromLen + (approachTo - fromLen) * k;
+      camera.position.copy(approachFrom).normalize().multiplyScalar(len);
+      camera.up.set(0, 1, 0);
+      camera.lookAt(0, 0, 0);
+      fx.step(dt, camera);
+      /* The worlds turn while the launch card is up, so the sky is alive
+         before anyone has pressed anything. */
+      space?.step(dt);
+      return true;
+    }
+
+    return false;
+  }
+  /** The launch dive from orbit to the player's own tower, ending exactly on the cockpit pose. */
+  function frameDive(dt: number, flight: Flight, camera: THREE.PerspectiveCamera, fx: Fx): boolean {
+    const s = scratch;
+    /* ---- the dive ----
+       One unbroken move from orbit down to the player's own tower. The
+       direction travels the great circle so it curves round the planet
+       rather than cutting through it, and the altitude falls on a steeper
+       curve so it hangs in space for a moment and then drops. It ends on
+       EXACTLY the cockpit pose, which is what makes the handover to live
+       flight invisible. */
+    if (phase === "dive") {
+      diveT = Math.min(1, diveT + dt / DIVE_SECONDS);
+
+      /* Where the cockpit ends up: level, looking along the heading. */
+      s.up.copy(flight.up);
+      s.target.copy(flight.pos).addScaledVector(flight.fwd, 10);
+      s.m4.lookAt(flight.pos, s.target, s.up);
+      endQuat.setFromRotationMatrix(s.m4);
+
+      /* The tower being flown at. Its tip, not the pad above it, so the
+         view is pinned to the thing the player is arriving at. */
+      const tip = homeIndex >= 0 && homeIndex < tipList.length
+        ? tipList[homeIndex]
+        : dirB.copy(flight.pos).normalize().multiplyScalar(globeRadius);
+
+      if (diveT < ARRIVE_AT) {
+        /* ---- the run in ----
+           STRAIGHT AT THE TOWER, and looking at it the whole way.
+
+           It used to travel the great circle from wherever the map was
+           looking round to the tower's own direction, slerping the camera
+           toward the final level cockpit pose as it went. Both halves of
+           that were wrong from the pilot's seat: curving round the planet
+           meant the tower was never actually ahead, and blending toward a
+           pose that is TANGENT to the surface meant the view swung away
+           from the planet early in the run and arrived sideways. Geoff:
+           "it turns away from the planet, ruining the approach view".
+
+           A straight line and a fixed gaze fix both. */
+        const u = diveT / ARRIVE_AT;
+        /* Decelerating: quick out of orbit, slowing as the tower fills the
+           frame, so the arrival is a settle rather than a stop. */
+        const k = 1 - (1 - u) * (1 - u) * (1 - u);
+        camera.position.lerpVectors(diveFromPos, flight.pos, k);
+
+        /* Up is the planet's here, not the ship's: the horizon should sit
+           level on the way down. Where the ship is nearly overhead the two
+           are almost parallel, so the heading stands in as the hint. */
+        dirA.copy(camera.position).normalize();
+        s.m4.lookAt(camera.position, tip,
+          Math.abs(dirA.dot(dirMix.copy(tip).sub(camera.position).normalize())) > 0.985
+            ? flight.fwd : dirA);
+        arriveQuat.setFromRotationMatrix(s.m4);
+        /* Eased off the map's own framing over the first moment, so the
+           cut from "looking at the globe" to "looking at the tower" is a
+           turn rather than a jump. */
+        camera.quaternion.slerpQuaternions(diveFromQuat, arriveQuat, Math.min(1, u * 3));
+      } else {
+        /* ---- the landing ----
+           Arrived, and now the ninety degrees from looking down at the
+           tower to looking along the surface. Nothing else moves, so it
+           reads as the ship settling onto the pad and levelling off. */
+        const u = (diveT - ARRIVE_AT) / (1 - ARRIVE_AT);
+        const k = u * u * (3 - 2 * u);
+        camera.position.copy(flight.pos);
+        camera.quaternion.slerpQuaternions(arriveQuat, endQuat, k);
+      }
+
+      camera.updateMatrixWorld();
+      fx.step(dt, camera);
+      space?.step(dt);
+      if (diveT >= 1) phase = "fly";
+      return true;
+    }
+
+    return false;
+  }
+  /** The flight model's step, flying into things, and docking. Returns what the step reported. */
+  function frameFlight(dt: number, flight: Flight, fx: Fx): FlightStep {
+    const live = !hud.dead;
+    const blank: Stick = {
+      x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0, lift: 0, superBoost: false,
+      throttle: 0, fullStop: false, boosting: false, firing: false,
+      secondary: false, guard: false, mini: false,
+    };
+    const tFlight = performance.now();
+    const shieldsWere = flight.shields;
+    const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
+    dflow.add("flight", performance.now() - tFlight);
+    /* ---- flying into things ----
+       The ground and the towers are the flight model's rule: it owns the
+       bounce, the angle, the speed and the cost of grinding along the
+       surface, and there is one copy of that rule and it is here. The
+       HULL, though, is the server's number, so whatever the flight model
+       just took off is handed over and the local figure put back. Any
+       loss, not only the bang: most of what killing yourself on a planet
+       costs is the dragging afterwards, which raises no impact. */
+    const selfHurt = shieldsWere - flight.shields;
+    if (selfHurt > 0) {
+      flight.shields = shieldsWere;
+      room?.hurt(selfHurt);
+    }
+    if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
+    nearTower = res.nearTower;
+    dockBlock = res.dockBlock;
+    /* The resupply finished: in company the room holds the gauges, so it
+       is told, checks the ship is at a tower, and refills. */
+    if (res.docked) room?.dock();
+
+    return res;
+  }
+  /** The hull where the ship is (leaning into turns), the cockpit camera, the jolt, and the ears. */
+  function frameShipAndCamera(dt: number, flight: Flight, camera: THREE.PerspectiveCamera): void {
+    const s = scratch;
+    /* ---- the ship you can see, and the camera behind it ----
+       The hull sits at the flight position and the CAMERA pulls back from
+       it, rather than the ship being pushed away from a fixed camera: a
+       ship that slid backwards out of its own cockpit would leave its guns
+       and its collider behind it.
+
+       Pulled back along the nose and lifted a little, so the hull sits low
+       in the frame and the crosshair is not behind it. */
+    if (shipModel && flight.view > 0.01) {
+      shipModel.visible = true;
+      shipModel.position.copy(flight.pos);
+      /* ---- WHICH WAY IS FORWARD ----
+         Not assumed. The first version took Synty hulls to face -Z, which is
+         what three's lookAt points down, and the ship flew backwards:
+         "it's pointing right at me instead of in the direction we're going."
+         Worse, the guns went with it — the muzzles are placed at the nose,
+         so a nose at the back put the fire behind the camera, which is the
+         fire appearing at the bottom of the screen.
+
+         The model's own geometry knows the answer. The collider was fitted
+         along the hull and its narrow end is the nose, so the direction from
+         the centre to that end IS forward, whichever axis the exporter
+         happened to use. Two bases are built from it and one is rotated onto
+         the other. */
+      shipM4.makeBasis(modelRight, modelUp, modelFwd);
+      worldRight.crossVectors(flight.up, flight.fwd).normalize();
+      worldM4.makeBasis(worldRight, flight.up, flight.fwd);
+      shipM4.transpose();
+      shipQuat.setFromRotationMatrix(worldM4.multiply(shipM4));
+
+      /* ---- LEANING INTO IT ----
+         The hull is drawn where it will be a fifth of a second from now, so
+         it visibly banks into a roll instead of sitting dead centre and
+         dead straight. The whole idea, and why it is one idea rather than
+         three, is in shipLean. The COLLIDER and the guns below keep the
+         true orientation. */
+      shipModel.quaternion.copy(shipQuat).multiply(stepLean(lean, shipQuat, dt));
+
+      /* And it slides a little in the frame as well as turning, which is
+         most of what sells it. Taken from where the leaned nose points
+         against where the real one does, so it needs no signs either. */
+      leanNose.set(0, 0, 1).applyQuaternion(shipModel.quaternion)
+        .sub(leanRef.set(0, 0, 1).applyQuaternion(shipQuat));
+      shipModel.position.addScaledVector(leanNose, LEAN_SLIDE * SHIP_LENGTH);
+
+      /* And the hull becomes what bullets hit, instead of the ball around
+         the camera. */
+      placeCollider(shipHull, flight.pos, shipQuat, SHIP_LENGTH, hullWorld);
+    } else if (shipModel) {
+      shipModel.visible = false;
+      hullWorld.length = 0;
+    }
+
+    /* THE SHIP'S OWN UP, not the planet's.
+       Deriving it from the position was what pinned the horizon level: the
+       camera stayed upright through a climb no matter where the nose was
+       pointing, which is exactly the sensation of not being allowed to
+       look up. Now a loop rolls the world over the top, because the ship
+       really is upside down at that moment. */
+    s.up.copy(flight.up);
+
+    /* ---- the cockpit ----
+       The camera IS the ship. There is no model in the middle of the view
+       because you are sitting in it, and the bank is applied to the camera
+       so a turn rolls the horizon rather than rolling a toy in front of
+       you. */
+    s.target.copy(flight.pos).addScaledVector(flight.fwd, 10);
+    s.m4.lookAt(flight.pos, s.target, s.up);
+    camera.quaternion.setFromRotationMatrix(s.m4);
+    s.qBank.setFromAxisAngle(s.zAxis, flight.bank * 0.55);
+    camera.quaternion.multiply(s.qBank);
+    /* The jolt. Applied after the cockpit's own orientation, so it throws
+       the whole view rather than steering the ship, and eased back to
+       nothing over its fifth of a second. */
+    if (shakeFor > 0) {
+      shakeFor = Math.max(0, shakeFor - dt);
+      const k = shakeFor / SHAKE_SECONDS;
+      const halfFov = (camera.fov * Math.PI) / 360;
+      const angle = Math.atan(Math.tan(halfFov) * SHAKE_FRACTION * 2) * k;
+      s.qBank.setFromAxisAngle(shakeAxis, angle);
+      camera.quaternion.multiply(s.qBank);
+    }
+
+    /* Behind and slightly above, or exactly at the ship in the cockpit. */
+    camera.position.copy(flight.pos);
+    if (flight.view > 0.01) {
+      const back = SHIP_LENGTH * (VIEW_NEAR + flight.view * VIEW_FAR);
+      camera.position
+        .addScaledVector(flight.fwd, -back)
+        .addScaledVector(flight.up, back * 0.30);
+    }
+    camera.updateMatrixWorld();
+
+    /* The ears go where the cockpit is, facing the way it faces, so a shot
+       behind you sounds behind you. */
+    setListener(
+      flight.pos.x, flight.pos.y, flight.pos.z,
+      flight.fwd.x, flight.fwd.y, flight.fwd.z,
+      s.up.x, s.up.y, s.up.z,
+    );
+  }
+  /** The shield: the mandala from the cockpit, the red sphere from outside. */
+  function frameShield(flight: Flight, camera: THREE.PerspectiveCamera): void {
+    /* ---- the shield ----
+       Two pictures of one thing, and only ever one of them at a time.
+
+       From the COCKPIT it is the mandala: pale, half transparent, turning,
+       hung on the eye so the pilot looks through it. From the chase camera
+       it is the red wire sphere it has always been, because that is the
+       shield as seen from OUTSIDE and Geoff asked for that to stay.
+
+       Both are driven by the same strength, so they fade in and out with
+       the charge in exactly the same way. */
+    {
+      const guardStrength = Math.min(1, flight.guardFor / (GUARD_SECONDS * 0.6));
+      const inside = flight.view <= 0.01;
+      if (guardShell) {
+        guardShell.mesh.position.copy(flight.pos);
+        guardShell.step(performance.now() / 1000, inside ? 0 : guardStrength);
+      }
+      if (mandala) {
+        mandala.step(
+          performance.now() / 1000,
+          inside ? guardStrength : 0,
+          camera as THREE.PerspectiveCamera,
+        );
+      }
+    }
+  }
+  /** The planets turning, and naming the one the ship is near. */
+  function frameSky(dt: number, flight: Flight): void {
+    /* ---- the sky, and what you are near ----
+       The worlds turn on their own axes whether anyone is watching or not.
+       Coming within three of a body's own diameters names it in the corner;
+       leaving clears it. Compared by name so the HUD is only pushed when the
+       answer actually changes, rather than on every frame you spend near
+       the same planet. */
+    if (space) {
+      space.step(dt);
+      const found: SpaceBody | null = space.near(flight.pos, 3);
+      const name = found?.name ?? "";
+      if (name !== nearBody) {
+        nearBody = name;
+        setHud({ nearby: found ? { name: found.name, detail: found.detail } : null });
+      }
+    }
+  }
+  /** The guns, the mini gun and the beam, forwards or through the rear window. Returns the backwards aim, or null. */
+  function frameGuns(dt: number, flight: Flight, camera: THREE.PerspectiveCamera, fx: Fx, res: FlightStep): THREE.Vector3 | null {
+    const s = scratch;
+    /* ---- guns ----
+       Fired from the edges of the frame at eye level, converging on the
+       crosshair, which is why the muzzles come from the camera's frustum
+       rather than from a fixed offset. */
+    /* ---- WHICH WAY THE GUNS POINT ----
+       Every primary weapon fires through the crosshair, and while the
+       crosshair is in the rear window the crosshair is BEHIND you, so
+       they all fire backwards: the pulse gun, the mini gun and the
+       beams alike. Only the pulse gun used to honour it, so a player
+       with the mini gun or a beam armed pressed the trigger in the rear
+       window and watched rounds leave the nose. Geoff, 2026-Sep-12:
+       "The rear gun doesn't seem to work." */
+    const rearAiming = rearOn && inRearWindow(cursor);
+    if (rearAiming !== hud.rearAim) setHud({ rearAim: rearAiming });
+    if (rearAiming) placeRearCamera(rearCamera, flight);
+    const backwards = rearAiming ? rearAim(rearCamera, cursor) : null;
+
+    /* The mini gun: one round from the top right, along the line the
+       POINTER is on rather than the ship's own axis. The ray is taken
+       straight from the camera through the crosshair, so what is under the
+       crosshair is what it hits. */
+    if (res.miniFired) {
+      const ndc = new THREE.Vector3(cursor.x * 2 - 1, -(cursor.y * 2 - 1), 0.5);
+      ndc.unproject(camera);
+      const aimDir = ndc.sub(camera.position).normalize();
+      const muzzle = new THREE.Vector3();
+      /* The SCREEN's axes, read off the camera itself, so the corner is the
+         corner of the picture whatever the bank is doing and wherever the
+         camera happens to be sitting. */
+      camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+      camUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+      camFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
+      miniMuzzle(
+        camera.position, camFwd, camRight, camUp, camera.fov, camera.aspect, muzzle,
+        /* In third person it comes out of the nose instead, the same way
+           the main guns already do. */
+        shipModel && flight.view > 0.01 ? shipNose(flight) : undefined,
+      );
+      /* ---- WHO PULLS THE TRIGGER ----
+         In a room the shot is a REQUEST, not a fact: the room decides
+         whether this ship had a round left, whether it may fire yet, and
+         what it hits. Firing locally as well would put a round in the air
+         that nobody else can see and that scores nothing. */
+      /* ---- WHERE THE MINI GUN IS AIMED ----
+         At the point under the crosshair, expressed from the SHIP, since
+         that is where the server fires from. It used to send the muzzle
+         as the position and the camera's own aim, so the server measured
+         the convergence from a point already a couple of units up and
+         out at the corner of the frame, and the stream landed up and to
+         the right of the crosshair. Geoff, 2026-Sep-12. */
+      if (backwards) {
+        /* Out of the tail, down the rear window's own line. */
+        const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
+        room?.fire("mini", tail, backwards, backwards, undefined, s.up);
+        fx.muzzle(tail);
+      } else {
+        const mark = camera.position.clone().addScaledVector(aimDir, CONVERGE);
+        room?.fire("mini", flight.pos, flight.fwd, mark.sub(flight.pos).normalize(), undefined, s.up);
+        fx.muzzle(muzzle);
+      }
+      playMiniSound();
+    }
+
+    /* ---- the beam ----
+       Not a round: everything in a narrow cone takes the damage at the
+       instant it fires, and the cone stays lit for half a second. Held
+       down, it simply fires again as soon as it is ready, which is the
+       same half second, so a held trigger reads as one continuous beam. */
+    const armed = weaponInSlot(weapons.primary + 1);
+    if (armed?.kind === "beam") {
+      beamAt -= dt;
+      if (stick.firing && beamAt <= 0 && flight.ammo >= 1) {
+        beamAt = BEAM_SECONDS;
+        flight.ammo -= 1;
+        const from = backwards ? tailOf(flight.pos, flight.fwd, SHIP_LENGTH) : shipNose(flight);
+        room?.fire("beam", from, backwards ?? flight.fwd, undefined, armed.key);
+        fx.muzzle(from);
+        playGunSound();
+      }
+    }
+
+    if (res.fired && backwards) {
+      /* ---- the rear gun ----
+         Geoff: "fire from the two sides of the mini-screen and go
+         towards wherever the mouse pointer is." So the muzzles are the
+         edges of the REAR camera's frame, as the main guns are the edges
+         of the main one, and the two streams cross on the crosshair's
+         spot in the window. The room is given the rear camera's place
+         (three units behind the ship, within its tolerance), the aim,
+         and the ship's up. */
+      const aim = backwards;
+      const rearUp = new THREE.Vector3(0, 1, 0).applyQuaternion(rearCamera.quaternion);
+      const muzzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
+      gunMuzzles(rearCamera.position, aim, rearUp, rearCamera.fov, rearCamera.aspect, muzzles);
+      room?.fire("main", rearCamera.position, aim, undefined, undefined, rearUp);
+      fx.muzzle(muzzles[0]);
+      fx.muzzle(muzzles[1]);
+      playGunSound();
+    } else if (res.fired) {
+      /* ---- where the guns are ----
+         In the cockpit they come from the EDGES of the frame at eye level,
+         which is the arcade convention and the only sensible answer when
+         there is no ship on screen to hang them off.
+
+         In third person there IS one, and fire that appears beside the
+         camera rather than at the hull reads as broken. So the muzzles move
+         to the ship's nose: the two barrels straddle it by a fifth of the
+         hull's length, still converging on the crosshair, so the rounds
+         leave the ship and meet where you are aiming. */
+      let at: [THREE.Vector3, THREE.Vector3] | undefined;
+      if (shipModel && flight.view > 0.01) at = shipBarrels(flight);
+      /* ---- WHO PULLS THE TRIGGER ----
+         In a room the shot is a REQUEST, not a fact: the room decides
+         whether this ship had rounds left, whether it may fire yet, and
+         what it hits. Firing locally as well would put rounds in the air
+         that nobody else can see and that score nothing. The muzzles are
+         still worked out here, because the flash is a local thing that
+         should happen the instant the trigger goes down. */
+      let muzzles: [THREE.Vector3, THREE.Vector3];
+      if (at) {
+        muzzles = at;
+      } else {
+        muzzles = [new THREE.Vector3(), new THREE.Vector3()];
+        gunMuzzles(flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, muzzles);
+      }
+      room?.fire("main", flight.pos, flight.fwd, undefined, undefined, s.up);
+      fx.muzzle(muzzles[0]);
+      fx.muzzle(muzzles[1]);
+      playGunSound();
+    }
+
+    return backwards;
+  }
+  /** The server's fight drawn here: enemies, rounds, streaks, torpedoes, wreckage, beams, loot, gauges, the wave and the crew. */
+  function frameRoom(dt: number, flight: Flight, camera: THREE.PerspectiveCamera, inRoom: boolean): void {
+    /* ---- WHOSE FIGHT IS IT ----
+       In a room, the room's. It simulates the fighters, every round in the
+       air and the coins for everybody at once, and the cockpit's job is to
+       draw that rather than to run a second private copy of it. Two players
+       each stepping their own simulation would be two people in the same
+       sky shooting at different enemies, which is not multiplayer, it is
+       two games with a chat window.
+
+       Flying stays here either way. A ship that waited for a round trip
+       before it turned would feel broken however good the connection was,
+       so the stick still moves the ship at once and the position is
+       reported afterwards for everyone else to see. */
+    const tRoom = performance.now();
+    if (inRoom && room) {
+      room.step(dt);
+      room.report(flight.pos, flight.fwd, flight.guardFor > 0);
+
+      /* The room's fight, put where the drawing already looks for it. */
+      combat.enemies.length = 0;
+      let di = 0;
+      for (const e of room.enemies) {
+        /* A drone from the wire is drawn as a drone: the sphere pass reads
+           the flag, the colour comes from the drone tier, and the pulse
+           phase is stable per slot so the swarm does not throb in unison. */
+        if (e.drone) {
+          const cls = droneClass(e.tier);
+          combat.enemies.push({
+            id: e.id, pos: e.pos, fwd: e.fwd, roll: 0,
+            cls: { ...cls, weight: 0 } as ShipClass,
+            shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
+            spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
+            weave: 0, weaveDir: 1, mode: "in", breakAt: 0, rejoinAt: 0,
+            escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
+            drone: true, group: 0, fleet: 0, slot: 0, pulse: (di++ * 0.73) % (Math.PI * 2),
+          } as Enemy);
+          continue;
+        }
+        combat.enemies.push({
+          id: e.id, pos: e.pos, fwd: e.fwd, roll: 0,
+          cls: e.dragon ? DRAGON_CLASS : TIERS[Math.max(0, Math.min(TIERS.length - 1, e.tier - 1))],
+          ...(e.dragon ? { dragon: true as const, life: DRAGON_LIFE } : {}),
+          shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
+          spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
+          weave: 0, weaveDir: 1, mode: "in", breakAt: 0, rejoinAt: 0,
+          escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
+        });
+      }
+      /* ---- THE ROUNDS ARE FLOWN HERE ----
+         The room says what was fired and what stopped early; everything
+         in between is this cockpit flying the same rounds with the same
+         file the room uses. It used to be handed five hundred positions
+         twenty times a second, which was two thirds of the wire. */
+      for (const s of room.takeShots()) {
+        showBullet(combat, {
+          id: s.id, pos: s.pos, vel: s.vel, life: s.life,
+          hostile: s.hostile, mini: s.mini,
+          ...(s.orb ? { orb: true as const, phase: Math.random() * Math.PI * 2 } : {}),
+        });
+      }
+      for (const id of room.takeSpent()) dropBullet(combat, id);
+      stepShownBullets(combat, dt);
+      /* Beams too: yours and everyone else's, drawn from the room's list
+         so a beam is seen by the whole room and hits what the room says. */
+      /* ---- streaks ----
+         Every round in the air gets a line from where it was a fortieth
+         of a second ago to where it is now. Rebuilt each tick from the
+         wire rather than tracked, because the cockpit has no history of
+         a round it did not fire and cannot recognise one from one tick
+         to the next. */
+      combat.tracers.length = 0;
+      for (const b of combat.bullets) {
+        combat.tracers.push({
+          from: b.pos.clone().addScaledVector(b.vel, -STREAK_SECONDS),
+          to: b.pos,
+          life: TRACER_LIFE, hostile: b.hostile, mini: !!b.mini, live: true,
+        });
+      }
+      combat.torpedoes.length = 0;
+      for (const t of room.torpedoes) combat.torpedoes.push({ pos: t.pos, vel: t.vel, life: 1 });
+      /* Wreckage is the room's too, and it is SOLID: a round that hits a
+         piece is spent, so a cockpit that did not draw it watched shots
+         disappear against nothing. */
+      combat.junk.length = 0;
+      for (const j of room.junk) {
+        combat.junk.push({
+          pos: j.pos, rot: j.rot, vel: _zero, spin: _zero,
+          life: JUNK_LIFE, kind: j.kind as never,
+        });
+      }
+      combat.beams.length = 0;
+      for (const b of room.beams) combat.beams.push(b);
+      /* Gems are the room's: drawn from its list, never simulated here.
+         A private drop only ever arrives at its owner, so nothing here
+         has to hide anything. */
+      combat.gems.length = 0;
+      for (const g of room.gems) {
+        combat.gems.push({
+          id: g.id, tier: g.tier, pos: g.pos, vel: new THREE.Vector3(), spin: g.spin, body: 0,
+          ...(g.item ? { item: g.item, owner: g.owner, hidden: g.hidden } : {}),
+        });
+      }
+      combat.coins.length = 0;
+      for (const k of room.coins) {
+        combat.coins.push({ pos: k.pos, vel: new THREE.Vector3(), spin: 0, value: 0 });
+      }
+      combat.events.push(...room.takeEvents().map((e) => ({
+        kind: e.kind as never, at: e.at, power: e.power, who: e.who,
+        tier: e.tier, shield: e.shield, damage: e.damage, wave: e.wave,
+        guarded: e.guarded, item: e.item, id: e.id,
+        /* Carried through, or a correction from the room would be
+           dropped on the way to the handler that obeys it. */
+        snap: (e as { snap?: true }).snap,
+      })));
+
+      /* ---- ANTI-CHEAT: THE GAUGES ARE THE ROOM'S ----
+         Shield, ammo, torpedoes, guards, score and DIVI are all overwritten
+         from the wire while connected. A cockpit that decided its own score
+         is a cockpit that could be edited into deciding a better one, and
+         the whole reason the room exists is that it settles those numbers
+         where nobody can reach them. */
+      const g = room.gauges;
+      /* Not while a resupply is running: the gauges climb locally over
+         the four seconds and the room refills at the end, so taking the
+         room's numbers mid-way would pin them at empty until then.
+         DAMAGE is the exception. Anything that takes the hull down while
+         the animation is playing has to be shown, or a player can be
+         shot to pieces behind a bar that reads full and only find out
+         when they leave. */
+      const docking = flight.dock > 0 && flight.dock < 1;
+      const hurtWhileDocking = !!g && lastRoomShield >= 0 && g.shield < lastRoomShield - 0.5;
+      if (g) lastRoomShield = g.shield;
+      if (g && (!docking || hurtWhileDocking)) {
+        flight.shields = g.shield;
+        flight.ammo = g.ammo;
+        flight.torpedoes = g.torps;
+        flight.guards = g.guards;
+        score = g.score;
+        divi = g.divi;
+        /* ---- THE SERVER DECIDES WHEN YOU ARE DEAD ----
+           It holds the hull, so it is the only thing that can say. The
+           cockpit used to work this out from its own copy inside the
+           hit-event handler, which missed every death the handler did
+           not see: flying into the planet, for one, whose damage the
+           flight model works out and the server applies. */
+        if (g.dead && !hud.dead) die();
+        if (g.respawn > 0) respawnAt = performance.now() + g.respawn * 1000;
+      }
+      /* ---- WHICH WAVE IT IS ----
+         Read from the room's own state every tick rather than from the
+         announcement, because an announcement can be missed. When the
+         last player alive goes down the fight starts over at wave one,
+         and that reset happens on a tick with nobody flying, whose
+         events are cleared without being sent: the cockpit was never
+         told, and went on showing the wave it died in. Geoff,
+         2026-Sep-12: "instead of restarting the game like it should
+         have, it went directly to Wave 2." */
+      if (room.wave !== lastWaveSeen) {
+        lastWaveSeen = room.wave;
+        setHud(room.wave > 0
+          ? { wave: room.wave, waveAt: performance.now() }
+          : { wave: 0 });
+      }
+      /* Once. others() builds a fresh array each call. */
+      const crew = room.others();
+      if (peers) peers.draw(crew, camera);
+      /* How many are in the WORLD, not how many are on screen. */
+      setHud({ crew: room.crew() });
+    } else if (peers) {
+      peers.draw([], camera);
+    }
+
+    dflow.add("room", performance.now() - tRoom);
+  }
+  /** The stake bonus, and the torpedo: launched, detonated, or fired backwards. */
+  function frameTorpedo(flight: Flight, res: FlightStep, backwards: THREE.Vector3 | null): void {
+    /* ---- THE FIGHT IS THE SERVER'S ----
+       Nothing here simulates it. There is one game and it runs in one
+       place; the cockpit flies the ship, draws what it is told and asks
+       for shots. This used to fall back to running the whole fight
+       locally whenever the connection was not up, which meant two copies
+       of every feature and, for anything hooked up to only one of them,
+       a bug that appeared or vanished depending on the network: the
+       tower resupply, torpedoes and the cheat keys all landed that way.
+       Geoff, 2026-Sep-12: "there's only ONE game, and it's always
+       multiplayer... There shouldn't be two different single or
+       multiplayer game modes." */
+    const tCombat = performance.now();
+    tellBonus();
+
+    /* One button does both jobs. If a torpedo is already in the air the
+       press sets it off; otherwise it launches the next one. That is what
+       "control-click again to detonate" means with a single control. */
+    if (res.heavyPress && backwards) {
+      /* A torpedo backwards, out of the tail. */
+      if (flight.torpedoes > 0) {
+        const aim = backwards;
+        const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
+        room?.fire("torp", tail, aim);
+        torpSentAt = performance.now();
+        playTorpedoSound();
+      }
+    } else if (res.heavyPress) {
+      const slot = weaponAt("secondary", weapons.secondary);
+      if (slot && !slot.ready) {
+        setHud({ note: `${slot.name}: not yet fitted`, noteAt: performance.now() });
+      } else {
+        /* ---- the torpedo is the server's ----
+           It flies there and comes back on the wire to be drawn. Press
+           once to launch, again while one of yours is still in the air to
+           set it off. */
+        const mineInAir = performance.now() - torpSentAt < TORPEDO_FUSE * 1000 && combat.torpedoes.length > 0;
+        if (mineInAir) { room?.detonate(); torpSentAt = 0; }
+        else if (flight.torpedoes > 0) {
+          room?.fire("torp", shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
+          torpSentAt = performance.now();
+          playTorpedoSound();
+        }
+      }
+    }
+
+    dflow.add("combat", performance.now() - tCombat);
+  }
+  /** Everything that happened this tick: hits, kills, pickups, refusals, and what each looks and sounds like. */
+  function frameEvents(flight: Flight, fx: Fx): void {
+    const tEvents = performance.now();
+    for (const ev of combat.events) {
+      if (ev.kind === "incoming") {
+        /* The event carries how near the round is, which is what the alarm
+           turns into loudness. */
+        playIncomingWarning(ev.power);
+      } else if (ev.kind === "playerHit") {
+        if (flight.grace <= 0) {
+          /* Tell the cockpit to flash, and knock the view off centre in
+             some direction that is not the same one every time. */
+          setHud({ hitAt: performance.now() });
+          shakeFor = SHAKE_SECONDS;
+          shakeAxis.set(Math.random() * 2 - 1, Math.random() * 2 - 1, 0).normalize();
+          /* The guard soaks four fifths of it, which is what makes ten of
+             them worth spending carefully. */
+          const guarded = flight.guardFor > 0;
+          const soak = guarded ? 1 - GUARD_ABSORB : 1;
+          /* And it is worth HEARING that the button worked. */
+          if (guarded) playBounce();
+          flight.shields -= (ev.damage ?? 25) * soak;
+          flight.grace = 0.45;
+          /* Being shot at postpones the slow repair, same as flying into
+             something does. */
+          flight.sinceHit = 0;
+          /* The big centred bar, for a second, coloured by how bad it is.
+             Raised HERE rather than from the HUD's own polling, because a
+             hit is an event and the bar is the game telling you about it. */
+          pulseHealth(flight.shields, MAX_SHIELD);
+          if (flight.shields <= 0) die();
+        }
+        fx.boom(ev.at, 1.4, "cold");
+      } else if (ev.kind === "enemyDown") {
+        fx.boom(ev.at, 3, "hot");
+        playShipExplosion();
+        /* The flock kill itself is the server's: it is the only thing
+           that sees every member and every shooter, and it arrives as its
+           own event (flockDown), below. */
+        if (ev.tier) {
+          lifetimeTiers[ev.tier - 1] = (lifetimeTiers[ev.tier - 1] ?? 0) + 1;
+          setHud({ tierKills: lifetimeTiers.slice() });
+        }
+      } else if (ev.kind === "enemyHit") {
+        /* Points are exactly the damage that landed, so a shot into a
+           fighter with ten left scores ten and not eighty. */
+        score += Math.round(ev.damage ?? 0);
+        /* A small spark where the shot landed. The bubble does the rest. */
+        fx.boom(ev.at, ev.power, "cold");
+      } else if (ev.kind === "flockDown") {
+        fx.boom(ev.at, 4, "hot");
+        playTorpedoBlast();
+        if (ev.who && room && ev.who === room.me()) {
+          flocks += 1;
+          setHud({ flocks, note: "FLOCK DOWN", noteAt: performance.now() });
+        }
+      } else if (ev.kind === "denied") {
+        /* ---- WHERE THE ROOM SAYS YOU ARE ----
+           Obeyed, not argued with. Ignoring it left the room's copy of
+           the ship behind after any lag spike, and from then on every
+           shot was refused for being fired from somewhere else: the guns
+           simply stopped working. */
+        if ((ev as { snap?: true }).snap && flight) {
+          flight.pos.copy(ev.at);
+          flight.alt = flight.pos.length() - R;
+        }
+        /* ---- THE SERVER SAID NO ----
+           And the cockpit used to say nothing at all: the refusal was
+           turned into an event that nothing handled, so a resupply the
+           server threw away still looked and sounded like a resupply.
+           Geoff, 2026-Sep-12: "I didn't see any indication that the
+           server was refusing the dock. It showed it as docked." Shown
+           now, and written down, because this is exactly where a bug
+           and a cheat look the same. */
+        const why = ev.who ?? "";
+        dflow.note(`refused: ${why}`);
+        if (performance.now() - deniedAt > 2000) {
+          deniedAt = performance.now();
+          setHud({ note: `REFUSED: ${why.toUpperCase()}`, noteAt: performance.now() });
+        }
+      } else if (ev.kind === "wingHit") {
+        fx.boom(ev.at, 0.9, "cold");
+      } else if (ev.kind === "wingDown") {
+        fx.boom(ev.at, 2.2, "hot");
+        playShipExplosion(0.8);
+        if (room && ev.who === room.me()) {
+          setHud({ note: "DRONE DOWN", noteAt: performance.now() });
+        }
+      } else if (ev.kind === "dragon") {
+        playTorpedoBlast();
+        setHud({ note: "A DRAGON", noteAt: performance.now() });
+      } else if (ev.kind === "dragonGone") {
+        fx.boom(ev.at, 1.5, "cold");
+      } else if (ev.kind === "drop") {
+        /* Something fell out of the wreck. A glint; the thing itself is
+           drawn from the gem list, and only its owner sees it. */
+        if (!ev.who || (room && ev.who === room.me())) fx.boom(ev.at, 0.9, "cold");
+      } else if (ev.kind === "gem") {
+        fx.boom(ev.at, 1.2, "cold");
+        playBounce();
+        if (!ev.who || (room && ev.who === room.me())) {
+          if (ev.item) {
+            /* Into the inventory, SEALED: the player opens it there (I).
+               Solo, this is the client's roll and the client's pickup; in
+               a room, the room's, relayed. Either way the account row is
+               what keeps it (watchLoadout). */
+            addSphere(ev.item, 1);
+            const spec = itemByKey(ev.item);
+            setHud({ note: `T${spec?.tier ?? 1} SPHERE: OPEN IT IN YOUR INVENTORY (I)`, noteAt: performance.now() });
+          } else {
+            setHud({ note: `GEM: ${["yellow", "green", "blue", "purple", "red", "white", "fuchsia"][(ev.tier ?? 1) - 1] ?? ""}`, noteAt: performance.now() });
+          }
+        }
+      } else if (ev.kind === "coinHit" || ev.kind === "gemHit") {
+        fx.boom(ev.at, 0.5, "cold");
+      } else if (ev.kind === "coin") {
+        playCoin();
+        /* Picked up. Kept for ever, not for this life: earnings survive
+           being shot down. */
+        divi += ev.value ?? 0;
+        addDivi(ev.value ?? 0);
+        /* One point for each DIVI brought home, which is what buys guns. */
+        setHud({ divi, points: earnPoints(ev.value ?? 0) });
+      } else if (ev.kind === "enemyShot") {
+        playShotAt(ev.at.x, ev.at.y, ev.at.z, 0.7);
+      } else if (ev.kind === "junkGone") {
+        fx.boom(ev.at, ev.power, "hot");
+        playShipExplosion(0.45);
+      } else if (ev.kind === "torpedoBlast") {
+        fx.boom(ev.at, 6, "torpedo");
+        playTorpedoBlast();
+      } else if (ev.kind === "towerHit") {
+        fx.boom(ev.at, 2, "hot");
+        playShipExplosion(0.55);
+      } else {
+        fx.boom(ev.at, 0.7, "hot");
+      }
+    }
+    if (flight.shields <= 0) die();
+
+    /* Keep one model per live fighter, cloning and hiding rather than
+       building and destroying. */
+    /* A model per fighter, and it has to match that fighter's tier, so a
+       slot whose occupant changed tier is rebuilt rather than recoloured. */
+    dflow.add("events", performance.now() - tEvents);
+  }
+  /** Enemy hulls and the dragon, the thrust and dock sounds, every draw call, and the gauges. */
+  function frameDrawAndGauges(dt: number, flight: Flight, camera: THREE.PerspectiveCamera, fx: Fx, scene: THREE.Scene): void {
+    const s = scratch;
+    const tMeshes = performance.now();
+    /* ---- HULLS FOLLOW ENEMIES, NOT SLOTS ----
+       A hull model used to belong to an INDEX in the enemy list. Every
+       time one enemy died the ones after it shifted down a slot, the slot
+       saw a different tier, threw its model away and cloned a fresh one
+       from the prototype: seven meshes and three line sets per fighter,
+       several fighters per death, every death. DFlow showed it: the
+       meshes stage spiking to 22ms and a hundred stalls the report could
+       only call "outside our code", which is the garbage collector
+       sweeping up the clones. Now a model is keyed by the enemy's own id
+       and follows it for life; a model whose enemy has gone is hidden
+       and kept in a pool for the next of its tier. Nothing is cloned
+       after the first wave of each tier. */
+    seenEnemies.clear();
+    for (const e of combat.enemies) {
+      if (e.drone || e.dragon) continue;
+      const id = e.id ?? -1;
+      const tier = e.cls.tier;
+      let slot = enemyRigs.get(id);
+      if (slot && slot.tier !== tier) { releaseHull(slot); enemyRigs.delete(id); slot = undefined; }
+      if (!slot) {
+        const pool = hullPools.get(tier);
+        const reused = pool && pool.length ? pool.pop()! : null;
+        if (reused) {
+          slot = reused;
+        } else {
+          const m = protos[tier - 1].clone(true);
+          m.userData.tier = tier;
+          m.scale.setScalar(ENEMY_SCALE);
+          scene.add(m);
+          enemyMeshes.push(m);
+          const rig = makeShieldRig(0x66ccff);
+          scene.add(rig.group);
+          enemyShields.push(rig);
+          slot = { mesh: m, rig, tier };
+        }
+        slot.mesh.visible = true;
+        slot.rig.group.visible = true;
+        enemyRigs.set(id, slot);
+      }
+      seenEnemies.add(id);
+    }
+    for (const [id, slot] of enemyRigs) {
+      if (seenEnemies.has(id)) continue;
+      releaseHull(slot);
+      enemyRigs.delete(id);
+    }
+    /* The dragon, if it is here. */
+    const dragon = combat.enemies.find((e) => e.dragon) ?? null;
+    if (dragon) ensureDragonRig();
+    if (dragonRig) {
+      dragonRig.group.visible = !!dragon;
+      if (dragon) {
+        dragonRig.group.position.copy(dragon.pos);
+        s.target.copy(dragon.pos).addScaledVector(dragon.fwd, 10);
+        s.m4.lookAt(dragon.pos, s.target, dragon.pos.clone().normalize());
+        dragonRig.group.quaternion.setFromRotationMatrix(s.m4);
+        dragonRig.mixer.update(Math.min(0.1, dt));
+      }
+    }
+    const nowS = performance.now() / 1000;
+    for (const e of combat.enemies) {
+      if (e.drone || e.dragon) continue;
+      const slot = enemyRigs.get(e.id ?? -1);
+      if (!slot) continue;
+      const m = slot.mesh, rig = slot.rig;
+      m.position.copy(e.pos);
+      s.target.copy(e.pos).addScaledVector(e.fwd, 10);
+      s.m4.lookAt(e.pos, s.target, e.pos.clone().normalize());
+      m.quaternion.setFromRotationMatrix(s.m4);
+      s.qBank.setFromEuler(new THREE.Euler(e.spin.x, e.spin.y, e.spin.z + e.roll));
+      m.quaternion.multiply(s.qBank);
+      rig.group.position.copy(e.pos);
+      rig.setColour(e.cls.colour);
+      rig.setLevel(e.shield, e.cls.shieldMax);
+      rig.step(nowS, Math.min(1, e.flash / 0.6));
+    }
+
+    /* ---- the thrust ----
+       Follows what the ship is DOING rather than what the key is doing.
+       Holding shift with an empty boost tank, or while docked, or after
+       being shot down, all move the ship not at all, and a roar with no
+       acceleration behind it is worse than silence. */
+    const thrusting = (stick.boosting || stick.superBoost) && flight.boost > 0
+      && flight.dock <= 0 && !hud.dead;
+    if (thrusting !== wasThrusting) {
+      wasThrusting = thrusting;
+      if (thrusting) startBoostSound(); else stopBoostSound();
+    }
+    /* Super boost: the same roar, faster and higher, for as long as TAB
+       is held with fuel to burn. */
+    if (thrusting) setBoostPitch(flight.superOn ? 1.35 : 1);
+    if (flight.superOn !== hud.superBoost || flight.extras.superMult !== hud.superMult) {
+      setHud({ superBoost: flight.superOn, superMult: flight.extras.superMult });
+    }
+
+    /* The recharging station, on for exactly as long as the resupply. */
+    const docking = flight.dock > 0;
+    if (docking !== wasDocking) {
+      wasDocking = docking;
+      if (docking) startRechargeSound(); else stopRechargeSound();
+    }
+
+    if (combat.torpedoes.length !== lastInFlight || flight.torpedoes !== lastRack) {
+      lastInFlight = combat.torpedoes.length;
+      lastRack = flight.torpedoes;
+      setHud({ inFlight: lastInFlight, torpedoes: lastRack });
+    }
+
+    /* Everything raised this frame has now been drawn and scored. */
+    clearEvents(combat);
+
+    dflow.add("meshes", performance.now() - tMeshes);
+    dflow.time("draw.bullets", () => fx!.drawBullets(combat.bullets));
+    dflow.time("draw.beams", () => fx!.drawBeams(combat.beams, BEAM_SECONDS));
+    /* The swarm and its fire. Both are instanced, so the cost of drawing a
+       hundred and forty spheres is the cost of drawing one. */
+    /* Reused lists rather than two fresh arrays from filter() a frame. */
+    droneList.length = 0;
+    for (const e of combat.enemies) if (e.drone) droneList.push(e);
+    orbList.length = 0;
+    for (const b of combat.bullets) if (b.orb) orbList.push(b);
+    dflow.time("draw.drones", () => fx!.drawDrones(droneList, nowS));
+    dflow.time("draw.orbs", () => fx!.drawOrbs(orbList, nowS));
+    dflow.time("draw.torps", () => fx!.drawTorpedoes(combat.torpedoes));
+    dflow.time("draw.junk", () => fx!.drawJunk(combat.junk));
+    dflow.time("draw.tracers", () => fx!.drawTracers(combat.tracers, TRACER_LIFE));
+    dflow.time("draw.coins", () => fx!.drawCoins(combat.coins));
+    dflow.time("draw.gems", () => { fx!.drawGems(combat.gems); fx!.drawDrops(combat.gems); });
+    dflow.time("draw.wings", () => drawWings());
+    const tDock = performance.now();
+    /* The tether, drawn only while a resupply is running. */
+    fx.drawDockLink(
+      flight.dock > 0 ? flight.pos : null,
+      flight.dock > 0 && flight.dockedAt >= 0 ? tipList[flight.dockedAt] ?? null : null,
+      performance.now() / 1000,
+    );
+    dflow.add("draw.dock", performance.now() - tDock);
+    fx.step(dt, camera);
+
+    const now = performance.now();
+    if (now - hudAt > 100) {
+      hudAt = now;
+      setHud({
+        speed: flight.speed,
+        alt: flight.alt,
+        shields: Math.max(0, flight.shields),
+        ammo: flight.ammo,
+        boost: flight.boost,
+        dock: flight.dock,
+        dockName: flight.dockedAt >= 0 ? labelFor(ipList[flight.dockedAt] ?? "") : "",
+        homeDist: homeIndex >= 0 ? flight.pos.distanceTo(tipList[homeIndex]) : 0,
+        torpedoes: flight.torpedoes,
+        inFlight: combat.torpedoes.length,
+        throttle: flight.throttle,
+        guards: flight.guards,
+        guarding: flight.guardFor > 0,
+        contacts: combat.enemies.length,
+        kills: Math.floor(combat.kills),
+        score,
+        junk: combat.junk.length,
+        bonus: (room?.gauges?.bonus ?? 0) > 0,
+        docked: flight.dock >= 1,
+        nearTower,
+        dockBlock,
+        respawnIn: Math.max(0, (respawnAt - performance.now()) / 1000),
+      });
+    }
+  }
+
   function runFrame(dt: number) {
       if (!flight || !camera || !fx || !scene || protos.length === 0) return;
       try {
-        const s = scratch;
-
-        /* ---- before launch: ease the map's own view in or out until the
-               globe just fills the frame, keeping whatever direction it was
-               already looking from ---- */
-        if (phase === "approach") {
-          approach = Math.min(1, approach + dt / 3.2);
-          /* Smoothstep, so it starts and stops gently instead of lurching. */
-          const k = approach * approach * (3 - 2 * approach);
-          const fromLen = approachFrom.length() || approachTo;
-          const len = fromLen + (approachTo - fromLen) * k;
-          camera.position.copy(approachFrom).normalize().multiplyScalar(len);
-          camera.up.set(0, 1, 0);
-          camera.lookAt(0, 0, 0);
-          fx.step(dt, camera);
-          /* The worlds turn while the launch card is up, so the sky is alive
-             before anyone has pressed anything. */
-          space?.step(dt);
-          return;
-        }
-
-        /* ---- the dive ----
-           One unbroken move from orbit down to the player's own tower. The
-           direction travels the great circle so it curves round the planet
-           rather than cutting through it, and the altitude falls on a steeper
-           curve so it hangs in space for a moment and then drops. It ends on
-           EXACTLY the cockpit pose, which is what makes the handover to live
-           flight invisible. */
-        if (phase === "dive") {
-          diveT = Math.min(1, diveT + dt / DIVE_SECONDS);
-
-          /* Where the cockpit ends up: level, looking along the heading. */
-          s.up.copy(flight.up);
-          s.target.copy(flight.pos).addScaledVector(flight.fwd, 10);
-          s.m4.lookAt(flight.pos, s.target, s.up);
-          endQuat.setFromRotationMatrix(s.m4);
-
-          /* The tower being flown at. Its tip, not the pad above it, so the
-             view is pinned to the thing the player is arriving at. */
-          const tip = homeIndex >= 0 && homeIndex < tipList.length
-            ? tipList[homeIndex]
-            : dirB.copy(flight.pos).normalize().multiplyScalar(globeRadius);
-
-          if (diveT < ARRIVE_AT) {
-            /* ---- the run in ----
-               STRAIGHT AT THE TOWER, and looking at it the whole way.
-
-               It used to travel the great circle from wherever the map was
-               looking round to the tower's own direction, slerping the camera
-               toward the final level cockpit pose as it went. Both halves of
-               that were wrong from the pilot's seat: curving round the planet
-               meant the tower was never actually ahead, and blending toward a
-               pose that is TANGENT to the surface meant the view swung away
-               from the planet early in the run and arrived sideways. Geoff:
-               "it turns away from the planet, ruining the approach view".
-
-               A straight line and a fixed gaze fix both. */
-            const u = diveT / ARRIVE_AT;
-            /* Decelerating: quick out of orbit, slowing as the tower fills the
-               frame, so the arrival is a settle rather than a stop. */
-            const k = 1 - (1 - u) * (1 - u) * (1 - u);
-            camera.position.lerpVectors(diveFromPos, flight.pos, k);
-
-            /* Up is the planet's here, not the ship's: the horizon should sit
-               level on the way down. Where the ship is nearly overhead the two
-               are almost parallel, so the heading stands in as the hint. */
-            dirA.copy(camera.position).normalize();
-            s.m4.lookAt(camera.position, tip,
-              Math.abs(dirA.dot(dirMix.copy(tip).sub(camera.position).normalize())) > 0.985
-                ? flight.fwd : dirA);
-            arriveQuat.setFromRotationMatrix(s.m4);
-            /* Eased off the map's own framing over the first moment, so the
-               cut from "looking at the globe" to "looking at the tower" is a
-               turn rather than a jump. */
-            camera.quaternion.slerpQuaternions(diveFromQuat, arriveQuat, Math.min(1, u * 3));
-          } else {
-            /* ---- the landing ----
-               Arrived, and now the ninety degrees from looking down at the
-               tower to looking along the surface. Nothing else moves, so it
-               reads as the ship settling onto the pad and levelling off. */
-            const u = (diveT - ARRIVE_AT) / (1 - ARRIVE_AT);
-            const k = u * u * (3 - 2 * u);
-            camera.position.copy(flight.pos);
-            camera.quaternion.slerpQuaternions(arriveQuat, endQuat, k);
-          }
-
-          camera.updateMatrixWorld();
-          fx.step(dt, camera);
-          space?.step(dt);
-          if (diveT >= 1) phase = "fly";
-          return;
-        }
-
-        const live = !hud.dead;
-        const blank: Stick = {
-          x: 0, y: 0, aimX: 0, aimY: 0, roll: 0, strafe: 0, lift: 0, superBoost: false,
-          throttle: 0, fullStop: false, boosting: false, firing: false,
-          secondary: false, guard: false, mini: false,
-        };
-        const tFlight = performance.now();
-        const shieldsWere = flight.shields;
-        const res = stepFlight(flight, dt, live ? stick : blank, tipList, homeIndex);
-        dflow.add("flight", performance.now() - tFlight);
-        /* ---- flying into things ----
-           The ground and the towers are the flight model's rule: it owns the
-           bounce, the angle, the speed and the cost of grinding along the
-           surface, and there is one copy of that rule and it is here. The
-           HULL, though, is the server's number, so whatever the flight model
-           just took off is handed over and the local figure put back. Any
-           loss, not only the bang: most of what killing yourself on a planet
-           costs is the dragging afterwards, which raises no impact. */
-        const selfHurt = shieldsWere - flight.shields;
-        if (selfHurt > 0) {
-          flight.shields = shieldsWere;
-          room?.hurt(selfHurt);
-        }
-        if (res.hit) fx.boom(flight.pos.clone(), 1.2, "cold");
-        nearTower = res.nearTower;
-        dockBlock = res.dockBlock;
-        /* The resupply finished: in company the room holds the gauges, so it
-           is told, checks the ship is at a tower, and refills. */
-        if (res.docked) room?.dock();
-
-        /* ---- the ship you can see, and the camera behind it ----
-           The hull sits at the flight position and the CAMERA pulls back from
-           it, rather than the ship being pushed away from a fixed camera: a
-           ship that slid backwards out of its own cockpit would leave its guns
-           and its collider behind it.
-
-           Pulled back along the nose and lifted a little, so the hull sits low
-           in the frame and the crosshair is not behind it. */
-        if (shipModel && flight.view > 0.01) {
-          shipModel.visible = true;
-          shipModel.position.copy(flight.pos);
-          /* ---- WHICH WAY IS FORWARD ----
-             Not assumed. The first version took Synty hulls to face -Z, which is
-             what three's lookAt points down, and the ship flew backwards:
-             "it's pointing right at me instead of in the direction we're going."
-             Worse, the guns went with it — the muzzles are placed at the nose,
-             so a nose at the back put the fire behind the camera, which is the
-             fire appearing at the bottom of the screen.
-
-             The model's own geometry knows the answer. The collider was fitted
-             along the hull and its narrow end is the nose, so the direction from
-             the centre to that end IS forward, whichever axis the exporter
-             happened to use. Two bases are built from it and one is rotated onto
-             the other. */
-          shipM4.makeBasis(modelRight, modelUp, modelFwd);
-          worldRight.crossVectors(flight.up, flight.fwd).normalize();
-          worldM4.makeBasis(worldRight, flight.up, flight.fwd);
-          shipM4.transpose();
-          shipQuat.setFromRotationMatrix(worldM4.multiply(shipM4));
-
-          /* ---- LEANING INTO IT ----
-             The hull is drawn where it will be a fifth of a second from now, so
-             it visibly banks into a roll instead of sitting dead centre and
-             dead straight. The whole idea, and why it is one idea rather than
-             three, is in shipLean. The COLLIDER and the guns below keep the
-             true orientation. */
-          shipModel.quaternion.copy(shipQuat).multiply(stepLean(lean, shipQuat, dt));
-
-          /* And it slides a little in the frame as well as turning, which is
-             most of what sells it. Taken from where the leaned nose points
-             against where the real one does, so it needs no signs either. */
-          leanNose.set(0, 0, 1).applyQuaternion(shipModel.quaternion)
-            .sub(leanRef.set(0, 0, 1).applyQuaternion(shipQuat));
-          shipModel.position.addScaledVector(leanNose, LEAN_SLIDE * SHIP_LENGTH);
-
-          /* And the hull becomes what bullets hit, instead of the ball around
-             the camera. */
-          placeCollider(shipHull, flight.pos, shipQuat, SHIP_LENGTH, hullWorld);
-        } else if (shipModel) {
-          shipModel.visible = false;
-          hullWorld.length = 0;
-        }
-
-        /* THE SHIP'S OWN UP, not the planet's.
-           Deriving it from the position was what pinned the horizon level: the
-           camera stayed upright through a climb no matter where the nose was
-           pointing, which is exactly the sensation of not being allowed to
-           look up. Now a loop rolls the world over the top, because the ship
-           really is upside down at that moment. */
-        s.up.copy(flight.up);
-
-        /* ---- the cockpit ----
-           The camera IS the ship. There is no model in the middle of the view
-           because you are sitting in it, and the bank is applied to the camera
-           so a turn rolls the horizon rather than rolling a toy in front of
-           you. */
-        s.target.copy(flight.pos).addScaledVector(flight.fwd, 10);
-        s.m4.lookAt(flight.pos, s.target, s.up);
-        camera.quaternion.setFromRotationMatrix(s.m4);
-        s.qBank.setFromAxisAngle(s.zAxis, flight.bank * 0.55);
-        camera.quaternion.multiply(s.qBank);
-        /* The jolt. Applied after the cockpit's own orientation, so it throws
-           the whole view rather than steering the ship, and eased back to
-           nothing over its fifth of a second. */
-        if (shakeFor > 0) {
-          shakeFor = Math.max(0, shakeFor - dt);
-          const k = shakeFor / SHAKE_SECONDS;
-          const halfFov = (camera.fov * Math.PI) / 360;
-          const angle = Math.atan(Math.tan(halfFov) * SHAKE_FRACTION * 2) * k;
-          s.qBank.setFromAxisAngle(shakeAxis, angle);
-          camera.quaternion.multiply(s.qBank);
-        }
-
-        /* Behind and slightly above, or exactly at the ship in the cockpit. */
-        camera.position.copy(flight.pos);
-        if (flight.view > 0.01) {
-          const back = SHIP_LENGTH * (VIEW_NEAR + flight.view * VIEW_FAR);
-          camera.position
-            .addScaledVector(flight.fwd, -back)
-            .addScaledVector(flight.up, back * 0.30);
-        }
-        camera.updateMatrixWorld();
-
-        /* The ears go where the cockpit is, facing the way it faces, so a shot
-           behind you sounds behind you. */
-        setListener(
-          flight.pos.x, flight.pos.y, flight.pos.z,
-          flight.fwd.x, flight.fwd.y, flight.fwd.z,
-          s.up.x, s.up.y, s.up.z,
-        );
-
-        /* ---- the shield ----
-           Two pictures of one thing, and only ever one of them at a time.
-
-           From the COCKPIT it is the mandala: pale, half transparent, turning,
-           hung on the eye so the pilot looks through it. From the chase camera
-           it is the red wire sphere it has always been, because that is the
-           shield as seen from OUTSIDE and Geoff asked for that to stay.
-
-           Both are driven by the same strength, so they fade in and out with
-           the charge in exactly the same way. */
-        {
-          const guardStrength = Math.min(1, flight.guardFor / (GUARD_SECONDS * 0.6));
-          const inside = flight.view <= 0.01;
-          if (guardShell) {
-            guardShell.mesh.position.copy(flight.pos);
-            guardShell.step(performance.now() / 1000, inside ? 0 : guardStrength);
-          }
-          if (mandala) {
-            mandala.step(
-              performance.now() / 1000,
-              inside ? guardStrength : 0,
-              camera as THREE.PerspectiveCamera,
-            );
-          }
-        }
-
-        /* ---- the sky, and what you are near ----
-           The worlds turn on their own axes whether anyone is watching or not.
-           Coming within three of a body's own diameters names it in the corner;
-           leaving clears it. Compared by name so the HUD is only pushed when the
-           answer actually changes, rather than on every frame you spend near
-           the same planet. */
-        if (space) {
-          space.step(dt);
-          const found: SpaceBody | null = space.near(flight.pos, 3);
-          const name = found?.name ?? "";
-          if (name !== nearBody) {
-            nearBody = name;
-            setHud({ nearby: found ? { name: found.name, detail: found.detail } : null });
-          }
-        }
-
+        if (phase === "approach" && frameApproach(dt, camera, fx)) return;
+        if (phase === "dive" && frameDive(dt, flight, camera, fx)) return;
+        const res = frameFlight(dt, flight, fx);
+        frameShipAndCamera(dt, flight, camera);
+        frameShield(flight, camera);
+        frameSky(dt, flight);
         /* Whether the fight belongs to a room. Worked out before the guns,
            because it decides whether a trigger pull is a shot or a request. */
         const inRoom = !!room && room.status() === "live";
-
-        /* ---- guns ----
-           Fired from the edges of the frame at eye level, converging on the
-           crosshair, which is why the muzzles come from the camera's frustum
-           rather than from a fixed offset. */
-        /* ---- WHICH WAY THE GUNS POINT ----
-           Every primary weapon fires through the crosshair, and while the
-           crosshair is in the rear window the crosshair is BEHIND you, so
-           they all fire backwards: the pulse gun, the mini gun and the
-           beams alike. Only the pulse gun used to honour it, so a player
-           with the mini gun or a beam armed pressed the trigger in the rear
-           window and watched rounds leave the nose. Geoff, 2026-Sep-12:
-           "The rear gun doesn't seem to work." */
-        const rearAiming = rearOn && inRearWindow(cursor);
-        if (rearAiming !== hud.rearAim) setHud({ rearAim: rearAiming });
-        if (rearAiming) placeRearCamera(rearCamera, flight);
-        const backwards = rearAiming ? rearAim(rearCamera, cursor) : null;
-
-        /* The mini gun: one round from the top right, along the line the
-           POINTER is on rather than the ship's own axis. The ray is taken
-           straight from the camera through the crosshair, so what is under the
-           crosshair is what it hits. */
-        if (res.miniFired) {
-          const ndc = new THREE.Vector3(cursor.x * 2 - 1, -(cursor.y * 2 - 1), 0.5);
-          ndc.unproject(camera);
-          const aimDir = ndc.sub(camera.position).normalize();
-          const muzzle = new THREE.Vector3();
-          /* The SCREEN's axes, read off the camera itself, so the corner is the
-             corner of the picture whatever the bank is doing and wherever the
-             camera happens to be sitting. */
-          camRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
-          camUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
-          camFwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
-          miniMuzzle(
-            camera.position, camFwd, camRight, camUp, camera.fov, camera.aspect, muzzle,
-            /* In third person it comes out of the nose instead, the same way
-               the main guns already do. */
-            shipModel && flight.view > 0.01 ? shipNose(flight) : undefined,
-          );
-          /* ---- WHO PULLS THE TRIGGER ----
-             In a room the shot is a REQUEST, not a fact: the room decides
-             whether this ship had a round left, whether it may fire yet, and
-             what it hits. Firing locally as well would put a round in the air
-             that nobody else can see and that scores nothing. */
-          /* ---- WHERE THE MINI GUN IS AIMED ----
-             At the point under the crosshair, expressed from the SHIP, since
-             that is where the server fires from. It used to send the muzzle
-             as the position and the camera's own aim, so the server measured
-             the convergence from a point already a couple of units up and
-             out at the corner of the frame, and the stream landed up and to
-             the right of the crosshair. Geoff, 2026-Sep-12. */
-          if (backwards) {
-            /* Out of the tail, down the rear window's own line. */
-            const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
-            room?.fire("mini", tail, backwards, backwards, undefined, s.up);
-            fx.muzzle(tail);
-          } else {
-            const mark = camera.position.clone().addScaledVector(aimDir, CONVERGE);
-            room?.fire("mini", flight.pos, flight.fwd, mark.sub(flight.pos).normalize(), undefined, s.up);
-            fx.muzzle(muzzle);
-          }
-          playMiniSound();
-        }
-
-        /* ---- the beam ----
-           Not a round: everything in a narrow cone takes the damage at the
-           instant it fires, and the cone stays lit for half a second. Held
-           down, it simply fires again as soon as it is ready, which is the
-           same half second, so a held trigger reads as one continuous beam. */
-        const armed = weaponInSlot(weapons.primary + 1);
-        if (armed?.kind === "beam") {
-          beamAt -= dt;
-          if (stick.firing && beamAt <= 0 && flight.ammo >= 1) {
-            beamAt = BEAM_SECONDS;
-            flight.ammo -= 1;
-            const from = backwards ? tailOf(flight.pos, flight.fwd, SHIP_LENGTH) : shipNose(flight);
-            room?.fire("beam", from, backwards ?? flight.fwd, undefined, armed.key);
-            fx.muzzle(from);
-            playGunSound();
-          }
-        }
-
-        if (res.fired && backwards) {
-          /* ---- the rear gun ----
-             Geoff: "fire from the two sides of the mini-screen and go
-             towards wherever the mouse pointer is." So the muzzles are the
-             edges of the REAR camera's frame, as the main guns are the edges
-             of the main one, and the two streams cross on the crosshair's
-             spot in the window. The room is given the rear camera's place
-             (three units behind the ship, within its tolerance), the aim,
-             and the ship's up. */
-          const aim = backwards;
-          const rearUp = new THREE.Vector3(0, 1, 0).applyQuaternion(rearCamera.quaternion);
-          const muzzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
-          gunMuzzles(rearCamera.position, aim, rearUp, rearCamera.fov, rearCamera.aspect, muzzles);
-          room?.fire("main", rearCamera.position, aim, undefined, undefined, rearUp);
-          fx.muzzle(muzzles[0]);
-          fx.muzzle(muzzles[1]);
-          playGunSound();
-        } else if (res.fired) {
-          /* ---- where the guns are ----
-             In the cockpit they come from the EDGES of the frame at eye level,
-             which is the arcade convention and the only sensible answer when
-             there is no ship on screen to hang them off.
-
-             In third person there IS one, and fire that appears beside the
-             camera rather than at the hull reads as broken. So the muzzles move
-             to the ship's nose: the two barrels straddle it by a fifth of the
-             hull's length, still converging on the crosshair, so the rounds
-             leave the ship and meet where you are aiming. */
-          let at: [THREE.Vector3, THREE.Vector3] | undefined;
-          if (shipModel && flight.view > 0.01) at = shipBarrels(flight);
-          /* ---- WHO PULLS THE TRIGGER ----
-             In a room the shot is a REQUEST, not a fact: the room decides
-             whether this ship had rounds left, whether it may fire yet, and
-             what it hits. Firing locally as well would put rounds in the air
-             that nobody else can see and that score nothing. The muzzles are
-             still worked out here, because the flash is a local thing that
-             should happen the instant the trigger goes down. */
-          let muzzles: [THREE.Vector3, THREE.Vector3];
-          if (at) {
-            muzzles = at;
-          } else {
-            muzzles = [new THREE.Vector3(), new THREE.Vector3()];
-            gunMuzzles(flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, muzzles);
-          }
-          room?.fire("main", flight.pos, flight.fwd, undefined, undefined, s.up);
-          fx.muzzle(muzzles[0]);
-          fx.muzzle(muzzles[1]);
-          playGunSound();
-        }
-
-        /* ---- WHOSE FIGHT IS IT ----
-           In a room, the room's. It simulates the fighters, every round in the
-           air and the coins for everybody at once, and the cockpit's job is to
-           draw that rather than to run a second private copy of it. Two players
-           each stepping their own simulation would be two people in the same
-           sky shooting at different enemies, which is not multiplayer, it is
-           two games with a chat window.
-
-           Flying stays here either way. A ship that waited for a round trip
-           before it turned would feel broken however good the connection was,
-           so the stick still moves the ship at once and the position is
-           reported afterwards for everyone else to see. */
-        const tRoom = performance.now();
-        if (inRoom && room) {
-          room.step(dt);
-          room.report(flight.pos, flight.fwd, flight.guardFor > 0);
-
-          /* The room's fight, put where the drawing already looks for it. */
-          combat.enemies.length = 0;
-          let di = 0;
-          for (const e of room.enemies) {
-            /* A drone from the wire is drawn as a drone: the sphere pass reads
-               the flag, the colour comes from the drone tier, and the pulse
-               phase is stable per slot so the swarm does not throb in unison. */
-            if (e.drone) {
-              const cls = droneClass(e.tier);
-              combat.enemies.push({
-                id: e.id, pos: e.pos, fwd: e.fwd, roll: 0,
-                cls: { ...cls, weight: 0 } as ShipClass,
-                shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
-                spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
-                weave: 0, weaveDir: 1, mode: "in", breakAt: 0, rejoinAt: 0,
-                escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
-                drone: true, group: 0, fleet: 0, slot: 0, pulse: (di++ * 0.73) % (Math.PI * 2),
-              } as Enemy);
-              continue;
-            }
-            combat.enemies.push({
-              id: e.id, pos: e.pos, fwd: e.fwd, roll: 0,
-              cls: e.dragon ? DRAGON_CLASS : TIERS[Math.max(0, Math.min(TIERS.length - 1, e.tier - 1))],
-              ...(e.dragon ? { dragon: true as const, life: DRAGON_LIFE } : {}),
-              shield: e.shield, vel: new THREE.Vector3(), tumble: new THREE.Vector3(),
-              spin: new THREE.Vector3(), flash: 0, ammo: 0, reload: 0, fireAt: 0,
-              weave: 0, weaveDir: 1, mode: "in", breakAt: 0, rejoinAt: 0,
-              escape: new THREE.Vector3(0, 0, 1), passFor: 0, wave: 0,
-            });
-          }
-          /* ---- THE ROUNDS ARE FLOWN HERE ----
-             The room says what was fired and what stopped early; everything
-             in between is this cockpit flying the same rounds with the same
-             file the room uses. It used to be handed five hundred positions
-             twenty times a second, which was two thirds of the wire. */
-          for (const s of room.takeShots()) {
-            showBullet(combat, {
-              id: s.id, pos: s.pos, vel: s.vel, life: s.life,
-              hostile: s.hostile, mini: s.mini,
-              ...(s.orb ? { orb: true as const, phase: Math.random() * Math.PI * 2 } : {}),
-            });
-          }
-          for (const id of room.takeSpent()) dropBullet(combat, id);
-          stepShownBullets(combat, dt);
-          /* Beams too: yours and everyone else's, drawn from the room's list
-             so a beam is seen by the whole room and hits what the room says. */
-          /* ---- streaks ----
-             Every round in the air gets a line from where it was a fortieth
-             of a second ago to where it is now. Rebuilt each tick from the
-             wire rather than tracked, because the cockpit has no history of
-             a round it did not fire and cannot recognise one from one tick
-             to the next. */
-          combat.tracers.length = 0;
-          for (const b of combat.bullets) {
-            combat.tracers.push({
-              from: b.pos.clone().addScaledVector(b.vel, -STREAK_SECONDS),
-              to: b.pos,
-              life: TRACER_LIFE, hostile: b.hostile, mini: !!b.mini, live: true,
-            });
-          }
-          combat.torpedoes.length = 0;
-          for (const t of room.torpedoes) combat.torpedoes.push({ pos: t.pos, vel: t.vel, life: 1 });
-          /* Wreckage is the room's too, and it is SOLID: a round that hits a
-             piece is spent, so a cockpit that did not draw it watched shots
-             disappear against nothing. */
-          combat.junk.length = 0;
-          for (const j of room.junk) {
-            combat.junk.push({
-              pos: j.pos, rot: j.rot, vel: _zero, spin: _zero,
-              life: JUNK_LIFE, kind: j.kind as never,
-            });
-          }
-          combat.beams.length = 0;
-          for (const b of room.beams) combat.beams.push(b);
-          /* Gems are the room's: drawn from its list, never simulated here.
-             A private drop only ever arrives at its owner, so nothing here
-             has to hide anything. */
-          combat.gems.length = 0;
-          for (const g of room.gems) {
-            combat.gems.push({
-              id: g.id, tier: g.tier, pos: g.pos, vel: new THREE.Vector3(), spin: g.spin, body: 0,
-              ...(g.item ? { item: g.item, owner: g.owner, hidden: g.hidden } : {}),
-            });
-          }
-          combat.coins.length = 0;
-          for (const k of room.coins) {
-            combat.coins.push({ pos: k.pos, vel: new THREE.Vector3(), spin: 0, value: 0 });
-          }
-          combat.events.push(...room.takeEvents().map((e) => ({
-            kind: e.kind as never, at: e.at, power: e.power, who: e.who,
-            tier: e.tier, shield: e.shield, damage: e.damage, wave: e.wave,
-            guarded: e.guarded, item: e.item, id: e.id,
-            /* Carried through, or a correction from the room would be
-               dropped on the way to the handler that obeys it. */
-            snap: (e as { snap?: true }).snap,
-          })));
-
-          /* ---- ANTI-CHEAT: THE GAUGES ARE THE ROOM'S ----
-             Shield, ammo, torpedoes, guards, score and DIVI are all overwritten
-             from the wire while connected. A cockpit that decided its own score
-             is a cockpit that could be edited into deciding a better one, and
-             the whole reason the room exists is that it settles those numbers
-             where nobody can reach them. */
-          const g = room.gauges;
-          /* Not while a resupply is running: the gauges climb locally over
-             the four seconds and the room refills at the end, so taking the
-             room's numbers mid-way would pin them at empty until then.
-             DAMAGE is the exception. Anything that takes the hull down while
-             the animation is playing has to be shown, or a player can be
-             shot to pieces behind a bar that reads full and only find out
-             when they leave. */
-          const docking = flight.dock > 0 && flight.dock < 1;
-          const hurtWhileDocking = !!g && lastRoomShield >= 0 && g.shield < lastRoomShield - 0.5;
-          if (g) lastRoomShield = g.shield;
-          if (g && (!docking || hurtWhileDocking)) {
-            flight.shields = g.shield;
-            flight.ammo = g.ammo;
-            flight.torpedoes = g.torps;
-            flight.guards = g.guards;
-            score = g.score;
-            divi = g.divi;
-            /* ---- THE SERVER DECIDES WHEN YOU ARE DEAD ----
-               It holds the hull, so it is the only thing that can say. The
-               cockpit used to work this out from its own copy inside the
-               hit-event handler, which missed every death the handler did
-               not see: flying into the planet, for one, whose damage the
-               flight model works out and the server applies. */
-            if (g.dead && !hud.dead) die();
-            if (g.respawn > 0) respawnAt = performance.now() + g.respawn * 1000;
-          }
-          /* ---- WHICH WAVE IT IS ----
-             Read from the room's own state every tick rather than from the
-             announcement, because an announcement can be missed. When the
-             last player alive goes down the fight starts over at wave one,
-             and that reset happens on a tick with nobody flying, whose
-             events are cleared without being sent: the cockpit was never
-             told, and went on showing the wave it died in. Geoff,
-             2026-Sep-12: "instead of restarting the game like it should
-             have, it went directly to Wave 2." */
-          if (room.wave !== lastWaveSeen) {
-            lastWaveSeen = room.wave;
-            setHud(room.wave > 0
-              ? { wave: room.wave, waveAt: performance.now() }
-              : { wave: 0 });
-          }
-          /* Once. others() builds a fresh array each call. */
-          const crew = room.others();
-          if (peers) peers.draw(crew, camera);
-          /* How many are in the WORLD, not how many are on screen. */
-          setHud({ crew: room.crew() });
-        } else if (peers) {
-          peers.draw([], camera);
-        }
-
-        dflow.add("room", performance.now() - tRoom);
-        /* ---- THE FIGHT IS THE SERVER'S ----
-           Nothing here simulates it. There is one game and it runs in one
-           place; the cockpit flies the ship, draws what it is told and asks
-           for shots. This used to fall back to running the whole fight
-           locally whenever the connection was not up, which meant two copies
-           of every feature and, for anything hooked up to only one of them,
-           a bug that appeared or vanished depending on the network: the
-           tower resupply, torpedoes and the cheat keys all landed that way.
-           Geoff, 2026-Sep-12: "there's only ONE game, and it's always
-           multiplayer... There shouldn't be two different single or
-           multiplayer game modes." */
-        const tCombat = performance.now();
-        tellBonus();
-
-        /* One button does both jobs. If a torpedo is already in the air the
-           press sets it off; otherwise it launches the next one. That is what
-           "control-click again to detonate" means with a single control. */
-        if (res.heavyPress && backwards) {
-          /* A torpedo backwards, out of the tail. */
-          if (flight.torpedoes > 0) {
-            const aim = backwards;
-            const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
-            room?.fire("torp", tail, aim);
-            torpSentAt = performance.now();
-            playTorpedoSound();
-          }
-        } else if (res.heavyPress) {
-          const slot = weaponAt("secondary", weapons.secondary);
-          if (slot && !slot.ready) {
-            setHud({ note: `${slot.name}: not yet fitted`, noteAt: performance.now() });
-          } else {
-            /* ---- the torpedo is the server's ----
-               It flies there and comes back on the wire to be drawn. Press
-               once to launch, again while one of yours is still in the air to
-               set it off. */
-            const mineInAir = performance.now() - torpSentAt < TORPEDO_FUSE * 1000 && combat.torpedoes.length > 0;
-            if (mineInAir) { room?.detonate(); torpSentAt = 0; }
-            else if (flight.torpedoes > 0) {
-              room?.fire("torp", shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
-              torpSentAt = performance.now();
-              playTorpedoSound();
-            }
-          }
-        }
-
-        dflow.add("combat", performance.now() - tCombat);
-        const tEvents = performance.now();
-        for (const ev of combat.events) {
-          if (ev.kind === "incoming") {
-            /* The event carries how near the round is, which is what the alarm
-               turns into loudness. */
-            playIncomingWarning(ev.power);
-          } else if (ev.kind === "playerHit") {
-            if (flight.grace <= 0) {
-              /* Tell the cockpit to flash, and knock the view off centre in
-                 some direction that is not the same one every time. */
-              setHud({ hitAt: performance.now() });
-              shakeFor = SHAKE_SECONDS;
-              shakeAxis.set(Math.random() * 2 - 1, Math.random() * 2 - 1, 0).normalize();
-              /* The guard soaks four fifths of it, which is what makes ten of
-                 them worth spending carefully. */
-              const guarded = flight.guardFor > 0;
-              const soak = guarded ? 1 - GUARD_ABSORB : 1;
-              /* And it is worth HEARING that the button worked. */
-              if (guarded) playBounce();
-              flight.shields -= (ev.damage ?? 25) * soak;
-              flight.grace = 0.45;
-              /* Being shot at postpones the slow repair, same as flying into
-                 something does. */
-              flight.sinceHit = 0;
-              /* The big centred bar, for a second, coloured by how bad it is.
-                 Raised HERE rather than from the HUD's own polling, because a
-                 hit is an event and the bar is the game telling you about it. */
-              pulseHealth(flight.shields, MAX_SHIELD);
-              if (flight.shields <= 0) die();
-            }
-            fx.boom(ev.at, 1.4, "cold");
-          } else if (ev.kind === "enemyDown") {
-            fx.boom(ev.at, 3, "hot");
-            playShipExplosion();
-            /* The flock kill itself is the server's: it is the only thing
-               that sees every member and every shooter, and it arrives as its
-               own event (flockDown), below. */
-            if (ev.tier) {
-              lifetimeTiers[ev.tier - 1] = (lifetimeTiers[ev.tier - 1] ?? 0) + 1;
-              setHud({ tierKills: lifetimeTiers.slice() });
-            }
-          } else if (ev.kind === "enemyHit") {
-            /* Points are exactly the damage that landed, so a shot into a
-               fighter with ten left scores ten and not eighty. */
-            score += Math.round(ev.damage ?? 0);
-            /* A small spark where the shot landed. The bubble does the rest. */
-            fx.boom(ev.at, ev.power, "cold");
-          } else if (ev.kind === "flockDown") {
-            fx.boom(ev.at, 4, "hot");
-            playTorpedoBlast();
-            if (ev.who && room && ev.who === room.me()) {
-              flocks += 1;
-              setHud({ flocks, note: "FLOCK DOWN", noteAt: performance.now() });
-            }
-          } else if (ev.kind === "denied") {
-            /* ---- WHERE THE ROOM SAYS YOU ARE ----
-               Obeyed, not argued with. Ignoring it left the room's copy of
-               the ship behind after any lag spike, and from then on every
-               shot was refused for being fired from somewhere else: the guns
-               simply stopped working. */
-            if ((ev as { snap?: true }).snap && flight) {
-              flight.pos.copy(ev.at);
-              flight.alt = flight.pos.length() - R;
-            }
-            /* ---- THE SERVER SAID NO ----
-               And the cockpit used to say nothing at all: the refusal was
-               turned into an event that nothing handled, so a resupply the
-               server threw away still looked and sounded like a resupply.
-               Geoff, 2026-Sep-12: "I didn't see any indication that the
-               server was refusing the dock. It showed it as docked." Shown
-               now, and written down, because this is exactly where a bug
-               and a cheat look the same. */
-            const why = ev.who ?? "";
-            dflow.note(`refused: ${why}`);
-            if (performance.now() - deniedAt > 2000) {
-              deniedAt = performance.now();
-              setHud({ note: `REFUSED: ${why.toUpperCase()}`, noteAt: performance.now() });
-            }
-          } else if (ev.kind === "wingHit") {
-            fx.boom(ev.at, 0.9, "cold");
-          } else if (ev.kind === "wingDown") {
-            fx.boom(ev.at, 2.2, "hot");
-            playShipExplosion(0.8);
-            if (room && ev.who === room.me()) {
-              setHud({ note: "DRONE DOWN", noteAt: performance.now() });
-            }
-          } else if (ev.kind === "dragon") {
-            playTorpedoBlast();
-            setHud({ note: "A DRAGON", noteAt: performance.now() });
-          } else if (ev.kind === "dragonGone") {
-            fx.boom(ev.at, 1.5, "cold");
-          } else if (ev.kind === "drop") {
-            /* Something fell out of the wreck. A glint; the thing itself is
-               drawn from the gem list, and only its owner sees it. */
-            if (!ev.who || (room && ev.who === room.me())) fx.boom(ev.at, 0.9, "cold");
-          } else if (ev.kind === "gem") {
-            fx.boom(ev.at, 1.2, "cold");
-            playBounce();
-            if (!ev.who || (room && ev.who === room.me())) {
-              if (ev.item) {
-                /* Into the inventory, SEALED: the player opens it there (I).
-                   Solo, this is the client's roll and the client's pickup; in
-                   a room, the room's, relayed. Either way the account row is
-                   what keeps it (watchLoadout). */
-                addSphere(ev.item, 1);
-                const spec = itemByKey(ev.item);
-                setHud({ note: `T${spec?.tier ?? 1} SPHERE: OPEN IT IN YOUR INVENTORY (I)`, noteAt: performance.now() });
-              } else {
-                setHud({ note: `GEM: ${["yellow", "green", "blue", "purple", "red", "white", "fuchsia"][(ev.tier ?? 1) - 1] ?? ""}`, noteAt: performance.now() });
-              }
-            }
-          } else if (ev.kind === "coinHit" || ev.kind === "gemHit") {
-            fx.boom(ev.at, 0.5, "cold");
-          } else if (ev.kind === "coin") {
-            playCoin();
-            /* Picked up. Kept for ever, not for this life: earnings survive
-               being shot down. */
-            divi += ev.value ?? 0;
-            addDivi(ev.value ?? 0);
-            /* One point for each DIVI brought home, which is what buys guns. */
-            setHud({ divi, points: earnPoints(ev.value ?? 0) });
-          } else if (ev.kind === "enemyShot") {
-            playShotAt(ev.at.x, ev.at.y, ev.at.z, 0.7);
-          } else if (ev.kind === "junkGone") {
-            fx.boom(ev.at, ev.power, "hot");
-            playShipExplosion(0.45);
-          } else if (ev.kind === "torpedoBlast") {
-            fx.boom(ev.at, 6, "torpedo");
-            playTorpedoBlast();
-          } else if (ev.kind === "towerHit") {
-            fx.boom(ev.at, 2, "hot");
-            playShipExplosion(0.55);
-          } else {
-            fx.boom(ev.at, 0.7, "hot");
-          }
-        }
-        if (flight.shields <= 0) die();
-
-        /* Keep one model per live fighter, cloning and hiding rather than
-           building and destroying. */
-        /* A model per fighter, and it has to match that fighter's tier, so a
-           slot whose occupant changed tier is rebuilt rather than recoloured. */
-        dflow.add("events", performance.now() - tEvents);
-        const tMeshes = performance.now();
-        /* ---- HULLS FOLLOW ENEMIES, NOT SLOTS ----
-           A hull model used to belong to an INDEX in the enemy list. Every
-           time one enemy died the ones after it shifted down a slot, the slot
-           saw a different tier, threw its model away and cloned a fresh one
-           from the prototype: seven meshes and three line sets per fighter,
-           several fighters per death, every death. DFlow showed it: the
-           meshes stage spiking to 22ms and a hundred stalls the report could
-           only call "outside our code", which is the garbage collector
-           sweeping up the clones. Now a model is keyed by the enemy's own id
-           and follows it for life; a model whose enemy has gone is hidden
-           and kept in a pool for the next of its tier. Nothing is cloned
-           after the first wave of each tier. */
-        seenEnemies.clear();
-        for (const e of combat.enemies) {
-          if (e.drone || e.dragon) continue;
-          const id = e.id ?? -1;
-          const tier = e.cls.tier;
-          let slot = enemyRigs.get(id);
-          if (slot && slot.tier !== tier) { releaseHull(slot); enemyRigs.delete(id); slot = undefined; }
-          if (!slot) {
-            const pool = hullPools.get(tier);
-            const reused = pool && pool.length ? pool.pop()! : null;
-            if (reused) {
-              slot = reused;
-            } else {
-              const m = protos[tier - 1].clone(true);
-              m.userData.tier = tier;
-              m.scale.setScalar(ENEMY_SCALE);
-              scene.add(m);
-              enemyMeshes.push(m);
-              const rig = makeShieldRig(0x66ccff);
-              scene.add(rig.group);
-              enemyShields.push(rig);
-              slot = { mesh: m, rig, tier };
-            }
-            slot.mesh.visible = true;
-            slot.rig.group.visible = true;
-            enemyRigs.set(id, slot);
-          }
-          seenEnemies.add(id);
-        }
-        for (const [id, slot] of enemyRigs) {
-          if (seenEnemies.has(id)) continue;
-          releaseHull(slot);
-          enemyRigs.delete(id);
-        }
-        /* The dragon, if it is here. */
-        const dragon = combat.enemies.find((e) => e.dragon) ?? null;
-        if (dragon) ensureDragonRig();
-        if (dragonRig) {
-          dragonRig.group.visible = !!dragon;
-          if (dragon) {
-            dragonRig.group.position.copy(dragon.pos);
-            s.target.copy(dragon.pos).addScaledVector(dragon.fwd, 10);
-            s.m4.lookAt(dragon.pos, s.target, dragon.pos.clone().normalize());
-            dragonRig.group.quaternion.setFromRotationMatrix(s.m4);
-            dragonRig.mixer.update(Math.min(0.1, dt));
-          }
-        }
-        const nowS = performance.now() / 1000;
-        for (const e of combat.enemies) {
-          if (e.drone || e.dragon) continue;
-          const slot = enemyRigs.get(e.id ?? -1);
-          if (!slot) continue;
-          const m = slot.mesh, rig = slot.rig;
-          m.position.copy(e.pos);
-          s.target.copy(e.pos).addScaledVector(e.fwd, 10);
-          s.m4.lookAt(e.pos, s.target, e.pos.clone().normalize());
-          m.quaternion.setFromRotationMatrix(s.m4);
-          s.qBank.setFromEuler(new THREE.Euler(e.spin.x, e.spin.y, e.spin.z + e.roll));
-          m.quaternion.multiply(s.qBank);
-          rig.group.position.copy(e.pos);
-          rig.setColour(e.cls.colour);
-          rig.setLevel(e.shield, e.cls.shieldMax);
-          rig.step(nowS, Math.min(1, e.flash / 0.6));
-        }
-
-        /* ---- the thrust ----
-           Follows what the ship is DOING rather than what the key is doing.
-           Holding shift with an empty boost tank, or while docked, or after
-           being shot down, all move the ship not at all, and a roar with no
-           acceleration behind it is worse than silence. */
-        const thrusting = (stick.boosting || stick.superBoost) && flight.boost > 0
-          && flight.dock <= 0 && !hud.dead;
-        if (thrusting !== wasThrusting) {
-          wasThrusting = thrusting;
-          if (thrusting) startBoostSound(); else stopBoostSound();
-        }
-        /* Super boost: the same roar, faster and higher, for as long as TAB
-           is held with fuel to burn. */
-        if (thrusting) setBoostPitch(flight.superOn ? 1.35 : 1);
-        if (flight.superOn !== hud.superBoost || flight.extras.superMult !== hud.superMult) {
-          setHud({ superBoost: flight.superOn, superMult: flight.extras.superMult });
-        }
-
-        /* The recharging station, on for exactly as long as the resupply. */
-        const docking = flight.dock > 0;
-        if (docking !== wasDocking) {
-          wasDocking = docking;
-          if (docking) startRechargeSound(); else stopRechargeSound();
-        }
-
-        if (combat.torpedoes.length !== lastInFlight || flight.torpedoes !== lastRack) {
-          lastInFlight = combat.torpedoes.length;
-          lastRack = flight.torpedoes;
-          setHud({ inFlight: lastInFlight, torpedoes: lastRack });
-        }
-
-        /* Everything raised this frame has now been drawn and scored. */
-        clearEvents(combat);
-
-        dflow.add("meshes", performance.now() - tMeshes);
-        dflow.time("draw.bullets", () => fx!.drawBullets(combat.bullets));
-        dflow.time("draw.beams", () => fx!.drawBeams(combat.beams, BEAM_SECONDS));
-        /* The swarm and its fire. Both are instanced, so the cost of drawing a
-           hundred and forty spheres is the cost of drawing one. */
-        /* Reused lists rather than two fresh arrays from filter() a frame. */
-        droneList.length = 0;
-        for (const e of combat.enemies) if (e.drone) droneList.push(e);
-        orbList.length = 0;
-        for (const b of combat.bullets) if (b.orb) orbList.push(b);
-        dflow.time("draw.drones", () => fx!.drawDrones(droneList, nowS));
-        dflow.time("draw.orbs", () => fx!.drawOrbs(orbList, nowS));
-        dflow.time("draw.torps", () => fx!.drawTorpedoes(combat.torpedoes));
-        dflow.time("draw.junk", () => fx!.drawJunk(combat.junk));
-        dflow.time("draw.tracers", () => fx!.drawTracers(combat.tracers, TRACER_LIFE));
-        dflow.time("draw.coins", () => fx!.drawCoins(combat.coins));
-        dflow.time("draw.gems", () => { fx!.drawGems(combat.gems); fx!.drawDrops(combat.gems); });
-        dflow.time("draw.wings", () => drawWings());
-        const tDock = performance.now();
-        /* The tether, drawn only while a resupply is running. */
-        fx.drawDockLink(
-          flight.dock > 0 ? flight.pos : null,
-          flight.dock > 0 && flight.dockedAt >= 0 ? tipList[flight.dockedAt] ?? null : null,
-          performance.now() / 1000,
-        );
-        dflow.add("draw.dock", performance.now() - tDock);
-        fx.step(dt, camera);
-
-        const now = performance.now();
-        if (now - hudAt > 100) {
-          hudAt = now;
-          setHud({
-            speed: flight.speed,
-            alt: flight.alt,
-            shields: Math.max(0, flight.shields),
-            ammo: flight.ammo,
-            boost: flight.boost,
-            dock: flight.dock,
-            dockName: flight.dockedAt >= 0 ? labelFor(ipList[flight.dockedAt] ?? "") : "",
-            homeDist: homeIndex >= 0 ? flight.pos.distanceTo(tipList[homeIndex]) : 0,
-            torpedoes: flight.torpedoes,
-            inFlight: combat.torpedoes.length,
-            throttle: flight.throttle,
-            guards: flight.guards,
-            guarding: flight.guardFor > 0,
-            contacts: combat.enemies.length,
-            kills: Math.floor(combat.kills),
-            score,
-            junk: combat.junk.length,
-            bonus: (room?.gauges?.bonus ?? 0) > 0,
-            docked: flight.dock >= 1,
-            nearTower,
-            dockBlock,
-            respawnIn: Math.max(0, (respawnAt - performance.now()) / 1000),
-          });
-        }
+        const backwards = frameGuns(dt, flight, camera, fx, res);
+        frameRoom(dt, flight, camera, inRoom);
+        frameTorpedo(flight, res, backwards);
+        frameEvents(flight, fx);
+        frameDrawAndGauges(dt, flight, camera, fx, scene);
       } catch (err) {
         setHud({ broken: err instanceof Error ? err.message : "the game stopped", ready: false });
         flight = null;
@@ -2149,6 +2203,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     }
 
   return {
+
     attach(api) {
       /* ---- FIRST, AND ON ITS OWN ----
          Before the ship models, before the map tiles, before anything else the
