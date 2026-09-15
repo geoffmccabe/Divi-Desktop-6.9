@@ -2931,6 +2931,28 @@ fn main() {
                     Err(e) => applog::log(format!("startup: node bring-up stopped — {e}")),
                 }
             });
+            // Forward the supervisor's own map events to the interface. The
+            // supervisor has no tauri dependency on purpose, so it pushes into a
+            // bounded channel and this thread is what turns those into webview
+            // events. The channel drops rather than blocks, so a slow or closed
+            // window can never hold up an RPC call.
+            if let Some(rx) = dd69_supervisor::mapfeed::subscribe() {
+                use tauri::Emitter;
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Ends by itself when the supervisor side is dropped.
+                    while let Ok(ev) = rx.recv() {
+                        let _ = handle.emit(
+                            "dd69://map-event",
+                            serde_json::json!({
+                                "trigger": ev.trigger,
+                                "ip": ev.ip,
+                                "detail": ev.detail,
+                            }),
+                        );
+                    }
+                });
+            }
             // The App Builder's service, started beside the wallet, in the
             // background so the window need not wait on finding Node.
             tauri::async_runtime::spawn_blocking(builder_service::start);

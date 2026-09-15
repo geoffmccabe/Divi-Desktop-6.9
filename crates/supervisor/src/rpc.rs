@@ -129,11 +129,24 @@ impl RpcClient {
             .post(&self.url)
             .set("Authorization", &self.auth)
             .send_string(&body.to_string());
+        // Every RPC call in the app funnels through here, which makes this the
+        // one honest place to tell the map whether the node is answering. A
+        // non-200 with a JSON body still means the node ANSWERED: it disagreed
+        // with us, which is not the same as being unreachable.
         let text = match resp {
-            Ok(r) => r.into_string().map_err(|e| e.to_string())?,
+            Ok(r) => {
+                crate::mapfeed::node_answered();
+                r.into_string().map_err(|e| e.to_string())?
+            }
             // divid returns RPC errors with non-200 status but a JSON body.
-            Err(ureq::Error::Status(_, r)) => r.into_string().map_err(|e| e.to_string())?,
-            Err(e) => return Err(format!("cannot reach the node: {e}")),
+            Err(ureq::Error::Status(_, r)) => {
+                crate::mapfeed::node_answered();
+                r.into_string().map_err(|e| e.to_string())?
+            }
+            Err(e) => {
+                crate::mapfeed::node_silent(&format!("{method} did not answer"));
+                return Err(format!("cannot reach the node: {e}"));
+            }
         };
         serde_json::from_str(&text).map_err(|_| "the node sent an unreadable reply".to_string())
     }

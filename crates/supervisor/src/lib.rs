@@ -23,6 +23,7 @@ pub mod health;
 pub mod identity;
 pub mod bearer;
 pub mod install;
+pub mod mapfeed;
 pub mod marketmaker;
 pub mod mempool;
 pub mod multisig;

@@ -195,6 +195,23 @@ export function triggerHsl(t: MapTriggerName): string {
   return m ? `${m[1]}, ${m[2]}%, ${m[3]}%` : "0, 0%, 100%";
 }
 
+// ── Where our own node is ──────────────────────────────────────────────────
+// Events about ourselves (an RPC round-trip, a new block) arrive from code that
+// has no idea where we are on the map. The map records our verified location
+// here once it knows it, so those events can be placed without every producer
+// having to carry a coordinate around.
+
+let selfLoc: { lat: number; lon: number } | null = null;
+
+export function setMapSelf(lat: number, lon: number) {
+  selfLoc = { lat, lon };
+}
+
+/** Null until our own location has actually been resolved. */
+export function mapSelf(): { lat: number; lon: number } | null {
+  return selfLoc;
+}
+
 export interface MapEvent {
   id: number;
   trigger: MapTriggerName;

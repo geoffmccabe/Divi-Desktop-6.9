@@ -6,7 +6,8 @@ import { emitPeerCount } from "./peerEvents";
 /* v2 event-driven animation system. Runs alongside the old polling one and is
    off unless the user flips it with Cmd-Shift-N — see mapAnimFlag.ts. Every
    call below is behind isMapAnimV2(), so with the flag off this is inert. */
-import { beginProbeWave, emitMap, type ProbeTarget } from "./mapEvents";
+import { beginProbeWave, emitMap, setMapSelf, type ProbeTarget } from "./mapEvents";
+import { startMapFeedBridge } from "./mapFeedBridge";
 import { installMapAnimHotkey, isMapAnimV2, useMapAnimV2 } from "./mapAnimFlag";
 import { drawMapAnim } from "./mapAnimRender";
 import { BlockChainViz } from "./BlockChainViz";
@@ -477,6 +478,18 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   // follow. Off by default, so the map behaves exactly as it always has.
   const animV2 = useMapAnimV2();
   useEffect(() => { installMapAnimHotkey(); }, []);
+  /* Supervisor-side events (RPC round-trips, new blocks). Rust sends meaning
+     only; we supply the location from what the map has already verified. */
+  useEffect(
+    () =>
+      startMapFeedBridge((ip) => {
+        const kp = knownRef.current[ip];
+        return kp && typeof kp.lat === "number" && typeof kp.lon === "number"
+          ? { lat: kp.lat, lon: kp.lon }
+          : null;
+      }),
+    [],
+  );
   const lastProbe = useRef(0); // last re-ping time (re-ping every 60s)
   const arcFx = useRef<Map<string, ArcFx>>(new Map()); // per-peer flex + colour state
   // Clicking our own node toggles "network only": hide the purple peer layer and
@@ -567,6 +580,9 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     // Self is per-node, so the "your node" marker follows the active node on a
     // switch. The broader network mesh (below) is shared and stays intact.
     selfRef.current = loadSelfGeo(nodeId);
+    // Use the cached location straight away, so events arriving before the
+    // first poll have somewhere to land instead of being dropped.
+    if (selfRef.current) setMapSelf(selfRef.current.lat, selfRef.current.lon);
 
     // Load the 30-day known network + geolocate them (for city labels).
     const known = loadKnown();
@@ -613,11 +629,9 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         const s = await networkPeers();
         if (!alive || !s) return;
         setSnap(s);
-        // v2: our own node just completed a real RPC round-trip. Gold rings at
-        // home mean "I asked my node and it answered", not "a timer fired".
-        if (isMapAnimV2() && selfRef.current) {
-          emitMap("self.ok", { lat: selfRef.current.lat, lon: selfRef.current.lon });
-        }
+        /* self.ok / self.fail are emitted by the Rust side now (rpc.rs), which
+           sees EVERY call rather than just this poll. Emitting here too would
+           double every heartbeat. */
         // Tell the Peers counter what we just saw, so it ticks up (and flashes)
         // at the same moment the peer turns pink on the map rather than up to
         // five seconds later on its own poll.
@@ -694,6 +708,9 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           // The node's verified location → cache it (stable + persisted to disk).
           if (s.selfIp && m[s.selfIp]) {
             selfRef.current = m[s.selfIp];
+            // v2: let events about ourselves that arrive from the Rust side be
+            // placed without every producer having to know any geography.
+            setMapSelf(m[s.selfIp].lat, m[s.selfIp].lon);
             saveSelfGeo(nodeId, m[s.selfIp]);
             const g0 = m[s.selfIp];
             // If our public IP just CHANGED (travel / new ISP), the IP we had
@@ -774,12 +791,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           instantRevealRef.current = false; // only the first poll after a switch is instant
         });
       } catch {
-        /* keep last */
-        // v2: the node did NOT answer. Red rings at home make an RPC stall
-        // visible immediately instead of the UI just quietly freezing.
-        if (isMapAnimV2() && selfRef.current) {
-          emitMap("self.fail", { lat: selfRef.current.lat, lon: selfRef.current.lon });
-        }
+        /* keep last — the red "node did not answer" rings come from rpc.rs */
       }
     };
     poll();

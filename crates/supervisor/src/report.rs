@@ -82,6 +82,11 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
     };
 
     let blocks = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64());
+    // Tell the map when the chain actually moves. Only a genuine change of
+    // height produces anything, so a poll that finds the same block is silent.
+    if let Some(h) = blocks {
+        crate::mapfeed::block_height(h);
+    }
     let mut staking = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
     // The node's "staking status" flag FLICKERS — it can read true even when the
     // wallet is LOCKED and can't actually sign a stake. Recompute it from stable
