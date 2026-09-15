@@ -135,8 +135,8 @@ async function main() {
   ok("nothing is heard once nobody listens", armoury === heard, `${heard} -> ${armoury}`);
 
   /* ---- YOU HAVE DIED ---- */
-  const hud = readFileSync(`${process.cwd()}/src/wallet/rebels/RebelsHud.tsx`, "utf8");
-  ok("dying says YOU HAVE DIED, in the banner shown while dead", /hud\.dead && \(\s*<div className="orbit-died"[^>]*>YOU HAVE DIED<\/div>/.test(hud));
+  const hud = readFileSync(`${process.cwd()}/src/wallet/rebels/cockpit/overlays.tsx`, "utf8");
+  ok("dying says YOU HAVE DIED, in the banner shown while dead", /hud\.dead (?:&&|\?) \(\s*<div className="orbit-died"[^>]*>YOU HAVE DIED<\/div>/.test(hud));
 
   console.log(out.join("\n"));
   console.log(`\n${out.length - failures} passed, ${failures} failed`);

@@ -358,3 +358,37 @@ a step is next changed. The phone work does not need it: it needs the pilot (ste
 a) and the cockpit screen in pieces (G8).
 
 **Suite:** 34 green, including cockpit 113. tsc clean.
+
+### G8 done: the cockpit screen in pieces (2026-Sep-15)
+
+**Proof first.** Before touching anything, the cockpit screen was drawn to plain
+HTML in 23 situations (waiting for the globe, connecting, refused, flying,
+reversing, low and over-full shields, a wave with flocks and wreckage, near a
+world, rear view, firing backwards, a fresh and an old note, reconnecting, lost
+the fight, docking, resupplied, dead counting down, dead ready, dead offline,
+broken before launch, broken in flight) and recorded in
+ui/src/wallet/rebels/golden/hud-render-v1.json (commit 117872a). After the split
+all 23 are identical, character for character.
+Test: ui/src/wallet/rebels/rebelsHud.test.ts, run by
+scripts/run-rebels-hud-tests.sh.
+
+**The split, code moved unchanged:**
+- ui/src/wallet/rebels/cockpit/useCockpit.ts: what the cockpit knows and does.
+  HUD state, open panels, the hit flash, the wave title's timing, the crosshair
+  following the controller, the Escape / # / I / ? keys, and the click fence.
+- ui/src/wallet/rebels/cockpit/readouts.tsx: flight readout, the top-right
+  corner (with the held recharges row), dock resupply, score corner, gauges.
+- ui/src/wallet/rebels/cockpit/overlays.tsx: hit flash, YOU HAVE DIED, the wave
+  title, aiming marks (rear label, boresight, crosshair), exit button, note
+  line, connection warning.
+- ui/src/wallet/rebels/cockpit/cards.tsx: NO LAUNCH, the panels, the launch card,
+  the death card.
+- ui/src/wallet/rebels/RebelsHud.tsx: now the desktop layout, 40 lines, placing
+  the pieces in the same order as before. A phone layout calls the same hook and
+  places the same pieces its own way.
+
+**Not covered by the recording:** things that only exist after timers or key
+presses (the flash, the wave title fading, open panels). Those were moved
+without edits and are type-checked; worth a glance in play.
+
+**Suite:** 35 green (the new cockpit screen test added). tsc clean.

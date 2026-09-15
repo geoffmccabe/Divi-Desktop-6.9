@@ -20,7 +20,7 @@ import { NO_EXTRAS, BOOST, STRAFE_SPEED } from "./orbitFlight";
 import { readFileSync } from "node:fs";
 /* Bundled into a temporary file, so the path is taken from the repo rather
    than from wherever the bundle happens to sit. */
-const hudSource = readFileSync(`${process.cwd()}/src/wallet/rebels/RebelsHud.tsx`, "utf8");
+const hudSource = readFileSync(`${process.cwd()}/src/wallet/rebels/cockpit/cards.tsx`, "utf8");
 
 const out: string[] = [];
 let failures = 0;
