@@ -1326,6 +1326,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
 // T. TOUCH: the real game flown by thumbs alone, through the touch module a
 //    phone door plugs in. No keys and no mouse anywhere in this block.
 {
+  store.delete("dd69.rebels.touch.autoFire");
   const touch = createTouchInput();
   setPlatform({ ...HEADLESS, id: "test-touch-input", identity: appIdentity, input: touch });
   const g = stubGlobe([["self-ip", home]]);
@@ -1340,28 +1341,32 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
     const e = { changedTouches: [{ identifier: id, clientX: x, clientY: y, target }], cancelable: true, preventDefault: () => {} };
     for (const fn of winHandlers[kind] ?? []) fn(e);
   };
+  const tap = (id: number, action: string) => { finger("touchstart", id, 700, 50, action); finger("touchend", id, 700, 50); };
   ok("the touch module is listening", (winHandlers.touchstart ?? []).length === 1);
 
-  /* Right thumb, slid up: the ship turns toward the reticle, as with the mouse. */
+  /* LEFT THUMB, pushed up: the ship turns toward the crosshair, as with the mouse. */
   const aim = () => g.camera.getWorldDirection(new THREE.Vector3());
   const aimBefore = aim();
-  finger("touchstart", 1, 600, 300);
-  finger("touchmove", 1, 600, 300 - 72);
-  ok("sliding the right thumb up moves the reticle up", ctl.cursor().y < 0.1, `${ctl.cursor().y.toFixed(2)}`);
+  finger("touchstart", 1, 200, 300);
+  finger("touchmove", 1, 200, 300 - 72);
+  ok("pushing the left thumb up moves the crosshair up", ctl.cursor().y < 0.1, `${ctl.cursor().y.toFixed(2)}`);
   for (let i = 0; i < 40; i++) ctl.frame(1 / 60);
   ok("and turns the ship", aimBefore.angleTo(aim()) > 0.5, `${aimBefore.angleTo(aim()).toFixed(2)} radians`);
   finger("touchend", 1, 0, 0);
-  ok("lifting the thumb centres the reticle", ctl.cursor().x === 0.5 && ctl.cursor().y === 0.5);
+  ok("lifting the thumb centres the crosshair", ctl.cursor().x === 0.5 && ctl.cursor().y === 0.5);
 
-  /* Left thumb, pulled down: the throttle comes back. */
+  /* BRAKE, held: slower. Let go: the lever is back where it was. */
+  const lever = ctl.hud().throttle;
   const speed0 = ctl.hud().speed;
-  finger("touchstart", 2, 200, 300);
-  finger("touchmove", 2, 200, 300 + 72);
+  finger("touchstart", 2, 650, 500, "brake");
   for (let i = 0; i < 60 * 2; i++) ctl.frame(1 / 60);
-  finger("touchend", 2, 0, 0);
-  const readBy = Date.now() + 400;
+  let readBy = Date.now() + 400;
   while (Date.now() < readBy) ctl.frame(1 / 60);
-  ok("pulling the left thumb back slows the ship", ctl.hud().speed < speed0, `${speed0.toFixed(1)} -> ${ctl.hud().speed.toFixed(1)}`);
+  ok("holding BRAKE slows the ship", ctl.hud().speed < speed0 * 0.5, `${speed0.toFixed(1)} -> ${ctl.hud().speed.toFixed(1)}`);
+  finger("touchend", 2, 650, 500);
+  readBy = Date.now() + 400;
+  while (Date.now() < readBy) ctl.frame(1 / 60);
+  ok("letting go puts the throttle back", Math.abs(ctl.hud().throttle - lever) < 1e-6, `${lever} -> ${ctl.hud().throttle}`);
 
   /* FIRE, held. */
   const ammo0 = ctl.hud().ammo;
@@ -1374,13 +1379,51 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   /* The weapon button steps to the next gun the ship owns (earlier blocks
      bought the mini gun and a beam), and never onto a "buy it" note. */
   const p0 = ctl.hud().primary;
-  finger("touchstart", 4, 700, 50, "weapon");
-  finger("touchend", 4, 700, 50);
+  tap(4, "weapon");
   const p1 = ctl.hud().primary;
   ok("the weapon button steps to another owned gun", p1 !== p0 && !/SPACESHIPS/.test(ctl.hud().note), `${p0} -> ${p1}, ${ctl.hud().note}`);
-  finger("touchstart", 5, 700, 50, "weaponBack");
-  finger("touchend", 5, 700, 50);
+  tap(5, "weaponBack");
   ok("and back again", ctl.hud().primary === p0, `${p1} -> ${ctl.hud().primary}`);
+
+  /* ---- AIM ASSIST AND AUTO FIRE ----
+     A fighter is held a little right of the crosshair, twenty units ahead of
+     the camera, with no thumb on the glass at all. */
+  const seat = [...(server as unknown as { seats: Map<string, { body: { pos: THREE.Vector3; fwd: THREE.Vector3 } }> }).seats.values()][0];
+  const combatNow = server!.combat as import("./rebelsCombat").CombatState;
+  const { runRoomCheat } = await import("../../../../contrib/rebels-room/src/cheats");
+  runRoomCheat(combatNow, seat.body, "11");
+  const target = () => combatNow.enemies[0];
+  ok("(setup) a fighter in the room", !!target());
+  const hold = () => {
+    const e = target();
+    if (!e) return;
+    const fwd = g.camera.getWorldDirection(new THREE.Vector3());
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(g.camera.quaternion);
+    e.pos.copy(g.camera.position).addScaledVector(fwd, 20).addScaledVector(right, 1.2);
+    e.vel.set(0, 0, 0);
+  };
+  const flyHeld = (frames: number) => { for (let i = 0; i < frames; i++) { hold(); ctl.frame(1 / 60); } };
+  const shields0 = ctl.hud().shields;
+  flyHeld(20);
+  const x0 = ctl.cursor().x;
+  flyHeld(60);
+  ok("an enemy near the crosshair draws it in", ctl.cursor().x > x0 + 0.01 || ctl.hud().onTarget, `${x0.toFixed(3)} -> ${ctl.cursor().x.toFixed(3)}`);
+  const onBy = Date.now() + 5000;
+  while (!ctl.hud().onTarget && Date.now() < onBy) flyHeld(1);
+  ok("until it is on target", ctl.hud().onTarget);
+  const ammoA = ctl.hud().ammo;
+  const fireBy = Date.now() + 5000;
+  while (ctl.hud().ammo >= ammoA && Date.now() < fireBy) flyHeld(1);
+  ok("auto fire shoots with no finger on FIRE", ctl.hud().ammo < ammoA, `${ammoA} -> ${ctl.hud().ammo}`);
+
+  tap(6, "auto");
+  ok("AUTO turns it off", touch.picture().autoFire === false);
+  flyHeld(10);
+  const ammoB = ctl.hud().ammo;
+  flyHeld(90);
+  ok("and then nothing fires by itself", ctl.hud().ammo === ammoB, `${ammoB} -> ${ctl.hud().ammo}, on target ${ctl.hud().onTarget}`);
+  tap(7, "auto");
+  void shields0;
   ctl.detach();
   ok("detaching stops the touch listening", (winHandlers.touchstart ?? []).length === 0);
   await settle();

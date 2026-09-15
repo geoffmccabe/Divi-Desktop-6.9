@@ -43,6 +43,7 @@ async function main() {
     primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
     wave: 0, waveAt: 0, respawnIn: 0,
     divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
+    onTarget: false,
   };
   const flying: Partial<Hud> = {
     ready: true, room: "live", launched: true, speed: 1.37, alt: 3.2, throttle: 0.8, towers: 212, homeDist: 4.4,

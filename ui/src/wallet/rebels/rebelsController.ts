@@ -20,7 +20,7 @@ import {
   createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE, CONVERGE, JUNK_LIFE,
   showBullet, dropBullet, stepShownBullets,
   miniMuzzle,
-  STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS,
+  STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS, ENEMY_FIRE_RANGE,
   type CombatState,
   type Enemy, type ShipClass,
 } from "./rebelsCombat";
@@ -169,6 +169,9 @@ export interface HudState {
   dead: boolean;
   launched: boolean;
   broken: string | null;
+  /** An enemy is under the crosshair (aim assist is on). A phone layout colours
+   *  the crosshair by it; auto fire shoots while it is true. */
+  onTarget: boolean;
 }
 
 const BLANK: HudState = {
@@ -181,6 +184,7 @@ const BLANK: HudState = {
   primary: 0, secondary: 0, note: "", noteAt: 0, nearby: null, contacts: 0, kills: 0, score: 0, nearTower: Infinity, dockBlock: "",
   wave: 0, waveAt: 0, respawnIn: 0,
   divi: 0, tierKills: new Array(7).fill(0), junk: 0, bonus: false, docked: false, dead: false, launched: false, broken: null,
+  onTarget: false,
 };
 
 /** Fighters are drawn about a unit across, against three-unit towers. */
@@ -708,6 +712,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     secondary: false, guard: false, mini: false,
   };
 
+  /* ---- AIM ASSIST, AUTO FIRE AND THE BRAKE: FOR THUMBS ----
+     Phone space games (Galaxy on Fire 3) and phone shooters (Call of Duty
+     Mobile's default mode) both do this, because a thumb on glass cannot aim
+     the way a mouse can: the crosshair eases onto an enemy that is close to it,
+     and the guns fire on their own while one is under it. Off unless the door's
+     input turns it on, so keyboard and mouse play is exactly as it was.
+     The brake is those games' other half: held, the ship slows; let go, it goes
+     back to the speed the lever was at. */
+  const assist = { autoFire: false, magnet: false };
+  /** The trigger as the hands hold it, apart from what auto fire adds. */
+  let triggerHeld = false;
+  let autoFiring = false;
+  /** The lever's setting when the brake went on, or null when it is off. */
+  let brakeFrom: number | null = null;
+
   /* What is in the two trigger slots. Saved, so a pilot who prefers the mini
      gun does not have to say so every time they launch. */
   const weapons: Loadout = loadLoadout();
@@ -1065,11 +1084,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (c.boost !== undefined) stick.boosting = c.boost;
       if (c.superBoost !== undefined) stick.superBoost = c.superBoost;
       if (c.guard !== undefined) stick.guard = c.guard;
+      if (c.brake !== undefined && flight) {
+        if (c.brake && brakeFrom === null) { brakeFrom = flight.throttle; flight.throttle = 0; }
+        else if (!c.brake && brakeFrom !== null) { flight.throttle = brakeFrom; brakeFrom = null; }
+      }
       stick.mini = weapons.primary === 1;
     },
     trigger: (which, down) => {
       if (which === "secondary") stick.secondary = down;
-      else stick.firing = down;
+      else { triggerHeld = down; stick.firing = down || autoFiring; }
+    },
+    setAssist: (a) => {
+      if (a.autoFire !== undefined) assist.autoFire = a.autoFire;
+      if (a.magnet !== undefined) assist.magnet = a.magnet;
     },
     moveCursor: (x, y) => {
       cursor.x = x;
@@ -1085,6 +1112,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     },
     /* Losing the window must not leave the throttle open or a key stuck down. */
     releaseAll: () => {
+      triggerHeld = false;
+      if (brakeFrom !== null && flight) flight.throttle = brakeFrom;
+      brakeFrom = null;
       stick.firing = false; stick.boosting = false; stick.secondary = false;
       stick.guard = false; stick.fullStop = false;
       stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.lift = 0; stick.superBoost = false; stick.throttle = 0;
@@ -1517,6 +1547,43 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     }
   }
   /** The guns, the mini gun and the beam, forwards or through the rear window. Returns the backwards aim, or null. */
+  /** How near the crosshair an enemy must be for the crosshair to ease onto
+   *  it, as a share of the screen's height. */
+  const ASSIST_REACH = 0.12;
+  /** Near enough to count as under the crosshair: auto fire shoots. */
+  const ASSIST_ON = 0.035;
+  /** How quickly the crosshair eases in, per second. Gentle on purpose: the
+   *  thumb still aims, and a desktop player in the same fight has no help. */
+  const ASSIST_PULL = 2.5;
+  const assistPoint = new THREE.Vector3();
+
+  /** Aim assist and auto fire, before the flight step reads the trigger. */
+  function frameAssist(dt: number, camera: THREE.PerspectiveCamera): void {
+    let best: { x: number; y: number; d: number } | null = null;
+    if ((assist.magnet || assist.autoFire) && flying && !hud.dead && !rearOn) {
+      const aspect = camera.aspect || 1;
+      for (const e of combat.enemies) {
+        if (e.pos.distanceTo(camera.position) > ENEMY_FIRE_RANGE) continue;
+        assistPoint.copy(e.pos).project(camera);
+        /* Behind the camera, or off the picture. */
+        if (assistPoint.z > 1 || Math.abs(assistPoint.x) > 1 || Math.abs(assistPoint.y) > 1) continue;
+        const x = (assistPoint.x + 1) / 2, y = (1 - assistPoint.y) / 2;
+        const d = Math.hypot((x - cursor.x) * aspect, y - cursor.y);
+        if (d < ASSIST_REACH && (!best || d < best.d)) best = { x, y, d };
+      }
+    }
+    if (best && assist.magnet) {
+      const k = Math.min(1, dt * ASSIST_PULL);
+      cursor.x += (best.x - cursor.x) * k;
+      cursor.y += (best.y - cursor.y) * k;
+      aimFromCursor();
+    }
+    const on = !!best && best.d < ASSIST_ON;
+    if (on !== hud.onTarget) setHud({ onTarget: on });
+    autoFiring = assist.autoFire && on;
+    stick.firing = triggerHeld || autoFiring;
+  }
+
   function frameGuns(dt: number, flight: Flight, camera: THREE.PerspectiveCamera, fx: Fx, res: FlightStep): THREE.Vector3 | null {
     const s = scratch;
     /* ---- guns ----
@@ -2200,6 +2267,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       try {
         if (phase === "approach" && frameApproach(dt, camera, fx)) return;
         if (phase === "dive" && frameDive(dt, flight, camera, fx)) return;
+        frameAssist(dt, camera);
         const res = frameFlight(dt, flight, fx);
         frameShipAndCamera(dt, flight, camera);
         frameShield(flight, camera);

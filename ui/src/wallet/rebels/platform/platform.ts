@@ -153,6 +153,8 @@ export interface Pilot {
   setControls(c: Partial<{
     pitch: number; yaw: number; roll: number; strafe: number; lift: number; throttle: number;
     fullStop: boolean; boost: boolean; superBoost: boolean; guard: boolean;
+    /** Held: slow down. Let go: back to where the lever was. */
+    brake: boolean;
   }>): void;
   /** Hold or release a trigger: the primary (left button, space) or the
    *  secondary (right button). */
@@ -160,6 +162,10 @@ export interface Pilot {
   /** Put the reticle at this point of the frame, 0 to 1 across and down. The
    *  ship turns toward it and the mini gun fires at it. */
   moveCursor(x: number, y: number): void;
+  /** Thumb help: the crosshair eases onto a nearby enemy (magnet) and the guns
+   *  fire while one is under it (autoFire). Both off unless an input turns them
+   *  on; keyboard and mouse never do. */
+  setAssist(a: { autoFire?: boolean; magnet?: boolean }): void;
   /** The reticle back to the middle, and no turning (the pointer left). */
   centreCursor(): void;
   /** Everything let go (the window lost focus). */
