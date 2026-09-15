@@ -74,6 +74,19 @@ async function main() {
   current = "saveFlyingShip"; await ships.saveFlyingShip("space_SM_Ship_Fighter_01");
   current = "pullFleet"; await ships.pullFleet();
 
+  const recorded = seen.slice();
+
+  /* ---- ready for sign-in: a door's credential is carried ---- */
+  seen.length = 0;
+  const { DEFAULT_ACCOUNT } = await import("./platform/defaults");
+  setPlatform({ ...HEADLESS, id: "test-signed-in", account: { ...DEFAULT_ACCOUNT, bearer: () => "player-session-token" } });
+  current = "signed in"; await scores.fetchTop("best", 1);
+  const signed = seen[0];
+  ok("a signed-in door's credential is sent as the bearer", signed?.headers.Authorization === "Bearer player-session-token", signed?.headers.Authorization);
+  ok("while the public key stays the api key", signed?.headers.apikey === DEFAULT_ACCOUNT.anonKey);
+  seen.length = 0;
+  seen.push(...recorded);
+
   const text = JSON.stringify(seen, null, 1);
   const GOLDEN = `${process.cwd()}/src/wallet/rebels/golden/account-requests-v1.json`;
   if (process.env.ACCOUNT_GOLDEN_RECORD === "1") {

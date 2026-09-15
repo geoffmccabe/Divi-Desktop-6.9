@@ -239,3 +239,25 @@ The same table as the build agent's document, section 4.
   a throwing listener does not silence the others, and unsubscribing works.
   dropCharts listens to the store instead of counting window events.
 - **Suite:** 33 green. tsc clean.
+
+### G5 done: one account and data module (2026-Sep-15)
+1. **Recorded first**, committed as 27ff262: ui/src/wallet/rebels/rebelsAccount.test.ts
+   drives every account function against a fake network and saves all 14
+   requests (address, method, sorted headers, body) to
+   ui/src/wallet/rebels/golden/account-requests-v1.json. The functions are
+   fetchDropConfig, saveDropConfig, saveLoadoutRemote, loadLoadoutRemote, forge,
+   recordScore, fetchTop best and total, myTotals, saveShip, myFleet,
+   saveFlyingShip and pullFleet. Two recordings were identical.
+2. **The module:** ui/src/wallet/rebels/rebelsAccount.ts, with `accountRead(table
+   and query)` and `accountCall(function, arguments)`. The connection is the
+   door's: `account` in the contract (address, public key, and an optional
+   signed-in `bearer`), defaulting to DEFAULT_ACCOUNT (the Divi Desktop project
+   and its public key) in the HEADLESS, app and web doors.
+3. **Moved onto it:** all ten call sites in dropConfigRemote.ts, rebelsForge.ts,
+   rebelsLoadout.ts, rebelsScores.ts and rebelsShips.ts. Their five copies of the
+   headers are gone. The room server reaches the drop charts through the same
+   module (HEADLESS connection).
+4. **Proof:** all 14 requests are identical to the recording. A door with a
+   signed-in credential sends it as the bearer while the public key stays the
+   api key, which is what sign-in (B6) needs.
+5. **Suite:** 34 green. tsc clean for ui/ and contrib/rebels-room/.

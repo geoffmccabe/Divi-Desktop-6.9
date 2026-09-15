@@ -60,6 +60,15 @@ export interface RebelsStorage {
   removeItem(key: string): void;
 }
 
+/** How the game reaches the account database (the Divi Desktop Supabase
+ *  project). `bearer` is a signed-in player's credential when the door has one;
+ *  without it the public key is used, as it always was. */
+export interface RebelsAccountConnection {
+  url: string;
+  anonKey: string;
+  bearer?: () => string | null;
+}
+
 /** What this player may do with ships. A guest flies the first hull as it
  *  comes; signing up opens the rest. */
 export interface RebelsLimits {
@@ -178,6 +187,7 @@ export interface RebelsPlatform {
   identity: RebelsIdentity;
   storage: RebelsStorage;
   limits: RebelsLimits;
+  account: RebelsAccountConnection;
   /** The multiplayer server's address. */
   roomBase: string;
   /** Whether this player's wallet just won a stake (it decks out their tower).

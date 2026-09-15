@@ -4,19 +4,14 @@
 // be reached or holds something the validator refuses, so a bad save can
 // never stop items dropping altogether.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
+import { accountRead, accountCall } from "./rebelsAccount";
 import { DEFAULT_DROP_CONFIG, validateDropConfig, type DropConfig } from "./dropCharts";
 
-const headers = {
-  apikey: SUPABASE_ANON_KEY,
-  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  "Content-Type": "application/json",
-};
 
 /** The live config, or the default. Never throws. */
 export async function fetchDropConfig(fetchFn: typeof fetch = fetch): Promise<{ config: DropConfig; live: boolean; error?: string }> {
   try {
-    const res = await fetchFn(`${SUPABASE_URL}/rest/v1/rebels_drops?id=eq.live&select=config`, { headers });
+    const res = await accountRead("rebels_drops?id=eq.live&select=config", fetchFn);
     if (!res.ok) return { config: DEFAULT_DROP_CONFIG, live: false, error: `http ${res.status}` };
     const rows = (await res.json()) as Array<{ config?: unknown }>;
     if (!rows.length) return { config: DEFAULT_DROP_CONFIG, live: false, error: "no live row yet" };
@@ -33,9 +28,7 @@ export async function saveDropConfig(secret: string, config: DropConfig, fetchFn
   const v = validateDropConfig(config);
   if ("errors" in v) return { error: v.errors.join("; ") };
   try {
-    const res = await fetchFn(`${SUPABASE_URL}/rest/v1/rpc/rebels_drops_save`, {
-      method: "POST", headers, body: JSON.stringify({ p_secret: secret, p_config: v.ok }),
-    });
+    const res = await accountCall("rebels_drops_save", { p_secret: secret, p_config: v.ok }, fetchFn);
     if (res.ok) return { ok: true };
     let why = `http ${res.status}`;
     try { const j = (await res.json()) as { message?: string }; if (j.message) why = j.message; } catch { /* plain */ }

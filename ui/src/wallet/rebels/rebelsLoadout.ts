@@ -10,7 +10,7 @@
 // It is the client's word, as the scores are. See the migration file for
 // what that means and what the next step is.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
+import { accountRead, accountCall } from "./rebelsAccount";
 import { playerName } from "./rebelsScores";
 import { platform } from "./platform/current";
 
@@ -25,28 +25,19 @@ import { loadoutSnapshot, mergeLoadout, subscribeArmoury, type Loadout } from ".
 let remoteOn = true;
 export function setLoadoutRemote(on: boolean): void { remoteOn = on; }
 
-const headers = {
-  apikey: SUPABASE_ANON_KEY,
-  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  "Content-Type": "application/json",
-};
 
 export async function saveLoadoutRemote(who = accountKey()): Promise<boolean> {
   if (!who || !remoteOn) return false;
   const l = loadoutSnapshot();
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/rebels_loadout_save`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        p_owner_key: who,
-        p_owner_name: playerName(),
-        p_points_earned: Math.round(l.earned * 10000) / 10000,
-        p_points_spent: Math.round(l.spent * 10000) / 10000,
-        p_owned: l.owned,
-        p_purchases: l.purchases,
-        p_items: l.items,
-      }),
+    const res = await accountCall("rebels_loadout_save", {
+      p_owner_key: who,
+      p_owner_name: playerName(),
+      p_points_earned: Math.round(l.earned * 10000) / 10000,
+      p_points_spent: Math.round(l.spent * 10000) / 10000,
+      p_owned: l.owned,
+      p_purchases: l.purchases,
+      p_items: l.items,
     });
     return res.ok;
   } catch {
@@ -57,11 +48,10 @@ export async function saveLoadoutRemote(who = accountKey()): Promise<boolean> {
 export async function loadLoadoutRemote(who = accountKey()): Promise<boolean> {
   if (!who || !remoteOn) return false;
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/rebels_loadout` +
+    const res = await accountRead(
+      "rebels_loadout" +
         `?owner_key=eq.${encodeURIComponent(who.toLowerCase())}` +
-        `&select=points_earned,points_spent,owned,purchases,items`,
-      { headers },
+        "&select=points_earned,points_spent,owned,purchases,items",
     );
     if (!res.ok) return false;
     const rows = (await res.json()) as Array<Record<string, unknown>>;

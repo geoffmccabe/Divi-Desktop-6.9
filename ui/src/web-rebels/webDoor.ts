@@ -5,7 +5,7 @@
 // a guest's DIVI is banked on the server and cashing it out asks them to sign in.
 
 import type { RebelsPlatform, RebelsStorage } from "../wallet/rebels/platform/platform";
-import { DEFAULT_ROOM_BASE, DESKTOP_DETAIL, LOCAL_STORAGE } from "../wallet/rebels/platform/defaults";
+import { DEFAULT_ACCOUNT, DEFAULT_ROOM_BASE, DESKTOP_DETAIL, LOCAL_STORAGE } from "../wallet/rebels/platform/defaults";
 import { desktopInput } from "../wallet/rebels/platform/desktopInput";
 import { isDiviAddress } from "./diviAddress";
 import { fetchWebPrices } from "./webPrice";
@@ -32,6 +32,8 @@ export function createWebDoor(opts: {
     storage: opts.storage ?? LOCAL_STORAGE,
     /* A guest flies the first hull as it comes, until they sign up. */
     limits: { customiseShips: false, why: GUEST_SHIP_LIMIT },
+    /* The same project and public key as the app; sign-in will add a credential. */
+    account: DEFAULT_ACCOUNT,
     roomBase: opts.roomBase ?? DEFAULT_ROOM_BASE,
     /* No staking wallet on the web. */
     wonStakeRecently: () => false,
