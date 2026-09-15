@@ -72,7 +72,7 @@ fn artifact() -> Option<Artifact> {
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     return Some(Artifact {
         file: "divid69-linux-x86_64.tar.gz",
-        sha256: "04d3fe12ea4008224ecceab37376c5575cef74ab7e243add99ce8e63461651c2",
+        sha256: "162965ac37a79c04bd50c59f16849225ade409c263d5c57a2d5137ffc5d4543f",
     });
 
     // Windows x86_64: packaged the same way (.tar.gz, which Windows 10+ extracts
@@ -81,7 +81,7 @@ fn artifact() -> Option<Artifact> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     return Some(Artifact {
         file: "divid69-windows-x86_64.tar.gz",
-        sha256: "700834e81a94d67b0ac8d1339a49bcb0065460adeea3f0b441cb5554444ee010",
+        sha256: "10123696683d0a88a7172e0984f25c9463e01fc2d4b6f90ad509e89e9bd45266",
     });
 
     #[cfg(not(any(
