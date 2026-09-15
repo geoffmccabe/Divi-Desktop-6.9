@@ -41,6 +41,7 @@ pub mod payreq;
 pub mod poe;
 pub mod price;
 pub mod report;
+pub mod reachable;
 pub mod rpc;
 pub mod state;
 pub mod wallet;

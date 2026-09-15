@@ -354,6 +354,10 @@ export const securityTools = () => invoke<string[]>("security_tools");
 // never re-quarantines it). Progress arrives as dd69://update-progress events.
 // Resolves with the installed version; rejects with a plain-English reason.
 export const updateInstall = () => invoke<string>("update_install");
+/* Restart into the version just installed. Without this the update lands on
+   disk but the OLD process keeps running, so the wallet looks unchanged and
+   goes on advertising the same update. */
+export const updateRelaunch = () => invoke<void>("update_relaunch");
 // Latest DIVI/USD from the shared CMC feed (no per-user key) — used to price PoE.
 export const priceLatest = () => traceExternal("price", invoke<number | null>("price_latest"));
 export interface StaleBlock {

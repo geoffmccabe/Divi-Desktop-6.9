@@ -314,6 +314,40 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
 ///
 /// An existing `divi.conf` is never touched. Someone who already runs a node
 /// has their own settings and we have no business rewriting them.
+/// The config file DD69 manages. Only ever the one in OUR data directory.
+pub fn conf_path() -> PathBuf {
+    crate::config::dd69_datadir().join("divi.conf")
+}
+
+/// The config as text, or None if there isn't one yet.
+pub fn read_conf_text() -> Option<String> {
+    std::fs::read_to_string(conf_path()).ok()
+}
+
+/// Set one `key=value` line, replacing every existing occurrence.
+///
+/// Refuses to touch a config we did not write. Someone running their own node
+/// with a hand-tuned config should not have it silently edited by a wallet, and
+/// a setting we appended to a file whose conventions we don't know could break
+/// their node in ways they would struggle to trace back to us.
+pub fn set_conf_flag(key: &str, value: &str) -> Result<(), String> {
+    let path = conf_path();
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read the node settings: {e}"))?;
+    if !text.contains("Written by DD69") {
+        return Err("this node's settings file wasn't written by DD69, so it is left alone".into());
+    }
+    let prefix = format!("{key}=");
+    let mut out: String = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with(&prefix))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    out.push_str(&format!("{key}={value}\n"));
+    std::fs::write(&path, out).map_err(|e| format!("cannot save the node settings: {e}"))?;
+    restrict_to_owner(&path);
+    Ok(())
+}
+
 pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
     let datadir = crate::config::dd69_datadir();
     let conf = datadir.join("divi.conf");
@@ -367,7 +401,15 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                     .unwrap_or(false)
             });
             let fix_queue = !has_queue || weak_queue;
-            if ours && (has_allowip || !has_addressindex || fix_threads || fix_queue) {
+            //   5. upnp missing entirely means this config predates the fix that
+            //      lets a node accept incoming connections. Such a node dials out
+            //      and nothing dials in: it stakes fine but is invisible to the
+            //      network, because no peer can list it and its address never
+            //      spreads. Add it only when ABSENT — never overwrite upnp=0,
+            //      which is a deliberate choice made in Settings.
+            let has_upnp = text.lines().any(|l| l.trim_start().starts_with("upnp="));
+            let fix_upnp = !has_upnp;
+            if ours && (has_allowip || !has_addressindex || fix_threads || fix_queue || fix_upnp) {
                 let mut fixed: String = text
                     .lines()
                     .filter(|l| !l.trim_start().starts_with("rpcallowip="))
@@ -384,9 +426,13 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                 if fix_queue {
                     fixed.push_str("rpcworkqueue=64\n");
                 }
+                if fix_upnp {
+                    fixed.push_str("upnp=1\n");
+                    fixed.push_str("discover=1\n");
+                }
                 let _ = std::fs::write(&conf, fixed);
                 restrict_to_owner(&conf);
-                crate::setuplog::log("node settings: repaired existing divi.conf (updated one or more of: rpcallowip removed, addressindex, rpcthreads, rpcworkqueue)");
+                crate::setuplog::log("node settings: repaired existing divi.conf (updated one or more of: rpcallowip removed, addressindex, rpcthreads, rpcworkqueue, upnp)");
             } else {
                 crate::setuplog::log("node settings: existing divi.conf is already correct");
             }
@@ -419,6 +465,14 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
          rpcport=51473\n\
          server=1\n\
          listen=1\n\
+         # upnp asks the router to open the peer port so other nodes can DIAL IN.\n\
+         # Without it a home node can only dial out: it stakes perfectly well but\n\
+         # is invisible to the network, since nobody can connect to it and its\n\
+         # address never spreads. Every DD69 install before this was in that\n\
+         # state. Turn it off in Settings if you would rather not accept\n\
+         # incoming connections.\n\
+         upnp=1\n\
+         discover=1\n\
          rpcthreads=16\n\
          rpcworkqueue=64\n\
          maxconnections=32\n\

@@ -1732,6 +1732,73 @@ async fn update_install(app: tauri::AppHandle) -> Result<String, String> {
     Ok(version)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReachabilityDto {
+    reachable: bool,
+    inbound: u32,
+    outbound: u32,
+    listening: bool,
+    upnp: bool,
+    port: u16,
+    addresses: Vec<String>,
+    known: bool,
+}
+
+/// Can the rest of the network reach this node, or does it only dial out?
+///
+/// Zero inbound connections with no advertised address means invisible: the
+/// node stakes fine, but nobody can list it and its address never spreads.
+#[tauri::command]
+fn node_reachability() -> ReachabilityDto {
+    // No node configured yet: report nothing rather than claiming unreachable,
+    // which would put a scary warning in front of someone mid-setup.
+    let Ok(cfg) = NodeConfig::load() else {
+        return ReachabilityDto {
+            reachable: false, inbound: 0, outbound: 0, listening: false,
+            upnp: false, port: dd69_supervisor::reachable::P2P_PORT,
+            addresses: vec![], known: false,
+        };
+    };
+    let r = dd69_supervisor::reachable::status(&cfg);
+    ReachabilityDto {
+        reachable: r.reachable,
+        inbound: r.inbound,
+        outbound: r.outbound,
+        listening: r.listening,
+        upnp: r.upnp,
+        port: r.port,
+        addresses: r.addresses,
+        known: r.known,
+    }
+}
+
+/// Turn automatic router port-opening on or off. Takes effect when the node
+/// next restarts; we do not bounce it out from under a staking user.
+#[tauri::command]
+fn set_node_upnp(enabled: bool) -> Result<(), String> {
+    dd69_supervisor::reachable::set_upnp(enabled)
+}
+
+/// Restart into the version that was just installed.
+///
+/// WITHOUT THIS THE UPDATE APPEARS TO DO NOTHING. download_and_install writes
+/// the new app to disk, but the process already running is still the old
+/// binary — so the wallet carried on as before and its version check kept
+/// reporting the old number, which made the "update available" notice flash
+/// again immediately. It looked like a failed update; it was a finished update
+/// that nobody had started.
+///
+/// There is no way to avoid the restart: the interface is compiled into this
+/// executable, so new code cannot run until the process is replaced. The node
+/// is a SEPARATE process and is deliberately left alone, so syncing and staking
+/// carry on across the restart.
+#[tauri::command]
+fn update_relaunch(app: tauri::AppHandle) {
+    applog::log("update: restarting into the newly installed version");
+    app.restart();
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -3072,6 +3139,9 @@ fn main() {
             update_check,
             security_tools,
             update_install,
+            update_relaunch,
+            node_reachability,
+            set_node_upnp,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { invoke } from "./tauri";
-import { securityTools, updateInstall, type UpdateInfo } from "./wallet/api";
+import { securityTools, updateInstall, updateRelaunch, type UpdateInfo } from "./wallet/api";
 
 // The center modal opened from the flashing "UPDATE TO vX.Y.Z" in the sidebar.
 // Built on the app's own modal shell (poe-modal-*) so it matches every other
@@ -50,6 +50,21 @@ export function UpdateModal({ info, onClose }: { info: UpdateInfo; onClose: () =
     };
   }, [onClose, phase]);
 
+  /* The update is on disk, but THIS process is still the old binary. Until it
+     is replaced the wallet looks untouched and goes on advertising the same
+     update, which reads as an updater that did nothing. So restart into it,
+     after a beat so the user sees what happened. The node is a separate
+     process and keeps running. */
+  useEffect(() => {
+    if (phase !== "ready") return;
+    const t = setTimeout(() => {
+      updateRelaunch().catch(() => {
+        /* Refused: the manual button in the modal is the fallback. */
+      });
+    }, 2200);
+    return () => clearTimeout(t);
+  }, [phase]);
+
   const run = async () => {
     setPhase("working"); setErr(""); setGot(0);
     try {
@@ -90,8 +105,18 @@ export function UpdateModal({ info, onClose }: { info: UpdateInfo; onClose: () =
 
           {phase === "ready" ? (
             <p className="wl-note">
-              Version {info.latest} is installed. <strong>Quit and reopen Divi Desktop</strong> to
-              finish — your node keeps running in the meantime.
+              Version {info.latest} is installed. <strong>Restarting now</strong> to finish.
+              Your node keeps running throughout, so syncing and staking are not
+              interrupted.
+              <br />
+              <button
+                type="button"
+                className="wl-btn"
+                style={{ marginTop: 10 }}
+                onClick={() => { updateRelaunch().catch(() => {}); }}
+              >
+                Restart now
+              </button>
             </p>
           ) : (
             <>
