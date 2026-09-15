@@ -1030,7 +1030,17 @@ code, .mono { font-family: var(--font-mono); }
 .nm-out { background: hsl(var(--primary)); } /* Active Peers — matches connection arcs */
 .nm-in { background: hsl(210 85% 62%); } /* Full Network — matches the blue background mesh */
 .nm-self { background: hsl(var(--warning)); }
-.nm-ghost { background: hsl(var(--map-offline)); opacity: 0.55; } /* Seen before — remembered, not confirmed connected right now */
+.nm-ghost { background: hsl(var(--map-offline)); opacity: 0.55; }
+/* Shown instead of the fiat value while the node is still reading the chain,
+   so a not-yet-counted balance is never presented as a settled zero. */
+.bl-syncing {
+  font-size: 0.68rem;
+  line-height: 1.35;
+  opacity: 0.85;
+  color: hsl(var(--warning));
+  max-width: 22rem;
+}
+ /* Seen before — remembered, not confirmed connected right now */
 /* v2 animation legend: the colour ladder a node walks as we learn about it. */
 .nm-seek { background: hsl(var(--map-discovery-pulse)); }
 .nm-deadc { background: hsl(var(--map-dead)); }
