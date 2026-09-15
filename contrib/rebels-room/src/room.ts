@@ -55,6 +55,9 @@ import {
   r1, type ClientMessage, type ServerMessage, type Vec,
   type PaintWire, type PaintPart, nextRoom, guestIdOk,
 } from "./protocol";
+import {
+  packPlayer, packEnemy, packShot, packCoin, packTorpedo, packJunk, packBeam, packGem, packWing, type WingRow,
+} from "../../../ui/src/wallet/rebels/rebelsWire";
 
 /** Twenty ticks a second. Fast enough for dogfighting, cheap enough to run
  *  dozens of rooms; the cockpit interpolates between them. */
@@ -1338,21 +1341,16 @@ export class RebelsRoom {
         mine.set(g.owner ?? "", list);
       } else shared.push(g);
     }
-    const gemWire = (g: Gem) => [
-      r1(g.pos.x), r1(g.pos.y), r1(g.pos.z), g.tier, Math.round(g.spin * 100) / 100, g.id,
-      ...(g.item ? [g.item, g.owner ?? "", Math.round(g.hidden ?? 0)] : []),
-    ];
+    const gemWire = (g: Gem) => packGem(g.pos, g.tier, g.spin, g.id,
+      g.item ? { key: g.item, owner: g.owner, hidden: g.hidden } : undefined);
     /* The wingmen, whose and where. They point where their owner points, so
        the cockpit takes the heading from the ship they belong to. */
-    const wings: Array<[string, number, number, number, number, number, number, number]> = [];
+    const wings: WingRow[] = [];
     for (const s of this.seats.values()) {
       if (!s.joined || s.dead) continue;
       for (const wing of s.wings) {
         if (wing.hull <= 0) continue;
-        wings.push([
-          s.id, wing.slot, r1(wing.pos.x), r1(wing.pos.y), r1(wing.pos.z),
-          Math.max(0, Math.round(wing.hull)), wing.hullMax, wing.tier,
-        ]);
+        wings.push(packWing(s.id, wing.slot, wing.pos, wing.hull, wing.hullMax, wing.tier));
       }
     }
     /* ---- THE SHOT, NOT THE ROUND ----
@@ -1406,11 +1404,7 @@ export class RebelsRoom {
       players.push({
         at: s.body.pos,
         key: s.id,
-        row: [
-          s.id, r1(s.body.pos.x), r1(s.body.pos.y), r1(s.body.pos.z),
-          r1(s.body.fwd.x), r1(s.body.fwd.y), r1(s.body.fwd.z),
-          s.body.guard ? 1 : 0, Math.max(0, Math.round(s.shield)),
-        ],
+        row: packPlayer(s.id, s.body.pos, s.body.fwd, !!s.body.guard, s.shield),
       });
     }
     const enemies: Array<Row<unknown>> = c.enemies.map((e) => ({
@@ -1419,51 +1413,32 @@ export class RebelsRoom {
       /* The dragon is an apparition the size of a house and it is there for
          ten seconds a minute at most: everybody sees it, wherever they are. */
       ...(e.dragon ? { always: true as const } : {}),
-      row: [
-        r1(e.pos.x), r1(e.pos.y), r1(e.pos.z),
-        r1(e.fwd.x), r1(e.fwd.y), r1(e.fwd.z),
-        e.cls.tier, Math.max(0, Math.round(e.shield)), e.cls.shieldMax,
-        /* A drone is drawn as a sphere, a fighter as a hull: the cockpit has
-           to be told which. And WHICH enemy, so its hull model follows it. */
-        e.dragon ? 2 : e.drone ? 1 : 0, e.id ?? 0,
-      ],
+      /* A drone is drawn as a sphere, a fighter as a hull: the cockpit has
+         to be told which. And WHICH enemy, so its hull model follows it. */
+      row: packEnemy(e.pos, e.fwd, e.cls.tier, e.shield, e.cls.shieldMax, e, e.id),
     }));
     const shots: Array<Row<unknown>> = fired.map((b) => ({
       at: b.pos,
       /* Your own rounds always reach you, however far the shot was taken
          from: you pulled the trigger and the flash has already gone off. */
       ...(b.owner ? { only: undefined } : {}),
-      row: [
-        b.id ?? 0,
-        r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
-        r1(b.vel.x), r1(b.vel.y), r1(b.vel.z),
-        (b.hostile ? 1 : 0) | (b.mini ? 2 : 0) | (b.orb ? 4 : 0),
-        Math.round(b.life * 100) / 100,
-      ],
+      row: packShot(b.id, b.pos, b.vel, b, b.life),
       owner: b.owner,
     } as Row<unknown> & { owner?: string }));
     const coins: Array<Row<unknown>> = c.coins.map((k) => ({
-      at: k.pos, row: [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)],
+      at: k.pos, row: packCoin(k.pos),
     }));
     const torps: Array<Row<unknown>> = c.torpedoes.map((t) => ({
       at: t.pos,
-      row: [r1(t.pos.x), r1(t.pos.y), r1(t.pos.z), r1(t.vel.x), r1(t.vel.y), r1(t.vel.z)],
+      row: packTorpedo(t.pos, t.vel),
     }));
     const junk: Array<Row<unknown>> = c.junk.map((j) => ({
       at: j.pos,
-      row: [
-        r1(j.pos.x), r1(j.pos.y), r1(j.pos.z),
-        Math.round(j.rot.x * 100) / 100, Math.round(j.rot.y * 100) / 100, Math.round(j.rot.z * 100) / 100,
-        j.kind === "wingL" ? 1 : j.kind === "wingR" ? 2 : 0,
-      ],
+      row: packJunk(j.pos, j.rot, j.kind),
     }));
     const beams: Array<Row<unknown>> = c.beams.map((b) => ({
       at: b.pos,
-      row: [
-        r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
-        Math.round(b.fwd.x * 1000) / 1000, Math.round(b.fwd.y * 1000) / 1000, Math.round(b.fwd.z * 1000) / 1000,
-        b.key, r1(b.life),
-      ],
+      row: packBeam(b.pos, b.fwd, b.key, b.life),
     }));
     const gemRows: Array<Row<unknown>> = [
       ...shared.map((g) => ({ at: g.pos, row: gemWire(g) })),

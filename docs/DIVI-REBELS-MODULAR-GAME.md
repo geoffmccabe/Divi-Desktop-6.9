@@ -150,3 +150,48 @@ The same table as the build agent's document, section 4.
   uncommitted work.
 - The room is live for app and web players: every room deploy is tested against
   both.
+
+## Log
+
+### Review of the build agent's work before starting (2026-Sep-15)
+- **Nothing of B1 to B7 existed yet** on any branch or in any folder: no test
+  command, no package move, no Rebels CI workflow, no globe split.
+- **Its recent work was elsewhere:**
+  - "Release 69.11.0", merging all Rebels work into integration/all-features
+  - map animation v2 on feat/map-animation-v2, which changes
+    ui/src/wallet/GlobeMap.tsx (+30 lines), NetworkMap.tsx (+170) and
+    ui/src/index.css (+165)
+- **The installed app is 69.11.4,** built from that release line; feat/divi-rebels
+  is at 69.9.47. So the app must NOT be installed from feat/divi-rebels any
+  more: it would be a downgrade. Game changes reach the app through the release
+  branch.
+- The game's own files are identical on both lines.
+- **Therefore:**
+  - G1 to G3 are safe now: they touch none of the files the map work changed,
+    and the package move has not started.
+  - G4 (styles out of ui/src/index.css) waits until the map animation work is
+    merged, because it edits the same stylesheet.
+- **Every change to the messages must keep them byte-identical,** so the installed
+  app and open web pages keep working when the room is redeployed.
+
+### G1 done: one shared message codec (2026-Sep-15)
+1. **Recorded first**, committed as 1e8ccbd before any change:
+   contrib/rebels-room/test/wireGolden.test.ts runs a fixed scenario (seeded
+   randomness, fixed clock) covering every row kind: ships, enemies, shots,
+   stopped rounds, coins, torpedoes, wreckage, beams, loot with a private item
+   drop, and wingmen. It saves the room's 39 state messages to
+   contrib/rebels-room/test/golden/wire-state-v1.json. Two fresh recordings were
+   identical.
+2. **The codec:** ui/src/wallet/rebels/rebelsWire.ts, one pack and one unpack per
+   row kind, with the layout written once. No THREE inside, so any client can
+   use it.
+3. **The room** packs with it, and **the cockpit** unpacks with it
+   (rebelsRoom.ts). protocol.ts's `r1` is now the codec's.
+4. **Proof:**
+   - The room's messages are byte-identical to the recording.
+   - ui/src/wallet/rebels/rebelsWire.test.ts unpacks all 781 recorded rows with
+     both the new code and a verbatim copy of the old cockpit unpacking (what
+     installed apps run), and they agree on every row.
+   - It also has pack layout and round-trip checks (14 in all).
+5. **Suites:** 33 green (the recording check and the codec tests are new). tsc
+   clean.

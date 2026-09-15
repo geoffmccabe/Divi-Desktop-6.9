@@ -322,5 +322,6 @@ export function guestIdOk(id: unknown): id is string {
   return typeof id === "string" && /^[A-Za-z0-9-]{16,64}$/.test(id);
 }
 
-/** Shorten a float for the wire. A tenth of a unit is six metres on this globe. */
-export const r1 = (n: number): number => Math.round(n * 10) / 10;
+/** Shorten a float for the wire. A tenth of a unit is six metres on this globe.
+ *  One definition, shared with the cockpit: see ui/src/wallet/rebels/rebelsWire.ts. */
+export { r1 } from "../../../ui/src/wallet/rebels/rebelsWire";

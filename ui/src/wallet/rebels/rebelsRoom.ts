@@ -24,6 +24,10 @@
 import * as THREE from "three";
 import { weaponByKey } from "./weaponCatalog";
 import { dflow } from "./rebelsDflow";
+import {
+  unpackPlayer, unpackEnemy, unpackShot, unpackCoin, unpackTorpedo, unpackJunk, unpackBeam, unpackGem, unpackWing,
+  type PlayerRow, type EnemyRow, type ShotRow, type CoinRow, type TorpedoRow, type JunkRow, type BeamRow, type GemRow, type WingRow,
+} from "./rebelsWire";
 import { platform } from "./platform/current";
 import { DEFAULT_ROOM_BASE } from "./platform/defaults";
 
@@ -244,6 +248,9 @@ interface Opts {
  *  should not hold one of a room's places all afternoon; coming back to it
  *  reconnects in about a second. */
 export const HIDDEN_RELEASE_MS = 3 * 60_000;
+
+/** The cockpit's vectors, for the rows it unpacks (rebelsWire.ts). */
+const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
 export function joinRoom(opts: Opts): Room {
   let ws: WebSocket | null = null;
@@ -496,82 +503,53 @@ export function joinRoom(opts: Opts): Room {
 
       case "s": {
         room.wave = Number(m.w) || 0;
-        const P = (m.P ?? []) as Array<[string, number, number, number, number, number, number, number, number]>;
+        const P = (m.P ?? []) as PlayerRow[];
         for (const p of players_.values()) p.seen = false;
         for (const row of P) {
-          const id = row[0];
+          const ship = unpackPlayer(row, (x, y, z) => ({ x, y, z }));
+          const id = ship.id;
           const p = players_.get(id) ?? blank(id);
           /* The newest report becomes the target and the CURRENT drawn
              position becomes the start, so a ship never jumps backwards to
              where it was a tick ago. */
           p.from.copy(p.pos);
           p.fromFwd.copy(p.fwd);
-          p.target.set(row[1], row[2], row[3]);
-          p.targetFwd.set(row[4], row[5], row[6]).normalize();
+          p.target.set(ship.pos.x, ship.pos.y, ship.pos.z);
+          p.targetFwd.set(ship.fwd.x, ship.fwd.y, ship.fwd.z).normalize();
           /* A ship that has just appeared has nowhere to come from. */
           if (p.t >= 1 && p.from.lengthSq() === 0) { p.pos.copy(p.target); p.from.copy(p.target); }
           p.t = 0;
-          p.guard = row[7] === 1;
-          p.shield = row[8];
+          p.guard = ship.guard;
+          p.shield = ship.shield;
           p.seen = true;
           players_.set(id, p);
         }
         for (const [id, p] of [...players_.entries()]) if (!p.seen) players_.delete(id);
 
-        room.enemies = ((m.E ?? []) as number[][]).map((e) => ({
-          pos: new THREE.Vector3(e[0], e[1], e[2]),
-          fwd: new THREE.Vector3(e[3], e[4], e[5]),
-          tier: e[6], shield: e[7], shieldMax: e[8], drone: e[9] === 1, dragon: e[9] === 2, id: e[10] || 0,
-        }));
-        for (const f of (m.F ?? []) as number[][]) {
-          shots.push({
-            id: f[0],
-            pos: new THREE.Vector3(f[1], f[2], f[3]),
-            vel: new THREE.Vector3(f[4], f[5], f[6]),
-            hostile: (f[7] & 1) !== 0,
-            mini: (f[7] & 2) !== 0,
-            orb: (f[7] & 4) !== 0,
-            life: f[8],
-          });
-        }
+        room.enemies = ((m.E ?? []) as EnemyRow[]).map((e) => unpackEnemy(e, V));
+        for (const f of (m.F ?? []) as ShotRow[]) shots.push(unpackShot(f, V));
         for (const id of (m.X ?? []) as number[]) spent.push(id);
         /* A long stall must not deliver a thousand rounds at once. */
         while (shots.length > 400) shots.shift();
         while (spent.length > 400) spent.shift();
-        room.junk = ((m.J ?? []) as number[][]).map((j) => ({
-          pos: new THREE.Vector3(j[0], j[1], j[2]),
-          rot: new THREE.Vector3(j[3], j[4], j[5]),
-          kind: j[6] === 1 ? "wingL" : j[6] === 2 ? "wingR" : "body",
-        }));
-        room.wings = ((m.W ?? []) as Array<[string, number, number, number, number, number, number, number]>).map((v) => ({
-          owner: String(v[0]), slot: Number(v[1]) || 0,
-          pos: new THREE.Vector3(v[2], v[3], v[4]),
-          hull: Number(v[5]) || 0, hullMax: Number(v[6]) || 1, tier: Number(v[7]) || 1,
-        }));
-        room.torpedoes = ((m.T ?? []) as number[][]).map((t) => ({
-          pos: new THREE.Vector3(t[0], t[1], t[2]),
-          vel: new THREE.Vector3(t[3], t[4], t[5]),
-        }));
-        room.coins = ((m.C ?? []) as number[][]).map((k) => ({
-          pos: new THREE.Vector3(k[0], k[1], k[2]),
-        }));
-        room.beams = ((m.M ?? []) as Array<[number, number, number, number, number, number, string, number]>).map((b) => {
-          const spec = weaponByKey(String(b[6]));
+        room.junk = ((m.J ?? []) as JunkRow[]).map((j) => unpackJunk(j, V));
+        room.wings = ((m.W ?? []) as WingRow[]).map((v) => unpackWing(v, V));
+        room.torpedoes = ((m.T ?? []) as TorpedoRow[]).map((t) => unpackTorpedo(t, V));
+        room.coins = ((m.C ?? []) as CoinRow[]).map((k) => unpackCoin(k, V));
+        room.beams = ((m.M ?? []) as BeamRow[]).map((row) => {
+          const b = unpackBeam(row, V);
+          const spec = weaponByKey(b.key);
           return {
-            pos: new THREE.Vector3(b[0], b[1], b[2]),
-            fwd: new THREE.Vector3(b[3], b[4], b[5]),
-            life: Number(b[7]) || 0,
+            pos: b.pos,
+            fwd: b.fwd,
+            life: b.life,
             half: ((spec?.cone ?? 2) * Math.PI) / 360,
             reach: spec?.reach ?? 90,
             colour: spec?.colour ?? 0xffd83a,
-            key: String(b[6]),
+            key: b.key,
           };
         });
-        room.gems = ((m.G ?? []) as Array<[number, number, number, number, number, string, string?, string?, number?]>).map((g) => ({
-          id: String(g[5]), tier: Number(g[3]) || 1,
-          pos: new THREE.Vector3(g[0], g[1], g[2]), spin: Number(g[4]) || 0,
-          ...(g[6] ? { item: String(g[6]), owner: String(g[7] ?? ""), hidden: Number(g[8]) || 0 } : {}),
-        }));
+        room.gems = ((m.G ?? []) as GemRow[]).map((g) => unpackGem(g, V));
         return;
       }
 
