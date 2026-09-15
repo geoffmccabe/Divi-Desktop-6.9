@@ -122,6 +122,20 @@ export const CHUNK = 32;
  */
 export const LOD_STEPS = [1, 2, 4, 8] as const;
 
+/**
+ * How high above the surface a ship may fly inside the shard, in cubes.
+ *
+ * This is the number the Phase 0 report was written to find, and the answer is
+ * a budget rather than a taste: at 400 cubes up the visible face of the shell
+ * costs about 104,000 triangles at the coarsest detail, and at 800 it costs
+ * 127,000 and is over. So the shard's sky ends at 400 cubes, 3,600 units, and
+ * the whole planet never has to be drawn at once.
+ *
+ * Above it there is nothing to fly to anyway: the rest of the sky is 200,000
+ * units of empty space back to Earth, and the gate is how that is crossed.
+ */
+export const SKY_EDGE = 400;
+
 /** Where the planet sits, in Earth diameters from Earth. Geoff: "at 1000 earth
  *  diameters... visible and potential to fly there." */
 export const DISTANCE_IN_EARTHS = 1000;

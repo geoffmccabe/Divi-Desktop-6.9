@@ -15,7 +15,7 @@
 // it run in a Web Worker and be tested in node. Whoever draws it wraps the
 // arrays in a BufferGeometry; that is the renderer's business, not this file's.
 
-import { solidAt } from "./voxelField";
+import { solidAt, solidSkinAt } from "./voxelField";
 
 /** A finished chunk: what a BufferGeometry needs, and nothing else. */
 export interface ChunkMesh {
@@ -57,7 +57,17 @@ const FACES: Array<{ n: [number, number, number]; u: number; v: number; axis: nu
  */
 export function meshChunk(
   ox: number, oy: number, oz: number, size: number, step: number, seed = 0,
+  /**
+   * How deep to bother with, in cubes. Zero means the real planet, caves and
+   * all. Anything else fills in below that depth, so only the outer skin
+   * produces faces: from far off that is all there is to see, and meshing the
+   * caves nobody can look into was most of the distant view's cost.
+   */
+  skinDepth = 0,
 ): ChunkMesh {
+  const field = skinDepth > 0
+    ? (i: number, j: number, k: number) => solidSkinAt(i, j, k, step, skinDepth, seed)
+    : (i: number, j: number, k: number) => solidAt(i, j, k, step, seed);
   const n3 = size * size * size;
   const at = new Uint8Array(n3);
   const idx = (i: number, j: number, k: number) => (k * size + j) * size + i;
@@ -65,7 +75,7 @@ export function meshChunk(
   for (let k = 0; k < size; k++) {
     for (let j = 0; j < size; j++) {
       for (let i = 0; i < size; i++) {
-        const s = solidAt(ox + i, oy + j, oz + k, step, seed) ? 1 : 0;
+        const s = field(ox + i, oy + j, oz + k) ? 1 : 0;
         at[idx(i, j, k)] = s;
         cubes += s;
       }
@@ -75,7 +85,7 @@ export function meshChunk(
      guessed its neighbours were empty would draw a wall at every chunk edge. */
   const get = (i: number, j: number, k: number): number => {
     if (i >= 0 && j >= 0 && k >= 0 && i < size && j < size && k < size) return at[idx(i, j, k)];
-    return solidAt(ox + i, oy + j, oz + k, step, seed) ? 1 : 0;
+    return field(ox + i, oy + j, oz + k) ? 1 : 0;
   };
 
   const pos: number[] = [], nor: number[] = [], uv: number[] = [], ind: number[] = [];

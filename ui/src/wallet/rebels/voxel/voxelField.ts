@@ -282,3 +282,28 @@ export function solidAt(cx: number, cy: number, cz: number, step: number, seed =
   const half = step >> 1;
   return solid(cx * step + half, cy * step + half, cz * step + half, seed);
 }
+
+/**
+ * The same question, but with everything below a certain depth treated as
+ * SOLID ROCK.
+ *
+ * For the distant view, and it is worth a great deal. From outside the planet
+ * only the outer skin can be seen, but a coarse chunk is 256 cubes thick and a
+ * quarter of that is rock with holes in it, so meshing it honestly generated
+ * tens of thousands of triangles of cave wall that nothing could ever look at.
+ * The Phase 3 test caught it: a view estimated at 100,000 triangles really cost
+ * 251,000.
+ *
+ * Filling in below the skin means the only faces generated are the ones on the
+ * outside, which is all there is to see. `depth` is in cubes.
+ */
+export function solidSkinAt(
+  cx: number, cy: number, cz: number, step: number, depth: number, seed = 0,
+): boolean {
+  const half = step > 1 ? step >> 1 : 0;
+  const x = cx * step + half, y = cy * step + half, z = cz * step + half;
+  const r2 = x * x + y * y + z * z;
+  const inner = R_OUTER - depth;
+  if (r2 <= inner * inner) return true;            /* filled in, below the skin */
+  return solid(x, y, z, seed);
+}
