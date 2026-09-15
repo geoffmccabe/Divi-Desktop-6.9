@@ -29,7 +29,7 @@
 import * as THREE from "three";
 import {
   createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
-  setDropRandomForTests, clampReach, spawnDragon, spawnFleet, pushBullet, takeSpentBullets, takeFreshBullets,
+  setDropRandomForTests, clampReach, pushBullet, takeSpentBullets, takeFreshBullets,
   type WingBody, type Bullet,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE, STAKE_BONUS, STAKE_BONUS_MS,
@@ -55,6 +55,7 @@ import {
   r1, type ClientMessage, type ServerMessage, type Vec,
   type PaintWire, type PaintPart, nextRoom, guestIdOk,
 } from "./protocol";
+import { runRoomCheat } from "./cheats";
 import {
   packPlayer, packEnemy, packShot, packCoin, packTorpedo, packJunk, packBeam, packGem, packWing, type WingRow,
 } from "../../../ui/src/wallet/rebels/rebelsWire";
@@ -1239,22 +1240,15 @@ export class RebelsRoom {
   }
 
   /* ---- test cheats ----
-     The same ones the solo game has, so the shared fight and the solo fight
-     are the same game to test. "21" is a REAL dragon ahead of the seat
-     (it leaves its egg): to remove or gate before eggs are worth anything.
-     "1x" is a flock of tier x, worth nothing, as in the cockpit. */
+     The spawning itself lives in cheats.ts. What the room decides here is WHO
+     may: never a web guest. The public page carries no cheat code, but a
+     message can be typed into any browser's console, and "21" is a real dragon
+     that leaves a real egg. App seats keep them for testing; with sign-in they
+     become admin-only. */
   private onCheat(seat: Seat, m: Extract<ClientMessage, { t: "cheat" }>): void {
     if (!seat.joined || seat.dead) return;
-    const code = String(m.code ?? "");
-    if (code === "21") {
-      if (this.combat.enemies.some((e) => e.dragon)) return;
-      const ahead = seat.body.pos.clone().addScaledVector(seat.body.fwd, 35);
-      const up = seat.body.pos.clone().normalize();
-      const across = new THREE.Vector3().crossVectors(seat.body.fwd, up).normalize();
-      spawnDragon(this.combat, ahead, across);
-    } else if (/^1[1-6]$/.test(code)) {
-      spawnFleet(this.combat, Number(code[1]), seat.body.pos, seat.body.fwd, { cheat: true });
-    }
+    if (seat.guest) return;
+    runRoomCheat(this.combat, seat.body, String(m.code ?? ""));
   }
 
   /* Y: a held Instant Recharge or Supercharge. The room does not hold the

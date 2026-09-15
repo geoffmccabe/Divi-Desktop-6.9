@@ -151,6 +151,26 @@ export interface RebelsInput {
   attach(dom: HTMLCanvasElement, handlers: CockpitHandlers): () => void;
 }
 
+/** What the test cheats may ask of the game. Kept small on purpose: a cheat
+ *  reaches the game only through these. */
+export interface CheatHost {
+  /** Whether a ship is in the air. Cheats do nothing on the launch card. */
+  flying(): boolean;
+  /** Ask the room to spawn something (the fight is the server's). */
+  sendToRoom(code: string): void;
+  addHeld(key: string, n: number): void;
+  applyToShip(model: string, key: string): { ok: true } | { ok: false; why: string };
+  grant(key: string): void;
+  ship(): string;
+  note(text: string): void;
+}
+
+/** The test cheats, as a door plugs them in. `onKey` returns true when the key
+ *  was part of a cheat and must not also do its normal job. */
+export interface RebelsCheats {
+  onKey(key: string, now: number): boolean;
+}
+
 /** Everything a door answers. */
 export interface RebelsPlatform {
   /** Which door this is, for the DFlow report and nothing else. */
@@ -167,4 +187,10 @@ export interface RebelsPlatform {
   money: RebelsMoney;
   detail: RebelsDetail;
   input: RebelsInput;
+  /**
+   * The test cheats (!11, !21, !77, !8t, !9t), or absent. A door that leaves this
+   * out leaves the cheat code out of its build entirely: the web door does, so
+   * the public page carries none. The room refuses cheats from web guests too.
+   */
+  cheats?: (host: CheatHost) => RebelsCheats;
 }

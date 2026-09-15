@@ -46,6 +46,9 @@ const FORBIDDEN = [
   "src/wallet/stakeWin.ts",
   "src/wallet/exchanges.ts",
   "src/wallet/rebels/platform/app/",
+  /* The test cheats are plugged in by a door that wants them (the app). They are
+     never part of the core or of the public web page. */
+  "src/wallet/rebels/rebelsCheats.ts",
 ];
 
 /* Ties that still exist. EMPTY since refactor phase A3 (2026-Sep-13): the game

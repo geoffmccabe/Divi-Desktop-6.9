@@ -13,6 +13,7 @@ import { userWonRecently } from "../../../stakeWin";
 import { fetchPrices } from "../../../value";
 import { validateAddress, walletAddresses } from "../../../api";
 import { PurchaseWithDivi } from "../../../../points/PurchaseWithDivi";
+import { createCheats } from "../../rebelsCheats";
 
 export const appPlatform: RebelsPlatform = {
   id: "app",
@@ -29,4 +30,6 @@ export const appPlatform: RebelsPlatform = {
   },
   detail: DESKTOP_DETAIL,
   input: desktopInput,
+  /* The test cheats, for testing in the app. */
+  cheats: createCheats,
 };

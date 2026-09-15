@@ -1102,6 +1102,30 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
+// N. CHEATS: never from a web guest. "21" is a real dragon that leaves a real egg,
+//    and any browser console can send the message.
+{
+  const room = newRoom();
+  const web = new FakeSocket();
+  room.seat(web as never, "198.51.100.90");
+  const webId = web.last("hi").id as string;
+  web.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Pilot 9", door: "web", guest: "3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c", home: [0, 0, R] }));
+  web.deliver(JSON.stringify({ t: "fly" }));
+  const before = room.combat.enemies.length;
+  web.deliver(JSON.stringify({ t: "cheat", code: "21" }));
+  web.deliver(JSON.stringify({ t: "cheat", code: "11" }));
+  ok("a web guest's cheat summons nothing", room.combat.enemies.length === before, `${before} -> ${room.combat.enemies.length}`);
+  ok("and is not a strike either", room.seats.get(webId).strikes === 0);
+
+  const app = new FakeSocket();
+  room.seat(app as never, "198.51.100.91");
+  app.deliver(JSON.stringify({ t: "join", node: "n", name: "App", home: [0, 0, R] }));
+  app.deliver(JSON.stringify({ t: "fly" }));
+  app.deliver(JSON.stringify({ t: "cheat", code: "21" }));
+  ok("an app seat's !21 still brings the dragon, for testing", room.combat.enemies.some((e: any) => e.dragon));
+  room.stop();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

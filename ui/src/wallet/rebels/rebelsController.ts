@@ -60,7 +60,7 @@ import {
 } from "../../sound";
 import { createPeers, paintFromWire, type Peers } from "./rebelsPeers";
 import { PART_ORDER } from "./shipColours";
-import { weaponInSlot, weaponByKey, BEAM_SECONDS } from "./weaponCatalog";
+import { weaponInSlot, BEAM_SECONDS } from "./weaponCatalog";
 import {
   hasWeapon, owned, earnPoints, spendable, flightExtras, gearKeys, droneCounts, subscribeArmoury,
   grant,
@@ -1149,69 +1149,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     stick.guard = !!keys.f;
     stick.mini = weapons.primary === 1;
   }
-  /* ---- the cheat key ----
-     Geoff's format: "!1#", where ! opens it, 1 says what to send, and # is the
-     tier. So "!11" sends a fleet of twenty-four grey spheres and "!15" sends
-     purple ones.
-
-     Typed as a SEQUENCE rather than bound to a chord, because the digits are
-     already the weapon keys and a chord would have to fight them. While a
-     sequence is open the digits are swallowed, so tapping out a cheat never
-     also swaps the guns out from under the player. It closes itself after four
-     seconds so a stray exclamation mark cannot leave the weapon keys dead.
-
-     Nothing it summons is worth anything: see the anti-cheat guard in
-     rebelsCombat, which refuses a conjured drone its kill, its tier count and
-     its DIVI. A key that makes enemies out of nothing must not also make
-     money out of nothing. */
-  let cheat = "";
-  let cheatUntil = 0;
-  function runCheat(code: string) {
-    const kind = code[1];
-    const tier = Number(code[2]);
-    if (!flight) return;
-    /* The fight is the server's, so the server spawns these. */
-    if (kind === "1" && tier >= 1 && tier <= 6) {
-      room?.cheat(code.slice(1));
-    } else if (kind === "2" && tier === 1) {
-      /* ---- TEST: !21, the dragon, in front of you ----
-         Thirty-five units ahead, crossing left to right so it can be seen
-         and chased. It is a REAL dragon (it leaves its egg), so this is a
-         way to mint eggs and must go, or be gated, before eggs are worth
-         anything. Geoff asked for it to test, 2026-Sep-11. */
-      room?.cheat("21");
-    } else if (kind === "8" && tier >= 1 && tier <= 5) {
-      /* ---- TEST: !8t, one wingman of tier t, opened ----
-         Press it again for another, up to eight. Goes with the other test
-         cheats and comes out with them. */
-      addHeld(`drone${tier}`, 1);
-      setHud({ note: `DRONE T${tier} FITTED`, noteAt: performance.now() });
-    } else if (kind === "9" && tier >= 1 && tier <= 4) {
-      /* ---- TEST: !9t, a Beam of tier t, owned ----
-         Geoff asked for a Tier 1 beam to test with, 2026-Sep-13, so "!91".
-         NINE, not three: the leading digit says WHAT is being summoned and the
-         low digits are reserved for enemy kinds, one each. 1 is the fighter
-         flock and 2 is the dragon, so 3 belongs to the next enemy type Geoff
-         adds. Geoff: "!31 should be for spawning our third enemy type."
-         The line has to be walked in order for the number key to select it, so
-         everything below the tier asked for is granted too: the mini gun and
-         any lower beams. Goes with the other test cheats and comes out with
-         them: this is a free weapon and must be gated before weapons are worth
-         anything. */
-      grant(loadShip(), "mini");
-      for (let n = 1; n <= tier; n++) grant(loadShip(), `beam${n}`);
-      const spec = weaponByKey(`beam${tier}`);
-      setHud({ note: `${(spec?.name ?? "BEAM").toUpperCase()} FITTED: PRESS ${spec?.slot ?? 3}`, noteAt: performance.now() });
-    } else if (kind === "7" && tier === 7) {
-      /* ---- TEST: !77, a Rear Gun, opened, into the inventory ----
-         Same caveat: a free item, to be removed with the one above. */
-      addHeld("reargun", 1);
-      /* Ship upgrades work once FITTED (shipFleet.ts), so the test gun goes on the
-         ship being flown straight away, as a found one would after "Apply to Ship". */
-      const fit = applyToShip(loadShip(), "reargun");
-      setHud({ note: fit.ok ? "REAR GUN FITTED: PRESS 7" : `REAR GUN IN INVENTORY: ${fit.why.toUpperCase()}`, noteAt: performance.now() });
-    }
-  }
+  /* ---- the test cheats ----
+     Their own module now (rebelsCheats.ts), plugged in by the door: the app has
+     them, the public web does not. The same small host either way. */
+  const cheats = platform().cheats?.({
+    flying: () => !!flight,
+    sendToRoom: (code) => room?.cheat(code),
+    addHeld: (key, n) => { addHeld(key, n); },
+    applyToShip: (model, key) => applyToShip(model, key),
+    grant: (key) => grant(loadShip(), key),
+    ship: () => loadShip(),
+    note: (text) => setHud({ note: text, noteAt: performance.now() }),
+  });
   /** Typing in a box (a ship's name) is typing, not flying. */
   function typing(e: KeyboardEvent): boolean {
     const t = e.target as { tagName?: string; isContentEditable?: boolean } | null;
@@ -1222,23 +1171,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     wakeAudio();
     const k = e.key.toLowerCase();
 
-    const now = performance.now();
-    if (cheat && now > cheatUntil) cheat = "";
-    if (k === "!") {
-      cheat = "!";
-      cheatUntil = now + 4000;
+    if (cheats?.onKey(k, performance.now())) {
       e.preventDefault();
       return;
-    }
-    if (cheat) {
-      if (k >= "0" && k <= "9") {
-        cheat += k;
-        e.preventDefault();
-        if (cheat.length >= 3) { runCheat(cheat); cheat = ""; }
-        return;
-      }
-      /* Anything else abandons it and is handled normally. */
-      cheat = "";
     }
 
     if (MAPPED.includes(k)) e.preventDefault();

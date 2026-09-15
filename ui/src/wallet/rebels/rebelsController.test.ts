@@ -26,11 +26,12 @@ import { grant } from "./rebelsArmoury";
 import { loadShip } from "./shipChoice";
 import { setPlatform, HEADLESS } from "./platform/current";
 import { appIdentity } from "./platform/app/identity";
+import { createCheats } from "./rebelsCheats";
 /* These tests name the player through the node identity the WALLET saves
    ("Test Node", "Quitter"), so the game runs behind the app's identity. The
    rest of the app door (prices, the wallet) is not needed here and would pull
    the desktop bridge into a node test. */
-setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity });
+setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
 
 /* The controller listens on window for key-up and focus loss. Node has no
    window, so stand one up; `document` is deliberately left undefined so the
@@ -1293,7 +1294,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("and the room knows it came through the web door", me?.guest === true && (me?.account ?? "").startsWith("web:"), me?.account);
   ctl.detach();
   await settle();
-  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity });
+  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
 }
 
 console.log(out.join("\n"));

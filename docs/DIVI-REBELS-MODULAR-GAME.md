@@ -195,3 +195,26 @@ The same table as the build agent's document, section 4.
    - It also has pack layout and round-trip checks (14 in all).
 5. **Suites:** 33 green (the recording check and the codec tests are new). tsc
    clean.
+
+### G2 done: cheats as their own module, and closed to web guests (2026-Sep-15)
+- **Found while doing it:** the room ran any cheat message it received, from
+  anyone. A web guest could type one line into the browser console on
+  divi.love/rebels and summon a real dragon (which leaves a real Dragon Egg) or
+  a swarm.
+- **The cockpit's cheats** now live in ui/src/wallet/rebels/rebelsCheats.ts, moved
+  verbatim. They reach the game only through a small CheatHost.
+  - The door plugs them in (`cheats` in the contract): the app door does, the
+    web door does not.
+  - scripts/check-rebels-boundary.mjs now forbids rebelsCheats.ts in the core
+    and the web page, so the public page carries no cheat code.
+- **The room's cheats** now live in contrib/rebels-room/src/cheats.ts. room.ts
+  decides who may use them and refuses web guests: silently, and not a strike.
+  App seats keep them for testing; they become admin-only with sign-in.
+- **Tests:**
+  - room 199, including: a guest's !21 and !11 summon nothing, and an app
+    seat's !21 still brings the dragon
+  - cockpit 105 (the cheat tests run with the app's cheats plugged in)
+  - boundary guard 4
+  - wire recording unchanged
+- **Suite:** 33 green. tsc clean for ui/ and contrib/rebels-room/.
+- **Deployed:** see the next entry.
