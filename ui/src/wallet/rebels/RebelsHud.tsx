@@ -13,12 +13,17 @@ import type { RebelsController } from "./rebelsController";
 import { RebelsHealthBar } from "./RebelsHealthBar";
 import { useCockpit } from "./cockpit/useCockpit";
 import { FlightReadout, CornerInfo, DockPanel, ScoreCorner, GaugeBars } from "./cockpit/readouts";
-import { HitFlash, DiedBanner, WaveBanner, AimMarks, ExitButton, NoteLine, OfflineBanner } from "./cockpit/overlays";
+import { useFullScreen } from "./cockpit/useFullScreen";
+import {
+  HitFlash, DiedBanner, WaveBanner, AimMarks, ExitButton, FullScreenButton,
+  NoteLine, OfflineBanner,
+} from "./cockpit/overlays";
 import { NoLaunchCard, CockpitPanels, LaunchCard, DeathCard } from "./cockpit/cards";
 
 export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () => void }) {
   const c = useCockpit(ctl, onExit);
   const { hud } = c;
+  const { fullScreen, toggleFullScreen } = useFullScreen();
   return (
     <div className="orbit-hud" ref={c.wrapRef}>
       <FlightReadout hud={hud} />
@@ -31,6 +36,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       <ScoreCorner hud={hud} />
       <GaugeBars hud={hud} />
       <ExitButton hud={hud} onExit={onExit} />
+      <FullScreenButton full={fullScreen} onToggle={toggleFullScreen} />
       <NoLaunchCard hud={hud} />
       <NoteLine hud={hud} />
       <OfflineBanner hud={hud} />

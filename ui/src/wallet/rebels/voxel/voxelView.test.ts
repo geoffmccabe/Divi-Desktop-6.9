@@ -13,13 +13,13 @@
 //   - just above the surface, which is where the gate drops you
 //   - inside a tunnel, which is where the game is
 
+import { readFileSync } from "node:fs";
 import {
   R_OUTER, R_INNER, R_HEART, CHUNK, CUBE, LOD_STEPS, WORLD_RADIUS, SKY_EDGE,
 } from "./voxelWorld";
 import {
   visibleChunks, stepFor, mightHoldRock, dustAt, dustFarFor,
   TRIANGLE_BUDGET, DUST_NEAR, DUST_FAR, DUST_FAR_OPEN, RING_CUBES, COST_BY_STEP,
-  SKIN_BY_STEP,
 } from "./voxelView";
 import { meshChunk, triangles } from "./voxelMesh";
 
@@ -34,7 +34,7 @@ function ok(name: string, cond: boolean, extra = "") {
 function actualTriangles(chunks: Array<{ ox: number; oy: number; oz: number; step: number }>): number {
   let n = 0;
   for (const c of chunks) {
-    n += triangles(meshChunk(c.ox, c.oy, c.oz, CHUNK, c.step, 0, SKIN_BY_STEP[c.step] ?? 0));
+    n += triangles(meshChunk(c.ox, c.oy, c.oz, CHUNK, c.step, 0));
   }
   return n;
 }
@@ -129,18 +129,35 @@ for (const [name, at] of places) {
     ["beside the heart", [R_HEART + 14, 0, 0]],
   ];
   for (const [name, at] of openViews) {
-    const v = visibleChunks(at);
+    /* LOOKING AT IT, which is what the name says and what the budget has to
+       serve: without a direction the allowance goes on chunks behind the ship
+       as well, which the renderer culls anyway. */
+    const len = Math.hypot(at[0], at[1], at[2]) || 1;
+    const towardsCentre: [number, number, number] = [-at[0] / len, -at[1] / len, -at[2] / len];
+    const v = visibleChunks(at, { look: towardsCentre });
     ok(`looking at the planet from ${name}: nothing is left out`,
        v.dropped === 0,
        `${v.dropped} dropped, ${v.chunks.length} drawn, ${v.triangles} of ${TRIANGLE_BUDGET}`);
   }
-  /* And the coarse levels are cheap enough for that to be possible at all. */
-  ok("a coarse chunk is a few thousand triangles, not a dozen thousand",
-     COST_BY_STEP[4] < 4000 && COST_BY_STEP[8] < 4000,
-     `step 4 ${COST_BY_STEP[4]}, step 8 ${COST_BY_STEP[8]}`);
-  ok("which is what a thin skin buys",
-     SKIN_BY_STEP[4] <= 12 && SKIN_BY_STEP[8] <= 12,
-     `depths ${LOD_STEPS.map((s) => `${s}:${SKIN_BY_STEP[s]}`).join(" ")}`);
+  /* And the direction is worth real money. */
+  {
+    const at: [number, number, number] = [R_INNER - 60, 0, 0];
+    const blind = visibleChunks(at, { budget: 1e9 });
+    const aimed = visibleChunks(at, { budget: 1e9, look: [-1, 0, 0] });
+    ok("knowing where the eye is looking is worth about a third of the work",
+       aimed.triangles < blind.triangles * 0.78,
+       `${aimed.triangles} looking one way against ${blind.triangles} looking every way`);
+  }
+  /* And every level is cheap enough for that to be possible at all. Measured
+     at the 90th percentile over a hundred and twenty chunks round the shell. */
+  ok("no level costs more than about five thousand triangles a chunk",
+     LOD_STEPS.every((st) => COST_BY_STEP[st] <= 5200),
+     LOD_STEPS.map((st) => `${st}:${COST_BY_STEP[st]}`).join(" "));
+  ok("and the planet is never filled in to get there",
+     !/solidSkinAt|skinDepth/.test(
+       readFileSync(`${process.cwd()}/src/wallet/rebels/voxel/voxelMesh.ts`, "utf8"),
+     ),
+     "filling it in made it look solid from outside and vanish from inside");
 }
 
 /* ---- and the estimate has to be honest ----
@@ -205,21 +222,22 @@ for (const [name, at] of [places[0], places[3]]) {
      design exists to avoid. */
   const naked = visibleChunks(insideAt, { dustFar: 1e6, budget: 1e9 });
   ok("and with no dust and no budget at all the planet is unaffordable",
-     naked.triangles > TRIANGLE_BUDGET * 3,
+     naked.triangles > TRIANGLE_BUDGET * 2,
      `${naked.triangles} triangles wanted against an allowance of ${TRIANGLE_BUDGET}`);
-  /* The skin-only pass at distance, which was worth more than anything else. */
-  ok("the coarse levels only mesh the skin, not the caves behind it",
-     SKIN_BY_STEP[4] > 0 && SKIN_BY_STEP[8] > 0 && SKIN_BY_STEP[1] === 0,
-     `depths ${LOD_STEPS.map((s) => `${s}:${SKIN_BY_STEP[s]}`).join(" ")}`);
-  /* Measured on a chunk that really straddles the skin, deep enough that there
-     is cave behind it to leave out. A chunk sitting entirely outside the skin
-     depth is identical either way, which is what the first attempt at this
-     measured, and it proved nothing. */
-  const at8 = Math.round((R_OUTER - 140) / 8);
-  const deep = triangles(meshChunk(at8, 0, 0, CHUNK, 8, 0, 0));
-  const skin = triangles(meshChunk(at8, 0, 0, CHUNK, 8, 0, SKIN_BY_STEP[8]));
-  ok("and that is worth most of the distant view",
-     skin < deep * 0.6, `${skin} triangles as skin against ${deep} meshed all the way down`);
+  /* ---- WHERE THE SAVING REALLY COMES FROM ----
+     Not from filling the planet in, which made it look solid from outside and
+     vanish from inside. From growing the clumps with the level, so a coarse
+     chunk costs what a fine one does and covers eight times the ground. */
+  ok("every level costs about the same per chunk",
+     LOD_STEPS.every((st) => Math.abs(COST_BY_STEP[st] - COST_BY_STEP[1]) < COST_BY_STEP[1] * 0.4),
+     LOD_STEPS.map((st) => `${st}:${COST_BY_STEP[st]}`).join(" "));
+  /* And it is measurable: the same ground, coarse against fine. A coarse chunk
+     covers eight times the cubes for no more triangles. */
+  const fine = triangles(meshChunk(Math.round(R_OUTER - 60), 0, 0, CHUNK, 1));
+  const coarse = triangles(meshChunk(Math.round((R_OUTER - 60) / 8), 0, 0, CHUNK, 8));
+  ok("a coarse chunk covers eight times the ground for no more triangles",
+     coarse < fine * 1.6,
+     `${coarse} triangles over ${CHUNK * 8} cubes against ${fine} over ${CHUNK}`);
 }
 
 /* ---- the world it has to fit in ---- */

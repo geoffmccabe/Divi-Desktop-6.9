@@ -80,12 +80,18 @@ export const FILL = 0.25;
 /**
  * The crust profile: how the fill leans from the outer surface to the cavity.
  *
- * Denser outside, thinner inside, averaging FILL. Without this the shell is
- * uniform mush with no skin and no ragged ceiling over the cavity. The two
- * numbers are the multipliers at the outer surface and at the inner face.
+ * FLAT, both one. It used to lean, denser outside and thinner in, on the
+ * argument that a planet wants a skin and a ragged ceiling. That was my idea
+ * and not the brief, and it pushed the fill at the surface to 31% and measured
+ * 37% in a chunk there. Geoff: "the distribution is wrong... I had asked for 3
+ * out of 4 cubes to be holes so only 25% of slots have cubes, but it's far more
+ * solid than that." He asked for a quarter, so it is a quarter everywhere.
+ *
+ * Kept as two numbers rather than deleted, because a lean is a dial somebody
+ * may want later; it is simply not on.
  */
-export const CRUST_OUTER = 1.25;
-export const CRUST_INNER = 0.75;
+export const CRUST_OUTER = 1;
+export const CRUST_INNER = 1;
 
 /**
  * How strongly the voids run radially, which is what makes tunnels rather than

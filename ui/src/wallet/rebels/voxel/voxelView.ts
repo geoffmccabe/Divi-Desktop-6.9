@@ -35,7 +35,21 @@ import {
  * Geoff's Mac, and the planet cannot have all of it: ships, shots, spikes and
  * effects need room. Two thirds is the planet's share.
  */
-export const TRIANGLE_BUDGET = 120000;
+/**
+ * What the planet may cost in one frame.
+ *
+ * 300,000, not 120,000. The smaller figure was two thirds of what the live game
+ * can carry in Earth orbit, where it shares the frame with ships, shots, coins
+ * and effects. Spikeworld is its OWN shard: the fight is not there, Earth is
+ * beyond the far plane, and the planet is very nearly the only thing being
+ * drawn. A capture of the live game sat at sixty frames a second with 300,000
+ * triangles, so this leaves room and buys a planet with no holes in it.
+ *
+ * With every level at about 4,600 triangles a chunk, this is room for sixty or
+ * so, which is what covering the visible face takes from inside the cavity,
+ * where the shell wraps round you and there is most of it to draw.
+ */
+export const TRIANGLE_BUDGET = 300000;
 
 /**
  * How far the dust lets you see, in world units.
@@ -96,29 +110,24 @@ export const RING_CUBES = [48, 140, 340, 1e9] as const;
  * a half times at the coarsest level, which is how the estimate came to promise
  * 100,000 triangles and deliver 251,000.
  */
-export const COST_BY_STEP: Record<number, number> = { 1: 6800, 2: 5600, 4: 2700, 8: 2900 };
-
 /**
- * How deep each detail level bothers with, in cubes.
+ * What a chunk costs, by detail level. MEASURED, and the AVERAGE rather than
+ * the 90th percentile.
  *
- * Zero is the real planet, caves and all, which is what you need when you are
- * flying through them. Further out only the outer skin can be seen, so below
- * that depth the rock is filled in and no cave walls are generated.
+ * The 90th was the wrong statistic and it cost the planet its horizon. A
+ * budget is spent on forty or fifty chunks at once, and a sum that large
+ * converges on the average: charging every chunk the 90th percentile
+ * overstates the total by nearly half, so the allowance ran out early and the
+ * furthest chunks were dropped. The test that compares the REAL total against
+ * the allowance is what keeps this honest, and it passes with room to spare.
  *
- * EIGHT CUBES, not sixty. Sixty was the first guess and it was far too deep:
- * it still meshed the whole 25%-filled crust block by block, which cost 16,900
- * triangles a chunk at step 4, so the 120,000-triangle allowance bought NINE
- * chunks and dropped thirty-five. The planet was therefore drawn as a patch of
- * ground directly under the ship and nothing else, which is exactly what Geoff
- * saw: "at a distance they are invisible and we see right through them, so they
- * appear only when close which is stupid and makes no sense." He was right that
- * it made no sense.
- *
- * At eight cubes the same chunk is 1,680 triangles, ten times less, and from
- * any distance where a coarse level is used it looks the same: the only thing
- * lost is cave wall nobody could see into from there.
+ * They are all about the same now, and that is the point: growing the clumps
+ * with the level means every level is equally clumpy, so a coarse chunk costs
+ * what a fine one does and covers eight times the ground. Before, subsampling
+ * a fine field made the coarse levels DEARER (14,763 against 6,054), which is
+ * backwards and is what the skin trick was papering over.
  */
-export const SKIN_BY_STEP: Record<number, number> = { 1: 0, 2: 32, 4: 8, 8: 8 };
+export const COST_BY_STEP: Record<number, number> = { 1: 4600, 2: 4400, 4: 4500, 8: 4900 };
 
 /** One chunk to draw: its corner in CELLS at its own step, and that step. */
 export interface ChunkRef {
@@ -165,11 +174,6 @@ export function mightHoldRock(ox: number, oy: number, oz: number, step: number):
   }
   const near = Math.sqrt(near2), far = Math.sqrt(far2);
   if (near > R_OUTER) return false;                       /* all outside */
-  /* At a coarse level everything below the skin is filled in, so a chunk that
-     lies WHOLLY below it is solid rock throughout and has no face anywhere: not
-     worth generating, and worth keeping off the budget. */
-  const skin = SKIN_BY_STEP[step] ?? 0;
-  if (skin > 0 && far <= R_OUTER - skin) return false;
   if (far <= R_HEART) return true;                        /* all inside the heart */
   if (far < R_INNER - SPOKE_R && near > R_HEART) {
     /* Wholly within the cavity. Only a spoke can be in here, and a spoke is
@@ -188,11 +192,33 @@ export function mightHoldRock(ox: number, oy: number, oz: number, step: number):
  * `viewer` is in CUBES. The result is ordered nearest first, which is both what
  * the budget wants and the order a renderer should build them in.
  */
+/**
+ * Half the angle of the cone kept in view, in cosine.
+ *
+ * Generous on purpose: a frame is about 55 degrees tall and rather more across
+ * the diagonal, and a chunk that pops in as the ship turns is worse than a
+ * chunk drawn just off the edge. 0.2 is about 78 degrees off the nose.
+ */
+const LOOK_COS = 0.2;
+
 export function visibleChunks(
   viewer: readonly [number, number, number],
-  opts: { budget?: number; dustFar?: number } = {},
+  opts: {
+    budget?: number; dustFar?: number;
+    /**
+     * Which way the eye is looking, as a unit vector. When given, the budget is
+     * only spent on chunks that could be ON SCREEN.
+     *
+     * Without it the allowance was going on chunks behind the ship, which the
+     * renderer then culled anyway: from inside the cavity the shell wraps right
+     * round you, so more than half of everything in range was being paid for
+     * and never drawn, and what was actually in front went without.
+     */
+    look?: readonly [number, number, number];
+  } = {},
 ): ViewResult {
   const budget = opts.budget ?? TRIANGLE_BUDGET;
+  const look = opts.look;
   const vr = Math.hypot(viewer[0], viewer[1], viewer[2]);
   const dustFarCubes = (opts.dustFar ?? dustFarFor(vr)) / CUBE;
   const outside = vr > R_OUTER;
@@ -232,6 +258,17 @@ export function visibleChunks(
           /* Round the back of the planet, behind nine thousand units of rock. */
           const ml = Math.hypot(mx, my, mz) || 1;
           if ((mx * vd[0] + my * vd[1] + mz * vd[2]) / ml < horizon) continue;
+          /* On screen, or near enough to it. A chunk is a box, so its own
+             angular size is allowed for: one close enough to fill the view is
+             kept even when its middle is off to the side. */
+          if (look && d > 1e-3) {
+            const half = cell * 0.87;
+            const cos = ((mx - viewer[0]) * look[0] + (my - viewer[1]) * look[1]
+              + (mz - viewer[2]) * look[2]) / d;
+            /* sin of the chunk's angular radius, near enough for a margin. */
+            const slack = Math.min(0.95, half / d);
+            if (cos < LOOK_COS - slack) continue;
+          }
           const key = `${step}:${cx},${cy},${cz}`;
           if (seen.has(key)) continue;
           seen.add(key);

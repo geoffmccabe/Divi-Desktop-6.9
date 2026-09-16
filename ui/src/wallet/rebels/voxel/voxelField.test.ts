@@ -81,10 +81,18 @@ function fillAt(radius: number, samples = 6000): number {
      worst < 0.035, `worst miss ${pct(worst)}`);
   ok("the channels carve a real amount, so they are doing something",
      carvedFraction() > 0.1 && carvedFraction() < 0.5, pct(carvedFraction()));
-  /* Denser outside than inside: a skin, and a ragged ceiling over the cavity. */
-  ok("there is a crust: the outside is denser than the inside",
-     fillAt(R_OUTER - 15) > fillAt(R_INNER + 15) + 0.05,
+  /* ---- A QUARTER EVERYWHERE, NOT A CRUST ----
+     There used to be a lean here, denser outside and thinner in, on my argument
+     that a planet wants a skin. That was not the brief and it pushed the fill
+     at the surface to 31%. Geoff, having flown it: "I had asked for 3 out of 4
+     cubes to be holes so only 25% of slots have cubes, but it's far more solid
+     than that." So the fill is flat, and this measures it at both faces. */
+  ok("the fill is the same at the surface as it is deep down",
+     Math.abs(fillAt(R_OUTER - 15) - fillAt(R_INNER + 15)) < 0.03,
      `${pct(fillAt(R_OUTER - 15))} outside against ${pct(fillAt(R_INNER + 15))} inside`);
+  ok("and it really is three holes in four",
+     Math.abs(fillAt(R_OUTER - 30) - 0.25) < 0.03 && Math.abs(fillAt((R_OUTER + R_INNER) / 2) - 0.25) < 0.03,
+     `${pct(fillAt(R_OUTER - 30))} near the surface, ${pct(fillAt((R_OUTER + R_INNER) / 2))} mid shell`);
 }
 
 /* ---- the cavity, the heart and the spokes ---- */

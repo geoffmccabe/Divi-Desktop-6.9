@@ -351,6 +351,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const SPIKEWORLD_AT = new THREE.Vector3(0, 0, DISTANCE_IN_EARTHS * EARTH_D);
   let spikeworld: VoxelPlanet | null = null;
   let voxBuilt = -1;
+  const _voxLook = new THREE.Vector3();
   let atSpikeworld = false;
   /** Where the ship was before it went, so it can be put back. */
   const homeAgain = new THREE.Vector3();
@@ -1587,7 +1588,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   function frameSpikeworld(camera: THREE.PerspectiveCamera): void {
     if (!spikeworld) return;
     const tVox = performance.now();
-    spikeworld.step(camera.position, 0);
+    spikeworld.step(camera.position, camera.getWorldDirection(_voxLook));
     dflow.add("vox", performance.now() - tVox);
     const st = spikeworld.stats();
     if (st.built !== voxBuilt) {
@@ -1837,9 +1838,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     const tRoom = performance.now();
     if (inRoom && room) {
       room.step(dt);
-      /* Not while away: the room's world is Earth's neighbourhood, and a ship
-         two hundred thousand units outside it would be corrected every tick. */
-      if (!atSpikeworld) room.report(flight.pos, flight.fwd, flight.guardFor > 0);
+      /* ---- NEVER SEND WHAT THE ROOM WILL REFUSE ----
+         The room's world is Earth's neighbourhood and it rejects any coordinate
+         past a hundred thousand outright, as "bad transform", with a strike
+         against the seat; twenty strikes and the socket is closed. Spikeworld
+         sits at two hundred thousand, so every report from there was a strike,
+         and Geoff was kicked mid-flight: "it crashed at some point and said
+         'refused bad transform'".
+
+         Gated on the POSITION rather than on a flag, because a flag can be
+         cleared by a path nobody thought of: backing out to the map while away
+         cleared it and left the ship still two hundred thousand units out. The
+         room's own bound cannot be got wrong. */
+      if (flight.pos.length() <= R + MAX_ALT + 2) {
+        room.report(flight.pos, flight.fwd, flight.guardFor > 0);
+      }
 
       /* The room's fight, put where the drawing already looks for it. */
       combat.enemies.length = 0;
@@ -2725,6 +2738,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (scene && mandala) scene.remove(mandala.group);
       mandala?.dispose();
       mandala = null;
+      /* Backing out to the map while away: bring the ship home and put the
+         ceiling back, or the next attach reports from two hundred thousand
+         units out and is struck for it. */
+      if (atSpikeworld && flight) {
+        flight.ceiling = undefined;
+        flight.pos.copy(homeAgain.lengthSq() > 1 ? homeAgain : new THREE.Vector3(0, 0, R + 40));
+        flight.alt = flight.pos.length() - R;
+        flight.speed = 0;
+      }
       spikeworld?.dispose();
       spikeworld = null;
       atSpikeworld = false;

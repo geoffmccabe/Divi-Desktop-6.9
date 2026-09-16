@@ -70,9 +70,26 @@ function noise(x: number, y: number, z: number, seed: number): number {
 
 /** The rock field: a coarse octave for the clumps and a fine one for
  *  roughness. Low means rock. */
-export function rockField(x: number, y: number, z: number, seed: number): number {
-  return (1 - FINE_WEIGHT) * noise(x / CLUMP, y / CLUMP, z / CLUMP, seed + 1)
-    + FINE_WEIGHT * noise(x / CLUMP_FINE, y / CLUMP_FINE, z / CLUMP_FINE, seed + 2);
+/**
+ * The rock field: a coarse octave for the clumps and a fine one for roughness.
+ * Low means rock.
+ *
+ * `lod` GROWS THE CLUMPS, and it is how the detail levels work. Sampling the
+ * same ten-cube field every fourth or eighth cube was the obvious way to make
+ * a coarse level and it is the wrong way: a ten-cube clump is two and a half
+ * cells at step 4 and one and a quarter at step 8, so the field turns back into
+ * salt-and-pepper, which is the one arrangement this whole design exists to
+ * avoid. Measured, it made a coarse chunk DEARER than a fine one: 6,054
+ * triangles at step 1 against 14,763 at step 8.
+ *
+ * Growing the clump with the level keeps it ten CELLS across at every level, so
+ * every level is equally clumpy and equally cheap, and a coarse planet is a
+ * blurred version of the fine one rather than a noisier one.
+ */
+export function rockField(x: number, y: number, z: number, seed: number, lod = 1): number {
+  const coarse = CLUMP * lod, fine = CLUMP_FINE * lod;
+  return (1 - FINE_WEIGHT) * noise(x / coarse, y / coarse, z / coarse, seed + 1)
+    + FINE_WEIGHT * noise(x / fine, y / fine, z / fine, seed + 2);
 }
 
 /* ---- turning "a quarter of it is rock" into a threshold ----
@@ -231,6 +248,9 @@ function channel(x: number, y: number, z: number, radius: number, seed: number):
      on the way in and has to be followed, but not so much that it closes. */
   const k = (R_OUTER * 0.4) / radius;
   const wobble = radius / (CLUMP * CHANNEL_STRETCH);
+  /* Not scaled by the level: a channel is a direction, and the same directions
+     have to be carved at every level or a shaft would close up when it went
+     coarse and open again when it came near. */
   return noise(
     x * k / CLUMP + wobble, y * k / CLUMP - wobble, z * k / CLUMP + wobble * 0.5,
     seed + 3,
@@ -243,7 +263,7 @@ function channel(x: number, y: number, z: number, radius: number, seed: number):
  * Coordinates are CUBES, centred on the planet, and may be any integers: the
  * shell test rejects everything outside. `seed` picks which planet.
  */
-export function solid(x: number, y: number, z: number, seed = 0): boolean {
+export function solid(x: number, y: number, z: number, seed = 0, lod = 1): boolean {
   const r2 = x * x + y * y + z * z;
   /* 1. Outside the surface: nothing. Squared, to skip the square root for the
         majority of calls that end here. */
@@ -253,7 +273,7 @@ export function solid(x: number, y: number, z: number, seed = 0): boolean {
   /* 2. The heart. Denser than the shell, so it reads as a solid body with
         detail rather than a smooth ball. */
   if (r <= R_HEART) {
-    return rockField(x, y, z, seed) < thresholdFor(0.8, seed);
+    return rockField(x, y, z, seed, lod) < thresholdFor(0.8, seed);
   }
 
   /* 3. The spokes, which cross the empty cavity. */
@@ -262,7 +282,7 @@ export function solid(x: number, y: number, z: number, seed = 0): boolean {
   /* 4, 5. How much rock at this depth, and is this cell some of it. Aimed high
         by whatever the channels will carve back out, so the shell really ends
         up the briefed quarter. */
-  if (rockField(x, y, z, seed) >= thresholdAfterCarving(crustFill(r), seed)) return false;
+  if (rockField(x, y, z, seed, lod) >= thresholdAfterCarving(crustFill(r), seed)) return false;
 
   /* 6. Carved out again if a channel runs through here. Last, because it is
         the most expensive test and only rock can be carved. */
@@ -280,30 +300,24 @@ export function solid(x: number, y: number, z: number, seed = 0): boolean {
 export function solidAt(cx: number, cy: number, cz: number, step: number, seed = 0): boolean {
   if (step <= 1) return solid(cx, cy, cz, seed);
   const half = step >> 1;
-  return solid(cx * step + half, cy * step + half, cz * step + half, seed);
+  /* The level is passed down, so the coarse cell asks a coarse field. Without
+     it this was subsampling a fine field, which is what made the coarse levels
+     dearer than the fine ones. */
+  return solid(cx * step + half, cy * step + half, cz * step + half, seed, step);
 }
 
-/**
- * The same question, but with everything below a certain depth treated as
- * SOLID ROCK.
- *
- * For the distant view, and it is worth a great deal. From outside the planet
- * only the outer skin can be seen, but a coarse chunk is 256 cubes thick and a
- * quarter of that is rock with holes in it, so meshing it honestly generated
- * tens of thousands of triangles of cave wall that nothing could ever look at.
- * The Phase 3 test caught it: a view estimated at 100,000 triangles really cost
- * 251,000.
- *
- * Filling in below the skin means the only faces generated are the ones on the
- * outside, which is all there is to see. `depth` is in cubes.
- */
-export function solidSkinAt(
-  cx: number, cy: number, cz: number, step: number, depth: number, seed = 0,
-): boolean {
-  const half = step > 1 ? step >> 1 : 0;
-  const x = cx * step + half, y = cy * step + half, z = cz * step + half;
-  const r2 = x * x + y * y + z * z;
-  const inner = R_OUTER - depth;
-  if (r2 <= inner * inner) return true;            /* filled in, below the skin */
-  return solid(x, y, z, seed);
-}
+/* ---- THE SKIN TRICK, AND WHY IT IS GONE ----
+   There used to be a solidSkinAt() here that treated everything below a depth
+   as solid rock, so a distant chunk drew only its outer surface. It was worth
+   ten times, and it was wrong in two ways that matter more than that.
+
+   It made the planet look SOLID from outside, which is the opposite of the
+   brief: Geoff asked for three cubes in four to be holes and said so again
+   after seeing it. And it assumed the viewer was always outside, so from within
+   the cavity the entire shell was "below the depth" and vanished: "From inside
+   of the planet, the entire planet is invisible and you see right through it
+   except for the spikes."
+
+   The honest saving is the one above: grow the clumps with the detail level, so
+   a coarse level is a blurred planet rather than a noisier one. */
+

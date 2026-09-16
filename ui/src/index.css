@@ -2222,3 +2222,29 @@ code, .mono { font-family: var(--font-mono); }
   cursor: pointer;
 }
 .orbit-exit:hover { background: hsl(var(--primary) / 0.3); }
+
+/* ---- full screen ----
+   Beside the exit button going in, and in the opposite corner coming back out,
+   so the collapse control is never under the thumb that was just reaching for
+   something else. Square, and the same height as the button it sits next to. */
+.orbit-full {
+  position: absolute; left: 16px; bottom: 14px;
+  transform: translateX(calc(100% + 154px));
+  pointer-events: auto;
+  width: 27px; height: 27px;
+  display: grid; place-items: center;
+  padding: 0;
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-ocean) / 0.7);
+  border: 1px solid hsl(var(--rebels-hud) / 0.45);
+  border-radius: calc(var(--panel-radius) * 0.5);
+  cursor: pointer;
+}
+.orbit-full svg { width: 14px; height: 14px; }
+.orbit-full svg path { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.orbit-full:hover { background: hsl(var(--primary) / 0.3); }
+/* Out of full screen: the other corner, where nothing else lives. */
+.orbit-full.out {
+  left: auto; right: 16px; bottom: 14px;
+  transform: none;
+}

@@ -25,14 +25,18 @@ import {
 } from "./voxelWorld";
 import { spokeDirections } from "./voxelField";
 import { meshChunk, type ChunkMesh } from "./voxelMesh";
-import {
-  visibleChunks, dustFarFor, SKIN_BY_STEP, type ChunkRef,
-} from "./voxelView";
+import { visibleChunks, dustFarFor, type ChunkRef } from "./voxelView";
 import { spikes, SPIKE_COUNT } from "./voxelSpikes";
 
-/** How many chunks may be built in one frame. A chunk is about twenty
- *  milliseconds, so more than one is a visible hitch. */
-const BUILD_PER_FRAME = 1;
+/**
+ * How many chunks may be built in one frame, and how many are kept once built.
+ *
+ * A chunk is a few milliseconds, so three is about as many as a frame can take
+ * without showing. Keeping two hundred means turning round does not rebuild
+ * what was behind you: they are hidden and shown again, which is free.
+ */
+const BUILD_PER_FRAME = 3;
+const CACHE_CHUNKS = 200;
 
 /** The rock, and the dust it fades into. */
 const ROCK_COLOUR = 0x8a90a0;
@@ -44,7 +48,7 @@ export interface VoxelPlanet {
   /** Where its centre sits in the game's world. */
   centre: THREE.Vector3;
   /** Move it on. `eye` is the camera in WORLD units. */
-  step(eye: THREE.Vector3, dt: number): void;
+  step(eye: THREE.Vector3, look: THREE.Vector3): void;
   /** For DFlow: what it is costing right now. */
   stats(): { chunks: number; triangles: number; queued: number; built: number };
   dispose(): void;
@@ -199,7 +203,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
 
   /** Turn one chunk into geometry. The seam a worker would replace. */
   function build(c: ChunkRef): void {
-    const m: ChunkMesh = meshChunk(c.ox, c.oy, c.oz, CHUNK, c.step, seed, SKIN_BY_STEP[c.step] ?? 0);
+    const m: ChunkMesh = meshChunk(c.ox, c.oy, c.oz, CHUNK, c.step, seed);
     built++;
     if (!m.indices.length) { live.set(keyOf(c), new THREE.Mesh()); return; }
     const geo = new THREE.BufferGeometry();
@@ -225,16 +229,29 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   return {
     group,
     centre: centre.clone(),
-    step(eye) {
+    step(eye, look) {
       /* Where the eye is, in the planet's own cubes. */
       _eye.copy(eye).sub(group.position).divideScalar(CUBE);
-      const view = visibleChunks([_eye.x, _eye.y, _eye.z]);
+      const view = visibleChunks([_eye.x, _eye.y, _eye.z], {
+        look: [look.x, look.y, look.z],
+      });
       const wanted = new Set(view.chunks.map(keyOf));
-      /* Anything no longer wanted goes at once: holding it would be holding
-         the budget open for geometry nobody is looking at. */
-      for (const key of [...live.keys()]) if (!wanted.has(key)) drop(key);
-      /* And the nearest few that are missing are built, a small number a frame
-         so a burst of new chunks does not stall. */
+      /* ---- BUILT CHUNKS ARE KEPT, NOT THROWN AWAY ----
+         They used to be disposed the moment they left the list, so turning the
+         ship threw away the geometry behind it and rebuilding it took a frame
+         each on the way back. Geoff: "It still has big chunks of cubes
+         appearing and disappearing in front of me." They are HIDDEN instead and
+         shown again instantly, and only the oldest are really let go, once
+         there are more than the cache holds. */
+      for (const [key, mesh] of live) mesh.visible = wanted.has(key);
+      if (live.size > CACHE_CHUNKS) {
+        for (const key of [...live.keys()]) {
+          if (live.size <= CACHE_CHUNKS) break;
+          if (!wanted.has(key)) drop(key);
+        }
+      }
+      /* And the nearest few that are missing are built. More than one a frame,
+         because one at a time is why a turn filled in visibly. */
       queue = view.chunks.filter((c) => !live.has(keyOf(c)));
       for (let i = 0; i < Math.min(BUILD_PER_FRAME, queue.length); i++) build(queue[i]);
 
