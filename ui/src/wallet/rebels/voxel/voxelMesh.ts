@@ -161,10 +161,20 @@ function emit(
   /* The face sits on the far side of the cell when the normal points outwards. */
   const lo = s + (out ? 1 : 0);
   const base = pos.length / 3;
-  /* The four corners of the rectangle, in the slice's own two axes. Wound so
-     the face looks the way its normal does. */
-  const da = out ? [0, w, w, 0] : [0, 0, w, w];
-  const db = out ? [0, 0, h, h] : [0, h, h, 0];
+  /* ---- WHICH WAY ROUND ----
+     A triangle is only drawn from the side its corners run anticlockwise
+     around; from behind it is invisible. Two of the three axes can be wound by
+     the obvious rule and the THIRD cannot, because the pair of axes that spans
+     a Y face is (X, Z), and X crossed with Z points at MINUS Y. So every top
+     and bottom face of every cube came out backwards and therefore invisible.
+     Geoff saw it on the heart: "only orange faces on one side I think?"
+
+     It is the classic mistake in this kind of mesher and the test now measures
+     every face's real geometric normal against the one the mesher claims. */
+  const flip = ny !== 0;
+  const anti = flip ? !out : out;
+  const da = anti ? [0, w, w, 0] : [0, 0, w, w];
+  const db = anti ? [0, 0, h, h] : [0, h, h, 0];
   for (let c = 0; c < 4; c++) {
     const ua = a + da[c], vb = b + db[c];
     let x: number, y: number, z: number;

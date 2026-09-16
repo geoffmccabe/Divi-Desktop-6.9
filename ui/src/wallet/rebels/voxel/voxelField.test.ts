@@ -337,6 +337,48 @@ function fillAt(radius: number, samples = 6000): number {
      `${spikeReach().toFixed(0)} world units past the surface`);
 }
 
+/* ---- WHICH WAY ROUND EVERY FACE IS ----
+   A triangle is only drawn from the side its corners run anticlockwise around;
+   from behind it is invisible. Two of the three axes can be wound by the
+   obvious rule and the third cannot, because the pair of axes spanning a Y face
+   is (X, Z) and X crossed with Z points at MINUS Y. Every top and bottom face
+   of every cube therefore came out backwards, and Geoff saw it on the heart:
+   "only orange faces on one side I think?"
+
+   Measured, not asserted: each triangle's own geometric normal against the
+   normal the mesher wrote beside it. */
+{
+  const m = meshChunk(-8, -8, -8, 16, 1);
+  const P = m.positions, N = m.normals, I = m.indices;
+  const backwards = new Map<string, number>();
+  const counted = new Map<string, number>();
+  for (let t = 0; t < I.length; t += 3) {
+    const a = I[t] * 3, b = I[t + 1] * 3, c = I[t + 2] * 3;
+    const e1 = [P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]];
+    const e2 = [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]];
+    /* The triangle's own normal, from the order its corners are given in. */
+    const gx = e1[1] * e2[2] - e1[2] * e2[1];
+    const gy = e1[2] * e2[0] - e1[0] * e2[2];
+    const gz = e1[0] * e2[1] - e1[1] * e2[0];
+    const key = `${N[a]},${N[a + 1]},${N[a + 2]}`;
+    counted.set(key, (counted.get(key) ?? 0) + 1);
+    if (gx * N[a] + gy * N[a + 1] + gz * N[a + 2] <= 0) {
+      backwards.set(key, (backwards.get(key) ?? 0) + 1);
+    }
+  }
+  ok("all six faces of a cube are drawn", counted.size === 6,
+     `${counted.size} directions: ${[...counted.keys()].sort().join(" ")}`);
+  ok("and every one of them is wound so it can be SEEN",
+     backwards.size === 0,
+     [...backwards].map(([k, n]) => `${k}: ${n} backwards`).join("; ") || "none backwards");
+  /* The Y faces specifically, because they are the ones that were wrong and
+     the ones an obvious-looking fix gets wrong again. */
+  ok("the top and bottom faces in particular",
+     !backwards.has("0,1,0") && !backwards.has("0,-1,0")
+     && (counted.get("0,1,0") ?? 0) > 0 && (counted.get("0,-1,0") ?? 0) > 0,
+     `${counted.get("0,1,0")} up, ${counted.get("0,-1,0")} down`);
+}
+
 /* ---- MODULARITY: nothing from the game gets in here ----
    Geoff: "make sure it's really modular and if you do it right then it won't be
    a problem for other agents that are building other things." This folder runs

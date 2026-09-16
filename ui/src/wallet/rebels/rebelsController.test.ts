@@ -1394,19 +1394,34 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   runRoomCheat(combatNow, seat.body, "11");
   const target = () => combatNow.enemies[0];
   ok("(setup) a fighter in the room", !!target());
+  /* Held at ONE place in the world, worked out once.
+     It used to be re-derived from the camera every frame, which teleported the
+     enemy after the crosshair as the crosshair moved. That was fine while the
+     cockpit copied enemy positions straight off the wire, and stopped being
+     fine when they were smoothed between ticks: an enemy that jumps every
+     frame is never where the smoothing has got to, so the assist was chasing a
+     target the player would never have seen either. A fixed spot is both a
+     fairer test and closer to a real fight. */
+  const spot = (() => {
+    const fwd = g.camera.getWorldDirection(new THREE.Vector3());
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(g.camera.quaternion);
+    return g.camera.position.clone().addScaledVector(fwd, 20).addScaledVector(right, 1.2);
+  })();
   const hold = () => {
     const e = target();
     if (!e) return;
-    const fwd = g.camera.getWorldDirection(new THREE.Vector3());
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(g.camera.quaternion);
-    e.pos.copy(g.camera.position).addScaledVector(fwd, 20).addScaledVector(right, 1.2);
+    e.pos.copy(spot);
     e.vel.set(0, 0, 0);
   };
   const flyHeld = (frames: number) => { for (let i = 0; i < frames; i++) { hold(); ctl.frame(1 / 60); } };
   const shields0 = ctl.hud().shields;
-  flyHeld(20);
+  /* Sampled BEFORE the enemy is put in front of the guns, not twenty frames
+     after. With the enemy now held still in the world rather than teleported
+     after the crosshair every frame, the assist finishes its pull in the first
+     few frames, so a reading taken twenty frames in had already missed most of
+     the movement it was meant to measure. */
   const x0 = ctl.cursor().x;
-  flyHeld(60);
+  flyHeld(80);
   ok("an enemy near the crosshair draws it in", ctl.cursor().x > x0 + 0.01 || ctl.hud().onTarget, `${x0.toFixed(3)} -> ${ctl.cursor().x.toFixed(3)}`);
   const onBy = Date.now() + 5000;
   while (!ctl.hud().onTarget && Date.now() < onBy) flyHeld(1);

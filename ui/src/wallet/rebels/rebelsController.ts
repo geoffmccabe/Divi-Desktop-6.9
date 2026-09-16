@@ -350,6 +350,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      built this key is the only way anybody sees it. */
   const SPIKEWORLD_AT = new THREE.Vector3(0, 0, DISTANCE_IN_EARTHS * EARTH_D);
   let spikeworld: VoxelPlanet | null = null;
+  let voxBuilt = -1;
   let atSpikeworld = false;
   /** Where the ship was before it went, so it can be put back. */
   const homeAgain = new THREE.Vector3();
@@ -1570,6 +1571,31 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     );
   }
   /** The shield: the mandala from the cockpit, the red sphere from outside. */
+  /**
+   * Spikeworld, a frame at a time.
+   *
+   * THIS CALL is what builds the cubes. The rods, the spokes and the heart are
+   * built once when the planet is made, which is why the first trip showed
+   * those three and nothing else: the step was written into a place in this
+   * file that no longer existed after the controller was split, the edit
+   * matched nothing, and nothing said so. An edit that silently matches
+   * nothing is the one kind this file cannot afford.
+   *
+   * Timed and counted into DFlow, so next time the answer to "is anything being
+   * built" is in the report rather than out of the window.
+   */
+  function frameSpikeworld(camera: THREE.PerspectiveCamera): void {
+    if (!spikeworld) return;
+    const tVox = performance.now();
+    spikeworld.step(camera.position, 0);
+    dflow.add("vox", performance.now() - tVox);
+    const st = spikeworld.stats();
+    if (st.built !== voxBuilt) {
+      voxBuilt = st.built;
+      dflow.note(`vox: ${st.chunks} chunks up, ${st.triangles} triangles, ${st.built} built, ${st.queued} waiting`);
+    }
+  }
+
   function frameShield(flight: Flight, camera: THREE.PerspectiveCamera): void {
     /* ---- the shield ----
        Two pictures of one thing, and only ever one of them at a time.
@@ -2347,6 +2373,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         frameAssist(dt, camera);
         const res = frameFlight(dt, flight, fx);
         frameShipAndCamera(dt, flight, camera);
+        frameSpikeworld(camera);
         frameShield(flight, camera);
         frameSky(dt, flight);
         /* Whether the fight belongs to a room. Worked out before the guns,

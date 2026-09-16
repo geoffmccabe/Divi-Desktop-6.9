@@ -89,25 +89,6 @@ function gridTexture(): THREE.Texture | null {
 }
 
 /**
- * Shade each face by the way it points, baked into the geometry.
- *
- * Six flat tones rather than a light: cheaper, it cannot be got wrong by
- * whatever else is in the scene, and the six sides of a cube read apart, which
- * is the whole point of drawing cubes.
- */
-function shadeColours(normals: Float32Array): Float32Array {
-  const out = new Float32Array(normals.length);
-  const base = new THREE.Color(ROCK_COLOUR);
-  for (let i = 0; i < normals.length; i += 3) {
-    const nx = normals[i], ny = normals[i + 1], nz = normals[i + 2];
-    /* Up brightest, down darkest, the four sides between. */
-    const lit = 0.58 + 0.30 * Math.max(0, ny) + 0.12 * Math.abs(nx) + 0.06 * Math.abs(nz);
-    out[i] = base.r * lit; out[i + 1] = base.g * lit; out[i + 2] = base.b * lit;
-  }
-  return out;
-}
-
-/**
  * Build the planet.
  *
  * `centre` is where it sits in the game's world, in world units. Nothing is
@@ -122,11 +103,29 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   cubes.scale.setScalar(CUBE);
   group.add(cubes);
 
+  /* ---- A LIGHT OF ITS OWN ----
+     Geoff: the things that did draw were "all identical color with no shading
+     at all so they have no 3D appearance". Quite right, and a lit material on
+     its own would not have fixed it: the scene's only lamp is a point light
+     ninety units wide that follows the camera, and the nearest cube here is
+     over a thousand units away, so anything lit would have come out black.
+
+     So the planet brings its own. A directional light has no falloff, so it
+     reaches whatever it is pointed at however far away, and a little ambient
+     keeps the dark sides from going to pitch. Both live in the planet's group
+     and go with it. */
+  const sun = new THREE.DirectionalLight(0xfff0dd, 2.4);
+  sun.position.set(0.45, 0.8, 0.4);
+  const fill = new THREE.AmbientLight(0x5a6478, 1.1);
+  group.add(sun, fill);
+
   const grid = gridTexture();
-  const material = new THREE.MeshBasicMaterial({
+  /* Lambert rather than Basic: Basic has no shading at all, which is exactly
+     what was wrong. Lambert is the cheapest material that has any, and on flat
+     cube faces it is all that is needed. */
+  const material = new THREE.MeshLambertMaterial({
     ...(grid ? { map: grid } : {}),
-    color: 0xffffff,
-    vertexColors: true,
+    color: ROCK_COLOUR,
   });
   const live = new Map<string, THREE.Mesh>();
   let queue: ChunkRef[] = [];
@@ -139,7 +138,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
      whole allowance. A rod one cube wide and a hundred long IS a box, so
      nothing is lost. */
   const rodGeo = new THREE.BoxGeometry(1, 1, 1);
-  const rodMat = new THREE.MeshBasicMaterial({ color: SPIKE_COLOUR });
+  const rodMat = new THREE.MeshLambertMaterial({ color: SPIKE_COLOUR });
   const rods = new THREE.InstancedMesh(rodGeo, rodMat, SPIKE_COUNT + 24);
   {
     const m = new THREE.Matrix4();
@@ -187,7 +186,10 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     geo.setAttribute("normal", new THREE.BufferAttribute(m.normals, 3));
     geo.setAttribute("uv", new THREE.BufferAttribute(m.uvs, 2));
     geo.setIndex(new THREE.BufferAttribute(m.indices, 1));
-    const mat = new THREE.MeshBasicMaterial({ color: HEART_COLOUR });
+    const mat = new THREE.MeshLambertMaterial({
+      color: HEART_COLOUR, emissive: HEART_COLOUR, emissiveIntensity: 0.35,
+      ...(grid ? { map: grid } : {}),
+    });
     const mesh = new THREE.Mesh(geo, mat);
     cubes.add(mesh);
     return { mesh, geo, mat };
@@ -204,7 +206,6 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     geo.setAttribute("position", new THREE.BufferAttribute(m.positions, 3));
     geo.setAttribute("normal", new THREE.BufferAttribute(m.normals, 3));
     geo.setAttribute("uv", new THREE.BufferAttribute(m.uvs, 2));
-    geo.setAttribute("color", new THREE.BufferAttribute(shadeColours(m.normals), 3));
     geo.setIndex(new THREE.BufferAttribute(m.indices, 1));
     geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, material);
@@ -251,6 +252,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
       for (const key of [...live.keys()]) drop(key);
       material.dispose();
       grid?.dispose();
+      sun.dispose(); fill.dispose();
       rodGeo.dispose(); rodMat.dispose(); rods.dispose();
       heartMesh.geo.dispose(); heartMesh.mat.dispose();
       group.removeFromParent();
