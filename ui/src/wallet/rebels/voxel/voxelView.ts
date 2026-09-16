@@ -38,18 +38,24 @@ import {
 /**
  * What the planet may cost in one frame.
  *
- * 300,000, not 120,000. The smaller figure was two thirds of what the live game
+ * 400,000, not 120,000. The smaller figure was two thirds of what the live game
  * can carry in Earth orbit, where it shares the frame with ships, shots, coins
  * and effects. Spikeworld is its OWN shard: the fight is not there, Earth is
  * beyond the far plane, and the planet is very nearly the only thing being
  * drawn. A capture of the live game sat at sixty frames a second with 300,000
  * triangles, so this leaves room and buys a planet with no holes in it.
  *
- * With every level at about 4,600 triangles a chunk, this is room for sixty or
- * so, which is what covering the visible face takes from inside the cavity,
- * where the shell wraps round you and there is most of it to draw.
+ * And the two frames are not alike in the way that matters. The 200,000 that
+ * gave Geoff's Mac trouble was the Earth scene: fifty shader programs, hundreds
+ * of draw calls, additive glow over most of the frame. Spikeworld is ONE
+ * material, no transparency, no overdraw and about seventy draw calls, which a
+ * card eats far more cheaply per triangle.
+ *
+ * With every level at about 4,600 triangles a chunk this is room for eighty or
+ * so, which is what covering the view takes from inside the cavity, where the
+ * shell wraps right round you. DFlow will say whether it was too generous.
  */
-export const TRIANGLE_BUDGET = 300000;
+export const TRIANGLE_BUDGET = 400000;
 
 /**
  * How far the dust lets you see, in world units.
@@ -80,11 +86,26 @@ export const DUST_FAR = 2700;
  */
 export const DUST_FAR_OPEN = 9000;
 
-/** Which of the two applies where the viewer is. Fades between them across the
- *  crust, so there is no line in the sky where the view distance jumps. */
+/**
+ * Which of the two applies where the viewer is.
+ *
+ * THICK ONLY IN THE ROCK. It used to thicken by radius alone, on the reasoning
+ * that "inside the planet" means "in a tunnel where you cannot see far". That
+ * is true of the shell and false of the CAVITY, which is four and a half
+ * thousand units of open space with a heart floating in it: from there the far
+ * side of the shell is 690 cubes away and the dust was stopping at 300, so
+ * half the planet simply was not drawn. Geoff: "when I'm inside the planet, an
+ * entire side of the planet is missing."
+ *
+ * So it is measured from the nearer FACE of the shell rather than from the
+ * centre: open at both faces, thick sixty cubes in, fading between so there is
+ * no line where the view distance jumps.
+ */
 export function dustFarFor(radiusCubes: number): number {
-  const t = Math.max(0, Math.min(1, (radiusCubes - R_OUTER * 0.9) / (R_OUTER * 0.2)));
-  return DUST_FAR + (DUST_FAR_OPEN - DUST_FAR) * t;
+  const intoRock = Math.min(radiusCubes - R_INNER, R_OUTER - radiusCubes);
+  if (intoRock <= 0) return DUST_FAR_OPEN;              /* cavity, or space */
+  const t = Math.min(1, intoRock / 60);
+  return DUST_FAR_OPEN + (DUST_FAR - DUST_FAR_OPEN) * t;
 }
 
 /**
@@ -99,7 +120,7 @@ export function dustFarFor(radiusCubes: number): number {
  * They were wider (64, 160, 380) and the near bands ate the whole allowance,
  * which left the far ones dropped and the planet full of holes.
  */
-export const RING_CUBES = [48, 140, 340, 1e9] as const;
+export const RING_CUBES = [48, 140, 340, 700, 1e9] as const;
 
 /**
  * What a chunk costs, by detail level. MEASURED, at the 90th percentile of a
@@ -127,7 +148,7 @@ export const RING_CUBES = [48, 140, 340, 1e9] as const;
  * a fine field made the coarse levels DEARER (14,763 against 6,054), which is
  * backwards and is what the skin trick was papering over.
  */
-export const COST_BY_STEP: Record<number, number> = { 1: 4600, 2: 4400, 4: 4500, 8: 4900 };
+export const COST_BY_STEP: Record<number, number> = { 1: 4600, 2: 4400, 4: 4500, 8: 4900, 16: 5200 };
 
 /** One chunk to draw: its corner in CELLS at its own step, and that step. */
 export interface ChunkRef {
@@ -144,6 +165,12 @@ export interface ViewResult {
   /** How many were dropped for want of budget. Zero is the healthy case; a
    *  large number means the rings are too generous for this viewpoint. */
   dropped: number;
+}
+
+/** How far out the band for a given detail level reaches, in cubes. */
+export function ringFor(step: number): number {
+  const i = LOD_STEPS.indexOf(step as (typeof LOD_STEPS)[number]);
+  return i < 0 ? RING_CUBES[RING_CUBES.length - 1] : RING_CUBES[i];
 }
 
 /** Which detail level a chunk that far away gets. */
@@ -195,11 +222,17 @@ export function mightHoldRock(ox: number, oy: number, oz: number, step: number):
 /**
  * Half the angle of the cone kept in view, in cosine.
  *
- * Generous on purpose: a frame is about 55 degrees tall and rather more across
- * the diagonal, and a chunk that pops in as the ship turns is worse than a
- * chunk drawn just off the edge. 0.2 is about 78 degrees off the nose.
+ * A frame is about 55 degrees tall and around 75 across the diagonal, so 63
+ * degrees off the nose covers it with room to spare. It was 78, which is a
+ * 156-degree view and meant paying for a great deal that was never on screen:
+ * from inside the cavity that was the difference between drawing the far side
+ * of the shell and dropping it.
+ *
+ * Turning is safe at this angle because a chunk already up STAYS up whatever
+ * the angle (see the hysteresis in voxelPlanet): the cone decides what is worth
+ * building, never what is worth hiding.
  */
-const LOOK_COS = 0.2;
+const LOOK_COS = 0.45;
 
 export function visibleChunks(
   viewer: readonly [number, number, number],

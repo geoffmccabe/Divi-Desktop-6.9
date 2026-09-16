@@ -76,13 +76,21 @@ function actualTriangles(chunks: Array<{ ox: number; oy: number; oz: number; ste
    One dust distance for everywhere swallowed the whole planet from outside,
    which the first run of this file caught by finding nothing to draw at all. */
 {
-  ok("deep in the rock you cannot see far", dustFarFor(R_INNER + 20) === DUST_FAR);
+  ok("deep in the rock you cannot see far",
+     dustFarFor((R_OUTER + R_INNER) / 2) === DUST_FAR,
+     `${dustFarFor((R_OUTER + R_INNER) / 2)} units mid shell`);
+  /* But the CAVITY is open space, not a tunnel, and the far side of the shell
+     is seven hundred cubes off. Treating it as rock hid half the planet. */
+  ok("the cavity is open space and you can see across it",
+     dustFarFor(R_INNER - 60) === DUST_FAR_OPEN
+     && DUST_FAR_OPEN / CUBE > R_INNER + R_OUTER - 60,
+     `${dustFarFor(R_INNER - 60) / CUBE} cubes against a far side ${R_INNER - 60 + R_OUTER} away`);
   ok("out in the open you can see the whole planet",
      dustFarFor(R_OUTER + SKY_EDGE) === DUST_FAR_OPEN,
      `${dustFarFor(R_OUTER + SKY_EDGE)} units against a ${R_OUTER * 2 * CUBE}-unit planet`);
-  ok("and it thickens gradually rather than at a line in the sky",
-     dustFarFor(R_OUTER) > DUST_FAR && dustFarFor(R_OUTER) < DUST_FAR_OPEN,
-     `${dustFarFor(R_OUTER).toFixed(0)} at the surface`);
+  ok("and it thickens gradually going into the rock, not at a line",
+     dustFarFor(R_OUTER - 20) > DUST_FAR && dustFarFor(R_OUTER - 20) < DUST_FAR_OPEN,
+     `${dustFarFor(R_OUTER - 20).toFixed(0)} twenty cubes in`);
   ok("the open dust reaches across the whole planet",
      DUST_FAR_OPEN >= R_OUTER * 2 * CUBE * 0.9);
 }
@@ -222,7 +230,7 @@ for (const [name, at] of [places[0], places[3]]) {
      design exists to avoid. */
   const naked = visibleChunks(insideAt, { dustFar: 1e6, budget: 1e9 });
   ok("and with no dust and no budget at all the planet is unaffordable",
-     naked.triangles > TRIANGLE_BUDGET * 2,
+     naked.triangles > TRIANGLE_BUDGET * 1.5,
      `${naked.triangles} triangles wanted against an allowance of ${TRIANGLE_BUDGET}`);
   /* ---- WHERE THE SAVING REALLY COMES FROM ----
      Not from filling the planet in, which made it look solid from outside and

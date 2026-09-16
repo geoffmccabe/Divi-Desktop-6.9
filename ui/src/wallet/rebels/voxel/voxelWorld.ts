@@ -97,36 +97,58 @@ export const CRUST_INNER = 1;
  * How strongly the voids run radially, which is what makes tunnels rather than
  * pockets.
  *
- * The channel field is the ordinary noise evaluated with the radial axis
- * stretched, so its features are long in the "inwards" direction. Cells inside
- * a channel are forced empty, so there are ways in by construction and not
- * merely by luck. A quarter fill almost certainly leaves the void connected
- * anyway (site percolation on a cubic lattice turns solid at about 31%), but
- * "almost certainly" is no use to a player who cannot get in.
+ * The channel field is the ordinary noise evaluated on DIRECTION, with a slow
+ * drift by radius so a shaft leans on the way in rather than being a laser
+ * bore. This number is how slow that drift is, and bigger is straighter: at 40
+ * a shaft wandered enough that only 4% of them stayed open the whole way down,
+ * and at 120 it is 29%.
  */
-export const CHANNEL_STRETCH = 40;
+export const CHANNEL_STRETCH = 120;
 /**
  * Above this, the channel field carves.
  *
- * Set so roughly a tenth of the sky is shaft. A quarter was tried first and
- * made the planet a colander: plenty of ways in and not much maze. A tenth
- * leaves the shafts findable and the rest of the shell worth exploring.
+ * ---- THIS IS THE DIAL THAT MAKES THE PLANET LOOK HOLEY ----
+ *
+ * A quarter fill in a shell 250 cubes deep is OPAQUE, and no arrangement of it
+ * is otherwise: a line of sight survives 0.75 to the power of how many cubes it
+ * passes, and 0.75^250 is nothing at all. Measured, the view stopped after 47
+ * cubes and 6% of straight lines reached the cavity, whatever the clump size:
+ * at two cubes it was 35 and 6.3%, at ten it was 43 and 6.0%. Geoff saw the
+ * consequence and read it as the rule being broken: "the rule of 3 holes to 1
+ * solid cube isn't being observed and the chunks of cubes are nearly completely
+ * solid." The rule IS observed, at 24.7%; a quarter of a thick slab simply
+ * looks solid.
+ *
+ * What makes real, visible holes is the shafts, and they are worth measuring
+ * rather than guessing. With straighter shafts and a lower threshold:
+ *
+ *     cut 0.66, wobble 40  -> 21% of the sky is shaft,  4% of lines go through
+ *     cut 0.58, wobble 120 -> 36% of the sky is shaft, 29% of lines go through
+ *     cut 0.52, wobble 120 -> 47% of the sky is shaft, 38% of lines go through
+ *
+ * At 0.58 and 120 the planet is riddled: a third of it is open shaft, nearly a
+ * third of straight lines pass clean through to the cavity, and the stars show
+ * behind it. The fill stays at a quarter, because the threshold aims high by
+ * whatever the shafts carve (see thresholdAfterCarving).
  */
-export const CHANNEL_CUT = 0.66;
+export const CHANNEL_CUT = 0.58;
 
 /** Chunk edge, in cubes. The unit of generation, meshing and culling. */
 export const CHUNK = 32;
 
 /**
- * The detail levels: one cube standing for 1, 2, 4 or 8.
+ * The detail levels: one cube standing for 1, 2, 4, 8 or 16.
  *
- * It stops at 8 because of the shell, not because of the screen. A chunk at
- * step 16 covers 512 cubes, which is twice the shell's thickness, so it spans
- * surface to cavity and is nearly all exposed face: the Phase 0 report measured
- * it costing TEN TIMES a full-detail chunk. The coarsest useful chunk is about
- * as thick as the shell, and CHUNK * 8 is 256 against a 250-cube shell.
+ * It used to stop at 8, because at the time a coarse level was made by
+ * SUBSAMPLING a fine field, and a step-16 chunk of that was ten times the cost
+ * of a fine one. Now the clumps grow with the level, so every level is equally
+ * clumpy and costs about the same per chunk while covering eight times the
+ * ground: more levels are very nearly free.
+ *
+ * The one that needs it is the view from inside the cavity, where the far side
+ * of the shell is seven hundred cubes off and there is a great deal of it.
  */
-export const LOD_STEPS = [1, 2, 4, 8] as const;
+export const LOD_STEPS = [1, 2, 4, 8, 16] as const;
 
 /**
  * How high above the surface a ship may fly inside the shard, in cubes.

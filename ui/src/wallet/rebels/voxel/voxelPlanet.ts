@@ -25,7 +25,7 @@ import {
 } from "./voxelWorld";
 import { spokeDirections } from "./voxelField";
 import { meshChunk, type ChunkMesh } from "./voxelMesh";
-import { visibleChunks, dustFarFor, type ChunkRef } from "./voxelView";
+import { visibleChunks, dustFarFor, ringFor, type ChunkRef } from "./voxelView";
 import { spikes, SPIKE_COUNT } from "./voxelSpikes";
 
 /**
@@ -36,7 +36,9 @@ import { spikes, SPIKE_COUNT } from "./voxelSpikes";
  * what was behind you: they are hidden and shown again, which is free.
  */
 const BUILD_PER_FRAME = 3;
-const CACHE_CHUNKS = 200;
+const CACHE_CHUNKS = 260;
+/** How far past its ring a chunk stays drawn once it is up. A third again. */
+const KEEP = 1.35;
 
 /** The rock, and the dust it fades into. */
 const ROCK_COLOUR = 0x8a90a0;
@@ -131,7 +133,9 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     ...(grid ? { map: grid } : {}),
     color: ROCK_COLOUR,
   });
-  const live = new Map<string, THREE.Mesh>();
+  /* The mesh AND where it is, so a chunk that has fallen off the list can still
+     be measured for the hysteresis below. */
+  const live = new Map<string, { mesh: THREE.Mesh; ref: ChunkRef }>();
   let queue: ChunkRef[] = [];
   let built = 0;
   let triangleCount = 0;
@@ -205,7 +209,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   function build(c: ChunkRef): void {
     const m: ChunkMesh = meshChunk(c.ox, c.oy, c.oz, CHUNK, c.step, seed);
     built++;
-    if (!m.indices.length) { live.set(keyOf(c), new THREE.Mesh()); return; }
+    if (!m.indices.length) { live.set(keyOf(c), { mesh: new THREE.Mesh(), ref: c }); return; }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(m.positions, 3));
     geo.setAttribute("normal", new THREE.BufferAttribute(m.normals, 3));
@@ -214,15 +218,15 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, material);
     cubes.add(mesh);
-    live.set(keyOf(c), mesh);
+    live.set(keyOf(c), { mesh, ref: c });
   }
 
   function drop(key: string): void {
-    const mesh = live.get(key);
-    if (!mesh) return;
+    const held = live.get(key);
+    if (!held) return;
     live.delete(key);
-    cubes.remove(mesh);
-    mesh.geometry?.dispose();
+    cubes.remove(held.mesh);
+    held.mesh.geometry?.dispose();
   }
 
   const _eye = new THREE.Vector3();
@@ -236,18 +240,34 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         look: [look.x, look.y, look.z],
       });
       const wanted = new Set(view.chunks.map(keyOf));
-      /* ---- BUILT CHUNKS ARE KEPT, NOT THROWN AWAY ----
-         They used to be disposed the moment they left the list, so turning the
-         ship threw away the geometry behind it and rebuilding it took a frame
-         each on the way back. Geoff: "It still has big chunks of cubes
-         appearing and disappearing in front of me." They are HIDDEN instead and
-         shown again instantly, and only the oldest are really let go, once
-         there are more than the cache holds. */
-      for (const [key, mesh] of live) mesh.visible = wanted.has(key);
+      /* ---- ONCE SHOWN, IT STAYS SHOWN ----
+         Hiding a chunk the moment it falls off the list is the popping, and
+         keeping the geometry did nothing about it: the flicker was never the
+         rebuild, it was the LIST changing as the ship moved, so a chunk on the
+         edge of a ring or of the allowance blinked in and out frame by frame.
+         Geoff, twice: "big chunks of cubes appearing and disappearing right in
+         front of me and everywhere."
+
+         So a chunk that is already up stays up until it is well out of range:
+         a third again past where it would have been admitted, which is the same
+         hysteresis the room uses to stop other ships flickering at the edge of
+         view. Nothing is hidden while the ship is anywhere near it. */
+      const keepFar = dustFarFor(_eye.length()) / CUBE * KEEP;
+      for (const [key, held] of live) {
+        if (wanted.has(key)) { held.mesh.visible = true; continue; }
+        const c = held.ref;
+        const mx = (c.ox + CHUNK / 2) * c.step;
+        const my = (c.oy + CHUNK / 2) * c.step;
+        const mz = (c.oz + CHUNK / 2) * c.step;
+        const d = Math.hypot(mx - _eye.x, my - _eye.y, mz - _eye.z);
+        /* Its own ring, plus the slack. Beyond the dust it goes whatever. */
+        const ring = ringFor(c.step) * KEEP;
+        held.mesh.visible = d <= Math.min(ring, keepFar);
+      }
       if (live.size > CACHE_CHUNKS) {
         for (const key of [...live.keys()]) {
           if (live.size <= CACHE_CHUNKS) break;
-          if (!wanted.has(key)) drop(key);
+          if (!wanted.has(key) && !live.get(key)!.mesh.visible) drop(key);
         }
       }
       /* And the nearest few that are missing are built. More than one a frame,
