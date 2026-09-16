@@ -194,6 +194,19 @@ export interface Pilot {
   /** A key that may be part of a test cheat. True when it was, and must not also
    *  do its normal job. */
   cheatKey(key: string): boolean;
+  /**
+   * Go to Spikeworld and come back. A TEST key, and optional on purpose.
+   *
+   * Geoff: "I also want a shortcut key of cmd-shift-| to teleport there
+   * immediately so I can see and test it." The planet is two hundred thousand
+   * units away and the gate that will take players there is not built, so this
+   * is how it gets looked at meanwhile.
+   *
+   * Optional so that nothing which implements this contract has to grow a
+   * method for a test key: an input that does not offer it simply cannot go.
+   * It comes out with the other test cheats.
+   */
+  teleportTest?(): void;
 }
 
 /**

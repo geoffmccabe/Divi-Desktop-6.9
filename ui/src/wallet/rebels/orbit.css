@@ -108,7 +108,9 @@
   width: 26px; height: 26px;
   margin: -13px 0 0 -13px;
   pointer-events: none;
-  opacity: 0.28;
+  /* Doubled from 0.28: Geoff, 2026-Sep-16, "they're too difficult to see so
+     make them less transparent. I think double their opacity." */
+  opacity: 0.56;
 }
 .orbit-bore i {
   position: absolute; background: hsl(var(--rebels-hud));

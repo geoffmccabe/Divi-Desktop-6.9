@@ -68,6 +68,31 @@ export interface RoomPlayer {
   seen: boolean;
 }
 
+/**
+ * An enemy as the cockpit holds it: where the room last said it is, where it
+ * was, and how far through the walk between them.
+ *
+ * The same shape the other ships have, and for the same reason.
+ */
+export interface RoomEnemy {
+  pos: THREE.Vector3;
+  fwd: THREE.Vector3;
+  from: THREE.Vector3;
+  fromFwd: THREE.Vector3;
+  target: THREE.Vector3;
+  targetFwd: THREE.Vector3;
+  /** How far through the interpolation, 0 to 1. */
+  t: number;
+  tier: number;
+  shield: number;
+  shieldMax: number;
+  drone: boolean;
+  dragon: boolean;
+  id: number;
+  /** Cleared each state message; anything not mentioned has gone. */
+  seen: boolean;
+}
+
 /** The gauges, which are the room's and never the cockpit's. */
 export interface RoomGauges {
   shield: number;
@@ -289,6 +314,16 @@ export function joinRoom(opts: Opts): Room {
   let sinceReport = 0;
 
   const players = new Map<string, RoomPlayer>();
+  /**
+   * The enemies, KEPT between ticks so they can be smoothed.
+   *
+   * They used to be thrown away and rebuilt from every state message, which is
+   * why they juddered: twenty updates a second drawn at sixty frames means two
+   * frames in three showing a ship that has not moved, then a jump. Keyed by
+   * the room's own id, which is what makes it possible to know where a given
+   * enemy WAS.
+   */
+  const enemies_ = new Map<number, RoomEnemy>();
   const events: RoomEvent[] = [];
 
   const room: Room = {
@@ -346,6 +381,12 @@ export function joinRoom(opts: Opts): Room {
         p.t = Math.min(1, p.t + dt / SMOOTH);
         p.pos.lerpVectors(p.from, p.target, p.t);
         p.fwd.lerpVectors(p.fromFwd, p.targetFwd, p.t).normalize();
+      }
+      /* And the enemies, which are what a player is actually looking at. */
+      for (const e of enemies_.values()) {
+        e.t = Math.min(1, e.t + dt / SMOOTH);
+        e.pos.lerpVectors(e.from, e.target, e.t);
+        e.fwd.lerpVectors(e.fromFwd, e.targetFwd, e.t).normalize();
       }
       if (closed || resting) return;
       if (!ws && performance.now() >= retryAt) open();
@@ -526,7 +567,53 @@ export function joinRoom(opts: Opts): Room {
         }
         for (const [id, p] of [...players_.entries()]) if (!p.seen) players_.delete(id);
 
-        room.enemies = ((m.E ?? []) as EnemyRow[]).map((e) => unpackEnemy(e, V));
+        /* ---- ENEMIES ARE SMOOTHED, LIKE THE SHIPS ----
+           This used to replace the whole list every state message, which meant
+           every enemy on screen stood still for two frames and jumped on the
+           third: the room speaks twenty times a second and the screen draws
+           sixty. Geoff, 2026-Sep-16: "it's super laggy and not fun because of
+           the jerkiness and lag." The frame rate was never the problem; DFlow
+           had it at a steady sixty. The MOTION was at twenty.
+
+           Other ships have been smoothed since the room was built (see the
+           loop in step). Enemies were not, and enemies are what a player spends
+           the whole game looking at. Same treatment: keep them between ticks,
+           remember where they were, and walk to where they are now. */
+        for (const e of enemies_.values()) e.seen = false;
+        const drawn: RoomEnemy[] = [];
+        for (const row of (m.E ?? []) as EnemyRow[]) {
+          const u = unpackEnemy(row, V);
+          const fresh = (): RoomEnemy => ({
+            ...u,
+            from: u.pos.clone(), target: u.pos.clone(),
+            fromFwd: u.fwd.clone(), targetFwd: u.fwd.clone(),
+            t: 1, seen: true,
+          });
+          /* Smoothing needs to know which enemy is which, and that is the
+             room's id. Anything the room does not number cannot be followed
+             from tick to tick, so it is drawn exactly where it is: unsmoothed
+             is worse than smoothed and far better than MISSING, which is what
+             an earlier version of this did to it. */
+          if (!u.id) { drawn.push(fresh()); continue; }
+          let e = enemies_.get(u.id);
+          if (!e) {
+            e = fresh();
+            enemies_.set(u.id, e);
+          } else {
+            /* From where it is NOW, not from where the last tick said it was:
+               an update that arrives late must not snap backwards first. */
+            e.from.copy(e.pos); e.fromFwd.copy(e.fwd);
+            e.target.copy(u.pos); e.targetFwd.copy(u.fwd);
+            e.t = 0;
+            e.tier = u.tier; e.shield = u.shield; e.shieldMax = u.shieldMax;
+            e.drone = u.drone; e.dragon = u.dragon;
+            e.seen = true;
+          }
+          drawn.push(e);
+        }
+        for (const [id, e] of [...enemies_.entries()]) if (!e.seen) enemies_.delete(id);
+        /* In the order the room sent them, so nothing shuffles between ticks. */
+        room.enemies = drawn;
         for (const f of (m.F ?? []) as ShotRow[]) shots.push(unpackShot(f, V));
         for (const id of (m.X ?? []) as number[]) spent.push(id);
         /* A long stall must not deliver a thousand rounds at once. */

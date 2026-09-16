@@ -162,6 +162,49 @@ async function main() {
     ok("so do the rounds fired", fired.length === 1 && fired[0].hostile && fired[0].id === 77);
     ok("and they are handed over only once", room.takeShots().length === 0);
     ok("and the coins", room.coins.length === 1);
+    /* ---- ENEMIES ARE SMOOTHED BETWEEN TICKS ----
+       Geoff, 2026-Sep-16: "it's super laggy and not fun because of the
+       jerkiness and lag." DFlow had the frame rate at a steady sixty, so the
+       frame rate was never it: the room speaks TWENTY times a second and every
+       enemy was being redrawn straight from the wire, so two frames in three
+       showed a ship that had not moved and the third jumped. Other ships had
+       been smoothed since the room was built; the enemies, which are what a
+       player looks at all game, had not.
+
+       Checked on a NUMBERED enemy, because knowing which enemy is which is
+       what makes following one possible. */
+    sock!.deliver({
+      t: "s", n: 6, w: 3,
+      E: [[5, 5, 5, 0, 0, 1, 2, 60, 130, 0, 42]],
+    });
+    const before = room.enemies[0].pos.clone();
+    sock!.deliver({
+      t: "s", n: 7, w: 3,
+      E: [[25, 5, 5, 0, 0, 1, 2, 60, 130, 0, 42]],
+    });
+    ok("a numbered enemy is followed from tick to tick, not replaced",
+       room.enemies.length === 1 && room.enemies[0].pos.distanceTo(before) < 0.001,
+       `it should still be where it was, not at the new place: ${room.enemies[0].pos.x}`);
+    /* Half the smoothing window: it should be about half way there. */
+    room.step(0.0375);
+    const half = room.enemies[0].pos.x;
+    ok("and then walks to where the room says it is",
+       half > 10 && half < 20, `${half.toFixed(1)}, between 5 and 25`);
+    room.step(0.0375);
+    ok("arriving by the end of the window",
+       Math.abs(room.enemies[0].pos.x - 25) < 0.001, `${room.enemies[0].pos.x}`);
+    room.step(1);
+    ok("and not overshooting however long it is left",
+       Math.abs(room.enemies[0].pos.x - 25) < 0.001, `${room.enemies[0].pos.x}`);
+    /* An enemy the room stops mentioning has gone. */
+    sock!.deliver({ t: "s", n: 8, w: 3, E: [] });
+    ok("an enemy the room stops sending is gone", room.enemies.length === 0);
+    /* And one the room does not number is still DRAWN, just not followed:
+       missing is far worse than unsmoothed. */
+    sock!.deliver({ t: "s", n: 9, w: 3, E: [[9, 9, 9, 0, 0, 1, 3, 10, 20]] });
+    ok("an unnumbered enemy is still drawn", room.enemies.length === 1
+       && room.enemies[0].tier === 3);
+
 
     /* ---- the gauges, which are the whole reason the room exists ---- */
     sock!.deliver({ t: "you", shield: 1234, ammo: 55, torps: 2, guards: 9, score: 4321, kills: 7, divi: 3 });

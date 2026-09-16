@@ -27,7 +27,9 @@ import {
 import { platform } from "./platform/current";
 import type { Pilot } from "./platform/platform";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
-import { R, MAX_ALT } from "./orbitWorld";
+import { R, MAX_ALT, EARTH_D } from "./orbitWorld";
+import { makeVoxelPlanet, arrivalOffset, type VoxelPlanet } from "./voxel/voxelPlanet";
+import { DISTANCE_IN_EARTHS, WORLD_RADIUS, SKY_EDGE, CUBE } from "./voxel/voxelWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import { installSky, skyTexture, type SkyHandle } from "./starfield";
 import { loadModel, unitCopy, modelClips } from "./spaceAssets";
@@ -339,6 +341,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let guardShell: ReturnType<typeof makeGuardShell> | null = null;
   /** The cockpit's own view of the shield. See rebelsMandala.ts. */
   let mandala: MandalaShield | null = null;
+  /* ---- SPIKEWORLD, the test trip ----
+     Built only when the test key asks for it, so a player who never presses it
+     never pays for any of it. See voxel/ and docs/DIVI-REBELS-VOXEL-PLANET-PLAN.md.
+
+     Its centre is a thousand Earth diameters out, which is where Geoff wants
+     it; the Threshold Gate will be the way players get there, and until that is
+     built this key is the only way anybody sees it. */
+  const SPIKEWORLD_AT = new THREE.Vector3(0, 0, DISTANCE_IN_EARTHS * EARTH_D);
+  let spikeworld: VoxelPlanet | null = null;
+  let atSpikeworld = false;
+  /** Where the ship was before it went, so it can be put back. */
+  const homeAgain = new THREE.Vector3();
   /** How much of its size a tower keeps once a game is running. */
   const WORLD_SCALE = 0.5;
   let space: ReturnType<typeof createSpace> | null = null;
@@ -1182,7 +1196,48 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     },
     lockChanged: () => onLockChange(),
     cheatKey: (k) => !!cheats?.onKey(k, performance.now()),
+    teleportTest: () => toggleSpikeworld(),
   };
+
+  /**
+   * Go to Spikeworld, or come home.
+   *
+   * A LOOK-AROUND TRIP, and deliberately not more than that yet: while it is on
+   * the ship stops reporting to the room and ignores its corrections, because
+   * the room's world is Earth's neighbourhood and a ship two hundred thousand
+   * units outside it would be snapped back every tick. Nothing here is
+   * multiplayer and nothing here collides; that is Phase 5.
+   */
+  function toggleSpikeworld(): void {
+    if (!flight || !scene || !camera) return;
+    atSpikeworld = !atSpikeworld;
+    if (atSpikeworld) {
+      homeAgain.copy(flight.pos);
+      if (!spikeworld) {
+        spikeworld = makeVoxelPlanet(SPIKEWORLD_AT);
+        scene.add(spikeworld.group);
+      }
+      /* Out of Earth's neighbourhood, which needs the ceiling lifted: the
+         flight model stops a ship at MAX_ALT, about 4,600 units, and this is
+         forty times that. */
+      flight.ceiling = SPIKEWORLD_AT.length() + WORLD_RADIUS + SKY_EDGE * CUBE + 500;
+      flight.pos.copy(SPIKEWORLD_AT).add(arrivalOffset());
+      flight.alt = flight.pos.length() - R;
+      flight.speed = 0;
+      /* Far enough to see the planet, near enough to keep the cockpit sharp.
+         The planet is 9,000 units across and the arrival is just outside it. */
+      camera.far = Math.max(camera.far, WORLD_RADIUS * 4);
+      camera.updateProjectionMatrix();
+      setHud({ note: "SPIKEWORLD: CMD+SHIFT+\\ TO RETURN", noteAt: performance.now() });
+    } else {
+      flight.ceiling = undefined;
+      flight.pos.copy(homeAgain.lengthSq() > 1 ? homeAgain : new THREE.Vector3(0, 0, R + 40));
+      flight.alt = flight.pos.length() - R;
+      flight.speed = 0;
+      if (spikeworld) { spikeworld.dispose(); spikeworld = null; }
+      setHud({ note: "BACK IN EARTH ORBIT", noteAt: performance.now() });
+    }
+  }
 
   /**
    * Join the shared world.
@@ -1736,7 +1791,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     const tRoom = performance.now();
     if (inRoom && room) {
       room.step(dt);
-      room.report(flight.pos, flight.fwd, flight.guardFor > 0);
+      /* Not while away: the room's world is Earth's neighbourhood, and a ship
+         two hundred thousand units outside it would be corrected every tick. */
+      if (!atSpikeworld) room.report(flight.pos, flight.fwd, flight.guardFor > 0);
 
       /* The room's fight, put where the drawing already looks for it. */
       combat.enemies.length = 0;
@@ -2005,7 +2062,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            the ship behind after any lag spike, and from then on every
            shot was refused for being fired from somewhere else: the guns
            simply stopped working. */
-        if ((ev as { snap?: true }).snap && flight) {
+        if ((ev as { snap?: true }).snap && flight && !atSpikeworld) {
           flight.pos.copy(ev.at);
           flight.alt = flight.pos.length() - R;
         }
@@ -2621,6 +2678,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (scene && mandala) scene.remove(mandala.group);
       mandala?.dispose();
       mandala = null;
+      spikeworld?.dispose();
+      spikeworld = null;
+      atSpikeworld = false;
       if (scene) {
         for (const m of enemyMeshes) scene.remove(m);
         for (const r of enemyShields) scene.remove(r.group);

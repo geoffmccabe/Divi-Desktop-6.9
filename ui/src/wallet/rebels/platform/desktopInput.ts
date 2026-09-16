@@ -125,6 +125,17 @@ export const desktopInput: RebelsInput = {
       if (!pilot.state().flying || typing(e)) return;
       pilot.gesture();
       const k = e.key.toLowerCase();
+      /* ---- the Spikeworld test key ----
+         Geoff asked for "cmd-shift-|", and the pipe is the backslash key with
+         shift held, so the chord is Cmd, Shift and backslash. Matched on the
+         PHYSICAL key rather than the character, so a keyboard that puts the
+         pipe somewhere else still works. Checked before the cheat sequence,
+         which only reads digits. */
+      if (e.metaKey && e.shiftKey && e.code === "Backslash") {
+        e.preventDefault();
+        pilot.teleportTest?.();
+        return;
+      }
       if (pilot.cheatKey(k)) {
         e.preventDefault();
         return;
