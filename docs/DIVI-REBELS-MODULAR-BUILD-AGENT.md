@@ -212,6 +212,12 @@ SHARED, changed only by agreement:
   option on `createWebDoor` show them today. Replace that switch with your phone
   detection and door (keep passing the touch input to the door and to PhoneHud),
   then remove the `?phone=1` lines.
+- **Changed in your area on 2026-Sep-16 (small, say if you would rather own it):**
+  ui/vite.web.config.ts had `publicDir: false`; it now points at
+  ui/web-rebels/public so the web app manifest and home screen icon are built.
+  ui/web-rebels/index.html gained the apple/manifest meta tags. Both are for
+  "Add to Home Screen", which is the only way an iPhone gives the game the whole
+  screen; your B5 manifest work can replace them.
 
 ### B6. LW-SSO sign-in for the web door (offered, never required)
 - **Background:** docs/DIVI-REBELS-WEB-PLAN.md (the greenlight section) and the

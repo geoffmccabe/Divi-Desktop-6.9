@@ -16,7 +16,9 @@ const APP_VERSION = JSON.parse(
 export default defineConfig({
   root: fileURLToPath(new URL("./web-rebels", import.meta.url)),
   base: "/rebels/",
-  publicDir: false,
+  /* The home screen files: the manifest, and the icon an installed game shows.
+     Everything else the page needs is imported by the source and hashed. */
+  publicDir: fileURLToPath(new URL("./web-rebels/public", import.meta.url)),
   plugins: [react()],
   clearScreen: false,
   build: {
