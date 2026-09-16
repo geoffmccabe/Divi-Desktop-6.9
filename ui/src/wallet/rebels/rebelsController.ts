@@ -1220,6 +1220,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       /* Out of Earth's neighbourhood, which needs the ceiling lifted: the
          flight model stops a ship at MAX_ALT, about 4,600 units, and this is
          forty times that. */
+      /* Out of the fight. Without this the room goes on simulating the ship
+         at the last place it was told about and the fighters there go on
+         shooting it, which is exactly what happened on the first trip: damage
+         from enemies two hundred thousand units away. */
+      room?.away();
       flight.ceiling = SPIKEWORLD_AT.length() + WORLD_RADIUS + SKY_EDGE * CUBE + 500;
       flight.pos.copy(SPIKEWORLD_AT).add(arrivalOffset());
       flight.alt = flight.pos.length() - R;
@@ -1232,6 +1237,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     } else {
       flight.ceiling = undefined;
       flight.pos.copy(homeAgain.lengthSq() > 1 ? homeAgain : new THREE.Vector3(0, 0, R + 40));
+      /* Back in the fight, which flying alone also starts over. */
+      room?.fly();
       flight.alt = flight.pos.length() - R;
       flight.speed = 0;
       if (spikeworld) { spikeworld.dispose(); spikeworld = null; }

@@ -26,7 +26,7 @@ import {
 import { spokeDirections } from "./voxelField";
 import { meshChunk, type ChunkMesh } from "./voxelMesh";
 import {
-  visibleChunks, dustFarFor, SKIN_BY_STEP, DUST_NEAR, type ChunkRef,
+  visibleChunks, dustFarFor, SKIN_BY_STEP, type ChunkRef,
 } from "./voxelView";
 import { spikes, SPIKE_COUNT } from "./voxelSpikes";
 
@@ -35,9 +35,7 @@ import { spikes, SPIKE_COUNT } from "./voxelSpikes";
 const BUILD_PER_FRAME = 1;
 
 /** The rock, and the dust it fades into. */
-const ROCK_COLOUR = 0x6b6f7a;
-const RIM_COLOUR = 0x9aa3b4;
-const DUST_COLOUR = 0x141821;
+const ROCK_COLOUR = 0x8a90a0;
 const HEART_COLOUR = 0xff8a4a;
 const SPIKE_COLOUR = 0x585d68;
 
@@ -53,56 +51,60 @@ export interface VoxelPlanet {
 }
 
 /**
- * A voxel-cube material that fades into the dust.
+ * The cube grid, as a small repeating picture.
  *
- * Two things are wanted of it that a stock material will not do: the cube grid
- * has to show on merged faces (a rectangle thirty cubes wide is one quad, so
- * the grid comes from the coordinates rather than from a texture), and the
- * fade has to be by distance from the eye so the far rings dissolve rather than
- * pop when they change detail.
+ * A merged face can be thirty cubes wide and is ONE rectangle, so the grid
+ * cannot come from the mesh: it comes from the texture, and the face's own
+ * coordinates are measured in cubes, so one tile lands on one cube however
+ * large the rectangle is. The same trick the sealed spheres use.
+ *
+ * This replaced a custom shader that did the same job in one pass and drew
+ * nothing at all on Geoff's machine: spikes, spokes and heart appeared and the
+ * cubes did not, and the only thing that told them apart was that material.
+ * A stock material with a texture is less clever and it works.
  */
-function rockMaterial(): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uRock: { value: new THREE.Color(ROCK_COLOUR) },
-      uRim: { value: new THREE.Color(RIM_COLOUR) },
-      uDust: { value: new THREE.Color(DUST_COLOUR) },
-      uNear: { value: DUST_NEAR },
-      uFar: { value: 3000 },
-      uCube: { value: CUBE },
-    },
-    vertexShader: `
-      varying vec2 vUv;
-      varying vec3 vNormal;
-      varying float vDist;
-      void main() {
-        vUv = uv;
-        vNormal = normalize(normalMatrix * normal);
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        vDist = -mv.z;
-        gl_Position = projectionMatrix * mv;
-      }`,
-    fragmentShader: `
-      uniform vec3 uRock; uniform vec3 uRim; uniform vec3 uDust;
-      uniform float uNear; uniform float uFar;
-      varying vec2 vUv;
-      varying vec3 vNormal;
-      varying float vDist;
-      void main() {
-        /* The cube grid, from the face's own coordinates: one square per cube
-           however many cubes the merged rectangle covers. */
-        vec2 g = abs(fract(vUv) - 0.5);
-        float line = 1.0 - smoothstep(0.42, 0.5, max(g.x, g.y));
-        /* A plain directional shade so the six faces of a cube read apart.
-           Cheaper than a light and it cannot be got wrong by the scene. */
-        float lit = 0.55 + 0.45 * clamp(dot(vNormal, normalize(vec3(0.4, 0.8, 0.3))), 0.0, 1.0);
-        vec3 c = mix(uRim, uRock, line) * lit;
-        /* Into the dust, so the far rings dissolve instead of popping when
-           their detail changes. */
-        float dust = clamp((vDist - uNear) / max(1.0, uFar - uNear), 0.0, 1.0);
-        gl_FragColor = vec4(mix(c, uDust, dust), 1.0);
-      }`,
-  });
+function gridTexture(): THREE.Texture | null {
+  if (typeof document === "undefined") return null;
+  const N = 64;
+  const canvas = document.createElement("canvas");
+  canvas.width = N; canvas.height = N;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, N, N);
+  /* A darker edge on two sides, so a wall of cubes reads as stacked blocks
+     rather than as one flat sheet. */
+  ctx.strokeStyle = "rgba(0,0,0,0.42)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0.5, 0); ctx.lineTo(0.5, N);
+  ctx.moveTo(0, 0.5); ctx.lineTo(N, 0.5);
+  ctx.stroke();
+  const t = new THREE.CanvasTexture(canvas);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
+/**
+ * Shade each face by the way it points, baked into the geometry.
+ *
+ * Six flat tones rather than a light: cheaper, it cannot be got wrong by
+ * whatever else is in the scene, and the six sides of a cube read apart, which
+ * is the whole point of drawing cubes.
+ */
+function shadeColours(normals: Float32Array): Float32Array {
+  const out = new Float32Array(normals.length);
+  const base = new THREE.Color(ROCK_COLOUR);
+  for (let i = 0; i < normals.length; i += 3) {
+    const nx = normals[i], ny = normals[i + 1], nz = normals[i + 2];
+    /* Up brightest, down darkest, the four sides between. */
+    const lit = 0.58 + 0.30 * Math.max(0, ny) + 0.12 * Math.abs(nx) + 0.06 * Math.abs(nz);
+    out[i] = base.r * lit; out[i + 1] = base.g * lit; out[i + 2] = base.b * lit;
+  }
+  return out;
 }
 
 /**
@@ -120,7 +122,12 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   cubes.scale.setScalar(CUBE);
   group.add(cubes);
 
-  const material = rockMaterial();
+  const grid = gridTexture();
+  const material = new THREE.MeshBasicMaterial({
+    ...(grid ? { map: grid } : {}),
+    color: 0xffffff,
+    vertexColors: true,
+  });
   const live = new Map<string, THREE.Mesh>();
   let queue: ChunkRef[] = [];
   let built = 0;
@@ -197,6 +204,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     geo.setAttribute("position", new THREE.BufferAttribute(m.positions, 3));
     geo.setAttribute("normal", new THREE.BufferAttribute(m.normals, 3));
     geo.setAttribute("uv", new THREE.BufferAttribute(m.uvs, 2));
+    geo.setAttribute("color", new THREE.BufferAttribute(shadeColours(m.normals), 3));
     geo.setIndex(new THREE.BufferAttribute(m.indices, 1));
     geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, material);
@@ -230,10 +238,11 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
       for (let i = 0; i < Math.min(BUILD_PER_FRAME, queue.length); i++) build(queue[i]);
 
       triangleCount = view.triangles;
-      /* The dust follows the eye out of the rock and into the open. */
-      const far = dustFarFor(_eye.length());
-      (material.uniforms.uFar.value as number) = far;
-      material.uniforms.uNear.value = Math.min(DUST_NEAR, far * 0.5);
+      /* The dust is what decides how far chunks are built at all (see
+         voxelView), so with the shader gone it still sets the view distance;
+         what it no longer does is fade the far ones out. That is the next
+         thing to put back, once the cubes are known to draw. */
+      void dustFarFor(_eye.length());
     },
     stats: () => ({
       chunks: live.size, triangles: triangleCount, queued: queue.length, built,
@@ -241,6 +250,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     dispose() {
       for (const key of [...live.keys()]) drop(key);
       material.dispose();
+      grid?.dispose();
       rodGeo.dispose(); rodMat.dispose(); rods.dispose();
       heartMesh.geo.dispose(); heartMesh.mat.dispose();
       group.removeFromParent();

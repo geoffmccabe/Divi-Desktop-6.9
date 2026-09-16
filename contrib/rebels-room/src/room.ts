@@ -735,6 +735,7 @@ export class RebelsRoom {
       case "bonus": return this.onBonus(seat);
       case "gear": return this.onGear(seat, msg);
       case "fly": return this.onFly(seat);
+      case "away": return this.onAway(seat);
       case "hurt": return this.onHurt(seat, msg);
       case "claim": { void this.onClaim(seat, msg); return; }
       case "purse": {
@@ -800,6 +801,25 @@ export class RebelsRoom {
     this.sendYou(seat);
     this.sendRoster();
     void this.sendPurse(seat);
+  }
+
+  /**
+   * The player has left the room's world entirely.
+   *
+   * Out of the fight at once, so nothing goes on shooting at a body that is no
+   * longer anywhere near it. The seat stays: this is not a death and not a
+   * disconnection, and nothing is banked.
+   */
+  private onAway(seat: Seat): void {
+    if (!seat.flying) return;
+    seat.flying = false;
+    this.refreshRoster();
+    /* Last one out clears the sky, the same rule death follows. */
+    let anyoneLeft = false;
+    for (const o of this.seats.values()) if (o.flying && !o.dead) anyoneLeft = true;
+    if (!anyoneLeft) this.resetFight();
+    this.sendYou(seat);
+    this.sendRoster();
   }
 
   /**

@@ -203,6 +203,13 @@ export interface Room {
    * fight over, which is what makes a restart a restart.
    */
   fly(): void;
+  /**
+   * Gone out of the room's world.
+   *
+   * The room stops counting this seat as a player, so nothing shoots at a body
+   * left behind at the last reported place. `fly` brings it back.
+   */
+  away(): void;
   /** The resupply finished at a tower: the room refills the seat, having
    *  checked the ship really is at one. */
   dock(): void;
@@ -358,6 +365,7 @@ export function joinRoom(opts: Opts): Room {
     detonate() { send({ t: "det" }); },
     use(k) { send({ t: "use", k }); },
     fly() { send({ t: "fly" }); },
+    away() { send({ t: "away" }); },
     dock() { send({ t: "dock" }); },
     cheat(code) { send({ t: "cheat", code }); },
     bonus() { send({ t: "bonus" }); },
