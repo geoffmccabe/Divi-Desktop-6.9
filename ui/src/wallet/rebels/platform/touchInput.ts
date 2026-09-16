@@ -45,6 +45,9 @@ export interface TouchStick {
   fromX: number; fromY: number; x: number; y: number;
   /** The stick's reading, each -1 to 1, before the dead zone. */
   dx: number; dy: number;
+  /** How far the thumb may travel for a full reading, in pixels. The layout
+   *  draws its ring at this size, so what is drawn is what is read. */
+  span: number;
 }
 
 /** What a phone layout needs to draw the controls under the thumbs. */
@@ -61,11 +64,20 @@ export interface TouchPicture {
 export interface TouchInput extends RebelsInput {
   subscribe(fn: (p: TouchPicture) => void): () => void;
   picture(): TouchPicture;
+  /** Let go of every finger and button. The layout calls this whenever its
+   *  buttons leave the screen (death, a panel opening), since a button taken
+   *  away under a thumb never gets its release. */
+  release(): void;
 }
 
 interface TouchPoint { identifier: number; clientX: number; clientY: number; target?: unknown }
 interface TouchLike { changedTouches: ArrayLike<TouchPoint>; preventDefault?: () => void; cancelable?: boolean }
 interface Closest { closest?: (sel: string) => (Closest & { getAttribute?: (k: string) => string | null }) | null }
+
+/** Anything that belongs to the page rather than to flying: a control to press,
+ *  or a panel to read and scroll (the inventory, the scoreboard, the market,
+ *  the launch and recovery cards). */
+const PAGE = "button, input, select, textarea, a, [role='dialog'], [class*='scrim'], [class*='panel'], [class*='orbit-inv'], [class*='orbit-card'], [class*='market'], [class*='board']";
 
 /** A reading with the dead zone taken out and the rest stretched back to 1. */
 export function shaped(v: number): number {
@@ -89,12 +101,16 @@ export function createTouchInput(): TouchInput {
     for (const fn of listeners) fn(p);
   };
 
+  /** Set while attached, so release() can reach the ship. */
+  let letGo: (() => void) | null = null;
+
   return {
     subscribe(fn) {
       listeners.add(fn);
       return () => { listeners.delete(fn); };
     },
     picture: () => current,
+    release: () => letGo?.(),
 
     attach(dom: HTMLCanvasElement, pilot: Pilot): () => void {
       /* Each finger is one thing until it lifts: a stick or a button. A thumb
@@ -105,6 +121,7 @@ export function createTouchInput(): TouchInput {
       pilot.setAssist({ autoFire, magnet: true });
 
       const heldNow = () => [...fingers.values()].flatMap((r) => (r.kind === "hold" ? [r.action] : []));
+      const holding = (action: HoldAction) => heldNow().includes(action);
       const stickOf = (kind: "steer" | "roll") => {
         for (const r of fingers.values()) if (r.kind === kind) return r.stick;
         return null;
@@ -156,16 +173,18 @@ export function createTouchInput(): TouchInput {
             break;
         }
       };
+      /* Asked again from whatever is still down, not simply switched off: with
+         two thumbs on FIRE, lifting one used to stop the guns. */
       const lift = (action: HoldAction) => {
-        if (action === "fire") pilot.trigger("primary", false);
-        if (action === "torpedo") pilot.trigger("secondary", false);
+        if (action === "fire") pilot.trigger("primary", holding("fire"));
+        if (action === "torpedo") pilot.trigger("secondary", holding("torpedo"));
       };
 
       const touchstart = (e: TouchLike) => {
         const st = pilot.state();
         /* The launch card, the death card and every open panel are ordinary
-           pages to tap. Only a ship in the air is flown. */
-        if (!st.flying || st.panelOpen) return;
+           pages to tap and scroll. Only a ship in the air is flown. */
+        if (!st.flying || st.dead || st.panelOpen) return;
         let used = false;
         for (const t of Array.from(e.changedTouches)) {
           const target = t.target as Closest | undefined;
@@ -180,7 +199,7 @@ export function createTouchInput(): TouchInput {
           }
           /* Anything else a page can be tapped on (a panel's button, a box to
              type in) is left to the page. */
-          if (target?.closest?.("button, input, select, textarea, a, [role='dialog']")) continue;
+          if (target?.closest?.(PAGE)) continue;
           const r = dom.getBoundingClientRect();
           if (t.clientX < r.left || t.clientX > r.left + r.width || t.clientY < r.top || t.clientY > r.top + r.height) continue;
           const kind = t.clientX < r.left + r.width / 2 ? "steer" : "roll";
@@ -188,7 +207,7 @@ export function createTouchInput(): TouchInput {
              rather than yanking the stick to where it landed. */
           if (stickOf(kind)) continue;
           used = true;
-          fingers.set(t.identifier, { kind, stick: { fromX: t.clientX, fromY: t.clientY, x: t.clientX, y: t.clientY, dx: 0, dy: 0 } });
+          fingers.set(t.identifier, { kind, stick: { fromX: t.clientX, fromY: t.clientY, x: t.clientX, y: t.clientY, dx: 0, dy: 0, span: travel() } });
         }
         if (!used) return;
         /* A finger on the game is flying, not scrolling or zooming the page. */
@@ -199,6 +218,9 @@ export function createTouchInput(): TouchInput {
       };
 
       const touchmove = (e: TouchLike) => {
+        /* A panel opened (or the ship was lost) with thumbs still down: let go
+           rather than fly the ship from behind the panel. */
+        if (fingers.size > 0 && (pilot.state().panelOpen || pilot.state().dead)) { blur(); return; }
         let used = false;
         for (const t of Array.from(e.changedTouches)) {
           const role = fingers.get(t.identifier);
@@ -208,7 +230,7 @@ export function createTouchInput(): TouchInput {
           /* Guarded: a touch without coordinates would put NaN in the crosshair,
              then in the ship's heading, and nothing recovers from that. */
           if (!Number.isFinite(t.clientX) || !Number.isFinite(t.clientY)) continue;
-          const s = role.stick, span = travel();
+          const s = role.stick, span = s.span;
           s.x = t.clientX; s.y = t.clientY;
           s.dx = clamp((s.x - s.fromX) / span);
           s.dy = clamp((s.y - s.fromY) / span);
@@ -239,8 +261,45 @@ export function createTouchInput(): TouchInput {
       /* Losing the page (a call, the home button) must not leave the brake on,
          the guns firing or the ship turning. */
       const blur = () => {
+        if (fingers.size === 0) return;
         fingers.clear();
         pilot.releaseAll();
+        /* Said again from the empty hand, so nothing is left held even if a
+           door's pilot treats releaseAll differently. */
+        applyHeld();
+        show();
+      };
+      letGo = blur;
+
+      /* ---- A MOUSE MAY PRESS THE BUTTONS TOO ----
+         An iPad with a trackpad, and anyone opening the phone layout on a
+         computer to look at it. Only the marked buttons: flying with a mouse is
+         the desktop module's job. */
+      const mouseOn = new Map<number, HoldAction>();
+      const pointerdown = (e: PointerEvent) => {
+        if (e.pointerType === "touch") return;
+        const st = pilot.state();
+        if (!st.flying || st.dead || st.panelOpen) return;
+        const button = (e.target as Closest | null)?.closest?.("[data-rebels-touch]");
+        const action = button?.getAttribute?.("data-rebels-touch") ?? "";
+        if (!TOUCH_ACTIONS.includes(action)) return;
+        e.preventDefault();
+        pilot.gesture();
+        if ((HOLD_ACTIONS as readonly string[]).includes(action)) {
+          mouseOn.set(e.pointerId, action as HoldAction);
+          fingers.set(-1000 - e.pointerId, { kind: "hold", action: action as HoldAction });
+        }
+        press(action);
+        applyHeld();
+        show();
+      };
+      const pointerup = (e: PointerEvent) => {
+        const action = mouseOn.get(e.pointerId);
+        if (action === undefined) return;
+        mouseOn.delete(e.pointerId);
+        fingers.delete(-1000 - e.pointerId);
+        lift(action);
+        applyHeld();
         show();
       };
       const focus = () => pilot.focusReturned();
@@ -252,6 +311,9 @@ export function createTouchInput(): TouchInput {
       window.addEventListener("touchcancel", touchend as unknown as EventListener);
       window.addEventListener("blur", blur);
       window.addEventListener("focus", focus);
+      window.addEventListener("pointerdown", pointerdown as unknown as EventListener, opts);
+      window.addEventListener("pointerup", pointerup as unknown as EventListener);
+      window.addEventListener("pointercancel", pointerup as unknown as EventListener);
       /* No long-press menu on the canvas in the middle of a fight. */
       const contextmenu = (e: Event) => { e.preventDefault(); };
       dom.addEventListener("contextmenu", contextmenu);
@@ -263,7 +325,11 @@ export function createTouchInput(): TouchInput {
         window.removeEventListener("touchcancel", touchend as unknown as EventListener);
         window.removeEventListener("blur", blur);
         window.removeEventListener("focus", focus);
+        window.removeEventListener("pointerdown", pointerdown as unknown as EventListener);
+        window.removeEventListener("pointerup", pointerup as unknown as EventListener);
+        window.removeEventListener("pointercancel", pointerup as unknown as EventListener);
         dom.removeEventListener("contextmenu", contextmenu);
+        letGo = null;
         if (fingers.size > 0) pilot.releaseAll();
         fingers.clear();
         pilot.setAssist({ autoFire: false, magnet: false });

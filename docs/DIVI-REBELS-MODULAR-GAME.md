@@ -482,3 +482,48 @@ the top buttons, BRAKE running off the bottom, and LAUNCH needing a scroll.
 strength, and whether the globe runs smoothly (B5's phone detail setting).
 
 **Suite:** 36 green. tsc clean.
+
+### Audit of G7b to G9b, and the fixes (2026-Sep-15)
+
+Two independent reviews of the whole diff: one on the game logic, one on the
+phone layout. Everything below was found and fixed; the desktop drawing is still
+identical to the recording, and the desktop app never turns thumb help on.
+
+**Game logic:**
+1. A button taken off the screen under a thumb (dying stops the controls being
+   drawn) never received its release, so FIRE, or worse the BRAKE, could stay
+   held for the rest of the session. The controls are now hidden rather than
+   removed, and the layout tells the touch module to let go whenever they go
+   (PhoneHud, touchInput.release()).
+2. Auto fire kept shooting behind an open panel: aim assist now stops while a
+   panel is open (rebelsController frameAssist).
+3. A thumb already steering, or a held BOOST or BRAKE, kept flying the ship from
+   behind an open panel: every finger is let go when one opens.
+4. The brake's saved throttle survived death and launch; cleared in both.
+5. The touch module treated the recovery card as flight, so taps and scrolling
+   on it and on the high scores were swallowed. The pilot now reports `dead`,
+   and panels and cards count as page, not sky.
+6. Two thumbs on FIRE: lifting either stopped the guns. The trigger is now asked
+   again from whatever is still held.
+7. Aim assist fought the steering thumb: the magnet only acts once the thumb has
+   been still for 140ms, so it helps at the moment of aiming and never during a
+   turn.
+Also: the marked buttons now answer a mouse as well as a thumb, so the phone
+layout can be tried on a computer (and works with an iPad trackpad).
+
+**Phone layout:**
+- `touch-action: none` on the whole cockpit stopped a finger scrolling the
+  inventory, high scores and market. Now only the thumb controls refuse to scroll.
+- The BRAKE button sat on the gauges below about 830px wide: the gauges are now a
+  narrow wrapped block between the thumbs.
+- The damage bar painted over BOOST after every hit; the death title, the
+  connection notice, the damage bar and the dock readout each have their own band.
+- Tap targets raised to 40px and up; `-webkit-backdrop-filter` added for older
+  iOS; `place-content: safe center` replaced (not supported everywhere);
+  percentage columns replaced with fractions; the stick ring is now drawn at the
+  travel the module actually measured and the knob stays inside it; EXIT moved
+  off the launch card's text; viewport-fit=cover added so the safe area insets
+  work.
+
+**Suite:** 36 green, 70 touch checks, tsc clean. Looked at five phone screens
+(flying, disconnected, dead, docking, launch) at 667x390.

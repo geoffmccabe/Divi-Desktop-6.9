@@ -12,7 +12,7 @@ import "../index.css";
 import "./web.css";
 import { ThemeProvider } from "../theme/ThemeProvider";
 import { GlobeMap, type GlobePoint } from "../wallet/GlobeMap";
-import { createRebels, RebelsHud, PhoneHud, createTouchInput, setPlatform, type RebelsController } from "../wallet/rebels/platform/coreEntry";
+import { createRebels, RebelsHud, PhoneHud, createTouchInput, desktopInput, setPlatform, type RebelsController, type RebelsInput } from "../wallet/rebels/platform/coreEntry";
 import { prefetchMusic } from "../wallet/rebels/rebelsMusic";
 import { createWebDoor } from "./webDoor";
 import { loadTowers, SCANNER } from "./webNodes";
@@ -25,8 +25,13 @@ import { hydrateWebStorage } from "./webStore";
    replace this switch with real phone detection and a phone detail setting).
    Without the switch nothing here changes. */
 const touch = new URLSearchParams(window.location.search).has("phone") ? createTouchInput() : null;
+/* Thumbs AND the keyboard and mouse while previewing, so the phone layout can
+   be looked at and flown on a computer as well as on a phone. */
+const phoneInput: RebelsInput | undefined = touch
+  ? { attach: (dom, pilot) => { const t = touch.attach(dom, pilot), d = desktopInput.attach(dom, pilot); return () => { t(); d(); }; } }
+  : undefined;
 
-setPlatform(createWebDoor({ input: touch ?? undefined }));
+setPlatform(createWebDoor({ input: phoneInput }));
 prefetchMusic();
 
 /** How long to wait for the node list before opening with the Scanner alone. */
@@ -45,7 +50,7 @@ function WebRebels() {
        anything or joins the room. Only then may a slow node list be given up on. */
     void restoreGuest().then(() => hydrateWebStorage()).then((storage) => {
       if (!alive) return;
-      setPlatform(createWebDoor({ storage, input: touch ?? undefined }));
+      setPlatform(createWebDoor({ storage, input: phoneInput }));
       timer = setTimeout(() => give([SCANNER]), TOWER_WAIT_MS);
       return loadTowers(import.meta.env.BASE_URL).then(give);
     });

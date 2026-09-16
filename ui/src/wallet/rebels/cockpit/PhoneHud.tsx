@@ -17,7 +17,8 @@ import { useEffect, useState, type CSSProperties } from "react";
 import "./phone.css";
 import type { RebelsController } from "../rebelsController";
 import type { TouchInput, TouchPicture } from "../platform/touchInput";
-import { STICK_TRAVEL } from "../platform/touchInput";
+/** The knob's size, matching .phone-stick > i in phone.css. */
+const KNOB = 54;
 import { RebelsHealthBar } from "../RebelsHealthBar";
 import { weaponInSlot } from "../weaponCatalog";
 import { heldCount } from "../rebelsInventory";
@@ -33,6 +34,10 @@ export function PhoneHud({ ctl, touch, onExit }: { ctl: RebelsController; touch:
   const [pic, setPic] = useState<TouchPicture>(() => touch.picture());
   useEffect(() => touch.subscribe(setPic), [touch]);
   const flying = hud.launched && !hud.dead && !hud.broken;
+  /* The moment flying stops or a panel opens, every thumb is let go: the screen
+     is a page to read now, and a finger still down is not flying anything. */
+  const panelOpen = c.inv || c.help || c.scores || c.market || c.dflowOpen;
+  useEffect(() => { if (!flying || panelOpen) touch.release(); }, [touch, flying, panelOpen]);
 
   return (
     <div className={"orbit-hud rebels-phone" + (hud.onTarget ? " on-target" : "")} ref={c.wrapRef}>
@@ -49,7 +54,11 @@ export function PhoneHud({ ctl, touch, onExit }: { ctl: RebelsController; touch:
       <NoLaunchCard hud={hud} />
       <RebelsHealthBar />
 
-      {flying && <ThumbControls pic={pic} primary={hud.primary} onItems={() => c.setInv(true)} onExit={onExit} />}
+      {/* ---- ALWAYS DRAWN, ONLY SOMETIMES SHOWN ----
+          Hidden with a class rather than taken off the page. A button removed
+          from under a thumb never receives the lift, which used to leave FIRE
+          or the BRAKE held down for the rest of the session. */}
+      <ThumbControls pic={pic} primary={hud.primary} hidden={!flying} onItems={() => c.setInv(true)} onExit={onExit} />
       {!flying && (
         <button type="button" className="phone-exit phone-exit-idle" onClick={onExit}>EXIT</button>
       )}
@@ -61,8 +70,8 @@ export function PhoneHud({ ctl, touch, onExit }: { ctl: RebelsController; touch:
   );
 }
 
-function ThumbControls({ pic, primary, onItems, onExit }: {
-  pic: TouchPicture; primary: number; onItems: () => void; onExit: () => void;
+function ThumbControls({ pic, primary, hidden, onItems, onExit }: {
+  pic: TouchPicture; primary: number; hidden: boolean; onItems: () => void; onExit: () => void;
 }) {
   const held = new Set(pic.held);
   const btn = (action: string, label: string, extra = "") => (
@@ -78,7 +87,7 @@ function ThumbControls({ pic, primary, onItems, onExit }: {
   const gun = weaponInSlot(primary + 1)?.name ?? "GUN";
 
   return (
-    <>
+    <div className={"phone-controls" + (hidden ? " phone-away" : "")}>
       <div className="phone-top">
         <div className="phone-chip phone-gun" data-rebels-touch="weapon" role="button" aria-label="Change gun">
           <span>{gun}</span>
@@ -100,7 +109,7 @@ function ThumbControls({ pic, primary, onItems, onExit }: {
         {btn("brake", "BRAKE")}
         {btn("auto", "AUTO", pic.autoFire ? " lit" : "")}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -114,9 +123,12 @@ function SteerStick({ stick }: { stick: TouchPicture["steer"] }) {
       </div>
     );
   }
-  const travel = Math.min(window.innerWidth, window.innerHeight) * STICK_TRAVEL;
+  /* The travel the module actually measured, so the ring drawn is the ring
+     read. The knob stops at the rim rather than climbing out of it. */
+  const travel = stick.span;
   const ring: CSSProperties = { left: stick.fromX, top: stick.fromY, width: travel * 2, height: travel * 2 };
-  const knob: CSSProperties = { transform: `translate(${stick.dx * travel}px, ${stick.dy * travel}px)` };
+  const reach = Math.max(0, travel - KNOB / 2);
+  const knob: CSSProperties = { transform: `translate(${stick.dx * reach}px, ${stick.dy * reach}px)` };
   return (
     <div className="phone-stick" style={ring} aria-hidden>
       <i style={knob} />
