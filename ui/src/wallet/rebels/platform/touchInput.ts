@@ -15,7 +15,9 @@
 //                under the crosshair (Galaxy on Fire 3; Call of Duty Mobile's
 //                default mode). FIRE still fires by hand; AUTO turns it off.
 //   AIM ASSIST   the crosshair eases onto an enemy close to it
-//   ROLL         dragging sideways on the empty right side (Galaxy on Fire 3)
+//   ROLL         two fingers on the sky, twisted like a steering wheel, which is
+//                what hands reach for; also a sideways drag on the empty right
+//                side (Galaxy on Fire 3)
 //
 // This module draws nothing. A button is ANY element the phone layout marks with
 // data-rebels-touch="<action>" (TOUCH_ACTIONS below), so the layout decides how
@@ -38,6 +40,8 @@ export const STICK_TRAVEL = 0.12;
 export const STICK_DEAD = 0.15;
 /** How far from the middle the crosshair may go: the same as the mouse under a lock. */
 const AIM_REACH = 0.45;
+/** How far two fingers must be twisted for a full roll: about thirty degrees. */
+export const TWIST_FULL = 0.55;
 const AUTO_KEY = "dd69.rebels.touch.autoFire";
 
 export interface TouchStick {
@@ -56,6 +60,8 @@ export interface TouchPicture {
   steer: TouchStick | null;
   /** A thumb rolling the ship on the empty right side. */
   roll: TouchStick | null;
+  /** Two fingers twisted on the sky, -1 to 1, or null when there are not two. */
+  twist: number | null;
   /** The held buttons with a finger on them now. */
   held: string[];
   autoFire: boolean;
@@ -95,7 +101,7 @@ function saveAuto(on: boolean) {
 
 export function createTouchInput(): TouchInput {
   const listeners = new Set<(p: TouchPicture) => void>();
-  let current: TouchPicture = { steer: null, roll: null, held: [], autoFire: readAuto() };
+  let current: TouchPicture = { steer: null, roll: null, twist: null, held: [], autoFire: readAuto() };
   const publish = (p: TouchPicture) => {
     current = p;
     for (const fn of listeners) fn(p);
@@ -117,6 +123,12 @@ export function createTouchInput(): TouchInput {
          that lands on FIRE and slides off it is still holding fire. */
       type Role = { kind: "steer" | "roll"; stick: TouchStick } | { kind: "hold"; action: HoldAction };
       const fingers = new Map<number, Role>();
+      /* ---- TWO FINGERS TWISTED IS A ROLL ----
+         Geoff reached for it on his first flight: "I used two fingers to try to
+         rotate the view and that didn't work, and I thought it should." While a
+         pair is twisting, neither finger steers; letting one go hands the other
+         back its own job from wherever it now is, so nothing jumps. */
+      let twist: { a: number; b: number; from: number; now: number } | null = null;
       let autoFire = readAuto();
       pilot.setAssist({ autoFire, magnet: true });
 
@@ -126,7 +138,33 @@ export function createTouchInput(): TouchInput {
         for (const r of fingers.values()) if (r.kind === kind) return r.stick;
         return null;
       };
-      const show = () => publish({ steer: stickOf("steer"), roll: stickOf("roll"), held: heldNow(), autoFire });
+      const show = () => publish({
+        steer: twist ? null : stickOf("steer"), roll: stickOf("roll"),
+        twist: twist ? shaped(twist.now) : null, held: heldNow(), autoFire,
+      });
+
+      /** The sky fingers, in the order they landed. */
+      const skyFingers = () => [...fingers.entries()].filter(([, r]) => r.kind !== "hold") as [number, { kind: "steer" | "roll"; stick: TouchStick }][];
+      const angleBetween = (a: TouchStick, b: TouchStick) => Math.atan2(b.y - a.y, b.x - a.x);
+      const readTwist = () => {
+        if (!twist) return;
+        const a = fingers.get(twist.a), b = fingers.get(twist.b);
+        if (!a || !b || a.kind === "hold" || b.kind === "hold") return;
+        let turned = angleBetween(a.stick, b.stick) - twist.from;
+        while (turned > Math.PI) turned -= Math.PI * 2;
+        while (turned < -Math.PI) turned += Math.PI * 2;
+        twist.now = Math.max(-1, Math.min(1, turned / TWIST_FULL));
+      };
+      /** A pair broken: the finger left behind starts again where it is. */
+      const endTwist = () => {
+        if (!twist) return;
+        twist = null;
+        for (const [, r] of skyFingers()) {
+          r.stick.fromX = r.stick.x; r.stick.fromY = r.stick.y;
+          r.stick.dx = 0; r.stick.dy = 0;
+          if (r.kind === "steer") pilot.centreCursor();
+        }
+      };
 
       /** Everything the held buttons and the roll drag say, together. */
       const applyHeld = () => {
@@ -134,7 +172,9 @@ export function createTouchInput(): TouchInput {
         const roll = stickOf("roll");
         pilot.setControls({
           lift: (h.has("liftUp") ? 1 : 0) - (h.has("liftDown") ? 1 : 0),
-          roll: roll ? shaped(roll.dx) : (h.has("rollRight") ? 1 : 0) - (h.has("rollLeft") ? 1 : 0),
+          roll: twist ? shaped(twist.now)
+            : roll ? shaped(roll.dx)
+            : (h.has("rollRight") ? 1 : 0) - (h.has("rollLeft") ? 1 : 0),
           boost: h.has("boost"),
           superBoost: h.has("super"),
           brake: h.has("brake"),
@@ -203,11 +243,20 @@ export function createTouchInput(): TouchInput {
           const r = dom.getBoundingClientRect();
           if (t.clientX < r.left || t.clientX > r.left + r.width || t.clientY < r.top || t.clientY > r.top + r.height) continue;
           const kind = t.clientX < r.left + r.width / 2 ? "steer" : "roll";
-          /* One thumb per stick. A second finger on the same side is ignored
-             rather than yanking the stick to where it landed. */
-          if (stickOf(kind)) continue;
+          const sky = skyFingers();
+          /* Two fingers on the sky and no more: the pair is a steering wheel. */
+          if (sky.length >= 2 || twist) continue;
           used = true;
           fingers.set(t.identifier, { kind, stick: { fromX: t.clientX, fromY: t.clientY, x: t.clientX, y: t.clientY, dx: 0, dy: 0, span: travel() } });
+          if (sky.length === 1) {
+            const [firstId, first] = sky[0];
+            const second = fingers.get(t.identifier);
+            if (second && second.kind !== "hold") {
+              twist = { a: firstId, b: t.identifier, from: angleBetween(first.stick, second.stick), now: 0 };
+              /* Neither finger steers while they are twisting. */
+              pilot.centreCursor();
+            }
+          }
         }
         if (!used) return;
         /* A finger on the game is flying, not scrolling or zooming the page. */
@@ -234,8 +283,10 @@ export function createTouchInput(): TouchInput {
           s.x = t.clientX; s.y = t.clientY;
           s.dx = clamp((s.x - s.fromX) / span);
           s.dy = clamp((s.y - s.fromY) / span);
+          if (twist) continue;
           if (role.kind === "steer") steerFrom(s);
         }
+        readTwist();
         if (!used) return;
         if (e.cancelable !== false) e.preventDefault?.();
         applyHeld();
@@ -249,6 +300,7 @@ export function createTouchInput(): TouchInput {
           if (!role) continue;
           used = true;
           fingers.delete(t.identifier);
+          if (twist && (twist.a === t.identifier || twist.b === t.identifier)) endTwist();
           if (role.kind === "hold") lift(role.action);
           /* The steering thumb lifted: stop turning, as the mouse leaving does. */
           if (role.kind === "steer") pilot.centreCursor();
@@ -262,6 +314,7 @@ export function createTouchInput(): TouchInput {
          the guns firing or the ship turning. */
       const blur = () => {
         if (fingers.size === 0) return;
+        twist = null;
         fingers.clear();
         pilot.releaseAll();
         /* Said again from the empty hand, so nothing is left held even if a

@@ -1,0 +1,16 @@
+{
+  "name": "Divi Rebels",
+  "short_name": "Rebels",
+  "description": "Fly the Divi network, fight, and earn DIVI.",
+  "start_url": "/rebels/?phone=1",
+  "scope": "/rebels/",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
+  "orientation": "landscape",
+  "background_color": "#07060e",
+  "theme_color": "#07060e",
+  "icons": [
+    { "src": "/rebels/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/rebels/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

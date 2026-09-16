@@ -208,3 +208,29 @@
 @media (orientation: portrait) {
   .rebels-phone .phone-cluster, .rebels-phone .phone-stick-idle { opacity: 0.25; }
 }
+
+/* ---- THE THUMB CARD ----
+   Shown by itself the first time anyone launches, and from the ? button. It is
+   an orbit-card, so the touch module already treats it as a page to tap. */
+.rebels-phone .phone-tips { place-content: center; gap: 10px; z-index: 20; }
+.rebels-phone .phone-tips h2 { font-size: 16px; }
+.rebels-phone .phone-tips .phone-howto { margin: 0 auto; max-width: 460px; }
+
+/* The roll, while two fingers are twisting: a wheel that turns with them. */
+.phone-twist {
+  position: absolute; left: 50%; top: 68%;
+  transform: translate(-50%, -50%);
+  width: 76px; height: 76px;
+  pointer-events: none;
+}
+.phone-twist > i {
+  position: absolute; inset: 0;
+  border: 2px dashed hsl(var(--primary) / 0.8);
+  border-radius: 50%;
+}
+.phone-twist > span {
+  position: absolute; left: 0; right: 0; top: 50%; margin-top: -5px;
+  text-align: center;
+  font: 700 10px/1 var(--font-mono); letter-spacing: 0.2em;
+  color: hsl(var(--primary));
+}
