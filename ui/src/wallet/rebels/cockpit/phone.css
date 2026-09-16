@@ -3,7 +3,9 @@
    thumb controls. Only layout numbers are literals. */
 
 .rebels-phone {
-  touch-action: none;
+  /* NOT touch-action: none on the whole cockpit. That also stops a finger
+     scrolling the inventory, the high scores and the ship market, which are
+     ordinary pages inside it. Only the thumb controls refuse to scroll. */
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
@@ -19,7 +21,7 @@
 
 /* Under the top right buttons, so the middle of the top stays clear to see. */
 .rebels-phone .orbit-score {
-  top: 48px; bottom: auto; right: var(--phone-edge-r);
+  top: 56px; bottom: auto; right: var(--phone-edge-r);
   display: grid; grid-auto-flow: column; grid-template-rows: auto auto;
   column-gap: 14px; text-align: right;
 }
@@ -27,15 +29,35 @@
 .rebels-phone .orbit-score > b { font-size: 17px; margin: 0; }
 .rebels-phone .orbit-tiers { display: none; }
 
+/* ---- THE GAUGES FIT BETWEEN THE THUMBS ----
+   One wide row ran under the BRAKE button on a small phone (the row is 600px
+   before scaling, and the button cluster owns the right 200px). Wrapped into a
+   narrow block in the middle instead, clear of the stick on the left and the
+   buttons on the right at every phone size. */
 .rebels-phone .orbit-bars {
   bottom: max(6px, env(safe-area-inset-bottom));
-  gap: 10px;
-  transform: translateX(-50%) scale(0.72);
+  gap: 8px 14px;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: 330px;
+  transform: translateX(-50%) scale(0.7);
   transform-origin: bottom center;
 }
 
 .rebels-phone .orbit-note { top: 22%; font-size: 12px; }
-.rebels-phone .orbit-died { font-size: 44px; }
+/* ---- THE NOTICES, STACKED DOWN THE MIDDLE ----
+   A phone held sideways is a third the height of a desktop cockpit, so three
+   things that never met on a computer all land on each other here: the death
+   title, the connection notice and the damage bar (which at three quarters
+   down painted over the BOOST button after every hit). Each gets its own band,
+   and all of them clear the score in the top right corner. */
+.rebels-phone .orbit-died { font-size: 38px; top: 15%; }
+.rebels-phone .orbit-offline { top: 30%; font-size: 11px; }
+.rebels-phone .rebels-healthbar { top: 40%; }
+.rebels-phone .rebels-healthbar-pct { font-size: 22px; }
+/* The resupply readout is five lines tall: smaller and higher on a phone, so it
+   sits between the crosshair and the gauges rather than on top of them. */
+.rebels-phone .orbit-dock { top: 48%; transform: translateX(-50%) scale(0.85); transform-origin: top center; }
 
 /* An enemy under the crosshair: the ring turns red, as phone shooters do. */
 .rebels-phone.on-target .orbit-cross {
@@ -44,27 +66,34 @@
 }
 
 /* ---- the small buttons along the top right ---- */
+.phone-controls { touch-action: none; }
+/* Kept on the page while the ship is down, so a thumb still on a button gets
+   its release, but out of sight and out of reach. */
+.phone-away { display: none; }
+
 .phone-top {
   position: absolute; top: 8px; right: var(--phone-edge-r);
-  display: flex; gap: 6px; pointer-events: auto;
+  display: flex; gap: 7px; pointer-events: auto;
 }
 .phone-chip {
   display: grid; place-items: center;
-  min-width: 44px; height: 32px; padding: 0 10px;
+  min-width: 46px; height: 40px; padding: 0 10px;
   font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em;
   color: hsl(var(--rebels-hud));
   background: hsl(var(--rebels-ocean) / 0.55);
   border: 1px solid hsl(var(--rebels-hud) / 0.45);
   border-radius: calc(var(--panel-radius) * 0.5);
+  -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
   -webkit-tap-highlight-color: transparent;
 }
 .phone-chip.phone-gun { color: hsl(var(--primary)); border-color: hsl(var(--primary) / 0.7); text-transform: uppercase; }
 .phone-chip.phone-held { color: hsl(var(--rebels-home)); border-color: hsl(var(--rebels-home) / 0.7); }
+/* Bottom right while a card is up: at the top it sat over the card's own text. */
 .phone-exit-idle {
-  position: absolute; top: 8px; right: var(--phone-edge-r);
+  position: absolute; bottom: max(10px, env(safe-area-inset-bottom)); right: var(--phone-edge-r);
   pointer-events: auto; z-index: 2;
-  padding: 8px 12px;
+  min-height: 40px; padding: 12px 16px;
   font: 600 10px/1 var(--font-mono); letter-spacing: 0.12em;
   color: hsl(var(--rebels-hud));
   background: hsl(var(--rebels-ocean) / 0.55);
@@ -92,8 +121,8 @@
 /* Where to put the thumb, before it is there. */
 .phone-stick-idle {
   position: absolute; transform: none;
-  left: calc(var(--phone-edge) + 40px); bottom: 44px;
-  width: 104px; height: 104px;
+  left: calc(var(--phone-edge) + 34px); bottom: 58px;
+  width: 96px; height: 96px;
   opacity: 0.35;
 }
 .phone-stick-idle > i { box-shadow: none; }
@@ -123,6 +152,7 @@
   color: hsl(var(--rebels-hud));
   background: hsl(var(--rebels-ocean) / 0.5);
   border: 1.5px solid hsl(var(--rebels-hud) / 0.55);
+  -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
   pointer-events: auto;
   -webkit-tap-highlight-color: transparent;
@@ -146,14 +176,22 @@
 
 /* ---- the launch card, fitted to a phone ----
    Side by side and short enough that LAUNCH is on screen without scrolling. */
+/* From the top, not centred: a card taller than a sideways phone would have its
+   top cut off with no way to scroll up to it. `place-content: safe center` does
+   the right thing but is not on every phone browser, so it is not relied on. */
 .rebels-phone .orbit-card {
   overflow-y: auto; gap: 8px;
-  padding: 8px var(--phone-edge-r) 8px var(--phone-edge);
-  place-content: safe center;
+  padding: 10px var(--phone-edge-r) 10px var(--phone-edge);
+  place-content: start center;
 }
+/* The recovery card is short, and starting it at the top puts it under the
+   YOU HAVE DIED title: it is centred instead, with the title above it. */
+.rebels-phone .orbit-card-died { place-content: center; padding-top: 26%; }
 .rebels-phone .orbit-card h2 { font-size: 18px; }
 .rebels-phone .orbit-card p { font-size: 11px; }
-.rebels-phone .orbit-launch-top { grid-template-columns: 30% 70%; gap: 12px; padding: 10px 14px; }
+/* Fractions rather than percentages: percentages plus a gap add up to more
+   than the width and push the text into the border. */
+.rebels-phone .orbit-launch-top { grid-template-columns: 2fr 5fr; gap: 12px; padding: 10px 14px; }
 .rebels-phone .orbit-launch-badge img { width: 64px; }
 .rebels-phone .orbit-card button { margin-top: 2px; padding: 9px 18px; font-size: 12px; }
 .phone-howto {

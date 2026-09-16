@@ -145,6 +145,8 @@ export interface Pilot {
   /** What an input needs to know to read its device. */
   state(): {
     flying: boolean; hasFlight: boolean; panelOpen: boolean; locked: boolean; rearOn: boolean;
+    /** The ship is lost and the recovery card is up: a screen to tap, not to fly. */
+    dead: boolean;
     /** Where the reticle is now, 0 to 1 across and down. */
     cursor: { x: number; y: number };
   };

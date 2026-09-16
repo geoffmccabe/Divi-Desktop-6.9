@@ -682,6 +682,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
    */
   function die(): void {
     if (hud.dead) return;
+    /* Whatever the brake was holding belonged to the ship that is now gone. */
+    brakeFrom = null;
     bank();
     /* The flying theme goes over five seconds and the menu theme comes back
        after it. See rebelsMusic for why after rather than across. */
@@ -740,6 +742,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let autoFiring = false;
   /** The lever's setting when the brake went on, or null when it is off. */
   let brakeFrom: number | null = null;
+  /** When a hand last moved the crosshair itself. Aim assist waits for a still
+      thumb, so steering is never fought for the crosshair mid-turn. */
+  let movedCursorAt = 0;
 
   /* What is in the two trigger slots. Saved, so a pilot who prefers the mini
      gun does not have to say so every time they launch. */
@@ -1086,7 +1091,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      here, moved behind a name. */
   let blurredAt = 0;
   const pilot: Pilot = {
-    state: () => ({ flying, hasFlight: !!flight, panelOpen, locked, rearOn, cursor: { x: cursor.x, y: cursor.y } }),
+    state: () => ({ flying, hasFlight: !!flight, dead: hud.dead, panelOpen, locked, rearOn, cursor: { x: cursor.x, y: cursor.y } }),
     setControls: (c) => {
       if (c.yaw !== undefined) stick.x = c.yaw;
       if (c.pitch !== undefined) stick.y = c.pitch;
@@ -1115,6 +1120,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     moveCursor: (x, y) => {
       cursor.x = x;
       cursor.y = y;
+      movedCursorAt = performance.now();
       aimFromCursor();
     },
     /* Pointer gone: stop turning, reticle back in the middle. */
@@ -1313,6 +1319,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     /* What this hull carries beyond the standard, from the store. Read at the
        moment of launch so a purchase made between sorties is felt on the next
        one without the panel having to be reopened. */
+    brakeFrom = null;
     flight = createFlight(at, flightExtras(loadShip()));
     setHud({ shieldMax: shieldMaxFor(flight.extras) });
     setHud({ dead: false });
@@ -1617,12 +1624,16 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /** How quickly the crosshair eases in, per second. Gentle on purpose: the
    *  thumb still aims, and a desktop player in the same fight has no help. */
   const ASSIST_PULL = 2.5;
+  /** How long a thumb must be still before the crosshair is eased anywhere. */
+  const ASSIST_WAIT = 140;
   const assistPoint = new THREE.Vector3();
 
   /** Aim assist and auto fire, before the flight step reads the trigger. */
   function frameAssist(dt: number, camera: THREE.PerspectiveCamera): void {
     let best: { x: number; y: number; d: number } | null = null;
-    if ((assist.magnet || assist.autoFire) && flying && !hud.dead && !rearOn) {
+    /* Not while a panel has the screen: an open inventory would otherwise keep
+       the guns firing at whatever happens to drift under the crosshair. */
+    if ((assist.magnet || assist.autoFire) && flying && !hud.dead && !rearOn && !panelOpen) {
       const aspect = camera.aspect || 1;
       for (const e of combat.enemies) {
         if (e.pos.distanceTo(camera.position) > ENEMY_FIRE_RANGE) continue;
@@ -1634,7 +1645,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         if (d < ASSIST_REACH && (!best || d < best.d)) best = { x, y, d };
       }
     }
-    if (best && assist.magnet) {
+    /* Only once the thumb has settled: while it is steering, the hand owns the
+       crosshair, and a magnet pulling against it reads as a stutter. */
+    if (best && assist.magnet && performance.now() - movedCursorAt > ASSIST_WAIT) {
       const k = Math.min(1, dt * ASSIST_PULL);
       cursor.x += (best.x - cursor.x) * k;
       cursor.y += (best.y - cursor.y) * k;

@@ -53,7 +53,7 @@ async function main() {
 
   type Call = [string, ...unknown[]];
   const calls: Call[] = [];
-  const st = { flying: true, hasFlight: true, panelOpen: false, locked: false, rearOn: false, cursor: { x: 0.5, y: 0.5 } };
+  const st = { flying: true, hasFlight: true, dead: false, panelOpen: false, locked: false, rearOn: false, cursor: { x: 0.5, y: 0.5 } };
   const controls: Record<string, number | boolean> = {};
   const assist: { autoFire?: boolean; magnet?: boolean } = {};
   const pilot: Pilot = {
@@ -186,6 +186,63 @@ async function main() {
   ok("and leaves aim assist on", assist.magnet === true);
   ok("and is remembered for next time", store.get("dd69.rebels.touch.autoFire") === "off");
   ok("every action the layout may use is tested", taps.length + 11 + 1 === TOUCH_ACTIONS.length, `${TOUCH_ACTIONS.length}`);
+
+  /* ---- TWO THUMBS ON FIRE ---- */
+  calls.length = 0;
+  fire("touchstart", touch(30, 700, 350, el("fire")));
+  fire("touchstart", touch(31, 760, 350, el("fire")));
+  fire("touchend", touch(30, 0, 0));
+  ok("with two thumbs on FIRE, lifting one keeps firing", !saw("trigger", "primary", false));
+  fire("touchend", touch(31, 0, 0));
+  ok("and lifting the last one stops", saw("trigger", "primary", false));
+
+  /* ---- A BUTTON TAKEN AWAY UNDER THE THUMB ----
+     The ship is lost, so the layout stops drawing its controls. A button that
+     is no longer on the page never gets its release, which used to leave the
+     guns firing (or worse, the brake on) for the rest of the session. */
+  calls.length = 0;
+  fire("touchstart", touch(32, 750, 350, el("fire")));
+  fire("touchstart", touch(33, 650, 350, el("brake")));
+  input.release();
+  ok("the layout can let go of everything", saw("releaseAll") && input.picture().held.length === 0 && controls.brake === false);
+  const afterRelease = calls.length;
+  fire("touchend", touch(32, 0, 0));
+  ok("and the lift that never comes changes nothing", calls.length === afterRelease);
+
+  /* ---- A PANEL OPENS WITH THUMBS DOWN ---- */
+  calls.length = 0;
+  fire("touchstart", touch(34, 200, 200));
+  fire("touchmove", touch(34, 200 + SPAN, 200));
+  st.panelOpen = true;
+  fire("touchmove", touch(34, 200 - SPAN, 200));
+  ok("a panel opening lets go of the steering", saw("releaseAll") && !input.picture().steer);
+  st.panelOpen = false;
+  fire("touchend", touch(34, 0, 0));
+
+  /* ---- THE RECOVERY CARD IS A PAGE ---- */
+  calls.length = 0; prevented = 0;
+  st.dead = true;
+  fire("touchstart", touch(35, 400, 200));
+  ok("while dead, a finger is for the card, not the ship", calls.length === 0 && prevented === 0 && !input.picture().steer);
+  st.dead = false;
+
+  /* ---- A MOUSE MAY PRESS THE BUTTONS ---- */
+  calls.length = 0;
+  const mouse = (id: number, action: string) => ({ pointerId: id, pointerType: "mouse", target: el(action), preventDefault: () => {} });
+  fire("pointerdown", mouse(1, "fire"));
+  ok("a mouse press on FIRE fires", saw("trigger", "primary", true) && input.picture().held.includes("fire"));
+  fire("pointerup", mouse(1, "fire"));
+  ok("and letting go stops", saw("trigger", "primary", false) && input.picture().held.length === 0);
+  calls.length = 0;
+  fire("pointerdown", { pointerId: 2, pointerType: "touch", target: el("fire"), preventDefault: () => {} });
+  ok("a touch is left to the touch handlers, not counted twice", calls.length === 0);
+  fire("pointerdown", { pointerId: 3, pointerType: "mouse", target: el("canvas"), preventDefault: () => {} });
+  ok("and a mouse on the sky does not fly the ship", calls.length === 0);
+
+  /* ---- THE RING THAT IS DRAWN IS THE RING THAT IS READ ---- */
+  fire("touchstart", touch(36, 200, 200));
+  ok("the stick carries its own travel for the layout to draw", input.picture().steer!.span === SPAN, `${input.picture().steer!.span} vs ${SPAN}`);
+  fire("touchend", touch(36, 0, 0));
 
   /* ---- LEFT ALONE ---- */
   calls.length = 0; prevented = 0;
