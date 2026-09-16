@@ -29,7 +29,7 @@ const fire = (k: string, e: unknown) => { for (const fn of handlers[k] ?? []) fn
 const count = () => Object.values(handlers).reduce((n, l) => n + l.length, 0);
 
 async function main() {
-  const { createTouchInput, shaped, STICK_TRAVEL, TOUCH_ACTIONS } = await import("./touchInput");
+  const { createTouchInput, shaped, STICK_TRAVEL, TWIST_FULL, TOUCH_ACTIONS } = await import("./touchInput");
   const W = 800, H = 400, SPAN = Math.min(W, H) * STICK_TRAVEL;
   const domHandlers: Record<string, number> = {};
   const dom = {
@@ -111,12 +111,38 @@ async function main() {
   st.rearOn = false;
   fire("touchmove", touch(1, NaN, 200));
   ok("a touch without coordinates is ignored, not turned into NaN", Number.isFinite(st.cursor.x));
-  fire("touchstart", touch(3, 100, 300));
-  fire("touchmove", touch(3, 10, 390));
-  ok("a second finger on the same side does not take the stick", input.picture().steer!.fromX === 200);
-  fire("touchend", touch(3, 0, 0));
   fire("touchend", touch(1, 0, 0));
   ok("lifting the steering thumb stops the turn", saw("centreCursor") && st.cursor.x === 0.5 && !input.picture().steer);
+
+  /* ---- TWO FINGERS TWISTED IS A ROLL ----
+     Geoff reached for this on his first flight. Fingers 40 and 41 land level,
+     then the pair is turned clockwise. */
+  calls.length = 0;
+  fire("touchstart", touch(40, 200, 200));
+  fire("touchstart", touch(41, 400, 200));
+  ok("a second finger on the sky starts a twist, and neither steers", input.picture().twist === 0 && !input.picture().steer && saw("centreCursor"));
+  /* The second finger swung around the first by a third of the twist needed
+     for a full roll. */
+  const swung = (a: number) => ({ changedTouches: [{ identifier: 41, clientX: 200 + 200 * Math.cos(a), clientY: 200 + 200 * Math.sin(a), target: el("canvas") }], cancelable: true, preventDefault: () => {} });
+  fire("touchmove", swung(TWIST_FULL / 3));
+  ok("twisting clockwise rolls right", (controls.roll as number) > 0.1, `${controls.roll}`);
+  fire("touchmove", swung(-TWIST_FULL));
+  ok("and the other way rolls left, to the stop", controls.roll === -1, `${controls.roll}`);
+  ok("the layout is told how far it is twisted", input.picture().twist === -1);
+  ok("and a twisting pair does not steer", st.cursor.x === 0.5 && st.cursor.y === 0.5);
+  fire("touchend", touch(41, 0, 0));
+  ok("letting one go stops the roll", controls.roll === 0 && input.picture().twist === null);
+  fire("touchmove", touch(40, 200 + SPAN, 200));
+  ok("and the finger left behind steers again from where it is", near(st.cursor.x, 0.95), `${st.cursor.x}`);
+  fire("touchend", touch(40, 0, 0));
+
+  fire("touchstart", touch(1, 200, 200));
+  fire("touchstart", touch(3, 100, 300));
+  fire("touchstart", touch(9, 300, 300));
+  ok("a third finger on the sky is ignored", input.picture().twist !== null);
+  fire("touchend", touch(9, 0, 0));
+  fire("touchend", touch(3, 0, 0));
+  fire("touchend", touch(1, 0, 0));
 
   /* ---- RIGHT SIDE: ROLL ---- */
   fire("touchstart", touch(2, 600, 200));

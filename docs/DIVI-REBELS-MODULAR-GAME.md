@@ -527,3 +527,31 @@ layout can be tried on a computer (and works with an iPad trackpad).
 
 **Suite:** 36 green, 70 touch checks, tsc clean. Looked at five phone screens
 (flying, disconnected, dead, docking, launch) at 667x390.
+
+### After Geoff's first flight on a real phone (2026-Sep-16)
+
+Three things he found, all fixed:
+
+1. **"A large portion of the screen is lost because the URL line remained at the
+   top."** Launching now asks for the whole screen (Android and desktop browsers
+   give it during a tap, which is what launching is); a FULL button appears in
+   the top row if that is refused. An iPhone never allows it in Safari, so the
+   page now carries a web app manifest, apple meta tags and an icon
+   (ui/web-rebels/index.html, ui/web-rebels/public/), and the thumb card tells
+   iPhone players to Add to Home Screen, which opens the game with no address
+   bar, sideways, at full size.
+2. **"I used two fingers to try to rotate the view and that didn't work, and I
+   thought it should."** Two fingers on the sky are now a steering wheel: twist
+   them to roll, with a dashed wheel drawn while they are turning. About thirty
+   degrees is a full roll. Neither finger steers while they twist, and letting
+   one go hands the other back its own job from where it is, with no jump. The
+   sideways drag on the right still rolls too.
+3. **"I couldn't intuitively figure out any other controls."** A thumb card now
+   appears by itself the first time anyone launches (remembered afterwards), and
+   a ? button in the top row brings it back. It lists the stick, FIRE and AUTO,
+   BOOST and BRAKE, TORP, roll, the gun, REAR and VIEW, ITEMS, and the iPhone
+   full screen step.
+
+**Tests:** 77 touch checks (the twist has its own: it rolls right and left, stops
+at the stop, does not steer, and hands the remaining finger back its job).
+Suite 36 green, tsc clean.
