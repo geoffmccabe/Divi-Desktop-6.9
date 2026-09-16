@@ -354,6 +354,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let stopItemUser: (() => void) | null = null;
   const _voxLook = new THREE.Vector3();
   let atSpikeworld = false;
+  /** The camera's far plane before Spikeworld pushed it out, so it can be put
+   *  back. Null when we are not out there. */
+  let farAtHome: number | null = null;
   /** Where the ship was before it went, so it can be put back. */
   const homeAgain = new THREE.Vector3();
   /** How much of its size a tower keeps once a game is running. */
@@ -1261,11 +1264,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       flight.speed = 0;
       /* Far enough to see the planet, near enough to keep the cockpit sharp.
          The planet is 9,000 units across and the arrival is just outside it. */
+      /* Put back on the way home. A far plane forty times further than Earth
+         orbit needs is depth precision thrown away for the rest of the
+         session: the z-buffer is shared out over the whole range, so leaving
+         it raised makes near surfaces fight each other back in the fight. */
+      if (farAtHome === null) farAtHome = camera.far;
       camera.far = Math.max(camera.far, WORLD_RADIUS * 4);
       camera.updateProjectionMatrix();
       setHud({ note: "SPIKEWORLD: CMD+SHIFT+\\ TO RETURN", noteAt: performance.now() });
     } else {
       flight.ceiling = undefined;
+      if (farAtHome !== null) {
+        camera.far = farAtHome;
+        camera.updateProjectionMatrix();
+        farAtHome = null;
+      }
       flight.pos.copy(homeAgain.lengthSq() > 1 ? homeAgain : new THREE.Vector3(0, 0, R + 40));
       /* Back in the fight, which flying alone also starts over. */
       room?.fly();
@@ -2799,12 +2812,17 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          units out and is struck for it. */
       if (atSpikeworld && flight) {
         flight.ceiling = undefined;
+        if (farAtHome !== null && camera) {
+          camera.far = farAtHome;
+          camera.updateProjectionMatrix();
+        }
         flight.pos.copy(homeAgain.lengthSq() > 1 ? homeAgain : new THREE.Vector3(0, 0, R + 40));
         flight.alt = flight.pos.length() - R;
         flight.speed = 0;
       }
       stopItemUser?.();
       stopItemUser = null;
+      farAtHome = null;
       spikeworld?.dispose();
       spikeworld = null;
       atSpikeworld = false;

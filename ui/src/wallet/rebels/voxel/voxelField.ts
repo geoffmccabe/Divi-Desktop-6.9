@@ -104,18 +104,31 @@ export function rockField(x: number, y: number, z: number, seed: number, lod = 1
    points, and kept as a small table from "how much rock" to "which threshold".
    Fixed points, not random ones, so the table is identical everywhere. */
 const TABLE_STEPS = 64;
-let table: Float64Array | null = null;
+/* ---- ONE TABLE PER SEED ----
+   It used to be a single table and a single carved fraction, built from
+   whichever seed asked first and then handed to every seed after it. With one
+   planet that is invisible; with two it is a planet whose fill is set from
+   another planet's noise, and the room and the cockpit disagreeing about which
+   cells are rock is the one failure this whole design is built to prevent.
+   Keyed by seed, and a seed is an integer, so the map stays tiny. */
+const tables = new Map<number, { table: Float64Array; carved: number }>();
 /**
- * What fraction of the rock the channels carve away again.
+ * What fraction of the rock the channels carve away again, per seed.
  *
  * Measured in the same pass, and it matters: the first report came back with a
  * shell 17.8% solid when it was meant to be 25%, because the threshold was set
  * to leave a quarter and THEN the channels cut a third of that quarter out.
  * The threshold has to aim high by exactly this much.
  */
-let carved = 0;
+function tableFor(seed: number): { table: Float64Array; carved: number } {
+  const had = tables.get(seed);
+  if (had) return had;
+  const made = buildTable(seed);
+  tables.set(seed, made);
+  return made;
+}
 
-function buildTable(seed: number): Float64Array {
+function buildTable(seed: number): { table: Float64Array; carved: number } {
   const SAMPLES = 24000;
   const v = new Float64Array(SAMPLES);
   /* Spread over the shell rather than along a line: the samples have to
@@ -132,19 +145,18 @@ function buildTable(seed: number): Float64Array {
     v[i] = rockField(x, y, z, seed);
     if (channel(x, y, z, r, seed) > CHANNEL_CUT) cut++;
   }
-  carved = cut / SAMPLES;
   v.sort();
   const out = new Float64Array(TABLE_STEPS + 1);
   for (let i = 0; i <= TABLE_STEPS; i++) {
     const at = Math.min(SAMPLES - 1, Math.round((i / TABLE_STEPS) * (SAMPLES - 1)));
     out[i] = v[at];
   }
-  return out;
+  return { table: out, carved: cut / SAMPLES };
 }
 
 /** The field value below which a cell is rock, for a wanted fill from 0 to 1. */
 export function thresholdFor(fill: number, seed = 0): number {
-  if (!table) table = buildTable(seed);
+  const { table } = tableFor(seed);
   const t = Math.max(0, Math.min(1, fill)) * TABLE_STEPS;
   const i = Math.min(TABLE_STEPS - 1, Math.floor(t));
   return table[i] + (table[i + 1] - table[i]) * (t - i);
@@ -158,29 +170,29 @@ export function thresholdFor(fill: number, seed = 0): number {
  * question, and using it was the fault the first report caught.
  */
 export function thresholdAfterCarving(fill: number, seed = 0): number {
-  if (!table) table = buildTable(seed);
+  const { carved } = tableFor(seed);
   return thresholdFor(fill / Math.max(0.05, 1 - carved), seed);
 }
 
 /** How much the channels carve. For the tests and the report. */
 export function carvedFraction(seed = 0): number {
-  if (!table) table = buildTable(seed);
-  return carved;
+  return tableFor(seed).carved;
 }
 
 /** Only for the tests, which check the table is stable. */
 export function fillTable(seed = 0): Float64Array {
-  if (!table) table = buildTable(seed);
-  return table;
+  return tableFor(seed).table;
 }
 /** Only for the tests, which build the table under more than one seed. */
-export function resetFieldForTests(): void { table = null; carved = 0; }
+export function resetFieldForTests(): void { tables.clear(); }
 
 /**
  * How much rock there is at this depth, from 0 to 1.
  *
- * Leaning outwards: a skin on the outside and a ragged ceiling over the cavity,
- * averaging the briefed quarter across the shell's thickness.
+ * A flat quarter, everywhere, because that is what was asked for. The lean this
+ * used to have (a skin outside, a ragged ceiling over the cavity) is still
+ * wired up through CRUST_OUTER and CRUST_INNER and is simply turned off; see
+ * the note on those two for why.
  */
 export function crustFill(radius: number): number {
   const t = (radius - R_INNER) / (R_OUTER - R_INNER);   /* 0 inside, 1 outside */
@@ -304,6 +316,25 @@ export function solidAt(cx: number, cy: number, cz: number, step: number, seed =
      it this was subsampling a fine field, which is what made the coarse levels
      dearer than the fine ones. */
   return solid(cx * step + half, cy * step + half, cz * step + half, seed, step);
+}
+
+/**
+ * The same question, but only about the SHELL: no heart and no spokes.
+ *
+ * The heart is meshed once as its own orange body and the spokes are drawn as
+ * stretched boxes, so a chunk that also meshed them drew the same rock twice,
+ * in two materials, in the same place. Two surfaces in one place is z-fighting,
+ * and the pair that lost was usually the orange one: the heart went grey and
+ * speckled from anywhere inside the cavity.
+ *
+ * Collision still asks `solid`, which knows about all three. This is only for
+ * the chunk meshes.
+ */
+export function solidShellAt(cx: number, cy: number, cz: number, step: number, seed = 0): boolean {
+  const half = step > 1 ? step >> 1 : 0;
+  const x = cx * Math.max(1, step) + half, y = cy * Math.max(1, step) + half, z = cz * Math.max(1, step) + half;
+  if (x * x + y * y + z * z < R_INNER * R_INNER) return false;
+  return solidAt(cx, cy, cz, step, seed);
 }
 
 /* ---- THE SKIN TRICK, AND WHY IT IS GONE ----

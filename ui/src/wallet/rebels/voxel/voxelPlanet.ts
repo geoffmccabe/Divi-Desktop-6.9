@@ -35,7 +35,18 @@ import { spikes, SPIKE_COUNT } from "./voxelSpikes";
  * without showing. Keeping two hundred means turning round does not rebuild
  * what was behind you: they are hidden and shown again, which is free.
  */
-const BUILD_PER_FRAME = 3;
+/**
+ * How long chunk building may take in one frame, in milliseconds, and how many
+ * chunks are kept once built.
+ *
+ * A BUDGET IN TIME, not a count. It was three chunks a frame, on the belief
+ * that a chunk is "a few milliseconds"; the measurement in the plan says a
+ * coarse chunk is seventeen, so three of them is fifty milliseconds and a
+ * guaranteed hitch every time the view moved onto new ground. One is always
+ * built, however long it takes, or a slow chunk would never be built at all;
+ * after that the clock decides.
+ */
+const BUILD_MS = 6;
 const CACHE_CHUNKS = 260;
 /** How far past its ring a chunk stays drawn once it is up. A third again. */
 const KEEP = 1.35;
@@ -181,6 +192,15 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     }
     rods.count = n;
     rods.instanceMatrix.needsUpdate = true;
+    /* ---- NEVER CULLED ----
+       One instanced draw covers the whole planet, so there is no view from
+       which most of it is off screen and nothing to win by testing it. What
+       there is to LOSE is the whole set of rods disappearing: an instanced
+       mesh has a single bounding volume, and one built from the base box
+       rather than from the instances is a unit cube at the centre, which is
+       off screen whenever the middle of the planet is. The node towers taught
+       this same lesson on the globe. */
+    rods.frustumCulled = false;
   }
   cubes.add(rods);
 
@@ -207,7 +227,9 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
 
   /** Turn one chunk into geometry. The seam a worker would replace. */
   function build(c: ChunkRef): void {
-    const m: ChunkMesh = meshChunk(c.ox, c.oy, c.oz, CHUNK, c.step, seed);
+    /* The shell only: the heart has its own mesh and the spokes are drawn as
+       boxes, and a chunk that meshed them too put two surfaces in one place. */
+    const m: ChunkMesh = meshChunk(c.ox, c.oy, c.oz, CHUNK, c.step, seed, true);
     built++;
     if (!m.indices.length) { live.set(keyOf(c), { mesh: new THREE.Mesh(), ref: c }); return; }
     const geo = new THREE.BufferGeometry();
@@ -264,16 +286,41 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         const ring = ringFor(c.step) * KEEP;
         held.mesh.visible = d <= Math.min(ring, keepFar);
       }
+      /* ---- THE CACHE HAS TO HAVE A CEILING ----
+         It used to drop only chunks that were both off the list and already
+         hidden, and the hysteresis above keeps nearly everything visible, so
+         in practice nothing was ever dropped: fly across the planet and the
+         geometry piles up until the card runs out. Now the furthest ones go,
+         list or no list, which is both the right choice and the one that
+         cannot be starved. */
       if (live.size > CACHE_CHUNKS) {
-        for (const key of [...live.keys()]) {
+        const far: Array<{ key: string; d: number }> = [];
+        for (const [key, held] of live) {
+          if (wanted.has(key)) continue;
+          const c = held.ref;
+          far.push({
+            key,
+            d: Math.hypot(
+              (c.ox + CHUNK / 2) * c.step - _eye.x,
+              (c.oy + CHUNK / 2) * c.step - _eye.y,
+              (c.oz + CHUNK / 2) * c.step - _eye.z,
+            ),
+          });
+        }
+        far.sort((a, b) => b.d - a.d);
+        for (const f of far) {
           if (live.size <= CACHE_CHUNKS) break;
-          if (!wanted.has(key) && !live.get(key)!.mesh.visible) drop(key);
+          drop(f.key);
         }
       }
-      /* And the nearest few that are missing are built. More than one a frame,
-         because one at a time is why a turn filled in visibly. */
+      /* And the nearest that are missing are built, for as long as the frame
+         can spare. One at a time is why a turn used to fill in visibly. */
       queue = view.chunks.filter((c) => !live.has(keyOf(c)));
-      for (let i = 0; i < Math.min(BUILD_PER_FRAME, queue.length); i++) build(queue[i]);
+      const until = performance.now() + BUILD_MS;
+      for (let i = 0; i < queue.length; i++) {
+        build(queue[i]);
+        if (performance.now() >= until) break;
+      }
 
       triangleCount = view.triangles;
       /* The dust is what decides how far chunks are built at all (see

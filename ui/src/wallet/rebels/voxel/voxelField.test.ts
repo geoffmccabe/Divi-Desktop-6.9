@@ -24,7 +24,8 @@ import {
   WORLD_DIAMETER, toWorld,
 } from "./voxelWorld";
 import {
-  solid, solidAt, crustFill, carvedFraction, spokeDirections, rockField,
+  solid, solidAt, solidShellAt, crustFill, carvedFraction, spokeDirections, rockField,
+  thresholdFor, resetFieldForTests,
 } from "./voxelField";
 import { meshChunk, triangles } from "./voxelMesh";
 import { spikes, spikeTriangles, inSpike, spikeReach, SPIKE_COUNT, SPIKE_W_MAX, SPIKE_L_MAX } from "./voxelSpikes";
@@ -394,6 +395,57 @@ function fillAt(radius: number, samples = 6000): number {
      !backwards.has("0,1,0") && !backwards.has("0,-1,0")
      && (counted.get("0,1,0") ?? 0) > 0 && (counted.get("0,-1,0") ?? 0) > 0,
      `${counted.get("0,1,0")} up, ${counted.get("0,-1,0")} down`);
+}
+
+/* ---- THE SHELL ON ITS OWN ----
+   The heart is meshed once as its own body and the spokes are drawn as boxes,
+   so the chunks have to leave both alone or the same rock is drawn twice in
+   two materials in one place, which is z-fighting and looked like the heart
+   going grey from inside the cavity. */
+{
+  let heart = 0, shellHeart = 0;
+  for (let x = -R_HEART + 2; x < R_HEART - 2; x += 3) {
+    for (let y = -R_HEART + 2; y < R_HEART - 2; y += 3) {
+      for (let z = -R_HEART + 2; z < R_HEART - 2; z += 3) {
+        if (x * x + y * y + z * z > (R_HEART - 3) * (R_HEART - 3)) continue;
+        if (solid(x, y, z)) heart++;
+        if (solidShellAt(x, y, z, 1)) shellHeart++;
+      }
+    }
+  }
+  ok("the heart is full of rock", heart > 20, `${heart} cubes`);
+  ok("and the shell-only field leaves every one of them to the heart's own mesh",
+     shellHeart === 0, `${shellHeart} would have been drawn twice`);
+  let spoke = 0, shellSpoke = 0;
+  const d = spokeDirections();
+  for (let t = R_HEART + 4; t < R_INNER - 4; t += 7) {
+    const x = Math.round(d[0] * t), y = Math.round(d[1] * t), z = Math.round(d[2] * t);
+    if (solid(x, y, z)) spoke++;
+    if (solidShellAt(x, y, z, 1)) shellSpoke++;
+  }
+  ok("a spoke is rock to the collision", spoke > 5, `${spoke} cubes`);
+  ok("and nothing to the chunks", shellSpoke === 0, `${shellSpoke} would have been drawn twice`);
+  ok("the shell itself is untouched",
+     solidShellAt(Math.round(R_OUTER - 80), 0, 0, 1) === solid(Math.round(R_OUTER - 80), 0, 0));
+  ok("and a chunk in the heart now meshes nothing",
+     meshChunk(-2, -2, -2, 4, 1, 0, true).quads === 0);
+}
+
+/* ---- ONE THRESHOLD TABLE PER SEED ----
+   It was one table for every seed, built from whichever asked first. With two
+   planets that is a planet whose fill is set from another planet's noise, and
+   worse, the room and the cockpit could each build it from a different seed
+   and then disagree about which cells are rock. */
+{
+  resetFieldForTests();
+  const a1 = thresholdFor(0.25, 1);
+  const b = thresholdFor(0.25, 2);
+  const a2 = thresholdFor(0.25, 1);
+  ok("a second seed gets its own threshold", a1 !== b, `${a1.toFixed(6)} against ${b.toFixed(6)}`);
+  ok("and the first one is unchanged by it", a1 === a2);
+  ok("and the carved fraction is per seed too", carvedFraction(1) !== carvedFraction(2),
+     `${carvedFraction(1).toFixed(4)} against ${carvedFraction(2).toFixed(4)}`);
+  resetFieldForTests();
 }
 
 /* ---- MODULARITY: nothing from the game gets in here ----

@@ -31,13 +31,6 @@ import {
 /**
  * What the planet may cost in one frame.
  *
- * DFlow showed the live game in trouble above about 200,000 triangles on
- * Geoff's Mac, and the planet cannot have all of it: ships, shots, spikes and
- * effects need room. Two thirds is the planet's share.
- */
-/**
- * What the planet may cost in one frame.
- *
  * 400,000, not 120,000. The smaller figure was two thirds of what the live game
  * can carry in Earth orbit, where it shares the frame with ships, shots, coins
  * and effects. Spikeworld is its OWN shard: the fight is not there, Earth is
@@ -123,15 +116,6 @@ export function dustFarFor(radiusCubes: number): number {
 export const RING_CUBES = [48, 140, 340, 700, 1e9] as const;
 
 /**
- * What a chunk costs, by detail level. MEASURED, at the 90th percentile of a
- * hundred and twenty chunks spread over the shell, not averaged: the budget has
- * to hold for an expensive view and not merely for a typical one.
- *
- * The first version of this table was one reading each and was wrong by two and
- * a half times at the coarsest level, which is how the estimate came to promise
- * 100,000 triangles and deliver 251,000.
- */
-/**
  * What a chunk costs, by detail level. MEASURED, and the AVERAGE rather than
  * the 90th percentile.
  *
@@ -214,12 +198,6 @@ export function mightHoldRock(ox: number, oy: number, oz: number, step: number):
 }
 
 /**
- * Which chunks to draw, from where the viewer is.
- *
- * `viewer` is in CUBES. The result is ordered nearest first, which is both what
- * the budget wants and the order a renderer should build them in.
- */
-/**
  * Half the angle of the cone kept in view, in cosine.
  *
  * A frame is about 55 degrees tall and around 75 across the diagonal, so 63
@@ -234,6 +212,12 @@ export function mightHoldRock(ox: number, oy: number, oz: number, step: number):
  */
 const LOOK_COS = 0.45;
 
+/**
+ * Which chunks to draw, from where the viewer is.
+ *
+ * `viewer` is in CUBES. The result is ordered nearest first, which is both what
+ * the budget wants and the order a renderer should build them in.
+ */
 export function visibleChunks(
   viewer: readonly [number, number, number],
   opts: {
@@ -327,10 +311,22 @@ export function visibleChunks(
   return { chunks, triangles, dropped };
 }
 
-/** How much the dust has swallowed something this far off, from 0 to 1. For
- *  the renderer's fade, and for nothing else here. */
-export function dustAt(distanceUnits: number): number {
-  if (distanceUnits <= DUST_NEAR) return 0;
-  if (distanceUnits >= DUST_FAR) return 1;
-  return (distanceUnits - DUST_NEAR) / (DUST_FAR - DUST_NEAR);
+/**
+ * How much the dust has swallowed something this far off, from 0 to 1. For the
+ * renderer's fade, and for nothing else here.
+ *
+ * `far` is how far the dust reaches WHERE THE VIEWER IS, which is not one
+ * number: dustFarFor gives 9,000 units out in the open and 2,700 deep in the
+ * rock. Fading everything out by 2,700 regardless would have hidden the whole
+ * planet from anyone approaching it, which is the same fault dustFarFor was
+ * written to fix; the two have to be given the same answer or the fade and the
+ * view distance disagree.
+ */
+export function dustAt(distanceUnits: number, far = DUST_FAR): number {
+  /* The clear part keeps its proportion when the dust closes in, and never
+     grows past the 1,400 units it is out in the open. */
+  const near = Math.min(DUST_NEAR, far * (DUST_NEAR / DUST_FAR));
+  if (distanceUnits <= near) return 0;
+  if (distanceUnits >= far) return 1;
+  return (distanceUnits - near) / (far - near);
 }

@@ -15,7 +15,7 @@
 // it run in a Web Worker and be tested in node. Whoever draws it wraps the
 // arrays in a BufferGeometry; that is the renderer's business, not this file's.
 
-import { solidAt } from "./voxelField";
+import { solidAt, solidShellAt } from "./voxelField";
 
 /** A finished chunk: what a BufferGeometry needs, and nothing else. */
 export interface ChunkMesh {
@@ -57,8 +57,14 @@ const FACES: Array<{ n: [number, number, number]; u: number; v: number; axis: nu
  */
 export function meshChunk(
   ox: number, oy: number, oz: number, size: number, step: number, seed = 0,
+  /** Mesh the SHELL only, leaving the heart and the spokes to the meshes that
+   *  already draw them. The planet's chunks pass this; the heart's own chunk
+   *  does not. See solidShellAt. */
+  shellOnly = false,
 ): ChunkMesh {
-  const field = (i: number, j: number, k: number) => solidAt(i, j, k, step, seed);
+  const field = shellOnly
+    ? (i: number, j: number, k: number) => solidShellAt(i, j, k, step, seed)
+    : (i: number, j: number, k: number) => solidAt(i, j, k, step, seed);
   const n3 = size * size * size;
   const at = new Uint8Array(n3);
   const idx = (i: number, j: number, k: number) => (k * size + j) * size + i;
@@ -136,6 +142,14 @@ export function meshChunk(
   };
 }
 
+/* The corner order, as multiples of the rectangle's width and height. Two
+   windings, because a Y face spans (X, Z) and X crossed with Z points at minus
+   Y: see the note in emit. */
+const ANTI_A = [0, 1, 1, 0] as const;
+const ANTI_B = [0, 0, 1, 1] as const;
+const CW_A = [0, 0, 1, 1] as const;
+const CW_B = [0, 1, 1, 0] as const;
+
 /** One merged rectangle, as two triangles, in CUBE coordinates.
  *
  *  Written without allocating anything: the four corners go straight into the
@@ -164,10 +178,15 @@ function emit(
      every face's real geometric normal against the one the mesher claims. */
   const flip = ny !== 0;
   const anti = flip ? !out : out;
-  const da = anti ? [0, w, w, 0] : [0, 0, w, w];
-  const db = anti ? [0, 0, h, h] : [0, h, h, 0];
+  /* The four corners, read from a pair of tables that are made ONCE rather
+     than per quad. The old pair of literals here allocated two arrays for
+     every rectangle in every chunk, which on a busy chunk is thousands of
+     throwaway objects for the sake of four numbers, and the comment above
+     claimed the opposite. */
+  const da = anti ? ANTI_A : CW_A;
+  const db = anti ? ANTI_B : CW_B;
   for (let c = 0; c < 4; c++) {
-    const ua = a + da[c], vb = b + db[c];
+    const ua = a + da[c] * w, vb = b + db[c] * h;
     let x: number, y: number, z: number;
     if (face.axis === 0) { x = lo; y = ua; z = vb; }
     else if (face.axis === 1) { x = ua; y = lo; z = vb; }
@@ -180,7 +199,11 @@ function emit(
   /* Measured in cubes, so a repeating grid texture shows one square per cube
      however large the merged rectangle is. */
   const su = w * step, sv = h * step;
-  if (out) uv.push(0, 0, su, 0, su, sv, 0, sv);
+  /* Follows the winding that was actually used. It followed `out`, which is a
+     different thing on the top and bottom faces, so their grid ran across the
+     rectangle instead of along it. Invisible on a square grid, and wrong the
+     moment the texture is anything else. */
+  if (anti) uv.push(0, 0, su, 0, su, sv, 0, sv);
   else uv.push(0, 0, 0, sv, su, sv, su, 0);
   ind.push(base, base + 1, base + 2, base, base + 2, base + 3);
 }
