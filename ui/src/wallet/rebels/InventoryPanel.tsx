@@ -15,7 +15,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ITEMS, ITEM_TIER_NAMES, FORGE_COST, itemByKey, itemMark, itemTierColour, forgeable, type ItemSpec } from "./itemCatalog";
 import { forge } from "./rebelsForge";
-import { heldSorted, spheresSorted, openSphere } from "./rebelsInventory";
+import { heldSorted, spheresSorted, openSphere, useItemNow } from "./rebelsInventory";
 import { owned, subscribeArmoury } from "./rebelsArmoury";
 import { weaponByKey } from "./weaponCatalog";
 import { myFleet, saveFlyingShip, type FleetShip } from "./rebelsShips";
@@ -29,6 +29,9 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
   const [, bump] = useState(0);
   const [fleet, setFleet] = useState<FleetShip[] | null>(null);
   const [note, setNote] = useState("");
+  /** Which card the player has clicked. Nothing but a highlight, so the thing
+   *  they are about to act on is the thing they think it is. */
+  const [picked, setPicked] = useState("");
   useEffect(() => subscribeArmoury(() => bump((n) => n + 1)), []);
   useEffect(() => {
     let alive = true;
@@ -43,6 +46,12 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
   const gear = mine.map((k) => itemByKey(k)).filter((i): i is ItemSpec => !!i && !i.drop);
   const flying = loadShip();
   const catalogue = shipCatalog();
+
+  /** Use one of this item now, and say what happened either way. */
+  const useOne = (key: string) => {
+    setPicked(key);
+    setNote(useItemNow(key));
+  };
 
   const open = (key: string) => {
     const spec = itemByKey(key);
@@ -152,6 +161,7 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
                 const spec = itemByKey(s.key)!;
                 return (
                   <SphereCard key={s.key} tier={spec.tier} count={s.count} sealed oval={spec.kind === "egg"}
+                    picked={picked === s.key} onPick={() => setPicked(s.key)}
                     title={spec.kind === "egg" ? "DRAGON EGG" : `TIER ${spec.tier} SPHERE`}
                     text={`${ITEM_TIER_NAMES[spec.tier - 1]} tier. Sealed. Right-click to open, or keep it to sell.`}
                     onOpen={() => open(s.key)} />
@@ -169,13 +179,16 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
                 const canForge = forgeable(spec) && s.count >= FORGE_COST;
                 return (
                   <SphereCard key={s.key} tier={spec.tier} count={s.count} label={`T${spec.tier} ${itemMark(spec)}`} oval={spec.kind === "egg"}
+                    picked={picked === s.key} onPick={() => setPicked(s.key)}
                     title={spec.name}
                     text={spec.consumable
-                      ? `${spec.note} Press Y in flight to use one.`
+                      ? `${spec.note} Right-click or double-click to use one, or press Y in flight.`
                       : isShipUpgrade(s.key)
-                        ? `${spec.note} Right-click to fit it to your ship for good.`
+                        ? `${spec.note} Right-click or double-click to fit it to your ship for good.`
                         : spec.note}
-                    onOpen={isShipUpgrade(s.key) ? () => startFit(s.key) : undefined}
+                    onOpen={isShipUpgrade(s.key)
+                      ? () => startFit(s.key)
+                      : spec.consumable ? () => useOne(s.key) : undefined}
                     action={canForge ? {
                       label: forging === s.key ? "FORGING" : `FORGE ${FORGE_COST} INTO 1`,
                       hint: "90% next tier, 9% two up, 1% three up",
@@ -209,9 +222,12 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
   );
 }
 
-function SphereCard({ tier, count, label, title, text, sealed, onOpen, action, oval }: {
+function SphereCard({
+  tier, count, label, title, text, sealed, onOpen, action, oval, picked, onPick,
+}: {
   tier: number; count: number; label?: string; title: string; text: string; sealed?: boolean; onOpen?: () => void;
   action?: { label: string; hint: string; run: () => void }; oval?: boolean;
+  picked?: boolean; onPick?: () => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
@@ -220,12 +236,29 @@ function SphereCard({ tier, count, label, title, text, sealed, onOpen, action, o
     return showSphere(c, { tier, label, oval });
   }, [tier, label, oval]);
   const colour = `#${itemTierColour(tier).toString(16).padStart(6, "0")}`;
+  /* ---- WHAT THIS CARD DOES ----
+     Sealed spheres open; ship upgrades fit; consumables are used. Until now
+     only the SEALED ones lit up or answered a right-click, so an opened item
+     looked like a picture of an item rather than a thing to press. Geoff:
+     "When I click my 'Items' they don't highlight. Only the Sealed Spheres
+     highlight. I expected to click my Supercharge item and highlight it, then
+     to right-click it or double-click it to Apply it."
+
+     So: any card with something to do lights up, clicking it picks it out, and
+     both a right-click and a double-click do the thing. The button stays,
+     because a button is how anyone finds out what the thing is. */
+  const does = onOpen ?? action?.run;
   return (
     <div
-      className={"orbit-inv-card" + (sealed ? " sealed" : "")}
+      className={"orbit-inv-card" + (sealed ? " sealed" : "") + (does ? " can" : "")
+        + (picked ? " picked" : "")}
       style={{ ["--tier" as string]: colour }}
-      onContextMenu={(e) => { e.preventDefault(); onOpen?.(); }}
-      title={sealed ? "Right-click to open" : undefined}
+      onClick={() => onPick?.()}
+      onDoubleClick={(e) => { e.preventDefault(); does?.(); }}
+      onContextMenu={(e) => { e.preventDefault(); onPick?.(); does?.(); }}
+      title={does
+        ? (sealed ? "Right-click or double-click to open" : "Right-click or double-click to use")
+        : undefined}
     >
       <canvas ref={ref} className="orbit-inv-ball" />
       <div className="orbit-inv-text">

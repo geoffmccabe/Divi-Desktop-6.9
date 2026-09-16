@@ -218,7 +218,7 @@ export interface Room {
   /** This node won a stake: a minute of triple damage, if the room allows it. */
   bonus(): void;
   /** What the ship carries, when it changes: a gun bought, a sphere opened. */
-  gear(list: string[], reach?: number, drones?: number[]): void;
+  gear(list: string[], reach?: number, drones?: number[], divi?: number): void;
   /** The flight model hit the ground or a tower, and by how much. */
   hurt(amount: number): void;
   /** Ask to be paid what is banked, to this address. The answer comes back
@@ -369,9 +369,10 @@ export function joinRoom(opts: Opts): Room {
     dock() { send({ t: "dock" }); },
     cheat(code) { send({ t: "cheat", code }); },
     bonus() { send({ t: "bonus" }); },
-    gear(list, reach, drones) {
+    gear(list, reach, drones, divi) {
       send({
         t: "gear", gear: list,
+        ...(divi && divi > 0 ? { divi: Math.round(divi) } : {}),
         ...(reach ? { reach: Math.round(reach * 100) / 100 } : {}),
         ...(drones ? { drones } : {}),
       });

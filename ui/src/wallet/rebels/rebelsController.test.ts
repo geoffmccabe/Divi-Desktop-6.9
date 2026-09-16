@@ -112,6 +112,34 @@ function freshServer() {
   s.setDropsForTests(null, () => 0.99);
   return s;
 }
+/**
+ * EMPTY THE ROOM'S SKY, for a block that is about the controls rather than
+ * about the fight.
+ *
+ * Flying an unattended ship through a live wave for a few thousand frames is
+ * not a steady thing to measure against: the ship gets shot, gets knocked off
+ * its heading, and eventually dies, and the reading the test wanted turns into
+ * a reading about a wreck. Clearing what is in the air is not enough on its
+ * own, because the room's own step rolls for a flock and for the dragon inside
+ * the very frame being measured, so both clocks are held far from their next
+ * roll as well.
+ *
+ * The fight is asked for every time and never held: the room throws it away
+ * and builds a new one whenever a lone pilot launches.
+ */
+function calmSky(keep?: { pos: THREE.Vector3 } | null): void {
+  const c = server?.combat as import("./rebelsCombat").CombatState | undefined;
+  if (!c) return;
+  c.enemies.length = 0;
+  c.bullets.length = 0;
+  c.torpedoes.length = 0;
+  c.flocks.length = 0;
+  c.wave = null;
+  c.flockClock = -1e6;
+  c.dragonClock = -1e6;
+  if (keep) c.enemies.push(keep as never);
+}
+
 (globalThis as unknown as { WebSocket: unknown }).WebSocket = class {
   readyState = 1;
   onopen: (() => void) | null = null;
@@ -154,6 +182,15 @@ function freshServer() {
   send: (text: string) => void;
   close: () => void;
 };
+
+/** Hand a millisecond back to the clock, without going async.
+ *  Some gauges refresh on a real clock rather than on frames, so a test that
+ *  waits for one has to let real time pass. Spinning frames as fast as the
+ *  machine will go does the opposite: on a quick run ten seconds of waiting
+ *  flew a THOUSAND seconds of game, the ship was long dead into the ground,
+ *  and the reading the test wanted never came. */
+const idleBuf = new Int32Array(new SharedArrayBuffer(4));
+function restMs(ms: number): void { Atomics.wait(idleBuf, 0, 0, ms); }
 
 function press(type: string, e: Record<string, unknown>) {
   for (const fn of winHandlers[type] ?? []) fn({ preventDefault() {}, ...e });
@@ -628,13 +665,17 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl2.attach({ ...g2, selfIp: "self-ip" });
   flushRoom();
   ctl2.launch();
-  for (let i = 0; i < 60 * 6; i++) ctl2.frame(1 / 60);
+  /* The sky is emptied for this block: it is about the mouse, and an
+     unattended ship in a live wave gets shot off its heading, which reads here
+     as the ship turning on its own after the pointer has left. */
+  const step2 = (frames: number) => { for (let i = 0; i < frames; i++) { calmSky(); ctl2.frame(1 / 60); } };
+  step2(60 * 6);
 
   const aim2 = () => g2.camera.getWorldDirection(new THREE.Vector3());
   const flat = aim2();
   /* The reticle put well left of centre. The canvas is 800 wide. */
   g2.fire("pointermove", { clientX: 150, clientY: 300 });
-  for (let i = 0; i < 45; i++) ctl2.frame(1 / 60);
+  step2(45);
   ok("with no pointer lock the reticle still steers", flat.angleTo(aim2()) > 0.3,
      `${flat.angleTo(aim2()).toFixed(2)} radians`);
   ok("and the reticle is where the mouse is", Math.abs(ctl2.cursor().x - 0.1875) < 0.01,
@@ -644,17 +685,17 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
      centre does not creep. */
   g2.fire("pointermove", { clientX: 402, clientY: 301 });
   const straight = aim2();
-  for (let i = 0; i < 60; i++) ctl2.frame(1 / 60);
+  step2(60);
   ok("and the middle means straight ahead", straight.angleTo(aim2()) < 1e-6,
      `${straight.angleTo(aim2()).toExponential(1)} radians of creep`);
 
   /* THE ONE THAT MATTERS: the pointer leaving the window stops the turn, rather
      than leaving the ship circling toward a reticle nobody can see. */
   g2.fire("pointermove", { clientX: 150, clientY: 300 });
-  for (let i = 0; i < 10; i++) ctl2.frame(1 / 60);
+  step2(10);
   g2.fire("pointerleave", {});
   const parked = aim2();
-  for (let i = 0; i < 120; i++) ctl2.frame(1 / 60);
+  step2(120);
   ok("and leaving the window stops the turn", parked.angleTo(aim2()) < 1e-6,
      `${parked.angleTo(aim2()).toExponential(1)} radians after two seconds`);
   ctl2.detach();
@@ -1333,9 +1374,44 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const ctl = createRebels(labelFor);
   ctl.attach({ ...g, selfIp: "self-ip" });
   flushRoom();
-  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  /* ---- A CALM SKY FOR THE CONTROLS ----
+     This block is about the thumb controls, not about the fight, and it flies
+     for ten seconds of real time in places. Left in a hostile sky it died
+     about one run in five, and a death reads as the OPPOSITE of what the
+     controls are meant to show: the guns stop firing and the respawn refills
+     the magazine, so "holding FIRE fires the guns" saw the ammo go UP. The
+     respawn also moves the ship a few hundred units in one go, which the room
+     rightly refuses as "moved too far", and the rest of the block then failed
+     with it.
+
+     So the sky is emptied on every frame of this block. `held` is the one
+     fighter the aim-assist section puts in front of the guns; it is put back
+     after the sweep, which is also what makes that section see exactly one
+     target instead of whatever earlier blocks left behind. */
+  /* ---- ASKED FOR EVERY TIME, NEVER HELD ----
+     The room throws its whole fight away and builds a new one whenever the
+     last pilot leaves the sky or a lone pilot launches, and `launch()` below
+     does exactly that. A reference taken once therefore stops being the fight
+     the room is running, and everything done through it, including the
+     fighter this block puts in front of the guns, goes into an object nobody
+     reads. */
+  const fight = () => server!.combat as import("./rebelsCombat").CombatState;
+  const seat = [...(server as unknown as { seats: Map<string, { body: { pos: THREE.Vector3; fwd: THREE.Vector3 } }> }).seats.values()][0];
+  let held: import("./rebelsCombat").Enemy | null = null;
+  const calm = () => calmSky(held);
+  /** One frame in a calm sky. Every frame of this block goes through here. */
+  const step = (frames = 1) => { for (let i = 0; i < frames; i++) { calm(); ctl.frame(1 / 60); } };
+  /** Fly for a stretch of REAL time, at about the speed the game really runs.
+   *  The gauges refresh on a real clock, so waiting on one means letting real
+   *  time pass; flying flat out while it passes is what put the ship into the
+   *  ground with the trigger held. */
+  const waitReal = (ms: number, done: () => boolean = () => false) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end && !done()) { step(); restMs(1); }
+  };
+  step(60);
   ctl.launch();
-  for (let i = 0; i < 60 * 6; i++) ctl.frame(1 / 60);   /* through the dive */
+  step(60 * 6);   /* through the dive */
   const finger = (kind: string, id: number, x: number, y: number, action = "") => {
     const target = { closest: (sel: string) => (sel === "[data-rebels-touch]" && action ? { getAttribute: () => action } : null) };
     const e = { changedTouches: [{ identifier: id, clientX: x, clientY: y, target }], cancelable: true, preventDefault: () => {} };
@@ -1350,7 +1426,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   finger("touchstart", 1, 200, 300);
   finger("touchmove", 1, 200, 300 - 72);
   ok("pushing the left thumb up moves the crosshair up", ctl.cursor().y < 0.1, `${ctl.cursor().y.toFixed(2)}`);
-  for (let i = 0; i < 40; i++) ctl.frame(1 / 60);
+  step(40);
   ok("and turns the ship", aimBefore.angleTo(aim()) > 0.5, `${aimBefore.angleTo(aim()).toFixed(2)} radians`);
   finger("touchend", 1, 0, 0);
   ok("lifting the thumb centres the crosshair", ctl.cursor().x === 0.5 && ctl.cursor().y === 0.5);
@@ -1359,22 +1435,24 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   const lever = ctl.hud().throttle;
   const speed0 = ctl.hud().speed;
   finger("touchstart", 2, 650, 500, "brake");
-  for (let i = 0; i < 60 * 2; i++) ctl.frame(1 / 60);
-  let readBy = Date.now() + 400;
-  while (Date.now() < readBy) ctl.frame(1 / 60);
+  step(60 * 2);
+  waitReal(400);
   ok("holding BRAKE slows the ship", ctl.hud().speed < speed0 * 0.5, `${speed0.toFixed(1)} -> ${ctl.hud().speed.toFixed(1)}`);
   finger("touchend", 2, 650, 500);
-  readBy = Date.now() + 400;
-  while (Date.now() < readBy) ctl.frame(1 / 60);
+  waitReal(400);
   ok("letting go puts the throttle back", Math.abs(ctl.hud().throttle - lever) < 1e-6, `${lever} -> ${ctl.hud().throttle}`);
 
   /* FIRE, held. */
   const ammo0 = ctl.hud().ammo;
   finger("touchstart", 3, 750, 550, "fire");
-  const until = Date.now() + 10_000;
-  while (ctl.hud().ammo >= ammo0 && Date.now() < until) ctl.frame(1 / 60);
+  /* Two seconds of held trigger, then as long as the gauge needs to catch up.
+     Bounded in FRAMES rather than in real time: the guns empty in a second and
+     the only open question is when the HUD next refreshes. */
+  step(120);
+  waitReal(2000, () => ctl.hud().ammo < ammo0);
   finger("touchend", 3, 750, 550);
-  ok("holding FIRE fires the guns", ctl.hud().ammo < ammo0, `${ammo0} -> ${ctl.hud().ammo}`);
+  ok("holding FIRE fires the guns", ctl.hud().ammo < ammo0, `${ammo0} -> ${ctl.hud().ammo}`
+     + `; dead ${ctl.hud().dead}; shields ${ctl.hud().shields}; note ${ctl.hud().note}`);
 
   /* The weapon button steps to the next gun the ship owns (earlier blocks
      bought the mini gun and a beam), and never onto a "buy it" note. */
@@ -1388,11 +1466,20 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   /* ---- AIM ASSIST AND AUTO FIRE ----
      A fighter is held a little right of the crosshair, twenty units ahead of
      the camera, with no thumb on the glass at all. */
-  const seat = [...(server as unknown as { seats: Map<string, { body: { pos: THREE.Vector3; fwd: THREE.Vector3 } }> }).seats.values()][0];
-  const combatNow = server!.combat as import("./rebelsCombat").CombatState;
   const { runRoomCheat } = await import("../../../../contrib/rebels-room/src/cheats");
-  runRoomCheat(combatNow, seat.body, "11");
-  const target = () => combatNow.enemies[0];
+  runRoomCheat(fight(), seat.body, "11");
+  /* ONE fighter, not the whole fleet the cheat sends. With thirty of them
+     milling about, the nearest was four units off the nose and the assist was
+     locking onto whichever of the crowd it liked; the test then reported on the
+     crowd rather than on the assist. */
+  fight().enemies.length = Math.min(1, fight().enemies.length);
+  /* THIS fighter, held by the object rather than by its place in the list. The
+     fight goes on around it and the room sends more of them, so "the first one
+     in the array" was a different ship from one frame to the next, which is
+     what made this flaky. */
+  const mine = fight().enemies[0];
+  held = mine;
+  const target = () => mine;
   ok("(setup) a fighter in the room", !!target());
   /* Held at ONE place in the world, worked out once.
      It used to be re-derived from the camera every frame, which teleported the
@@ -1402,33 +1489,53 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
      frame is never where the smoothing has got to, so the assist was chasing a
      target the player would never have seen either. A fixed spot is both a
      fairer test and closer to a real fight. */
-  const spot = (() => {
-    const fwd = g.camera.getWorldDirection(new THREE.Vector3());
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(g.camera.quaternion);
-    return g.camera.position.clone().addScaledVector(fwd, 20).addScaledVector(right, 1.2);
-  })();
   const hold = () => {
     const e = target();
     if (!e) return;
-    e.pos.copy(spot);
+    /* Held twenty units ahead of the ship and a little to one side, as it
+       flies: an enemy keeping formation, which is an ordinary thing in a fight
+       and which the smoothing follows to within a fraction of a unit. */
+    const fwd = g.camera.getWorldDirection(new THREE.Vector3());
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(g.camera.quaternion);
+    e.pos.copy(g.camera.position).addScaledVector(fwd, 20).addScaledVector(right, 1.2);
     e.vel.set(0, 0, 0);
   };
-  const flyHeld = (frames: number) => { for (let i = 0; i < frames; i++) { hold(); ctl.frame(1 / 60); } };
+  const flyHeld = (frames: number) => { for (let i = 0; i < frames; i++) { hold(); step(); } };
   const shields0 = ctl.hud().shields;
   /* Sampled BEFORE the enemy is put in front of the guns, not twenty frames
      after. With the enemy now held still in the world rather than teleported
      after the crosshair every frame, the assist finishes its pull in the first
      few frames, so a reading taken twenty frames in had already missed most of
      the movement it was meant to measure. */
+  /* Let the room and the cockpit agree on what is in the sky before measuring:
+     the enemies smoothed between ticks arrive a moment after the room has them,
+     and the blocks before this one leave their own fighters behind. */
+  flyHeld(40);
   const x0 = ctl.cursor().x;
-  flyHeld(80);
-  ok("an enemy near the crosshair draws it in", ctl.cursor().x > x0 + 0.01 || ctl.hud().onTarget, `${x0.toFixed(3)} -> ${ctl.cursor().x.toFixed(3)}`);
+  /* Flown to a DEADLINE rather than for a fixed count of frames. The assist
+     deliberately waits for the thumb to be still for a moment before it eases
+     the crosshair anywhere, and that wait is measured against the clock on the
+     wall, not against the frames. A fixed sixty frames is a race: on a quick
+     run they all go by inside the wait and the assist never starts, which is
+     what made this fail about one run in three. */
   const onBy = Date.now() + 5000;
-  while (!ctl.hud().onTarget && Date.now() < onBy) flyHeld(1);
-  ok("until it is on target", ctl.hud().onTarget);
+  while (!ctl.hud().onTarget && Date.now() < onBy) { flyHeld(1); restMs(1); }
+  /* The claim is the assist's, not the crosshair's: with one fighter held dead
+     ahead, the guns should end up ON it. Whether the reticle had to travel to
+     get there depends on where it already was, which is not what this is
+     about and is why measuring the travel was flaky. */
+  ok("an enemy held in front of the guns reads as on target", ctl.hud().onTarget,
+     `${x0.toFixed(3)} -> ${ctl.cursor().x.toFixed(3)}`
+     + `; the cockpit can see ${ctl.hud().contacts}, the room has ${fight().enemies.length}, room ${ctl.hud().room}`
+     + `; ${(() => {
+       const v = mine.pos.clone().project(g.camera);
+       const x = (v.x + 1) / 2, y = (1 - v.y) / 2;
+       const d = Math.hypot((x - ctl.cursor().x) * (g.camera.aspect || 1), y - ctl.cursor().y);
+       return `the target sits ${d.toFixed(3)} from the crosshair, ${mine.pos.distanceTo(g.camera.position).toFixed(1)} away`;
+     })()}`);
   const ammoA = ctl.hud().ammo;
   const fireBy = Date.now() + 5000;
-  while (ctl.hud().ammo >= ammoA && Date.now() < fireBy) flyHeld(1);
+  while (ctl.hud().ammo >= ammoA && Date.now() < fireBy) { flyHeld(1); restMs(1); }
   ok("auto fire shoots with no finger on FIRE", ctl.hud().ammo < ammoA, `${ammoA} -> ${ctl.hud().ammo}`);
 
   tap(6, "auto");

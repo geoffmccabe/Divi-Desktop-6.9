@@ -47,7 +47,7 @@ import {
 } from "../../../ui/src/wallet/rebels/rebelsWings";
 import { distanceToTower, DOCK_RANGE, DOCK_SECONDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
-import { ALL_ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, superBoostMult, strafeMult, vstrafeMult, hullMult } from "../../../ui/src/wallet/rebels/itemCatalog";
+import { ALL_ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, respawnSeconds, superBoostMult, strafeMult, vstrafeMult, hullMult } from "../../../ui/src/wallet/rebels/itemCatalog";
 import { fetchDropConfig } from "../../../ui/src/wallet/rebels/dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "../../../ui/src/wallet/rebels/dropCharts";
 import { ammoFor, torpedoesFor, topSpeedFor, shieldMaxFor, recharge, supercharge, SUPER_BOOST_MULT, type Extras } from "../../../ui/src/wallet/rebels/orbitFlight";
@@ -210,6 +210,9 @@ interface Seat {
   tfCount: number;
   strikes: number;
   joined: boolean;
+  /** What this player holds in their wallet, as they reported it. Sets how long
+   *  they wait to respawn; see respawnSeconds. */
+  walletDivi: number;
   /**
    * In the fight, as against merely seated.
    *
@@ -319,7 +322,7 @@ export class RebelsRoom {
       score: 0, kills: 0, divi: 0,
       dead: false, respawn: 0,
       lastMain: -99, lastMini: -99, lastTorp: -99,
-      tfWindow: 0, tfCount: 0, strikes: 0, joined: false, flying: false,
+      tfWindow: 0, tfCount: 0, strikes: 0, joined: false, flying: false, walletDivi: 0,
     };
     this.seats.set(id, seat);
 
@@ -647,7 +650,11 @@ export class RebelsRoom {
        the next launch dropped them into a fight already in progress with
        fighters on top of them. */
     s.flying = false;
-    s.respawn = s.gear.has("vip") ? RESPAWN_VIP : RESPAWN_SECONDS;
+    /* By the pass AND by what the player holds in their wallet, whichever is
+       kinder. The holding is the client's word, as the gear and the paint are,
+       and it is bounded the same way: the worst a lie buys is a shorter wait,
+       and the room decides when the wait is over either way. */
+    s.respawn = respawnSeconds([...s.gear], s.walletDivi);
     s.shield = 0;
     s.guardFor = 0;
     s.body.guard = false;
@@ -686,6 +693,14 @@ export class RebelsRoom {
     /* Back on your own pad, which is where a launch happens. */
     s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
     this.refreshRoster();
+    /* ---- AND TELL THEM, OR THE COUNTDOWN NEVER ENDS ----
+       A revived seat is not FLYING until its player launches again, so with
+       nobody else in the room the roster is empty, the tick returns early and
+       not one more message goes out. The cockpit was therefore left on its last
+       gauge reading, showing a dead ship and a countdown that had stopped:
+       Geoff, "the 30 second countdown froze... then it froze again and never
+       restarted." This is the message that says it is over. */
+    this.sendYou(s);
   }
 
   /**
@@ -785,6 +800,10 @@ export class RebelsRoom {
     seat.ship = shipFor(seat, seat.ship);
     if (seat.guest) m = { ...m, paint: undefined };
     seat.paint = cleanPaint(m.paint);
+    /* Bounded to something a wallet could plausibly hold, so a silly number
+       cannot become a silly wait. */
+    const held = Number(m.divi);
+    seat.walletDivi = Number.isFinite(held) && held > 0 ? Math.min(held, 1e12) : 0;
     /* The capture ball. The client measured its own wings; the room only
        keeps it within reason. */
     seat.body.reach = clampReach(Number(m.reach));
@@ -1156,6 +1175,12 @@ export class RebelsRoom {
 
   static GEAR_GAP = 1;
   private onGear(seat: Seat, m: Extract<ClientMessage, { t: "gear" }>): void {
+    /* The wallet balance can arrive after the join, because the door has to be
+       asked for it. Same trust and same bound as on the join. */
+    if (m.divi !== undefined) {
+      const held = Number(m.divi);
+      seat.walletDivi = Number.isFinite(held) && held > 0 ? Math.min(held, 1e12) : 0;
+    }
     if (!seat.joined) return;
     if (this.now - seat.lastGear < RebelsRoom.GEAR_GAP) return;
     seat.lastGear = this.now;

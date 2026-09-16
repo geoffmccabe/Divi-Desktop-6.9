@@ -1140,6 +1140,56 @@ const home: [number, number, number] = [0, 0, R + 8];
      I.shipFor(guest, "space_SM_Ship_Cruiser_05") === I.GUEST_SHIP && I.shipFor(app, "space_SM_Ship_Cruiser_05") === "space_SM_Ship_Cruiser_05");
 }
 
+/* ---- THE COUNTDOWN HAS TO END ----
+   A revived seat is not FLYING until its player launches again, so with nobody
+   else in the room the roster is empty and the tick returns early: not one more
+   message goes out, and the cockpit is left showing a dead ship and a stopped
+   clock. Geoff: "the 30 second countdown froze... then it froze again and never
+   restarted." */
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws);
+  room.down(seat);
+  ok("dead, with a wait", seat.dead && seat.respawn > 0, `${seat.respawn}s`);
+  ws.sent.length = 0;
+  seat.respawn = 0.01;
+  room.step();
+  ok("the countdown ends", !seat.dead);
+  ok("AND THE COCKPIT IS TOLD, or it waits for ever",
+     !!ws.last("you") && !ws.last("you").dead,
+     ws.last("you") ? JSON.stringify(ws.last("you")).slice(0, 80) : "nothing was sent");
+  room.stop();
+}
+
+/* ---- AND IT IS AS LONG AS THE WALLET SAYS ---- */
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  room.seat(ws as never);
+  ws.deliver(JSON.stringify({
+    t: "join", node: "rich", name: "Rich", home: [0, 0, R + 6], divi: 20_000_000,
+  }));
+  const seat = room.seats.get(ws.last("hi").id as string);
+  ws.deliver(JSON.stringify({ t: "fly" }));
+  room.down(seat);
+  ok("twenty million in the wallet is a five second wait", seat.respawn === 5, `${seat.respawn}s`);
+  room.stop();
+}
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws);
+  room.down(seat);
+  ok("no wallet is the plain thirty", seat.respawn === 30, `${seat.respawn}s`);
+  /* And it can arrive late, because the door has to be asked. */
+  seat.dead = false;
+  ws.deliver(JSON.stringify({ t: "gear", gear: [], divi: 1_000_000 }));
+  room.down(seat);
+  ok("a balance that arrives after the join still counts", seat.respawn === 10, `${seat.respawn}s`);
+  room.stop();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

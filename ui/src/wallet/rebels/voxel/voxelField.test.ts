@@ -246,8 +246,17 @@ function fillAt(radius: number, samples = 6000): number {
 
 /* ---- the coarse levels ---- */
 {
-  ok("the coarsest level is no thicker than the shell",
-     CHUNK * LOD_STEPS[LOD_STEPS.length - 1] <= (R_OUTER - R_INNER) + CHUNK,
+  /* The coarsest level used to be capped at the shell's thickness, because a
+     coarse level was made by SUBSAMPLING a fine field and a chunk thicker than
+     the shell was then nearly all exposed face. Growing the clumps with the
+     level removed that reason: a coarse chunk is now a blurred planet, costs
+     what a fine one does, and may cover as much ground as it likes. What still
+     has to hold is that the levels only ever get coarser. */
+  ok("the levels only ever get coarser",
+     LOD_STEPS.every((st, i) => i === 0 || st > LOD_STEPS[i - 1]),
+     LOD_STEPS.join(", "));
+  ok("and the coarsest covers a useful part of the planet",
+     CHUNK * LOD_STEPS[LOD_STEPS.length - 1] >= (R_OUTER - R_INNER),
      `${CHUNK * LOD_STEPS[LOD_STEPS.length - 1]} cubes against a ${R_OUTER - R_INNER}-cube shell`);
   ok("a coarse cell agrees with the cube at its middle",
      solidAt(10, 3, 2, 4) === solid(10 * 4 + 2, 3 * 4 + 2, 2 * 4 + 2));

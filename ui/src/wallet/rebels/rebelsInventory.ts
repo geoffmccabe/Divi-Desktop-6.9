@@ -159,3 +159,28 @@ export function spheresSorted(): Array<{ key: string; count: number }> {
 export function resetInventoryForTests(): void {
   try { platform().storage.removeItem(ITEMS_KEY); } catch { /* fine */ }
 }
+
+/* ---- USING A HELD ITEM FROM THE INVENTORY ----
+   The panel is a React component and the cockpit is not; they have no reference
+   to one another, which is why the only way to use a Supercharge used to be the
+   Y key in flight. Geoff expected to be able to do it from the inventory, and
+   he is right: an item you are looking at should be an item you can use.
+
+   So the cockpit leaves a way to be called, and the panel calls it. One
+   function, set while a flight is attached and cleared when it lets go, so a
+   panel open outside a game simply finds nobody home and says so. */
+type ItemUser = (key: string) => string;
+let itemUser: ItemUser | null = null;
+
+/** The cockpit registers here on attach. Returns the undo. */
+export function setItemUser(fn: ItemUser | null): () => void {
+  itemUser = fn;
+  return () => { if (itemUser === fn) itemUser = null; };
+}
+
+/** Use one of `key` now. Returns what to tell the player, always: an empty
+ *  answer would leave a click looking like it did nothing. */
+export function useItemNow(key: string): string {
+  if (!itemUser) return "LAUNCH FIRST: ITEMS ARE USED IN FLIGHT";
+  return itemUser(key);
+}

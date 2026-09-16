@@ -54,6 +54,10 @@ export interface JoinIn {
   /** How many wingmen of each tier this account holds, tier one first. Counts
    *  rather than keys, because two T3 drones are two wingmen. */
   drones?: number[];
+  /** What this player holds in their DIVI wallet, which sets how long they wait
+   *  to respawn. Absent where the door has no wallet to look in, which is the
+   *  web today. The client's word, like the gear; see respawnSeconds. */
+  divi?: number;
 }
 
 /**
@@ -143,7 +147,12 @@ export interface DockIn { t: "dock" }
 /** What this ship carries, when it changes mid-flight: a gun bought, a sphere
  *  opened, four things forged. Without this the server only ever knew what was
  *  declared on join, and anything bought while flying did nothing. */
-export interface GearIn { t: "gear"; gear: string[]; reach?: number; drones?: number[] }
+export interface GearIn {
+  t: "gear"; gear: string[]; reach?: number; drones?: number[];
+  /** What the wallet holds, when the door finds out after joining. Sets the
+   *  respawn wait; see respawnSeconds. */
+  divi?: number;
+}
 
 /** The cockpit's flight model says the ship hit the ground or a tower, and by
  *  how much. See the room's onHurt for what is and is not trusted here. */

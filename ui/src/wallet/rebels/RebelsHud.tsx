@@ -35,8 +35,8 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       <DockPanel hud={hud} />
       <ScoreCorner hud={hud} />
       <GaugeBars hud={hud} />
-      <ExitButton hud={hud} onExit={onExit} />
-      <FullScreenButton full={fullScreen} onToggle={toggleFullScreen} />
+      <ExitButton hud={hud} onExit={onExit} full={fullScreen} onToggleFull={toggleFullScreen} />
+      {fullScreen && <FullScreenButton full onToggle={toggleFullScreen} />}
       <NoLaunchCard hud={hud} />
       <NoteLine hud={hud} />
       <OfflineBanner hud={hud} />

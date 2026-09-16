@@ -49,7 +49,7 @@ import { droneClass } from "./rebelsFlock";
 import { respawnSeconds, itemByKey } from "./itemCatalog";
 import { fetchDropConfig } from "./dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "./dropCharts";
-import { addSphere, addHeld, heldCount, takeHeld } from "./rebelsInventory";
+import { addSphere, addHeld, heldCount, takeHeld, setItemUser } from "./rebelsInventory";
 import { inRearWindow, placeRearCamera, rearAim, tailOf, rearViewport } from "./rearGun";
 import { WING_SCALE } from "./rebelsWings";
 import { dflow } from "./rebelsDflow";
@@ -351,6 +351,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   const SPIKEWORLD_AT = new THREE.Vector3(0, 0, DISTANCE_IN_EARTHS * EARTH_D);
   let spikeworld: VoxelPlanet | null = null;
   let voxBuilt = -1;
+  let stopItemUser: (() => void) | null = null;
   const _voxLook = new THREE.Vector3();
   let atSpikeworld = false;
   /** Where the ship was before it went, so it can be put back. */
@@ -656,7 +657,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      the trigger reads as the trigger not having worked. */
   /** How long a player waits before rejoining while others are still flying. */
   /* Thirty seconds, or ten with a VIP Pass. See itemCatalog. */
-  const respawnWait = () => respawnSeconds(owned(loadShip()));
+  /** What the wallet says the player holds, once the door has answered. Nothing
+   *  waits on it: it starts at none and the ladder simply improves when it
+   *  arrives. */
+  let walletDivi = 0;
+  const respawnWait = () => respawnSeconds(owned(loadShip()), walletDivi);
   let respawnAt = 0;
   let nearTower = Infinity;
   let dockBlock: string = "";
@@ -899,11 +904,28 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     const full = isFull(flight, flight.extras);
     const key = haveR > 0 && !full ? "recharge" : haveS > 0 ? "supercharge" : haveR > 0 ? "recharge" : null;
     if (!key) { setHud({ note: "NOTHING TO USE: OPEN A SPHERE IN YOUR INVENTORY (I)", noteAt: performance.now() }); return; }
-    if (key === "recharge" && full) { setHud({ note: "ALREADY FULL", noteAt: performance.now() }); return; }
-    if (!takeHeld(key, 1)) return;
+    const said = useOneHeld(key);
+    setHud({ note: said, noteAt: performance.now() });
+  }
+
+  /**
+   * Use ONE NAMED item, and say what happened.
+   *
+   * Split out of useHeld so the inventory can use the thing the player is
+   * actually looking at, rather than whatever the Y key would have picked.
+   * Every answer is a sentence, because a click that does nothing and says
+   * nothing is indistinguishable from a broken button.
+   */
+  function useOneHeld(key: string): string {
+    if (!flight || !flying) return "LAUNCH FIRST: ITEMS ARE USED IN FLIGHT";
+    if (hud.dead) return "NOT WHILE YOU ARE DOWN";
+    if (heldCount(key) <= 0) return "NONE LEFT";
+    if (key === "recharge" && isFull(flight, flight.extras)) return "ALREADY FULL";
+    if (key !== "recharge" && key !== "supercharge") return "THAT ONE IS NOT USED, IT IS FITTED";
+    if (!takeHeld(key, 1)) return "NONE LEFT";
     room?.use(key);
     playBounce();
-    setHud({ note: key === "recharge" ? "INSTANT RECHARGE" : "SUPERCHARGE", noteAt: performance.now() });
+    return key === "recharge" ? "INSTANT RECHARGE" : "SUPERCHARGE";
   }
 
   /* Escape releases the lock, which the browser does for us, and that is the
@@ -1982,7 +2004,27 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            not see: flying into the planet, for one, whose damage the
            flight model works out and the server applies. */
         if (g.dead && !hud.dead) die();
-        if (g.respawn > 0) respawnAt = performance.now() + g.respawn * 1000;
+        /* ---- THE COUNTDOWN RUNS LOCALLY ----
+           The room sends whole seconds, so taking each message as the new
+           deadline made the clock stutter and jump: at 2.4 seconds left it says
+           3 and the clock is pushed back out to three, at 1.9 it says 2 and it
+           is pushed back to two. Geoff: "the 30 second countdown froze for a
+           while at 2 seconds left, then after 10 seconds or so it changed to 1
+           second."
+
+           So the deadline is set ONCE, when the room first says a wait is
+           running, and after that the cockpit counts down on its own clock. A
+           later message only moves it when the room disagrees by more than a
+           second and a half, which is a real correction rather than rounding. */
+        if (g.respawn > 0) {
+          const asked = performance.now() + g.respawn * 1000;
+          if (respawnAt <= performance.now() || Math.abs(asked - respawnAt) > 1500) {
+            respawnAt = asked;
+          }
+        } else if (!g.dead) {
+          /* Alive again: the wait is over whatever the clock says. */
+          respawnAt = 0;
+        }
       }
       /* ---- WHICH WAVE IT IS ----
          Read from the room's own state every tick rather than from the
@@ -2445,6 +2487,17 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       /* The dragon arrives long after the rest, so it gets its own warm: its
          skinned shader is a different program again, and the one time anybody
          meets a dragon is the worst moment to compile it. */
+      /* How much is in the wallet, which is all the respawn ladder needs. Asked
+         once and told to the room, because the room owns the countdown. */
+      void (async () => {
+        try {
+          const held = await platform().money.walletDivi?.();
+          if (typeof held === "number" && held > 0) {
+            walletDivi = held;
+            room?.gear(gearKeys(loadShip()).filter((k) => k !== "pulse"), shipReach, droneCounts(), held);
+          }
+        } catch { /* no wallet behind this door */ }
+      })();
       void loadModel("rebels_dragon")
         .then((p) => { dragonProto = p; warmShaders(); })
         .catch((e) => dflow.note(`dragon model: ${String(e)}`));
@@ -2511,6 +2564,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         sky = installSky(scene);
         guardShell = makeGuardShell();
         scene.add(guardShell.mesh);
+        /* The inventory can use an item while a flight is attached. */
+        stopItemUser?.();
+        stopItemUser = setItemUser((key) => useOneHeld(key));
         mandala = makeMandalaShield();
         scene.add(mandala.group);
         /* One prototype per tier, cloned per fighter. Seven models built once
@@ -2747,6 +2803,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         flight.alt = flight.pos.length() - R;
         flight.speed = 0;
       }
+      stopItemUser?.();
+      stopItemUser = null;
       spikeworld?.dispose();
       spikeworld = null;
       atSpikeworld = false;

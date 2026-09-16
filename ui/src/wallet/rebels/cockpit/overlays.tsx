@@ -47,11 +47,30 @@ export function AimMarks({ hud, crossRef }: { hud: HudState; crossRef: React.Ref
   );
 }
 
-export function ExitButton({ hud, onExit }: { hud: HudState; onExit: () => void }) {
+/**
+ * The bottom-left row: back to the map, and full screen beside it.
+ *
+ * One row rather than two things positioned separately, because the exit
+ * button's width changes with its own text and an icon placed at a guessed
+ * offset from the corner cannot stay in line with it. Geoff: "That button isn't
+ * properly aligned with the EXIT button to its left."
+ *
+ * Once the game IS full screen the collapse icon leaves the row for the
+ * opposite corner, which is what he asked for and where nothing else lives.
+ */
+export function ExitButton({
+  hud, onExit, full, onToggleFull,
+}: {
+  hud: HudState; onExit: () => void;
+  full?: boolean; onToggleFull?: () => void;
+}) {
   return (
-    <button type="button" className="orbit-exit" onClick={onExit} title="Back to the map">
-      {hud.launched ? "ESC  BACK TO MAP" : "BACK TO MAP"}
-    </button>
+    <div className="orbit-exit-row">
+      <button type="button" className="orbit-exit" onClick={onExit} title="Back to the map">
+        {hud.launched ? "ESC  BACK TO MAP" : "BACK TO MAP"}
+      </button>
+      {onToggleFull && !full && <FullScreenButton full={false} onToggle={onToggleFull} />}
+    </div>
   );
 }
 

@@ -1003,6 +1003,15 @@
   background: hsl(var(--rebels-hud) / 0.04); border: 1px solid hsl(var(--rebels-hud) / 0.14); border-radius: 6px;
   box-shadow: inset 0 0 24px color-mix(in srgb, var(--tier) 14%, transparent);
 }
+/* Anything with something to do says so: it lights under the pointer and stays
+   lit once picked. Only the sealed spheres did before, so an opened item looked
+   like a picture rather than a thing to press. */
+.orbit-inv-card.can { cursor: pointer; }
+.orbit-inv-card.can:hover { border-color: var(--tier); box-shadow: inset 0 0 28px color-mix(in srgb, var(--tier) 26%, transparent), 0 0 14px color-mix(in srgb, var(--tier) 30%, transparent); }
+.orbit-inv-card.picked {
+  border-color: var(--tier);
+  box-shadow: inset 0 0 30px color-mix(in srgb, var(--tier) 34%, transparent), 0 0 18px color-mix(in srgb, var(--tier) 45%, transparent);
+}
 .orbit-inv-card.sealed { cursor: context-menu; }
 .orbit-inv-card.sealed:hover { border-color: var(--tier); box-shadow: inset 0 0 28px color-mix(in srgb, var(--tier) 26%, transparent), 0 0 14px color-mix(in srgb, var(--tier) 30%, transparent); }
 .orbit-inv-ball { width: 96px; height: 96px; display: block; }

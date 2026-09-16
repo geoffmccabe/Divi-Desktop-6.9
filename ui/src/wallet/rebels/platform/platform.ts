@@ -121,6 +121,34 @@ export interface RebelsMoney {
   /** The panel that sends DIVI to buy points, or null where this door cannot
    *  send DIVI. */
   PayWithDivi: ComponentType<PayWithDiviProps> | null;
+  /**
+   * What the player holds in their DIVI wallet, or null where this door has no
+   * wallet to look in.
+   *
+   * Only one thing reads it: how long a player waits to respawn. Geoff:
+   * "The restart time should depend on how much Divi the user has in the
+   * wallet." A door without a wallet, which is the web today, answers null and
+   * the player waits the plain thirty seconds.
+   *
+   * Optional, so no door has to grow a method it cannot answer.
+   */
+  walletDivi?(): Promise<number | null>;
+}
+
+/**
+ * Making the game fill the screen, where the door can.
+ *
+ * The browser's own full-screen API is not the answer inside the desktop app:
+ * a WKWebView will take the request and do nothing with it, which is what
+ * happened. Geoff: "the button doesn't work to go into full screen mode." The
+ * app has a WINDOW, and a window is what has to be made full screen; the web
+ * has no window of its own and the browser API is exactly right there.
+ *
+ * So the door answers for its own platform, and the button asks the door first.
+ */
+export interface RebelsScreen {
+  isFull(): Promise<boolean>;
+  setFull(on: boolean): Promise<void>;
 }
 
 /**
@@ -255,6 +283,8 @@ export interface RebelsPlatform {
   wonStakeRecently(windowMs?: number): boolean;
   prices: { fetch(): Promise<RebelsPrices> };
   money: RebelsMoney;
+  /** Full screen, where the door can do it. Absent on a door that cannot. */
+  screen?: RebelsScreen;
   detail: RebelsDetail;
   input: RebelsInput;
   /**

@@ -1706,7 +1706,14 @@ code, .mono { font-family: var(--font-mono); }
 .netmap-viewtoggle button.on { background: hsl(210 85% 62% / 0.34); color: hsl(210 85% 82%); }
 
 /* The 3D globe fills the map area, behind the overlay panels (which are z>=6). */
-.netmap-globe { position: absolute; inset: 0; z-index: 1; }
+/* Held back until the globe has actually drawn something: an undrawn canvas is
+   a black rectangle, and it was showing for a moment every time the map opened.
+   Faded rather than snapped, so the world arrives instead of appearing. */
+.netmap-globe {
+  position: absolute; inset: 0; z-index: 1;
+  opacity: 0; transition: opacity 260ms ease;
+}
+.netmap-globe.shown { opacity: 1; }
 .globe-tip {
   background: rgba(0, 0, 0, 0.8); border: 1px solid hsl(210 85% 62% / 0.6); border-radius: 6px;
   padding: 4px 7px; font-size: 0.72rem; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums;
@@ -2210,8 +2217,19 @@ code, .mono { font-family: var(--font-mono); }
   background: hsl(var(--rebels-home));
   transition: width 0.12s linear;
 }
-.orbit-exit {
+/* ---- the bottom-left row ----
+   The exit button and the full-screen icon in one flex row, rather than two
+   things positioned separately and hoped into line. The icon was placed with a
+   guessed offset and the exit button's own width changes with its text ("ESC
+   BACK TO MAP" against "BACK TO MAP"), so it could not have stayed aligned.
+   Stretching it to the row's height makes its top and bottom edges the
+   button's, exactly, whatever the font does. */
+.orbit-exit-row {
   position: absolute; left: 16px; bottom: 14px;
+  display: flex; align-items: stretch; gap: 6px;
+  pointer-events: none;
+}
+.orbit-exit {
   pointer-events: auto;
   padding: 6px 12px;
   font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em;
@@ -2228,10 +2246,9 @@ code, .mono { font-family: var(--font-mono); }
    so the collapse control is never under the thumb that was just reaching for
    something else. Square, and the same height as the button it sits next to. */
 .orbit-full {
-  position: absolute; left: 16px; bottom: 14px;
-  transform: translateX(calc(100% + 154px));
   pointer-events: auto;
-  width: 27px; height: 27px;
+  align-self: stretch;          /* exactly as tall as the button beside it */
+  width: 27px;
   display: grid; place-items: center;
   padding: 0;
   color: hsl(var(--rebels-hud));
@@ -2245,6 +2262,6 @@ code, .mono { font-family: var(--font-mono); }
 .orbit-full:hover { background: hsl(var(--primary) / 0.3); }
 /* Out of full screen: the other corner, where nothing else lives. */
 .orbit-full.out {
-  left: auto; right: 16px; bottom: 14px;
-  transform: none;
+  position: absolute; right: 16px; bottom: 14px; align-self: auto;
+  height: 27px;
 }
