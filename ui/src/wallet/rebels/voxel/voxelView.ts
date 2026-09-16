@@ -76,25 +76,16 @@ export function dustFarFor(radiusCubes: number): number {
 /**
  * Where each detail level takes over, in CUBES from the viewer.
  *
- * Read off the measurements: a full-detail chunk is about 6,000 triangles, so
- * a couple of dozen of them is half the budget, and 64 cubes is about as far as
- * a player can see inside a tunnel anyway. The rings are a starting point and
- * the budget overrides them, so getting these wrong costs sharpness and never
- * frame rate.
- */
-export const RING_CUBES = [64, 160, 380, 1e9] as const;
-
-/**
- * How deep each detail level bothers with, in cubes.
+ * Read off the measurements: a full-detail chunk is about 6,800 triangles, so
+ * a couple of dozen of them is most of the budget, and forty-eight cubes is
+ * further than a player can see inside a tunnel anyway. The rings are a
+ * starting point and the budget overrides them, so getting these wrong costs
+ * sharpness and never frame rate.
  *
- * Zero is the real planet, caves and all, which is what you need when you are
- * flying through them. Further out only the outer skin can be seen, so below
- * that depth the rock is filled in and no cave walls are generated. This is
- * worth more than any other single thing at distance: the Phase 3 test found a
- * view estimated at 100,000 triangles really costing 251,000, and nearly all of
- * the difference was cave wall nothing could look at.
+ * They were wider (64, 160, 380) and the near bands ate the whole allowance,
+ * which left the far ones dropped and the planet full of holes.
  */
-export const SKIN_BY_STEP: Record<number, number> = { 1: 0, 2: 0, 4: 60, 8: 40 };
+export const RING_CUBES = [48, 140, 340, 1e9] as const;
 
 /**
  * What a chunk costs, by detail level. MEASURED, at the 90th percentile of a
@@ -105,7 +96,29 @@ export const SKIN_BY_STEP: Record<number, number> = { 1: 0, 2: 0, 4: 60, 8: 40 }
  * a half times at the coarsest level, which is how the estimate came to promise
  * 100,000 triangles and deliver 251,000.
  */
-export const COST_BY_STEP: Record<number, number> = { 1: 6800, 2: 11600, 4: 12500, 8: 8400 };
+export const COST_BY_STEP: Record<number, number> = { 1: 6800, 2: 5600, 4: 2700, 8: 2900 };
+
+/**
+ * How deep each detail level bothers with, in cubes.
+ *
+ * Zero is the real planet, caves and all, which is what you need when you are
+ * flying through them. Further out only the outer skin can be seen, so below
+ * that depth the rock is filled in and no cave walls are generated.
+ *
+ * EIGHT CUBES, not sixty. Sixty was the first guess and it was far too deep:
+ * it still meshed the whole 25%-filled crust block by block, which cost 16,900
+ * triangles a chunk at step 4, so the 120,000-triangle allowance bought NINE
+ * chunks and dropped thirty-five. The planet was therefore drawn as a patch of
+ * ground directly under the ship and nothing else, which is exactly what Geoff
+ * saw: "at a distance they are invisible and we see right through them, so they
+ * appear only when close which is stupid and makes no sense." He was right that
+ * it made no sense.
+ *
+ * At eight cubes the same chunk is 1,680 triangles, ten times less, and from
+ * any distance where a coarse level is used it looks the same: the only thing
+ * lost is cave wall nobody could see into from there.
+ */
+export const SKIN_BY_STEP: Record<number, number> = { 1: 0, 2: 32, 4: 8, 8: 8 };
 
 /** One chunk to draw: its corner in CELLS at its own step, and that step. */
 export interface ChunkRef {
@@ -152,6 +165,11 @@ export function mightHoldRock(ox: number, oy: number, oz: number, step: number):
   }
   const near = Math.sqrt(near2), far = Math.sqrt(far2);
   if (near > R_OUTER) return false;                       /* all outside */
+  /* At a coarse level everything below the skin is filled in, so a chunk that
+     lies WHOLLY below it is solid rock throughout and has no face anywhere: not
+     worth generating, and worth keeping off the budget. */
+  const skin = SKIN_BY_STEP[step] ?? 0;
+  if (skin > 0 && far <= R_OUTER - skin) return false;
   if (far <= R_HEART) return true;                        /* all inside the heart */
   if (far < R_INNER - SPOKE_R && near > R_HEART) {
     /* Wholly within the cavity. Only a spoke can be in here, and a spoke is

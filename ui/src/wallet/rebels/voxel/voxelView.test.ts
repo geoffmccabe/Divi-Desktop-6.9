@@ -108,6 +108,41 @@ for (const [name, at] of places) {
        : "nothing to draw");
 }
 
+/* ---- NOTHING MISSING WHERE A PLAYER CAN SEE IT ----
+   Holding the budget is not enough on its own: an allowance can be held by
+   drawing a patch of ground and dropping the rest, and that is exactly what
+   happened. The skin at the coarse levels was sixty cubes deep, so a coarse
+   chunk still meshed the whole 25%-filled crust block by block at 12,000
+   triangles; the allowance bought nine chunks and dropped thirty-five. Geoff:
+   "at a distance they are invisible and we see right through them, so they
+   appear only when close which is stupid and makes no sense."
+
+   So the views a player actually looks at the planet FROM have to drop nothing
+   at all. Inside the rock is allowed to drop, because what is dropped there is
+   behind a wall. */
+{
+  const openViews: Array<[string, [number, number, number]]> = [
+    ["the shard's sky edge", [R_OUTER + SKY_EDGE, 0, 0]],
+    ["half way in from the edge", [R_OUTER + SKY_EDGE * 0.5, 0, 0]],
+    ["arriving, just above the surface", [R_OUTER + 40, 0, 0]],
+    ["in the cavity", [R_INNER - 60, 0, 0]],
+    ["beside the heart", [R_HEART + 14, 0, 0]],
+  ];
+  for (const [name, at] of openViews) {
+    const v = visibleChunks(at);
+    ok(`looking at the planet from ${name}: nothing is left out`,
+       v.dropped === 0,
+       `${v.dropped} dropped, ${v.chunks.length} drawn, ${v.triangles} of ${TRIANGLE_BUDGET}`);
+  }
+  /* And the coarse levels are cheap enough for that to be possible at all. */
+  ok("a coarse chunk is a few thousand triangles, not a dozen thousand",
+     COST_BY_STEP[4] < 4000 && COST_BY_STEP[8] < 4000,
+     `step 4 ${COST_BY_STEP[4]}, step 8 ${COST_BY_STEP[8]}`);
+  ok("which is what a thin skin buys",
+     SKIN_BY_STEP[4] <= 12 && SKIN_BY_STEP[8] <= 12,
+     `depths ${LOD_STEPS.map((s) => `${s}:${SKIN_BY_STEP[s]}`).join(" ")}`);
+}
+
 /* ---- and the estimate has to be honest ----
    The budget is spent against a table of average costs. If the real meshes are
    much dearer than the table says, the budget is a fiction. Checked on the two
