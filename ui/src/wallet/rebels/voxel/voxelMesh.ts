@@ -28,6 +28,27 @@ export interface ChunkMesh {
   /** Which way round the rectangle runs, in cubes, so a repeating texture can
    *  draw the cube edges along a merged face instead of stretching over it. */
   uvs: Float32Array;
+  /**
+   * The light, BAKED IN, as a colour per corner.
+   *
+   * A face's brightness here depends only on which way it points, which is the
+   * oldest trick in voxel rendering and is worth far more than it looks:
+   *
+   *   - it needs NO LIGHTS, and a light is not a free thing to add. Three.js
+   *     builds a different shader for every number of lights in the scene, so
+   *     putting two of them in to light this planet made the card recompile
+   *     every lit material in the whole game: the ships, the globe, the
+   *     effects. DFlow caught it as twenty shader compiles and one frame that
+   *     took 791 milliseconds inside the renderer.
+   *   - an unlit material is cheaper to draw than a lit one, per pixel, and
+   *     there are a great many pixels of rock.
+   *   - it cannot go black. A real light has a direction, and the faces
+   *     pointing away from it are unlit; these are readable from every angle.
+   *
+   * What is lost is that the planet does not turn in the light, which it was
+   * never going to do anyway: it has no sun of its own.
+   */
+  colours: Float32Array;
   indices: Uint32Array;
   /** For the budget, and for DFlow. */
   cubes: number;
@@ -86,6 +107,7 @@ export function meshChunk(
   };
 
   const pos: number[] = [], nor: number[] = [], uv: number[] = [], ind: number[] = [];
+  const col: number[] = [];
   let faces = 0, quads = 0;
   const mask = new Uint8Array(size * size);
 
@@ -126,7 +148,7 @@ export function meshChunk(
             for (let ww = 0; ww < w; ww++) mask[(b + hh) * size + a + ww] = 0;
           }
           quads++;
-          emit(pos, nor, uv, ind, face, s, a, b, w, h, step, ox, oy, oz);
+          emit(pos, nor, uv, col, ind, face, s, a, b, w, h, step, ox, oy, oz);
         }
       }
     }
@@ -137,6 +159,7 @@ export function meshChunk(
     positions: new Float32Array(pos),
     normals: new Float32Array(nor),
     uvs: new Float32Array(uv),
+    colours: new Float32Array(col),
     indices: new Uint32Array(ind),
     cubes, faces, quads,
   };
@@ -155,14 +178,28 @@ const CW_B = [0, 1, 1, 0] as const;
  *  Written without allocating anything: the four corners go straight into the
  *  output arrays. The readable version built a small array per corner and per
  *  quad, which on a busy chunk is tens of thousands of throwaway objects. */
+/**
+ * How bright a face is, by the way it points: up, down, or one of the sides.
+ *
+ * The usual voxel ladder. The top catches the most, the bottom the least, and
+ * the four sides sit between with the two pairs slightly apart so a corner
+ * where two walls meet reads as a corner rather than as one flat sheet.
+ */
+export const FACE_SHADE: Record<string, number> = {
+  "0,1,0": 1.0, "0,-1,0": 0.45,
+  "1,0,0": 0.8, "-1,0,0": 0.8,
+  "0,0,1": 0.62, "0,0,-1": 0.62,
+};
+
 function emit(
-  pos: number[], nor: number[], uv: number[], ind: number[],
+  pos: number[], nor: number[], uv: number[], col: number[], ind: number[],
   face: { n: [number, number, number]; u: number; v: number; axis: number },
   s: number, a: number, b: number, w: number, h: number,
   step: number, ox: number, oy: number, oz: number,
 ): void {
   const [nx, ny, nz] = face.n;
   const out = nx + ny + nz > 0;
+  const shade = FACE_SHADE[`${nx},${ny},${nz}`] ?? 0.8;
   /* The face sits on the far side of the cell when the normal points outwards. */
   const lo = s + (out ? 1 : 0);
   const base = pos.length / 3;
@@ -195,6 +232,7 @@ function emit(
        measures in. */
     pos.push((x + ox) * step, (y + oy) * step, (z + oz) * step);
     nor.push(nx, ny, nz);
+    col.push(shade, shade, shade);
   }
   /* Measured in cubes, so a repeating grid texture shows one square per cube
      however large the merged rectangle is. */

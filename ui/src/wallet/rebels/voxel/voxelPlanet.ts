@@ -24,7 +24,7 @@ import {
   CUBE, CHUNK, R_OUTER, R_INNER, R_HEART, WORLD_RADIUS, SKY_EDGE, toWorld,
 } from "./voxelWorld";
 import { spokeDirections } from "./voxelField";
-import { meshChunk, type ChunkMesh } from "./voxelMesh";
+import { meshChunk, FACE_SHADE, type ChunkMesh } from "./voxelMesh";
 import { visibleChunks, dustFarFor, ringFor, type ChunkRef } from "./voxelView";
 import { spikes, SPIKE_COUNT } from "./voxelSpikes";
 
@@ -47,7 +47,19 @@ import { spikes, SPIKE_COUNT } from "./voxelSpikes";
  * after that the clock decides.
  */
 const BUILD_MS = 6;
-const CACHE_CHUNKS = 260;
+/**
+ * How many built chunks are kept.
+ *
+ * It was 260 and that was too few, which DFlow caught at once: "261 chunks up
+ * ... 1 waiting", a chunk built every tenth of a second, for ever. The cap was
+ * below what the hysteresis wanted to keep on screen, so every frame threw one
+ * away and built it again. A chunk destroyed and rebuilt is a chunk that
+ * BLINKS, which is the thing the hysteresis was added to stop.
+ *
+ * It is also cheap to be generous: an empty chunk is a few bytes and a chunk
+ * out of range is not drawn, so the cost of keeping one is memory alone.
+ */
+const CACHE_CHUNKS = 520;
 /** How far past its ring a chunk stays drawn once it is up. A third again. */
 const KEEP = 1.35;
 
@@ -63,7 +75,10 @@ export interface VoxelPlanet {
   /** Move it on. `eye` is the camera in WORLD units. */
   step(eye: THREE.Vector3, look: THREE.Vector3): void;
   /** For DFlow: what it is costing right now. */
-  stats(): { chunks: number; triangles: number; queued: number; built: number };
+  stats(): {
+    chunks: number; triangles: number; queued: number; built: number;
+    dropped: number; shown: number;
+  };
   dispose(): void;
 }
 
@@ -120,36 +135,41 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   cubes.scale.setScalar(CUBE);
   group.add(cubes);
 
-  /* ---- A LIGHT OF ITS OWN ----
+  /* ---- NO LIGHTS. THE SHADING IS IN THE MESH ----
      Geoff: the things that did draw were "all identical color with no shading
-     at all so they have no 3D appearance". Quite right, and a lit material on
-     its own would not have fixed it: the scene's only lamp is a point light
-     ninety units wide that follows the camera, and the nearest cube here is
-     over a thousand units away, so anything lit would have come out black.
+     at all so they have no 3D appearance". Quite right, and the first answer
+     to it was a directional light and an ambient light of the planet's own.
+     That worked, and it cost far too much.
 
-     So the planet brings its own. A directional light has no falloff, so it
-     reaches whatever it is pointed at however far away, and a little ambient
-     keeps the dark sides from going to pitch. Both live in the planet's group
-     and go with it. */
-  const sun = new THREE.DirectionalLight(0xfff0dd, 2.4);
-  sun.position.set(0.45, 0.8, 0.4);
-  const fill = new THREE.AmbientLight(0x5a6478, 1.1);
-  group.add(sun, fill);
+     Three.js builds a DIFFERENT SHADER for every number of lights in a scene,
+     so adding two of them recompiled every lit material in the whole game the
+     moment the ship arrived: the ships, the globe's towers, the effects, all
+     of it. DFlow, 69.9.54: twenty shader compiles and one frame that spent
+     791 milliseconds inside the renderer. That is a freeze you can feel, and
+     I put it there.
+
+     So a face's brightness is baked into the mesh by the way it points (see
+     FACE_SHADE) and the materials are unlit. Cheaper per pixel, no recompiles,
+     nothing else in the scene disturbed, and the rock cannot go black on a
+     side no light reaches. */
 
   const grid = gridTexture();
   /* Lambert rather than Basic: Basic has no shading at all, which is exactly
      what was wrong. Lambert is the cheapest material that has any, and on flat
      cube faces it is all that is needed. */
-  const material = new THREE.MeshLambertMaterial({
+  const material = new THREE.MeshBasicMaterial({
     ...(grid ? { map: grid } : {}),
     color: ROCK_COLOUR,
+    /* The baked light. Three.js multiplies it into the colour and the map. */
+    vertexColors: true,
   });
   /* The mesh AND where it is, so a chunk that has fallen off the list can still
      be measured for the hysteresis below. */
-  const live = new Map<string, { mesh: THREE.Mesh; ref: ChunkRef }>();
+  const live = new Map<string, { mesh: THREE.Mesh; ref: ChunkRef; triangles: number }>();
   let queue: ChunkRef[] = [];
   let built = 0;
   let triangleCount = 0;
+  let dropped = 0;
 
   /* ---- the spikes, and the spokes ----
      Boxes, not cubes. Three thousand rods as one instanced draw is about
@@ -157,7 +177,20 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
      whole allowance. A rod one cube wide and a hundred long IS a box, so
      nothing is lost. */
   const rodGeo = new THREE.BoxGeometry(1, 1, 1);
-  const rodMat = new THREE.MeshLambertMaterial({ color: SPIKE_COLOUR });
+  /* The rods get the same treatment, painted onto the base box: a box has four
+     corners to a face and all three thousand instances share the one geometry,
+     so this is twenty-four numbers for the lot of them. */
+  {
+    const n = rodGeo.getAttribute("normal");
+    const c = new Float32Array(n.count * 3);
+    for (let i = 0; i < n.count; i++) {
+      const key = `${Math.round(n.getX(i))},${Math.round(n.getY(i))},${Math.round(n.getZ(i))}`;
+      const shade = FACE_SHADE[key] ?? 0.8;
+      c[i * 3] = shade; c[i * 3 + 1] = shade; c[i * 3 + 2] = shade;
+    }
+    rodGeo.setAttribute("color", new THREE.BufferAttribute(c, 3));
+  }
+  const rodMat = new THREE.MeshBasicMaterial({ color: SPIKE_COLOUR, vertexColors: true });
   const rods = new THREE.InstancedMesh(rodGeo, rodMat, SPIKE_COUNT + 24);
   {
     const m = new THREE.Matrix4();
@@ -213,9 +246,12 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     geo.setAttribute("position", new THREE.BufferAttribute(m.positions, 3));
     geo.setAttribute("normal", new THREE.BufferAttribute(m.normals, 3));
     geo.setAttribute("uv", new THREE.BufferAttribute(m.uvs, 2));
+    geo.setAttribute("color", new THREE.BufferAttribute(m.colours, 3));
     geo.setIndex(new THREE.BufferAttribute(m.indices, 1));
-    const mat = new THREE.MeshLambertMaterial({
-      color: HEART_COLOUR, emissive: HEART_COLOUR, emissiveIntensity: 0.35,
+    /* Brighter than the rock and unlit like it, so it reads as a glow without
+       an emissive channel and without a light to pay for. */
+    const mat = new THREE.MeshBasicMaterial({
+      color: HEART_COLOUR, vertexColors: true,
       ...(grid ? { map: grid } : {}),
     });
     const mesh = new THREE.Mesh(geo, mat);
@@ -231,16 +267,23 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
        boxes, and a chunk that meshed them too put two surfaces in one place. */
     const m: ChunkMesh = meshChunk(c.ox, c.oy, c.oz, CHUNK, c.step, seed, true);
     built++;
-    if (!m.indices.length) { live.set(keyOf(c), { mesh: new THREE.Mesh(), ref: c }); return; }
+    if (!m.indices.length) {
+      /* An EMPTY chunk is still worth remembering, and worth remembering as
+         costing nothing: a great many of them are, and charging them the
+         average is what used to eat the allowance. */
+      live.set(keyOf(c), { mesh: new THREE.Mesh(), ref: c, triangles: 0 });
+      return;
+    }
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(m.positions, 3));
     geo.setAttribute("normal", new THREE.BufferAttribute(m.normals, 3));
     geo.setAttribute("uv", new THREE.BufferAttribute(m.uvs, 2));
+    geo.setAttribute("color", new THREE.BufferAttribute(m.colours, 3));
     geo.setIndex(new THREE.BufferAttribute(m.indices, 1));
     geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, material);
     cubes.add(mesh);
-    live.set(keyOf(c), { mesh, ref: c });
+    live.set(keyOf(c), { mesh, ref: c, triangles: m.indices.length / 3 });
   }
 
   function drop(key: string): void {
@@ -260,6 +303,8 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
       _eye.copy(eye).sub(group.position).divideScalar(CUBE);
       const view = visibleChunks([_eye.x, _eye.y, _eye.z], {
         look: [look.x, look.y, look.z],
+        /* What it really costs, for everything already built. */
+        costOf: (ox, oy, oz, step) => live.get(`${step}:${ox},${oy},${oz}`)?.triangles,
       });
       const wanted = new Set(view.chunks.map(keyOf));
       /* ---- ONCE SHOWN, IT STAYS SHOWN ----
@@ -297,6 +342,13 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         const far: Array<{ key: string; d: number }> = [];
         for (const [key, held] of live) {
           if (wanted.has(key)) continue;
+          /* ---- NEVER TAKE AWAY SOMETHING ON SCREEN ----
+             The hysteresis above decides what stays up, and this used to
+             overrule it: the furthest chunks went whatever they were doing,
+             and the furthest chunks are exactly the ones the hysteresis is
+             holding. They vanished in front of the ship and were rebuilt a
+             moment later. Only what is already hidden may go. */
+          if (held.mesh.visible) continue;
           const c = held.ref;
           far.push({
             key,
@@ -323,6 +375,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
       }
 
       triangleCount = view.triangles;
+      dropped = view.dropped;
       /* The dust is what decides how far chunks are built at all (see
          voxelView), so with the shader gone it still sets the view distance;
          what it no longer does is fade the far ones out. That is the next
@@ -331,12 +384,16 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     },
     stats: () => ({
       chunks: live.size, triangles: triangleCount, queued: queue.length, built,
+      /* How many the allowance refused. A number that stays above zero means
+         the rings are too generous for this viewpoint, and it is the number
+         that goes with things blinking, so it belongs in the report. */
+      dropped,
+      shown: (() => { let n = 0; for (const h of live.values()) if (h.mesh.visible) n++; return n; })(),
     }),
     dispose() {
       for (const key of [...live.keys()]) drop(key);
       material.dispose();
       grid?.dispose();
-      sun.dispose(); fill.dispose();
       rodGeo.dispose(); rodMat.dispose(); rods.dispose();
       heartMesh.geo.dispose(); heartMesh.mat.dispose();
       group.removeFromParent();

@@ -448,6 +448,40 @@ function fillAt(radius: number, samples = 6000): number {
   resetFieldForTests();
 }
 
+/* ---- THE LIGHT IS IN THE MESH, AND THERE ARE NO LAMPS ----
+   Three.js builds a different shader for every number of lights in a scene, so
+   a light added here recompiles every lit material in the whole game: the
+   ships, the globe, the effects. It cost one frame 791 milliseconds on Geoff's
+   Mac and it is the kind of thing that looks harmless in a diff. */
+{
+  const m = meshChunk(Math.round(R_OUTER - 80), 0, 0, CHUNK, 1, 0, true);
+  ok("every corner carries its own brightness",
+     m.colours.length === m.positions.length && m.colours.length > 0,
+     `${m.colours.length} against ${m.positions.length}`);
+  /* Read the brightness back per face direction, through the normals. */
+  const byFace = new Map<string, number>();
+  for (let i = 0; i < m.normals.length; i += 3) {
+    byFace.set(`${m.normals[i]},${m.normals[i + 1]},${m.normals[i + 2]}`, m.colours[i]);
+  }
+  const up = byFace.get("0,1,0") ?? 0, down = byFace.get("0,-1,0") ?? 0;
+  const side = byFace.get("1,0,0") ?? 0;
+  ok("the tops are the brightest and the undersides the darkest",
+     up > side && side > down && down > 0,
+     `up ${up}, side ${side}, down ${down}`);
+  let src = "";
+  try {
+    src = readFileSync(`${process.cwd()}/src/wallet/rebels/voxel/voxelPlanet.ts`, "utf8");
+  } catch { /* not run from the ui folder */ }
+  if (src) {
+    ok("the renderer adds no light to the scene it is put in",
+       !/new THREE\.[A-Za-z]*Light/.test(src),
+       (src.match(/new THREE\.[A-Za-z]*Light/g) ?? []).join(", "));
+    ok("and asks for no material that would need one",
+       !/Mesh(Lambert|Phong|Standard|Physical)Material/.test(src),
+       (src.match(/Mesh[A-Za-z]*Material/g) ?? []).join(", "));
+  }
+}
+
 /* ---- MODULARITY: nothing from the game gets in here ----
    Geoff: "make sure it's really modular and if you do it right then it won't be
    a problem for other agents that are building other things." This folder runs

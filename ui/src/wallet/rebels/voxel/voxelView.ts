@@ -232,6 +232,22 @@ export function visibleChunks(
      * and never drawn, and what was actually in front went without.
      */
     look?: readonly [number, number, number];
+    /**
+     * What a chunk REALLY costs, when that is already known.
+     *
+     * The table below is an average taken over the shell, and an average is
+     * the wrong price for any particular chunk: a great many of them are
+     * empty (past the surface, inside the cavity, or simply a hole) and cost
+     * nothing at all, while a few cost double. Charging every one of them the
+     * average spent half the allowance on chunks with no triangles in them,
+     * so the furthest real ones were refused, and a chunk that is refused one
+     * frame and admitted the next is a chunk that BLINKS. Geoff, twice: "big
+     * chunks of cubes appearing and disappearing".
+     *
+     * Whoever holds the built meshes knows the true figure and passes it here;
+     * anything not yet built still has to be guessed at.
+     */
+    costOf?: (ox: number, oy: number, oz: number, step: number) => number | undefined;
   } = {},
 ): ViewResult {
   const budget = opts.budget ?? TRIANGLE_BUDGET;
@@ -303,7 +319,8 @@ export function visibleChunks(
   const chunks: ChunkRef[] = [];
   let triangles = 0, dropped = 0;
   for (const c of found) {
-    const cost = COST_BY_STEP[c.step] ?? 6000;
+    const known = opts.costOf?.(c.ox, c.oy, c.oz, c.step);
+    const cost = known ?? COST_BY_STEP[c.step] ?? 6000;
     if (triangles + cost > budget) { dropped++; continue; }
     triangles += cost;
     chunks.push(c);

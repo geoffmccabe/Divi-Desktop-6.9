@@ -29,7 +29,9 @@ import type { Pilot } from "./platform/platform";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import { R, MAX_ALT, EARTH_D } from "./orbitWorld";
 import { makeVoxelPlanet, arrivalOffset, type VoxelPlanet } from "./voxel/voxelPlanet";
-import { DISTANCE_IN_EARTHS, WORLD_RADIUS, SKY_EDGE, CUBE } from "./voxel/voxelWorld";
+import {
+  DISTANCE_IN_EARTHS, WORLD_RADIUS, SKY_EDGE, CUBE, SPIKEWORLD_NEAR, SPIKEWORLD_FAR,
+} from "./voxel/voxelWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import { installSky, skyTexture, type SkyHandle } from "./starfield";
 import { loadModel, unitCopy, modelClips } from "./spaceAssets";
@@ -354,9 +356,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let stopItemUser: (() => void) | null = null;
   const _voxLook = new THREE.Vector3();
   let atSpikeworld = false;
-  /** The camera's far plane before Spikeworld pushed it out, so it can be put
-   *  back. Null when we are not out there. */
+  /** The camera's near and far planes before Spikeworld moved them, so they
+   *  can be put back. Null when we are not out there. */
   let farAtHome: number | null = null;
+  let nearAtHome: number | null = null;
   /** Where the ship was before it went, so it can be put back. */
   const homeAgain = new THREE.Vector3();
   /** How much of its size a tower keeps once a game is running. */
@@ -1264,20 +1267,40 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       flight.speed = 0;
       /* Far enough to see the planet, near enough to keep the cockpit sharp.
          The planet is 9,000 units across and the arrival is just outside it. */
-      /* Put back on the way home. A far plane forty times further than Earth
-         orbit needs is depth precision thrown away for the rest of the
-         session: the z-buffer is shared out over the whole range, so leaving
-         it raised makes near surfaces fight each other back in the fight. */
-      if (farAtHome === null) farAtHome = camera.far;
-      camera.far = Math.max(camera.far, WORLD_RADIUS * 4);
+      /* ---- THE DEPTH BUFFER, WHICH IS THE WHOLE FLICKER ----
+         Geoff, on 69.9.54: "the orange heart is still flickering like crazy"
+         and "big chunks of cubes appearing and disappearing". One cause, not
+         two, and it is not the geometry: it is how finely the card can tell
+         one surface from another at these distances.
+
+         Earth orbit runs a near plane of five centimetres, which is right
+         there: the cockpit has things a hand's width from the eye. Depth
+         resolution falls off with the SQUARE of the distance and in direct
+         proportion to how near the near plane is, and Spikeworld is nothing
+         like Earth orbit: the heart is two thousand units away across the
+         cavity and the far shell is nine thousand. At near 0.05 and far
+         18,000 the card can only tell surfaces SIX UNITS apart at the heart
+         and ninety-six at the far shell, against a cube face of nine. So the
+         front and back of the same cube land on the same depth and the card
+         picks one at random, every frame. That is the flicker, exactly.
+
+         Pushing the near plane out to three units and pulling the far plane
+         in to ten thousand (the dust stops at nine anyway) is a hundredfold
+         improvement and puts every distance that matters well inside a cube
+         face. Three units is safe here because nothing is drawn close: no
+         shield, no wingmen, no muzzle flashes, only rock. */
+      if (farAtHome === null) { farAtHome = camera.far; nearAtHome = camera.near; }
+      camera.near = SPIKEWORLD_NEAR;
+      camera.far = SPIKEWORLD_FAR;
       camera.updateProjectionMatrix();
       setHud({ note: "SPIKEWORLD: CMD+SHIFT+\\ TO RETURN", noteAt: performance.now() });
     } else {
       flight.ceiling = undefined;
       if (farAtHome !== null) {
         camera.far = farAtHome;
+        camera.near = nearAtHome ?? camera.near;
         camera.updateProjectionMatrix();
-        farAtHome = null;
+        farAtHome = null; nearAtHome = null;
       }
       flight.pos.copy(homeAgain.lengthSq() > 1 ? homeAgain : new THREE.Vector3(0, 0, R + 40));
       /* Back in the fight, which flying alone also starts over. */
@@ -1628,7 +1651,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     const st = spikeworld.stats();
     if (st.built !== voxBuilt) {
       voxBuilt = st.built;
-      dflow.note(`vox: ${st.chunks} chunks up, ${st.triangles} triangles, ${st.built} built, ${st.queued} waiting`);
+      dflow.note(`vox: ${st.chunks} kept, ${st.shown} shown, ${st.triangles} triangles,`
+        + ` ${st.dropped} refused by the budget, ${st.built} built, ${st.queued} waiting`);
     }
   }
 
@@ -2814,6 +2838,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         flight.ceiling = undefined;
         if (farAtHome !== null && camera) {
           camera.far = farAtHome;
+          camera.near = nearAtHome ?? camera.near;
           camera.updateProjectionMatrix();
         }
         flight.pos.copy(homeAgain.lengthSq() > 1 ? homeAgain : new THREE.Vector3(0, 0, R + 40));
@@ -2822,7 +2847,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
       stopItemUser?.();
       stopItemUser = null;
-      farAtHome = null;
+      farAtHome = null; nearAtHome = null;
       spikeworld?.dispose();
       spikeworld = null;
       atSpikeworld = false;

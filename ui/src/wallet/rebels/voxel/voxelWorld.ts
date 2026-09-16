@@ -168,6 +168,26 @@ export const SKY_EDGE = 400;
  *  diameters... visible and potential to fly there." */
 export const DISTANCE_IN_EARTHS = 1000;
 
+/**
+ * The camera's near and far planes while the ship is at Spikeworld.
+ *
+ * NOT the cockpit's own pair, which are tuned for Earth orbit where things are
+ * drawn a hand's width from the eye. Depth resolution falls off with the SQUARE
+ * of the distance and in proportion to how near the near plane is, and this
+ * planet is measured in thousands of units: with Earth orbit's five-centimetre
+ * near plane the card could only tell surfaces six units apart at the heart and
+ * ninety-six at the far shell, against a cube face of nine. Every cube was
+ * fighting with itself, which is what Geoff saw as the heart "flickering like
+ * crazy" and as cubes appearing and disappearing.
+ *
+ * Three units is safe because nothing is drawn close out here, and ten thousand
+ * covers the whole planet from the arrival point with room to spare: the dust
+ * stops at nine thousand in any case. Together they are a hundredfold better
+ * than the pair they replace.
+ */
+export const SPIKEWORLD_NEAR = 3;
+export const SPIKEWORLD_FAR = 10000;
+
 /** The planet's width in world units, and its radius. For the sky body, the
  *  shard's size, and anything that has to hold it. */
 export const WORLD_DIAMETER = GRID * CUBE;
