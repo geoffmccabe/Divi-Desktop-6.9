@@ -1651,8 +1651,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     const st = spikeworld.stats();
     if (st.built !== voxBuilt) {
       voxBuilt = st.built;
+      /* The `gone` tally is the one to read first. Every reason in it except
+         "replaced" is rock taken away with nothing covering its ground, which
+         is what Geoff kept seeing as "big groups appearing and disappearing".
+         It should stay empty of those. */
+      const why = Object.entries(st.gone).map(([k, n]) => `${k} ${n}`).join(", ");
       dflow.note(`vox: ${st.chunks} kept, ${st.shown} shown, ${st.triangles} triangles,`
-        + ` ${st.dropped} refused by the budget, ${st.built} built, ${st.queued} waiting`);
+        + ` ${st.dropped} refused by the budget, ${st.built} built, ${st.queued} waiting`
+        + (why ? `; stopped drawing: ${why}` : ""));
     }
   }
 

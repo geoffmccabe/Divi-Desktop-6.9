@@ -25,7 +25,7 @@ import {
 } from "./voxelWorld";
 import { spokeDirections } from "./voxelField";
 import { meshChunk, FACE_SHADE, type ChunkMesh } from "./voxelMesh";
-import { visibleChunks, dustFarFor, ringFor, parentOf, type ChunkRef } from "./voxelView";
+import { visibleChunks, dustFarFor, DUST_FAR_OPEN, parentOf, type ChunkRef } from "./voxelView";
 import { spikes, SPIKE_COUNT } from "./voxelSpikes";
 
 /**
@@ -59,8 +59,18 @@ const BUILD_MS_EASY = 5;
 const BUILD_MS_BUSY = 24;
 /** Above this many waiting, the frame stops being precious about it. */
 const BUSY_QUEUE = 12;
-const CACHE_CHUNKS = 520;
-/** How far past its ring a chunk stays drawn once it is up. A third again. */
+/**
+ * How many built chunks are kept.
+ *
+ * Reaching this is now the ONLY way a chunk can stop being drawn with nothing
+ * covering its ground, and measured over a flight it accounted for 48 of the
+ * 58 that did. So it is generous, and it can afford to be: dropping the
+ * normals, which an unlit material never reads, took a quarter off what each
+ * chunk costs on the card, and a chunk nothing is looking at costs memory and
+ * nothing else.
+ */
+const CACHE_CHUNKS = 760;
+/** How far past the dust a chunk stays drawn once it is up. A third again. */
 const KEEP = 1.35;
 
 /** The rock, and the dust it fades into. */
@@ -78,6 +88,8 @@ export interface VoxelPlanet {
   stats(): {
     chunks: number; triangles: number; queued: number; built: number;
     dropped: number; shown: number;
+    /** Why chunks have stopped being drawn, by reason, since the start. */
+    gone: Record<string, number>;
   };
   dispose(): void;
 }
@@ -170,6 +182,8 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   let built = 0;
   let triangleCount = 0;
   let dropped = 0;
+  /** Why chunks stopped being drawn, counted since the planet was made. */
+  const gone: Record<string, number> = {};
 
   /* ---- the spikes, and the spokes ----
      Boxes, not cubes. Three thousand rods as one instanced draw is about
@@ -293,6 +307,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   function drop(key: string): void {
     const held = live.get(key);
     if (!held) return;
+    if (held.mesh.visible) gone.evicted = (gone.evicted ?? 0) + 1;
     live.delete(key);
     cubes.remove(held.mesh);
     held.mesh.geometry?.dispose();
@@ -318,39 +333,67 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
          something that is. Both directions have to give way, so every wanted
          chunk marks the whole line of boxes above it as already covered by
          something finer. */
-      /* ---- AND A PARENT ONLY STANDS DOWN WHEN ITS REPLACEMENTS ARE THERE ----
-         The first version of this hid a coarse chunk the moment a finer one
-         was ASKED FOR, which is a hole for as long as the finer one takes to
-         build: the big box vanishes at once and the eight small ones arrive
-         over the next few frames. That is a bigger, more sudden gap than the
-         one it was meant to cure, and Geoff saw it immediately on 69.9.56:
-         "even more cubes are appearing and disappearing all over".
+      /* ---- AND A PARENT ONLY STANDS DOWN WHEN ALL OF ITS REPLACEMENTS ARE THERE ----
+         Twice wrong now, the same way, a little less each time.
 
-         So a wanted chunk only displaces its ancestors once it is BUILT. Until
-         then the coarse one keeps drawing, which costs a moment of two
-         surfaces in one place and is much the lesser evil: an overlap is a
-         shimmer, a gap is a hole through the planet. */
-      const coveredByFiner = new Set<string>();
+         First I hid a coarse chunk the moment a finer one was ASKED FOR, so
+         the big box vanished at once and the eight small ones arrived over the
+         next several frames: "even more cubes are appearing and disappearing
+         all over" (69.9.56).
+
+         Then I hid it once a finer one had been BUILT, which sounds right and
+         is still wrong, because a coarse box is replaced by EIGHT finer ones
+         and one of them is not a replacement. Building the first child hid the
+         parent and left seven eighths of that ground drawn by nothing. A box
+         splits every time the ship moves a little closer, at every distance at
+         once, which is exactly what Geoff then saw: "big groups appearing and
+         disappearing as I move around. Some very close, some far away ... it
+         looks terrible."
+
+         So the count has to be kept. A parent gives way when every wanted
+         child under it is built and not before; until then it keeps drawing,
+         over the top of the few that have arrived. An overlap is a shimmer for
+         a frame or two. A gap is the planet being wrong. */
+      const under = new Map<string, { wanted: number; built: number }>();
       for (const c of view.chunks) {
-        if (!live.has(keyOf(c))) continue;
+        const here = live.has(keyOf(c)) ? 1 : 0;
         let up = parentOf(c.ox, c.oy, c.oz, c.step);
         while (up) {
-          coveredByFiner.add(`${up.step}:${up.ox},${up.oy},${up.oz}`);
+          const k = `${up.step}:${up.ox},${up.oy},${up.oz}`;
+          const tally = under.get(k) ?? { wanted: 0, built: 0 };
+          tally.wanted++;
+          tally.built += here;
+          under.set(k, tally);
           up = parentOf(up.ox, up.oy, up.oz, up.step);
         }
       }
+      /** Every finer chunk that replaces this one is built and drawing. */
+      const replaced = (key: string): boolean => {
+        const tally = under.get(key);
+        return !!tally && tally.built === tally.wanted;
+      };
       /** Is some other level already drawing this chunk's ground? */
-      const overlapped = (c: ChunkRef): boolean => {
-        if (coveredByFiner.has(keyOf(c))) return true;      /* finer is up */
+      const overlapped = (c: ChunkRef): boolean => !!whyGone(c);
+      /**
+       * Why this chunk should stop being drawn, or "" to keep it.
+       *
+       * Named reasons rather than one boolean, because every version of this
+       * file has hidden rock it should have kept and the reason was never
+       * visible from outside. They are counted into DFlow, so "big groups
+       * appearing and disappearing" becomes a number with a cause next to it
+       * instead of something to reason about.
+       */
+      const whyGone = (c: ChunkRef): string => {
+        if (replaced(keyOf(c))) return "replaced";          /* all the finer ones are up */
         let up = parentOf(c.ox, c.oy, c.oz, c.step);
         while (up) {
           const k = `${up.step}:${up.ox},${up.oy},${up.oz}`;
           /* Same rule the other way round: a coarser chunk only displaces this
              one once it is actually built and drawing. */
-          if (wanted.has(k) && live.has(k)) return true;
+          if (wanted.has(k) && live.has(k)) return "coarser";
           up = parentOf(up.ox, up.oy, up.oz, up.step);
         }
-        return false;
+        return "";
       };
       /* ---- ONCE SHOWN, IT STAYS SHOWN ----
          Hiding a chunk the moment it falls off the list is the popping, and
@@ -364,7 +407,29 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
          a third again past where it would have been admitted, which is the same
          hysteresis the room uses to stop other ships flickering at the edge of
          view. Nothing is hidden while the ship is anywhere near it. */
-      const keepFar = dustFarFor(_eye.length()) / CUBE * KEEP;
+      /* ---- WHAT IS ALLOWED TO TAKE ROCK AWAY ----
+         Measured over a flight: 498 chunks stopped being drawn because they
+         were past their level's ring and 343 because the dust closed in, while
+         only 5 went because something else had taken over their ground. So
+         almost every one of Geoff's "big groups appearing and disappearing"
+         was one of these two rules, not the exclusivity I kept re-fixing.
+
+         Both are left over from the scheme that drew some ground twice. Now
+         that exactly one level covers each piece of ground, there is only one
+         honest reason to stop drawing a chunk: SOMETHING ELSE IS DRAWING IT.
+         Being far for its own level is not a reason, because a chunk that has
+         receded has a coarser box over it and that box says so itself once it
+         is built. The ring test was hiding rock on the chance that something
+         else was there.
+
+         The dust is the other one. It decides how far chunks are ASKED for,
+         which is right, and it was also deciding when to stop drawing them,
+         which is a hard edge with no fade behind it: fly into the rock, the
+         dust closes from a thousand cubes to three hundred, and everything
+         past three hundred pops out in a body. So the keeping distance is now
+         the open figure always, further than the planet is wide, and the dust
+         goes back to being about what to ask for. */
+      const keepFar = (DUST_FAR_OPEN / CUBE) * KEEP;
       for (const [key, held] of live) {
         if (wanted.has(key)) { held.mesh.visible = true; continue; }
         const c = held.ref;
@@ -374,8 +439,10 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         const d = Math.hypot(mx - _eye.x, my - _eye.y, mz - _eye.z);
         /* Its own ring, plus the slack. Beyond the dust it goes whatever, and
            it goes at once if another level is already drawing its ground. */
-        const ring = ringFor(c.step) * KEEP;
-        held.mesh.visible = d <= Math.min(ring, keepFar) && !overlapped(c);
+        const was = held.mesh.visible;
+        const why = d > keepFar ? "dust" : whyGone(c);
+        held.mesh.visible = !why;
+        if (was && why) gone[why] = (gone[why] ?? 0) + 1;
       }
       /* ---- THE CACHE HAS TO HAVE A CEILING ----
          It used to drop only chunks that were both off the list and already
@@ -409,6 +476,30 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         for (const f of far) {
           if (live.size <= CACHE_CHUNKS) break;
           drop(f.key);
+        }
+        /* Still over, because nothing is hidden any more? Then the furthest
+           still-drawn chunks go, furthest first. This is the one remaining way
+           a chunk can vanish with nothing covering it, so it is counted, and
+           it should only ever happen a very long way off. */
+        if (live.size > CACHE_CHUNKS) {
+          const out: Array<{ key: string; d: number }> = [];
+          for (const [key, held] of live) {
+            if (wanted.has(key)) continue;
+            const c = held.ref;
+            out.push({
+              key,
+              d: Math.hypot(
+                (c.ox + CHUNK / 2) * c.step - _eye.x,
+                (c.oy + CHUNK / 2) * c.step - _eye.y,
+                (c.oz + CHUNK / 2) * c.step - _eye.z,
+              ),
+            });
+          }
+          out.sort((a, b) => b.d - a.d);
+          for (const f of out) {
+            if (live.size <= CACHE_CHUNKS) break;
+            drop(f.key);
+          }
         }
       }
       /* And the nearest that are missing are built, for as long as the frame
@@ -452,21 +543,33 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         const held = live.get(keyOf(c));
         if (held && !overlapped(c)) held.mesh.visible = true;
       }
-      /* Anything built this frame can now displace what it replaces, without
-         waiting a frame to do it: a frame of both is a frame of shimmer. */
+      /* And anything whose replacements were ALL completed by this frame's
+         building can stand down now rather than next frame, because a frame of
+         both is a frame of shimmer. The tally is simply taken again: building
+         has just changed the answer, and counting it is one pass over a list
+         we already have. */
       if (queue.length) {
+        under.clear();
         for (const c of view.chunks) {
-          if (!live.has(keyOf(c))) continue;
+          const here = live.has(keyOf(c)) ? 1 : 0;
           let up = parentOf(c.ox, c.oy, c.oz, c.step);
           while (up) {
             const k = `${up.step}:${up.ox},${up.oy},${up.oz}`;
-            const held = live.get(k);
-            if (held) held.mesh.visible = false;
+            const tally = under.get(k) ?? { wanted: 0, built: 0 };
+            tally.wanted++;
+            tally.built += here;
+            under.set(k, tally);
             up = parentOf(up.ox, up.oy, up.oz, up.step);
           }
         }
+        for (const [k, tally] of under) {
+          if (tally.built !== tally.wanted) continue;
+          const held = live.get(k);
+          if (!held || !held.mesh.visible) continue;
+          held.mesh.visible = false;
+          gone.replaced = (gone.replaced ?? 0) + 1;
+        }
       }
-
       triangleCount = view.triangles;
       dropped = view.dropped;
       /* The dust is what decides how far chunks are built at all (see
@@ -482,6 +585,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
          that goes with things blinking, so it belongs in the report. */
       dropped,
       shown: (() => { let n = 0; for (const h of live.values()) if (h.mesh.visible) n++; return n; })(),
+      gone: { ...gone },
     }),
     dispose() {
       for (const key of [...live.keys()]) drop(key);

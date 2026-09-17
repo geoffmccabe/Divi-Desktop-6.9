@@ -1,110 +1,99 @@
-// Full screen, and back out of it again.
+// Full screen, for the GAME.
 //
 // Geoff: "I want you to add a small icon for 'full screen' to the right of the
 // ESC BACK TO MAP button. When clicked then the game goes completely full
 // screen. And then there's a button in the bottom right after that on the full
 // screen version, to collapse it back into the app version again."
 //
-// The browser owns this, not the game: asking for full screen is a request
-// that can be refused, and the user can leave it by other means (Escape, the
-// window controls, swiping away). So the button never assumes it worked. It
-// asks, and then it believes only what the browser reports.
+// And then, three versions later, the part I had been missing: "Yes, the APP is
+// full screen, but the game is inside a smaller window within the app. So the
+// game needs to come out of the app and become full screen."
 
 import { useCallback, useEffect, useState } from "react";
 
 import { platform } from "../platform/current";
 import { dflow } from "../rebelsDflow";
 
-/** Is the page full screen right now? Asked of the document, not remembered. */
+/**
+ * ---- WHAT "FULL SCREEN" MEANS HERE ----
+ *
+ * Three rounds of this were spent making the WINDOW full screen, and that was
+ * never the ask. Geoff, on 69.9.57: "Yes, the APP is full screen, but the game
+ * is inside a smaller window within the app. So the game needs to come out of
+ * the app and become full screen." The window obeying changed nothing he could
+ * see, because the game is a panel inside the shell with a sidebar beside it, a
+ * header above it and padding round the lot.
+ *
+ * So full screen is the GAME's own mode, held here, applied as one class on the
+ * root element. The shell's furniture stands aside (see .dd69-game-full in
+ * index.css) and nothing in the tree moves, which matters more than it looks:
+ * moving the canvas would tear down its WebGL context and restart the game.
+ *
+ * The window is asked to go full screen too, so the game reaches the edges of
+ * the DISPLAY rather than of a window, but that is a bonus and never the
+ * measure. It was the measure before, which is the other half of what Geoff
+ * saw: "When I make the DD69 window full screen, then the full-screen button
+ * disappears. So it thinks it's full screen when it isn't." Making the window
+ * full screen yourself is not the game being full screen, and the button must
+ * not vanish because of it.
+ */
+const FULL_CLASS = "dd69-game-full";
+
+/** Put the game's own full-screen mode on, or take it off. */
+function wearIt(on: boolean): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.toggle(FULL_CLASS, on);
+}
+
+/** Is the GAME full screen? Its own mode, not the window's. */
 function isFull(): boolean {
   if (typeof document === "undefined") return false;
-  return !!document.fullscreenElement;
+  return document.documentElement.classList.contains(FULL_CLASS);
 }
 
 export function useFullScreen(): { fullScreen: boolean; toggleFullScreen: () => void } {
   const [fullScreen, setFullScreen] = useState(isFull);
 
-  /* The browser is the authority. Escape leaves full screen without going
-     anywhere near the button, and so does the window's own control, so the
-     icon follows the document rather than the last click. */
+  /* Escape leaves it, which is what Escape is for and what a player will try
+     first. The cockpit's own Escape takes you back to the map, so this only
+     acts while the game is full and stops the key there. */
   useEffect(() => {
-    if (typeof document === "undefined") return;
-    const sync = () => setFullScreen(isFull());
-    document.addEventListener("fullscreenchange", sync);
-    /* A window made full screen by the app fires no document event, and the
-       user can leave it by the window's own controls, so it is also asked
-       now and then. Twice a second is far below anything a person notices and
-       far above anything that costs. */
-    const door = platform().screen;
-    let asking = false;
-    const poll = door
-      ? setInterval(() => {
-        /* Never two at once: this crosses to the app over its own channel, and
-           stacking requests on a busy frame is how a poll becomes a stall. */
-        if (asking) return;
-        asking = true;
-        void door.isFull()
-          .then(setFullScreen)
-          .catch(() => {})
-          .finally(() => { asking = false; });
-      }, 1000)
-      : null;
-    return () => {
-      document.removeEventListener("fullscreenchange", sync);
-      if (poll) clearInterval(poll);
+    if (typeof window === "undefined") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !isFull()) return;
+      e.preventDefault();
+      e.stopPropagation();
+      wearIt(false);
+      setFullScreen(false);
+      void platform().screen?.setFull(false).catch(() => {});
     };
+    /* On the way DOWN and before anything else, or the cockpit's own Escape
+       handler would have backed out to the map first. */
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, []);
 
-  const toggleFullScreen = useCallback(() => {
-    if (typeof document === "undefined") return;
-    void (async () => {
-      /* ---- THE DOOR FIRST ----
-         Inside the desktop app the browser's own request does nothing: a
-         WKWebView takes it and ignores it, which is why the button appeared to
-         be dead. The app has a WINDOW, and its door knows how to make a window
-         full screen. The browser API is the right answer on the web and the
-         fallback everywhere else.
+  /* Taken off on the way out. A game that left the class behind would leave the
+     whole wallet with no sidebar. */
+  useEffect(() => () => { wearIt(false); }, []);
 
-         ---- AND IT SAYS WHAT HAPPENED ----
-         Three attempts at this have now been reported as "the full screen
-         button doesn't work", and every one of the reasons it could fail is
-         invisible from here: a door that is not there, a window call the app
-         has no permission for, a webview that takes the request and ignores
-         it, or a window that really did go full screen while the page inside
-         it stayed the size it was. They look identical to a player and they
-         need completely different fixes, so each step is written into DFlow.
-         One press and the next report says which it was. */
-      const size = () => `${window.innerWidth}x${window.innerHeight}`;
-      const before = size();
+  const toggleFullScreen = useCallback(() => {
+    const want = !isFull();
+    wearIt(want);
+    setFullScreen(want);
+    dflow.note(`full screen: the game is now ${want ? "full" : "back in the app"}`);
+    /* And the window too, so the game reaches the edge of the display rather
+       than the edge of a window. Best effort in every sense: refused, missing
+       or ignored, the game is already full screen inside the app either way,
+       which is what was asked for. */
+    void (async () => {
       const door = platform().screen;
-      dflow.note(`full screen: asked for; door ${door ? "present" : "MISSING"}; page ${before}`);
       try {
-        if (door) {
-          const now = await door.isFull();
-          await door.setFull(!now);
-          const after = await door.isFull();
-          setFullScreen(after);
-          dflow.note(`full screen: the app's window went ${now} -> ${after}; page ${before} -> ${size()}`);
-          /* The window obeying and the PAGE not following are different
-             faults. If the window changed and the page did not, the layout is
-             the problem, not the door, and nothing is gained by asking the
-             webview as well. */
-          if (after !== now) return;
-          dflow.note("full screen: the window did not change, trying the browser's own");
-        }
+        if (door) { await door.setFull(want); return; }
+        if (want) await document.documentElement.requestFullscreen?.();
+        else await document.exitFullscreen?.();
       } catch (err) {
-        dflow.note(`full screen: the app's window REFUSED it: ${err instanceof Error ? err.message : String(err)}`);
-      }
-      try {
-        /* The whole page, not the canvas: the cockpit's gauges, cards and
-           panels are ordinary elements over it, and asking for the canvas alone
-           would leave every one of them behind. */
-        if (isFull()) await document.exitFullscreen?.();
-        else await document.documentElement.requestFullscreen?.();
-        setFullScreen(isFull());
-        dflow.note(`full screen: the browser says ${isFull()}; page ${before} -> ${size()}`);
-      } catch (err) {
-        dflow.note(`full screen: the browser REFUSED it too: ${err instanceof Error ? err.message : String(err)}`);
+        dflow.note(`full screen: the window would not follow (${err instanceof Error ? err.message : String(err)}), the game is full anyway`);
       }
     })();
   }, []);
