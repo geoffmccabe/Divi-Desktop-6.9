@@ -47,8 +47,17 @@ import {
  * With every level at about 4,600 triangles a chunk this is room for eighty or
  * so, which is what covering the view takes from inside the cavity, where the
  * shell wraps right round you. DFlow will say whether it was too generous.
+ *
+ * RAISED AGAIN, to 560,000, when the detail levels were made exclusive. What
+ * the allowance buys is not this number: a chunk not yet built is charged the
+ * average, 4,600, and the REAL total for the worst viewpoint, measured by
+ * meshing every chunk it asks for, is 443,000. The estimate runs about a
+ * quarter high, so the allowance has to stand a quarter above what is really
+ * wanted or the last chunks are refused and the planet has holes in it again.
+ * The capture that prompted all this drew 378,000 triangles and spent three
+ * milliseconds a frame doing it, so there is room.
  */
-export const TRIANGLE_BUDGET = 400000;
+export const TRIANGLE_BUDGET = 560000;
 
 /**
  * How far the dust lets you see, in world units.
@@ -112,8 +121,17 @@ export function dustFarFor(radiusCubes: number): number {
  *
  * They were wider (64, 160, 380) and the near bands ate the whole allowance,
  * which left the far ones dropped and the planet full of holes.
+ *
+ * TIGHTENED AGAIN when the detail levels were made exclusive. The old numbers
+ * were tuned against a scheme that drew some ground twice and skipped other
+ * ground entirely; asking an octree for that much fine detail wants 758,000
+ * triangles at the worst viewpoint, which is nearly twice the allowance, and
+ * an allowance that runs out is a planet with holes in it. Measured over five
+ * viewpoints, these want 443,000 at the worst and refuse twenty chunks;
+ * tightening them further saves nothing, because what is left is the far side
+ * of the shell seen across the cavity and it has to be drawn at SOME level.
  */
-export const RING_CUBES = [48, 140, 340, 700, 1e9] as const;
+export const RING_CUBES = [36, 96, 230, 520, 1e9] as const;
 
 /**
  * What a chunk costs, by detail level. MEASURED, and the AVERAGE rather than
@@ -222,31 +240,7 @@ export function visibleChunks(
   viewer: readonly [number, number, number],
   opts: {
     budget?: number; dustFar?: number;
-    /**
-     * Which way the eye is looking, as a unit vector. When given, the budget is
-     * only spent on chunks that could be ON SCREEN.
-     *
-     * Without it the allowance was going on chunks behind the ship, which the
-     * renderer then culled anyway: from inside the cavity the shell wraps right
-     * round you, so more than half of everything in range was being paid for
-     * and never drawn, and what was actually in front went without.
-     */
     look?: readonly [number, number, number];
-    /**
-     * What a chunk REALLY costs, when that is already known.
-     *
-     * The table below is an average taken over the shell, and an average is
-     * the wrong price for any particular chunk: a great many of them are
-     * empty (past the surface, inside the cavity, or simply a hole) and cost
-     * nothing at all, while a few cost double. Charging every one of them the
-     * average spent half the allowance on chunks with no triangles in them,
-     * so the furthest real ones were refused, and a chunk that is refused one
-     * frame and admitted the next is a chunk that BLINKS. Geoff, twice: "big
-     * chunks of cubes appearing and disappearing".
-     *
-     * Whoever holds the built meshes knows the true figure and passes it here;
-     * anything not yet built still has to be guessed at.
-     */
     costOf?: (ox: number, oy: number, oz: number, step: number) => number | undefined;
   } = {},
 ): ViewResult {
@@ -255,58 +249,95 @@ export function visibleChunks(
   const vr = Math.hypot(viewer[0], viewer[1], viewer[2]);
   const dustFarCubes = (opts.dustFar ?? dustFarFor(vr)) / CUBE;
   const outside = vr > R_OUTER;
-  /* Which way the viewer is, for the horizon test. Only meaningful outside. */
   const vd = vr > 1e-6 ? [viewer[0] / vr, viewer[1] / vr, viewer[2] / vr] : [1, 0, 0];
-  /* Anything whose direction dots with the viewer's below this is round the
-     back of the planet. A tenth of slack keeps the limb, whose spikes and
-     masts still show. */
   const horizon = outside ? Math.min(0.999, R_OUTER / vr) - 0.1 : -1.1;
 
   const found: ChunkRef[] = [];
-  /* Walked at the FINEST step, so a chunk is never missed, but each one is
-     assigned the step its distance earns and snapped to that step's grid.
-     Chunks that land on the same coarse cell are kept once. */
-  const seen = new Set<string>();
 
-  for (const step of LOD_STEPS) {
+  /**
+   * ---- ONE PIECE OF GROUND, ONE DETAIL LEVEL ----
+   *
+   * This used to walk each detail level separately and keep the chunks whose
+   * MIDDLE fell in that level's band of distances. The levels nest exactly (a
+   * step-2 box is eight step-1 boxes), but their middles do not, so at every
+   * band boundary a coarse chunk and the fine chunks inside it both passed
+   * their own test and BOTH were drawn. Measured from inside the cavity: 32 of
+   * 80 chunks overlapped another level, and 5 to 6.5% of the covered ground
+   * carried two surfaces.
+   *
+   * That one fault produced every symptom Geoff reported at once. Two surfaces
+   * in almost the same place fight over which is in front, which is the
+   * flicker. The coarse one is a blurred copy of the fine one, so it fills in
+   * the holes the fine one has: "mainly purely solid without any texture of
+   * small caverns". And as the ship moves, one or the other leaves the list,
+   * which is "big chunks of cubes appearing and disappearing, leaving giant
+   * holes".
+   *
+   * So it walks DOWNWARDS instead, which is what the nesting was asking for.
+   * Start with boxes big enough to hold the planet; throw away any box that is
+   * out of range, out of the dust, round the back or empty; and split what is
+   * left into eight only when it is near enough to deserve finer detail. A box
+   * that is emitted is never split, so no two chunks can ever cover the same
+   * ground. Throwing away a coarse box throws away everything inside it too,
+   * which makes this quicker as well as right.
+   */
+  const deepest = LOD_STEPS[LOD_STEPS.length - 1];
+  const visit = (ox: number, oy: number, oz: number, step: number): void => {
     const cell = CHUNK * step;
-    /* The band of distances this step serves. */
-    const i = LOD_STEPS.indexOf(step);
-    const inner = i === 0 ? 0 : RING_CUBES[i - 1];
-    const outer = Math.min(RING_CUBES[i], dustFarCubes);
-    if (outer <= inner) continue;
-    /* Only the boxes that can reach that band. */
-    const from = (v: number) => Math.floor((v - outer - cell) / cell);
-    const to = (v: number) => Math.ceil((v + outer + cell) / cell);
-    for (let cz = from(viewer[2]); cz <= to(viewer[2]); cz++) {
-      for (let cy = from(viewer[1]); cy <= to(viewer[1]); cy++) {
-        for (let cx = from(viewer[0]); cx <= to(viewer[0]); cx++) {
-          const mx = cx * cell + cell / 2, my = cy * cell + cell / 2, mz = cz * cell + cell / 2;
-          const d = Math.hypot(mx - viewer[0], my - viewer[1], mz - viewer[2]);
-          if (d < inner || d > outer) continue;
-          if (d > dustFarCubes) continue;
-          /* The chunk's corner in CELLS at this step. */
-          const ox = cx * CHUNK, oy = cy * CHUNK, oz = cz * CHUNK;
-          if (!mightHoldRock(ox, oy, oz, step)) continue;
-          /* Round the back of the planet, behind nine thousand units of rock. */
-          const ml = Math.hypot(mx, my, mz) || 1;
-          if ((mx * vd[0] + my * vd[1] + mz * vd[2]) / ml < horizon) continue;
-          /* On screen, or near enough to it. A chunk is a box, so its own
-             angular size is allowed for: one close enough to fill the view is
-             kept even when its middle is off to the side. */
-          if (look && d > 1e-3) {
-            const half = cell * 0.87;
-            const cos = ((mx - viewer[0]) * look[0] + (my - viewer[1]) * look[1]
-              + (mz - viewer[2]) * look[2]) / d;
-            /* sin of the chunk's angular radius, near enough for a margin. */
-            const slack = Math.min(0.95, half / d);
-            if (cos < LOOK_COS - slack) continue;
+    const lo = [ox * step, oy * step, oz * step];
+    const hi = [lo[0] + cell, lo[1] + cell, lo[2] + cell];
+    /* Nearest point and middle, both wanted: the nearest decides range and how
+       fine it should be, the middle is what the budget orders by. */
+    let near2 = 0;
+    for (let a = 0; a < 3; a++) {
+      const gap = viewer[a] < lo[a] ? lo[a] - viewer[a] : (viewer[a] > hi[a] ? viewer[a] - hi[a] : 0);
+      near2 += gap * gap;
+    }
+    const near = Math.sqrt(near2);
+    if (near > dustFarCubes) return;                       /* lost in the dust */
+    if (!mightHoldRock(ox, oy, oz, step)) return;          /* nothing in it */
+
+    const mx = (lo[0] + hi[0]) / 2, my = (lo[1] + hi[1]) / 2, mz = (lo[2] + hi[2]) / 2;
+    /* Round the back of the planet, with the box's own size allowed for so one
+       straddling the limb is kept. */
+    const ml = Math.hypot(mx, my, mz) || 1;
+    const cosBack = (mx * vd[0] + my * vd[1] + mz * vd[2]) / ml;
+    if (cosBack + Math.min(0.9, (cell * 0.87) / ml) < horizon) return;
+
+    /* On screen, or near enough to it. */
+    const d = Math.hypot(mx - viewer[0], my - viewer[1], mz - viewer[2]);
+    if (look && d > 1e-3) {
+      const cos = ((mx - viewer[0]) * look[0] + (my - viewer[1]) * look[1]
+        + (mz - viewer[2]) * look[2]) / d;
+      if (cos < LOOK_COS - Math.min(0.95, (cell * 0.87) / d)) return;
+    }
+
+    /* Fine enough? A box is split when it is nearer than the inner edge of its
+       own level's band, and never below the finest level. */
+    const i = LOD_STEPS.indexOf(step as (typeof LOD_STEPS)[number]);
+    const splitAt = i > 0 ? RING_CUBES[i - 1] : -1;
+    if (step > 1 && near < splitAt) {
+      const half = CHUNK / 2;
+      const child = step / 2;
+      for (let a = 0; a < 2; a++) {
+        for (let b = 0; b < 2; b++) {
+          for (let c = 0; c < 2; c++) {
+            visit((ox + a * half) * 2, (oy + b * half) * 2, (oz + c * half) * 2, child);
           }
-          const key = `${step}:${cx},${cy},${cz}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          found.push({ ox, oy, oz, step, distance: d });
         }
+      }
+      return;
+    }
+    found.push({ ox, oy, oz, step, distance: d });
+  };
+
+  /* The roots: boxes at the coarsest level, meeting at the centre, enough of
+     them between them to hold the whole planet. */
+  const rootCells = Math.ceil(R_OUTER / (CHUNK * deepest));
+  for (let cx = -rootCells; cx < rootCells; cx++) {
+    for (let cy = -rootCells; cy < rootCells; cy++) {
+      for (let cz = -rootCells; cz < rootCells; cz++) {
+        visit(cx * CHUNK, cy * CHUNK, cz * CHUNK, deepest);
       }
     }
   }
@@ -326,6 +357,22 @@ export function visibleChunks(
     chunks.push(c);
   }
   return { chunks, triangles, dropped };
+}
+
+/**
+ * The box one level up that contains this one, or null at the coarsest level.
+ *
+ * The levels nest exactly: a step-2S box is eight step-S boxes. Whoever holds
+ * the built meshes needs this to keep the drawing exclusive, because a chunk it
+ * is still showing out of hysteresis has to give way the moment another level
+ * covering the same ground is asked for.
+ */
+export function parentOf(ox: number, oy: number, oz: number, step: number):
+{ ox: number; oy: number; oz: number; step: number } | null {
+  const i = LOD_STEPS.indexOf(step as (typeof LOD_STEPS)[number]);
+  if (i < 0 || i >= LOD_STEPS.length - 1) return null;
+  const up = (v: number) => CHUNK * Math.floor(v / (2 * CHUNK));
+  return { ox: up(ox), oy: up(oy), oz: up(oz), step: LOD_STEPS[i + 1] };
 }
 
 /**

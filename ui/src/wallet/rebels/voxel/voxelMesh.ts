@@ -15,7 +15,7 @@
 // it run in a Web Worker and be tested in node. Whoever draws it wraps the
 // arrays in a BufferGeometry; that is the renderer's business, not this file's.
 
-import { solidAt, solidShellAt } from "./voxelField";
+import { solidAt, solidShellAt, solidHeartAt } from "./voxelField";
 
 /** A finished chunk: what a BufferGeometry needs, and nothing else. */
 export interface ChunkMesh {
@@ -78,14 +78,22 @@ const FACES: Array<{ n: [number, number, number]; u: number; v: number; axis: nu
  */
 export function meshChunk(
   ox: number, oy: number, oz: number, size: number, step: number, seed = 0,
-  /** Mesh the SHELL only, leaving the heart and the spokes to the meshes that
-   *  already draw them. The planet's chunks pass this; the heart's own chunk
-   *  does not. See solidShellAt. */
-  shellOnly = false,
+  /**
+   * WHICH PART of the planet this chunk is allowed to draw.
+   *
+   * Three things are drawn by three different meshes: the shell by the chunks,
+   * the heart by its own, and the spokes as stretched boxes. Each has to keep
+   * to its own or the same rock ends up in two surfaces in one place, which is
+   * a flicker rather than a picture. "all" is for tests and for anything that
+   * wants the field as the collision sees it.
+   */
+  part: "all" | "shell" | "heart" = "all",
 ): ChunkMesh {
-  const field = shellOnly
+  const field = part === "shell"
     ? (i: number, j: number, k: number) => solidShellAt(i, j, k, step, seed)
-    : (i: number, j: number, k: number) => solidAt(i, j, k, step, seed);
+    : part === "heart"
+      ? (i: number, j: number, k: number) => solidHeartAt(i, j, k, step, seed)
+      : (i: number, j: number, k: number) => solidAt(i, j, k, step, seed);
   const n3 = size * size * size;
   const at = new Uint8Array(n3);
   const idx = (i: number, j: number, k: number) => (k * size + j) * size + i;

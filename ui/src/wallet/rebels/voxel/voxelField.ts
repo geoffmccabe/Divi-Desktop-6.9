@@ -319,6 +319,16 @@ export function solidAt(cx: number, cy: number, cz: number, step: number, seed =
 }
 
 /**
+/**
+ * The heart ALONE: the ball at the centre, and not the spokes that leave it.
+ *
+ * The heart's chunk reaches two cubes past the heart itself, and a spoke
+ * starts exactly where the heart ends, so those two cubes were meshed into the
+ * heart AND drawn again by the spoke's own box: two surfaces in one place at
+ * each of the twenty-four spoke roots. Geoff, on 69.9.55: "the orange heart is
+ * still flickering in some places, but not all." Twenty-four places.
+ */
+/**
  * The same question, but only about the SHELL: no heart and no spokes.
  *
  * The heart is meshed once as its own orange body and the spokes are drawn as
@@ -330,6 +340,13 @@ export function solidAt(cx: number, cy: number, cz: number, step: number, seed =
  * Collision still asks `solid`, which knows about all three. This is only for
  * the chunk meshes.
  */
+export function solidHeartAt(cx: number, cy: number, cz: number, step: number, seed = 0): boolean {
+  const half = step > 1 ? step >> 1 : 0;
+  const x = cx * Math.max(1, step) + half, y = cy * Math.max(1, step) + half, z = cz * Math.max(1, step) + half;
+  if (x * x + y * y + z * z > R_HEART * R_HEART) return false;
+  return solidAt(cx, cy, cz, step, seed);
+}
+
 export function solidShellAt(cx: number, cy: number, cz: number, step: number, seed = 0): boolean {
   const half = step > 1 ? step >> 1 : 0;
   const x = cx * Math.max(1, step) + half, y = cy * Math.max(1, step) + half, z = cz * Math.max(1, step) + half;

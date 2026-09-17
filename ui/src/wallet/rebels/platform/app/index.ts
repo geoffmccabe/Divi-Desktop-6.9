@@ -57,10 +57,22 @@ export const appPlatform: RebelsPlatform = {
     },
   },
   /* ---- full screen, the app's way ----
-     The browser's requestFullscreen does nothing useful inside this webview.
-     The app has a window, and Tauri exposes it on the global because the app is
-     built with withGlobalTauri. Everything is guarded: if the shape is not
-     there, the button's own fallback uses the browser API instead. */
+     The browser's requestFullscreen does nothing useful inside this webview:
+     it fills the webview and leaves the window where it was, which is what
+     Geoff saw on 69.9.55 ("it only just keeps it in the right-corner window in
+     the app and doesn't make it full screen").
+
+     The app has a window and Tauri exposes it on the global, but ASKING IS NOT
+     ENOUGH. Tauri 2 refuses any window call the app has not been given
+     permission for, and its `core:default` set allows reading whether a window
+     is full screen while refusing to SET it. So `isFullscreen` worked, which is
+     why the icon behaved, and `setFullscreen` was rejected every time; the
+     rejection was swallowed and the browser fallback ran instead, which is why
+     it looked like a half-working button rather than a blocked one.
+
+     The permission is granted in crates/app/capabilities/default.json. If it
+     is ever missing again, `setFull` now throws rather than quietly doing the
+     wrong thing, so the button can say so instead of lying. */
   screen: {
     isFull: async () => {
       try {
@@ -70,6 +82,8 @@ export const appPlatform: RebelsPlatform = {
     },
     setFull: async (on: boolean) => {
       const w = (window as unknown as TauriWindows).__TAURI__?.window?.getCurrentWindow?.();
+      /* No catch. A refusal here has to reach the caller: swallowing it is
+         what turned a missing permission into a mystery. */
       if (w) { await w.setFullscreen(on); return; }
       if (on) await document.documentElement.requestFullscreen?.();
       else await document.exitFullscreen?.();

@@ -25,7 +25,7 @@ import {
 } from "./voxelWorld";
 import { spokeDirections } from "./voxelField";
 import { meshChunk, FACE_SHADE, type ChunkMesh } from "./voxelMesh";
-import { visibleChunks, dustFarFor, ringFor, type ChunkRef } from "./voxelView";
+import { visibleChunks, dustFarFor, ringFor, parentOf, type ChunkRef } from "./voxelView";
 import { spikes, SPIKE_COUNT } from "./voxelSpikes";
 
 /**
@@ -241,7 +241,11 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
      Small, always there, and always worth drawing: it is the thing the spokes
      point at. Meshed once at full detail. */
   const heartMesh = (() => {
-    const m = meshChunk(-R_HEART - 2, -R_HEART - 2, -R_HEART - 2, (R_HEART + 2) * 2, 1, seed);
+    /* The heart ALONE. It used to be meshed from the field the collision uses,
+       which also says yes to the spokes, so the two cubes where each spoke
+       leaves the heart were drawn twice: once here and once by the spoke's own
+       box. Twenty-four of those, which is what Geoff saw still flickering. */
+    const m = meshChunk(-R_HEART - 2, -R_HEART - 2, -R_HEART - 2, (R_HEART + 2) * 2, 1, seed, "heart");
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(m.positions, 3));
     geo.setAttribute("normal", new THREE.BufferAttribute(m.normals, 3));
@@ -265,7 +269,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   function build(c: ChunkRef): void {
     /* The shell only: the heart has its own mesh and the spokes are drawn as
        boxes, and a chunk that meshed them too put two surfaces in one place. */
-    const m: ChunkMesh = meshChunk(c.ox, c.oy, c.oz, CHUNK, c.step, seed, true);
+    const m: ChunkMesh = meshChunk(c.ox, c.oy, c.oz, CHUNK, c.step, seed, "shell");
     built++;
     if (!m.indices.length) {
       /* An EMPTY chunk is still worth remembering, and worth remembering as
@@ -307,6 +311,31 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         costOf: (ox, oy, oz, step) => live.get(`${step}:${ox},${oy},${oz}`)?.triangles,
       });
       const wanted = new Set(view.chunks.map(keyOf));
+      /* ---- AND THE HYSTERESIS MUST NOT UNDO THE EXCLUSIVITY ----
+         The view now promises that no two chunks it asks for cover the same
+         ground. A chunk kept on screen out of hysteresis is NOT in that list
+         and can quietly break the promise: it is the parent, or a child, of
+         something that is. Both directions have to give way, so every wanted
+         chunk marks the whole line of boxes above it as already covered by
+         something finer. */
+      const coveredByFiner = new Set<string>();
+      for (const c of view.chunks) {
+        let up = parentOf(c.ox, c.oy, c.oz, c.step);
+        while (up) {
+          coveredByFiner.add(`${up.step}:${up.ox},${up.oy},${up.oz}`);
+          up = parentOf(up.ox, up.oy, up.oz, up.step);
+        }
+      }
+      /** Is some other level already drawing this chunk's ground? */
+      const overlapped = (c: ChunkRef): boolean => {
+        if (coveredByFiner.has(keyOf(c))) return true;      /* finer is up */
+        let up = parentOf(c.ox, c.oy, c.oz, c.step);
+        while (up) {
+          if (wanted.has(`${up.step}:${up.ox},${up.oy},${up.oz}`)) return true;  /* coarser is up */
+          up = parentOf(up.ox, up.oy, up.oz, up.step);
+        }
+        return false;
+      };
       /* ---- ONCE SHOWN, IT STAYS SHOWN ----
          Hiding a chunk the moment it falls off the list is the popping, and
          keeping the geometry did nothing about it: the flicker was never the
@@ -327,9 +356,10 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         const my = (c.oy + CHUNK / 2) * c.step;
         const mz = (c.oz + CHUNK / 2) * c.step;
         const d = Math.hypot(mx - _eye.x, my - _eye.y, mz - _eye.z);
-        /* Its own ring, plus the slack. Beyond the dust it goes whatever. */
+        /* Its own ring, plus the slack. Beyond the dust it goes whatever, and
+           it goes at once if another level is already drawing its ground. */
         const ring = ringFor(c.step) * KEEP;
-        held.mesh.visible = d <= Math.min(ring, keepFar);
+        held.mesh.visible = d <= Math.min(ring, keepFar) && !overlapped(c);
       }
       /* ---- THE CACHE HAS TO HAVE A CEILING ----
          It used to drop only chunks that were both off the list and already

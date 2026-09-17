@@ -18,7 +18,7 @@ import {
   R_OUTER, R_INNER, R_HEART, CHUNK, CUBE, LOD_STEPS, WORLD_RADIUS, SKY_EDGE,
 } from "./voxelWorld";
 import {
-  visibleChunks, stepFor, mightHoldRock, dustAt, dustFarFor,
+  visibleChunks, stepFor, mightHoldRock, dustAt, dustFarFor, parentOf,
   TRIANGLE_BUDGET, DUST_NEAR, DUST_FAR, DUST_FAR_OPEN, RING_CUBES, COST_BY_STEP,
 } from "./voxelView";
 import { meshChunk, triangles } from "./voxelMesh";
@@ -254,6 +254,55 @@ for (const [name, at] of [places[0], places[3]]) {
      WORLD_RADIUS === R_OUTER * CUBE, `${WORLD_RADIUS} units`);
   ok("the cost table covers every detail level",
      LOD_STEPS.every((s) => typeof COST_BY_STEP[s] === "number"));
+}
+
+/* ---- ONE PIECE OF GROUND, ONE DETAIL LEVEL ----
+   The fault that produced every symptom Geoff reported on 69.9.55 at once. The
+   levels nest exactly, so a coarse box and the fine boxes inside it cover the
+   same ground; drawing both puts two surfaces in one place, which flickers,
+   fills the fine one's holes with the coarse one's blur, and blinks in and out
+   as the ship moves. Measured then: 32 of 80 chunks overlapped. */
+{
+  const box = (c: { ox: number; oy: number; oz: number; step: number }) => {
+    const lo = [c.ox * c.step, c.oy * c.step, c.oz * c.step];
+    return { lo, hi: [lo[0] + CHUNK * c.step, lo[1] + CHUNK * c.step, lo[2] + CHUNK * c.step], step: c.step };
+  };
+  const meets = (a: ReturnType<typeof box>, b: ReturnType<typeof box>) =>
+    a.lo[0] < b.hi[0] && b.lo[0] < a.hi[0] && a.lo[1] < b.hi[1] && b.lo[1] < a.hi[1]
+    && a.lo[2] < b.hi[2] && b.lo[2] < a.hi[2];
+
+  const spots: Array<[string, [number, number, number], [number, number, number]]> = [
+    ["from the middle of the cavity", [0, 0, 60], [0, 0, 1]],
+    ["from just inside the inner face", [0, 0, R_INNER + 10], [0, 0, 1]],
+    ["from the middle of the shell", [0, 0, (R_INNER + R_OUTER) / 2], [0, 0, 1]],
+    ["from just outside the surface", [0, 0, R_OUTER + 80], [0, 0, -1]],
+    ["from where a ship arrives", [0, 0, 640], [0, 0, -1]],
+  ];
+  let worst = 0, worstWhere = "";
+  for (const [label, eye, look] of spots) {
+    const boxes = visibleChunks(eye, { look }).chunks.map(box);
+    let pairs = 0;
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        if (boxes[i].step !== boxes[j].step && meets(boxes[i], boxes[j])) pairs++;
+      }
+    }
+    if (pairs > worst) { worst = pairs; worstWhere = label; }
+    ok(`no ground is drawn at two detail levels ${label}`, pairs === 0,
+       `${pairs} overlapping pairs of ${boxes.length} chunks`);
+  }
+  void worst; void worstWhere;
+  /* And the nesting the whole thing rests on: a box's parent must contain it. */
+  for (const step of [1, 2, 4, 8]) {
+    for (const ox of [-64, -32, 0, 32, 96]) {
+      const up = parentOf(ox, 0, 0, step);
+      if (!up) continue;
+      const a = box({ ox, oy: 0, oz: 0, step }), b = box({ ...up, oy: up.oy, oz: up.oz });
+      ok(`a step-${step} box at ${ox} sits inside its parent`,
+         a.lo[0] >= b.lo[0] && a.hi[0] <= b.hi[0],
+         `[${a.lo[0]},${a.hi[0]}] against [${b.lo[0]},${b.hi[0]}]`);
+    }
+  }
 }
 
 console.log(out.join("\n"));

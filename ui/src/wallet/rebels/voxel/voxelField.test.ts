@@ -24,7 +24,7 @@ import {
   WORLD_DIAMETER, toWorld,
 } from "./voxelWorld";
 import {
-  solid, solidAt, solidShellAt, crustFill, carvedFraction, spokeDirections, rockField,
+  solid, solidAt, solidShellAt, solidHeartAt, crustFill, carvedFraction, spokeDirections, rockField,
   thresholdFor, resetFieldForTests,
 } from "./voxelField";
 import { meshChunk, triangles } from "./voxelMesh";
@@ -425,10 +425,19 @@ function fillAt(radius: number, samples = 6000): number {
   }
   ok("a spoke is rock to the collision", spoke > 5, `${spoke} cubes`);
   ok("and nothing to the chunks", shellSpoke === 0, `${shellSpoke} would have been drawn twice`);
+  /* And nothing to the heart's own mesh either. The heart's chunk reaches two
+     cubes past the heart, and a spoke starts exactly where the heart ends. */
+  let heartSpoke = 0;
+  for (let t = R_HEART; t <= R_HEART + 2; t += 1) {
+    const x = Math.round(d[0] * t), y = Math.round(d[1] * t), z = Math.round(d[2] * t);
+    if (solidHeartAt(x, y, z, 1) && x * x + y * y + z * z > R_HEART * R_HEART) heartSpoke++;
+  }
+  ok("and the heart's mesh stops where the heart stops", heartSpoke === 0,
+     `${heartSpoke} cubes past the heart would have been drawn twice`);
   ok("the shell itself is untouched",
      solidShellAt(Math.round(R_OUTER - 80), 0, 0, 1) === solid(Math.round(R_OUTER - 80), 0, 0));
   ok("and a chunk in the heart now meshes nothing",
-     meshChunk(-2, -2, -2, 4, 1, 0, true).quads === 0);
+     meshChunk(-2, -2, -2, 4, 1, 0, "shell").quads === 0);
 }
 
 /* ---- ONE THRESHOLD TABLE PER SEED ----
@@ -454,7 +463,7 @@ function fillAt(radius: number, samples = 6000): number {
    ships, the globe, the effects. It cost one frame 791 milliseconds on Geoff's
    Mac and it is the kind of thing that looks harmless in a diff. */
 {
-  const m = meshChunk(Math.round(R_OUTER - 80), 0, 0, CHUNK, 1, 0, true);
+  const m = meshChunk(Math.round(R_OUTER - 80), 0, 0, CHUNK, 1, 0, "shell");
   ok("every corner carries its own brightness",
      m.colours.length === m.positions.length && m.colours.length > 0,
      `${m.colours.length} against ${m.positions.length}`);
