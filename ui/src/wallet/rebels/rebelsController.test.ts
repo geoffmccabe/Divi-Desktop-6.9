@@ -12,6 +12,7 @@
 
 import * as THREE from "three";
 import * as serverModule from "../../../../contrib/rebels-room/src/room";
+import { getHealthPulse } from "./healthPulse";
 import { createRebels } from "./rebelsController";
 import { setLoadoutRemote } from "./rebelsLoadout";
 import { SUSPEND_GRACE_MS } from "./rebelsController";
@@ -1343,10 +1344,10 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
     while (Date.now() < readBy) ctl.frame(1 / 60);
     ok("pulling the throttle back through the pilot slows the ship", ctl.hud().speed < speed0, `${speed0.toFixed(1)} -> ${ctl.hud().speed.toFixed(1)}`);
     const ammo0 = ctl.hud().ammo;
-    pilot.trigger("primary", true);
+    pilot?.trigger("primary", true);
     const until = Date.now() + 10_000;
     while (ctl.hud().ammo >= ammo0 && Date.now() < until) ctl.frame(1 / 60);
-    pilot.trigger("primary", false);
+    pilot?.trigger("primary", false);
     ok("holding the trigger through the pilot fires the guns", ctl.hud().ammo < ammo0, `${ammo0} -> ${ctl.hud().ammo}`);
     pilot.moveCursor(0.9, 0.5);
     ok("moving the reticle is remembered", Math.abs(pilot.state().cursor.x - 0.9) < 1e-9);
@@ -1548,6 +1549,66 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   void shields0;
   ctl.detach();
   ok("detaching stops the touch listening", (winHandlers.touchstart ?? []).length === 0);
+  await settle();
+  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
+}
+
+// V. SPIKEWORLD: the heart, its million, and the sixty that guard it.
+//    Geoff: "make sure we have the 1 million health counter on the orange
+//    heart, and the flock of 60 heart-protector orbs".
+//
+//    Flown for real: a cockpit, a room, out to Spikeworld, in to the heart,
+//    and the trigger held. What this is really proving is that the fight runs
+//    LOCALLY out there, because the room cannot referee a ship two hundred
+//    thousand units outside its world and used to refuse every shot from one.
+{
+  let held: import("./platform/platform").Pilot | null = null;
+  setPlatform({
+    ...HEADLESS, id: "test-heart", identity: appIdentity,
+    input: { attach: (_dom, p) => { held = p; return () => { held = null; }; } },
+  });
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  ctl.launch();
+  for (let i = 0; i < 60 * 7; i++) ctl.frame(1 / 60);   /* through the dive */
+  const pilot = held as import("./platform/platform").Pilot | null;
+  ok("(setup) the door was handed the pilot", !!pilot);
+
+  const fight = () => server!.combat as import("./rebelsCombat").CombatState;
+  const before = fight().enemies.length;
+  pilot?.teleportTest?.();
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  ok("out at Spikeworld the room's fighters are gone from the sky",
+     ctl.hud().contacts === 0, `${ctl.hud().contacts} contacts, room had ${before}`);
+
+  /* And the room is no longer being told anything, so it cannot refuse a
+     shot: the bug that stopped the guns out there. */
+  pilot?.trigger("primary", true);
+  for (let i = 0; i < 40; i++) ctl.frame(1 / 60);
+  pilot?.trigger("primary", false);
+  ok("the guns fire out there instead of being refused",
+     !/bad shot|REFUSED/i.test(ctl.hud().note), ctl.hud().note);
+
+  /* ---- AND NO FURTHER, HERE ----
+     The heart is at the middle of the planet, behind two hundred and fifty
+     cubes of maze, and there is deliberately no shortcut to it: Geoff, when I
+     added one for this test, "You don't need to add a way in. There's already
+     so many holes it's easy to get in. Did I tell you to put a way in?" Quite
+     right, and it was his design to change, not mine.
+
+     So what the heart and its sixty guards do is proved where it can be proved
+     without inventing a door: in voxelHeart.test.ts, which asks the same
+     questions of the same code - the guard class, sixty of them, one flock
+     whose home is the heart, and a million counting down - without needing a
+     ship to fly there. What THIS block proves is the part that only a real
+     cockpit and a real room can show, which is that going out there takes the
+     fight with it. */
+
+  pilot?.teleportTest?.();
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  ctl.detach();
   await settle();
   setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
 }

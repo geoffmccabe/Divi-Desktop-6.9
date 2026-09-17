@@ -19,6 +19,8 @@ import {
   clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
   createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE, CONVERGE, JUNK_LIFE,
   showBullet, dropBullet, stepShownBullets, BULLET_SPEED, BULLET_LIFE,
+  stepCombat, spawnFleet, rollLaserDamage, MINI_DAMAGE, LASER_MAX, TORPEDO_DAMAGE,
+  type CombatWorld,
   miniMuzzle,
   STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS, ENEMY_FIRE_RANGE,
   type CombatState,
@@ -29,9 +31,11 @@ import type { Pilot } from "./platform/platform";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import { R, MAX_ALT, EARTH_D } from "./orbitWorld";
 import { makeVoxelPlanet, arrivalOffset, type VoxelPlanet } from "./voxel/voxelPlanet";
+import { HEART_GUARD, HEART_GUARD_COUNT } from "./rebelsFlock";
 import { hitRock, bounceVelocity, bounceDamage } from "./voxel/voxelCollide";
 import {
-  DISTANCE_IN_EARTHS, WORLD_RADIUS, SKY_EDGE, CUBE, SPIKEWORLD_NEAR, SPIKEWORLD_FAR,
+  DISTANCE_IN_EARTHS, WORLD_RADIUS, SKY_EDGE, CUBE, R_INNER,
+  SPIKEWORLD_NEAR, SPIKEWORLD_FAR,
 } from "./voxel/voxelWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
 import { installSky, skyTexture, type SkyHandle } from "./starfield";
@@ -1262,6 +1266,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          shooting it, which is exactly what happened on the first trip: damage
          from enemies two hundred thousand units away. */
       room?.away();
+      /* ---- A CLEAN SKY OUT THERE ----
+         Whatever the wire last put in the fight belongs to Earth: fighters, a
+         wave, wreckage, coins. None of it followed the ship out here, it was
+         simply the last thing drawn, and the local fight is about to start
+         stepping it. */
+      combat.enemies.length = 0;
+      combat.bullets.length = 0;
+      combat.torpedoes.length = 0;
+      combat.flocks.length = 0;
+      combat.junk.length = 0;
+      combat.coins.length = 0;
+      combat.wave = null;
+      guardsSent = false;
       flight.ceiling = SPIKEWORLD_AT.length() + WORLD_RADIUS + SKY_EDGE * CUBE + 500;
       flight.pos.copy(SPIKEWORLD_AT).add(arrivalOffset());
       flight.alt = flight.pos.length() - R;
@@ -1304,6 +1321,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         farAtHome = null; nearAtHome = null;
       }
       flight.pos.copy(homeAgain.lengthSq() > 1 ? homeAgain : new THREE.Vector3(0, 0, R + 40));
+      /* And the local fight is over. The room's next state message refills
+         all of this; leaving it behind would draw the heart's guards in Earth
+         orbit for a frame. */
+      combat.enemies.length = 0;
+      combat.bullets.length = 0;
+      combat.torpedoes.length = 0;
+      combat.flocks.length = 0;
+      guardsSent = false;
       /* Back in the fight, which flying alone also starts over. */
       room?.fly();
       flight.alt = flight.pos.length() - R;
@@ -1765,6 +1790,93 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     setHud({ hitAt: now, note: `HULL ${hurt}`, noteAt: now });
   }
 
+  /* ---- THE WORLD THE LOCAL FIGHT IS STEPPED IN ----
+     No towers out here, and one pilot. `scale` is the open-space speed
+     multiplier the swarms need so a flock can keep pace with a ship that is
+     also moving faster away from the planet; out here the ship's own limits are
+     unchanged, so it is flat. */
+  const _voxWorld: CombatWorld = {
+    tips: [],
+    playerPos: new THREE.Vector3(),
+    playerFwd: new THREE.Vector3(0, 0, 1),
+    /* No stake bonus out here: there is nobody to have won one from. */
+    damageScale: 1,
+  };
+
+  /** Set once the heart's guards have been sent, so they are sent once. */
+  let guardsSent = false;
+
+  /**
+   * The heart's sixty, launched when the ship crosses into the cavity.
+   *
+   * Geoff: "when you get inside the hollow part of the world, and are thus
+   * approaching the orange heart, I want it to launch a flock of orange
+   * spheroids ... it's a big flock."
+   *
+   * Sent from the heart itself rather than from in front of the player, which
+   * is where an Earth fleet comes from: these are its guards, so they have to
+   * be seen leaving it. They keep the heart as their home, which is what the
+   * flock code uses to send a group back when it has nothing to hunt.
+   */
+  function frameHeartGuards(flight: Flight): void {
+    if (!spikeworld) return;
+    const h = spikeworld.heart();
+    const from = flight.pos.distanceTo(h.centre);
+    /* Inside the cavity: the inner face of the shell, with a little margin so
+       crossing it is unambiguous. */
+    if (guardsSent || from > (R_INNER - 10) * CUBE) return;
+    guardsSent = true;
+    const toward = flight.pos.clone().sub(h.centre).normalize();
+    spawnFleet(combat, HEART_GUARD.tier, flight.pos, flight.fwd, {
+      count: HEART_GUARD_COUNT,
+      /* Off the heart's surface, on the player's side of it. */
+      from: h.centre.clone().addScaledVector(toward, h.radius + 40),
+      home: h.centre.clone(),
+    });
+    setHud({ note: "THE HEART IS GUARDED", noteAt: performance.now() });
+  }
+
+  /**
+   * Shooting the heart.
+   *
+   * The heart is not an Enemy and deliberately so: it does not fly, it cannot
+   * be killed yet, and making it one would put it through the flock and fighter
+   * AI for nothing. So the rounds are tested against it here, as one sphere,
+   * which is all it is.
+   *
+   * Torpedoes count for what a torpedo is worth, and the bar comes up on every
+   * hit: it holds for a second and fades, so under fire it simply stays up,
+   * counting down from the million. Geoff: "it starts counting down with a
+   * health bar showing it being reduced from 1 million."
+   */
+  function frameHeartHits(): void {
+    if (!spikeworld) return;
+    const h = spikeworld.heart();
+    const reach = h.radius;
+    let took = 0;
+    for (let i = combat.bullets.length - 1; i >= 0; i--) {
+      const b = combat.bullets[i];
+      if (b.hostile) continue;                      /* the guards' own fire */
+      if (b.pos.distanceTo(h.centre) > reach) continue;
+      /* The same roll a fighter takes, so a pulse round is worth out here
+         exactly what it is worth anywhere else. */
+      took += rollLaserDamage() * (b.mini ? MINI_DAMAGE : 1);
+      combat.bullets.splice(i, 1);
+    }
+    for (let i = combat.torpedoes.length - 1; i >= 0; i--) {
+      const t = combat.torpedoes[i];
+      if (t.pos.distanceTo(h.centre) > reach) continue;
+      /* And a torpedo is worth what a torpedo is worth: five lasers' worth at
+         the top of the roll, which is how the combat file prices one. */
+      took += LASER_MAX * TORPEDO_DAMAGE;
+      combat.torpedoes.splice(i, 1);
+      combat.events.push({ kind: "torpedoBlast", at: t.pos.clone(), power: 6, who: "" });
+    }
+    if (took <= 0) return;
+    const left = spikeworld.hitHeart(took);
+    pulseHealth(left, h.max);
+  }
+
   function frameSpikeworld(camera: THREE.PerspectiveCamera): void {
     if (!spikeworld) return;
     const tVox = performance.now();
@@ -2211,6 +2323,24 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (peers) peers.draw(crew, camera);
       /* How many are in the WORLD, not how many are on screen. */
       setHud({ crew: room.crew() });
+    } else if (atSpikeworld) {
+      /* ---- THE FIGHT AT SPIKEWORLD, RUN HERE ----
+         One pilot, the same simulation, and nothing of Earth's: no waves and no
+         wandering flocks, because a player who has gone out there has left that
+         game (see the waves test in the room). What IS out here is the heart's
+         sixty guards, and they are sent once, when the ship crosses into the
+         cavity. */
+      _voxWorld.playerPos = flight.pos;
+      _voxWorld.playerFwd = flight.fwd;
+      /* Earth's own spawning held off rather than deleted: the wave and the
+         two clocks are the only things that would put a stranger in this sky. */
+      combat.wave = null;
+      combat.flockClock = -1e6;
+      combat.dragonClock = -1e6;
+      stepCombat(combat, dt, _voxWorld);
+      frameHeartGuards(flight);
+      frameHeartHits();
+      if (peers) peers.draw([], camera);
     } else if (peers) {
       peers.draw([], camera);
     }
@@ -2601,7 +2731,16 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         frameSky(dt, flight);
         /* Whether the fight belongs to a room. Worked out before the guns,
            because it decides whether a trigger pull is a shot or a request. */
-        const inRoom = !!room && room.status() === "live";
+        /* ---- WHOSE FIGHT IS IT, OUT THERE ----
+           Not the room's. The ship stops reporting its position at Spikeworld
+           (the room's world is Earth's neighbourhood and would snap it back
+           from two hundred thousand units out), so the room has no idea where
+           the player is and cannot referee anything. The cockpit therefore
+           runs the same simulation file the room runs, for one pilot, which is
+           exactly the arrangement the solo game always had. Multiplayer out
+           there is Phase 5 and this is the shape it will take: the room steps
+           this same file. */
+        const inRoom = !!room && room.status() === "live" && !atSpikeworld;
         const backwards = frameGuns(dt, flight, camera, fx, res);
         frameRoom(dt, flight, camera, inRoom);
         frameTorpedo(flight, res, backwards);

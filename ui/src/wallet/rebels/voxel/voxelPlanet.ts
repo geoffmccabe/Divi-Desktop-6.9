@@ -21,7 +21,7 @@
 
 import * as THREE from "three";
 import {
-  CUBE, CHUNK, R_OUTER, R_INNER, R_HEART, WORLD_RADIUS, SKY_EDGE, toWorld,
+  CUBE, CHUNK, R_OUTER, R_INNER, R_HEART, WORLD_RADIUS, SKY_EDGE, HEART_HP, toWorld,
 } from "./voxelWorld";
 import { spokeDirections } from "./voxelField";
 import { meshChunk, FACE_SHADE, type ChunkMesh } from "./voxelMesh";
@@ -78,12 +78,33 @@ const ROCK_COLOUR = 0x8a90a0;
 const HEART_COLOUR = 0xff8a4a;
 const SPIKE_COLOUR = 0x585d68;
 
+/** The heart, as something that can be shot. */
+export interface Heart {
+  /** Where it is, in WORLD units, and how big. */
+  centre: THREE.Vector3;
+  radius: number;
+  hp: number;
+  max: number;
+}
+
 export interface VoxelPlanet {
   group: THREE.Group;
   /** Where its centre sits in the game's world. */
   centre: THREE.Vector3;
   /** Move it on. `eye` is the camera in WORLD units. */
   step(eye: THREE.Vector3, look: THREE.Vector3): void;
+  /** The heart: where it is, how big, and what is left of it. */
+  heart(): Heart;
+  /**
+   * Take a bite out of the heart, and return what is left.
+   *
+   * The heart dims as it goes, from its full orange down towards a dull ember,
+   * which is the only feedback a player has at a distance that the million is
+   * moving at all. It does not die at zero yet: what happens then is a design
+   * question nobody has answered, and a boss that quietly vanishes would be
+   * worse than one that sits there at nothing.
+   */
+  hitHeart(damage: number): number;
   /** For DFlow: what it is costing right now. */
   stats(): {
     chunks: number; triangles: number; queued: number; built: number;
@@ -305,6 +326,17 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     cubes.add(mesh);
     return { mesh, geo, mat };
   })();
+
+  /* The heart's own health, held here because the heart is drawn here and
+     because the room will own this the moment the fight out here is the
+     room's. See HEART_HP for why a million. */
+  let heartHp = HEART_HP;
+  const _heart: Heart = {
+    centre: centre.clone(),
+    radius: R_HEART * CUBE,
+    hp: heartHp,
+    max: HEART_HP,
+  };
 
   const keyOf = (c: ChunkRef) => `${c.step}:${c.ox},${c.oy},${c.oz}`;
 
@@ -672,6 +704,17 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
          what it no longer does is fade the far ones out. That is the next
          thing to put back, once the cubes are known to draw. */
       void dustFarFor(_eye.length());
+    },
+    heart: () => { _heart.hp = heartHp; return _heart; },
+    hitHeart: (damage) => {
+      if (!(damage > 0)) return heartHp;
+      heartHp = Math.max(0, heartHp - damage);
+      /* Dimming, not reddening: the colour stays the heart's own so it is
+         still recognisably the thing you came for, and only the brightness
+         says how it is doing. */
+      const left = heartHp / HEART_HP;
+      heartMesh.mat.color.setHex(HEART_COLOUR).multiplyScalar(0.35 + 0.65 * left);
+      return heartHp;
     },
     stats: () => ({
       chunks: live.size, triangles: triangleCount, queued: queue.length, built,

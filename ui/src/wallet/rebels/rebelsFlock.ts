@@ -56,6 +56,31 @@ export const DRONE_TIERS: DroneClass[] = DRONE_COLOURS.map((colour, i) => ({
   speed: 1 + i * 0.15,
 }));
 
+/**
+ * THE HEART GUARD, which is not one of the seven.
+ *
+ * Geoff: "when you get inside the hollow part of the world, and are thus
+ * approaching the orange heart, I want it to launch a flock of orange (matching
+ * color to the center) spheroids like we have with the tiers. These will be a
+ * special Flock that isn't one of the tiers, but behaves like T1 but a
+ * different color, and it's a big flock."
+ *
+ * So: tier one's health and tier one's speed, the heart's own orange, and sixty
+ * of them. Given tier 0 rather than a tier of its own, because everything that
+ * asks `droneClass(tier)` clamps into the seven and would otherwise hand a
+ * guard the yellow of tier one; nothing in the game rolls tier 0, so the number
+ * is free and the lookup below catches it first.
+ */
+export const HEART_GUARD: DroneClass = {
+  tier: 0,
+  name: "Heart Guard",
+  colour: 0xff8a4a,        /* HEART_COLOUR in voxelPlanet, deliberately equal */
+  shieldMax: DRONE_TIERS[0].shieldMax,
+  speed: DRONE_TIERS[0].speed,
+};
+/** How many guards the heart keeps. Geoff: "the flock of 60". */
+export const HEART_GUARD_COUNT = 60;
+
 /** How many arrive, by tier: "24, 28, 32, 36, 40, 44, 48". */
 export const FLEET_SIZES = [24, 28, 32, 36, 40, 44, 48];
 export function fleetSize(tier: number): number {
@@ -108,6 +133,9 @@ export const GIVE_UP_SECONDS = 60;
 export const HOME_ARRIVE = 40;
 
 export function droneClass(tier: number): DroneClass {
+  /* The heart's guards first: they are not one of the seven and clamping would
+     hand them tier one's yellow. */
+  if (Math.round(tier) === HEART_GUARD.tier) return HEART_GUARD;
   return DRONE_TIERS[Math.max(0, Math.min(DRONE_TIERS.length - 1, Math.round(tier) - 1))];
 }
 

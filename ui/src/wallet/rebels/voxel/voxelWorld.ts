@@ -51,6 +51,20 @@ export const R_INNER = GRID / 4;
 
 /** The heart at the centre: "a second smaller sphere of 50x50x50". */
 export const R_HEART = 25;
+/**
+ * The heart's health.
+ *
+ * Geoff: "if anyone shoots the orange heart, make it have a health of 1 million
+ * and it starts counting down with a health bar showing it being reduced from 1
+ * million."
+ *
+ * A million is a number chosen to be a long job rather than a boss fight: a
+ * pulse round does about ten, so this is not something one pilot finishes in an
+ * afternoon, which is the point of putting it at the centre of a planet behind
+ * a maze and sixty guards.
+ */
+export const HEART_HP = 1_000_000;
+
 /** How many spokes join the heart to the shell. Geoff: "like 24 or so". */
 export const SPOKES = 24;
 /** How thick a spoke is, in cubes. */
