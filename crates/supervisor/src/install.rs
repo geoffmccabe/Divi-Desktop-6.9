@@ -337,6 +337,15 @@ pub fn install_error() -> Option<String> {
     INSTALL_ERROR.lock().ok().and_then(|g| g.clone())
 }
 
+/// Free space on the volume holding the node's data, in whole GB.
+///
+/// Reuses the same measurement the bring-up disk check uses, so the number the
+/// setup screen shows and the number that refuses the install can never
+/// disagree.
+pub fn free_disk_gb() -> Option<u64> {
+    free_bytes(&crate::config::dd69_datadir()).map(|b| b / (1 << 30))
+}
+
 /// The config file DD69 manages. Only ever the one in OUR data directory.
 pub fn conf_path() -> PathBuf {
     crate::config::dd69_datadir().join("divi.conf")

@@ -35,6 +35,7 @@ pub mod updates;
 pub mod nfd_record;
 pub mod nfd_storage;
 pub mod skinbuy;
+pub mod snapshot;
 pub mod process;
 pub mod names;
 pub mod network;

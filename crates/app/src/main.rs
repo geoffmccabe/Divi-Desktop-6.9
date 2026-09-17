@@ -1780,6 +1780,53 @@ fn set_node_upnp(enabled: bool) -> Result<(), String> {
     dd69_supervisor::reachable::set_upnp(enabled)
 }
 
+/// What the fast-sync download will cost, before the user commits to it.
+///
+/// The setup screen used to advertise "~4.7 GB" as a hardcoded string while
+/// doing nothing. This asks the server.
+#[tauri::command]
+async fn snapshot_info() -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(|| {
+        let bytes = dd69_supervisor::snapshot::remote_size();
+        let free = dd69_supervisor::install::free_disk_gb().unwrap_or(0);
+        // Unpacked, the chain is roughly half again the archive size, and the
+        // archive is kept until it is unpacked, so the peak need is both.
+        let need_gb = bytes.map(|b| ((b as f64 / 1.0e9) * 2.6).ceil() as u64).unwrap_or(13);
+        serde_json::json!({
+            "bytes": bytes,
+            "freeGb": free,
+            "needGb": need_gb,
+            "enoughRoom": free >= need_gb,
+            "chainPresent": dd69_supervisor::snapshot::chain_already_present(),
+        })
+    })
+    .await
+    .unwrap_or(serde_json::json!({ "bytes": null }))
+}
+
+/// Download and unpack the chain snapshot.
+///
+/// Emits `dd69://snapshot-progress` ({done,total,stage}) throughout, because a
+/// five-gigabyte download with no visible progress is indistinguishable from a
+/// hang, and that is precisely what makes people force-quit a wallet mid-write.
+#[tauri::command]
+async fn snapshot_fetch(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Emitter;
+    tauri::async_runtime::spawn_blocking(move || {
+        let emit = |p: dd69_supervisor::snapshot::Progress| {
+            let _ = app.emit(
+                "dd69://snapshot-progress",
+                serde_json::json!({ "done": p.done, "total": p.total, "stage": p.stage }),
+            );
+        };
+        let (archive, digest) = dd69_supervisor::snapshot::download(&emit)?;
+        dd69_supervisor::snapshot::install(&archive, &emit)?;
+        Ok(digest)
+    })
+    .await
+    .map_err(|e| format!("the snapshot task could not be run: {e}"))?
+}
+
 /// Restart into the version that was just installed.
 ///
 /// WITHOUT THIS THE UPDATE APPEARS TO DO NOTHING. download_and_install writes
@@ -3141,6 +3188,8 @@ fn main() {
             update_install,
             update_relaunch,
             node_reachability,
+            snapshot_info,
+            snapshot_fetch,
             set_node_upnp,
             list_nodes,
             set_active_node,

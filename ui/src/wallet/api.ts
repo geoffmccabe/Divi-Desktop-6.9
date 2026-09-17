@@ -371,6 +371,19 @@ export interface Reachability {
   known: boolean;
 }
 export const nodeReachability = () => invoke<Reachability>("node_reachability");
+
+/** What the fast first sync will cost, asked of the server rather than guessed. */
+export interface SnapshotInfo {
+  bytes: number | null;
+  freeGb: number;
+  needGb: number;
+  enoughRoom: boolean;
+  chainPresent: boolean;
+}
+export const snapshotInfo = () => invoke<SnapshotInfo>("snapshot_info");
+/** Download and unpack the chain snapshot. Progress arrives as
+ *  dd69://snapshot-progress events; resolves with the archive's SHA-256. */
+export const snapshotFetch = () => invoke<string>("snapshot_fetch");
 /** Ask the router to open the peer port (or stop asking). Applies on node restart. */
 export const setNodeUpnp = (enabled: boolean) => invoke<void>("set_node_upnp", { enabled });
 // Latest DIVI/USD from the shared CMC feed (no per-user key) — used to price PoE.

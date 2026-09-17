@@ -1056,6 +1056,15 @@ code, .mono { font-family: var(--font-mono); }
 .reach-help { border-left: 2px solid hsl(var(--border)); padding-left: 12px; }
 .reach-help strong { font-size: 0.85rem; }
 /* "NODE NOT RUNNING" is a fault, not a wait: it reads red, not amber. */
+/* Setup: a blocker the user must act on, not a hint. */
+.ip-warn {
+  color: hsl(var(--map-dead));
+  font-size: 0.78rem;
+  line-height: 1.45;
+  border-left: 2px solid hsl(var(--map-dead) / 0.6);
+  padding-left: 10px;
+  margin: 8px 0;
+}
 .bl-down-amt {
   color: hsl(var(--map-dead));
   font-size: 1.05rem;
