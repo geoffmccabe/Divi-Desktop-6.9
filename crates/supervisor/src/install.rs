@@ -17,7 +17,14 @@ use std::path::{Path, PathBuf};
 
 /// Bumped whenever a new daemon build is published. Also used as the stamp
 /// filename, so an upgrade is detected simply by the stamp not being there.
-pub const DIVID69_VERSION: &str = "69.0.1";
+/// Bumping this re-downloads the node program on every existing install.
+///
+/// is_installed() looks for a stamp file named after this version, so without a
+/// bump a wallet that already has a node says "already installed, skipping
+/// download" and keeps whatever it has — including a node that crashes on
+/// startup. 69.0.2 carries the fix for that crash, so every install must fetch
+/// it rather than keep the copy it already trusts.
+pub const DIVID69_VERSION: &str = "69.0.2";
 
 const BASE_URL: &str = "https://scan.divi.love/downloads";
 
@@ -66,13 +73,13 @@ fn artifact() -> Option<Artifact> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     return Some(Artifact {
         file: "divid69-macos-arm64.tar.gz",
-        sha256: "4529dea8fa246fbf333c61d2ccbbaffdde5108adebf51d1c886592bfc0e9e634",
+        sha256: "cdd12abb1af3f538582fe0cc6b8544a9a85200019b5b437ac1e681be88c29af9",
     });
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     return Some(Artifact {
         file: "divid69-linux-x86_64.tar.gz",
-        sha256: "162965ac37a79c04bd50c59f16849225ade409c263d5c57a2d5137ffc5d4543f",
+        sha256: "0b2d0b4346e353b8c2879ddefa1e4f5114c7111324e411e04b23daf1623ef79e",
     });
 
     // Windows x86_64: packaged the same way (.tar.gz, which Windows 10+ extracts
@@ -81,7 +88,7 @@ fn artifact() -> Option<Artifact> {
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     return Some(Artifact {
         file: "divid69-windows-x86_64.tar.gz",
-        sha256: "10123696683d0a88a7172e0984f25c9463e01fc2d4b6f90ad509e89e9bd45266",
+        sha256: "02176c9462205b763c4334bbf74e6972a99dd68acd4ac63698274547528f3c2f",
     });
 
     #[cfg(not(any(
@@ -551,9 +558,41 @@ fn free_bytes(path: &Path) -> Option<u64> {
     Some(s.f_bavail as u64 * s.f_frsize as u64)
 }
 
-#[cfg(not(unix))]
+/// Free space on Windows.
+///
+/// This used to return None with a comment saying there was no Windows build
+/// yet. There is. So the disk guard never gated on Windows and every Windows
+/// log read "free disk: unknown" — on the one platform where testers were
+/// failing, and where a full disk is a leading cause of exactly those symptoms.
+///
+/// Asked of PowerShell rather than adding a Windows API dependency for one
+/// number. CREATE_NO_WINDOW so it cannot flash a console at the user.
+#[cfg(windows)]
+fn free_bytes(path: &Path) -> Option<u64> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // The drive the node folder actually lives on, which need not be C:.
+    let root = path.components().next().map(|c| c.as_os_str().to_string_lossy().to_string())?;
+    let drive = root.trim_end_matches('\\').trim_end_matches(':').to_string();
+    let out = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            &format!("(Get-PSDrive -Name '{drive}').Free"),
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().ok()
+}
+
+#[cfg(not(any(unix, windows)))]
 fn free_bytes(_path: &Path) -> Option<u64> {
-    None // no Windows build yet; the guard simply doesn't gate there
+    None
 }
 
 /// Public wrapper so the setup flow can run the same free-space check.
@@ -717,6 +756,8 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
             e
         })?
     };
+    // Predictable failure, reported before it happens rather than after.
+    setuplog::check_port(crate::reachable::P2P_PORT);
     setuplog::log(format!("bringup: launching node program at {}", bin.display()));
 
     progress("Starting the node…");
@@ -729,6 +770,10 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
     )
     .map_err(|e| {
         setuplog::log(format!("bringup: NODE FAILED TO START — {e}"));
+        // The node's own words about what it was doing when it stopped. Without
+        // this we captured one line and had to ask the user to run commands.
+        setuplog::attach_node_log(60);
+        setuplog::session_result(false, e.clone());
         e
     })?;
     match &report.repaired_with {
@@ -744,6 +789,7 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
         setuplog::log(format!("bringup: peers connected so far: {v}"));
     }
     setuplog::log("bringup: first-run sequence finished OK");
+    setuplog::session_result(true, format!("running as pid {}", report.pid));
     progress("Node is running.");
     Ok(report.pid)
 }
