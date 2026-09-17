@@ -21,7 +21,7 @@
 
 import * as THREE from "three";
 import {
-  CUBE, CHUNK, R_OUTER, R_INNER, R_HEART, WORLD_RADIUS, SKY_EDGE, LOD_STEPS, toWorld,
+  CUBE, CHUNK, R_OUTER, R_INNER, R_HEART, WORLD_RADIUS, SKY_EDGE, toWorld,
 } from "./voxelWorld";
 import { spokeDirections } from "./voxelField";
 import { meshChunk, FACE_SHADE, type ChunkMesh } from "./voxelMesh";
@@ -205,6 +205,8 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   let dropped = 0;
   /** Why chunks stopped being drawn, counted since the planet was made. */
   const gone: Record<string, number> = {};
+  /** Every box that has finer detail on screen beneath it. Rebuilt each frame. */
+  const finerDrawn = new Set<string>();
 
   /* ---- the spikes, and the spokes ----
      Boxes, not cubes. Three thousand rods as one instanced draw is about
@@ -353,6 +355,23 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     step(eye, look) {
       /* Where the eye is, in the planet's own cubes. */
       _eye.copy(eye).sub(group.position).divideScalar(CUBE);
+      /* ---- WHICH GROUND ALREADY HAS FINER DETAIL ON SCREEN ----
+         Every box above something that is being drawn. One pass over what is
+         on screen, walking up, which is a few hundred steps; the same answer
+         found by walking down would be thousands of lookups for every box the
+         view considers. The view uses it to leave a coarse box alone while
+         anything finer is still drawing that ground. */
+      finerDrawn.clear();
+      for (const [key, held] of live) {
+        if (!held.mesh.visible) continue;
+        const c = held.ref;
+        void key;
+        let up = parentOf(c.ox, c.oy, c.oz, c.step);
+        while (up) {
+          finerDrawn.add(`${up.step}:${up.ox},${up.oy},${up.oz}`);
+          up = parentOf(up.ox, up.oy, up.oz, up.step);
+        }
+      }
       const view = visibleChunks([_eye.x, _eye.y, _eye.z], {
         look: [look.x, look.y, look.z],
         /* What it really costs, for everything already built. */
@@ -363,23 +382,25 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         lodHold: (ox, oy, oz, step) => {
           const held = live.get(`${step}:${ox},${oy},${oz}`);
           if (held && held.mesh.visible) return true;        /* this box is up */
-          /* Is something FINER up for this ground? Its own children are the
-             only place to look: anything finer than them is under one of them
-             and would have kept them up in turn. */
-          const i = LOD_STEPS.indexOf(step as (typeof LOD_STEPS)[number]);
-          if (i <= 0) return undefined;
-          const child = LOD_STEPS[i - 1];
-          const ratio = step / child;
-          const span = CHUNK / ratio;
-          for (let a = 0; a < ratio; a++) {
-            for (let b = 0; b < ratio; b++) {
-              for (let c = 0; c < ratio; c++) {
-                const k = `${child}:${(ox + a * span) * ratio},${(oy + b * span) * ratio},${(oz + c * span) * ratio}`;
-                const kid = live.get(k);
-                if (kid && kid.mesh.visible) return false;   /* finer is up */
-              }
-            }
-          }
+          /* ---- ANY DESCENDANT, NOT JUST THE CHILDREN ----
+             This looked one level down and reasoned that anything finer would
+             have kept the children up in turn. That is simply wrong. If the
+             ground is being drawn at step 1, a step-4 box's step-2 children are
+             not up at all, because nothing is drawn at step 2; so the search
+             found nothing, the band defaulted to the coarse answer, the box
+             merged, and every fine chunk beneath it was hidden as "coarser".
+
+             A step-16 box has four thousand step-1 descendants. That is why
+             Geoff saw whole layers go at once: "every few seconds all the cubes
+             around me shift and change, as if they are being recreated
+             differently" and "perhaps a new layer of cubes is appearing or
+             disappearing". DFlow caught it exactly: shown fell from 284 to 93
+             in one moment while the "coarser" count jumped by 280.
+
+             So the answer comes from `finerDrawn`, built once a frame by
+             walking UP from everything on screen. Walking down would mean
+             thousands of lookups per box. */
+          if (finerDrawn.has(`${step}:${ox},${oy},${oz}`)) return false;
           return undefined;                                  /* nothing here yet */
         },
       });
@@ -583,6 +604,20 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
           if (!up) continue;
           const k = `${up.step}:${up.ox},${up.oy},${up.oz}`;
           if (live.has(k) || asked.has(k)) continue;
+          /* ---- ONLY WHERE THERE IS NOTHING TO STAND IN FOR ----
+             A stand-in is a coarse box put up while the fine ones for its
+             ground are still building. If some of that ground is ALREADY being
+             drawn finely, the stand-in is not filling a gap, it is laying a
+             second, blurrier surface over rock that is already there, and the
+             two disagree about where the cubes are. It goes up and comes down
+             again a moment later when the last fine chunk arrives.
+             That is a new layer of cubes appearing and disappearing, which is
+             what Geoff described, and it happens whenever more than four
+             chunks are queued, which while flying is most of the time.
+             Geoff: "every few seconds all the cubes around me shift and change
+             ... perhaps a new layer of cubes is appearing or disappearing.
+             Sometimes it happens 2-3 times very quickly, in a single second." */
+          if (finerDrawn.has(k)) continue;
           asked.add(k);
           standIns.push({ ...up, distance: c.distance });
         }
@@ -599,7 +634,9 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
          have looked at it, and that pass has already run this frame. */
       for (const c of standIns) {
         const held = live.get(keyOf(c));
-        if (held && !overlapped(c)) held.mesh.visible = true;
+        /* And not if something finer has arrived for that ground in the
+           meantime: the gap it was built for has closed. */
+        if (held && !overlapped(c) && !finerDrawn.has(keyOf(c))) held.mesh.visible = true;
       }
       /* And anything whose replacements were ALL completed by this frame's
          building can stand down now rather than next frame, because a frame of
