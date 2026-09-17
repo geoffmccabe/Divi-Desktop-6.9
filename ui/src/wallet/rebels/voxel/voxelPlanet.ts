@@ -147,6 +147,27 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   cubes.scale.setScalar(CUBE);
   group.add(cubes);
 
+  /* ---- NOTHING HERE EVER MOVES ----
+     A trace of the web build, navigating inside Spikeworld, spent 876ms in
+     updateMatrixWorld and another 201ms in multiplyMatrices: nearly a tenth of
+     all the CPU the page used, recomputing where things are. Three.js walks the
+     whole scene every frame and rebuilds each object's world matrix, and it has
+     to, because in general things move.
+
+     Not these. A chunk's vertices carry their own place in the planet, so every
+     chunk mesh sits at the origin with an identity matrix that will never
+     change again; the group holding them is scaled once and put where the
+     planet is, and the planet does not go anywhere either. So the matrices are
+     worked out once, here, and three.js is told to stop asking. The camera
+     still moves, which is what actually changes the picture.
+
+     `matrixWorldNeedsUpdate` is set once after the parents are in place; the
+     chunk meshes do the same as they are built. */
+  group.updateMatrix();
+  cubes.updateMatrix();
+  group.matrixAutoUpdate = false;
+  cubes.matrixAutoUpdate = false;
+
   /* ---- NO LIGHTS. THE SHADING IS IN THE MESH ----
      Geoff: the things that did draw were "all identical color with no shading
      at all so they have no 3D appearance". Quite right, and the first answer
@@ -248,6 +269,10 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
        off screen whenever the middle of the planet is. The node towers taught
        this same lesson on the globe. */
     rods.frustumCulled = false;
+    /* The rods are placed by their instance matrices and the mesh itself never
+       moves, so it does not need asking about either. */
+    rods.matrixAutoUpdate = false;
+    rods.updateMatrix();
   }
   cubes.add(rods);
 
@@ -273,6 +298,8 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
       ...(grid ? { map: grid } : {}),
     });
     const mesh = new THREE.Mesh(geo, mat);
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
     cubes.add(mesh);
     return { mesh, geo, mat };
   })();
@@ -289,7 +316,9 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
       /* An EMPTY chunk is still worth remembering, and worth remembering as
          costing nothing: a great many of them are, and charging them the
          average is what used to eat the allowance. */
-      live.set(keyOf(c), { mesh: new THREE.Mesh(), ref: c, triangles: 0 });
+      const blank = new THREE.Mesh();
+      blank.matrixAutoUpdate = false;
+      live.set(keyOf(c), { mesh: blank, ref: c, triangles: 0 });
       return;
     }
     const geo = new THREE.BufferGeometry();
@@ -300,6 +329,10 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     geo.setIndex(new THREE.BufferAttribute(m.indices, 1));
     geo.computeBoundingSphere();
     const mesh = new THREE.Mesh(geo, material);
+    /* Its place is in its vertices, so its matrix is the identity for ever.
+       See the note where the groups are made. */
+    mesh.matrixAutoUpdate = false;
+    mesh.updateMatrix();
     cubes.add(mesh);
     live.set(keyOf(c), { mesh, ref: c, triangles: m.indices.length / 3 });
   }
