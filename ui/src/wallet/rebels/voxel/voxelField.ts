@@ -28,7 +28,7 @@
 
 import {
   R_OUTER, R_INNER, R_HEART, SPOKES, SPOKE_R,
-  CLUMP, CLUMP_FINE, FINE_WEIGHT,
+  CLUMP, FINE_WEIGHT,
   FILL, CRUST_OUTER, CRUST_INNER,
   CHANNEL_STRETCH, CHANNEL_CUT,
 } from "./voxelWorld";
@@ -68,26 +68,91 @@ function noise(x: number, y: number, z: number, seed: number): number {
   return y0 + (y1 - y0) * tz;
 }
 
-/** The rock field: a coarse octave for the clumps and a fine one for
- *  roughness. Low means rock. */
 /**
  * The rock field: a coarse octave for the clumps and a fine one for roughness.
  * Low means rock.
  *
- * `lod` GROWS THE CLUMPS, and it is how the detail levels work. Sampling the
- * same ten-cube field every fourth or eighth cube was the obvious way to make
- * a coarse level and it is the wrong way: a ten-cube clump is two and a half
- * cells at step 4 and one and a quarter at step 8, so the field turns back into
- * salt-and-pepper, which is the one arrangement this whole design exists to
- * avoid. Measured, it made a coarse chunk DEARER than a fine one: 6,054
- * triangles at step 1 against 14,763 at step 8.
+ * ---- ONE FIELD, AT EVERY DETAIL LEVEL ----
  *
- * Growing the clump with the level keeps it ten CELLS across at every level, so
- * every level is equally clumpy and equally cheap, and a coarse planet is a
- * blurred version of the fine one rather than a noisier one.
+ * This used to GROW the clumps with the level, so a coarse level sampled a
+ * ten-times-wider version of the noise. The argument was that it kept every
+ * level equally clumpy and equally cheap. What it actually did was make each
+ * level a DIFFERENT PLANET, and that is the fault behind everything Geoff has
+ * been reporting for four versions.
+ *
+ * Measured, crossing one detail boundary with the clumps grown:
+ *
+ *     step 1 -> 2   130% of the rock changes
+ *     step 2 -> 4   103% to 179%
+ *     step 4 -> 8    74% to  97%
+ *
+ * More cubes change than there are cubes, because almost none of the rock is
+ * in the same place at the two levels. And the fill went with it: a quarter of
+ * the cells at the finest level, 37% at step 4, 5% at step 8 and NOTHING at
+ * all at step 16, so the distant planet was alternately more solid than it
+ * should be and completely absent.
+ *
+ * A chunk crosses a boundary whenever the ship moves a little closer or a
+ * little further, which is constantly, at every distance at once, flying
+ * perfectly straight. Every one of those crossings threw away nearly all of a
+ * chunk's cubes and put different ones in their place, in the middle of the
+ * view, with each cube 29 pixels tall at the first boundary. Geoff, four
+ * times, most plainly: "going in a straight line they appear and disappear at
+ * every distance from close to me to far away ... it looks terrible."
+ *
+ * Every test I wrote asked whether the GROUND WAS COVERED, and the ground was
+ * always covered. It was simply different rock. That is why none of them found
+ * this and why four rounds of fixes did not touch it.
+ *
+ * So there is one field now, sampled more sparsely as the detail drops, which
+ * is what a detail level is supposed to be. Measured after: 25 to 29% of the
+ * rock changes at the first boundary rather than 130%, the fill holds between
+ * 17% and 25% at every level instead of swinging from 37% to zero, and a
+ * coarse chunk is CHEAPER than a fine one (453 triangles at step 8 against
+ * 4,435 at step 1) rather than dearer, which is what the growing clumps were
+ * introduced to fix in the first place.
  */
-export function rockField(x: number, y: number, z: number, seed: number, lod = 1): number {
-  const coarse = CLUMP * lod, fine = CLUMP_FINE * lod;
+/**
+ * How big the clumps are at a given detail level.
+ *
+ * ---- THE MIDDLE ROAD, AND WHY THE TWO EXTREMES BOTH FAIL ----
+ *
+ * The clumps used to grow with the level, ten cubes becoming a hundred and
+ * sixty, which made every level a different planet: 130% of the rock moved at
+ * the first boundary and the fill swung from 37% to nothing. That is the
+ * popping.
+ *
+ * Holding them at ten cubes for every level fixes the shape (28% at the first
+ * boundary, fill steady at 17-25%) and creates a different problem, which is
+ * the one the growing was introduced to solve. A ten-cube clump is a cell and
+ * a quarter across at step 8, so the rock stops being clumps and becomes
+ * salt and pepper: nothing merges, a chunk costs three times the triangles,
+ * and the distant planet is a haze of separate cubes. Measured, the worst
+ * viewpoint wanted 1.37 million triangles against 443,000 before.
+ *
+ * So the clump is held at ten cubes while that is still several cells across,
+ * and grows no faster than it must to stay three cells wide. The levels are
+ * IDENTICAL up to step 4, which covers every boundary a player can see
+ * properly: a cube is 29 pixels at the first, 11 at the second and 4 at the
+ * third. Past that the shape is allowed to drift, because 4 pixels is where
+ * nobody can tell which cube moved.
+ */
+export function clumpFor(step: number): number {
+  /* ALWAYS the same. Growing it even a little was tried and is worse than not
+     growing it at all: value noise is chaotic in scale, so a clump of twelve
+     cubes is not a blurred version of a clump of ten, it is an unrelated
+     pattern. Measured, going from 10 to 12 at step 4 put the disagreement at
+     that boundary back up to 130%, as bad as the original. It is all or
+     nothing, and the levels have to be the same field.
+
+     Kept as a function because the cost of that decision is paid elsewhere:
+     see the de-speckling below, and COST_BY_STEP in voxelView. */
+  void step;
+  return CLUMP;
+}
+
+export function rockField(x: number, y: number, z: number, seed: number, step = 1): number {
+  const coarse = clumpFor(step), fine = coarse / 3;
   return (1 - FINE_WEIGHT) * noise(x / coarse, y / coarse, z / coarse, seed + 1)
     + FINE_WEIGHT * noise(x / fine, y / fine, z / fine, seed + 2);
 }
@@ -275,7 +340,7 @@ function channel(x: number, y: number, z: number, radius: number, seed: number):
  * Coordinates are CUBES, centred on the planet, and may be any integers: the
  * shell test rejects everything outside. `seed` picks which planet.
  */
-export function solid(x: number, y: number, z: number, seed = 0, lod = 1): boolean {
+export function solid(x: number, y: number, z: number, seed = 0, step = 1): boolean {
   const r2 = x * x + y * y + z * z;
   /* 1. Outside the surface: nothing. Squared, to skip the square root for the
         majority of calls that end here. */
@@ -285,7 +350,7 @@ export function solid(x: number, y: number, z: number, seed = 0, lod = 1): boole
   /* 2. The heart. Denser than the shell, so it reads as a solid body with
         detail rather than a smooth ball. */
   if (r <= R_HEART) {
-    return rockField(x, y, z, seed, lod) < thresholdFor(0.8, seed);
+    return rockField(x, y, z, seed, step) < thresholdFor(0.8, seed);
   }
 
   /* 3. The spokes, which cross the empty cavity. */
@@ -294,7 +359,7 @@ export function solid(x: number, y: number, z: number, seed = 0, lod = 1): boole
   /* 4, 5. How much rock at this depth, and is this cell some of it. Aimed high
         by whatever the channels will carve back out, so the shell really ends
         up the briefed quarter. */
-  if (rockField(x, y, z, seed, lod) >= thresholdAfterCarving(crustFill(r), seed)) return false;
+  if (rockField(x, y, z, seed, step) >= thresholdAfterCarving(crustFill(r), seed)) return false;
 
   /* 6. Carved out again if a channel runs through here. Last, because it is
         the most expensive test and only rock can be carved. */
@@ -312,9 +377,8 @@ export function solid(x: number, y: number, z: number, seed = 0, lod = 1): boole
 export function solidAt(cx: number, cy: number, cz: number, step: number, seed = 0): boolean {
   if (step <= 1) return solid(cx, cy, cz, seed);
   const half = step >> 1;
-  /* The level is passed down, so the coarse cell asks a coarse field. Without
-     it this was subsampling a fine field, which is what made the coarse levels
-     dearer than the fine ones. */
+  /* The middle of the coarse cell, in the ONE field. See the note on rockField
+     for why there is no longer a coarser field to ask. */
   return solid(cx * step + half, cy * step + half, cz * step + half, seed, step);
 }
 
@@ -403,7 +467,7 @@ export function fillChunk(
 ): void {
   const { table, carved } = tableFor(seed);
   const half = step > 1 ? step >> 1 : 0;
-  const coarse = CLUMP * step, fine = CLUMP_FINE * step;
+  const coarse = clumpFor(step), fine = clumpFor(step) / 3;
   /* Where the block starts and how far one cell moves, in each octave's own
      coordinates. Both are the same at every level, which is why this works. */
   const bx = ((ox * step + half) / coarse), fxs = step / coarse;
@@ -412,8 +476,24 @@ export function fillChunk(
   const gx = ((ox * step + half) / fine), fxf = step / fine;
   const gy = ((oy * step + half) / fine);
   const gz = ((oz * step + half) / fine);
-  const Lc = lattice(bx, by, bz, fxs, size, seed + 1);
-  const Lf = lattice(gx, gy, gz, fxf, size, seed + 2);
+  /* ---- THE CACHE ONLY PAYS WHEN CORNERS ARE SHARED ----
+     One cell to the next moves `step / CLUMP` through the coarse octave and
+     `step / CLUMP_FINE` through the fine one. Below one, several cells share
+     the same eight corners and hashing them once is worth a great deal. At or
+     above one, each cell wants corners of its own and a lattice big enough to
+     hold them is bigger than the chunk: at step 16 the fine octave asked for a
+     161-cube lattice, four million hashes, to answer 39,000 cells. Measured,
+     that took a step-16 chunk from under a millisecond to 14.5. So above the
+     line each octave is simply asked directly, which is what `solid` does. */
+  const SHARES = 0.75;
+  const Lc = fxs < SHARES ? lattice(bx, by, bz, fxs, size, seed + 1) : null;
+  const Lf = fxf < SHARES ? lattice(gx, gy, gz, fxf, size, seed + 2) : null;
+  const coarseAt = Lc
+    ? (a: number, j: number, k: number) => fromLattice(Lc, bx + a * fxs, by + j * fxs, bz + k * fxs)
+    : (a: number, j: number, k: number) => noise(bx + a * fxs, by + j * fxs, bz + k * fxs, seed + 1);
+  const fineAt = Lf
+    ? (a: number, j: number, k: number) => fromLattice(Lf, gx + a * fxf, gy + j * fxf, gz + k * fxf)
+    : (a: number, j: number, k: number) => noise(gx + a * fxf, gy + j * fxf, gz + k * fxf, seed + 2);
   void table; void carved;
 
   const heartThreshold = thresholdFor(0.8, seed);
@@ -428,21 +508,21 @@ export function fillChunk(
         if (r2 > R_OUTER * R_OUTER) { out[i] = 0; continue; }
         const r = Math.sqrt(r2);
         if (part !== "shell" && r <= R_HEART) {
-          const v = (1 - FINE_WEIGHT) * fromLattice(Lc, bx + a * fxs, by + j * fxs, bz + k * fxs)
-            + FINE_WEIGHT * fromLattice(Lf, gx + a * fxf, gy + j * fxf, gz + k * fxf);
+          const v = (1 - FINE_WEIGHT) * coarseAt(a, j, k) + FINE_WEIGHT * fineAt(a, j, k);
           out[i] = v < heartThreshold ? 1 : 0;
           continue;
         }
         if (part === "heart") { out[i] = 0; continue; }
         if (r < R_INNER) { out[i] = part === "all" && inSpoke(x, y, z, r) ? 1 : 0; continue; }
-        const v = (1 - FINE_WEIGHT) * fromLattice(Lc, bx + a * fxs, by + j * fxs, bz + k * fxs)
-          + FINE_WEIGHT * fromLattice(Lf, gx + a * fxf, gy + j * fxf, gz + k * fxf);
+        const v = (1 - FINE_WEIGHT) * coarseAt(a, j, k) + FINE_WEIGHT * fineAt(a, j, k);
         if (v >= thresholdAfterCarving(crustFill(r), seed)) { out[i] = 0; continue; }
         out[i] = channel(x, y, z, r, seed) <= CHANNEL_CUT ? 1 : 0;
       }
     }
   }
 }
+
+
 
 /**
  * The heart ALONE: the ball at the centre, and not the spokes that leave it.

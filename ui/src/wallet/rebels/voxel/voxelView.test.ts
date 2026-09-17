@@ -22,6 +22,7 @@ import {
   TRIANGLE_BUDGET, DUST_NEAR, DUST_FAR, DUST_FAR_OPEN, RING_CUBES, COST_BY_STEP,
 } from "./voxelView";
 import { meshChunk, triangles } from "./voxelMesh";
+import { solidShellAt } from "./voxelField";
 
 const out: string[] = [];
 let failures = 0;
@@ -156,11 +157,22 @@ for (const [name, at] of places) {
        aimed.triangles < blind.triangles * 0.78,
        `${aimed.triangles} looking one way against ${blind.triangles} looking every way`);
   }
-  /* And every level is cheap enough for that to be possible at all. Measured
-     at the 90th percentile over a hundred and twenty chunks round the shell. */
-  ok("no level costs more than about five thousand triangles a chunk",
-     LOD_STEPS.every((st) => COST_BY_STEP[st] <= 5200),
-     LOD_STEPS.map((st) => `${st}:${COST_BY_STEP[st]}`).join(" "));
+  /* ---- A COARSE CHUNK IS DEARER, AND THAT IS THE BARGAIN ----
+     This used to insist every level cost about the same, which it did while
+     the levels were different noise fields: a coarse one merged into a few big
+     rectangles. It was also why crossing between them replaced 74% to 179% of
+     a chunk's cubes with different ones, which is the popping Geoff reported
+     four versions running.
+
+     The levels are one field now, so a coarse level samples ten-cube clumps
+     every four, eight or sixteen cubes and much less of it merges. The cost
+     per chunk therefore RISES with the level, and the allowance was raised to
+     carry it. The test that matters is no longer "is every level cheap" but
+     "does the allowance cover what the worst viewpoint asks for", which is
+     measured further down. */
+  ok("the allowance covers the dearest level several times over",
+     TRIANGLE_BUDGET > Math.max(...LOD_STEPS.map((st) => COST_BY_STEP[st])) * 20,
+     `dearest ${Math.max(...LOD_STEPS.map((st) => COST_BY_STEP[st]))} against ${TRIANGLE_BUDGET}`);
   ok("and the planet is never filled in to get there",
      !/solidSkinAt|skinDepth/.test(
        readFileSync(`${process.cwd()}/src/wallet/rebels/voxel/voxelMesh.ts`, "utf8"),
@@ -234,18 +246,34 @@ for (const [name, at] of [places[0], places[3]]) {
      `${naked.triangles} triangles wanted against an allowance of ${TRIANGLE_BUDGET}`);
   /* ---- WHERE THE SAVING REALLY COMES FROM ----
      Not from filling the planet in, which made it look solid from outside and
-     vanish from inside. From growing the clumps with the level, so a coarse
-     chunk costs what a fine one does and covers eight times the ground. */
-  ok("every level costs about the same per chunk",
-     LOD_STEPS.every((st) => Math.abs(COST_BY_STEP[st] - COST_BY_STEP[1]) < COST_BY_STEP[1] * 0.4),
-     LOD_STEPS.map((st) => `${st}:${COST_BY_STEP[st]}`).join(" "));
-  /* And it is measurable: the same ground, coarse against fine. A coarse chunk
-     covers eight times the cubes for no more triangles. */
-  const fine = triangles(meshChunk(Math.round(R_OUTER - 60), 0, 0, CHUNK, 1));
-  const coarse = triangles(meshChunk(Math.round((R_OUTER - 60) / 8), 0, 0, CHUNK, 8));
-  ok("a coarse chunk covers eight times the ground for no more triangles",
-     coarse < fine * 1.6,
-     `${coarse} triangles over ${CHUNK * 8} cubes against ${fine} over ${CHUNK}`);
+     vanish from inside, and no longer from growing the clumps with the level
+     either: that made every level a different planet. It comes from the dust,
+     the horizon, the view cone and the allowance, all of which are measured
+     above.
+
+     What the levels must now do is AGREE, because a level that disagrees with
+     the next is rock that changes as the ship moves, which is what a player
+     sees as blocks appearing and disappearing. Measured on the same ground at
+     two neighbouring levels. */
+  {
+    const c0 = Math.round(R_OUTER - 70);
+    let same = 0, onlyFine = 0, onlyCoarse = 0;
+    for (let x = c0; x < c0 + 40; x++) {
+      for (let y = 0; y < 40; y++) {
+        for (let z = 0; z < 40; z++) {
+          const f = solidShellAt(x, y, z, 1);
+          const c = solidShellAt(Math.floor(x / 2), Math.floor(y / 2), Math.floor(z / 2), 2);
+          if (f && c) same++; else if (f) onlyFine++; else if (c) onlyCoarse++;
+        }
+      }
+    }
+    const solid = Math.max(1, same + onlyFine);
+    const moved = 100 * (onlyFine + onlyCoarse) / solid;
+    ok("the finest two levels mostly agree about where the rock is",
+       moved < 45,
+       `${moved.toFixed(0)}% of the rock moves across that boundary`
+       + ` (it was 130% when the levels were different fields)`);
+  }
 }
 
 /* ---- the world it has to fit in ---- */

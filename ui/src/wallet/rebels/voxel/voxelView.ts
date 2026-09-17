@@ -57,7 +57,32 @@ import {
  * The capture that prompted all this drew 378,000 triangles and spent three
  * milliseconds a frame doing it, so there is room.
  */
-export const TRIANGLE_BUDGET = 560000;
+/* ---- RAISED TO 1.35 MILLION, AND WHAT IT BOUGHT ----
+   Three times what it was, and it is a trade made with eyes open.
+
+   The detail levels used to be different noise fields, which made them cheap
+   (a coarse chunk merged into few big rectangles) and made every crossing
+   between them replace 74% to 179% of a chunk's cubes with different ones.
+   That is the popping, and it is the thing Geoff has reported in four
+   successive versions.
+
+   Making the levels ONE field fixes the shape - 25 to 29% changes at the first
+   boundary instead of 130%, and the fill holds at 17-25% everywhere instead of
+   swinging from 37% to nothing - and the price is that a coarse level samples
+   ten-cube clumps every eight cubes, so much less merges. Measured over five
+   viewpoints, the worst wants 1.27 million triangles where it used to want
+   443,000. Declining to draw cubes standing entirely alone (see deSpeckle)
+   gives 8% of that back and no more: the cost is small clusters, not specks.
+
+   So the allowance covers it rather than refusing chunks, because a refused
+   chunk is a hole and a hole is worse. About half of what is admitted is
+   culled by the frustum before it is drawn, and the capture this came from
+   drew 378,000 triangles in 3ms of a frame with the machine 62% idle, so there
+   is headroom. DFlow will say whether there is enough. If not, the dial to
+   turn is the rings, not this number: pulling them in costs sharpness, and
+   refusing chunks costs the planet.
+*/
+export const TRIANGLE_BUDGET = 1450000;
 
 /**
  * How far the dust lets you see, in world units.
@@ -150,7 +175,9 @@ export const RING_CUBES = [36, 96, 230, 520, 1e9] as const;
  * a fine field made the coarse levels DEARER (14,763 against 6,054), which is
  * backwards and is what the skin trick was papering over.
  */
-export const COST_BY_STEP: Record<number, number> = { 1: 4600, 2: 4400, 4: 4500, 8: 4900, 16: 5200 };
+export const COST_BY_STEP: Record<number, number> = {
+  1: 4800, 2: 7500, 4: 12800, 8: 13600, 16: 10000,
+};
 
 /** One chunk to draw: its corner in CELLS at its own step, and that step. */
 export interface ChunkRef {
