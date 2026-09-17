@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { platform } from "../platform/current";
+import { dflow } from "../rebelsDflow";
 
 /** Is the page full screen right now? Asked of the document, not remembered. */
 function isFull(): boolean {
@@ -62,16 +63,38 @@ export function useFullScreen(): { fullScreen: boolean; toggleFullScreen: () => 
          WKWebView takes it and ignores it, which is why the button appeared to
          be dead. The app has a WINDOW, and its door knows how to make a window
          full screen. The browser API is the right answer on the web and the
-         fallback everywhere else. */
+         fallback everywhere else.
+
+         ---- AND IT SAYS WHAT HAPPENED ----
+         Three attempts at this have now been reported as "the full screen
+         button doesn't work", and every one of the reasons it could fail is
+         invisible from here: a door that is not there, a window call the app
+         has no permission for, a webview that takes the request and ignores
+         it, or a window that really did go full screen while the page inside
+         it stayed the size it was. They look identical to a player and they
+         need completely different fixes, so each step is written into DFlow.
+         One press and the next report says which it was. */
+      const size = () => `${window.innerWidth}x${window.innerHeight}`;
+      const before = size();
       const door = platform().screen;
+      dflow.note(`full screen: asked for; door ${door ? "present" : "MISSING"}; page ${before}`);
       try {
         if (door) {
           const now = await door.isFull();
           await door.setFull(!now);
-          setFullScreen(await door.isFull());
-          return;
+          const after = await door.isFull();
+          setFullScreen(after);
+          dflow.note(`full screen: the app's window went ${now} -> ${after}; page ${before} -> ${size()}`);
+          /* The window obeying and the PAGE not following are different
+             faults. If the window changed and the page did not, the layout is
+             the problem, not the door, and nothing is gained by asking the
+             webview as well. */
+          if (after !== now) return;
+          dflow.note("full screen: the window did not change, trying the browser's own");
         }
-      } catch { /* fall through to the browser's own */ }
+      } catch (err) {
+        dflow.note(`full screen: the app's window REFUSED it: ${err instanceof Error ? err.message : String(err)}`);
+      }
       try {
         /* The whole page, not the canvas: the cockpit's gauges, cards and
            panels are ordinary elements over it, and asking for the canvas alone
@@ -79,9 +102,9 @@ export function useFullScreen(): { fullScreen: boolean; toggleFullScreen: () => 
         if (isFull()) await document.exitFullscreen?.();
         else await document.documentElement.requestFullscreen?.();
         setFullScreen(isFull());
-      } catch {
-        /* Refused, or unsupported. The icon stays as it was, because nothing
-           changed. */
+        dflow.note(`full screen: the browser says ${isFull()}; page ${before} -> ${size()}`);
+      } catch (err) {
+        dflow.note(`full screen: the browser REFUSED it too: ${err instanceof Error ? err.message : String(err)}`);
       }
     })();
   }, []);

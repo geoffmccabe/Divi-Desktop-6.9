@@ -15,7 +15,7 @@
 // it run in a Web Worker and be tested in node. Whoever draws it wraps the
 // arrays in a BufferGeometry; that is the renderer's business, not this file's.
 
-import { solidAt, solidShellAt, solidHeartAt } from "./voxelField";
+import { fillChunk } from "./voxelField";
 
 /** A finished chunk: what a BufferGeometry needs, and nothing else. */
 export interface ChunkMesh {
@@ -89,30 +89,25 @@ export function meshChunk(
    */
   part: "all" | "shell" | "heart" = "all",
 ): ChunkMesh {
-  const field = part === "shell"
-    ? (i: number, j: number, k: number) => solidShellAt(i, j, k, step, seed)
-    : part === "heart"
-      ? (i: number, j: number, k: number) => solidHeartAt(i, j, k, step, seed)
-      : (i: number, j: number, k: number) => solidAt(i, j, k, step, seed);
-  const n3 = size * size * size;
-  const at = new Uint8Array(n3);
-  const idx = (i: number, j: number, k: number) => (k * size + j) * size + i;
+  /* ---- THE WHOLE BLOCK AT ONCE, AND ONE CELL WIDER ----
+     Asked for in one call rather than cell by cell, which is where nearly all
+     of the time used to go (see fillChunk). One cell wider each way because a
+     face is only drawn when there is air on the other side, and the cells on
+     the other side of the chunk's own edges are its neighbours': a chunk that
+     guessed they were empty would draw a wall at every chunk boundary. Those
+     used to be fetched one at a time through the slow path, six thousand of
+     them a chunk. */
+  const pad = size + 2;
+  const at = new Uint8Array(pad * pad * pad);
+  fillChunk(ox - 1, oy - 1, oz - 1, pad, step, seed, part, at);
+  const get = (i: number, j: number, k: number): number =>
+    at[((k + 1) * pad + (j + 1)) * pad + (i + 1)];
   let cubes = 0;
   for (let k = 0; k < size; k++) {
     for (let j = 0; j < size; j++) {
-      for (let i = 0; i < size; i++) {
-        const s = field(ox + i, oy + j, oz + k) ? 1 : 0;
-        at[idx(i, j, k)] = s;
-        cubes += s;
-      }
+      for (let i = 0; i < size; i++) cubes += get(i, j, k);
     }
   }
-  /* Inside the chunk from the array; outside it from the field. A chunk that
-     guessed its neighbours were empty would draw a wall at every chunk edge. */
-  const get = (i: number, j: number, k: number): number => {
-    if (i >= 0 && j >= 0 && k >= 0 && i < size && j < size && k < size) return at[idx(i, j, k)];
-    return field(ox + i, oy + j, oz + k) ? 1 : 0;
-  };
 
   const pos: number[] = [], nor: number[] = [], uv: number[] = [], ind: number[] = [];
   const col: number[] = [];

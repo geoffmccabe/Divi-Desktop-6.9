@@ -319,6 +319,131 @@ export function solidAt(cx: number, cy: number, cz: number, step: number, seed =
 }
 
 /**
+/* ---- A WHOLE CHUNK AT ONCE, WHICH IS WHERE THE TIME GOES ----
+
+   `solid` is written to answer about ONE cube, because that is what collision
+   asks, and it pays the full price every time: two octaves of value noise, each
+   eight hashes, for every cell. A chunk is 32,768 cells, so building one costs
+   half a million hashes and measured at sixteen milliseconds, three quarters of
+   it in here. At a few milliseconds a frame that is one chunk a frame, and when
+   a lot of new ground arrives at once, which is what crossing into the cavity
+   is, the ground arrives faster than it can be built. Measured over a whole
+   flight: the worst frame had three quarters of the view missing.
+
+   But a chunk's cells sit on a REGULAR LATTICE, and the noise is built from
+   corners on a lattice of its own. Over one chunk the coarse octave spans about
+   three of its cells and the fine one about ten, so the eight corners each cell
+   blends are shared with all its neighbours: 1,456 corner hashes for the chunk
+   instead of half a million, and the rest is arithmetic on numbers already to
+   hand.
+
+   The spacing works out the same at every detail level, which is the part that
+   makes this possible: a coarse level grows the clumps to match, so a chunk is
+   always about three coarse cells across whatever it is standing for.
+
+   IT MUST AGREE WITH `solid` EXACTLY. The room decides collisions with `solid`
+   and the cockpit draws what this says; if they ever disagree a ship flies
+   through a wall it can see. The test walks a chunk cell by cell at every level
+   and compares the two. */
+
+/** Corner hashes for one octave over one chunk, and the blend that reads them. */
+interface Lattice {
+  /** Lattice coordinate of the corner the block starts at. */
+  x0: number; y0: number; z0: number;
+  /** How many corners each way. */
+  nx: number; ny: number; nz: number;
+  at: Float64Array;
+}
+
+function lattice(
+  fx: number, fy: number, fz: number, dx: number, n: number, seed: number,
+): Lattice {
+  const x0 = Math.floor(fx), y0 = Math.floor(fy), z0 = Math.floor(fz);
+  /* Enough corners to reach the far end of the block, plus the one past it
+     that the blend reads. Generous by one: a corner too many costs a hash, a
+     corner too few reads past the end of the array. */
+  const span = Math.floor(dx * (n - 1)) + 3;
+  const at = new Float64Array(span * span * span);
+  let i = 0;
+  for (let k = 0; k < span; k++) {
+    for (let j = 0; j < span; j++) {
+      for (let a = 0; a < span; a++) at[i++] = hash3(x0 + a, y0 + j, z0 + k, seed);
+    }
+  }
+  return { x0, y0, z0, nx: span, ny: span, nz: span, at };
+}
+
+/** The same trilinear blend `noise` does, reading corners already hashed. */
+function fromLattice(L: Lattice, x: number, y: number, z: number): number {
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+  const tx = ease(x - xi), ty = ease(y - yi), tz = ease(z - zi);
+  const a = xi - L.x0, b = yi - L.y0, c = zi - L.z0;
+  const o = (c * L.ny + b) * L.nx + a;
+  const sx = 1, sy = L.nx, sz = L.nx * L.ny;
+  const c000 = L.at[o], c100 = L.at[o + sx];
+  const c010 = L.at[o + sy], c110 = L.at[o + sy + sx];
+  const c001 = L.at[o + sz], c101 = L.at[o + sz + sx];
+  const c011 = L.at[o + sz + sy], c111 = L.at[o + sz + sy + sx];
+  const x00 = c000 + (c100 - c000) * tx, x10 = c010 + (c110 - c010) * tx;
+  const x01 = c001 + (c101 - c001) * tx, x11 = c011 + (c111 - c011) * tx;
+  const y0 = x00 + (x10 - x00) * ty, y1 = x01 + (x11 - x01) * ty;
+  return y0 + (y1 - y0) * tz;
+}
+
+/**
+ * Fill `out` with one cube per cell for a whole block, the quick way.
+ *
+ * `ox, oy, oz` are in CELLS at this step and `size` is the block's edge, the
+ * same as the mesher's. `part` keeps each mesh to its own: see solidShellAt and
+ * solidHeartAt for why that matters.
+ */
+export function fillChunk(
+  ox: number, oy: number, oz: number, size: number, step: number, seed: number,
+  part: "all" | "shell" | "heart", out: Uint8Array,
+): void {
+  const { table, carved } = tableFor(seed);
+  const half = step > 1 ? step >> 1 : 0;
+  const coarse = CLUMP * step, fine = CLUMP_FINE * step;
+  /* Where the block starts and how far one cell moves, in each octave's own
+     coordinates. Both are the same at every level, which is why this works. */
+  const bx = ((ox * step + half) / coarse), fxs = step / coarse;
+  const by = ((oy * step + half) / coarse);
+  const bz = ((oz * step + half) / coarse);
+  const gx = ((ox * step + half) / fine), fxf = step / fine;
+  const gy = ((oy * step + half) / fine);
+  const gz = ((oz * step + half) / fine);
+  const Lc = lattice(bx, by, bz, fxs, size, seed + 1);
+  const Lf = lattice(gx, gy, gz, fxf, size, seed + 2);
+  void table; void carved;
+
+  const heartThreshold = thresholdFor(0.8, seed);
+  let i = 0;
+  for (let k = 0; k < size; k++) {
+    const z = (oz + k) * step + half;
+    for (let j = 0; j < size; j++) {
+      const y = (oy + j) * step + half;
+      for (let a = 0; a < size; a++, i++) {
+        const x = (ox + a) * step + half;
+        const r2 = x * x + y * y + z * z;
+        if (r2 > R_OUTER * R_OUTER) { out[i] = 0; continue; }
+        const r = Math.sqrt(r2);
+        if (part !== "shell" && r <= R_HEART) {
+          const v = (1 - FINE_WEIGHT) * fromLattice(Lc, bx + a * fxs, by + j * fxs, bz + k * fxs)
+            + FINE_WEIGHT * fromLattice(Lf, gx + a * fxf, gy + j * fxf, gz + k * fxf);
+          out[i] = v < heartThreshold ? 1 : 0;
+          continue;
+        }
+        if (part === "heart") { out[i] = 0; continue; }
+        if (r < R_INNER) { out[i] = part === "all" && inSpoke(x, y, z, r) ? 1 : 0; continue; }
+        const v = (1 - FINE_WEIGHT) * fromLattice(Lc, bx + a * fxs, by + j * fxs, bz + k * fxs)
+          + FINE_WEIGHT * fromLattice(Lf, gx + a * fxf, gy + j * fxf, gz + k * fxf);
+        if (v >= thresholdAfterCarving(crustFill(r), seed)) { out[i] = 0; continue; }
+        out[i] = channel(x, y, z, r, seed) <= CHANNEL_CUT ? 1 : 0;
+      }
+    }
+  }
+}
+
 /**
  * The heart ALONE: the ball at the centre, and not the spokes that leave it.
  *

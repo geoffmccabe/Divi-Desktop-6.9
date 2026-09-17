@@ -24,7 +24,8 @@ import {
   WORLD_DIAMETER, toWorld,
 } from "./voxelWorld";
 import {
-  solid, solidAt, solidShellAt, solidHeartAt, crustFill, carvedFraction, spokeDirections, rockField,
+  solid, solidAt, solidShellAt, solidHeartAt, fillChunk, crustFill, carvedFraction,
+  spokeDirections, rockField,
   thresholdFor, resetFieldForTests,
 } from "./voxelField";
 import { meshChunk, triangles } from "./voxelMesh";
@@ -489,6 +490,53 @@ function fillAt(radius: number, samples = 6000): number {
        !/Mesh(Lambert|Phong|Standard|Physical)Material/.test(src),
        (src.match(/Mesh[A-Za-z]*Material/g) ?? []).join(", "));
   }
+}
+
+/* ---- THE QUICK PATH MUST GIVE THE SAME PLANET ----
+   fillChunk answers for a whole block at once by hashing each noise corner once
+   and sharing it between the cells that blend it, which is worth a great deal
+   and is worth nothing if it disagrees with `solid` by a single cube. The room
+   settles collisions with `solid` and the cockpit draws what fillChunk says; a
+   disagreement is a ship flying through a wall it can see. So: cell by cell,
+   at every detail level, in three different places on the planet. */
+{
+  const size = 16;
+  let checked = 0, wrong = 0, firstWrong = "";
+  const spots: Array<[string, number, number, number]> = [
+    ["the outer crust", Math.round(R_OUTER - 70), 0, 0],
+    ["the middle of the shell", Math.round((R_OUTER + R_INNER) / 2), 30, -20],
+    ["across the inner face", Math.round(R_INNER), 20, 10],
+    ["the heart", -8, -8, -8],
+    ["empty space past the surface", Math.round(R_OUTER + 60), 0, 0],
+  ];
+  const out = new Uint8Array(size * size * size);
+  for (const [where, cx, cy, cz] of spots) {
+    for (const step of LOD_STEPS) {
+      for (const part of ["all", "shell", "heart"] as const) {
+        const ox = Math.round(cx / step), oy = Math.round(cy / step), oz = Math.round(cz / step);
+        fillChunk(ox, oy, oz, size, step, 0, part, out);
+        for (let k = 0; k < size; k += 3) {
+          for (let j = 0; j < size; j += 3) {
+            for (let a = 0; a < size; a += 3) {
+              const want = part === "shell" ? solidShellAt(ox + a, oy + j, oz + k, step)
+                : part === "heart" ? solidHeartAt(ox + a, oy + j, oz + k, step)
+                  : solidAt(ox + a, oy + j, oz + k, step);
+              const got = out[(k * size + j) * size + a] === 1;
+              checked++;
+              if (want !== got && !firstWrong) {
+                firstWrong = `${where}, step ${step}, ${part}, cell ${ox + a},${oy + j},${oz + k}:`
+                  + ` the slow way says ${want}, the quick way says ${got}`;
+              }
+              if (want !== got) wrong++;
+            }
+          }
+        }
+      }
+    }
+  }
+  ok("the quick path agrees with the slow one, cube for cube", wrong === 0,
+     `${wrong} of ${checked} disagree. ${firstWrong}`);
+  ok("(and it actually looked at something)", checked > 5000, `${checked} cells`);
 }
 
 /* ---- MODULARITY: nothing from the game gets in here ----

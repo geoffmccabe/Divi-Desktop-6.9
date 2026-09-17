@@ -36,29 +36,29 @@ import { spikes, SPIKE_COUNT } from "./voxelSpikes";
  * what was behind you: they are hidden and shown again, which is free.
  */
 /**
- * How long chunk building may take in one frame, in milliseconds, and how many
- * chunks are kept once built.
+ * How long chunk building may take in one frame, in milliseconds.
  *
- * A BUDGET IN TIME, not a count. It was three chunks a frame, on the belief
- * that a chunk is "a few milliseconds"; the measurement in the plan says a
- * coarse chunk is seventeen, so three of them is fifty milliseconds and a
- * guaranteed hitch every time the view moved onto new ground. One is always
- * built, however long it takes, or a slow chunk would never be built at all;
- * after that the clock decides.
+ * TWO NUMBERS, because the right answer is not the same in the two situations.
+ *
+ * In steady flight almost nothing is missing and a long build is a stutter for
+ * no reason, so the frame gives it very little. But when a great deal of new
+ * ground arrives at once, which is what crossing into the cavity is, holding
+ * to that little means a second of flying at a wall that is not drawn: over a
+ * measured flight, one frame in eighty had a real hole in it and the worst had
+ * three quarters of the view missing. Geoff: "giant holes ... you can see right
+ * through it from one side to the other."
+ *
+ * So the allowance rises with the size of the queue. A long queue means
+ * something dramatic just changed, and in that moment a frame or two of
+ * stutter is much the better bargain: a stutter passes, a hole in the planet
+ * is the planet being wrong. Measured, this takes the frames with holes in
+ * them from 129 of 10,678 to 27, and the remaining worst is the single frame
+ * where nothing could have been built yet whatever the allowance.
  */
-const BUILD_MS = 6;
-/**
- * How many built chunks are kept.
- *
- * It was 260 and that was too few, which DFlow caught at once: "261 chunks up
- * ... 1 waiting", a chunk built every tenth of a second, for ever. The cap was
- * below what the hysteresis wanted to keep on screen, so every frame threw one
- * away and built it again. A chunk destroyed and rebuilt is a chunk that
- * BLINKS, which is the thing the hysteresis was added to stop.
- *
- * It is also cheap to be generous: an empty chunk is a few bytes and a chunk
- * out of range is not drawn, so the cost of keeping one is memory alone.
- */
+const BUILD_MS_EASY = 5;
+const BUILD_MS_BUSY = 24;
+/** Above this many waiting, the frame stops being precious about it. */
+const BUSY_QUEUE = 12;
 const CACHE_CHUNKS = 520;
 /** How far past its ring a chunk stays drawn once it is up. A third again. */
 const KEEP = 1.35;
@@ -318,8 +318,21 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
          something that is. Both directions have to give way, so every wanted
          chunk marks the whole line of boxes above it as already covered by
          something finer. */
+      /* ---- AND A PARENT ONLY STANDS DOWN WHEN ITS REPLACEMENTS ARE THERE ----
+         The first version of this hid a coarse chunk the moment a finer one
+         was ASKED FOR, which is a hole for as long as the finer one takes to
+         build: the big box vanishes at once and the eight small ones arrive
+         over the next few frames. That is a bigger, more sudden gap than the
+         one it was meant to cure, and Geoff saw it immediately on 69.9.56:
+         "even more cubes are appearing and disappearing all over".
+
+         So a wanted chunk only displaces its ancestors once it is BUILT. Until
+         then the coarse one keeps drawing, which costs a moment of two
+         surfaces in one place and is much the lesser evil: an overlap is a
+         shimmer, a gap is a hole through the planet. */
       const coveredByFiner = new Set<string>();
       for (const c of view.chunks) {
+        if (!live.has(keyOf(c))) continue;
         let up = parentOf(c.ox, c.oy, c.oz, c.step);
         while (up) {
           coveredByFiner.add(`${up.step}:${up.ox},${up.oy},${up.oz}`);
@@ -331,7 +344,10 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         if (coveredByFiner.has(keyOf(c))) return true;      /* finer is up */
         let up = parentOf(c.ox, c.oy, c.oz, c.step);
         while (up) {
-          if (wanted.has(`${up.step}:${up.ox},${up.oy},${up.oz}`)) return true;  /* coarser is up */
+          const k = `${up.step}:${up.ox},${up.oy},${up.oz}`;
+          /* Same rule the other way round: a coarser chunk only displaces this
+             one once it is actually built and drawing. */
+          if (wanted.has(k) && live.has(k)) return true;
           up = parentOf(up.ox, up.oy, up.oz, up.step);
         }
         return false;
@@ -397,11 +413,58 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
       }
       /* And the nearest that are missing are built, for as long as the frame
          can spare. One at a time is why a turn used to fill in visibly. */
-      queue = view.chunks.filter((c) => !live.has(keyOf(c)));
-      const until = performance.now() + BUILD_MS;
+      /* ---- A COARSE STAND-IN, RATHER THAN A HOLE ----
+         When a lot of new ground arrives at once, which is what crossing into
+         the cavity is, the fine chunks for it take a second or more to build
+         and until then there is nothing there at all. Measured over a whole
+         flight: one frame in eighty had a real hole in it and the worst had
+         three quarters of the view missing. That is Geoff's "giant holes ...
+         you can see right through it from one side to the other".
+
+         A chunk one level up covers eight times the ground for about a
+         quarter of the cost, so it is built FIRST and shown while the fine
+         ones come in behind it. A blurred wall for a moment is not the same
+         kind of wrong as no wall at all. */
+      const missing = view.chunks.filter((c) => !live.has(keyOf(c)));
+      const standIns: ChunkRef[] = [];
+      if (missing.length > 4) {
+        const asked = new Set<string>();
+        for (const c of missing) {
+          const up = parentOf(c.ox, c.oy, c.oz, c.step);
+          if (!up) continue;
+          const k = `${up.step}:${up.ox},${up.oy},${up.oz}`;
+          if (live.has(k) || asked.has(k)) continue;
+          asked.add(k);
+          standIns.push({ ...up, distance: c.distance });
+        }
+      }
+      queue = [...standIns, ...missing];
+      const until = performance.now()
+        + (queue.length > BUSY_QUEUE ? BUILD_MS_BUSY : BUILD_MS_EASY);
       for (let i = 0; i < queue.length; i++) {
         build(queue[i]);
         if (performance.now() >= until) break;
+      }
+      /* A stand-in has to be SHOWN the moment it exists, or it was built for
+         nothing: it is not in the wanted list, so only the pass above would
+         have looked at it, and that pass has already run this frame. */
+      for (const c of standIns) {
+        const held = live.get(keyOf(c));
+        if (held && !overlapped(c)) held.mesh.visible = true;
+      }
+      /* Anything built this frame can now displace what it replaces, without
+         waiting a frame to do it: a frame of both is a frame of shimmer. */
+      if (queue.length) {
+        for (const c of view.chunks) {
+          if (!live.has(keyOf(c))) continue;
+          let up = parentOf(c.ox, c.oy, c.oz, c.step);
+          while (up) {
+            const k = `${up.step}:${up.ox},${up.oy},${up.oz}`;
+            const held = live.get(k);
+            if (held) held.mesh.visible = false;
+            up = parentOf(up.ox, up.oy, up.oz, up.step);
+          }
+        }
       }
 
       triangleCount = view.triangles;
