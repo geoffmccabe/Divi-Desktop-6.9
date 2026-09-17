@@ -11,7 +11,7 @@ import * as THREE from "three";
 import type { GlobeFlight } from "../GlobeMap";
 import {
   createFlight, stepFlight, MAX_AMMO, MAX_SHIELD, MAX_TORPEDOES, MAX_GUARDS, MAX_VIEW,
-  shieldMaxFor, isFull,
+  shieldMaxFor, isFull, BOOST, SUPER_BOOST_MULT,
   GUARD_ABSORB, GUARD_SECONDS,
   type Flight, type Stick,
 } from "./orbitFlight";
@@ -29,6 +29,7 @@ import type { Pilot } from "./platform/platform";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import { R, MAX_ALT, EARTH_D } from "./orbitWorld";
 import { makeVoxelPlanet, arrivalOffset, type VoxelPlanet } from "./voxel/voxelPlanet";
+import { hitRock, bounceVelocity, bounceDamage } from "./voxel/voxelCollide";
 import {
   DISTANCE_IN_EARTHS, WORLD_RADIUS, SKY_EDGE, CUBE, SPIKEWORLD_NEAR, SPIKEWORLD_FAR,
 } from "./voxel/voxelWorld";
@@ -1643,6 +1644,83 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
    * Timed and counted into DFlow, so next time the answer to "is anything being
    * built" is in the report rather than out of the window.
    */
+  /** The last bounce, so the knocks are not counted one a frame while a ship
+   *  is scraping along a wall. */
+  let bouncedAt = 0;
+  const _bv = { x: 0, y: 0, z: 0 };
+  const _bn = new THREE.Vector3();
+  const _bUpY = new THREE.Vector3(0, 1, 0);
+  const _bUpZ = new THREE.Vector3(0, 0, 1);
+  /** The ship, as a ball, in world units. A heavy fighter is about three
+   *  across, so a cube (nine) comfortably holds one and the ball is its half
+   *  span with a little margin for the wings. */
+  const SHIP_HALF_SPAN = 1.8;
+
+  /**
+   * Flying into the rock.
+   *
+   * Geoff: "the cubes in the game need colliders and ships should bounce off of
+   * them and take a small amount of damage based on velocity ... impart the
+   * correct momentum and reduce speed by 30% when colliding and bouncing off at
+   * the correct angle (classic physics like billiards)."
+   *
+   * The flight model steers by a HEADING and a speed rather than by a velocity
+   * vector, so the bounce turns the nose: the heading is reflected in the face,
+   * which is the same reflection a ball off a cushion makes, and the speed
+   * keeps its seventy percent. The ship is also lifted back out of the cube it
+   * had got into, or the next frame would find it still inside and bounce it
+   * again.
+   *
+   * The arithmetic is all in voxelCollide, which knows nothing about three.js
+   * and can therefore be the room's collision too when the room becomes the
+   * authority out here.
+   */
+  function frameVoxelBounce(flight: Flight): void {
+    if (!spikeworld) return;
+    const c = spikeworld.centre;
+    /* Into the planet's own frame, which is what the collider measures in. */
+    const px = flight.pos.x - c.x, py = flight.pos.y - c.y, pz = flight.pos.z - c.z;
+    const v = flight.speed;
+    const b = hitRock(px, py, pz,
+                      flight.fwd.x * v, flight.fwd.y * v, flight.fwd.z * v,
+                      SHIP_HALF_SPAN);
+    if (!b) return;
+
+    /* Out of the rock first, along the face, with a hair of clearance. */
+    _bn.set(b.nx, b.ny, b.nz);
+    flight.pos.addScaledVector(_bn, b.depth + 0.05);
+
+    /* The heading, reflected. */
+    bounceVelocity(flight.fwd.x * v, flight.fwd.y * v, flight.fwd.z * v, b, _bv);
+    const out = Math.hypot(_bv.x, _bv.y, _bv.z);
+    if (out > 1e-4) {
+      flight.fwd.set(_bv.x / out, _bv.y / out, _bv.z / out);
+      flight.speed = out;
+      /* The ship's own up has to stay square to its nose or the camera rolls
+         into nonsense. Rebuilt from whichever axis is least like the new
+         heading, which is the ordinary way round. */
+      const side = Math.abs(flight.fwd.y) < 0.9 ? _bUpY : _bUpZ;
+      _bn.crossVectors(side, flight.fwd).normalize();
+      flight.up.crossVectors(flight.fwd, _bn).normalize();
+    } else {
+      flight.speed = 0;
+    }
+    flight.alt = flight.pos.length() - R;
+
+    /* And the knock. Not more than one every third of a second: a ship sliding
+       along a wall touches it every frame, and Geoff asked for a few points a
+       bump, not a few points sixty times a second. */
+    const now = performance.now();
+    if (now - bouncedAt < 330) return;
+    bouncedAt = now;
+    /* Measured against what the ship could possibly be doing, so "forty" means
+       flying flat out straight into a wall and nothing less. */
+    const hurt = bounceDamage(b.into, BOOST * SUPER_BOOST_MULT);
+    if (hurt <= 0) return;
+    flight.shields -= hurt;
+    setHud({ hitAt: now, note: `HULL ${hurt}`, noteAt: now });
+  }
+
   function frameSpikeworld(camera: THREE.PerspectiveCamera): void {
     if (!spikeworld) return;
     const tVox = performance.now();
@@ -2470,6 +2548,9 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         if (phase === "dive" && frameDive(dt, flight, camera, fx)) return;
         frameAssist(dt, camera);
         const res = frameFlight(dt, flight, fx);
+        /* Before the camera follows the ship, or a bounce would be seen a
+           frame late and the view would dip into the rock and out again. */
+        if (atSpikeworld) frameVoxelBounce(flight);
         frameShipAndCamera(dt, flight, camera);
         frameSpikeworld(camera);
         frameShield(flight, camera);

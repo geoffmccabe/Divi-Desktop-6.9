@@ -165,6 +165,21 @@ export const desktopInput: RebelsInput = {
     };
     const focus = () => pilot.focusReturned();
     const pointerlockchange = () => pilot.lockChanged();
+    /* ---- A RESIZE LEAVES THE STICK WHERE THE MOUSE ISN'T ----
+       Without a pointer lock the aim is the pointer's position INSIDE the
+       canvas, as a fraction of it, and the offset from the middle is how hard
+       the ship turns. Change the canvas size and that fraction changes without
+       the mouse having moved: leaving full screen shrinks the canvas out from
+       under the pointer, which is often then outside it altogether, so no
+       further move event ever arrives and the stick stays jammed wherever it
+       was. Geoff: "when the game changes back from full screen to smaller, it
+       doesn't reset the center point, so it just uncontrollably spins."
+
+       So any change of size hands back a neutral stick, which is the same
+       thing leaving the window with the pointer already does. */
+    const resized = () => pilot.centreCursor();
+    const sizeWatch = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resized) : null;
+    sizeWatch?.observe(dom);
 
     dom.addEventListener("wheel", wheel, { passive: false });
     dom.addEventListener("pointerleave", pointerleave);
@@ -176,7 +191,12 @@ export const desktopInput: RebelsInput = {
     window.addEventListener("keyup", keyup);
     window.addEventListener("blur", blur);
     window.addEventListener("focus", focus);
+    /* The observer above catches the canvas itself changing; this catches the
+       window changing when the canvas is sized by something that does not
+       trigger it, and full screen toggling, which fires both. */
+    window.addEventListener("resize", resized);
     if (typeof document !== "undefined") {
+      document.addEventListener("fullscreenchange", resized);
       document.addEventListener("pointerlockchange", pointerlockchange);
     }
     return () => {
@@ -190,7 +210,10 @@ export const desktopInput: RebelsInput = {
       window.removeEventListener("keyup", keyup);
       window.removeEventListener("blur", blur);
       window.removeEventListener("focus", focus);
+      window.removeEventListener("resize", resized);
+      sizeWatch?.disconnect();
       if (typeof document !== "undefined") {
+        document.removeEventListener("fullscreenchange", resized);
         document.removeEventListener("pointerlockchange", pointerlockchange);
       }
     };
