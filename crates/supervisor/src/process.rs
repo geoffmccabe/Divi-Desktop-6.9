@@ -195,6 +195,23 @@ fn spawn_once(
                 if CORRUPTION_MARKERS.iter().any(|m| msg.contains(m)) {
                     return Spawn::Corruption(msg);
                 }
+                // Two failures a user CAN fix, if only they are told what they
+                // mean. The node's own wording explains neither.
+                if msg.contains("Unable to bind") {
+                    return Spawn::Failed(
+                        "Another Divi wallet is already running on this computer and is using the \
+                         network port this one needs. Close the other Divi wallet (including Divi \
+                         Desktop 2.0, and check the system tray), then start this one again."
+                            .into(),
+                    );
+                }
+                if msg.contains("Assertion failed") {
+                    return Spawn::Failed(format!(
+                        "The node program stopped immediately with an internal error, so this is a \
+                         fault in the node program itself rather than anything you did. Please send \
+                         this to the Divi team: {msg}"
+                    ));
+                }
                 return Spawn::Failed(msg);
             }
             // No "Error:" line but the process is gone — capture whatever it did

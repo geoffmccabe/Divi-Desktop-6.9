@@ -151,7 +151,13 @@ fn sha256_hex(bytes: &[u8]) -> String {
 pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
     use crate::setuplog;
     let dir = managed_dir().ok_or("no home directory")?;
-    let target = dir.join("divid69");
+    // managed_names() adds .exe on Windows. Hardcoding "divid69" here meant the
+    // path returned after a SUCCESSFUL install did not exist on Windows, so the
+    // caller decided the managed binary was missing and went hunting the whole
+    // system for any Divi daemon it could find. On a machine with an older Divi
+    // wallet installed that search can find a DIFFERENT, incompatible node and
+    // run it against this data directory.
+    let target = dir.join(managed_names()[0]);
     if is_installed() {
         setuplog::log(format!(
             "node software: already installed (version {DIVID69_VERSION}) at {} — skipping download",
