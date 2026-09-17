@@ -48,6 +48,15 @@ import {
  * so, which is what covering the view takes from inside the cavity, where the
  * shell wraps right round you. DFlow will say whether it was too generous.
  *
+ * BACK DOWN TO 900,000. Holding the level steady around a boundary turned out
+ * to cost LESS as well as flicker less: defaulting to the coarse answer where
+ * nothing has been drawn yet takes the worst viewpoint from 1.27 million real
+ * triangles to 705,000. The allowance sits above that because a chunk not yet
+ * built is charged an average that runs high.
+ *
+ * The note below is kept because the reasoning still holds; only the number
+ * moved. It read:
+ *
  * RAISED AGAIN, to 560,000, when the detail levels were made exclusive. What
  * the allowance buys is not this number: a chunk not yet built is charged the
  * average, 4,600, and the REAL total for the worst viewpoint, measured by
@@ -82,7 +91,7 @@ import {
    turn is the rings, not this number: pulling them in costs sharpness, and
    refusing chunks costs the planet.
 */
-export const TRIANGLE_BUDGET = 1450000;
+export const TRIANGLE_BUDGET = 1050000;
 
 /**
  * How far the dust lets you see, in world units.
@@ -258,6 +267,24 @@ export function mightHoldRock(ox: number, oy: number, oz: number, step: number):
 const LOOK_COS = 0.45;
 
 /**
+ * The band around a detail boundary in which the decision holds still.
+ *
+ * Split only when clearly inside it, merge only when clearly outside it, and
+ * in between keep drawing whatever is already drawn. VERY wide, and measured
+ * rather than chosen: on a forty-cube drift the chunks that came and went more
+ * than twice fell from 79 to 16 as the band widened, and the total appearances
+ * and disappearances from 546 to 178.
+ *
+ * With one asymmetry that matters as much as the width. Inside the band, if
+ * NOTHING has been drawn for this ground yet, the coarse answer wins. A band
+ * that defaulted the other way kept fine chunks alive far out and cost 2.45
+ * million triangles for the same steadiness; defaulting coarse costs 705,000,
+ * which is less than the scheme it replaces.
+ */
+const SPLIT_IN = 0.35;
+const SPLIT_OUT = 2.8;
+
+/**
  * Which chunks to draw, from where the viewer is.
  *
  * `viewer` is in CUBES. The result is ordered nearest first, which is both what
@@ -269,6 +296,15 @@ export function visibleChunks(
     budget?: number; dustFar?: number;
     look?: readonly [number, number, number];
     costOf?: (ox: number, oy: number, oz: number, step: number) => number | undefined;
+    /**
+     * What is being DRAWN for this box's ground right now?
+     *
+     * `true` when this very box is on screen, `false` when something finer is,
+     * and undefined when neither: nothing here has been drawn yet. Asked only
+     * inside the band where the decision is a close call, and it is what stops
+     * a box changing its mind over and over. See SPLIT_IN below.
+     */
+    lodHold?: (ox: number, oy: number, oz: number, step: number) => boolean | undefined;
   } = {},
 ): ViewResult {
   const budget = opts.budget ?? TRIANGLE_BUDGET;
@@ -339,17 +375,55 @@ export function visibleChunks(
       if (cos < LOOK_COS - Math.min(0.95, (cell * 0.87) / d)) return;
     }
 
-    /* Fine enough? A box is split when it is nearer than the inner edge of its
-       own level's band, and never below the finest level. */
+    /* ---- FINE ENOUGH? AND, ONCE DECIDED, STICK TO IT ----
+       This was a bare comparison: split if nearer than the inner edge of the
+       level's band. No hysteresis at all, and that is the fault behind the
+       thing Geoff could not believe anyone would write on purpose: "often the
+       same groups of blocks appear and disappear multiple times ... it makes no
+       sense that you would code the blocks to appear and disappear over and
+       over all over the place."
+
+       Quite right, and here is how it happens. A box whose nearest corner sits
+       near that distance crosses it every time the ship drifts a little, and
+       the two levels DRAW DIFFERENT ROCK - 28% of the cubes change at the first
+       boundary, more at the others. So the box changes its mind, the rock
+       rearranges, the ship drifts back, and it rearranges again. Measured on a
+       gentle fourteen-cube drift: sixteen boxes changed level four times each
+       in twenty seconds. In real flight the ship moves every way at once and
+       dozens of boxes are near a boundary at any moment, which is why it is
+       everywhere.
+
+       There are four boundaries and a box can be near any of them, so the cure
+       has to be at the decision: once a piece of ground is being drawn at a
+       level, it KEEPS that level until the ship has moved decisively past the
+       distance, not merely across it. */
     const i = LOD_STEPS.indexOf(step as (typeof LOD_STEPS)[number]);
     const splitAt = i > 0 ? RING_CUBES[i - 1] : -1;
-    if (step > 1 && near < splitAt) {
-      const half = CHUNK / 2;
-      const child = step / 2;
-      for (let a = 0; a < 2; a++) {
-        for (let b = 0; b < 2; b++) {
-          for (let c = 0; c < 2; c++) {
-            visit((ox + a * half) * 2, (oy + b * half) * 2, (oz + c * half) * 2, child);
+    let wantSplit = false;
+    if (step > 1) {
+      if (near < splitAt * SPLIT_IN) wantSplit = true;
+      else if (near > splitAt * SPLIT_OUT) wantSplit = false;
+      /* In between, whatever is already being drawn stays, and if NOTHING is
+         yet drawn here the coarse answer wins. That asymmetry matters: a band
+         that defaulted to splitting kept fine chunks alive far out and cost
+         twice the triangles for the same steadiness. */
+      else wantSplit = opts.lodHold?.(ox, oy, oz, step) === false;
+    }
+    if (wantSplit) {
+      /* ---- SPLIT BY THE REAL RATIO BETWEEN LEVELS ----
+         This used to halve the step and produce eight children, which is right
+         only when the levels are a factor of two apart. They are a factor of
+         FOUR apart now, and halving quietly invented levels 8 and 2 that are
+         not levels at all: LOD_STEPS.indexOf gave -1 for them, the ring lookup
+         read past the end of the array, and they were emitted anyway. The
+         planet drew itself at detail levels nobody had chosen. */
+      const child = LOD_STEPS[i - 1];
+      const ratio = step / child;
+      const span = CHUNK / ratio;
+      for (let a = 0; a < ratio; a++) {
+        for (let b = 0; b < ratio; b++) {
+          for (let c = 0; c < ratio; c++) {
+            visit((ox + a * span) * ratio, (oy + b * span) * ratio, (oz + c * span) * ratio, child);
           }
         }
       }
@@ -361,6 +435,7 @@ export function visibleChunks(
   /* The roots: boxes at the coarsest level, meeting at the centre, enough of
      them between them to hold the whole planet. */
   const rootCells = Math.ceil(R_OUTER / (CHUNK * deepest));
+  /* Every emitted box must be one of the chosen levels: nothing invents one. */
   for (let cx = -rootCells; cx < rootCells; cx++) {
     for (let cy = -rootCells; cy < rootCells; cy++) {
       for (let cz = -rootCells; cz < rootCells; cz++) {
@@ -398,8 +473,10 @@ export function parentOf(ox: number, oy: number, oz: number, step: number):
 { ox: number; oy: number; oz: number; step: number } | null {
   const i = LOD_STEPS.indexOf(step as (typeof LOD_STEPS)[number]);
   if (i < 0 || i >= LOD_STEPS.length - 1) return null;
-  const up = (v: number) => CHUNK * Math.floor(v / (2 * CHUNK));
-  return { ox: up(ox), oy: up(oy), oz: up(oz), step: LOD_STEPS[i + 1] };
+  const parent = LOD_STEPS[i + 1];
+  const ratio = parent / step;
+  const up = (v: number) => CHUNK * Math.floor(v / (ratio * CHUNK));
+  return { ox: up(ox), oy: up(oy), oz: up(oz), step: parent };
 }
 
 /**

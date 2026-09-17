@@ -21,7 +21,7 @@
 
 import * as THREE from "three";
 import {
-  CUBE, CHUNK, R_OUTER, R_INNER, R_HEART, WORLD_RADIUS, SKY_EDGE, toWorld,
+  CUBE, CHUNK, R_OUTER, R_INNER, R_HEART, WORLD_RADIUS, SKY_EDGE, LOD_STEPS, toWorld,
 } from "./voxelWorld";
 import { spokeDirections } from "./voxelField";
 import { meshChunk, FACE_SHADE, type ChunkMesh } from "./voxelMesh";
@@ -357,6 +357,31 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
         look: [look.x, look.y, look.z],
         /* What it really costs, for everything already built. */
         costOf: (ox, oy, oz, step) => live.get(`${step}:${ox},${oy},${oz}`)?.triangles,
+        /* What is on screen for this ground right now, so a box near a detail
+           boundary keeps the level it already has instead of changing its mind
+           every time the ship drifts across the line. */
+        lodHold: (ox, oy, oz, step) => {
+          const held = live.get(`${step}:${ox},${oy},${oz}`);
+          if (held && held.mesh.visible) return true;        /* this box is up */
+          /* Is something FINER up for this ground? Its own children are the
+             only place to look: anything finer than them is under one of them
+             and would have kept them up in turn. */
+          const i = LOD_STEPS.indexOf(step as (typeof LOD_STEPS)[number]);
+          if (i <= 0) return undefined;
+          const child = LOD_STEPS[i - 1];
+          const ratio = step / child;
+          const span = CHUNK / ratio;
+          for (let a = 0; a < ratio; a++) {
+            for (let b = 0; b < ratio; b++) {
+              for (let c = 0; c < ratio; c++) {
+                const k = `${child}:${(ox + a * span) * ratio},${(oy + b * span) * ratio},${(oz + c * span) * ratio}`;
+                const kid = live.get(k);
+                if (kid && kid.mesh.visible) return false;   /* finer is up */
+              }
+            }
+          }
+          return undefined;                                  /* nothing here yet */
+        },
       });
       const wanted = new Set(view.chunks.map(keyOf));
       /* ---- AND THE HYSTERESIS MUST NOT UNDO THE EXCLUSIVITY ----

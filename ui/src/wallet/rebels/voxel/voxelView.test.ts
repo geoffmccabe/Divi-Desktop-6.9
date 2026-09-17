@@ -241,8 +241,13 @@ for (const [name, at] of [places[0], places[3]]) {
   /* And without any of it, the planet is hopeless: this is the number the whole
      design exists to avoid. */
   const naked = visibleChunks(insideAt, { dustFar: 1e6, budget: 1e9 });
+  /* Still unaffordable, by less than it was. Asking for everything used to want
+     half again as much as the allowance; holding the detail level steady around
+     a boundary made the whole planet cheaper (the coarse answer wins wherever
+     nothing has been drawn yet), so the margin narrowed. The claim that matters
+     is only that the dust and the allowance are still doing work. */
   ok("and with no dust and no budget at all the planet is unaffordable",
-     naked.triangles > TRIANGLE_BUDGET * 1.5,
+     naked.triangles > TRIANGLE_BUDGET,
      `${naked.triangles} triangles wanted against an allowance of ${TRIANGLE_BUDGET}`);
   /* ---- WHERE THE SAVING REALLY COMES FROM ----
      Not from filling the planet in, which made it look solid from outside and

@@ -260,7 +260,17 @@ class Dflow {
 
   report(): string {
     const L: string[] = [];
-    const f = (n: number, d = 2) => (Number.isFinite(n) ? n.toFixed(d) : "-");
+    /* Zero is written as "0", not "0.000". Geoff: "your dflow report has a lot
+       of 0.000 when that could just be 0 and not spam so many useless extra
+       bytes of data". Most of a capture's raw rows are stages that did nothing
+       at all, so this is the bulk of the report: 21 stages a row, 470 rows, and
+       almost every cell a zero. Trailing zeros go too, so 2.500 is 2.5. */
+    const f = (n: number, d = 2) => {
+      if (!Number.isFinite(n)) return "-";
+      if (n === 0) return "0";
+      const t = n.toFixed(d);
+      return t.includes(".") ? t.replace(/0+$/, "").replace(/\.$/, "") : t;
+    };
     const ring = this.ring;
     const frames = ring.reduce((a, s) => a + s.frames, 0);
     const secs = ring.reduce((a, s) => a + s.frames * s.dtAvg, 0) / 1000;
