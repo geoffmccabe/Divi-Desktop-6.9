@@ -96,6 +96,63 @@ let lastRebuildAt = 0;
  *  stopped. See watchAudio. */
 let lastClock = -1;
 let stalls = 0;
+/* ---- WHAT THE METER CANNOT SEE, AND HOW TO CATCH IT ANYWAY ----
+   Geoff, on the fifth or sixth silence: "The sound is completely gone in the
+   game again... zero sound. I've never, in so many years, had the sound going
+   out in my projects over and over and unable to be fixed."
+
+   His own black box said everything was fine: context running, the level
+   varying between 0.008 and 0.057, the audio clock advancing, no stalls, no
+   device changes. Two numbers in it were the whole story.
+
+   `deviceApi: false`. This webview has no navigator.mediaDevices at all, so the
+   one detector written for exactly this failure - the speakers changing under
+   us - can never fire. Its zero reading means nothing, and the note beside it
+   saying "the browser does announce the change" is wrong HERE.
+
+   `ctxAge: 33674`. The context had been alive nine and a half hours. And
+   macOS's own audio daemon had two device contexts open, one of them an
+   aggregate device made for a video call: the machine's output arrangement had
+   genuinely changed under a context created hours earlier, and WebKit went on
+   rendering into the old route with every measurement on this side reading
+   perfectly healthy.
+
+   So there are three things to watch that need no API:
+
+   1. THE WALL CLOCK against the audio clock. The audio clock only advances
+      while the stream is really being rendered. The frame loop stops while the
+      machine sleeps, so comparing the audio clock with the FRAME's own dt
+      cannot see a sleep at all; comparing it with the wall can. A gap in one
+      and not the other means the stream was interrupted.
+   2. WHAT THE MACHINE SAYS ABOUT ITS OUTPUT. The latencies and the channel
+      count are the only things visible from below the destination, and a device
+      swap changes them. Nothing was watching them.
+   3. HOW OLD IT IS. When none of the above fires and the sound is still gone,
+      age is the correlate: a context that has been running for hours has had
+      every chance to be re-routed. Past a point it is simply replaced, at the
+      next keypress, which costs a fraction of a second of silence instead of
+      all of it. */
+let lastWall = -1;
+/** Seconds of wall time the audio clock has fallen behind by, all told. */
+let drift = 0;
+let interruptions = 0;
+/** What the machine last said about its own output, to notice it change. */
+let lastShape = "";
+let shapeChanges = 0;
+/** When this context was made, on whatever clock the watchdog is given. Taken
+ *  from the first reading rather than from Date.now, so it is the SAME clock
+ *  the checks above use and a test can drive it. */
+let bornAt = -1;
+let agedOut = 0;
+/**
+ * How old a context may get before it is replaced, in seconds.
+ *
+ * Twenty minutes. Long enough that nobody meets it in a short session, short
+ * enough that a silence caused by something nothing here can measure cannot
+ * last a whole evening. The replacement happens at the next gesture, and
+ * everything that decoded a sample decodes it again.
+ */
+const MAX_AGE = 20 * 60;
 
 /** Seconds of expected-but-absent sound before the context is kicked, and
  *  before it is rebuilt. The kick is cheap; the rebuild re-decodes everything. */
@@ -140,6 +197,12 @@ export function rebuildAudio(): void {
      stall and rebuild again, for ever. */
   lastClock = -1;
   silentFor = 0;
+  /* A fresh context is a fresh age, a fresh wall reading and a fresh shape, or
+     the age cap would fire again immediately and the wall check would see the
+     whole of the old context's life as one interruption. */
+  bornAt = -1;
+  lastWall = -1;
+  lastShape = "";
   try { void old?.close(); } catch { /* gone anyway */ }
   for (const fn of rebuildListeners) { try { fn(); } catch { /* one bad listener is not all of them */ } }
 }
@@ -178,6 +241,50 @@ export function watchAudio(expectSound: boolean, dtSeconds: number, nowSeconds =
   const clock = ctx.currentTime;
   const ran = lastClock >= 0 ? clock - lastClock : dtSeconds;
   lastClock = clock;
+
+  /* ---- 1. THE WALL CLOCK IS THE OTHER HONEST WITNESS ----
+     The check below compares the audio clock with the FRAME's dt, and cannot
+     see a sleep or an interruption: the frame loop stops too, so both agree.
+     Against the WALL they disagree, and the gap is how long the stream was not
+     being rendered. */
+  const wallRan = lastWall >= 0 ? Math.max(0, nowSeconds - lastWall) : dtSeconds;
+  lastWall = nowSeconds;
+  if (wallRan > 5 && ran < wallRan * 0.5) {
+    drift += wallRan - ran;
+    interruptions++;
+    lastRebuildAt = nowSeconds;
+    silentFor = 0;
+    pendingFix = "rebuild";
+    return "rebuild";
+  }
+
+  /* ---- 2. AND WHAT THE MACHINE SAYS ABOUT ITS OWN OUTPUT ----
+     The only things visible from below the destination. A device swap changes
+     them, and nothing was looking. */
+  const shape = outputShape();
+  if (lastShape && shape !== lastShape) {
+    shapeChanges++;
+    lastShape = shape;
+    lastRebuildAt = nowSeconds;
+    silentFor = 0;
+    pendingFix = "rebuild";
+    return "rebuild";
+  }
+  lastShape = shape;
+
+  /* ---- 3. AND SHEER AGE ----
+     Last, because it is the only one of the three that is not evidence of
+     anything: it is the admission that this webview cannot be told its
+     speakers moved. */
+  if (bornAt < 0) bornAt = nowSeconds;
+  if (nowSeconds - bornAt > MAX_AGE) {
+    agedOut++;
+    bornAt = nowSeconds;
+    lastRebuildAt = nowSeconds;
+    silentFor = 0;
+    pendingFix = "rebuild";
+    return "rebuild";
+  }
   if (ctx.state === "running" && ran < dtSeconds * 0.25) {
     stalls++;
     lastRebuildAt = nowSeconds;
@@ -200,6 +307,18 @@ export function watchAudio(expectSound: boolean, dtSeconds: number, nowSeconds =
   if (verdict === "kick") { lastKickAt = nowSeconds; pendingFix = "kick"; }
   if (verdict === "rebuild") { lastRebuildAt = nowSeconds; silentFor = 0; pendingFix = "rebuild"; }
   return verdict;
+}
+
+/** What the machine says about its own output, as one string to compare. */
+function outputShape(): string {
+  if (!ctx) return "";
+  const out = (ctx as unknown as { outputLatency?: number }).outputLatency ?? 0;
+  return [
+    Math.round(out * 1000),
+    Math.round((ctx.baseLatency ?? 0) * 10000),
+    ctx.destination?.maxChannelCount ?? 0,
+    Math.round(ctx.sampleRate ?? 0),
+  ].join("/");
 }
 
 /** What the watchdog is waiting to do, for the black box. */
@@ -291,6 +410,14 @@ export function audioHealth(): Record<string, unknown> {
     channels: ctx?.destination?.maxChannelCount ?? 0,
     pending: pendingFix,
     deviceChanges,
+    /* The three that do not need an API the webview has not got. Read these
+       first on a "no sound" report: they are what the meter cannot see. */
+    interruptions,
+    drift: Math.round(drift),
+    shapeChanges,
+    shape: outputShape(),
+    agedOut,
+    ageSeconds: bornAt < 0 ? 0 : Math.round(Date.now() / 1000 - bornAt),
     history: history.slice(),
     ctxAge: ctx ? Math.round(ctx.currentTime) : 0,
     sampleRate: ctx?.sampleRate ?? 0,
@@ -305,6 +432,12 @@ export function resetSoundForTests(): void {
   ctx = null; master = null; analyser = null; samples = null;
   kicks = 0; rebuilds = 0; silentFor = 0; lastKickAt = 0; lastRebuildAt = 0;
   pendingFix = "none"; deviceChanges = 0; history.length = 0;
+  /* The three that need no API, and the state they watch. Left behind once and
+     the next test inherited another test's output shape, which read as the
+     speakers moving. */
+  lastWall = -1; drift = 0; interruptions = 0;
+  lastShape = ""; shapeChanges = 0;
+  bornAt = -1; agedOut = 0;
   rebuildListeners.clear();
 }
 

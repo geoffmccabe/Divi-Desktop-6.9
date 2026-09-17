@@ -18,7 +18,7 @@ import {
 import {
   clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
   createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE, CONVERGE, JUNK_LIFE,
-  showBullet, dropBullet, stepShownBullets,
+  showBullet, dropBullet, stepShownBullets, BULLET_SPEED, BULLET_LIFE,
   miniMuzzle,
   STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS, ENEMY_FIRE_RANGE,
   type CombatState,
@@ -1644,6 +1644,50 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
    * Timed and counted into DFlow, so next time the answer to "is anything being
    * built" is in the report rather than out of the window.
    */
+  /**
+   * ---- THE ROOM ONLY HEARS ABOUT SHOTS FIRED IN ITS OWN WORLD ----
+   *
+   * The room refuses any coordinate past a hundred thousand, and Spikeworld
+   * sits at two hundred thousand, so every trigger pull out there arrived as a
+   * "bad shot" and took a strike against the seat; twenty strikes closes the
+   * socket. The position REPORTS were gated on this bound already and the
+   * shots were not, which is the same fault twice. Geoff: "it won't let me
+   * fire my guns or torpedoes ... it gives an error, something about 'bad
+   * shot' which is ridiculous."
+   *
+   * Gated on the position rather than on a flag, for the same reason the
+   * reports are: the room's own bound cannot be got wrong, and a flag can be
+   * left set by a path nobody thought of.
+   */
+  const inRoomsWorld = (): boolean => !!flight && flight.pos.length() <= R + MAX_ALT + 2;
+
+  /**
+   * Fire, wherever the ship is.
+   *
+   * In the room's world the room fires it, decides the hit and sends the round
+   * back. Outside it, at Spikeworld, the round is shown locally: the shot is
+   * seen and heard, it flies the same simulation the room would have flown it
+   * with, and it hits nothing, because there is nothing out there to hit YET.
+   * The heart and the orange flock need the whole fight running locally, which
+   * is the next piece (see docs/DIVI-REBELS-SPIKEWORLD-COMBAT-PLAN.md); this
+   * is so that pulling the trigger does something in the meantime instead of
+   * spending a strike.
+   */
+  function fireShot(
+    kind: "main" | "mini" | "beam" | "torp",
+    from: THREE.Vector3, fwd: THREE.Vector3,
+    aim?: THREE.Vector3, weapon?: string, up?: THREE.Vector3,
+  ): void {
+    if (inRoomsWorld()) { room?.fire(kind, from, fwd, aim, weapon, up); return; }
+    if (kind === "beam" || kind === "torp") return;   /* drawn by their own code */
+    const dir = (aim ?? fwd).clone().normalize();
+    showBullet(combat, {
+      id: -(++localShotId), pos: from.clone(), vel: dir.multiplyScalar(BULLET_SPEED),
+      life: BULLET_LIFE, hostile: false, mini: kind === "mini",
+    });
+  }
+  let localShotId = 0;
+
   /** The last bounce, so the knocks are not counted one a frame while a ship
    *  is scraping along a wall. */
   let bouncedAt = 0;
@@ -1884,11 +1928,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (backwards) {
         /* Out of the tail, down the rear window's own line. */
         const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
-        room?.fire("mini", tail, backwards, backwards, undefined, s.up);
+        fireShot("mini", tail, backwards, backwards, undefined, s.up);
         fx.muzzle(tail);
       } else {
         const mark = camera.position.clone().addScaledVector(aimDir, CONVERGE);
-        room?.fire("mini", flight.pos, flight.fwd, mark.sub(flight.pos).normalize(), undefined, s.up);
+        fireShot("mini", flight.pos, flight.fwd, mark.sub(flight.pos).normalize(), undefined, s.up);
         fx.muzzle(muzzle);
       }
       playMiniSound();
@@ -1906,7 +1950,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         beamAt = BEAM_SECONDS;
         flight.ammo -= 1;
         const from = backwards ? tailOf(flight.pos, flight.fwd, SHIP_LENGTH) : shipNose(flight);
-        room?.fire("beam", from, backwards ?? flight.fwd, undefined, armed.key);
+        fireShot("beam", from, backwards ?? flight.fwd, undefined, armed.key);
         fx.muzzle(from);
         playGunSound();
       }
@@ -1925,7 +1969,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       const rearUp = new THREE.Vector3(0, 1, 0).applyQuaternion(rearCamera.quaternion);
       const muzzles: [THREE.Vector3, THREE.Vector3] = [new THREE.Vector3(), new THREE.Vector3()];
       gunMuzzles(rearCamera.position, aim, rearUp, rearCamera.fov, rearCamera.aspect, muzzles);
-      room?.fire("main", rearCamera.position, aim, undefined, undefined, rearUp);
+      fireShot("main", rearCamera.position, aim, undefined, undefined, rearUp);
       fx.muzzle(muzzles[0]);
       fx.muzzle(muzzles[1]);
       playGunSound();
@@ -1956,7 +2000,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         muzzles = [new THREE.Vector3(), new THREE.Vector3()];
         gunMuzzles(flight.pos, flight.fwd, s.up, camera.fov, camera.aspect, muzzles);
       }
-      room?.fire("main", flight.pos, flight.fwd, undefined, undefined, s.up);
+      fireShot("main", flight.pos, flight.fwd, undefined, undefined, s.up);
       fx.muzzle(muzzles[0]);
       fx.muzzle(muzzles[1]);
       playGunSound();
@@ -2197,7 +2241,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (flight.torpedoes > 0) {
         const aim = backwards;
         const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
-        room?.fire("torp", tail, aim);
+        fireShot("torp", tail, aim);
         torpSentAt = performance.now();
         playTorpedoSound();
       }
@@ -2213,7 +2257,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         const mineInAir = performance.now() - torpSentAt < TORPEDO_FUSE * 1000 && combat.torpedoes.length > 0;
         if (mineInAir) { room?.detonate(); torpSentAt = 0; }
         else if (flight.torpedoes > 0) {
-          room?.fire("torp", shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
+          fireShot("torp", shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
           torpSentAt = performance.now();
           playTorpedoSound();
         }
