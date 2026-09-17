@@ -24,6 +24,40 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 pub const SNAPSHOT_URL: &str = "https://snapshots.diviproject.org/dist/DIVI-snapshot.tar.gz";
+/// Where a published checksum would live. Checked on every run: the moment the
+/// snapshot server starts publishing one, verification turns itself on with no
+/// change here and no new release.
+pub const SNAPSHOT_SHA_URL: &str = "https://snapshots.diviproject.org/dist/DIVI-snapshot.tar.gz.sha256";
+
+/// The checksum the server says the archive should have, if it publishes one.
+///
+/// Accepts either a bare hash or the usual `<hash>  <filename>` form that
+/// `shasum` and `sha256sum` write, since whoever adds this to the server will
+/// almost certainly generate it with one of those.
+pub fn published_hash() -> Option<String> {
+    let body = ureq::get(SNAPSHOT_SHA_URL).call().ok()?.into_string().ok()?;
+    let first = body.split_whitespace().next()?.trim().to_lowercase();
+    // A 404 page is not a checksum. Only 64 hex characters is.
+    if first.len() == 64 && first.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(first)
+    } else {
+        None
+    }
+}
+
+/// Is this actually a gzip archive?
+///
+/// A truncated transfer, a captive-portal login page or an HTML error saved as
+/// .tar.gz all arrive looking like a file and fail much later with something
+/// unreadable. Two bytes settle it before we act on five gigabytes.
+fn looks_like_gzip(path: &Path) -> bool {
+    let mut f = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return false,
+    };
+    let mut magic = [0u8; 2];
+    f.read_exact(&mut magic).is_ok() && magic == [0x1f, 0x8b]
+}
 
 /// Progress during the download and import.
 pub struct Progress {
@@ -140,8 +174,35 @@ pub fn download(progress: &dyn Fn(Progress)) -> Result<(PathBuf, String), String
     }
 
     progress(Progress { done, total, stage: "Checking the download…".into() });
+
+    if !looks_like_gzip(&path) {
+        let _ = std::fs::remove_file(&path);
+        return Err("what was downloaded is not a snapshot archive (it may be an error page from the server or a captive portal). It has been discarded.".into());
+    }
+
     let digest = hash_file(&path)?;
-    crate::setuplog::log(format!("snapshot: downloaded {} bytes, sha256 {digest}", done));
+    crate::setuplog::log(format!("snapshot: downloaded {done} bytes, sha256 {digest}"));
+
+    // Verify against the server's own checksum when it publishes one. This is
+    // not about distrusting Divi: an ordinary connection can truncate or
+    // corrupt a five-gigabyte transfer, and a silently corrupt chain is far
+    // harder to diagnose later than a refused download now.
+    match published_hash() {
+        Some(expected) if expected != digest => {
+            let _ = std::fs::remove_file(&path);
+            crate::setuplog::log(format!(
+                "snapshot: CHECKSUM MISMATCH — expected {expected}, got {digest}; discarded"
+            ));
+            return Err(format!(
+                "the snapshot did not match its published checksum, so it was discarded. Expected {expected}, got {digest}."
+            ));
+        }
+        Some(_) => crate::setuplog::log("snapshot: checksum verified against the published value"),
+        None => crate::setuplog::log(
+            "snapshot: the server publishes no checksum, so only the length was checked",
+        ),
+    }
+
     Ok((path, digest))
 }
 
@@ -236,6 +297,29 @@ fn flatten_if_wrapped(datadir: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_real_hash_counts_as_a_checksum() {
+        // Whatever a 404 page says, it is not a checksum.
+        let ok = "a".repeat(64);
+        assert_eq!(ok.len(), 64);
+        assert!(ok.chars().all(|c| c.is_ascii_hexdigit()));
+        for bad in ["<html>404</html>", "", "not-a-hash", &"z".repeat(64), &"a".repeat(63)] {
+            let first = bad.split_whitespace().next().unwrap_or("").to_lowercase();
+            let accepted = first.len() == 64 && first.chars().all(|c| c.is_ascii_hexdigit());
+            assert!(!accepted, "should have rejected {bad:?}");
+        }
+    }
+
+    #[test]
+    fn an_html_error_page_is_not_mistaken_for_an_archive() {
+        let tmp = std::env::temp_dir().join(format!("dd69-gz-{}", std::process::id()));
+        std::fs::write(&tmp, b"<html><head><title>404 Not Found</title>").unwrap();
+        assert!(!looks_like_gzip(&tmp), "an HTML page must not pass as a gzip archive");
+        std::fs::write(&tmp, [0x1f, 0x8b, 0x08, 0x00]).unwrap();
+        assert!(looks_like_gzip(&tmp), "a real gzip header must pass");
+        let _ = std::fs::remove_file(&tmp);
+    }
 
     #[test]
     fn a_wrapped_archive_is_lifted_into_place() {
