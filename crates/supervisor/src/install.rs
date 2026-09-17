@@ -314,6 +314,29 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
 ///
 /// An existing `divi.conf` is never touched. Someone who already runs a node
 /// has their own settings and we have no business rewriting them.
+/// Why the node program could not be installed, if that is what happened.
+///
+/// Without this the app could only say "the node isn't running", which is true
+/// and useless. A user whose download failed a checksum check, or who ran out
+/// of disk, sat looking at a wallet that appeared to be syncing and was not.
+static INSTALL_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn note_install_error(msg: impl Into<String>) {
+    if let Ok(mut g) = INSTALL_ERROR.lock() {
+        *g = Some(msg.into());
+    }
+}
+
+pub fn clear_install_error() {
+    if let Ok(mut g) = INSTALL_ERROR.lock() {
+        *g = None;
+    }
+}
+
+pub fn install_error() -> Option<String> {
+    INSTALL_ERROR.lock().ok().and_then(|g| g.clone())
+}
+
 /// The config file DD69 manages. Only ever the one in OUR data directory.
 pub fn conf_path() -> PathBuf {
     crate::config::dd69_datadir().join("divi.conf")
@@ -566,6 +589,8 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
     use std::time::Duration;
 
     setuplog::log("bringup: first-run sequence starting");
+    // Any previous reason is stale the moment we try again.
+    clear_install_error();
 
     // Test rig: when pointed at an external node (e.g. a regtest node via
     // DIVI_DATADIR), skip all node install/start so the app never touches the
@@ -652,6 +677,9 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
     }
 
     let divid = ensure_divid69(&progress).map_err(|e| {
+        // Remember this so the status line can say WHY there is no node,
+        // instead of only that there isn't one.
+        note_install_error(e.clone());
         setuplog::log(format!("bringup: node software not available — {e}"));
         e
     })?;

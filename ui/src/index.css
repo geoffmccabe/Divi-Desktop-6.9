@@ -1055,6 +1055,13 @@ code, .mono { font-family: var(--font-mono); }
 .reach-err { color: hsl(var(--map-dead)); }
 .reach-help { border-left: 2px solid hsl(var(--border)); padding-left: 12px; }
 .reach-help strong { font-size: 0.85rem; }
+/* "NODE NOT RUNNING" is a fault, not a wait: it reads red, not amber. */
+.bl-down-amt {
+  color: hsl(var(--map-dead));
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
 .bl-sync-amt {
   color: hsl(var(--warning));
   font-size: 1.15rem;
