@@ -3,7 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use dd69_supervisor::{applog, bearer, c2pa_read, chaintips, chart, coins, collectibles, collectibles_import, config, config::NodeConfig, escrow, fastsend, marketmaker, mempool, multisig, names, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{applog, bearer, c2pa_read, chaintips, chart, coins, collectibles, collectibles_import, config, config::NodeConfig, dmt, escrow, fastsend, marketmaker, mempool, multisig, names, network, payreq, poe, price, report, security, skinbuy, wallet};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -1403,6 +1403,93 @@ async fn mm_book(slug: String, connector: String, rest_url: String, symbol: Stri
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct TradePnlDto {
+    fills: usize,
+    buys: usize,
+    sells: usize,
+    divi_bought: f64,
+    divi_sold: f64,
+    usdt_spent: f64,
+    usdt_recv: f64,
+    avg_buy: f64,
+    avg_sell: f64,
+    net_divi: f64,
+    net_usdt: f64,
+    gross_volume: f64,
+    mid: f64,
+    total_pnl: f64,
+    first_ms: i64,
+    last_ms: i64,
+}
+
+/// Realized market-making P&L, reconstructed from the exchange's own filled-order
+/// history. This is how a node holder audits where their money went. Read-only.
+#[tauri::command]
+async fn mm_trade_history(slug: String, connector: String, rest_url: String, symbol: String, source: String) -> Result<TradePnlDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = marketmaker::trade_history(&slug, &connector, &rest_url, &symbol, &source)?;
+        Ok::<TradePnlDto, String>(TradePnlDto {
+            fills: p.fills, buys: p.buys, sells: p.sells,
+            divi_bought: p.divi_bought, divi_sold: p.divi_sold,
+            usdt_spent: p.usdt_spent, usdt_recv: p.usdt_recv,
+            avg_buy: p.avg_buy, avg_sell: p.avg_sell,
+            net_divi: p.net_divi, net_usdt: p.net_usdt, gross_volume: p.gross_volume,
+            mid: p.mid, total_pnl: p.total_pnl, first_ms: p.first_ms, last_ms: p.last_ms,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Place a manual buy/sell (the user's own order, not the engine's). Market or
+/// limit; quantity is always in the base coin. Returns the new order id.
+#[tauri::command]
+async fn mm_place_order(slug: String, connector: String, rest_url: String, symbol: String,
+                        side: String, order_type: String, quantity: f64, price: Option<f64>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        marketmaker::place_order(&slug, &connector, &rest_url, &symbol, &side, &order_type, quantity, price)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Cancel one of the user's orders by id.
+#[tauri::command]
+async fn mm_cancel_order(slug: String, connector: String, rest_url: String, id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        marketmaker::cancel_order(&slug, &connector, &rest_url, &id)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ManualOrderDto {
+    id: String,
+    side: String,
+    order_type: String,
+    price: f64,
+    qty: f64,
+    from_mm: bool,
+    created_ms: i64,
+}
+
+/// The user's currently-open orders on a pair, with ids for the Trade panel.
+#[tauri::command]
+async fn mm_open_orders(slug: String, connector: String, rest_url: String, symbol: String) -> Result<Vec<ManualOrderDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let orders = marketmaker::open_orders(&slug, &connector, &rest_url, &symbol)?;
+        Ok::<Vec<ManualOrderDto>, String>(orders.into_iter().map(|o| ManualOrderDto {
+            id: o.id, side: o.side, order_type: o.order_type, price: o.price, qty: o.qty, from_mm: o.from_mm, created_ms: o.created_ms,
+        }).collect())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct DexPoolDto {
     reserve_edivi: f64,
     reserve_weth: f64,
@@ -1522,6 +1609,243 @@ async fn node_logs() -> NodeLogsDto {
     .unwrap_or(NodeLogsDto { node_log: String::new(), app_log: Vec::new() })
 }
 
+/// The full, detailed first-run setup log as one copy-pasteable block, for the
+/// ⌘L "copy setup log" shortcut. Read-only; contains no secrets (never the
+/// wallet password, seed phrase, keys, or the node's rpcpassword).
+#[tauri::command]
+async fn setup_log_report() -> String {
+    tauri::async_runtime::spawn_blocking(dd69_supervisor::setuplog::report)
+        .await
+        .unwrap_or_else(|_| "setup log unavailable".into())
+}
+
+/// This install's node identity: a stable id (survives IP changes) plus the
+/// user's chosen node name. Read on startup so the map can label the user's own
+/// node and, later, group its many IPs into one.
+#[tauri::command]
+async fn node_identity() -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(dd69_supervisor::identity::to_json)
+        .await
+        .unwrap_or_else(|_| serde_json::json!({ "id": "", "name": "", "nameSource": "custom" }))
+}
+
+/// Set (or clear) this node's name. `source` is "custom" for a typed name, or
+/// "agent" when the name comes from the node's registered Agent identity.
+#[tauri::command]
+async fn set_node_name(name: String, source: Option<String>) -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(move || {
+        dd69_supervisor::identity::set_name(&name, source.as_deref().unwrap_or("custom"))
+    })
+    .await
+    .unwrap_or_else(|_| serde_json::json!({ "id": "", "name": "", "nameSource": "custom" }))
+}
+
+/// Is a newer build published for THIS platform? Powers the "UPDATE TO vX.Y.Z"
+/// flash under the logo. Read-only: compares the running version to the manifest
+/// on scan.divi.love. Never claims an update for an equal or older version.
+#[tauri::command]
+async fn update_check(app: tauri::AppHandle) -> serde_json::Value {
+    let current = app.package_info().version.to_string();
+    let latest = tauri::async_runtime::spawn_blocking(dd69_supervisor::updates::latest_version)
+        .await
+        .ok()
+        .flatten();
+    let available = latest
+        .as_deref()
+        .map(|l| dd69_supervisor::updates::is_newer(l, &current))
+        .unwrap_or(false);
+    let os = dd69_supervisor::updates::os_key();
+    // The installer filename for this OS follows the scan.divi.love naming
+    // convention, so the modal can offer the right download.
+    let download_url = latest.as_deref().map(|l| {
+        let file = match os {
+            "mac" => format!("Divi-Desktop-{l}-Universal.dmg"),
+            "windows" => format!("Divi-Desktop-{l}-Windows-x64-setup.exe"),
+            _ => format!("Divi-Desktop-{l}-Linux-x86_64.deb"),
+        };
+        format!("https://scan.divi.love/downloads/{file}")
+    });
+    serde_json::json!({
+        "current": current, "latest": latest, "available": available,
+        "os": os, "downloadUrl": download_url
+    })
+}
+
+/// Firewalls / antivirus installed on this machine that might prompt about (or
+/// block) a freshly-updated binary, so the update modal can pre-warn the user.
+/// Best-effort and read-only.
+#[tauri::command]
+async fn security_tools() -> Vec<String> {
+    tauri::async_runtime::spawn_blocking(dd69_supervisor::updates::security_tools)
+        .await
+        .unwrap_or_default()
+}
+
+/// Download and install the newer build IN PLACE, reporting progress as it goes.
+///
+/// This is what makes an update painless: the app replaces itself rather than
+/// the user fetching an installer in a browser, so the OS never re-applies the
+/// "unidentified developer" quarantine tag and nothing has to be re-approved.
+/// Every byte is verified against our public key before anything is installed —
+/// a hijacked download server cannot push a different binary.
+///
+/// Emits `dd69://update-progress` ({downloaded, total}) so the modal can show a
+/// live KB/MB bar, then `dd69://update-ready` when the new version is in place.
+#[tauri::command]
+async fn update_install(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = app
+        .updater_builder()
+        .build()
+        .map_err(|e| format!("could not start the updater: {e}"))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("could not check for an update: {e}"))?
+        .ok_or_else(|| "you're already on the newest version".to_string())?;
+
+    let version = update.version.clone();
+    let on_progress = app.clone();
+    let on_done = app.clone();
+    let mut downloaded: usize = 0;
+
+    update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk;
+                // total is None if the server sends no length; the UI then shows
+                // bytes downloaded without a percentage rather than a wrong one.
+                let _ = on_progress.emit(
+                    "dd69://update-progress",
+                    serde_json::json!({ "downloaded": downloaded, "total": total }),
+                );
+            },
+            move || {
+                let _ = on_done.emit("dd69://update-ready", ());
+            },
+        )
+        .await
+        .map_err(|e| format!("the update could not be installed: {e}"))?;
+
+    Ok(version)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReachabilityDto {
+    reachable: bool,
+    inbound: u32,
+    outbound: u32,
+    listening: bool,
+    upnp: bool,
+    port: u16,
+    addresses: Vec<String>,
+    known: bool,
+}
+
+/// Can the rest of the network reach this node, or does it only dial out?
+///
+/// Zero inbound connections with no advertised address means invisible: the
+/// node stakes fine, but nobody can list it and its address never spreads.
+#[tauri::command]
+fn node_reachability() -> ReachabilityDto {
+    // No node configured yet: report nothing rather than claiming unreachable,
+    // which would put a scary warning in front of someone mid-setup.
+    let Ok(cfg) = NodeConfig::load() else {
+        return ReachabilityDto {
+            reachable: false, inbound: 0, outbound: 0, listening: false,
+            upnp: false, port: dd69_supervisor::reachable::P2P_PORT,
+            addresses: vec![], known: false,
+        };
+    };
+    let r = dd69_supervisor::reachable::status(&cfg);
+    ReachabilityDto {
+        reachable: r.reachable,
+        inbound: r.inbound,
+        outbound: r.outbound,
+        listening: r.listening,
+        upnp: r.upnp,
+        port: r.port,
+        addresses: r.addresses,
+        known: r.known,
+    }
+}
+
+/// Turn automatic router port-opening on or off. Takes effect when the node
+/// next restarts; we do not bounce it out from under a staking user.
+#[tauri::command]
+fn set_node_upnp(enabled: bool) -> Result<(), String> {
+    dd69_supervisor::reachable::set_upnp(enabled)
+}
+
+/// What the fast-sync download will cost, before the user commits to it.
+///
+/// The setup screen used to advertise "~4.7 GB" as a hardcoded string while
+/// doing nothing. This asks the server.
+#[tauri::command]
+async fn snapshot_info() -> serde_json::Value {
+    tauri::async_runtime::spawn_blocking(|| {
+        let bytes = dd69_supervisor::snapshot::remote_size();
+        let free = dd69_supervisor::install::free_disk_gb().unwrap_or(0);
+        // Unpacked, the chain is roughly half again the archive size, and the
+        // archive is kept until it is unpacked, so the peak need is both.
+        let need_gb = bytes.map(|b| ((b as f64 / 1.0e9) * 2.6).ceil() as u64).unwrap_or(13);
+        serde_json::json!({
+            "bytes": bytes,
+            "freeGb": free,
+            "needGb": need_gb,
+            "enoughRoom": free >= need_gb,
+            "chainPresent": dd69_supervisor::snapshot::chain_already_present(),
+        })
+    })
+    .await
+    .unwrap_or(serde_json::json!({ "bytes": null }))
+}
+
+/// Download and unpack the chain snapshot.
+///
+/// Emits `dd69://snapshot-progress` ({done,total,stage}) throughout, because a
+/// five-gigabyte download with no visible progress is indistinguishable from a
+/// hang, and that is precisely what makes people force-quit a wallet mid-write.
+#[tauri::command]
+async fn snapshot_fetch(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Emitter;
+    tauri::async_runtime::spawn_blocking(move || {
+        let emit = |p: dd69_supervisor::snapshot::Progress| {
+            let _ = app.emit(
+                "dd69://snapshot-progress",
+                serde_json::json!({ "done": p.done, "total": p.total, "stage": p.stage }),
+            );
+        };
+        let (archive, digest) = dd69_supervisor::snapshot::download(&emit)?;
+        dd69_supervisor::snapshot::install(&archive, &emit)?;
+        Ok(digest)
+    })
+    .await
+    .map_err(|e| format!("the snapshot task could not be run: {e}"))?
+}
+
+/// Restart into the version that was just installed.
+///
+/// WITHOUT THIS THE UPDATE APPEARS TO DO NOTHING. download_and_install writes
+/// the new app to disk, but the process already running is still the old
+/// binary — so the wallet carried on as before and its version check kept
+/// reporting the old number, which made the "update available" notice flash
+/// again immediately. It looked like a failed update; it was a finished update
+/// that nobody had started.
+///
+/// There is no way to avoid the restart: the interface is compiled into this
+/// executable, so new code cannot run until the process is replaced. The node
+/// is a SEPARATE process and is deliberately left alone, so syncing and staking
+/// carry on across the restart.
+#[tauri::command]
+fn update_relaunch(app: tauri::AppHandle) {
+    applog::log("update: restarting into the newly installed version");
+    app.restart();
+}
+
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
 // like DIVI LOVE SCAN that only exists in this machine's nodes.json) ──────────
 #[derive(Serialize)]
@@ -1632,6 +1956,53 @@ async fn fast_send(address: String, amount: f64, passphrase: Option<String>) -> 
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
         fastsend::fast_send(&cfg, &address, amount, passphrase.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Buy a Skins Gallery skin: one immediate payment to the creator, tagged
+/// on-chain with the skin's id/slug so it can be recognised again later
+/// (see `skinbuy.rs`). Not a payment request -- the buyer pays right now.
+#[tauri::command]
+async fn skin_buy(
+    pay_to_address: String,
+    amount: f64,
+    skin_ref: String,
+    passphrase: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        skinbuy::buy(&cfg, &pay_to_address, amount, &skin_ref, passphrase.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkinEntitlementDto {
+    skin_ref: String,
+    txid: String,
+    confirmations: i64,
+}
+
+/// Skins this wallet has paid for, by scanning its own outgoing transactions
+/// for the `SKINBUY1:` tag `skin_buy` attaches (see `skinbuy.rs`). Zero
+/// confirmations means the payment is still unconfirmed, not yet owned.
+#[tauri::command]
+async fn skin_entitlements(count: Option<i64>) -> Result<Vec<SkinEntitlementDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        skinbuy::entitlements(&cfg, count.unwrap_or(200)).map(|list| {
+            list.into_iter()
+                .map(|e| SkinEntitlementDto {
+                    skin_ref: e.skin_ref,
+                    txid: e.txid,
+                    confirmations: e.confirmations,
+                })
+                .collect()
+        })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -2490,13 +2861,176 @@ async fn nfd_relay_status() -> RelayStatusDto {
     .unwrap_or(RelayStatusDto { relay_url: String::new(), reachable: false, balance_winc: None })
 }
 
+
+// ── Divi Meta Tokens ──────────────────────────────────────────────────────
+//
+// Every one of these pins `from`: a record's author is the address that funds
+// vin[0], so an ordinary coin selection would attribute the record to a change
+// address holding no tokens. It would then be mined, cost a fee, and be ignored,
+// with nothing said. See crates/supervisor/src/dmt.rs.
+//
+// Amounts cross this boundary as STRINGS. A token with 8 decimals and a large
+// supply exceeds what a JavaScript number holds exactly, and silently rounding
+// somebody's balance is not acceptable.
+
+fn parse_units(amount: &str) -> Result<u64, String> {
+    amount
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| "That amount is not a whole number of the token's smallest unit.".to_string())
+}
+
+#[tauri::command]
+async fn token_create(
+    from: String,
+    premine: String,
+    decimals: u8,
+    fee: Option<f64>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dmt::create_token(&cfg, &from, parse_units(&premine)?, decimals, fee.unwrap_or(0.0001))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn token_send(
+    from: String,
+    token: String,
+    amount: String,
+    to: String,
+    fee: Option<f64>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dmt::send_tokens(&cfg, &from, &token, parse_units(&amount)?, &to, fee.unwrap_or(0.0001))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn token_airdrop(
+    from: String,
+    token: String,
+    payouts: Vec<(String, String)>,
+    fee: Option<f64>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let parsed = payouts
+            .iter()
+            .map(|(addr, amount)| Ok((addr.clone(), parse_units(amount)?)))
+            .collect::<Result<Vec<_>, String>>()?;
+        dmt::airdrop(&cfg, &from, &token, &parsed, fee.unwrap_or(0.0001))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn token_burn(
+    from: String,
+    token: String,
+    amount: String,
+    fee: Option<f64>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dmt::burn_tokens(&cfg, &from, &token, parse_units(&amount)?, fee.unwrap_or(0.0001))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn token_lock_supply(from: String, token: String, fee: Option<f64>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dmt::lock_supply(&cfg, &from, &token, fee.unwrap_or(0.0001))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Create a token and claim a ticker reserved earlier.
+///
+/// `saltHex` is what token_commit_ticker returned. Must be sent from the same
+/// address that made the reservation, and not until it has matured.
+#[tauri::command]
+#[allow(non_snake_case)]
+async fn token_create_named(
+    from: String,
+    ticker: String,
+    saltHex: String,
+    premine: String,
+    decimals: u8,
+    fee: Option<f64>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dmt::create_named_token(
+            &cfg,
+            &from,
+            &ticker,
+            &saltHex,
+            parse_units(&premine)?,
+            decimals,
+            fee.unwrap_or(0.0001),
+        )
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// What a ticker costs to register, so the user is told before being asked.
+#[tauri::command]
+async fn token_ticker_price(ticker: String) -> Result<f64, String> {
+    tauri::async_runtime::spawn_blocking(move || dmt::ticker_price_divi(&ticker))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Reserve a ticker. Returns the txid and the salt, hex encoded.
+///
+/// **The caller must keep the salt.** The reveal cannot be built without it and
+/// it is not recoverable from the chain: that is what makes the commitment a
+/// commitment rather than a public announcement of the name.
+#[tauri::command]
+async fn token_commit_ticker(
+    from: String,
+    ticker: String,
+    fee: Option<f64>,
+) -> Result<(String, String), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let (txid, salt) = dmt::commit_ticker(&cfg, &from, &ticker, fee.unwrap_or(0.0001))?;
+        Ok((txid, salt.iter().map(|b| format!("{b:02x}")).collect::<String>()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
+        // The official Tauri updater. It replaces the app IN PLACE, so an update
+        // never arrives via a browser download — which is what stamps the macOS
+        // quarantine tag — and the user therefore never has to re-approve the app
+        // or re-whitelist it. Every download is verified against our public key
+        // (see plugins.updater in tauri.conf.json) before it is installed.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // Community apps load from divi-app://<id>/ so each one gets its own
         // origin and its own content policy. See crates/app/src/community.rs for
         // why inline frame content would not work here.
         .register_uri_scheme_protocol(community::SCHEME, community::handle)
-        .setup(|_app| {
+        .setup(|app| {
+            // Stamp the detailed setup log with this build's version and open a
+            // fresh setup-log session (environment, disk, folder) BEFORE bring-up,
+            // so ⌘L always has a complete, persistent record for diagnosis.
+            dd69_supervisor::setuplog::set_app_version(&app.package_info().version.to_string());
+            dd69_supervisor::setuplog::start_session();
             // First-launch bring-up: create the config, download and verify
             // divid69, and start the node — in the background so the window opens
             // immediately and the UI shows sync progress via node_status.
@@ -2511,6 +3045,28 @@ fn main() {
                     Err(e) => applog::log(format!("startup: node bring-up stopped — {e}")),
                 }
             });
+            // Forward the supervisor's own map events to the interface. The
+            // supervisor has no tauri dependency on purpose, so it pushes into a
+            // bounded channel and this thread is what turns those into webview
+            // events. The channel drops rather than blocks, so a slow or closed
+            // window can never hold up an RPC call.
+            if let Some(rx) = dd69_supervisor::mapfeed::subscribe() {
+                use tauri::Emitter;
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Ends by itself when the supervisor side is dropped.
+                    while let Ok(ev) = rx.recv() {
+                        let _ = handle.emit(
+                            "dd69://map-event",
+                            serde_json::json!({
+                                "trigger": ev.trigger,
+                                "ip": ev.ip,
+                                "detail": ev.detail,
+                            }),
+                        );
+                    }
+                });
+            }
             // The App Builder's service, started beside the wallet, in the
             // background so the window need not wait on finding Node.
             tauri::async_runtime::spawn_blocking(builder_service::start);
@@ -2601,6 +3157,8 @@ fn main() {
             resume_staking,
             send_coins,
             fast_send,
+            skin_buy,
+            skin_entitlements,
             tx_status,
             divi_prices,
             ai_set_key,
@@ -2614,10 +3172,25 @@ fn main() {
             mm_stop,
             mm_cancel_all,
             dex_pool,
+            mm_trade_history,
+            mm_place_order,
+            mm_cancel_order,
+            mm_open_orders,
             mm_status,
             mm_book,
             restart_node,
             node_logs,
+            setup_log_report,
+            node_identity,
+            set_node_name,
+            update_check,
+            security_tools,
+            update_install,
+            update_relaunch,
+            node_reachability,
+            snapshot_info,
+            snapshot_fetch,
+            set_node_upnp,
             list_nodes,
             set_active_node,
             community::community_builtin_apps,
@@ -2639,7 +3212,15 @@ fn main() {
             nfd_import_open,
             nfd_import_read_item,
             nfd_prepare_funding,
-            nfd_tx_confirmations
+            nfd_tx_confirmations,
+            token_create,
+            token_send,
+            token_airdrop,
+            token_burn,
+            token_lock_supply,
+            token_commit_ticker,
+            token_create_named,
+            token_ticker_price
         ])
         .build(tauri::generate_context!())
         .expect("error while running Divi Desktop 6.9")

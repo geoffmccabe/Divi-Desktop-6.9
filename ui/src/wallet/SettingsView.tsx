@@ -3,12 +3,14 @@ import { PasswordPanel } from "./PasswordPanel";
 import { CoinMaturity } from "./CoinMaturity";
 import { MyNodes } from "./MyNodes";
 import { LogsPanel } from "./LogsPanel";
+import { NetworkReachPanel } from "./NetworkReachPanel";
 
 // Settings: real tabs — one panel shown at a time below a fixed tab row. (It used
 // to be a scroll-stack with scroll-spy, which let content slide under the tabs and
 // switched tabs while scrolling.)
 const TABS = [
   { id: "nodes", label: "My Nodes" },
+  { id: "network", label: "Network" },
   { id: "password", label: "Password" },
   { id: "maturity", label: "Coin Maturity" },
   { id: "logs", label: "Logs" },
@@ -34,6 +36,7 @@ export function SettingsView() {
 
       <div className="set-body">
         {active === "nodes" && <MyNodes />}
+        {active === "network" && <NetworkReachPanel />}
         {active === "password" && <PasswordPanel />}
         {active === "maturity" && <CoinMaturity />}
         {active === "logs" && <LogsPanel />}

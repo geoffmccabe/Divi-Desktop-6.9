@@ -490,16 +490,49 @@ fn nonkyc_place(rest_url: &str, c: &Creds, symbol: &str, side: &str, price: &str
 }
 
 // Reliable fail-safe: cancel every resting order by id (cancel-all is a no-op).
-fn nonkyc_cancel_all(rest_url: &str, c: &Creds, symbol: &str) -> usize {
+fn nonkyc_cancel_one(rest_url: &str, c: &Creds, id: &str) -> bool {
     let url = format!("{}/cancelorder", rest_url.trim_end_matches('/'));
+    let body = format!("{{\"id\":\"{id}\"}}");
+    nonkyc_call(&url, "POST", Some(&body), c).is_ok()
+}
+
+fn nonkyc_cancel_all(rest_url: &str, c: &Creds, symbol: &str) -> usize {
     let mut n = 0;
     for id in nonkyc_open_ids(rest_url, c, symbol) {
-        let body = format!("{{\"id\":\"{id}\"}}");
-        if nonkyc_call(&url, "POST", Some(&body), c).is_ok() {
+        if nonkyc_cancel_one(rest_url, c, &id) {
             n += 1;
         }
     }
     n
+}
+
+/// A resting order of ours, with the id needed to cancel it and the fields needed
+/// to decide whether it still matches what we want (so we can leave it in place).
+struct RestingOrder {
+    id: String,
+    is_buy: bool,
+    price: f64,
+    qty: f64, // quantity still resting (unfilled)
+}
+
+fn nonkyc_resting_orders(rest_url: &str, c: &Creds, symbol: &str) -> Vec<RestingOrder> {
+    let url = format!("{}/getorders?symbol={}&status=active&limit=200", rest_url.trim_end_matches('/'), enc_symbol(symbol));
+    let mut out = Vec::new();
+    if let Ok(v) = nonkyc_call(&url, "GET", None, c) {
+        if let Some(arr) = v.as_array() {
+            for o in arr {
+                let id = o.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let is_buy = o.get("side").and_then(|x| x.as_str()) == Some("buy");
+                let pf = |k: &str| o.get(k).and_then(|x| x.as_str()).and_then(|s| s.parse::<f64>().ok());
+                let price = pf("price").unwrap_or(0.0);
+                let qty = pf("remainQuantity").or_else(|| pf("quantity")).unwrap_or(0.0);
+                if !id.is_empty() && price > 0.0 && qty > 0.0 {
+                    out.push(RestingOrder { id, is_buy, price, qty });
+                }
+            }
+        }
+    }
+    out
 }
 
 fn sleep_stoppable(stop: &Arc<AtomicBool>, secs: u64) {
@@ -526,9 +559,23 @@ fn run_loop(cfg: MmConfig, stop: Arc<AtomicBool>) {
     let per_side = cfg.commit_usdt / 2.0; // ~half the commit to each side
     let sum_w: f64 = cfg.levels.iter().sum();
 
-    while !stop.load(Ordering::Relaxed) {
-        nonkyc_cancel_all(&cfg.rest_url, &c, &cfg.symbol);
+    // Per-order minimum the exchange accepts, in USDT.
+    const MIN_ORDER: f64 = 1.0;
+    // How far a resting order's price may drift from where we now want it before
+    // we bother repricing it. Below this, we leave it alone. This is what stops
+    // the pointless cancel/replace every cycle: when the market is quiet, nothing
+    // moves out of tolerance, so nothing is cancelled or placed.
+    const PRICE_TOL: f64 = 0.0015; // 0.15%
+    // Likewise for size: small drifts (partial fills, a nudge from the skew) don't
+    // justify tearing an order down and rebuilding it.
+    const QTY_TOL: f64 = 0.25; // 25%
+    // Inventory skew: bias the budget away from whichever coin we're already heavy
+    // in, so the bot stops piling into one side (the thing that bled it before).
+    // Gentle and clamped, so it nudges rather than dumps.
+    const SKEW_GAIN: f64 = 1.0;
+    const SKEW_MAX: f64 = 0.35;
 
+    while !stop.load(Ordering::Relaxed) {
         let (best_bid, best_ask, mid) = match nonkyc_mid(&cfg.rest_url, &cfg.symbol) {
             Ok(m) => m,
             Err(e) => {
@@ -545,54 +592,88 @@ fn run_loop(cfg: MmConfig, stop: Arc<AtomicBool>) {
         let floor = ref_high * (1.0 - cfg.protect_pct / 100.0);
         let ceiling = ref_low * (1.0 + cfg.protect_pct / 100.0);
 
-        // Held is read right after cancel-all above, so it is ~0 here; we report
-        // what we actually place below instead of these held figures.
-        let (qf, _qh, bf, _bh) = nonkyc_two_bals(&cfg.rest_url, &c, &base, &quote);
+        let (qf, qh, bf, bh) = nonkyc_two_bals(&cfg.rest_url, &c, &base, &quote);
+        let quote_total = qf + qh;                 // all USDT
+        let base_value = (bf + bh) * mid;          // all DIVI, valued in USDT
+        // deviation > 0 means too much DIVI: shrink bids, grow asks, and vice versa.
+        let denom = base_value + quote_total;
+        let deviation = if denom > 0.0 { (base_value - quote_total) / denom } else { 0.0 };
+        let skew = (deviation * SKEW_GAIN).clamp(-SKEW_MAX, SKEW_MAX);
+        let bid_budget = per_side * (1.0 - skew);
+        let ask_budget = per_side * (1.0 + skew);
 
-        let mut quote_used = 0.0; // USDT committed to bids
-        let mut ask_notional = 0.0; // USDT-equiv committed to asks
-        let mut base_used = 0.0; // base committed to asks
-        let mut placed = 0usize;
-
+        // 1) Work out the ladder we WANT right now. Weight toward the outer levels
+        //    so a sudden move fills only the small near orders first.
+        let mut desired: Vec<(bool, f64, i64)> = Vec::new(); // (is_buy, price, qty)
         for &sp in &cfg.levels {
-            // Weight the per-side budget toward the OUTER levels - less right at
-            // the price, more deeper - so a sudden move fills only small near
-            // orders first, and never more than the per-side cap.
             let weight = if sum_w > 0.0 { sp / sum_w } else { 1.0 / cfg.levels.len().max(1) as f64 };
-            let level_notional = per_side * weight;
-
-            // BUY level: below mid, never crossing best ask, never below the floor.
             let bid_px = (mid * (1.0 - sp / 100.0)).min(best_ask * 0.9999);
             if bid_px >= floor {
-                let bid_qty = (level_notional / bid_px) as i64;
-                let cost = bid_qty as f64 * bid_px;
-                if bid_qty > 0 && cost >= 1.0 && quote_used + cost <= per_side && qf >= quote_used + cost
-                    && nonkyc_place(&cfg.rest_url, &c, &cfg.symbol, "buy", &fmt_price(bid_px), bid_qty) {
-                    quote_used += cost;
-                    placed += 1;
-                }
+                let qty = (bid_budget * weight / bid_px) as i64;
+                if qty > 0 && qty as f64 * bid_px >= MIN_ORDER { desired.push((true, bid_px, qty)); }
             }
-            // SELL level: above mid, never crossing best bid, never above the ceiling.
             let ask_px = (mid * (1.0 + sp / 100.0)).max(best_bid * 1.0001);
             if ask_px <= ceiling {
-                let ask_qty = (level_notional / ask_px) as i64;
-                let val = ask_qty as f64 * ask_px;
-                if ask_qty > 0 && val >= 1.0 && ask_notional + val <= per_side && bf >= base_used + ask_qty as f64
-                    && nonkyc_place(&cfg.rest_url, &c, &cfg.symbol, "sell", &fmt_price(ask_px), ask_qty) {
-                    ask_notional += val;
-                    base_used += ask_qty as f64;
-                    placed += 1;
-                }
+                let qty = (ask_budget * weight / ask_px) as i64;
+                if qty > 0 && qty as f64 * ask_px >= MIN_ORDER { desired.push((false, ask_px, qty)); }
             }
         }
 
+        // 2) Compare with what's already resting: keep matches, note what to place.
+        let resting = nonkyc_resting_orders(&cfg.rest_url, &c, &cfg.symbol);
+        let mut used = vec![false; resting.len()];
+        let mut committed_quote = 0.0; // USDT tied up in buys
+        let mut committed_base = 0.0;  // DIVI tied up in sells
+        let mut kept = 0usize;
+        let mut to_place: Vec<(bool, f64, i64)> = Vec::new();
+        for &(is_buy, price, qty) in &desired {
+            let mut matched = false;
+            for (i, r) in resting.iter().enumerate() {
+                if used[i] || r.is_buy != is_buy { continue; }
+                if (r.price - price).abs() <= price * PRICE_TOL
+                    && (r.qty - qty as f64).abs() <= (qty as f64) * QTY_TOL {
+                    used[i] = true; matched = true; kept += 1;
+                    if is_buy { committed_quote += r.qty * r.price; } else { committed_base += r.qty; }
+                    break;
+                }
+            }
+            if !matched { to_place.push((is_buy, price, qty)); }
+        }
+
+        // 3) Cancel only the resting orders that no longer fit.
+        let mut cancelled = 0usize;
+        for (i, r) in resting.iter().enumerate() {
+            if !used[i] && nonkyc_cancel_one(&cfg.rest_url, &c, &r.id) { cancelled += 1; }
+        }
+
+        // 4) Place only the missing orders, capped by the free (un-held) balance.
+        let mut quote_free_left = qf;
+        let mut base_free_left = bf;
+        let mut placed_new = 0usize;
+        for &(is_buy, price, qty) in &to_place {
+            if is_buy {
+                let cost = qty as f64 * price;
+                if cost <= quote_free_left
+                    && nonkyc_place(&cfg.rest_url, &c, &cfg.symbol, "buy", &fmt_price(price), qty) {
+                    quote_free_left -= cost; committed_quote += cost; placed_new += 1;
+                }
+            } else if qty as f64 <= base_free_left
+                && nonkyc_place(&cfg.rest_url, &c, &cfg.symbol, "sell", &fmt_price(price), qty) {
+                base_free_left -= qty as f64; committed_base += qty as f64; placed_new += 1;
+            }
+        }
+
+        let live = kept + placed_new;
         cycles += 1;
+        let msg = if cancelled == 0 && placed_new == 0 {
+            format!("steady: {live} orders around {mid:.7}")
+        } else {
+            format!("adjusted (+{placed_new}/-{cancelled}): {live} orders around {mid:.7}")
+        };
         set_status(MmStatus {
-            running: true,
-            message: format!("quoting {placed} orders around {mid:.7}"),
-            mid, open_orders: placed,
-            base_free: (bf - base_used).max(0.0), base_held: base_used,
-            quote_free: (qf - quote_used).max(0.0), quote_held: quote_used,
+            running: true, message: msg, mid, open_orders: live,
+            base_free: ((bf + bh) - committed_base).max(0.0), base_held: committed_base,
+            quote_free: (quote_total - committed_quote).max(0.0), quote_held: committed_quote,
             cycles,
         });
         sleep_stoppable(&stop, cfg.refresh_secs);
@@ -637,6 +718,156 @@ pub fn cancel_all_orders(slug: &str, connector: &str, rest_url: &str, symbol: &s
     let c = load(slug).ok_or_else(|| "Connect this exchange first.".to_string())?;
     let sym = symbol.replace('-', "/");
     Ok(nonkyc_cancel_all(rest_url, &c, &sym))
+}
+
+/// Realized trading result, reconstructed from the exchange's own filled-order
+/// history. This is the source of truth for "where did my money go": the exchange
+/// keeps every fill, so a node holder can always audit their market making.
+pub struct TradePnl {
+    pub fills: usize,
+    pub buys: usize,
+    pub sells: usize,
+    pub divi_bought: f64,
+    pub divi_sold: f64,
+    pub usdt_spent: f64,
+    pub usdt_recv: f64,
+    pub avg_buy: f64,
+    pub avg_sell: f64,
+    pub net_divi: f64,      // bought - sold (inventory change)
+    pub net_usdt: f64,      // received - spent (realized cash flow, pre external fees)
+    pub gross_volume: f64,  // total USDT traded, both sides
+    pub mid: f64,           // current mid, to value leftover inventory
+    pub total_pnl: f64,     // net_usdt + net_divi * mid
+    pub first_ms: i64,
+    pub last_ms: i64,
+}
+
+/// Pull the filled-order history for a pair and total it up. Read-only.
+/// `source` splits the history: "mm" counts only the market-maker's own fills
+/// (mm-* orders); anything else counts only manual/external fills (the user's own
+/// trades, whether placed here or directly on the exchange), so each panel shows
+/// its own trading and never the other's.
+pub fn trade_history(slug: &str, connector: &str, rest_url: &str, symbol: &str, source: &str) -> Result<TradePnl, String> {
+    if connector != "nonkyc" {
+        return Err("Trade history is available for NonKYC today.".into());
+    }
+    check_rest_url(connector, rest_url)?;
+    let c = load(slug).ok_or_else(|| "Connect this exchange first.".to_string())?;
+    let url = format!("{}/getorders?symbol={}&status=filled&limit=1000", rest_url.trim_end_matches('/'), enc_symbol(symbol));
+    let v = nonkyc_call(&url, "GET", None, &c)?;
+    let arr = v.as_array().ok_or_else(|| "The exchange reply wasn't a list of orders.".to_string())?;
+
+    let (mut buys, mut sells) = (0usize, 0usize);
+    let (mut divi_bought, mut divi_sold, mut usdt_spent, mut usdt_recv) = (0.0, 0.0, 0.0, 0.0);
+    let (mut first_ms, mut last_ms) = (i64::MAX, 0i64);
+    let fstr = |o: &serde_json::Value, k: &str| o.get(k).and_then(|x| x.as_str()).and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+    let want_mm = source == "mm";
+    for o in arr {
+        let qty = fstr(o, "executedQuantity");
+        let px = fstr(o, "price");
+        if qty <= 0.0 { continue; }
+        let from_mm = o.get("userProvidedId").and_then(|x| x.as_str()).unwrap_or("").starts_with("mm-");
+        if from_mm != want_mm { continue; } // keep only this panel's own trades
+        let val = qty * px;
+        let t = o.get("lastTradeAt").and_then(|x| x.as_i64()).or_else(|| o.get("createdAt").and_then(|x| x.as_i64())).unwrap_or(0);
+        if t > 0 { first_ms = first_ms.min(t); last_ms = last_ms.max(t); }
+        match o.get("side").and_then(|x| x.as_str()) {
+            Some("buy") => { buys += 1; divi_bought += qty; usdt_spent += val; }
+            Some("sell") => { sells += 1; divi_sold += qty; usdt_recv += val; }
+            _ => {}
+        }
+    }
+    let mid = nonkyc_mid(rest_url, symbol).map(|(_, _, m)| m).unwrap_or(0.0);
+    let net_divi = divi_bought - divi_sold;
+    let net_usdt = usdt_recv - usdt_spent;
+    Ok(TradePnl {
+        fills: buys + sells, buys, sells,
+        divi_bought, divi_sold, usdt_spent, usdt_recv,
+        avg_buy: if divi_bought > 0.0 { usdt_spent / divi_bought } else { 0.0 },
+        avg_sell: if divi_sold > 0.0 { usdt_recv / divi_sold } else { 0.0 },
+        net_divi, net_usdt, gross_volume: usdt_spent + usdt_recv, mid,
+        total_pnl: net_usdt + net_divi * mid,
+        first_ms: if first_ms == i64::MAX { 0 } else { first_ms }, last_ms,
+    })
+}
+
+// Plain-decimal quantity (no scientific notation, trailing zeros trimmed), for
+// the manual trade order body.
+fn fmt_qty(q: f64) -> String {
+    let s = format!("{q:.8}");
+    let t = s.trim_end_matches('0').trim_end_matches('.');
+    if t.is_empty() { "0".to_string() } else { t.to_string() }
+}
+
+/// Place a manual order (the user's own buy/sell, not the engine's). Market or
+/// limit. Quantity is always in the base coin (DIVI). Returns the new order id.
+/// The user drives this from the Trade panel; errors from the exchange (balance,
+/// minimum size, bad price) are surfaced verbatim so nothing fails silently.
+pub fn place_order(slug: &str, connector: &str, rest_url: &str, symbol: &str,
+                   side: &str, order_type: &str, quantity: f64, price: Option<f64>) -> Result<String, String> {
+    if connector != "nonkyc" { return Err("Trading is available for NonKYC today.".into()); }
+    check_rest_url(connector, rest_url)?;
+    if side != "buy" && side != "sell" { return Err("Side must be buy or sell.".into()); }
+    if order_type != "limit" && order_type != "market" { return Err("Order type must be limit or market.".into()); }
+    if !(quantity > 0.0) { return Err("Enter a quantity greater than zero.".into()); }
+    let c = load(slug).ok_or_else(|| "Connect this exchange first.".to_string())?;
+    let sym = symbol.replace('-', "/");
+    let url = format!("{}/createorder", rest_url.trim_end_matches('/'));
+    let qty = fmt_qty(quantity);
+    let body = if order_type == "limit" {
+        let p = price.ok_or_else(|| "A limit order needs a price.".to_string())?;
+        if !(p > 0.0) { return Err("Enter a price greater than zero.".into()); }
+        format!("{{\"userProvidedId\":\"tr-{}\",\"symbol\":\"{}\",\"side\":\"{}\",\"type\":\"limit\",\"quantity\":\"{}\",\"price\":\"{}\",\"strictValidate\":false}}",
+            now_ms(), sym, side, qty, fmt_price(p))
+    } else {
+        format!("{{\"userProvidedId\":\"tr-{}\",\"symbol\":\"{}\",\"side\":\"{}\",\"type\":\"market\",\"quantity\":\"{}\",\"strictValidate\":false}}",
+            now_ms(), sym, side, qty)
+    };
+    let v = nonkyc_call(&url, "POST", Some(&body), &c)?;
+    Ok(v.get("id").and_then(|x| x.as_str()).unwrap_or("ok").to_string())
+}
+
+/// Cancel one of the user's orders by id.
+pub fn cancel_order(slug: &str, connector: &str, rest_url: &str, id: &str) -> Result<(), String> {
+    if connector != "nonkyc" { return Err("Cancelling is available for NonKYC today.".into()); }
+    check_rest_url(connector, rest_url)?;
+    let c = load(slug).ok_or_else(|| "Connect this exchange first.".to_string())?;
+    if nonkyc_cancel_one(rest_url, &c, id) { Ok(()) } else { Err("The exchange did not cancel that order.".into()) }
+}
+
+/// One of the user's resting orders, for the Trade panel's open-orders list.
+pub struct ManualOrder {
+    pub id: String,
+    pub side: String,
+    pub order_type: String,
+    pub price: f64,
+    pub qty: f64,
+    pub from_mm: bool, // placed by the market-maker engine (mm-*) vs a manual trade (tr-*)
+    pub created_ms: i64, // when the exchange recorded the order (epoch ms)
+}
+
+/// The user's currently-open orders on a pair, with ids so the UI can cancel them.
+pub fn open_orders(slug: &str, connector: &str, rest_url: &str, symbol: &str) -> Result<Vec<ManualOrder>, String> {
+    if connector != "nonkyc" { return Err("Available for NonKYC today.".into()); }
+    check_rest_url(connector, rest_url)?;
+    let c = load(slug).ok_or_else(|| "Connect this exchange first.".to_string())?;
+    let url = format!("{}/getorders?symbol={}&status=active&limit=200", rest_url.trim_end_matches('/'), enc_symbol(symbol));
+    let v = nonkyc_call(&url, "GET", None, &c)?;
+    let arr = v.as_array().ok_or_else(|| "The exchange reply wasn't a list of orders.".to_string())?;
+    let mut out = Vec::new();
+    for o in arr {
+        let id = o.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        if id.is_empty() { continue; }
+        let side = o.get("side").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let order_type = o.get("type").and_then(|x| x.as_str()).unwrap_or("limit").to_string();
+        let pf = |k: &str| o.get(k).and_then(|x| x.as_str()).and_then(|s| s.parse::<f64>().ok());
+        let price = pf("price").unwrap_or(0.0);
+        let qty = pf("remainQuantity").or_else(|| pf("quantity")).unwrap_or(0.0);
+        let from_mm = o.get("userProvidedId").and_then(|x| x.as_str()).unwrap_or("").starts_with("mm-");
+        let created_ms = o.get("createdAt").and_then(|x| x.as_i64()).unwrap_or(0);
+        out.push(ManualOrder { id, side, order_type, price, qty, from_mm, created_ms });
+    }
+    Ok(out)
 }
 
 /// Stop the engine, wait for its fail-safe cancel to finish.

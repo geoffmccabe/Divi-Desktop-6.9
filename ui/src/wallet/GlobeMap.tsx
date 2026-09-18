@@ -10,6 +10,7 @@ import { platform } from "./rebels/platform/current";
 import { towerMaterials, tickTowerLights } from "./towerLights";
 import { createDetail, type DetailLayer } from "./globeDetail";
 import { createBorders, type Borders } from "./globeBorders";
+import { createGlobeAnimOverlay } from "./globeAnimOverlay";
 
 // "H S% L%" (this app's HSL-triplet token format) -> a CSS hsl() string that
 // THREE.Color / material `color` params accept directly.
@@ -434,6 +435,11 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
   const [shown, setShown] = useState(false);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [size, setSize] = useState({ w: 600, h: 400 });
+  /* The overlay loop reads the size every frame, so it needs a ref rather than
+     the state value captured when its effect ran. Declared here, next to the
+     state it mirrors, so it can never be read before it exists. */
+  const sizeRef = useRef(size);
+  sizeRef.current = size;
   const [ready, setReady] = useState(false);
   const [hover, setHover] = useState<{ x: number; y: number; title: string; lines: string[] } | null>(null);
   const pointsRef = useRef(points);
@@ -446,6 +452,23 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
   const flightRef = useRef<GlobeFlight | null | undefined>(flight);
   flightRef.current = flight;
   const attachedRef = useRef<GlobeFlight | null>(null);
+  /* v2 animation layer: a transparent 2D canvas over the globe, driven by the
+     SAME renderer the flat map uses so the two can never disagree about what a
+     node is doing. Idle unless the flag is on. */
+  const animRef = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = animRef.current;
+    if (!canvas) return;
+    return createGlobeAnimOverlay({
+      canvas,
+      globe: () => globeRef.current,
+      self: () => {
+        const me = pointsRef.current.find((p) => p.kind === "self");
+        return me ? { lat: me.lat, lng: me.lng } : null;
+      },
+      size: () => sizeRef.current,
+    });
+  }, []);
   /* The map's own pixel ratio, kept while the game runs at one. */
   const ratioRef = useRef(0);
   let unpatchRender: (() => void) | null = null;
@@ -1290,6 +1313,13 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
         atmosphereColor={cssHsl(mapAtmosphere)}
         atmosphereAltitude={0.18}
         onGlobeReady={onReady}
+      />
+      {/* v2 animation layer. pointer-events:none so it never intercepts a
+          drag, a click on a node, or the game's controls. */}
+      <canvas
+        ref={animRef}
+        className="netmap-globe-anim"
+        style={{ width: size.w, height: size.h }}
       />
       {hover && (
         <div

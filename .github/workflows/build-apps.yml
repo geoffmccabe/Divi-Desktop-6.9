@@ -59,6 +59,24 @@ jobs:
           fi
         shell: bash
 
+      # Cache the crate downloads AND the compiled dependency artifacts so each
+      # build recompiles only OUR code, not the whole dependency tree — that
+      # recompile was most of the ~5-7 min release build. First-party actions/cache
+      # (not a third-party action) given this project's supply-chain history. Keyed
+      # per-OS + Cargo.lock; the restore-key falls back to the newest cache when the
+      # lock changes, so a dependency bump only recompiles what actually changed.
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ matrix.os }}-
+
       # Linux needs the webview + build libraries the desktop shell links against.
       - name: Linux system deps
         if: matrix.os == 'ubuntu-22.04'
@@ -83,17 +101,39 @@ jobs:
         run: echo "RUSTFLAGS=--remap-path-prefix=$HOME=/build" >> "$GITHUB_ENV"
         shell: bash
 
+      # The cached target/ keeps the previous build's installer bundles, so
+      # without this the artifact would carry stale old-version installers
+      # alongside the new ones. Purge them; only dependency artifacts are worth
+      # keeping in the cache, and those live elsewhere under target/.
+      - name: Clear stale installers from the cache
+        run: find target -type d -name bundle -prune -exec rm -rf {} + 2>/dev/null || true
+        shell: bash
+
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         with:
           projectPath: crates/app
           args: ${{ matrix.args }}
+        # Signs the updater artifacts with our private key (stored as a repo
+        # secret, never in the tree). The app verifies every update against the
+        # matching public key in tauri.conf.json, so a compromised download
+        # server cannot push a different binary to anyone.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      # The .sig files are the signatures the in-app updater checks before it
+      # installs anything, and the .tar.gz/.zip are the update payloads the
+      # updater downloads (distinct from the human-facing installers). Without
+      # these collected, the updater manifest can't be published.
       - name: Collect installers
         run: |
           mkdir -p out
           find target -type f \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \
-            -o -name '*.msi' -o -name '*-setup.exe' \) -exec cp {} out/ \; || true
+            -o -name '*.msi' -o -name '*-setup.exe' \
+            -o -name '*.sig' -o -name '*.app.tar.gz' -o -name '*-setup.nsis.zip' \) \
+            -exec cp {} out/ \; || true
+          echo "collected:"; ls -1 out/
         shell: bash
 
       - name: Upload installer

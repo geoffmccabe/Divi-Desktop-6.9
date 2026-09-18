@@ -20,10 +20,19 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const REG = "dd69.newNodes.reg"; // { ip: firstSeenMs } — append-only, never churned
 const ANNOUNCED = "dd69.newNodes.announced"; // IPs whose arrival cue has fired
 
-// The user's Costa Rica desktop node — seeded as the day-0 test spiral. It is the
-// user's OWN node, not a peer, so its location is injected into knownPeers too so
-// the map has somewhere to draw it.
-const SEED = { ip: "201.206.191.234", lat: 9.9985, lon: -84.1171, city: "Heredia", country: "Costa Rica", cc: "CR" };
+// A dev-only test spiral used to point at one specific desktop node (in Heredia,
+// Costa Rica) as a demo "brand-new node". It was hardcoded and injected into
+// every install's saved peer data, so EVERY user — wherever they actually are —
+// saw a phantom node in Costa Rica and read it as "their node". That is wrong to
+// ship. We no longer seed it, and `cleanupLegacySeed` removes it from any machine
+// that already saved it. A genuinely-live node at this IP will simply reappear
+// through the normal peer path with its real, geolocated position.
+const LEGACY_SEED_IP = "201.206.191.234";
+const SEED_CLEANUP_FLAG = "dd69.newNodes.seedCleanup.v1";
+// The exact coordinates we used to inject, so cleanup only removes OUR fake
+// entry from knownPeers and never a real peer that happens to share the IP.
+const LEGACY_SEED_LAT = 9.9985;
+const LEGACY_SEED_LON = -84.1171;
 
 type Reg = Record<string, number>;
 
@@ -43,28 +52,68 @@ function saveReg(r: Reg): void {
 }
 
 /**
+ * Remove the old hardcoded Costa Rica test node from a machine that already
+ * saved it (registry, arrival-announcements, and the injected knownPeers entry).
+ * Runs once (flag-guarded). We only delete the knownPeers entry when its saved
+ * coordinates match the exact ones we injected, so a genuinely-live peer at the
+ * same IP is left untouched and will keep its real, geolocated position.
+ */
+export function cleanupLegacySeed(): void {
+  try {
+    if (localStorage.getItem(SEED_CLEANUP_FLAG)) return;
+  } catch {
+    return;
+  }
+  // registry
+  const reg = loadReg();
+  if (reg[LEGACY_SEED_IP] != null) {
+    delete reg[LEGACY_SEED_IP];
+    saveReg(reg);
+  }
+  // arrival announcements
+  try {
+    const s = announcedSet();
+    if (s.delete(LEGACY_SEED_IP)) {
+      localStorage.setItem(ANNOUNCED, JSON.stringify([...s]));
+    }
+  } catch {
+    /* ignore */
+  }
+  // the injected knownPeers entry — only if it's OUR fake (coords match)
+  try {
+    const k = loadKnown();
+    const e = k[LEGACY_SEED_IP];
+    if (e && Math.abs(e.lat - LEGACY_SEED_LAT) < 0.001 && Math.abs(e.lon - LEGACY_SEED_LON) < 0.001) {
+      delete k[LEGACY_SEED_IP];
+      localStorage.setItem("dd69.knownPeers", JSON.stringify(k));
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    localStorage.setItem(SEED_CLEANUP_FLAG, "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
  * One-time seed. Registers EVERY node known today as "existing" (first seen far
- * in the past ⇒ no spiral), and the Costa Rica node as brand-new (day 0). Runs
- * only when the registry is empty, so it never re-freezes a genuine new node.
- * Reads knownPeers straight from disk (a stable 92-ish), so it can't be fooled
- * by a momentarily-thin in-memory copy.
+ * in the past ⇒ no spiral). Runs only when the registry is empty, so it never
+ * re-freezes a genuine new node. Reads knownPeers straight from disk (a stable
+ * 92-ish), so it can't be fooled by a momentarily-thin in-memory copy.
+ *
+ * No demo/test node is seeded here: a "new node" spiral now only ever comes from
+ * a genuinely newly-seen peer, so the map reflects the real network for everyone.
  */
 export function baselineNewNodes(now = Date.now()): void {
+  cleanupLegacySeed(); // heal installs that already saved the old Costa Rica seed
   const reg = loadReg();
   if (Object.keys(reg).length > 0) return; // already seeded
   const old = now - (NEW_DAYS + 1) * DAY_MS; // older than the window ⇒ not new
   const k = loadKnown();
   for (const ip of Object.keys(k)) reg[ip] = old;
-  reg[SEED.ip] = now; // the one test spiral
   saveReg(reg);
-  // Make sure the seed node has a location to draw at (it's our own node).
-  try {
-    k[SEED.ip] = { lat: SEED.lat, lon: SEED.lon, city: SEED.city, country: SEED.country, cc: SEED.cc, lastSeen: now };
-    localStorage.setItem("dd69.knownPeers", JSON.stringify(k));
-  } catch {
-    /* ignore */
-  }
-  markAnnounced([SEED.ip]); // don't chime for the seed on first run
 }
 
 /**
@@ -121,9 +170,8 @@ export function newNodes(known: Known = loadKnown(), now = Date.now(), limit = 1
   for (const [ip, firstSeen] of Object.entries(reg)) {
     const d = ageDays(firstSeen, now);
     if (d >= NEW_DAYS) continue;
-    const kp = known[ip];
-    // Need a location to place it. The seed node carries its own.
-    const loc = kp ?? (ip === SEED.ip ? { lat: SEED.lat, lon: SEED.lon, city: SEED.city, country: SEED.country, cc: SEED.cc, lastSeen: now } : null);
+    // Need a location to place it; skip any node we can't position.
+    const loc = known[ip];
     if (!loc) continue;
     out.push({
       ip,

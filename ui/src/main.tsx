@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import SetupLogHotkey from "./wallet/SetupLogHotkey";
 import { applyIcons } from "./icons";
 import { installClickSound } from "./sound";
 import { prefetchMusic } from "./wallet/rebels/rebelsMusic";
@@ -64,6 +65,7 @@ try {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <App />
+      <SetupLogHotkey />
     </React.StrictMode>
   );
 } catch (e) {

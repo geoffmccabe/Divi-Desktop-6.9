@@ -20,6 +20,7 @@ import { TimestampPanel } from "./wallet/TimestampPanel";
 import { CollectiblesPanel } from "./wallet/CollectiblesPanel";
 import { TokensPanel } from "./wallet/TokensPanel";
 import { MarketMakerPanel } from "./wallet/MarketMakerPanel";
+import { TradingPanel } from "./wallet/TradingPanel";
 import { HraPanel } from "./wallet/HraPanel";
 import { GovernancePreview } from "./wallet/governance/GovernancePreview";
 import { MultisigPanel } from "./wallet/multisig/MultisigPanel";
@@ -29,6 +30,7 @@ import { NetworkMap } from "./wallet/NetworkMap";
 import { PriceChart } from "./wallet/PriceChart";
 import { FastReceiveHost } from "./wallet/FastReceiveHost";
 import { MmVenueToggle } from "./wallet/mmVenue";
+import { SkinsGallery } from "./theme/gallery/SkinsGallery";
 
 const VIEWS: Record<string, ComponentType> = {
   overview: Overview,
@@ -39,6 +41,7 @@ const VIEWS: Record<string, ComponentType> = {
   timestamp: TimestampPanel,
   collectibles: CollectiblesPanel,
   tokens: TokensPanel,
+  trading: TradingPanel,
   marketmaker: MarketMakerPanel,
   governance: GovernancePreview,
   multisig: MultisigPanel,
@@ -46,6 +49,7 @@ const VIEWS: Record<string, ComponentType> = {
   appbuilder: BuilderPanel,
   communityapps: CommunityApps,
   addressbook: AddressBook,
+  skinsgallery: SkinsGallery,
   settings: SettingsView,
   network: NetworkMap,
 };

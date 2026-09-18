@@ -20,6 +20,7 @@ export const NAV: NavItem[] = [
   { id: "communityapps", label: "Community Apps", icon: "communityapps" },
   { id: "governance", label: "Governance", icon: "governance" },
   { id: "multisig", label: "MultiSig", icon: "multisig" },
+  { id: "trading", label: "Trading", icon: "trading" },
   { id: "marketmaker", label: "Market Maker", icon: "marketmaker" },
   // A newline in a label wraps the row onto two tight lines (see .nav-item span
   // in index.css). Used where a name is genuinely long rather than to save a
@@ -30,5 +31,6 @@ export const NAV: NavItem[] = [
   /* Straight into the cockpit: the map in globe view with the game started,
      rather than the map and then a button. */
   { id: "divirebels", label: "Divi Rebels Game", icon: "divirebels" },
+  { id: "skinsgallery", label: "Skins Gallery", icon: "collectibles" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];

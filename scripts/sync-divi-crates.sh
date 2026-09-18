@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Sync the vendored protocol crates from the chain repo.
 #
-# `crates/dvxp-core` and `crates/name-registry` are BYTE-IDENTICAL copies of
-# contrib/dvxp-core and contrib/name-registry in geoffmccabe/Divi-Blockchain_6.9,
-# which is where they are normative. They are vendored rather than referenced so
+# The crates listed below are BYTE-IDENTICAL copies of the matching directories
+# in contrib/ in geoffmccabe/Divi-Blockchain_6.9, which is where they are
+# normative. They are vendored rather than referenced so
 # that DD69 builds standalone, with no private-repo credentials and no network.
 #
 # The rules in those crates must give identical answers in the wallet, the
@@ -20,7 +20,12 @@ set -euo pipefail
 
 CHAIN_REPO="${CHAIN_REPO:-$HOME/Divi-Blockchain_6.9}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CRATES=(dvxp-core name-registry)
+# Order matters only for readability; each is copied independently.
+# dmt-indexer brings the token rules AND the record encoders, so the wallet
+# never carries its own copy of a record layout. dvxp-scan brings the scanner
+# and the query layer, vendored with default-features off: no HTTP client, no
+# listener, just the rules the wallet drives in-process.
+CRATES=(dvxp-core name-registry dmt-indexer nfd-indexer dvxp-scan)
 APPLY=0
 [ "${1:-}" = "--apply" ] && APPLY=1
 
@@ -36,9 +41,13 @@ for c in "${CRATES[@]}"; do
   src="$CHAIN_REPO/contrib/$c"
   dst="$HERE/crates/$c"
   if [ "$APPLY" = "1" ]; then
+    mkdir -p "$dst"
     rm -rf "$dst/src"
     cp -R "$src/src" "$dst/src"
     cp "$src/Cargo.toml" "$dst/Cargo.toml"
+    # Examples are developer tools for the chain repo, not part of the wallet,
+    # and one of them is a Python script. Never vendored.
+    rm -rf "$dst/examples"
     echo "synced $c"
   else
     if ! diff -ru "$src/src" "$dst/src" >/dev/null 2>&1 \

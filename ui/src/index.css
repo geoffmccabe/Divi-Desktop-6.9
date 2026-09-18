@@ -59,6 +59,10 @@
   --map-activity-pulse: 45 100% 55%;
   --map-new-node: 177 85% 58%;
   --map-stake-accent: 353 76% 50%;
+  /* v2 animation states: a node that refused or timed out, and traffic that
+     leaves the Divi network entirely (price feed, geolocation, updates). */
+  --map-dead: 0 85% 58%;
+  --map-external: 185 90% 55%;
   --map-background: 216 33% 6%;
   --map-atmosphere: 211 100% 68%;
 }
@@ -1026,6 +1030,82 @@ code, .mono { font-family: var(--font-mono); }
 .nm-out { background: hsl(var(--primary)); } /* Active Peers — matches connection arcs */
 .nm-in { background: hsl(210 85% 62%); } /* Full Network — matches the blue background mesh */
 .nm-self { background: hsl(var(--warning)); }
+.nm-ghost { background: hsl(var(--map-offline)); opacity: 0.55; }
+/* Shown instead of the fiat value while the node is still reading the chain,
+   so a not-yet-counted balance is never presented as a settled zero. */
+/* "STILL SYNCING" replaces the figure entirely, so it must read as a status
+   rather than as a value: no monospace figure styling, no currency unit. */
+/* Settings -> Network: whether the outside world can reach this node. */
+.reach-panel { display: flex; flex-direction: column; gap: 16px; max-width: 46rem; }
+.reach-status { border-radius: 10px; padding: 12px 14px; border: 1px solid transparent; }
+.reach-status strong { display: block; margin-bottom: 4px; font-size: 0.95rem; }
+.reach-ok { border-color: hsl(var(--map-discovery-pulse) / 0.45); background: hsl(var(--map-discovery-pulse) / 0.08); }
+.reach-ok strong { color: hsl(var(--map-discovery-pulse)); }
+.reach-hidden { border-color: hsl(var(--warning) / 0.5); background: hsl(var(--warning) / 0.08); }
+.reach-hidden strong { color: hsl(var(--warning)); }
+.reach-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 8px 18px; }
+.reach-facts > div { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; border-bottom: 1px solid hsl(var(--border) / 0.5); }
+.reach-facts span { color: hsl(var(--muted-foreground)); font-size: 0.8rem; }
+.reach-facts b { font-variant-numeric: tabular-nums; }
+.reach-toggle { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.reach-toggle input { margin-top: 3px; flex: none; }
+.reach-toggle strong { display: block; font-size: 0.9rem; }
+.reach-toggle em { display: block; font-style: normal; font-size: 0.78rem; color: hsl(var(--muted-foreground)); line-height: 1.45; margin-top: 3px; }
+.reach-restart { color: hsl(var(--map-discovery-pulse)); }
+.reach-err { color: hsl(var(--map-dead)); }
+.reach-help { border-left: 2px solid hsl(var(--border)); padding-left: 12px; }
+.reach-help strong { font-size: 0.85rem; }
+/* "NODE NOT RUNNING" is a fault, not a wait: it reads red, not amber. */
+/* Setup: a blocker the user must act on, not a hint. */
+.ip-warn {
+  color: hsl(var(--map-dead));
+  font-size: 0.78rem;
+  line-height: 1.45;
+  border-left: 2px solid hsl(var(--map-dead) / 0.6);
+  padding-left: 10px;
+  margin: 8px 0;
+}
+.bl-down-amt {
+  color: hsl(var(--map-dead));
+  font-size: 1.05rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.bl-sync-amt {
+  color: hsl(var(--warning));
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+/* The reassurance under STILL SYNCING. Sits where the fiat value would be, so
+   the panel keeps its height and nothing jumps when syncing finishes. */
+.bl-sync-note {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.66rem;
+  line-height: 1.3;
+}
+.bl-syncing {
+  font-size: 0.68rem;
+  line-height: 1.35;
+  opacity: 0.85;
+  color: hsl(var(--warning));
+  max-width: 22rem;
+}
+ /* Seen before — remembered, not confirmed connected right now */
+/* v2 animation legend: the colour ladder a node walks as we learn about it. */
+.nm-seek { background: hsl(var(--map-discovery-pulse)); }
+.nm-deadc { background: hsl(var(--map-dead)); }
+.nm-extc { background: hsl(var(--map-external)); }
+.nm-v2tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: hsl(var(--map-discovery-pulse));
+  border: 1px solid hsl(var(--map-discovery-pulse) / 0.5);
+  background: hsl(var(--map-discovery-pulse) / 0.12);
+}
 /* Row below the topbar: optional install panel (left) + the map (right, flex:1).
    When no panel is open the map fills the whole row unchanged. */
 .netmap-body { flex: 1; display: flex; flex-direction: row; min-height: 0; gap: 12px; }
@@ -1714,6 +1794,9 @@ code, .mono { font-family: var(--font-mono); }
   opacity: 0; transition: opacity 260ms ease;
 }
 .netmap-globe.shown { opacity: 1; }
+/* The v2 animation layer sits over the WebGL globe and must never swallow a
+   drag, a node click, or the game's controls. */
+.netmap-globe-anim { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; }
 .globe-tip {
   background: rgba(0, 0, 0, 0.8); border: 1px solid hsl(210 85% 62% / 0.6); border-radius: 6px;
   padding: 4px 7px; font-size: 0.72rem; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums;
@@ -1961,6 +2044,26 @@ code, .mono { font-family: var(--font-mono); }
 .pc-tip-price { font-weight: 700; font-size: 0.92rem; color: hsl(var(--foreground)); }
 .pc-tip-date { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
 
+/* Node name box in My Nodes settings. Dark field + fuchsia focus, matching the
+   theme (never a white control on the dark panel). */
+.nodename-box { margin: 6px 0 18px; }
+.nodename-label { display: block; font-size: 0.8rem; font-weight: 600; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
+.nodename-row { display: flex; gap: 8px; align-items: stretch; max-width: 460px; }
+.nodename-input {
+  flex: 1 1 auto; min-width: 0; padding: 8px 12px; border-radius: 8px; font-size: 0.9rem;
+  color: hsl(var(--foreground)); background: hsl(var(--background) / 0.6);
+  border: 1px solid hsl(var(--primary) / 0.35); transition: border-color 0.15s, box-shadow 0.15s;
+}
+.nodename-input::placeholder { color: hsl(var(--muted-foreground) / 0.7); }
+.nodename-input:focus { outline: none; border-color: hsl(var(--primary) / 0.8); box-shadow: 0 0 0 2px hsl(var(--primary) / 0.25); }
+.nodename-save {
+  flex: 0 0 auto; padding: 7px 16px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.16);
+  border: 1px solid hsl(var(--primary) / 0.45); transition: background 0.15s, border-color 0.15s;
+}
+.nodename-save:hover:not(:disabled) { background: hsl(var(--primary) / 0.3); border-color: hsl(var(--primary) / 0.7); }
+.nodename-save:disabled { opacity: 0.5; cursor: default; }
+.nodename-hint { margin-top: 8px; word-break: break-word; }
 /* Divi Rebels launcher, sitting with the Flat/Globe toggle it belongs to. Same
    blue as its neighbours so it reads as one control group, lit when flying. */
 .netmap-play {
@@ -2303,3 +2406,100 @@ code, .mono { font-family: var(--font-mono); }
 .dd69-game-full .view-body { flex: 1; min-height: 0; }
 /* The shell sits above the animated backdrop already (z-index 10), and the
    map's own sky fills the panel, so there is nothing else to hide. */
+/* ── In-app update: flashing sidebar version + the update modal ─────────────── */
+/* The version becomes a clickable pill that alternates with "UPDATE TO vX". */
+.sidebar-brand .ver-update {
+  font: inherit; font-family: inherit; /* it's a <button>: match the version text, not browser button defaults */
+  border: 1px solid hsl(var(--primary) / 0.5); border-radius: 6px; padding: 1px 6px;
+  background: hsl(var(--primary) / 0.12); cursor: pointer; white-space: nowrap;
+  transition: background 0.25s, box-shadow 0.25s, color 0.25s;
+}
+.sidebar-brand .ver-update.ver-flash {
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.35);
+  box-shadow: 0 0 10px hsl(var(--primary) / 0.6);
+}
+.sidebar-brand .ver-update:hover { background: hsl(var(--primary) / 0.45); }
+
+/* Narrower than the default modal shell; the shell (poe-modal-*) handles the
+   backdrop, centering, padding and scrolling — only the width is ours. */
+.upd-modal { width: min(520px, 100%); }
+.upd-body { display: flex; flex-direction: column; gap: 14px; }
+.upd-jump { display: flex; align-items: center; gap: 12px; font-family: var(--font-mono); font-size: 1.2rem; }
+.upd-cur { color: hsl(var(--muted-foreground)); }
+.upd-arrow { color: hsl(var(--primary)); }
+.upd-new { color: hsl(var(--foreground)); font-weight: 700; }
+.upd-warn {
+  padding: 10px 12px; border-radius: 8px; line-height: 1.4; font-size: 0.86rem;
+  background: hsl(var(--warning) / 0.14); border: 1px solid hsl(var(--warning) / 0.5);
+}
+.upd-note { font-size: 0.82rem; color: hsl(var(--muted-foreground)); line-height: 1.4; margin: 0; }
+.upd-actions { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
+.upd-go {
+  padding: 9px 18px; border-radius: 8px; cursor: pointer; font-size: 0.9rem; font-weight: 600;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.22);
+  border: 1px solid hsl(var(--primary) / 0.6); transition: background 0.15s;
+}
+.upd-go:hover { background: hsl(var(--primary) / 0.38); }
+
+/* Live download progress inside the update modal. */
+.upd-prog { display: flex; flex-direction: column; gap: 6px; }
+.upd-bar {
+  height: 8px; border-radius: 999px; overflow: hidden;
+  background: hsl(var(--border));
+}
+.upd-bar-fill {
+  height: 100%; border-radius: 999px; transition: width 0.25s linear;
+  background: linear-gradient(90deg, hsl(var(--primary) / 0.8), hsl(var(--primary)));
+  box-shadow: 0 0 10px hsl(var(--primary) / 0.6);
+}
+.upd-prog-text {
+  font-size: 0.8rem; color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono);
+}
+/* ── Skins Gallery: "Publish" inline form under a saved theme (StylePanel.tsx) ── */
+.style-saved-row { flex-wrap: wrap; }
+.style-publish-form {
+  flex-basis: 100%; width: 100%;
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 6px 0 10px; padding: 10px;
+  border: 1px solid hsl(var(--border)); border-radius: 8px;
+}
+.style-publish-form textarea.style-name { resize: vertical; font: inherit; }
+
+/* ── Skins Gallery: browse (SkinsGallery.tsx) + detail (SkinDetail.tsx) ── */
+.skins-gallery { padding: 4px; }
+.gallery-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+.gallery-card {
+  display: flex; flex-direction: column; text-align: left; cursor: pointer;
+  border: 1px solid hsl(var(--border)); border-radius: 10px; overflow: hidden;
+  background: hsl(var(--card) / 0.5); padding: 0; font: inherit; color: inherit;
+}
+.gallery-card:hover { border-color: hsl(var(--primary) / 0.6); }
+.gallery-card-preview {
+  aspect-ratio: 16 / 10; background: hsl(var(--muted, 0 0% 20%) / 0.4) center / cover no-repeat;
+}
+.gallery-card-body { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; }
+.gallery-card-name { font-weight: 700; color: hsl(var(--foreground)); }
+.gallery-card-author { font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
+.gallery-card-price { font-size: 0.78rem; font-weight: 600; color: hsl(var(--primary)); }
+
+.gallery-detail { display: flex; flex-direction: column; gap: 14px; }
+.gallery-detail-body { display: flex; gap: 20px; flex-wrap: wrap; }
+.gallery-detail-preview {
+  width: min(360px, 100%); aspect-ratio: 16 / 10; border-radius: 12px;
+  background: hsl(var(--muted, 0 0% 20%) / 0.4) center / cover no-repeat;
+  border: 1px solid hsl(var(--border));
+}
+.gallery-detail-info { display: flex; flex-direction: column; gap: 8px; min-width: 220px; flex: 1; }
+.gallery-detail-info h2 { margin: 0; color: hsl(var(--foreground)); }
+.gallery-detail-author { margin: 0; font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
+.gallery-detail-desc { margin: 0; color: hsl(var(--foreground)); line-height: 1.5; }
+.gallery-price { margin: 0; font-weight: 700; color: hsl(var(--primary)); }
+
+.gallery-buy-confirm { display: flex; flex-direction: column; gap: 8px; }
+.gallery-buy-actions { display: flex; gap: 8px; }
+.gallery-buy-done { display: flex; flex-direction: column; gap: 4px; }
+.gallery-buy-txid { font-size: 0.72rem; word-break: break-all; opacity: 0.75; }

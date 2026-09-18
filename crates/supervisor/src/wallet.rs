@@ -497,12 +497,23 @@ pub fn new_address(cfg: &NodeConfig) -> Result<String, String> {
         .ok_or_else(|| "the node returned no address".into())
 }
 
-pub fn is_valid_address(cfg: &NodeConfig, addr: &str) -> bool {
-    let rpc = RpcClient::new(cfg);
-    rpc.call("validateaddress", json!([addr]))
-        .ok()
-        .and_then(|v| v["isvalid"].as_bool())
-        .unwrap_or(false)
+/// Is this a well-formed DIVI address for this network?
+///
+/// Checked LOCALLY (base58check + version byte), deliberately not over RPC.
+///
+/// The RPC version could not tell "the node says this is invalid" apart from "I
+/// could not reach the node": both collapsed to `false` via `.unwrap_or(false)`.
+/// So whenever the node was busy — which is exactly when two dozen panels are
+/// polling it — a perfectly valid address was reported to the user as invalid,
+/// after a multi-second wait for that wrong answer. Refusing to send someone's
+/// money because we were too busy to look is the worst possible failure here.
+///
+/// The local decode verifies the base58 checksum, the 20-byte payload and the
+/// Divi version byte. It is instant, needs no node, and cannot produce a false
+/// "invalid". `false` = mainnet, matching every other caller (the app is
+/// mainnet-only; NodeConfig carries no testnet flag).
+pub fn is_valid_address(_cfg: &NodeConfig, addr: &str) -> bool {
+    crate::base58::address_to_payload(addr.trim(), false).is_some()
 }
 
 /// An address the wallet controls, to sign identity records with — the account

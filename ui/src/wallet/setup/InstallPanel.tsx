@@ -15,6 +15,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { setupInfo, nodeStatus, type SetupInfo, type NodeStatus } from "../../bridge";
+import { snapshotInfo, snapshotFetch, type SnapshotInfo } from "../api";
+import { copySetupLog } from "../SetupLogHotkey";
 import "./install-panel.css";
 
 export type SetupMethod = "snapshot" | "nodes" | "reuse" | null;
@@ -52,6 +54,29 @@ export function InstallPanel({
   const [installing, setInstalling] = useState(false);
   const [status, setStatus] = useState<NodeStatus | null>(null);
   const [sim, setSim] = useState<Sim>({ pct: 0, blocks: 0, peers: 0, stage: simStage(0), done: false });
+  const [copied, setCopied] = useState(false);
+  /* The real download. `sim` above is the demo animation; these are the actual
+     bytes. The GO button used to set `installing` and nothing else, so the
+     panel advertised "fast · ~4.7 GB" and then let the node crawl the chain
+     from peers for days. */
+  const [snap, setSnap] = useState<SnapshotInfo | null>(null);
+  const [dl, setDl] = useState<{ done: number; total: number | null; stage: string } | null>(null);
+  const [dlErr, setDlErr] = useState<string | null>(null);
+  useEffect(() => {
+    snapshotInfo().then(setSnap).catch(() => setSnap(null));
+    const ev = (window as unknown as {
+      __TAURI__?: { event?: { listen: (n: string, cb: (e: { payload: unknown }) => void) => Promise<() => void> } };
+    }).__TAURI__?.event;
+    if (!ev) return;
+    let un: (() => void) | null = null;
+    let dead = false;
+    ev.listen("dd69://snapshot-progress", (e) => {
+      const p = e.payload as { done?: number; total?: number | null; stage?: string };
+      setDl({ done: p.done ?? 0, total: p.total ?? null, stage: p.stage ?? "" });
+    }).then((u) => { if (dead) u(); else un = u; }).catch(() => {});
+    return () => { dead = true; try { un?.(); } catch { /* gone */ } };
+  }, []);
+
   const onStateRef = useRef(onStateChange);
   onStateRef.current = onStateChange;
 
@@ -90,11 +115,21 @@ export function InstallPanel({
     return () => clearInterval(id);
   }, [simulate, installing]);
 
-  // Start a real setup (download/import lands in the next slice). For now this
-  // flips into the "installing" look so the red node + progress area come alive.
   const start = (m: SetupMethod) => {
     setInstalling(true);
+    setDlErr(null);
     onStateRef.current?.({ installing: true, method: m });
+    // SNAPSHOT actually downloads the chain now. NODES is the honest slow path:
+    // the node fetches blocks from peers, which needs nothing started here.
+    if (m === "snapshot") {
+      snapshotFetch()
+        .then(() => setDl({ done: 1, total: 1, stage: "Snapshot ready — starting your node." }))
+        .catch((e) => {
+          setDlErr(String(e));
+          setInstalling(false);
+          onStateRef.current?.({ installing: false, method: null });
+        });
+    }
   };
 
   if (!info) {
@@ -132,8 +167,21 @@ export function InstallPanel({
                 ? "Bringing in the blockchain…"
                 : "Reaching out to the network…"}
             </p>
-            {simulate && (
+            {simulate ? (
               <div className="ip-bar"><div className="ip-bar-fill" style={{ width: `${sim.pct}%` }} /></div>
+            ) : dl && dl.total ? (
+              <>
+                <div className="ip-bar">
+                  <div className="ip-bar-fill" style={{ width: `${Math.min(100, (dl.done / dl.total) * 100)}%` }} />
+                </div>
+                <div className="ip-stat">
+                  <span>Downloaded</span>
+                  <b>{(dl.done / 1e9).toFixed(2)} of {(dl.total / 1e9).toFixed(2)} GB</b>
+                </div>
+              </>
+            ) : null}
+            {!simulate && dl?.stage && (
+              <div className="ip-stat"><span>Step</span><b>{dl.stage}</b></div>
             )}
             <div className="ip-stat">
               <span>Status</span>
@@ -175,6 +223,30 @@ export function InstallPanel({
         ) : (
           <div className="ip-flow">
             <p className="ip-lead">Let's get your node running.</p>
+            {/* What it costs, BEFORE committing to it. This said nothing before, so
+                people began a multi-day download with no idea of size or wait. */}
+            {snap && (
+              <p className="ip-note">
+                {method === "snapshot" ? (
+                  <>
+                    About {snap.bytes ? (snap.bytes / 1e9).toFixed(1) : "4.7"} GB to download, and
+                    roughly {snap.needGb} GB free needed while it unpacks. Usually under an hour.
+                  </>
+                ) : (
+                  <>
+                    Collects the chain block by block from other nodes. Needs about {snap.needGb} GB
+                    free and typically takes <b>a day or more</b>. The snapshot is far faster.
+                  </>
+                )}{" "}You have {snap.freeGb} GB free.
+              </p>
+            )}
+            {snap && !snap.enoughRoom && (
+              <p className="ip-warn">
+                Not enough free space on this disk yet ({snap.freeGb} GB free, about {snap.needGb} GB
+                needed). Free some space first: a half-finished chain is worse than none.
+              </p>
+            )}
+            {dlErr && <p className="ip-warn">{dlErr}</p>}
             <label className="ip-field-label">Download node data:</label>
             <div className="ip-split" role="group" aria-label="Download method">
               <button
@@ -183,7 +255,9 @@ export function InstallPanel({
                 onClick={() => setMethod("snapshot")}
               >
                 SNAPSHOT
-                <small>fast · ~4.7 GB</small>
+                <small>
+                  fast · {snap?.bytes ? `${(snap.bytes / 1e9).toFixed(1)} GB` : "~4.7 GB"}
+                </small>
               </button>
               <button
                 type="button"
@@ -199,7 +273,12 @@ export function InstallPanel({
                 ? "Grabs a daily snapshot of the chain from the Divi server, then catches up the last few blocks. Much faster."
                 : "Builds the chain block-by-block directly from other nodes. Slower, but trusts no single source."}
             </p>
-            <button type="button" className="ip-btn ip-btn-go" onClick={() => start(method)}>
+            <button
+              type="button"
+              className="ip-btn ip-btn-go"
+              disabled={!!snap && !snap.enoughRoom}
+              onClick={() => start(method)}
+            >
               GO →
             </button>
             {(goFresh && (info.track === "dd2")) && (
@@ -236,6 +315,22 @@ export function InstallPanel({
           whenever others store data through you.
         </p>
       </section>
+
+      {/* ============ Diagnostics footer ============ */}
+      <footer className="ip-foot">
+        <button
+          type="button"
+          className="ip-link"
+          onClick={async () => {
+            const ok = await copySetupLog();
+            setCopied(ok);
+            window.setTimeout(() => setCopied(false), 3000);
+          }}
+        >
+          {copied ? "✓ Setup log copied" : "Copy setup log (⌘L)"}
+        </button>
+        <span className="ip-foot-hint">Having trouble? Copy this and send it over — it has no private keys.</span>
+      </footer>
     </aside>
   );
 }

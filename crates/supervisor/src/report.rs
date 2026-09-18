@@ -44,6 +44,20 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
                 Phase::CrashedNeedsRepair,
                 "The node didn't shut down cleanly last time. It will repair itself on the next start — your coins are safe.".to_string(),
             )
+        } else if let Some(err) = crate::install::install_error() {
+            // The most useful thing the app can say, and it used to say nothing:
+            // the node program itself could not be installed, so there is no
+            // node to sync and never will be until that is dealt with.
+            (
+                Phase::Stopped,
+                format!("The node program could not be installed, so there is nothing to sync. {err}"),
+            )
+        } else if !crate::install::is_installed() {
+            (
+                Phase::Stopped,
+                "The node program hasn't been installed yet. It downloads on first run — check your internet connection."
+                    .to_string(),
+            )
         } else {
             (Phase::Stopped, "The node isn't running.".to_string())
         };
@@ -82,6 +96,11 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
     };
 
     let blocks = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64());
+    // Tell the map when the chain actually moves. Only a genuine change of
+    // height produces anything, so a poll that finds the same block is silent.
+    if let Some(h) = blocks {
+        crate::mapfeed::block_height(h);
+    }
     let mut staking = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
     // The node's "staking status" flag FLICKERS — it can read true even when the
     // wallet is LOCKED and can't actually sign a stake. Recompute it from stable

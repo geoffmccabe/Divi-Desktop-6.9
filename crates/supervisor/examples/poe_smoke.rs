@@ -9,7 +9,9 @@ fn main() {
     let hash = "4caad21afba16c5d9ceda9cb297665040e3b88daa82201dc6b62d0d88423a061";
 
     // Defaults = minimum fee, no payout; the smoke test shouldn't spend real value.
-    let txid = poe::timestamp(&cfg, hash, poe::AnchorCost::default()).expect("anchor");
+    // None = no passphrase; the smoke test assumes an unlocked or unencrypted
+    // wallet rather than carrying a secret around.
+    let txid = poe::timestamp(&cfg, hash, poe::AnchorCost::default(), None).expect("anchor");
     println!("anchored txid = {txid}");
 
     // Confirm it (regtest mines on demand).

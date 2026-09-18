@@ -1,4 +1,8 @@
 import { invoke } from "../tauri";
+/* v2 map animation: shows calls that leave the Divi network (price, geo,
+   updates) in cyan. traceExternal returns the promise untouched and is a
+   no-op unless the v2 flag is on, so no caller is affected either way. */
+import { traceExternal } from "./mapExternal";
 
 export interface Balance {
   spendable: number;
@@ -66,6 +70,67 @@ export const poeTimestamp = (
     passphrase: passphrase || null,
   });
 export const poeVerify = (txid: string, hash: string) => invoke<Proof>("poe_verify", { txid, hash });
+
+// ---- Divi Meta Tokens ----
+//
+// `from` is not optional in spirit on any of these. A record's author is the
+// address that funds the transaction, so the caller must pass the address that
+// actually holds the tokens. Funding from anywhere else produces a record that
+// is mined, costs a fee, and is then ignored, with nothing shown to the user.
+//
+// Amounts are STRINGS in the token's smallest unit, never numbers. A token with
+// 8 decimals and a large supply exceeds what a JavaScript number represents
+// exactly, and rounding somebody's balance in transit is not acceptable.
+
+export const tokenCreate = (from: string, premine: string, decimals: number, fee?: number) =>
+  invoke<string>("token_create", { from, premine, decimals, fee });
+
+export const tokenSend = (from: string, token: string, amount: string, to: string, fee?: number) =>
+  invoke<string>("token_send", { from, token, amount, to, fee });
+
+/** One record, many recipients. The Rust side refuses a list too large to fit. */
+export const tokenAirdrop = (
+  from: string,
+  token: string,
+  payouts: [string, string][],
+  fee?: number,
+) => invoke<string>("token_airdrop", { from, token, payouts, fee });
+
+export const tokenBurn = (from: string, token: string, amount: string, fee?: number) =>
+  invoke<string>("token_burn", { from, token, amount, fee });
+
+export const tokenLockSupply = (from: string, token: string, fee?: number) =>
+  invoke<string>("token_lock_supply", { from, token, fee });
+
+/**
+ * Reserve a ticker. Returns [txid, salt].
+ *
+ * **Keep the salt.** The reveal cannot be built without it and it is not
+ * recoverable from the chain: that is exactly what makes the reservation a
+ * commitment rather than a public announcement of the name you want.
+ */
+export const tokenCommitTicker = (from: string, ticker: string, fee?: number) =>
+  invoke<[string, string]>("token_commit_ticker", { from, ticker, fee });
+
+/**
+ * The second half: create the token and claim the name reserved earlier.
+ *
+ * `saltHex` is what tokenCommitTicker returned, and must be sent from the same
+ * address that made the reservation once it has matured. Without this the
+ * reservation is a fee paid for nothing.
+ */
+export const tokenCreateNamed = (
+  from: string,
+  ticker: string,
+  saltHex: string,
+  premine: string,
+  decimals: number,
+  fee?: number,
+) => invoke<string>("token_create_named", { from, ticker, saltHex, premine, decimals, fee });
+
+/** What a name costs, so the user is told before being asked to pay it. */
+export const tokenTickerPrice = (ticker: string) =>
+  invoke<number>("token_ticker_price", { ticker });
 
 // ── Divi Collectibles (NFD) ──────────────────────────────────────────────────
 export interface NfdMint {
@@ -251,7 +316,8 @@ export interface Geo {
   isp?: string;
 }
 export const networkPeers = () => invoke<PeerSnapshot | null>("network_peers");
-export const geolocateIps = (ips: string[]) => invoke<Geo[]>("geolocate_ips", { ips });
+export const geolocateIps = (ips: string[]) =>
+  traceExternal("geolocate", invoke<Geo[]>("geolocate_ips", { ips }));
 // Resolve the DIVI snapshot server's real IP (so the setup map can draw the
 // download firehose from its actual geographic location).
 export const snapshotSourceIp = () => invoke<string | null>("snapshot_source_ip");
@@ -270,8 +336,58 @@ export interface PricePoint {
   close: number;
 }
 export const priceHistory = () => invoke<PricePoint[]>("price_history");
+// The full detailed first-run setup log, for the ⌘L copy shortcut. No secrets.
+export const setupLogReport = () => invoke<string>("setup_log_report");
+
+// This install's node identity: a stable id (survives IP changes) + node name.
+export interface NodeIdentity { id: string; name: string; nameSource: string }
+export const nodeIdentity = () => invoke<NodeIdentity>("node_identity");
+export const setNodeName = (name: string, source = "custom") =>
+  invoke<NodeIdentity>("set_node_name", { name, source });
+
+// Is a newer build published for this OS? Powers the "UPDATE TO vX.Y.Z" flash.
+export interface UpdateInfo { current: string; latest: string | null; available: boolean; os: string; downloadUrl: string | null }
+export const updateCheck = () => traceExternal("update", invoke<UpdateInfo>("update_check"));
+// Firewalls / antivirus that might prompt about a freshly-updated binary.
+export const securityTools = () => invoke<string[]>("security_tools");
+// Download + install the newer build IN PLACE (no browser download, so the OS
+// never re-quarantines it). Progress arrives as dd69://update-progress events.
+// Resolves with the installed version; rejects with a plain-English reason.
+export const updateInstall = () => invoke<string>("update_install");
+/* Restart into the version just installed. Without this the update lands on
+   disk but the OLD process keeps running, so the wallet looks unchanged and
+   goes on advertising the same update. */
+export const updateRelaunch = () => invoke<void>("update_relaunch");
+
+/** Whether anything on the network can actually reach this node. */
+export interface Reachability {
+  reachable: boolean;
+  inbound: number;
+  outbound: number;
+  listening: boolean;
+  upnp: boolean;
+  port: number;
+  addresses: string[];
+  known: boolean;
+}
+export const nodeReachability = () => invoke<Reachability>("node_reachability");
+
+/** What the fast first sync will cost, asked of the server rather than guessed. */
+export interface SnapshotInfo {
+  bytes: number | null;
+  freeGb: number;
+  needGb: number;
+  enoughRoom: boolean;
+  chainPresent: boolean;
+}
+export const snapshotInfo = () => invoke<SnapshotInfo>("snapshot_info");
+/** Download and unpack the chain snapshot. Progress arrives as
+ *  dd69://snapshot-progress events; resolves with the archive's SHA-256. */
+export const snapshotFetch = () => invoke<string>("snapshot_fetch");
+/** Ask the router to open the peer port (or stop asking). Applies on node restart. */
+export const setNodeUpnp = (enabled: boolean) => invoke<void>("set_node_upnp", { enabled });
 // Latest DIVI/USD from the shared CMC feed (no per-user key) — used to price PoE.
-export const priceLatest = () => invoke<number | null>("price_latest");
+export const priceLatest = () => traceExternal("price", invoke<number | null>("price_latest"));
 export interface StaleBlock {
   height: number;
   status: string;
@@ -544,6 +660,22 @@ export const sendCoins = (address: string, amount: number, passphrase?: string) 
 export const fastSend = (address: string, amount: number, passphrase?: string) =>
   invoke<string>("fast_send", { address, amount, passphrase: passphrase ?? null });
 
+// Skins Gallery purchase: one immediate payment to the skin's creator, tagged
+// on-chain with the skin's slug so it can be recognised again later.
+export const buySkin = (payToAddress: string, amount: number, skinRef: string, passphrase?: string) =>
+  invoke<string>("skin_buy", { payToAddress, amount, skinRef, passphrase: passphrase ?? null });
+
+// Skins this wallet has paid for, found by scanning its own outgoing
+// transactions for the tag `buySkin` attaches. `confirmations` of 0 means
+// the payment hasn't landed in a block yet.
+export interface SkinEntitlement {
+  skinRef: string;
+  txid: string;
+  confirmations: number;
+}
+export const skinEntitlements = (count?: number) =>
+  invoke<SkinEntitlement[]>("skin_entitlements", { count: count ?? null });
+
 // Live status of one wallet transaction, for the Fast Send tracker. Negative
 // `confirmations` means the node sees a conflicting (double-spent) transaction.
 export interface TxStatus {
@@ -635,6 +767,29 @@ export interface MmBook {
 }
 export const mmBook = (slug: string, connector: string, restUrl: string, symbol: string) =>
   invoke<MmBook>("mm_book", { slug, connector, restUrl, symbol });
+
+// Realized market-making P&L, reconstructed from the exchange's own filled-order
+// history: the source of truth for where the money went.
+export interface TradePnl {
+  fills: number; buys: number; sells: number;
+  diviBought: number; diviSold: number; usdtSpent: number; usdtRecv: number;
+  avgBuy: number; avgSell: number;
+  netDivi: number; netUsdt: number; grossVolume: number;
+  mid: number; totalPnl: number; firstMs: number; lastMs: number;
+}
+export const mmTradeHistory = (slug: string, connector: string, restUrl: string, symbol: string, source: "mm" | "manual") =>
+  invoke<TradePnl>("mm_trade_history", { slug, connector, restUrl, symbol, source });
+
+// Manual trading: the user's own buy/sell orders (not the engine's).
+export interface ManualOrder { id: string; side: string; orderType: string; price: number; qty: number; fromMm: boolean; createdMs: number; }
+export const mmPlaceOrder = (
+  slug: string, connector: string, restUrl: string, symbol: string,
+  side: "buy" | "sell", orderType: "limit" | "market", quantity: number, price: number | null,
+) => invoke<string>("mm_place_order", { slug, connector, restUrl, symbol, side, orderType, quantity, price });
+export const mmCancelOrder = (slug: string, connector: string, restUrl: string, id: string) =>
+  invoke<void>("mm_cancel_order", { slug, connector, restUrl, id });
+export const mmOpenOrders = (slug: string, connector: string, restUrl: string, symbol: string) =>
+  invoke<ManualOrder[]>("mm_open_orders", { slug, connector, restUrl, symbol });
 
 // DEX (Uniswap V2 eDIVI/WETH on Ethereum): live pool reserves + on-chain ETH/USD.
 // Read-only; used by the DEX tab to price swaps. Swapping (wallet) is a later phase.

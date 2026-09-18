@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { walletBalance, walletAddresses, lotteryInfo, type Balance, type AddrInfo, type LotteryInfo } from "./api";
+import { nodeStatus } from "../bridge";
 import { fmtDiviParts } from "../status";
 import { AddressDropdown } from "./AddressDropdown";
 import { StakingDropdown, StartStaking } from "./StakingDropdown";
@@ -15,6 +16,15 @@ export function HeaderBar() {
   const [addrs, setAddrs] = useState<AddrInfo[] | null>(null);
   const [lottery, setLottery] = useState<LotteryInfo | null>(null);
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
+  /* A balance is only the whole truth once the node has read the whole
+     chain. Until then the wallet has not seen the blocks that pay it, so a
+     zero means "not counted yet", not "you have nothing". Showing a
+     confident 0.00 mid-sync told a user his 10,000 DIVI had vanished when
+     it was on chain, unspent, three thousand blocks deep. */
+  const [caughtUp, setCaughtUp] = useState<boolean | null>(null);
+  /* Not running at all, which is a different problem from being behind. */
+  const [nodeDown, setNodeDown] = useState(false);
+  const [headline, setHeadline] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
 
@@ -43,6 +53,20 @@ export function HeaderBar() {
         if (alive && l) setLottery(l);
       } catch {
         /* keep last */
+      }
+      try {
+        const st = await nodeStatus();
+        if (alive) {
+          setCaughtUp(st.phase === "synced" || st.phase === "staking");
+          // A node that is not RUNNING is not "catching up". Treating every
+          // non-synced state as syncing told a user whose node had never
+          // started that it was "STILL SYNCING", forever, with nothing
+          // syncing — which is worse than the misleading zero it replaced.
+          setNodeDown(st.phase === "stopped" || st.phase === "crashed");
+          setHeadline(st.headline ?? null);
+        }
+      } catch {
+        /* keep the last answer rather than flapping the notice on and off */
       }
     };
     // Heavy + rare: the per-address tally scans a lot of history, and addresses
@@ -76,8 +100,9 @@ export function HeaderBar() {
   }, [openPanel]);
 
   const main = addrs?.find((a) => a.isMain) ?? addrs?.[0] ?? null;
+  const syncing = caughtUp === false && !nodeDown;
   const spend = bal ? fmtDiviParts(bal.spendable) : null;
-  const fiat = useDiviValue(bal ? bal.spendable : null);
+  const fiat = useDiviValue(bal && !syncing ? bal.spendable : null);
 
   const copyMain = async () => {
     if (!main) return;
@@ -97,6 +122,27 @@ export function HeaderBar() {
       {/* Spendable */}
       <div className="hdr-panel glass-panel">
         <span className="bl-label">Spendable</span>
+        {/* No figure at all while the node is catching up. A number it cannot
+            stand behind is worse than none: a zero reads as "your coins are
+            gone" when they are on chain and merely not counted yet. No fiat
+            line either, since there is nothing honest to convert. */}
+        {nodeDown ? (
+          <span className="bl-amt">
+            <span className="bl-divi bl-down-amt">NODE NOT RUNNING</span>
+            <span className="bl-fiat bl-sync-note">
+              {headline ?? "Your balance cannot be read until the node starts."}
+              {" "}Press {navigator.platform.startsWith("Mac") ? "\u2318" : "Ctrl"}-L to copy a
+              diagnostic report.
+            </span>
+          </span>
+        ) : syncing ? (
+          <span className="bl-amt">
+            <span className="bl-divi bl-sync-amt">STILL SYNCING…</span>
+            <span className="bl-fiat bl-sync-note">
+              Coins sent to you appear here as your node catches up
+            </span>
+          </span>
+        ) : (
         <span className="bl-amt">
           <span className="bl-divi">
             {spend ? (
@@ -127,6 +173,7 @@ export function HeaderBar() {
             </span>
           )}
         </span>
+        )}
       </div>
 
       {/* Staking (left) + next lottery (right) */}
@@ -135,7 +182,21 @@ export function HeaderBar() {
           {/* Status line. The chevron toggles the details dropdown; it no longer
               opens on its own. */}
           <button type="button" className="hdr-staking-btn" onClick={() => toggle("staking")}>
-            {bal && bal.staking > 0 ? (
+            {nodeDown ? (
+              <>
+                <span className="bl-label">Staking</span>
+                <span className="bl-amt bl-amt-staking bl-down-amt">NODE NOT RUNNING</span>
+              </>
+            ) : syncing ? (
+              /* Mid-sync the wallet has not finished counting, so neither the
+                 staking figure nor a "NOT STAKING" alarm would be truthful. */
+              <>
+                <span className="bl-label">
+                  Staking <span className={"addr-chevron" + (openPanel === "staking" ? " up" : "")}>▾</span>
+                </span>
+                <span className="bl-amt bl-amt-staking bl-sync-amt">STILL SYNCING…</span>
+              </>
+            ) : bal && bal.staking > 0 ? (
               // Staking: green dot + the amount.
               <>
                 <span className="bl-label">

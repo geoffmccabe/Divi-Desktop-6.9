@@ -411,7 +411,17 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
         </form>
       )}
 
-      {stage === "sending" && <p className="wl-note">Sending…</p>}
+      {/* A bare "Sending…" looks frozen. On a wallet holding thousands of small
+          staking rewards the node spends real time picking which coins to spend
+          before it can broadcast, so say that plainly rather than leaving the
+          user wondering whether the click even registered. */}
+      {stage === "sending" && (
+        <p className="wl-note">
+          Sending… choosing which coins to spend, then broadcasting. On a large wallet
+          with many staking rewards this can take a minute or two. Leave this window
+          open — it updates as soon as the transaction is broadcast.
+        </p>
+      )}
       {err && <p className="wl-err">{err}</p>}
     </div>
   );
