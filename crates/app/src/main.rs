@@ -3230,6 +3230,44 @@ fn main() {
             // three of them and no idea why the port is busy.
             if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
                 builder_service::stop();
+
+                // Stop the NODE too, and wait for it to finish writing.
+                //
+                // It was left running after the wallet closed, with nothing
+                // managing it. That is how chain databases get corrupted, and
+                // it is our doing rather than anyone's hardware: when the user
+                // later shuts down or restarts, the operating system allows a
+                // few seconds and then kills it outright. A Divi node flushing
+                // its chain state takes far longer than that — minutes, on a
+                // large chain — so it dies mid-write and the next start reports
+                // "Failed to find best block in block index".
+                //
+                // One tester's database corrupted three times in a week that
+                // way, and each time the app called it a repair rather than a
+                // fault of its own.
+                //
+                // Bounded, because a wallet that refuses to quit is its own
+                // kind of broken: we ask nicely, wait, and give up rather than
+                // force it, since forcing it is the very thing that causes the
+                // damage.
+                if let Ok(cfg) = NodeConfig::load() {
+                    let rpc = dd69_supervisor::rpc::RpcClient::new(&cfg);
+                    applog::log("shutdown: asking the node to stop before the wallet exits");
+                    match dd69_supervisor::process::safe_stop(
+                        &rpc,
+                        &cfg.datadir,
+                        std::time::Duration::from_secs(150),
+                    ) {
+                        Ok(d) => applog::log(format!(
+                            "shutdown: node stopped cleanly after {}s",
+                            d.as_secs()
+                        )),
+                        Err(e) => applog::log(format!(
+                            "shutdown: the node did not stop in time ({e}); left running rather \
+                             than forced, so it can finish writing"
+                        )),
+                    }
+                }
             }
         });
 }
