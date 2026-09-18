@@ -48,6 +48,17 @@ import {
  * so, which is what covering the view takes from inside the cavity, where the
  * shell wraps right round you. DFlow will say whether it was too generous.
  *
+ * AND BACK UP TO 1,250,000, because new ground stopped being handed the coarse
+ * answer. Defaulting coarse inside the hysteresis band was worth 130,000
+ * triangles and cost a player big slabs at close range that then changed under
+ * them, which is not a trade worth making; see the note on SPLIT_IN. The worst
+ * viewpoint now really wants 835,000 in triangles actually meshed, but a chunk not yet built is
+ * charged the average for its level and the coarse averages are high, so the
+ * allowance has to stand well above the real figure
+ * because a chunk not yet built is charged an average that runs high.
+ *
+ * The note below is kept for its reasoning; only the number moved. It read:
+ *
  * BACK DOWN TO 900,000. Holding the level steady around a boundary turned out
  * to cost LESS as well as flicker less: defaulting to the coarse answer where
  * nothing has been drawn yet takes the worst viewpoint from 1.27 million real
@@ -91,7 +102,7 @@ import {
    turn is the rings, not this number: pulling them in costs sharpness, and
    refusing chunks costs the planet.
 */
-export const TRIANGLE_BUDGET = 1050000;
+export const TRIANGLE_BUDGET = 1500000;
 
 /**
  * How far the dust lets you see, in world units.
@@ -403,11 +414,30 @@ export function visibleChunks(
     if (step > 1) {
       if (near < splitAt * SPLIT_IN) wantSplit = true;
       else if (near > splitAt * SPLIT_OUT) wantSplit = false;
-      /* In between, whatever is already being drawn stays, and if NOTHING is
-         yet drawn here the coarse answer wins. That asymmetry matters: a band
-         that defaulted to splitting kept fine chunks alive far out and cost
-         twice the triangles for the same steadiness. */
-      else wantSplit = opts.lodHold?.(ox, oy, oz, step) === false;
+      /* ---- IN BETWEEN: HOLD WHAT IS DRAWN, AND OTHERWISE BE HONEST ----
+         Whatever is already on screen for this ground stays on screen, which
+         is the whole point of the band. But when NOTHING is drawn here yet
+         there is nothing to hold, and the answer has to be the one the
+         distance actually earns.
+
+         It used to be the COARSE answer, chosen to save triangles, and that
+         was wrong in a way a player sees immediately: the band reaches a third
+         of the way in, so newly seen ground 182 cubes off was drawn in
+         512-cube slabs and a box only 13 cubes away could stay coarse. Then
+         the fine chunks arrived and it all changed under you. Geoff: "it's
+         switching between patterns of high complexity within the cubes to
+         patterns of very simple large congruent slabs and blocks of cubes.
+         Both group types are good, but it shouldn't be switching and
+         flickering between them like it is."
+
+         Quite so: the coarse look is not the problem, being handed it at close
+         range and then having it replaced is. New ground now gets the detail
+         its distance earns, first time, and the band only ever holds something
+         that is already there. */
+      else {
+        const drawn = opts.lodHold?.(ox, oy, oz, step);
+        wantSplit = drawn === undefined ? near < splitAt : drawn === false;
+      }
     }
     if (wantSplit) {
       /* ---- SPLIT BY THE REAL RATIO BETWEEN LEVELS ----

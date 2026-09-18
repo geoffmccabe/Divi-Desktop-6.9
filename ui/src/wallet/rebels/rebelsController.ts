@@ -19,7 +19,8 @@ import {
   clampReach, REACH_MIN, DRAGON_CLASS, DRAGON_LIFE,
   createCombat, clearEvents, gunMuzzles, TORPEDO_FUSE, CONVERGE, JUNK_LIFE,
   showBullet, dropBullet, stepShownBullets, BULLET_SPEED, BULLET_LIFE,
-  stepCombat, spawnFleet, rollLaserDamage, MINI_DAMAGE, LASER_MAX, TORPEDO_DAMAGE,
+  stepCombat, spawnFleet, fireTorpedo, detonateOldest,
+  rollLaserDamage, MINI_DAMAGE, LASER_MAX, TORPEDO_DAMAGE,
   type CombatWorld,
   miniMuzzle,
   STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS, ENEMY_FIRE_RANGE,
@@ -1704,7 +1705,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     aim?: THREE.Vector3, weapon?: string, up?: THREE.Vector3,
   ): void {
     if (inRoomsWorld()) { room?.fire(kind, from, fwd, aim, weapon, up); return; }
-    if (kind === "beam" || kind === "torp") return;   /* drawn by their own code */
+    /* ---- A TORPEDO IS A REAL THING OUT HERE ----
+       This used to return without doing anything, so at Spikeworld the
+       torpedo simply did not exist: no round, no flight, no blast. Geoff:
+       "Torpedoes don't work at all in that spikeworld." It is put into the
+       local fight instead, which flies it and detonates it with the same code
+       the room uses, so it kills the heart's guards and takes its bite out of
+       the heart exactly as it does anywhere else. */
+    if (kind === "torp") { fireTorpedo(combat, from, (aim ?? fwd).clone().normalize()); return; }
+    if (kind === "beam") return;   /* drawn by its own code, and harmless here */
     const dir = (aim ?? fwd).clone().normalize();
     showBullet(combat, {
       id: -(++localShotId), pos: from.clone(), vel: dir.multiplyScalar(BULLET_SPEED),
@@ -2385,7 +2394,13 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            once to launch, again while one of yours is still in the air to
            set it off. */
         const mineInAir = performance.now() - torpSentAt < TORPEDO_FUSE * 1000 && combat.torpedoes.length > 0;
-        if (mineInAir) { room?.detonate(); torpSentAt = 0; }
+        if (mineInAir) {
+          /* Set it off where the fight for it is: the room's, or the local one
+             out at Spikeworld, which the room knows nothing about. */
+          if (inRoomsWorld()) room?.detonate();
+          else detonateOldest(combat, _voxWorld);
+          torpSentAt = 0;
+        }
         else if (flight.torpedoes > 0) {
           fireShot("torp", shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
           torpSentAt = performance.now();

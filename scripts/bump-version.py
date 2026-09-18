@@ -1,6 +1,18 @@
 #!/usr/bin/env python3
 """Bump the app version, everywhere it appears.
 
+⛔ NOT FOR THE REBELS WORK. 2026-Sep-17: the release line owns the version
+number and the Rebels branch must not touch crates/app/tauri.conf.json at all.
+Twelve version bumps on feat/divi-rebels stamped 69.9.x, which is NUMERICALLY
+LOWER than the published 69.12.0, so even a working updater read the build as
+newer than the real release and never offered an upgrade. The same edits also
+dropped createUpdaterArtifacts and the whole updater plugin block from that
+branch, so the build had no updater in it at all. Geoff spent a day on a wallet
+that could not update itself because of this.
+
+If you are working on Rebels: do not run this, and do not edit that file.
+
+
     python3 scripts/bump-version.py           # the normal case    69.2.0 -> 69.2.1
     python3 scripts/bump-version.py patch     # the same thing
     python3 scripts/bump-version.py feature   # a NEW track only    69.2.1 -> 69.3.0
