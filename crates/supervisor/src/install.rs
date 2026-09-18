@@ -810,6 +810,33 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
         Duration::from_secs(180),
         Duration::from_secs(1800),
     )
+    .or_else(|e| {
+        // The rebuild-from-disk rungs could not fix it, so the block files
+        // themselves are bad. Replace them automatically rather than telling
+        // the user to open their Library and delete folders by hand, which is
+        // both unreasonable and one slip away from deleting their wallet.
+        if e.contains("damaged") || e.contains("corrupt") {
+            setuplog::log(format!(
+                "bringup: rebuilding from the on-disk blocks failed ({e}) — replacing the chain data"
+            ));
+            let emit = |p: crate::snapshot::Progress| progress(&p.stage);
+            match crate::snapshot::replace_damaged_chain(&emit) {
+                Ok(()) => {
+                    progress("Starting the node…");
+                    process::start_with_recovery(
+                        &bin,
+                        &cfg.datadir,
+                        &rpc,
+                        Duration::from_secs(180),
+                        Duration::from_secs(1800),
+                    )
+                }
+                Err(why) => Err(format!("{e} Replacing it also failed: {why}")),
+            }
+        } else {
+            Err(e)
+        }
+    })
     .map_err(|e| {
         setuplog::log(format!("bringup: NODE FAILED TO START — {e}"));
         // The node's own words about what it was doing when it stopped. Without

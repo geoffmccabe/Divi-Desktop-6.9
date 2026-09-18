@@ -344,3 +344,54 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
+
+/// Replace a chain that cannot be repaired, without involving the user.
+///
+/// The recovery ladder rebuilds from the block files already on disk, which
+/// handles most damage and needs no download. When even that fails the block
+/// files themselves are bad, and the only remaining cure is new data.
+///
+/// This used to be a sentence telling the user to "restore from the Divi
+/// snapshot", which in practice meant asking them to find a folder in their
+/// Library and delete parts of it by hand. Nobody should have to do that to
+/// their wallet, and one wrong click in there deletes wallet.dat.
+///
+/// ONLY blocks/ and chainstate/ are removed. Both are public data that the
+/// network hands back on request. wallet.dat, the config and the backups are
+/// never touched, and the wallet is checked to be present afterwards so a bug
+/// here can never quietly take someone's keys with it.
+pub fn replace_damaged_chain(progress: &dyn Fn(Progress)) -> Result<(), String> {
+    let datadir = crate::config::dd69_datadir();
+    let wallet = datadir.join("wallet.dat");
+    let had_wallet = wallet.is_file();
+
+    crate::setuplog::log("recovery: the chain could not be repaired; replacing the downloaded data");
+    progress(Progress {
+        done: 0,
+        total: None,
+        stage: "Replacing damaged blockchain data (your wallet is untouched)…".into(),
+    });
+
+    for dir in ["blocks", "chainstate"] {
+        let path = datadir.join(dir);
+        if path.exists() {
+            std::fs::remove_dir_all(&path)
+                .map_err(|e| format!("could not remove the damaged {dir} folder: {e}"))?;
+            crate::setuplog::log(format!("recovery: removed {dir}"));
+        }
+    }
+
+    if had_wallet && !wallet.is_file() {
+        return Err("aborted: the wallet file went missing during recovery".into());
+    }
+
+    let (archive, digest) = download(progress)?;
+    crate::setuplog::log(format!("recovery: fresh snapshot downloaded, sha256 {digest}"));
+    install(&archive, progress)?;
+
+    if had_wallet && !wallet.is_file() {
+        return Err("aborted: the wallet file went missing while unpacking the snapshot".into());
+    }
+    crate::setuplog::log("recovery: chain replaced from the snapshot");
+    Ok(())
+}
