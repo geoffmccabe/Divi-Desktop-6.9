@@ -34,6 +34,13 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
   const [dispNodes, setDispNodes] = useState(0);
   const [peerTok, setPeerTok] = useState(0);
   const [nodeTok, setNodeTok] = useState(0);
+  /* Block height needs the same treatment as the counters. While syncing it was
+     drawn greyed-out as if stale, with no flash, even though it was climbing —
+     so a node that was working looked stuck. A tester asked "is it actually
+     adding blocks?" precisely because nothing on screen said so. */
+  const [blkTok, setBlkTok] = useState(0);
+  const lastBlkAt = useRef<number>(Date.now());
+  const [blkMoving, setBlkMoving] = useState(false);
 
   // The last status where the node actually answered, so a brief connection miss
   // keeps showing the true state instead of flapping to a scary message.
@@ -130,6 +137,23 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
 
   // Block height: live value when caught up; otherwise the last-known value in
   // grey with a "+?" to show it's behind and still climbing.
+  /* Flash on every change of height, and remember when it last moved. */
+  useEffect(() => {
+    if (lastBlocks == null) return;
+    lastBlkAt.current = Date.now();
+    setBlkTok((k) => k + 1);
+    setBlkMoving(true);
+  }, [lastBlocks]);
+
+  /* If it has not moved for a minute and a half it really has stalled, and the
+     display should say so rather than keep implying progress. */
+  useEffect(() => {
+    const id = setInterval(() => {
+      setBlkMoving(Date.now() - lastBlkAt.current < 90000);
+    }, 5000);
+    return () => clearInterval(id);
+  }, []);
+
   const liveBlocks = caughtUp && status?.blocks != null ? status.blocks : null;
   const showBlocks = liveBlocks ?? lastBlocks;
 
@@ -160,9 +184,18 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
               liveBlocks != null ? (
                 <span className="chip-num">{showBlocks.toLocaleString()}</span>
               ) : (
-                <span className="chip-num blk-stale">
+                /* Syncing. Grey ONLY when it has genuinely stopped moving; while
+                   blocks are arriving it reads as live and flashes gold on each
+                   one, which is the difference between "working" and "stuck". */
+                <span
+                  key={`bn${blkTok}`}
+                  className={
+                    "chip-num" +
+                    (blkMoving ? " gold-flash" : " blk-stale")
+                  }
+                >
                   {showBlocks.toLocaleString()}
-                  <span className="blk-more">+?</span>
+                  <span className="blk-more">{blkMoving ? "+" : "+?"}</span>
                 </span>
               )
             ) : (
