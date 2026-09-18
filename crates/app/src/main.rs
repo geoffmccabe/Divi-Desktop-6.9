@@ -1780,6 +1780,49 @@ fn set_node_upnp(enabled: bool) -> Result<(), String> {
     dd69_supervisor::reachable::set_upnp(enabled)
 }
 
+/// Health-check nodes and ask a few of them who else they know.
+///
+/// This is what the U key was always supposed to do. Two things our own node
+/// cannot tell us: whether a given node is genuinely working (it only knows the
+/// handful it dialled), and who exists beyond those. Divi 3.0.0.0 has no RPC
+/// for its address book, but every node hands that book to another node that
+/// asks in the peer protocol — so we ask, as a node would.
+///
+/// `ask` is how many are asked for their lists. A few is plenty: each reply
+/// describes a different slice of the network, and asking everyone is slow and
+/// needlessly noisy.
+#[tauri::command]
+async fn network_crawl(ips: Vec<String>, ask: Option<usize>) -> serde_json::Value {
+    let ask = ask.unwrap_or(6);
+    tauri::async_runtime::spawn_blocking(move || {
+        let results = dd69_supervisor::crawl::crawl(&ips, ask);
+        let mut discovered: std::collections::BTreeSet<String> = Default::default();
+        let mut out = Vec::with_capacity(results.len());
+        for r in &results {
+            for a in &r.addrs {
+                discovered.insert(a.clone());
+            }
+            out.push(serde_json::json!({
+                "ip": r.ip,
+                "alive": r.alive,
+                "subver": r.subver,
+                "height": r.height,
+            }));
+        }
+        // Only addresses we did not already have are interesting to the map.
+        let known: std::collections::BTreeSet<&String> = ips.iter().collect();
+        let fresh: Vec<&String> = discovered.iter().filter(|a| !known.contains(a)).collect();
+        serde_json::json!({
+            "checked": results.len(),
+            "alive": results.iter().filter(|r| r.alive).count(),
+            "results": out,
+            "discovered": fresh,
+        })
+    })
+    .await
+    .unwrap_or(serde_json::json!({ "checked": 0, "alive": 0, "results": [], "discovered": [] }))
+}
+
 /// What the fast-sync download will cost, before the user commits to it.
 ///
 /// The setup screen used to advertise "~4.7 GB" as a hardcoded string while
@@ -3188,6 +3231,7 @@ fn main() {
             update_install,
             update_relaunch,
             node_reachability,
+            network_crawl,
             snapshot_info,
             snapshot_fetch,
             set_node_upnp,

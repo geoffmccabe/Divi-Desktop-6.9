@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { networkPeers, probePeers, listNodes, nodeIdentity, type Peer, type Geo } from "./api";
+import { networkPeers, probePeers, listNodes, nodeIdentity, networkCrawl, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, addMyIps, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
@@ -485,6 +485,69 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       }),
     [],
   );
+  /* What U does. It used to be the animation and nothing else: no request left
+     the machine, so it could never find a node our own node had not already
+     dialled. It now speaks Divi to every node we know, marks each alive or dead
+     by whether it actually completed a handshake, and asks a few of them for
+     their own address books — which is how a node nobody here has connected to
+     becomes visible. */
+  const crawlBusy = useRef(false);
+  const runNetworkRefresh = async () => {
+    if (crawlBusy.current) return;
+    crawlBusy.current = true;
+    try {
+      const known = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
+      const live = (snapRef.current?.peers ?? []).map((p) => p.ip);
+      const ips = Array.from(new Set([...live, ...known]));
+      if (!ips.length) return;
+
+      const targets: ProbeTarget[] = [];
+      for (const ip of ips) {
+        const kp = knownRef.current[ip];
+        if (kp && typeof kp.lat === "number" && typeof kp.lon === "number") {
+          targets.push({ ip, lat: kp.lat, lon: kp.lon });
+        }
+      }
+      const resolve = beginProbeWave(targets);
+
+      const reply = await networkCrawl(ips, 6);
+      // Alive means it spoke Divi to us, not merely that a port answered.
+      resolve(reply.results.map((r) => ({ ip: r.ip, online: r.alive })));
+      for (const r of reply.results) {
+        probeRef.current.set(r.ip, r.alive ? "online" : "offline");
+      }
+
+      // Learned second-hand from other nodes' address books: the ones our own
+      // node has never connected to and so could never show.
+      if (reply.discovered.length) {
+        const fresh = reply.discovered.slice(0, 200);
+        await resolveGeos(fresh, (m) => {
+          const seen = fresh
+            .filter((ip) => m[ip])
+            .map((ip) => ({
+              ip,
+              lat: m[ip].lat,
+              lon: m[ip].lon,
+              city: m[ip].city,
+              country: m[ip].country,
+              cc: m[ip].countryCode,
+            }));
+          if (!seen.length) return;
+          knownRef.current = recordKnown(knownRef.current, seen);
+          noteSeen(seen.map((x) => x.ip));
+          newNodesRef.current = newNodes(knownRef.current);
+          for (const n of seen) {
+            emitMap("node.discovered", { lat: n.lat, lon: n.lon, ip: n.ip });
+          }
+        });
+      }
+    } catch {
+      /* best-effort; the map keeps what it had */
+    } finally {
+      crawlBusy.current = false;
+    }
+  };
+
   const lastProbe = useRef(0); // last re-ping time (re-ping every 60s)
   const arcFx = useRef<Map<string, ArcFx>>(new Map()); // per-peer flex + colour state
   // Clicking our own node toggles "network only": hide the purple peer layer and
@@ -534,7 +597,10 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
-      if ((e.key === "u" || e.key === "U") && !e.metaKey && !e.ctrlKey && !e.altKey) pulseActivity();
+      if ((e.key === "u" || e.key === "U") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        pulseActivity();
+        void runNetworkRefresh();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

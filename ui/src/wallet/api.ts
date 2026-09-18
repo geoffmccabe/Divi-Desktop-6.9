@@ -380,6 +380,19 @@ export interface SnapshotInfo {
   enoughRoom: boolean;
   chainPresent: boolean;
 }
+/** One node's answer to a real Divi handshake. */
+export interface CrawlResult { ip: string; alive: boolean; subver: string; height: number }
+export interface CrawlReply {
+  checked: number;
+  alive: number;
+  results: CrawlResult[];
+  /** Addresses learned from other nodes that we did not already know. */
+  discovered: string[];
+}
+/** Health-check nodes and ask a few of them who else they know. */
+export const networkCrawl = (ips: string[], ask?: number) =>
+  invoke<CrawlReply>("network_crawl", { ips, ask });
+
 export const snapshotInfo = () => invoke<SnapshotInfo>("snapshot_info");
 /** Download and unpack the chain snapshot. Progress arrives as
  *  dd69://snapshot-progress events; resolves with the archive's SHA-256. */
