@@ -231,9 +231,34 @@ export function itemMark(spec: ItemSpec): string {
   }
 }
 
-/** How long this player waits to respawn, given what they own. */
-export function respawnSeconds(owned: string[]): number {
-  return owned.includes("vip") ? RESPAWN_VIP : RESPAWN_WAIT;
+/**
+ * How long a player waits to respawn: by what they OWN, and by what they HOLD.
+ *
+ * Geoff, 2026-Sep-16: "The restart time should depend on how much Divi the user
+ * has in the wallet. If it's 100,000 or more, 20 seconds. If it's 1 million or
+ * more, then 10 seconds. If it's 10 million or more, then 5 seconds."
+ *
+ * A ladder rather than a formula, because that is how it was asked for and how
+ * a player would describe it to another player. The VIP pass still counts, and
+ * whichever is kinder wins: nobody is made to wait longer by holding more.
+ *
+ * `walletDivi` is what the door reports, and a door with no wallet behind it
+ * reports nothing, which is the plain thirty seconds. That is the honest
+ * outcome on the web today: there is no wallet there to look in.
+ */
+export const RESPAWN_BY_DIVI: Array<[held: number, seconds: number]> = [
+  [10_000_000, 5],
+  [1_000_000, 10],
+  [100_000, 20],
+];
+
+export function respawnSeconds(owned: string[], walletDivi = 0): number {
+  let wait = owned.includes("vip") ? RESPAWN_VIP : RESPAWN_WAIT;
+  const held = Number.isFinite(walletDivi) ? walletDivi : 0;
+  for (const [need, seconds] of RESPAWN_BY_DIVI) {
+    if (held >= need) { wait = Math.min(wait, seconds); break; }
+  }
+  return wait;
 }
 
 /** What TAB multiplies boost by: the best "super" item owned, else the base. */

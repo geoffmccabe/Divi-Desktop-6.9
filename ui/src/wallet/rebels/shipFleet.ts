@@ -19,7 +19,8 @@
 
 import { platform } from "./platform/current";
 import { itemByKey } from "./itemCatalog";
-import { heldCount, takeHeld, INVENTORY_CHANGED } from "./rebelsInventory";
+import { heldCount, takeHeld } from "./rebelsInventory";
+import { notify } from "./rebelsSignals";
 
 const NAMES_KEY = "dd69.rebels.shipNames";
 const UPGRADES_KEY = "dd69.rebels.shipUpgrades";
@@ -50,7 +51,7 @@ function readJson<T>(key: string, fallback: T): T {
 }
 function writeJson(key: string, value: unknown): void {
   platform().storage.setItem(key, JSON.stringify(value));
-  try { window.dispatchEvent(new Event(INVENTORY_CHANGED)); } catch { /* not a browser */ }
+  notify("armoury");
 }
 
 const MODEL_OK = /^space_SM_Ship_[A-Za-z0-9_]{1,60}$/;

@@ -25,6 +25,7 @@ import { USD_PER_POINT } from "./weaponCatalog";
 import { spendDivi } from "./rebelsScores";
 import { platform } from "./platform/current";
 import { isShipUpgrade, shipUpgrades } from "./shipFleet";
+import { notify, listen } from "./rebelsSignals";
 
 /** Anything that can be bought. Guns and gear are the same transaction. */
 export type Buyable = WeaponSpec | ItemSpec;
@@ -190,7 +191,7 @@ export function grant(_ship: string, key: string): void {
 }
 
 function changed(): void {
-  try { window.dispatchEvent(new Event(CHANGED)); } catch { /* not a browser */ }
+  notify("armoury");
 }
 
 /* ---- saving to the account ----
@@ -245,13 +246,10 @@ export function mergeLoadout(remote: Partial<Loadout>): boolean {
   return moved;
 }
 
-/** Fired whenever points or ownership move, so the store and the HUD can
- *  follow without polling. */
-export const CHANGED = "dd69-rebels-armoury";
-
+/** Heard whenever points, ownership, found items or a ship's own things move,
+ *  so the store and the HUD can follow without polling (rebelsSignals.ts). */
 export function subscribeArmoury(fn: () => void): () => void {
-  window.addEventListener(CHANGED, fn);
-  return () => window.removeEventListener(CHANGED, fn);
+  return listen("armoury", fn);
 }
 
 /**

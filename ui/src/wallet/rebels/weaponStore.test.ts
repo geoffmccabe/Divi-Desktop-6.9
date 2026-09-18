@@ -223,6 +223,24 @@ async function main() {
     const ship = "space_SM_Ship_Fighter_01";
 
     ok("seven items: three torpedo, three magazine, the VIP pass", I.ITEMS.length === 7, `${I.ITEMS.length}`);
+    /* ---- THE RESPAWN LADDER ----
+       Geoff: "The restart time should depend on how much Divi the user has in
+       the wallet. If it's 100,000 or more, 20 seconds. If it's 1 million or
+       more, then 10 seconds. If it's 10 million or more, then 5 seconds." */
+    ok("a hundred thousand held is twenty seconds", I.respawnSeconds([], 100_000) === 20);
+    ok("just under it is still thirty", I.respawnSeconds([], 99_999) === 30);
+    ok("a million is ten", I.respawnSeconds([], 1_000_000) === 10);
+    ok("ten million is five", I.respawnSeconds([], 10_000_000) === 5);
+    ok("and twenty million is still five", I.respawnSeconds([], 20_000_000) === 5,
+       `${I.respawnSeconds([], 20_000_000)}s, which is what Geoff's own wallet should give him`);
+    ok("no wallet behind the door is the plain thirty",
+       I.respawnSeconds([]) === 30 && I.respawnSeconds([], 0) === 30);
+    /* Whichever is kinder: holding more must never make anyone wait longer. */
+    ok("the pass and the ladder do not fight: the kinder one wins",
+       I.respawnSeconds(["vip"], 0) === 10 && I.respawnSeconds(["vip"], 100_000) === 10
+       && I.respawnSeconds(["vip"], 10_000_000) === 5);
+    ok("nonsense held is treated as none",
+       I.respawnSeconds([], Number.NaN) === 30 && I.respawnSeconds([], -5) === 30);
     ok("thirty seconds to respawn, ten with the pass", I.respawnSeconds([]) === 30 && I.respawnSeconds(["vip"]) === 10
        && I.RESPAWN_WAIT === 30 && I.RESPAWN_VIP === 10);
     ok("the pass is a plain purchase with nothing before it", I.ITEMS.find((x) => x.key === "vip")?.needs === null

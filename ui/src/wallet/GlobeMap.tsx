@@ -423,6 +423,16 @@ interface Glyph { s: number; strand: number; base: number; }
 
 export function GlobeMap({ points, center, getWinnerIp, flight }: { points: GlobePoint[]; arcs: GlobeArc[]; center?: { lat: number; lon: number } | null; getWinnerIp?: () => string | null; flight?: GlobeFlight | null }) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  /**
+   * Whether there is anything worth looking at yet.
+   *
+   * The globe's canvas exists before it has drawn anything, and an undrawn
+   * canvas is BLACK: opening the map showed a black rectangle in the corner for
+   * a moment and then the world. Geoff: "It first displays a black rectangle in
+   * the top left corner before showing the globe." So it is held back until the
+   * globe says it is ready, and faded in rather than snapped.
+   */
+  const [shown, setShown] = useState(false);
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const [size, setSize] = useState({ w: 600, h: 400 });
   /* The overlay loop reads the size every frame, so it needs a ref rather than
@@ -514,6 +524,9 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
   }, []);
 
   const onReady = () => {
+    /* Next frame, so the first real picture is on the canvas before it is
+       uncovered rather than at the same moment. */
+    requestAnimationFrame(() => requestAnimationFrame(() => setShown(true)));
     const g = globeRef.current;
     if (!g) return;
     const c = g.controls() as unknown as { autoRotate: boolean; enableDamping: boolean; addEventListener: (e: string, f: () => void) => void };
@@ -1289,7 +1302,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       mapStakeTower, mapDetail, mapBorders, mapBorderColor]);
 
   return (
-    <div className="netmap-globe" ref={wrapRef}>
+    <div className={"netmap-globe" + (shown ? " shown" : "")} ref={wrapRef}>
       <Globe
         ref={globeRef}
         width={size.w}

@@ -26,8 +26,7 @@ const store = new Map<string, string>();
   setItem: (k: string, v: string) => { store.set(k, v); },
   removeItem: (k: string) => { store.delete(k); },
 };
-const fired: string[] = [];
-(globalThis as Record<string, unknown>).window = { dispatchEvent: (e: { type: string }) => { fired.push(e.type); return true; } };
+(globalThis as Record<string, unknown>).window = { dispatchEvent: () => true };
 (globalThis as Record<string, unknown>).Event = class { type: string; constructor(t: string) { this.type = t; } };
 
 /* ---- the catalogue ---- */
@@ -116,12 +115,15 @@ const fired: string[] = [];
 /* ---- the inventory ---- */
 {
   const INV = await import("./rebelsInventory");
+  const SIG = await import("./rebelsSignals");
+  let armourySignals = 0;
+  SIG.listen("armoury", () => { armourySignals++; });
   INV.resetInventoryForTests();
   ok("empty to start", Object.keys(INV.heldItems()).length === 0);
   ok("a pickup is one more", INV.addHeld("hull2") && INV.heldCount("hull2") === 1);
   ok("and again", INV.addHeld("hull2") && INV.heldCount("hull2") === 2);
   ok("an unknown key is refused", !INV.addHeld("deathray") && Object.keys(INV.heldItems()).length === 1);
-  ok("a change is announced on the armoury's channel", fired.includes("dd69-rebels-armoury"));
+  ok("a change is announced on the armoury's channel", armourySignals > 0, `${armourySignals}`);
   ok("taking more than held takes nothing", !INV.takeHeld("hull2", 3) && INV.heldCount("hull2") === 2);
   ok("taking what is held works and clears the stack", INV.takeHeld("hull2", 2) && INV.heldCount("hull2") === 0 && !("hull2" in INV.heldItems()));
   INV.addHeld("drone1", 1); INV.addHeld("hull5", 2); INV.addHeld("recharge", 4); INV.addHeld("drone5", 1);

@@ -317,6 +317,78 @@ async function main() {
     ctx.closed = false;
   }
 
+  /* ---- THE THREE THINGS THE METER CANNOT SEE ----
+     Geoff's black box, on the silence of 2026-Sep-17: running, the level
+     varying between 0.008 and 0.057, the clock advancing, no stalls, no device
+     changes, and not a sound in the room. Two numbers in it were the whole
+     story. `deviceApi: false`: this webview has no navigator.mediaDevices, so
+     the detector written for a device swap can never fire here and its zero
+     reading means nothing. And `ctxAge: 33674`: the context had been alive nine
+     and a half hours, while macOS's own audio daemon had quietly built an
+     aggregate output device under it for a video call.
+
+     So: three detectors that need no API at all. */
+  {
+    const S = await import("../../sound");
+
+    /* 1. A GAP IN WALL TIME THE AUDIO CLOCK DID NOT SHARE.
+          The frame loop stops while a machine sleeps, so the audio clock and
+          the frame's own dt agree and see nothing. Only the wall disagrees. */
+    S.resetSoundForTests();
+    FakeCtx.loud = 0.2;
+    let ctx = S.audioContext() as unknown as FakeCtx;
+    S.output();
+    ctx.currentTime = 10;
+    ok("(setup) healthy to start with", S.watchAudio(true, 2, 5000) === "none");
+    /* Ninety seconds of wall time, two of audio: the stream was not running. */
+    ctx.currentTime = 12;
+    const slept = S.watchAudio(true, 2, 5090);
+    ok("a gap in wall time the audio clock did not share is a rebuild",
+       slept === "rebuild", slept);
+    ok("and it is counted, so a report can say it happened",
+       ((S.audioHealth() as { interruptions: number }).interruptions) >= 1,
+       `${(S.audioHealth() as { interruptions: number }).interruptions}`);
+
+    /* 2. THE MACHINE'S OWN OUTPUT CHANGING SHAPE. The latencies and the channel
+          count are the only things visible from below the destination, and a
+          device swap moves them. Nothing was watching them. */
+    S.resetSoundForTests();
+    ctx = S.audioContext() as unknown as FakeCtx;
+    S.output();
+    ctx.currentTime = 10;
+    S.watchAudio(true, 2, 6000);
+    ctx.currentTime = 12;
+    ok("(setup) steady while the output is steady", S.watchAudio(true, 2, 6002) === "none");
+    ctx.currentTime = 14;
+    ctx.sampleRate = 44100;                  /* the speakers moved */
+    const swapped = S.watchAudio(true, 2, 6004);
+    ok("the output changing shape is a rebuild", swapped === "rebuild", swapped);
+    ok("and that is counted too",
+       ((S.audioHealth() as { shapeChanges: number }).shapeChanges) >= 1,
+       `${(S.audioHealth() as { shapeChanges: number }).shapeChanges}`);
+
+    /* 3. AND SHEER AGE, which is the admission that this webview cannot be told
+          its speakers have moved. */
+    S.resetSoundForTests();
+    ctx = S.audioContext() as unknown as FakeCtx;
+    S.output();
+    ctx.currentTime = 10;
+    let verdict = S.watchAudio(true, 2, 7000);
+    ok("a young context is left alone", verdict !== "rebuild", verdict);
+    /* Twenty-one minutes, in steps the wall check stays quiet through, so this
+       is the AGE firing and nothing else. */
+    for (let t = 7002; t < 7000 + 21 * 60; t += 2) {
+      ctx.currentTime += 2;
+      verdict = S.watchAudio(true, 2, t);
+      if (verdict === "rebuild") break;
+    }
+    ok("a context past twenty minutes is replaced", verdict === "rebuild", verdict);
+    ok("and the report says which of the three it was",
+       ((S.audioHealth() as { agedOut: number }).agedOut) >= 1,
+       `${(S.audioHealth() as { agedOut: number }).agedOut}`);
+    FakeCtx.loud = 0.2;
+  }
+
   /* ---- THE CLOCK THAT STOPPED ----
      The failure that kept killing the sound in long sessions: the context
      still says "running", the meter still reads signal, and nothing comes

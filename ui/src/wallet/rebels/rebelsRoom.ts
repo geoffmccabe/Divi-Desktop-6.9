@@ -24,6 +24,10 @@
 import * as THREE from "three";
 import { weaponByKey } from "./weaponCatalog";
 import { dflow } from "./rebelsDflow";
+import {
+  unpackPlayer, unpackEnemy, unpackShot, unpackCoin, unpackTorpedo, unpackJunk, unpackBeam, unpackGem, unpackWing,
+  type PlayerRow, type EnemyRow, type ShotRow, type CoinRow, type TorpedoRow, type JunkRow, type BeamRow, type GemRow, type WingRow,
+} from "./rebelsWire";
 import { platform } from "./platform/current";
 import { DEFAULT_ROOM_BASE } from "./platform/defaults";
 
@@ -61,6 +65,31 @@ export interface RoomPlayer {
   guard: boolean;
   shield: number;
   /** Cleared each state message; anyone not mentioned has gone. */
+  seen: boolean;
+}
+
+/**
+ * An enemy as the cockpit holds it: where the room last said it is, where it
+ * was, and how far through the walk between them.
+ *
+ * The same shape the other ships have, and for the same reason.
+ */
+export interface RoomEnemy {
+  pos: THREE.Vector3;
+  fwd: THREE.Vector3;
+  from: THREE.Vector3;
+  fromFwd: THREE.Vector3;
+  target: THREE.Vector3;
+  targetFwd: THREE.Vector3;
+  /** How far through the interpolation, 0 to 1. */
+  t: number;
+  tier: number;
+  shield: number;
+  shieldMax: number;
+  drone: boolean;
+  dragon: boolean;
+  id: number;
+  /** Cleared each state message; anything not mentioned has gone. */
   seen: boolean;
 }
 
@@ -174,6 +203,13 @@ export interface Room {
    * fight over, which is what makes a restart a restart.
    */
   fly(): void;
+  /**
+   * Gone out of the room's world.
+   *
+   * The room stops counting this seat as a player, so nothing shoots at a body
+   * left behind at the last reported place. `fly` brings it back.
+   */
+  away(): void;
   /** The resupply finished at a tower: the room refills the seat, having
    *  checked the ship really is at one. */
   dock(): void;
@@ -182,7 +218,7 @@ export interface Room {
   /** This node won a stake: a minute of triple damage, if the room allows it. */
   bonus(): void;
   /** What the ship carries, when it changes: a gun bought, a sphere opened. */
-  gear(list: string[], reach?: number, drones?: number[]): void;
+  gear(list: string[], reach?: number, drones?: number[], divi?: number): void;
   /** The flight model hit the ground or a tower, and by how much. */
   hurt(amount: number): void;
   /** Ask to be paid what is banked, to this address. The answer comes back
@@ -245,6 +281,9 @@ interface Opts {
  *  reconnects in about a second. */
 export const HIDDEN_RELEASE_MS = 3 * 60_000;
 
+/** The cockpit's vectors, for the rows it unpacks (rebelsWire.ts). */
+const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+
 export function joinRoom(opts: Opts): Room {
   let ws: WebSocket | null = null;
   /* ---- which room ----
@@ -282,6 +321,16 @@ export function joinRoom(opts: Opts): Room {
   let sinceReport = 0;
 
   const players = new Map<string, RoomPlayer>();
+  /**
+   * The enemies, KEPT between ticks so they can be smoothed.
+   *
+   * They used to be thrown away and rebuilt from every state message, which is
+   * why they juddered: twenty updates a second drawn at sixty frames means two
+   * frames in three showing a ship that has not moved, then a jump. Keyed by
+   * the room's own id, which is what makes it possible to know where a given
+   * enemy WAS.
+   */
+  const enemies_ = new Map<number, RoomEnemy>();
   const events: RoomEvent[] = [];
 
   const room: Room = {
@@ -316,12 +365,14 @@ export function joinRoom(opts: Opts): Room {
     detonate() { send({ t: "det" }); },
     use(k) { send({ t: "use", k }); },
     fly() { send({ t: "fly" }); },
+    away() { send({ t: "away" }); },
     dock() { send({ t: "dock" }); },
     cheat(code) { send({ t: "cheat", code }); },
     bonus() { send({ t: "bonus" }); },
-    gear(list, reach, drones) {
+    gear(list, reach, drones, divi) {
       send({
         t: "gear", gear: list,
+        ...(divi && divi > 0 ? { divi: Math.round(divi) } : {}),
         ...(reach ? { reach: Math.round(reach * 100) / 100 } : {}),
         ...(drones ? { drones } : {}),
       });
@@ -339,6 +390,12 @@ export function joinRoom(opts: Opts): Room {
         p.t = Math.min(1, p.t + dt / SMOOTH);
         p.pos.lerpVectors(p.from, p.target, p.t);
         p.fwd.lerpVectors(p.fromFwd, p.targetFwd, p.t).normalize();
+      }
+      /* And the enemies, which are what a player is actually looking at. */
+      for (const e of enemies_.values()) {
+        e.t = Math.min(1, e.t + dt / SMOOTH);
+        e.pos.lerpVectors(e.from, e.target, e.t);
+        e.fwd.lerpVectors(e.fromFwd, e.targetFwd, e.t).normalize();
       }
       if (closed || resting) return;
       if (!ws && performance.now() >= retryAt) open();
@@ -496,82 +553,99 @@ export function joinRoom(opts: Opts): Room {
 
       case "s": {
         room.wave = Number(m.w) || 0;
-        const P = (m.P ?? []) as Array<[string, number, number, number, number, number, number, number, number]>;
+        const P = (m.P ?? []) as PlayerRow[];
         for (const p of players_.values()) p.seen = false;
         for (const row of P) {
-          const id = row[0];
+          const ship = unpackPlayer(row, (x, y, z) => ({ x, y, z }));
+          const id = ship.id;
           const p = players_.get(id) ?? blank(id);
           /* The newest report becomes the target and the CURRENT drawn
              position becomes the start, so a ship never jumps backwards to
              where it was a tick ago. */
           p.from.copy(p.pos);
           p.fromFwd.copy(p.fwd);
-          p.target.set(row[1], row[2], row[3]);
-          p.targetFwd.set(row[4], row[5], row[6]).normalize();
+          p.target.set(ship.pos.x, ship.pos.y, ship.pos.z);
+          p.targetFwd.set(ship.fwd.x, ship.fwd.y, ship.fwd.z).normalize();
           /* A ship that has just appeared has nowhere to come from. */
           if (p.t >= 1 && p.from.lengthSq() === 0) { p.pos.copy(p.target); p.from.copy(p.target); }
           p.t = 0;
-          p.guard = row[7] === 1;
-          p.shield = row[8];
+          p.guard = ship.guard;
+          p.shield = ship.shield;
           p.seen = true;
           players_.set(id, p);
         }
         for (const [id, p] of [...players_.entries()]) if (!p.seen) players_.delete(id);
 
-        room.enemies = ((m.E ?? []) as number[][]).map((e) => ({
-          pos: new THREE.Vector3(e[0], e[1], e[2]),
-          fwd: new THREE.Vector3(e[3], e[4], e[5]),
-          tier: e[6], shield: e[7], shieldMax: e[8], drone: e[9] === 1, dragon: e[9] === 2, id: e[10] || 0,
-        }));
-        for (const f of (m.F ?? []) as number[][]) {
-          shots.push({
-            id: f[0],
-            pos: new THREE.Vector3(f[1], f[2], f[3]),
-            vel: new THREE.Vector3(f[4], f[5], f[6]),
-            hostile: (f[7] & 1) !== 0,
-            mini: (f[7] & 2) !== 0,
-            orb: (f[7] & 4) !== 0,
-            life: f[8],
+        /* ---- ENEMIES ARE SMOOTHED, LIKE THE SHIPS ----
+           This used to replace the whole list every state message, which meant
+           every enemy on screen stood still for two frames and jumped on the
+           third: the room speaks twenty times a second and the screen draws
+           sixty. Geoff, 2026-Sep-16: "it's super laggy and not fun because of
+           the jerkiness and lag." The frame rate was never the problem; DFlow
+           had it at a steady sixty. The MOTION was at twenty.
+
+           Other ships have been smoothed since the room was built (see the
+           loop in step). Enemies were not, and enemies are what a player spends
+           the whole game looking at. Same treatment: keep them between ticks,
+           remember where they were, and walk to where they are now. */
+        for (const e of enemies_.values()) e.seen = false;
+        const drawn: RoomEnemy[] = [];
+        for (const row of (m.E ?? []) as EnemyRow[]) {
+          const u = unpackEnemy(row, V);
+          const fresh = (): RoomEnemy => ({
+            ...u,
+            from: u.pos.clone(), target: u.pos.clone(),
+            fromFwd: u.fwd.clone(), targetFwd: u.fwd.clone(),
+            t: 1, seen: true,
           });
+          /* Smoothing needs to know which enemy is which, and that is the
+             room's id. Anything the room does not number cannot be followed
+             from tick to tick, so it is drawn exactly where it is: unsmoothed
+             is worse than smoothed and far better than MISSING, which is what
+             an earlier version of this did to it. */
+          if (!u.id) { drawn.push(fresh()); continue; }
+          let e = enemies_.get(u.id);
+          if (!e) {
+            e = fresh();
+            enemies_.set(u.id, e);
+          } else {
+            /* From where it is NOW, not from where the last tick said it was:
+               an update that arrives late must not snap backwards first. */
+            e.from.copy(e.pos); e.fromFwd.copy(e.fwd);
+            e.target.copy(u.pos); e.targetFwd.copy(u.fwd);
+            e.t = 0;
+            e.tier = u.tier; e.shield = u.shield; e.shieldMax = u.shieldMax;
+            e.drone = u.drone; e.dragon = u.dragon;
+            e.seen = true;
+          }
+          drawn.push(e);
         }
+        for (const [id, e] of [...enemies_.entries()]) if (!e.seen) enemies_.delete(id);
+        /* In the order the room sent them, so nothing shuffles between ticks. */
+        room.enemies = drawn;
+        for (const f of (m.F ?? []) as ShotRow[]) shots.push(unpackShot(f, V));
         for (const id of (m.X ?? []) as number[]) spent.push(id);
         /* A long stall must not deliver a thousand rounds at once. */
         while (shots.length > 400) shots.shift();
         while (spent.length > 400) spent.shift();
-        room.junk = ((m.J ?? []) as number[][]).map((j) => ({
-          pos: new THREE.Vector3(j[0], j[1], j[2]),
-          rot: new THREE.Vector3(j[3], j[4], j[5]),
-          kind: j[6] === 1 ? "wingL" : j[6] === 2 ? "wingR" : "body",
-        }));
-        room.wings = ((m.W ?? []) as Array<[string, number, number, number, number, number, number, number]>).map((v) => ({
-          owner: String(v[0]), slot: Number(v[1]) || 0,
-          pos: new THREE.Vector3(v[2], v[3], v[4]),
-          hull: Number(v[5]) || 0, hullMax: Number(v[6]) || 1, tier: Number(v[7]) || 1,
-        }));
-        room.torpedoes = ((m.T ?? []) as number[][]).map((t) => ({
-          pos: new THREE.Vector3(t[0], t[1], t[2]),
-          vel: new THREE.Vector3(t[3], t[4], t[5]),
-        }));
-        room.coins = ((m.C ?? []) as number[][]).map((k) => ({
-          pos: new THREE.Vector3(k[0], k[1], k[2]),
-        }));
-        room.beams = ((m.M ?? []) as Array<[number, number, number, number, number, number, string, number]>).map((b) => {
-          const spec = weaponByKey(String(b[6]));
+        room.junk = ((m.J ?? []) as JunkRow[]).map((j) => unpackJunk(j, V));
+        room.wings = ((m.W ?? []) as WingRow[]).map((v) => unpackWing(v, V));
+        room.torpedoes = ((m.T ?? []) as TorpedoRow[]).map((t) => unpackTorpedo(t, V));
+        room.coins = ((m.C ?? []) as CoinRow[]).map((k) => unpackCoin(k, V));
+        room.beams = ((m.M ?? []) as BeamRow[]).map((row) => {
+          const b = unpackBeam(row, V);
+          const spec = weaponByKey(b.key);
           return {
-            pos: new THREE.Vector3(b[0], b[1], b[2]),
-            fwd: new THREE.Vector3(b[3], b[4], b[5]),
-            life: Number(b[7]) || 0,
+            pos: b.pos,
+            fwd: b.fwd,
+            life: b.life,
             half: ((spec?.cone ?? 2) * Math.PI) / 360,
             reach: spec?.reach ?? 90,
             colour: spec?.colour ?? 0xffd83a,
-            key: String(b[6]),
+            key: b.key,
           };
         });
-        room.gems = ((m.G ?? []) as Array<[number, number, number, number, number, string, string?, string?, number?]>).map((g) => ({
-          id: String(g[5]), tier: Number(g[3]) || 1,
-          pos: new THREE.Vector3(g[0], g[1], g[2]), spin: Number(g[4]) || 0,
-          ...(g[6] ? { item: String(g[6]), owner: String(g[7] ?? ""), hidden: Number(g[8]) || 0 } : {}),
-        }));
+        room.gems = ((m.G ?? []) as GemRow[]).map((g) => unpackGem(g, V));
         return;
       }
 

@@ -1,7 +1,8 @@
 // The values every door starts from, kept apart from any door so that the game,
 // the app door and the web door can all read them without importing each other.
 
-import type { RebelsDetail, RebelsLimits, RebelsStorage } from "./platform";
+import type { RebelsAccountConnection, RebelsDetail, RebelsLimits, RebelsStorage } from "./platform";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../../supabaseProject";
 
 /** The multiplayer server. One world, everyone in it. */
 export const DEFAULT_ROOM_BASE = "wss://divi-rebels-room.geoff-de3.workers.dev";
@@ -26,3 +27,7 @@ export const LOCAL_STORAGE: RebelsStorage = {
 
 /** Everything open: the app, where the player is a node owner. */
 export const NO_LIMITS: RebelsLimits = { customiseShips: true, why: "" };
+
+/** The Divi Desktop Supabase project with its public key: every door's account
+ *  connection until a player signs in. */
+export const DEFAULT_ACCOUNT: RebelsAccountConnection = { url: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY };

@@ -29,8 +29,8 @@
 import * as THREE from "three";
 import {
   createCombat, stepCombat, clearEvents, startWave, fireBeam, dropGem, type Gem,
-  setDropRandomForTests, clampReach, spawnDragon, spawnFleet, pushBullet, takeSpentBullets, takeFreshBullets,
-  type WingBody, type Bullet,
+  setDropRandomForTests, clampReach, pushBullet,
+  type WingBody,
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE, STAKE_BONUS, STAKE_BONUS_MS,
   BULLET_SPEED, BULLET_LIFE, CONVERGE,
@@ -47,14 +47,18 @@ import {
 } from "../../../ui/src/wallet/rebels/rebelsWings";
 import { distanceToTower, DOCK_RANGE, DOCK_SECONDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
-import { ALL_ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, superBoostMult, strafeMult, vstrafeMult, hullMult } from "../../../ui/src/wallet/rebels/itemCatalog";
+import { ALL_ITEMS, torpedoBonus, magBonus, RESPAWN_WAIT, RESPAWN_VIP, respawnSeconds, superBoostMult, strafeMult, vstrafeMult, hullMult } from "../../../ui/src/wallet/rebels/itemCatalog";
 import { fetchDropConfig } from "../../../ui/src/wallet/rebels/dropConfigRemote";
 import { DEFAULT_DROP_CONFIG, type DropConfig } from "../../../ui/src/wallet/rebels/dropCharts";
 import { ammoFor, torpedoesFor, topSpeedFor, shieldMaxFor, recharge, supercharge, SUPER_BOOST_MULT, type Extras } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
-  type PaintWire, type PaintPart, nextRoom, guestIdOk,
+  type PaintWire, type PaintPart, nextRoom,
 } from "./protocol";
+import { runRoomCheat } from "./cheats";
+import { stateMessages } from "./broadcast";
+import { whoJoins, mayCheat, mayCashOut, shipFor, GUEST_CASH_OUT } from "./identity";
+import { bankRun, requestCashOut, readPurse, type LedgerBinding } from "./economy";
 
 /** Twenty ticks a second. Fast enough for dogfighting, cheap enough to run
  *  dozens of rooms; the cockpit interpolates between them. */
@@ -93,12 +97,6 @@ interface Wing {
   ammoMax: number;
   pos: THREE.Vector3;
 }
-
-/** The hull a web guest flies: the first one, the same as shipChoice's DEFAULT_SHIP. */
-const GUEST_SHIP = "space_SM_Ship_Fighter_01";
-
-/** What a web guest is told about cashing out, on every purse it is sent. */
-const GUEST_CASH_OUT = "Sign in to cash out DIVI earned on the web. It stays banked to you until you do.";
 
 interface Seat {
   id: string;
@@ -212,6 +210,9 @@ interface Seat {
   tfCount: number;
   strikes: number;
   joined: boolean;
+  /** What this player holds in their wallet, as they reported it. Sets how long
+   *  they wait to respawn; see respawnSeconds. */
+  walletDivi: number;
   /**
    * In the fight, as against merely seated.
    *
@@ -321,7 +322,7 @@ export class RebelsRoom {
       score: 0, kills: 0, divi: 0,
       dead: false, respawn: 0,
       lastMain: -99, lastMini: -99, lastTorp: -99,
-      tfWindow: 0, tfCount: 0, strikes: 0, joined: false, flying: false,
+      tfWindow: 0, tfCount: 0, strikes: 0, joined: false, flying: false, walletDivi: 0,
     };
     this.seats.set(id, seat);
 
@@ -649,7 +650,11 @@ export class RebelsRoom {
        the next launch dropped them into a fight already in progress with
        fighters on top of them. */
     s.flying = false;
-    s.respawn = s.gear.has("vip") ? RESPAWN_VIP : RESPAWN_SECONDS;
+    /* By the pass AND by what the player holds in their wallet, whichever is
+       kinder. The holding is the client's word, as the gear and the paint are,
+       and it is bounded the same way: the worst a lie buys is a shorter wait,
+       and the room decides when the wait is over either way. */
+    s.respawn = respawnSeconds([...s.gear], s.walletDivi);
     s.shield = 0;
     s.guardFor = 0;
     s.body.guard = false;
@@ -688,6 +693,14 @@ export class RebelsRoom {
     /* Back on your own pad, which is where a launch happens. */
     s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
     this.refreshRoster();
+    /* ---- AND TELL THEM, OR THE COUNTDOWN NEVER ENDS ----
+       A revived seat is not FLYING until its player launches again, so with
+       nobody else in the room the roster is empty, the tick returns early and
+       not one more message goes out. The cockpit was therefore left on its last
+       gauge reading, showing a dead ship and a countdown that had stopped:
+       Geoff, "the 30 second countdown froze... then it froze again and never
+       restarted." This is the message that says it is over. */
+    this.sendYou(s);
   }
 
   /**
@@ -711,27 +724,9 @@ export class RebelsRoom {
   }
 
   /* ---- the ledger ----
-     Kills and DIVI are reported to a single object that spans every room, since
-     a player may fly in several over a week and the payout is one running
-     total. The room is the only thing that ever writes to it. */
+     Banking, cash-out requests and purses are in economy.ts. */
   private async bank(s: Seat): Promise<void> {
-    const anyGems = s.gems.some((n) => n > 0);
-    const anyItems = Object.keys(s.items).length > 0;
-    if (!(s.account || s.node) || (s.kills === 0 && s.divi === 0 && s.score === 0 && s.flocks === 0 && !anyGems && !anyItems)) return;
-    const kills = s.kills, divi = s.divi, score = s.score, flocks = s.flocks, gems = s.gems.slice(), items = s.items;
-    s.kills = 0; s.divi = 0; s.score = 0; s.flocks = 0; s.gems = [0, 0, 0, 0, 0, 0, 0]; s.items = {};
-    try {
-      const id = this.env.LEDGER.idFromName("v1");
-      await this.env.LEDGER.get(id).fetch("https://ledger/credit", {
-        method: "POST",
-        body: JSON.stringify({ node: s.account || s.node, name: s.name, kills, divi, score, flocks, gems, items }),
-      });
-    } catch {
-      /* Put it back rather than lose it: the next flush will carry it. */
-      s.kills += kills; s.divi += divi; s.score += score; s.flocks += flocks;
-      for (let i = 0; i < 7; i++) s.gems[i] += gems[i] ?? 0;
-      for (const [k, n] of Object.entries(items)) s.items[k] = (s.items[k] ?? 0) + n;
-    }
+    await bankRun(this.env.LEDGER as unknown as LedgerBinding, s);
   }
 
   /* ---- messages in ---- */
@@ -755,6 +750,7 @@ export class RebelsRoom {
       case "bonus": return this.onBonus(seat);
       case "gear": return this.onGear(seat, msg);
       case "fly": return this.onFly(seat);
+      case "away": return this.onAway(seat);
       case "hurt": return this.onHurt(seat, msg);
       case "claim": { void this.onClaim(seat, msg); return; }
       case "purse": {
@@ -781,18 +777,13 @@ export class RebelsRoom {
     seat.name = String(m.name ?? "").slice(0, 40) || "Unnamed node";
     /* No connecting address (a local run, a test) falls back to the declared
        one. Live, through Cloudflare, there always is one. */
-    if (!seat.account) seat.account = seat.node;
-    /* ---- a web guest ----
-       Kept to an account of its own, so a player on divi.love/rebels and an app
-       player behind the same home router never share a balance. Everything a
-       guest earns is banked there exactly as it is for anyone else; only the
-       cash-out waits for a sign-in (see onClaim). */
-    if (m.door === "web") {
-      seat.guest = true;
-      /* Banked under the guest's own id when it sends one, so their DIVI follows
-         them between visits and connections; by address only as a fallback. */
-      seat.account = (guestIdOk(m.guest) ? `guest:${m.guest}` : `web:${seat.account}`).slice(0, 80);
-    }
+    /* ---- who this is ----
+       App players by the address they connect from, web guests by their private
+       id: the rules are in identity.ts. No connecting address (a local run, a
+       test) falls back to the declared node. */
+    const who = whoJoins(seat.account, seat.node, m);
+    seat.account = who.account;
+    seat.guest = who.guest;
     /* ---- what they look like ----
        Taken on trust, because it is paint: the worst a lie here can do is make
        somebody's ship the wrong colour on somebody else's screen. It is still
@@ -806,11 +797,13 @@ export class RebelsRoom {
     /* A web guest flies the first hull, as it comes, until they sign up; the
        room says so too, so a page that claims otherwise is shown the same ship
        as everyone else sees. Its paint is the factory scheme. */
-    if (seat.guest) {
-      seat.ship = GUEST_SHIP;
-      m = { ...m, paint: undefined };
-    }
+    seat.ship = shipFor(seat, seat.ship);
+    if (seat.guest) m = { ...m, paint: undefined };
     seat.paint = cleanPaint(m.paint);
+    /* Bounded to something a wallet could plausibly hold, so a silly number
+       cannot become a silly wait. */
+    const held = Number(m.divi);
+    seat.walletDivi = Number.isFinite(held) && held > 0 ? Math.min(held, 1e12) : 0;
     /* The capture ball. The client measured its own wings; the room only
        keeps it within reason. */
     seat.body.reach = clampReach(Number(m.reach));
@@ -827,6 +820,25 @@ export class RebelsRoom {
     this.sendYou(seat);
     this.sendRoster();
     void this.sendPurse(seat);
+  }
+
+  /**
+   * The player has left the room's world entirely.
+   *
+   * Out of the fight at once, so nothing goes on shooting at a body that is no
+   * longer anywhere near it. The seat stays: this is not a death and not a
+   * disconnection, and nothing is banked.
+   */
+  private onAway(seat: Seat): void {
+    if (!seat.flying) return;
+    seat.flying = false;
+    this.refreshRoster();
+    /* Last one out clears the sky, the same rule death follows. */
+    let anyoneLeft = false;
+    for (const o of this.seats.values()) if (o.flying && !o.dead) anyoneLeft = true;
+    if (!anyoneLeft) this.resetFight();
+    this.sendYou(seat);
+    this.sendRoster();
   }
 
   /**
@@ -871,48 +883,28 @@ export class RebelsRoom {
     const to = typeof m.to === "string" ? m.to.slice(0, 40) : "";
     await this.bank(seat);
     /* A web guest's DIVI is real and stays banked, but paying it out waits for
-       a signed-in account: a guest costs nothing to make, and a cash-out is
-       money leaving the treasury. */
-    if (seat.guest) {
+       a signed-in account (identity.ts). */
+    if (!mayCashOut(seat)) {
       await this.sendPurse(seat);
       return;
     }
-    try {
-      const id = this.env.LEDGER.idFromName("v1");
-      const r = await this.env.LEDGER.get(id).fetch("https://ledger/request", {
-        method: "POST",
-        body: JSON.stringify({ node: seat.account, to }),
-      });
-      const purse = await r.json() as Record<string, unknown>;
-      this.send(seat, { t: "purse", ...(purse as object) } as ServerMessage);
-    } catch {
-      this.send(seat, {
-        t: "purse", divi: 0, claimable: 0, paid: 0, pending: null, last: null,
-        why: "the ledger did not answer; try again in a moment",
-      });
-    }
+    const purse = await requestCashOut(this.env.LEDGER as unknown as LedgerBinding, seat.account, to);
+    this.send(seat, { t: "purse", ...(purse as object) } as ServerMessage);
   }
 
   private async sendPurse(seat: Seat, why?: string): Promise<void> {
     if (!seat.joined) return;
-    try {
-      const id = this.env.LEDGER.idFromName("v1");
-      const r = await this.env.LEDGER.get(id).fetch(
-        `https://ledger/purse?node=${encodeURIComponent(seat.account)}`,
-      );
-      const purse = await r.json() as Record<string, unknown>;
-      if (typeof purse.divi !== "number") return;
-      /* A guest sees what is banked, never an amount offered to cash out, and
-         always sees why. */
-      if (seat.guest) {
-        purse.claimable = 0;
-        purse.why = GUEST_CASH_OUT;
-      }
-      if (why) purse.why = why;
-      this.send(seat, { t: "purse", ...(purse as object) } as ServerMessage);
-    } catch {
-      /* Nothing to show yet. The panel asks again when it opens. */
+    const purse = await readPurse(this.env.LEDGER as unknown as LedgerBinding, seat.account);
+    /* Nothing to show yet: the panel asks again when it opens. */
+    if (!purse) return;
+    /* A guest sees what is banked, never an amount offered to cash out, and
+       always sees why. */
+    if (!mayCashOut(seat)) {
+      purse.claimable = 0;
+      purse.why = GUEST_CASH_OUT;
     }
+    if (why) purse.why = why;
+    this.send(seat, { t: "purse", ...(purse as object) } as ServerMessage);
   }
 
   /**
@@ -1183,6 +1175,12 @@ export class RebelsRoom {
 
   static GEAR_GAP = 1;
   private onGear(seat: Seat, m: Extract<ClientMessage, { t: "gear" }>): void {
+    /* The wallet balance can arrive after the join, because the door has to be
+       asked for it. Same trust and same bound as on the join. */
+    if (m.divi !== undefined) {
+      const held = Number(m.divi);
+      seat.walletDivi = Number.isFinite(held) && held > 0 ? Math.min(held, 1e12) : 0;
+    }
     if (!seat.joined) return;
     if (this.now - seat.lastGear < RebelsRoom.GEAR_GAP) return;
     seat.lastGear = this.now;
@@ -1236,22 +1234,15 @@ export class RebelsRoom {
   }
 
   /* ---- test cheats ----
-     The same ones the solo game has, so the shared fight and the solo fight
-     are the same game to test. "21" is a REAL dragon ahead of the seat
-     (it leaves its egg): to remove or gate before eggs are worth anything.
-     "1x" is a flock of tier x, worth nothing, as in the cockpit. */
+     The spawning itself lives in cheats.ts. What the room decides here is WHO
+     may: never a web guest. The public page carries no cheat code, but a
+     message can be typed into any browser's console, and "21" is a real dragon
+     that leaves a real egg. App seats keep them for testing; with sign-in they
+     become admin-only. */
   private onCheat(seat: Seat, m: Extract<ClientMessage, { t: "cheat" }>): void {
     if (!seat.joined || seat.dead) return;
-    const code = String(m.code ?? "");
-    if (code === "21") {
-      if (this.combat.enemies.some((e) => e.dragon)) return;
-      const ahead = seat.body.pos.clone().addScaledVector(seat.body.fwd, 35);
-      const up = seat.body.pos.clone().normalize();
-      const across = new THREE.Vector3().crossVectors(seat.body.fwd, up).normalize();
-      spawnDragon(this.combat, ahead, across);
-    } else if (/^1[1-6]$/.test(code)) {
-      spawnFleet(this.combat, Number(code[1]), seat.body.pos, seat.body.fwd, { cheat: true });
-    }
+    if (!mayCheat(seat)) return;
+    runRoomCheat(this.combat, seat.body, String(m.code ?? ""));
   }
 
   /* Y: a held Instant Recharge or Supercharge. The room does not hold the
@@ -1326,188 +1317,9 @@ export class RebelsRoom {
   }
 
   private broadcastState(): void {
-    const c = this.combat;
-    /* A dropped item in its private minute goes only to its owner: nobody
-       else is told it exists. Everything else is one string for everyone. */
-    const shared: Gem[] = [];
-    const mine = new Map<string, Gem[]>();
-    for (const g of c.gems) {
-      if (g.item && (g.hidden ?? 0) > 0) {
-        const list = mine.get(g.owner ?? "") ?? [];
-        list.push(g);
-        mine.set(g.owner ?? "", list);
-      } else shared.push(g);
-    }
-    const gemWire = (g: Gem) => [
-      r1(g.pos.x), r1(g.pos.y), r1(g.pos.z), g.tier, Math.round(g.spin * 100) / 100, g.id,
-      ...(g.item ? [g.item, g.owner ?? "", Math.round(g.hidden ?? 0)] : []),
-    ];
-    /* The wingmen, whose and where. They point where their owner points, so
-       the cockpit takes the heading from the ship they belong to. */
-    const wings: Array<[string, number, number, number, number, number, number, number]> = [];
-    for (const s of this.seats.values()) {
-      if (!s.joined || s.dead) continue;
-      for (const wing of s.wings) {
-        if (wing.hull <= 0) continue;
-        wings.push([
-          s.id, wing.slot, r1(wing.pos.x), r1(wing.pos.y), r1(wing.pos.z),
-          Math.max(0, Math.round(wing.hull)), wing.hullMax, wing.tier,
-        ]);
-      }
-    }
-    /* ---- THE SHOT, NOT THE ROUND ----
-       Everything fired since the last tick, and everything that stopped
-       early. A round flies itself in every cockpit from here on, with this
-       same simulation file; the server still decides every hit and says
-       which rounds stopped. */
-    const fired: Bullet[] = takeFreshBullets(c);
-    const stopped: number[] = takeSpentBullets(c);
-    /* ---- ONE ROW PER THING, BUILT ONCE ----
-       The rounding and the shaping happen here, not once per player: with two
-       dozen seats that would be two dozen times the work for the same answer.
-       Each row is kept beside the point it is at, and each seat then takes
-       only the rows its own eyes reach. */
-    interface Row<T> { at: THREE.Vector3; row: T; only?: string; always?: true; key?: string | number }
-    /**
-     * Something already in view is kept in view a fifth further out.
-     *
-     * Without it, anything hovering at the edge of a range is sent on one
-     * tick and not the next, and a ship or a fighter at that distance
-     * flickers in and out. The seat remembers what it was told about last
-     * tick, which is all the memory this needs.
-     */
-    const KEEP = 1.2;
-    const sticky = <T>(rows: Array<Row<T>>, eye: THREE.Vector3, range: number, held: Set<string | number>) => {
-      const out: T[] = [];
-      const seen = new Set<string | number>();
-      for (const r of rows) {
-        const key = r.key;
-        const near = inRange(eye, r.at, range)
-          || (key !== undefined && held.has(key) && inRange(eye, r.at, range * KEEP));
-        if (r.always || near) {
-          out.push(r.row);
-          if (key !== undefined) seen.add(key);
-        }
-      }
-      return { out, seen };
-    };
-    const pick = <T>(rows: Array<Row<T>>, eye: THREE.Vector3, range: number, id: string): T[] => {
-      const out: T[] = [];
-      for (const r of rows) {
-        if (r.only && r.only !== id) continue;
-        if (r.always || r.only === id || inRange(eye, r.at, range)) out.push(r.row);
-      }
-      return out;
-    };
-
-    const players: Array<Row<unknown>> = [];
-    for (const s of this.seats.values()) {
-      if (!s.joined) continue;
-      players.push({
-        at: s.body.pos,
-        key: s.id,
-        row: [
-          s.id, r1(s.body.pos.x), r1(s.body.pos.y), r1(s.body.pos.z),
-          r1(s.body.fwd.x), r1(s.body.fwd.y), r1(s.body.fwd.z),
-          s.body.guard ? 1 : 0, Math.max(0, Math.round(s.shield)),
-        ],
-      });
-    }
-    const enemies: Array<Row<unknown>> = c.enemies.map((e) => ({
-      at: e.pos,
-      key: e.id ?? undefined,
-      /* The dragon is an apparition the size of a house and it is there for
-         ten seconds a minute at most: everybody sees it, wherever they are. */
-      ...(e.dragon ? { always: true as const } : {}),
-      row: [
-        r1(e.pos.x), r1(e.pos.y), r1(e.pos.z),
-        r1(e.fwd.x), r1(e.fwd.y), r1(e.fwd.z),
-        e.cls.tier, Math.max(0, Math.round(e.shield)), e.cls.shieldMax,
-        /* A drone is drawn as a sphere, a fighter as a hull: the cockpit has
-           to be told which. And WHICH enemy, so its hull model follows it. */
-        e.dragon ? 2 : e.drone ? 1 : 0, e.id ?? 0,
-      ],
-    }));
-    const shots: Array<Row<unknown>> = fired.map((b) => ({
-      at: b.pos,
-      /* Your own rounds always reach you, however far the shot was taken
-         from: you pulled the trigger and the flash has already gone off. */
-      ...(b.owner ? { only: undefined } : {}),
-      row: [
-        b.id ?? 0,
-        r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
-        r1(b.vel.x), r1(b.vel.y), r1(b.vel.z),
-        (b.hostile ? 1 : 0) | (b.mini ? 2 : 0) | (b.orb ? 4 : 0),
-        Math.round(b.life * 100) / 100,
-      ],
-      owner: b.owner,
-    } as Row<unknown> & { owner?: string }));
-    const coins: Array<Row<unknown>> = c.coins.map((k) => ({
-      at: k.pos, row: [r1(k.pos.x), r1(k.pos.y), r1(k.pos.z)],
-    }));
-    const torps: Array<Row<unknown>> = c.torpedoes.map((t) => ({
-      at: t.pos,
-      row: [r1(t.pos.x), r1(t.pos.y), r1(t.pos.z), r1(t.vel.x), r1(t.vel.y), r1(t.vel.z)],
-    }));
-    const junk: Array<Row<unknown>> = c.junk.map((j) => ({
-      at: j.pos,
-      row: [
-        r1(j.pos.x), r1(j.pos.y), r1(j.pos.z),
-        Math.round(j.rot.x * 100) / 100, Math.round(j.rot.y * 100) / 100, Math.round(j.rot.z * 100) / 100,
-        j.kind === "wingL" ? 1 : j.kind === "wingR" ? 2 : 0,
-      ],
-    }));
-    const beams: Array<Row<unknown>> = c.beams.map((b) => ({
-      at: b.pos,
-      row: [
-        r1(b.pos.x), r1(b.pos.y), r1(b.pos.z),
-        Math.round(b.fwd.x * 1000) / 1000, Math.round(b.fwd.y * 1000) / 1000, Math.round(b.fwd.z * 1000) / 1000,
-        b.key, r1(b.life),
-      ],
-    }));
-    const gemRows: Array<Row<unknown>> = [
-      ...shared.map((g) => ({ at: g.pos, row: gemWire(g) })),
-      /* A dropped item in its private minute goes to its owner and to nobody
-         else: not out of range, out of existence. */
-      ...[...mine.entries()].flatMap(([owner, list]) =>
-        list.map((g) => ({ at: g.pos, row: gemWire(g), only: owner }))),
-    ];
-    const wingRows: Array<Row<unknown>> = wings.map((w) => ({
-      at: new THREE.Vector3(w[2], w[3], w[4]), row: w,
-    }));
-
-    /* ---- AND ONE MESSAGE PER PLAYER ----
-       Which is the whole change: everybody used to be handed the same string
-       describing the whole world, including fights on the far side of a
-       planet they could not see. */
-    for (const s of this.seats.values()) {
-      const eye = s.body.pos;
-      const pickedP = sticky(players, eye, VIEW.ships, s.sawShips);
-      const pickedE = sticky(enemies, eye, VIEW.enemies, s.sawEnemies);
-      s.sawShips = pickedP.seen;
-      s.sawEnemies = pickedE.seen;
-      const state = {
-        t: "s" as const,
-        n: this.tick,
-        w: c.wave?.n ?? 0,
-        P: pickedP.out,
-        E: pickedE.out,
-        ...(() => {
-          const f = shots.filter((r) => {
-            const own = (r as Row<unknown> & { owner?: string }).owner === s.id;
-            return own || inRange(eye, r.at, VIEW.shots);
-          }).map((r) => r.row);
-          return f.length ? { F: f } : {};
-        })(),
-        ...(stopped.length ? { X: stopped } : {}),
-        C: pick(coins, eye, VIEW.loot, s.id),
-        ...(() => { const t = pick(torps, eye, VIEW.torpedoes, s.id); return t.length ? { T: t } : {}; })(),
-        ...(() => { const j = pick(junk, eye, VIEW.junk, s.id); return j.length ? { J: j } : {}; })(),
-        ...(() => { const w = pick(wingRows, eye, VIEW.ships, s.id); return w.length ? { W: w } : {}; })(),
-        ...(() => { const g = pick(gemRows, eye, VIEW.gems, s.id); return g.length ? { G: g } : {}; })(),
-        ...(() => { const m = pick(beams, eye, VIEW.beams, s.id); return m.length ? { M: m } : {}; })(),
-      };
-      try { s.ws.send(JSON.stringify(state)); } catch { this.leave(s); }
+    /* The picture for each player is built in broadcast.ts; the room sends it. */
+    for (const [s, text] of stateMessages(this.combat, [...this.seats.values()], this.tick)) {
+      try { s.ws.send(text); } catch { this.leave(s); }
     }
     /* Gauges every half second rather than every tick: they change slowly and
        they are the one message that is different for every player. */

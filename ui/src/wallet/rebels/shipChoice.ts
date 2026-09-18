@@ -8,9 +8,9 @@
 // already uses for the node's identity.
 
 import { platform } from "./platform/current";
+import { notify, listen } from "./rebelsSignals";
 
 const KEY = "dd69.rebels.ship";
-const EVENT = "dd69-rebels-ship-changed";
 
 /** The hull the game starts everyone on. */
 export const DEFAULT_SHIP = "space_SM_Ship_Fighter_01";
@@ -30,11 +30,10 @@ export function loadShip(): string {
 export function saveShip(id: string): void {
   if (!platform().limits.customiseShips) return;
   try { platform().storage.setItem(KEY, id); } catch { /* storage full */ }
-  window.dispatchEvent(new Event(EVENT));
+  notify("ship");
 }
 
 /** Called whenever the choice changes, from anywhere. */
 export function subscribeShip(fn: () => void): () => void {
-  window.addEventListener(EVENT, fn);
-  return () => window.removeEventListener(EVENT, fn);
+  return listen("ship", fn);
 }

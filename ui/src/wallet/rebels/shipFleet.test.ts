@@ -113,9 +113,30 @@ async function main() {
   ok("and saves into IndexedDB progress only the second copy still had", hydrated.getItem("dd69.rebels.divi") === "12.5000" && written.some(([k]) => k === "dd69.rebels.divi"));
   ok("but not a cache that is not progress", !written.some(([k]) => k === "dd69.music"));
 
+  /* ---- one store for "something changed" (rebelsSignals.ts) ---- */
+  const SIG = await import("./rebelsSignals");
+  setPlatform({ ...HEADLESS });
+  let armoury = 0, ship = 0, after = 0;
+  const offA = SIG.listen("armoury", () => { armoury++; });
+  const offS = SIG.listen("ship", () => { ship++; });
+  const offBad = SIG.listen("armoury", () => { throw new Error("a broken listener"); });
+  const offAfter = SIG.listen("armoury", () => { after++; });
+  INV.addHeld("hull4", 1);
+  ok("finding an item is heard on the armoury signal", armoury === 1);
+  ok("a listener that throws does not silence the ones after it", after === 1);
+  F.applyToShip(CRUISER, "hull4");
+  ok("fitting an upgrade is heard too", armoury >= 2);
+  saveShip(DEFAULT_SHIP);
+  ok("choosing a hull is heard on the ship signal, not the armoury's", ship === 1);
+  offA(); offS(); offBad(); offAfter();
+  ok("and stopping listening stops it", SIG.listenerCount("armoury") === 0 && SIG.listenerCount("ship") === 0);
+  const heard = armoury;
+  INV.addHeld("hull4", 1);
+  ok("nothing is heard once nobody listens", armoury === heard, `${heard} -> ${armoury}`);
+
   /* ---- YOU HAVE DIED ---- */
-  const hud = readFileSync(`${process.cwd()}/src/wallet/rebels/RebelsHud.tsx`, "utf8");
-  ok("dying says YOU HAVE DIED, in the banner shown while dead", /hud\.dead && \(\s*<div className="orbit-died"[^>]*>YOU HAVE DIED<\/div>/.test(hud));
+  const hud = readFileSync(`${process.cwd()}/src/wallet/rebels/cockpit/overlays.tsx`, "utf8");
+  ok("dying says YOU HAVE DIED, in the banner shown while dead", /hud\.dead (?:&&|\?) \(\s*<div className="orbit-died"[^>]*>YOU HAVE DIED<\/div>/.test(hud));
 
   console.log(out.join("\n"));
   console.log(`\n${out.length - failures} passed, ${failures} failed`);

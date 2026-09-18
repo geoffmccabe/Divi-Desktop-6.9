@@ -16,17 +16,12 @@
 // anything, and two runs finishing at once would lose one of them. Direct writes
 // are refused by policy; the function is the only way in.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
+import { accountRead, accountCall } from "./rebelsAccount";
 import { platform } from "./platform/current";
 
 const KEY = "dd69.rebels.scores";
 const KEEP = 100;
 
-const headers = {
-  apikey: SUPABASE_ANON_KEY,
-  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  "Content-Type": "application/json",
-};
 
 export interface ScoreRow {
   /** Node name if its owner set one, otherwise the address and country. */
@@ -86,14 +81,10 @@ export function recordScore(
 ): ScoreRow {
   const kills = tierKills.reduce((a, b) => a + b, 0);
   if (points > 0 || kills > 0) {
-    fetch(`${SUPABASE_URL}/rest/v1/rpc/rebels_submit`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        p_name: name,
-        p_points: Math.round(points),
-        p_tier_kills: tierKills.slice(0, TIER_COUNT).map((n) => Math.max(0, Math.round(n))),
-      }),
+    accountCall("rebels_submit", {
+      p_name: name,
+      p_points: Math.round(points),
+      p_tier_kills: tierKills.slice(0, TIER_COUNT).map((n) => Math.max(0, Math.round(n))),
     }).catch(() => { /* offline; the local copy still has it */ });
   }
   return recordLocal(points, tierKills, name);
@@ -142,10 +133,9 @@ export function topByTotal(limit = KEEP): ScoreRow[] {
  */
 export async function fetchTop(by: "best" | "total", limit = KEEP): Promise<ScoreRow[] | null> {
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/rebels_scores` +
+    const res = await accountRead(
+      "rebels_scores" +
       `?select=name,best,total,games,tier_kills,updated_at&order=${by}.desc&limit=${limit}`,
-      { headers },
     );
     if (!res.ok) return null;
     const rows = (await res.json()) as Array<{
@@ -176,11 +166,10 @@ export async function myTotals(name = playerName()): Promise<ScoreRow> {
   const local = topByTotal(1000).find((r) => r.name === name)
     ?? { name, best: 0, total: 0, games: 0, tierKills: noKills(), at: 0 };
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/rebels_scores` +
+    const res = await accountRead(
+      "rebels_scores" +
       `?name_key=eq.${encodeURIComponent(name.toLowerCase())}` +
-      `&select=name,best,total,games,tier_kills,updated_at&limit=1`,
-      { headers },
+      "&select=name,best,total,games,tier_kills,updated_at&limit=1",
     );
     if (!res.ok) return local;
     const rows = (await res.json()) as Array<{

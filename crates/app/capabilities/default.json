@@ -1,6 +1,12 @@
 {
   "identifier": "default",
   "description": "Baseline window capability for Divi Desktop 6.9",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen"
+  ]
 }

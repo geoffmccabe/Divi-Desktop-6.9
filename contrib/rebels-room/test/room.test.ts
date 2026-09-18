@@ -1102,6 +1102,94 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
+// N. CHEATS: never from a web guest. "21" is a real dragon that leaves a real egg,
+//    and any browser console can send the message.
+{
+  const room = newRoom();
+  const web = new FakeSocket();
+  room.seat(web as never, "198.51.100.90");
+  const webId = web.last("hi").id as string;
+  web.deliver(JSON.stringify({ t: "join", node: "web-guest", name: "Pilot 9", door: "web", guest: "3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c", home: [0, 0, R] }));
+  web.deliver(JSON.stringify({ t: "fly" }));
+  const before = room.combat.enemies.length;
+  web.deliver(JSON.stringify({ t: "cheat", code: "21" }));
+  web.deliver(JSON.stringify({ t: "cheat", code: "11" }));
+  ok("a web guest's cheat summons nothing", room.combat.enemies.length === before, `${before} -> ${room.combat.enemies.length}`);
+  ok("and is not a strike either", room.seats.get(webId).strikes === 0);
+
+  const app = new FakeSocket();
+  room.seat(app as never, "198.51.100.91");
+  app.deliver(JSON.stringify({ t: "join", node: "n", name: "App", home: [0, 0, R] }));
+  app.deliver(JSON.stringify({ t: "fly" }));
+  app.deliver(JSON.stringify({ t: "cheat", code: "21" }));
+  ok("an app seat's !21 still brings the dragon, for testing", room.combat.enemies.some((e: any) => e.dragon));
+  room.stop();
+}
+
+// N. identity.ts, directly: who a player is and what they may do.
+{
+  const I = await import("../src/identity");
+  const app = I.whoJoins("203.0.113.1", "node-a", {});
+  ok("an app player is its connecting address", app.account === "203.0.113.1" && !app.guest);
+  ok("with no address (a local run) the node stands in", I.whoJoins("", "node-a", {}).account === "node-a");
+  const guest = I.whoJoins("203.0.113.1", "web-guest", { door: "web", guest: "3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c" });
+  ok("a web guest is its private id", guest.account === "guest:3f2b9c1e-7a4d-4e8b-9c2a-1d5e6f7a8b9c" && guest.guest);
+  ok("a guest with no sound id is its address, marked as the web's", I.whoJoins("203.0.113.1", "w", { door: "web", guest: "x" }).account === "web:203.0.113.1");
+  ok("an app player may cheat and cash out; a guest may do neither", I.mayCheat(app) && I.mayCashOut(app) && !I.mayCheat(guest) && !I.mayCashOut(guest));
+  ok("a guest is shown in the first hull; an app player in the one asked for",
+     I.shipFor(guest, "space_SM_Ship_Cruiser_05") === I.GUEST_SHIP && I.shipFor(app, "space_SM_Ship_Cruiser_05") === "space_SM_Ship_Cruiser_05");
+}
+
+/* ---- THE COUNTDOWN HAS TO END ----
+   A revived seat is not FLYING until its player launches again, so with nobody
+   else in the room the roster is empty and the tick returns early: not one more
+   message goes out, and the cockpit is left showing a dead ship and a stopped
+   clock. Geoff: "the 30 second countdown froze... then it froze again and never
+   restarted." */
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws);
+  room.down(seat);
+  ok("dead, with a wait", seat.dead && seat.respawn > 0, `${seat.respawn}s`);
+  ws.sent.length = 0;
+  seat.respawn = 0.01;
+  room.step();
+  ok("the countdown ends", !seat.dead);
+  ok("AND THE COCKPIT IS TOLD, or it waits for ever",
+     !!ws.last("you") && !ws.last("you").dead,
+     ws.last("you") ? JSON.stringify(ws.last("you")).slice(0, 80) : "nothing was sent");
+  room.stop();
+}
+
+/* ---- AND IT IS AS LONG AS THE WALLET SAYS ---- */
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  room.seat(ws as never);
+  ws.deliver(JSON.stringify({
+    t: "join", node: "rich", name: "Rich", home: [0, 0, R + 6], divi: 20_000_000,
+  }));
+  const seat = room.seats.get(ws.last("hi").id as string);
+  ws.deliver(JSON.stringify({ t: "fly" }));
+  room.down(seat);
+  ok("twenty million in the wallet is a five second wait", seat.respawn === 5, `${seat.respawn}s`);
+  room.stop();
+}
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  const seat = join(room, ws);
+  room.down(seat);
+  ok("no wallet is the plain thirty", seat.respawn === 30, `${seat.respawn}s`);
+  /* And it can arrive late, because the door has to be asked. */
+  seat.dead = false;
+  ws.deliver(JSON.stringify({ t: "gear", gear: [], divi: 1_000_000 }));
+  room.down(seat);
+  ok("a balance that arrives after the join still counts", seat.respawn === 10, `${seat.respawn}s`);
+  room.stop();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

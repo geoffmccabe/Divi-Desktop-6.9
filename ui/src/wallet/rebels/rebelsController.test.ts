@@ -12,6 +12,7 @@
 
 import * as THREE from "three";
 import * as serverModule from "../../../../contrib/rebels-room/src/room";
+import { getHealthPulse } from "./healthPulse";
 import { createRebels } from "./rebelsController";
 import { setLoadoutRemote } from "./rebelsLoadout";
 import { SUSPEND_GRACE_MS } from "./rebelsController";
@@ -26,11 +27,13 @@ import { grant } from "./rebelsArmoury";
 import { loadShip } from "./shipChoice";
 import { setPlatform, HEADLESS } from "./platform/current";
 import { appIdentity } from "./platform/app/identity";
+import { createCheats } from "./rebelsCheats";
+import { createTouchInput } from "./platform/touchInput";
 /* These tests name the player through the node identity the WALLET saves
    ("Test Node", "Quitter"), so the game runs behind the app's identity. The
    rest of the app door (prices, the wallet) is not needed here and would pull
    the desktop bridge into a node test. */
-setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity });
+setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
 
 /* The controller listens on window for key-up and focus loss. Node has no
    window, so stand one up; `document` is deliberately left undefined so the
@@ -110,6 +113,34 @@ function freshServer() {
   s.setDropsForTests(null, () => 0.99);
   return s;
 }
+/**
+ * EMPTY THE ROOM'S SKY, for a block that is about the controls rather than
+ * about the fight.
+ *
+ * Flying an unattended ship through a live wave for a few thousand frames is
+ * not a steady thing to measure against: the ship gets shot, gets knocked off
+ * its heading, and eventually dies, and the reading the test wanted turns into
+ * a reading about a wreck. Clearing what is in the air is not enough on its
+ * own, because the room's own step rolls for a flock and for the dragon inside
+ * the very frame being measured, so both clocks are held far from their next
+ * roll as well.
+ *
+ * The fight is asked for every time and never held: the room throws it away
+ * and builds a new one whenever a lone pilot launches.
+ */
+function calmSky(keep?: { pos: THREE.Vector3 } | null): void {
+  const c = server?.combat as import("./rebelsCombat").CombatState | undefined;
+  if (!c) return;
+  c.enemies.length = 0;
+  c.bullets.length = 0;
+  c.torpedoes.length = 0;
+  c.flocks.length = 0;
+  c.wave = null;
+  c.flockClock = -1e6;
+  c.dragonClock = -1e6;
+  if (keep) c.enemies.push(keep as never);
+}
+
 (globalThis as unknown as { WebSocket: unknown }).WebSocket = class {
   readyState = 1;
   onopen: (() => void) | null = null;
@@ -152,6 +183,15 @@ function freshServer() {
   send: (text: string) => void;
   close: () => void;
 };
+
+/** Hand a millisecond back to the clock, without going async.
+ *  Some gauges refresh on a real clock rather than on frames, so a test that
+ *  waits for one has to let real time pass. Spinning frames as fast as the
+ *  machine will go does the opposite: on a quick run ten seconds of waiting
+ *  flew a THOUSAND seconds of game, the ship was long dead into the ground,
+ *  and the reading the test wanted never came. */
+const idleBuf = new Int32Array(new SharedArrayBuffer(4));
+function restMs(ms: number): void { Atomics.wait(idleBuf, 0, 0, ms); }
 
 function press(type: string, e: Record<string, unknown>) {
   for (const fn of winHandlers[type] ?? []) fn({ preventDefault() {}, ...e });
@@ -626,13 +666,17 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl2.attach({ ...g2, selfIp: "self-ip" });
   flushRoom();
   ctl2.launch();
-  for (let i = 0; i < 60 * 6; i++) ctl2.frame(1 / 60);
+  /* The sky is emptied for this block: it is about the mouse, and an
+     unattended ship in a live wave gets shot off its heading, which reads here
+     as the ship turning on its own after the pointer has left. */
+  const step2 = (frames: number) => { for (let i = 0; i < frames; i++) { calmSky(); ctl2.frame(1 / 60); } };
+  step2(60 * 6);
 
   const aim2 = () => g2.camera.getWorldDirection(new THREE.Vector3());
   const flat = aim2();
   /* The reticle put well left of centre. The canvas is 800 wide. */
   g2.fire("pointermove", { clientX: 150, clientY: 300 });
-  for (let i = 0; i < 45; i++) ctl2.frame(1 / 60);
+  step2(45);
   ok("with no pointer lock the reticle still steers", flat.angleTo(aim2()) > 0.3,
      `${flat.angleTo(aim2()).toFixed(2)} radians`);
   ok("and the reticle is where the mouse is", Math.abs(ctl2.cursor().x - 0.1875) < 0.01,
@@ -642,17 +686,17 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
      centre does not creep. */
   g2.fire("pointermove", { clientX: 402, clientY: 301 });
   const straight = aim2();
-  for (let i = 0; i < 60; i++) ctl2.frame(1 / 60);
+  step2(60);
   ok("and the middle means straight ahead", straight.angleTo(aim2()) < 1e-6,
      `${straight.angleTo(aim2()).toExponential(1)} radians of creep`);
 
   /* THE ONE THAT MATTERS: the pointer leaving the window stops the turn, rather
      than leaving the ship circling toward a reticle nobody can see. */
   g2.fire("pointermove", { clientX: 150, clientY: 300 });
-  for (let i = 0; i < 10; i++) ctl2.frame(1 / 60);
+  step2(10);
   g2.fire("pointerleave", {});
   const parked = aim2();
-  for (let i = 0; i < 120; i++) ctl2.frame(1 / 60);
+  step2(120);
   ok("and leaving the window stops the turn", parked.angleTo(aim2()) < 1e-6,
      `${parked.angleTo(aim2()).toExponential(1)} radians after two seconds`);
   ctl2.detach();
@@ -1269,6 +1313,306 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   await settle();
 }
 
+// P. THE PILOT: a ship flown with no keyboard and no mouse at all.
+//    A phone's touch controls will drive exactly this interface, so this is the
+//    proof the game does not need keys to fly.
+{
+  let captured: import("./platform/platform").Pilot | null = null;
+  setPlatform({
+    ...HEADLESS, id: "test-touch", identity: appIdentity,
+    input: { attach: (_dom, pilot) => { captured = pilot; return () => { captured = null; }; } },
+  });
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
+  ctl.launch();
+  for (let i = 0; i < 60 * 5; i++) ctl.frame(1 / 60);
+  const pilot = captured as import("./platform/platform").Pilot | null;
+  ok("a door's own input is handed the pilot", !!pilot);
+  if (pilot) {
+    ok("the pilot knows the ship is flying", pilot.state().flying && pilot.state().hasFlight);
+    /* The throttle starts at full, so the pilot pulls it back. */
+    const speed0 = ctl.hud().speed;
+    pilot.setControls({ throttle: -1 });
+    for (let i = 0; i < 60 * 2; i++) ctl.frame(1 / 60);
+    pilot.setControls({ throttle: 0 });
+    /* The lever stays where it was put. The speed readout refreshes on a real
+       clock, so fly on for a moment of real time before reading it. */
+    const readBy = Date.now() + 400;
+    while (Date.now() < readBy) ctl.frame(1 / 60);
+    ok("pulling the throttle back through the pilot slows the ship", ctl.hud().speed < speed0, `${speed0.toFixed(1)} -> ${ctl.hud().speed.toFixed(1)}`);
+    const ammo0 = ctl.hud().ammo;
+    pilot?.trigger("primary", true);
+    const until = Date.now() + 10_000;
+    while (ctl.hud().ammo >= ammo0 && Date.now() < until) ctl.frame(1 / 60);
+    pilot?.trigger("primary", false);
+    ok("holding the trigger through the pilot fires the guns", ctl.hud().ammo < ammo0, `${ammo0} -> ${ctl.hud().ammo}`);
+    pilot.moveCursor(0.9, 0.5);
+    ok("moving the reticle is remembered", Math.abs(pilot.state().cursor.x - 0.9) < 1e-9);
+    pilot.centreCursor();
+    ok("and centring it puts it back", pilot.state().cursor.x === 0.5);
+    /* Slot 2 is the mini gun: selected if an earlier block's test cheat granted
+       it, and a "buy it" note if not. Either way it is exactly what key 2 does. */
+    pilot.selectWeapon(2);
+    ok("choosing a weapon through the pilot does what its key does",
+       ctl.hud().primary === 1 || /SPACESHIPS/.test(ctl.hud().note), `primary ${ctl.hud().primary}, note ${ctl.hud().note}`);
+  }
+  ctl.detach();
+  ok("detaching hands the input back", captured === null);
+  await settle();
+  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
+}
+
+// T. TOUCH: the real game flown by thumbs alone, through the touch module a
+//    phone door plugs in. No keys and no mouse anywhere in this block.
+{
+  store.delete("dd69.rebels.touch.autoFire");
+  const touch = createTouchInput();
+  setPlatform({ ...HEADLESS, id: "test-touch-input", identity: appIdentity, input: touch });
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  /* ---- A CALM SKY FOR THE CONTROLS ----
+     This block is about the thumb controls, not about the fight, and it flies
+     for ten seconds of real time in places. Left in a hostile sky it died
+     about one run in five, and a death reads as the OPPOSITE of what the
+     controls are meant to show: the guns stop firing and the respawn refills
+     the magazine, so "holding FIRE fires the guns" saw the ammo go UP. The
+     respawn also moves the ship a few hundred units in one go, which the room
+     rightly refuses as "moved too far", and the rest of the block then failed
+     with it.
+
+     So the sky is emptied on every frame of this block. `held` is the one
+     fighter the aim-assist section puts in front of the guns; it is put back
+     after the sweep, which is also what makes that section see exactly one
+     target instead of whatever earlier blocks left behind. */
+  /* ---- ASKED FOR EVERY TIME, NEVER HELD ----
+     The room throws its whole fight away and builds a new one whenever the
+     last pilot leaves the sky or a lone pilot launches, and `launch()` below
+     does exactly that. A reference taken once therefore stops being the fight
+     the room is running, and everything done through it, including the
+     fighter this block puts in front of the guns, goes into an object nobody
+     reads. */
+  const fight = () => server!.combat as import("./rebelsCombat").CombatState;
+  const seat = [...(server as unknown as { seats: Map<string, { body: { pos: THREE.Vector3; fwd: THREE.Vector3 } }> }).seats.values()][0];
+  let held: import("./rebelsCombat").Enemy | null = null;
+  const calm = () => calmSky(held);
+  /** One frame in a calm sky. Every frame of this block goes through here. */
+  const step = (frames = 1) => { for (let i = 0; i < frames; i++) { calm(); ctl.frame(1 / 60); } };
+  /** Fly for a stretch of REAL time, at about the speed the game really runs.
+   *  The gauges refresh on a real clock, so waiting on one means letting real
+   *  time pass; flying flat out while it passes is what put the ship into the
+   *  ground with the trigger held. */
+  const waitReal = (ms: number, done: () => boolean = () => false) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end && !done()) { step(); restMs(1); }
+  };
+  step(60);
+  ctl.launch();
+  step(60 * 6);   /* through the dive */
+  const finger = (kind: string, id: number, x: number, y: number, action = "") => {
+    const target = { closest: (sel: string) => (sel === "[data-rebels-touch]" && action ? { getAttribute: () => action } : null) };
+    const e = { changedTouches: [{ identifier: id, clientX: x, clientY: y, target }], cancelable: true, preventDefault: () => {} };
+    for (const fn of winHandlers[kind] ?? []) fn(e);
+  };
+  const tap = (id: number, action: string) => { finger("touchstart", id, 700, 50, action); finger("touchend", id, 700, 50); };
+  ok("the touch module is listening", (winHandlers.touchstart ?? []).length === 1);
+
+  /* LEFT THUMB, pushed up: the ship turns toward the crosshair, as with the mouse. */
+  const aim = () => g.camera.getWorldDirection(new THREE.Vector3());
+  const aimBefore = aim();
+  finger("touchstart", 1, 200, 300);
+  finger("touchmove", 1, 200, 300 - 72);
+  ok("pushing the left thumb up moves the crosshair up", ctl.cursor().y < 0.1, `${ctl.cursor().y.toFixed(2)}`);
+  step(40);
+  ok("and turns the ship", aimBefore.angleTo(aim()) > 0.5, `${aimBefore.angleTo(aim()).toFixed(2)} radians`);
+  finger("touchend", 1, 0, 0);
+  ok("lifting the thumb centres the crosshair", ctl.cursor().x === 0.5 && ctl.cursor().y === 0.5);
+
+  /* BRAKE, held: slower. Let go: the lever is back where it was. */
+  const lever = ctl.hud().throttle;
+  const speed0 = ctl.hud().speed;
+  finger("touchstart", 2, 650, 500, "brake");
+  step(60 * 2);
+  waitReal(400);
+  ok("holding BRAKE slows the ship", ctl.hud().speed < speed0 * 0.5, `${speed0.toFixed(1)} -> ${ctl.hud().speed.toFixed(1)}`);
+  finger("touchend", 2, 650, 500);
+  waitReal(400);
+  ok("letting go puts the throttle back", Math.abs(ctl.hud().throttle - lever) < 1e-6, `${lever} -> ${ctl.hud().throttle}`);
+
+  /* FIRE, held. */
+  const ammo0 = ctl.hud().ammo;
+  finger("touchstart", 3, 750, 550, "fire");
+  /* Two seconds of held trigger, then as long as the gauge needs to catch up.
+     Bounded in FRAMES rather than in real time: the guns empty in a second and
+     the only open question is when the HUD next refreshes. */
+  step(120);
+  waitReal(2000, () => ctl.hud().ammo < ammo0);
+  finger("touchend", 3, 750, 550);
+  ok("holding FIRE fires the guns", ctl.hud().ammo < ammo0, `${ammo0} -> ${ctl.hud().ammo}`
+     + `; dead ${ctl.hud().dead}; shields ${ctl.hud().shields}; note ${ctl.hud().note}`);
+
+  /* The weapon button steps to the next gun the ship owns (earlier blocks
+     bought the mini gun and a beam), and never onto a "buy it" note. */
+  const p0 = ctl.hud().primary;
+  tap(4, "weapon");
+  const p1 = ctl.hud().primary;
+  ok("the weapon button steps to another owned gun", p1 !== p0 && !/SPACESHIPS/.test(ctl.hud().note), `${p0} -> ${p1}, ${ctl.hud().note}`);
+  tap(5, "weaponBack");
+  ok("and back again", ctl.hud().primary === p0, `${p1} -> ${ctl.hud().primary}`);
+
+  /* ---- AIM ASSIST AND AUTO FIRE ----
+     A fighter is held a little right of the crosshair, twenty units ahead of
+     the camera, with no thumb on the glass at all. */
+  const { runRoomCheat } = await import("../../../../contrib/rebels-room/src/cheats");
+  runRoomCheat(fight(), seat.body, "11");
+  /* ONE fighter, not the whole fleet the cheat sends. With thirty of them
+     milling about, the nearest was four units off the nose and the assist was
+     locking onto whichever of the crowd it liked; the test then reported on the
+     crowd rather than on the assist. */
+  fight().enemies.length = Math.min(1, fight().enemies.length);
+  /* THIS fighter, held by the object rather than by its place in the list. The
+     fight goes on around it and the room sends more of them, so "the first one
+     in the array" was a different ship from one frame to the next, which is
+     what made this flaky. */
+  const mine = fight().enemies[0];
+  held = mine;
+  const target = () => mine;
+  ok("(setup) a fighter in the room", !!target());
+  /* Held at ONE place in the world, worked out once.
+     It used to be re-derived from the camera every frame, which teleported the
+     enemy after the crosshair as the crosshair moved. That was fine while the
+     cockpit copied enemy positions straight off the wire, and stopped being
+     fine when they were smoothed between ticks: an enemy that jumps every
+     frame is never where the smoothing has got to, so the assist was chasing a
+     target the player would never have seen either. A fixed spot is both a
+     fairer test and closer to a real fight. */
+  const hold = () => {
+    const e = target();
+    if (!e) return;
+    /* Held twenty units ahead of the ship and a little to one side, as it
+       flies: an enemy keeping formation, which is an ordinary thing in a fight
+       and which the smoothing follows to within a fraction of a unit. */
+    const fwd = g.camera.getWorldDirection(new THREE.Vector3());
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(g.camera.quaternion);
+    e.pos.copy(g.camera.position).addScaledVector(fwd, 20).addScaledVector(right, 1.2);
+    e.vel.set(0, 0, 0);
+  };
+  const flyHeld = (frames: number) => { for (let i = 0; i < frames; i++) { hold(); step(); } };
+  const shields0 = ctl.hud().shields;
+  /* Sampled BEFORE the enemy is put in front of the guns, not twenty frames
+     after. With the enemy now held still in the world rather than teleported
+     after the crosshair every frame, the assist finishes its pull in the first
+     few frames, so a reading taken twenty frames in had already missed most of
+     the movement it was meant to measure. */
+  /* Let the room and the cockpit agree on what is in the sky before measuring:
+     the enemies smoothed between ticks arrive a moment after the room has them,
+     and the blocks before this one leave their own fighters behind. */
+  flyHeld(40);
+  const x0 = ctl.cursor().x;
+  /* Flown to a DEADLINE rather than for a fixed count of frames. The assist
+     deliberately waits for the thumb to be still for a moment before it eases
+     the crosshair anywhere, and that wait is measured against the clock on the
+     wall, not against the frames. A fixed sixty frames is a race: on a quick
+     run they all go by inside the wait and the assist never starts, which is
+     what made this fail about one run in three. */
+  const onBy = Date.now() + 5000;
+  while (!ctl.hud().onTarget && Date.now() < onBy) { flyHeld(1); restMs(1); }
+  /* The claim is the assist's, not the crosshair's: with one fighter held dead
+     ahead, the guns should end up ON it. Whether the reticle had to travel to
+     get there depends on where it already was, which is not what this is
+     about and is why measuring the travel was flaky. */
+  ok("an enemy held in front of the guns reads as on target", ctl.hud().onTarget,
+     `${x0.toFixed(3)} -> ${ctl.cursor().x.toFixed(3)}`
+     + `; the cockpit can see ${ctl.hud().contacts}, the room has ${fight().enemies.length}, room ${ctl.hud().room}`
+     + `; ${(() => {
+       const v = mine.pos.clone().project(g.camera);
+       const x = (v.x + 1) / 2, y = (1 - v.y) / 2;
+       const d = Math.hypot((x - ctl.cursor().x) * (g.camera.aspect || 1), y - ctl.cursor().y);
+       return `the target sits ${d.toFixed(3)} from the crosshair, ${mine.pos.distanceTo(g.camera.position).toFixed(1)} away`;
+     })()}`);
+  const ammoA = ctl.hud().ammo;
+  const fireBy = Date.now() + 5000;
+  while (ctl.hud().ammo >= ammoA && Date.now() < fireBy) { flyHeld(1); restMs(1); }
+  ok("auto fire shoots with no finger on FIRE", ctl.hud().ammo < ammoA, `${ammoA} -> ${ctl.hud().ammo}`);
+
+  tap(6, "auto");
+  ok("AUTO turns it off", touch.picture().autoFire === false);
+  flyHeld(10);
+  const ammoB = ctl.hud().ammo;
+  flyHeld(90);
+  ok("and then nothing fires by itself", ctl.hud().ammo === ammoB, `${ammoB} -> ${ctl.hud().ammo}, on target ${ctl.hud().onTarget}`);
+  tap(7, "auto");
+  void shields0;
+  ctl.detach();
+  ok("detaching stops the touch listening", (winHandlers.touchstart ?? []).length === 0);
+  await settle();
+  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
+}
+
+// V. SPIKEWORLD: the heart, its million, and the sixty that guard it.
+//    Geoff: "make sure we have the 1 million health counter on the orange
+//    heart, and the flock of 60 heart-protector orbs".
+//
+//    Flown for real: a cockpit, a room, out to Spikeworld, in to the heart,
+//    and the trigger held. What this is really proving is that the fight runs
+//    LOCALLY out there, because the room cannot referee a ship two hundred
+//    thousand units outside its world and used to refuse every shot from one.
+{
+  let held: import("./platform/platform").Pilot | null = null;
+  setPlatform({
+    ...HEADLESS, id: "test-heart", identity: appIdentity,
+    input: { attach: (_dom, p) => { held = p; return () => { held = null; }; } },
+  });
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  ctl.launch();
+  for (let i = 0; i < 60 * 7; i++) ctl.frame(1 / 60);   /* through the dive */
+  const pilot = held as import("./platform/platform").Pilot | null;
+  ok("(setup) the door was handed the pilot", !!pilot);
+
+  const fight = () => server!.combat as import("./rebelsCombat").CombatState;
+  const before = fight().enemies.length;
+  pilot?.teleportTest?.();
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  ok("out at Spikeworld the room's fighters are gone from the sky",
+     ctl.hud().contacts === 0, `${ctl.hud().contacts} contacts, room had ${before}`);
+
+  /* And the room is no longer being told anything, so it cannot refuse a
+     shot: the bug that stopped the guns out there. */
+  pilot?.trigger("primary", true);
+  for (let i = 0; i < 40; i++) ctl.frame(1 / 60);
+  pilot?.trigger("primary", false);
+  ok("the guns fire out there instead of being refused",
+     !/bad shot|REFUSED/i.test(ctl.hud().note), ctl.hud().note);
+
+  /* ---- AND NO FURTHER, HERE ----
+     The heart is at the middle of the planet, behind two hundred and fifty
+     cubes of maze, and there is deliberately no shortcut to it: Geoff, when I
+     added one for this test, "You don't need to add a way in. There's already
+     so many holes it's easy to get in. Did I tell you to put a way in?" Quite
+     right, and it was his design to change, not mine.
+
+     So what the heart and its sixty guards do is proved where it can be proved
+     without inventing a door: in voxelHeart.test.ts, which asks the same
+     questions of the same code - the guard class, sixty of them, one flock
+     whose home is the heart, and a million counting down - without needing a
+     ship to fly there. What THIS block proves is the part that only a real
+     cockpit and a real room can show, which is that going out there takes the
+     fight with it. */
+
+  pilot?.teleportTest?.();
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  ctl.detach();
+  await settle();
+  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
+}
+
 // W. Behind the WEB door, the cockpit arrives at the room as a web guest.
 //    The same game, the same server: only the door is different.
 {
@@ -1293,7 +1637,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("and the room knows it came through the web door", me?.guest === true && (me?.account ?? "").startsWith("web:"), me?.account);
   ctl.detach();
   await settle();
-  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity });
+  setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
 }
 
 console.log(out.join("\n"));

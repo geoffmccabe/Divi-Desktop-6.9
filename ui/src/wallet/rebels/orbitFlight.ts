@@ -185,6 +185,15 @@ export interface Flight {
   /** Guards left, and seconds the current one has to run. */
   guards: number;
   guardFor: number;
+  /**
+   * How far from Earth's centre the ship may go, or undefined for the usual
+   * ceiling (MAX_ALT).
+   *
+   * Raised to reach somewhere outside Earth's neighbourhood. Kept on the flight
+   * rather than passed in, because the ship carries its own permission to be
+   * where it is.
+   */
+  ceiling?: number;
   guardWasDown: boolean;
   dock: number;       /* 0..1 progress into a docking */
   dockedAt: number;   /* index of the tower being docked with, or -1 */
@@ -643,9 +652,15 @@ export function stepFlight(
      and it is there so a player who points at the stars and holds boost does
      not end up a thousand seconds from anything with nothing to shoot. At that
      distance the planet is a marble; it is space by any reasonable reading. */
-  if (f.alt > MAX_ALT) {
-    f.alt = MAX_ALT;
-    f.pos.normalize().multiplyScalar(R + MAX_ALT);
+  /* The ceiling is a PROPERTY OF THE FLIGHT rather than a constant, so a
+     journey out of Earth's neighbourhood can raise it. Spikeworld sits two
+     hundred thousand units away, which is forty times this ceiling, and a ship
+     that cannot leave cannot get there. Unset, it is the same ceiling it has
+     always been. */
+  const ceiling = f.ceiling ?? MAX_ALT;
+  if (f.alt > ceiling) {
+    f.alt = ceiling;
+    f.pos.normalize().multiplyScalar(R + ceiling);
   }
 
   /* ---- towers: dock with one, or bounce off it ----

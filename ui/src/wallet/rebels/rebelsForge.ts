@@ -6,17 +6,12 @@
 // local copy and the account agree without a second round trip. Offline there
 // is no forging: the answer says so.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
+import { accountCall } from "./rebelsAccount";
 import { platform } from "./platform/current";
 import { saveLoadoutRemote } from "./rebelsLoadout";
 import { mergeHeld, heldCount } from "./rebelsInventory";
 import { itemByKey, forgeable, FORGE_COST } from "./itemCatalog";
 
-const headers = {
-  apikey: SUPABASE_ANON_KEY,
-  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  "Content-Type": "application/json",
-};
 
 export type ForgeAnswer = { ok: true; result: string } | { ok: false; why: string };
 
@@ -29,9 +24,7 @@ export async function forge(key: string, who = platform().identity.accountKey(),
      for want of four. */
   await saveLoadoutRemote(who);
   try {
-    const res = await fetchFn(`${SUPABASE_URL}/rest/v1/rpc/rebels_forge`, {
-      method: "POST", headers, body: JSON.stringify({ p_owner_key: who, p_key: key }),
-    });
+    const res = await accountCall("rebels_forge", { p_owner_key: who, p_key: key }, fetchFn);
     if (!res.ok) {
       let why = `the forge is unreachable (${res.status})`;
       try { const j = (await res.json()) as { message?: string }; if (j.message) why = j.message; } catch { /* plain */ }

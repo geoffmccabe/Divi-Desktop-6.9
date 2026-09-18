@@ -39,7 +39,10 @@ function ok(name: string, cond: boolean, extra = "") {
   const after = d.live();
   ok("stalls are counted", after.stalls === 2, `${after.stalls}`);
   const rep = d.report();
-  ok("the report names the stall's stage", rep.includes("meshes 95.0") && rep.includes("in our code"), rep.split("\n").find((l) => l.includes("meshes 95")) ?? "");
+  /* "95", not "95.0": trailing zeros were dropped from the report because most
+     of a capture is stages that did nothing and the padding was the bulk of the
+     bytes. Geoff: "if the number is zero then put just 0". */
+  ok("the report names the stall's stage", rep.includes("meshes 95") && rep.includes("in our code"), rep.split("\n").find((l) => l.includes("meshes 95")) ?? "");
   ok("and blames the browser when it was not us", rep.includes("outside our code"));
   ok("worst first", rep.indexOf("120ms") < rep.indexOf(" 80ms"));
 

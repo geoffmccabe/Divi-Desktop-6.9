@@ -1786,7 +1786,14 @@ code, .mono { font-family: var(--font-mono); }
 .netmap-viewtoggle button.on { background: hsl(210 85% 62% / 0.34); color: hsl(210 85% 82%); }
 
 /* The 3D globe fills the map area, behind the overlay panels (which are z>=6). */
-.netmap-globe { position: absolute; inset: 0; z-index: 1; }
+/* Held back until the globe has actually drawn something: an undrawn canvas is
+   a black rectangle, and it was showing for a moment every time the map opened.
+   Faded rather than snapped, so the world arrives instead of appearing. */
+.netmap-globe {
+  position: absolute; inset: 0; z-index: 1;
+  opacity: 0; transition: opacity 260ms ease;
+}
+.netmap-globe.shown { opacity: 1; }
 /* The v2 animation layer sits over the WebGL globe and must never swallow a
    drag, a node click, or the game's controls. */
 .netmap-globe-anim { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 2; }
@@ -2313,8 +2320,19 @@ code, .mono { font-family: var(--font-mono); }
   background: hsl(var(--rebels-home));
   transition: width 0.12s linear;
 }
-.orbit-exit {
+/* ---- the bottom-left row ----
+   The exit button and the full-screen icon in one flex row, rather than two
+   things positioned separately and hoped into line. The icon was placed with a
+   guessed offset and the exit button's own width changes with its text ("ESC
+   BACK TO MAP" against "BACK TO MAP"), so it could not have stayed aligned.
+   Stretching it to the row's height makes its top and bottom edges the
+   button's, exactly, whatever the font does. */
+.orbit-exit-row {
   position: absolute; left: 16px; bottom: 14px;
+  display: flex; align-items: stretch; gap: 6px;
+  pointer-events: none;
+}
+.orbit-exit {
   pointer-events: auto;
   padding: 6px 12px;
   font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em;
@@ -2326,6 +2344,68 @@ code, .mono { font-family: var(--font-mono); }
 }
 .orbit-exit:hover { background: hsl(var(--primary) / 0.3); }
 
+/* ---- full screen ----
+   Beside the exit button going in, and in the opposite corner coming back out,
+   so the collapse control is never under the thumb that was just reaching for
+   something else. Square, and the same height as the button it sits next to. */
+.orbit-full {
+  pointer-events: auto;
+  align-self: stretch;          /* exactly as tall as the button beside it */
+  width: 27px;
+  display: grid; place-items: center;
+  padding: 0;
+  color: hsl(var(--rebels-hud));
+  background: hsl(var(--rebels-ocean) / 0.7);
+  border: 1px solid hsl(var(--rebels-hud) / 0.45);
+  border-radius: calc(var(--panel-radius) * 0.5);
+  cursor: pointer;
+}
+.orbit-full svg { width: 14px; height: 14px; }
+.orbit-full svg path { fill: none; stroke: currentColor; stroke-width: 1.6; }
+.orbit-full:hover { background: hsl(var(--primary) / 0.3); }
+/* Out of full screen: the other corner, where nothing else lives. */
+.orbit-full.out {
+  position: absolute; right: 16px; bottom: 14px; align-self: auto;
+  height: 27px;
+}
+
+/* ---- THE GAME, FULL SCREEN ----
+   Geoff, on 69.9.57: "Yes, the APP is full screen, but the game is inside a
+   smaller window within the app. So the game needs to come out of the app and
+   become full screen."
+
+   Quite right, and it is a different job from the one I kept doing. Making the
+   WINDOW full screen leaves the game where it is: a panel inside the shell,
+   with a sidebar beside it, a header above it, a title row over that and
+   twenty-six pixels of padding round the lot. Full screen has to mean the GAME
+   fills the display, so the shell's furniture stands aside while it does.
+
+   Done with a class on the root element rather than by moving anything, so
+   nothing is unmounted and remounted: the canvas, its WebGL context and the
+   whole game carry on untouched while the boxes around them change shape.
+   Moving the canvas in the DOM would tear down the context and restart the
+   game, which is the one thing this must not do. */
+.dd69-game-full,
+.dd69-game-full body { overflow: hidden; }
+.dd69-game-full .shell { gap: 0; padding: 0; }
+.dd69-game-full .col-left { display: none; }
+.dd69-game-full .header-panel { display: none; }
+.dd69-game-full .col-right { gap: 0; }
+.dd69-game-full .main-panel {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: #000;
+  /* No blur and no rounded corner to draw round the edge of a full screen. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  overflow: hidden;
+}
+/* The title and the buttons above the map go with the rest of the furniture. */
+.dd69-game-full .view-title-row { display: none; }
+.dd69-game-full .view-body { flex: 1; min-height: 0; }
+/* The shell sits above the animated backdrop already (z-index 10), and the
+   map's own sky fills the panel, so there is nothing else to hide. */
 /* ── In-app update: flashing sidebar version + the update modal ─────────────── */
 /* The version becomes a clickable pill that alternates with "UPDATE TO vX". */
 .sidebar-brand .ver-update {

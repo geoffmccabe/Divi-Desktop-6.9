@@ -54,6 +54,10 @@ export interface JoinIn {
   /** How many wingmen of each tier this account holds, tier one first. Counts
    *  rather than keys, because two T3 drones are two wingmen. */
   drones?: number[];
+  /** What this player holds in their DIVI wallet, which sets how long they wait
+   *  to respawn. Absent where the door has no wallet to look in, which is the
+   *  web today. The client's word, like the gear; see respawnSeconds. */
+  divi?: number;
 }
 
 /**
@@ -121,13 +125,34 @@ export interface UseIn { t: "use"; k: "recharge" | "supercharge" }
  */
 export interface FlyIn { t: "fly" }
 
+/**
+ * GONE somewhere the room's world does not reach.
+ *
+ * The other half of FlyIn. The room's world is Earth's neighbourhood, and a
+ * ship that has left it entirely must stop being part of the fight: otherwise
+ * the room goes on simulating a body at the last place it was told about, and
+ * the fighters there go on shooting it. Geoff, 2026-Sep-16, after the first
+ * trip to Spikeworld: "i was taking damage from what appeared to be invisible
+ * enemies. I think the system thought I was somewhere else than where I
+ * actually was." It did, and it was right to: nobody had told it.
+ *
+ * The seat is kept, with its gear and its earnings; it simply is not flying.
+ * FlyIn brings it back.
+ */
+export interface AwayIn { t: "away" }
+
 /** The resupply at a tower finished. The room checks the ship is at one. */
 export interface DockIn { t: "dock" }
 
 /** What this ship carries, when it changes mid-flight: a gun bought, a sphere
  *  opened, four things forged. Without this the server only ever knew what was
  *  declared on join, and anything bought while flying did nothing. */
-export interface GearIn { t: "gear"; gear: string[]; reach?: number; drones?: number[] }
+export interface GearIn {
+  t: "gear"; gear: string[]; reach?: number; drones?: number[];
+  /** What the wallet holds, when the door finds out after joining. Sets the
+   *  respawn wait; see respawnSeconds. */
+  divi?: number;
+}
 
 /** The cockpit's flight model says the ship hit the ground or a tower, and by
  *  how much. See the room's onHurt for what is and is not trusted here. */
@@ -142,7 +167,7 @@ export interface BonusIn { t: "bonus" }
 export interface CheatIn { t: "cheat"; code: string }
 
 export type ClientMessage =
-  JoinIn | FlyIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn | DockIn | CheatIn | BonusIn | GearIn | HurtIn;
+  JoinIn | FlyIn | AwayIn | TransformIn | FireIn | DetonateIn | ClaimIn | PurseIn | UseIn | DockIn | CheatIn | BonusIn | GearIn | HurtIn;
 
 /* ---- room to cockpit ---- */
 
@@ -322,5 +347,6 @@ export function guestIdOk(id: unknown): id is string {
   return typeof id === "string" && /^[A-Za-z0-9-]{16,64}$/.test(id);
 }
 
-/** Shorten a float for the wire. A tenth of a unit is six metres on this globe. */
-export const r1 = (n: number): number => Math.round(n * 10) / 10;
+/** Shorten a float for the wire. A tenth of a unit is six metres on this globe.
+ *  One definition, shared with the cockpit: see ui/src/wallet/rebels/rebelsWire.ts. */
+export { r1 } from "../../../ui/src/wallet/rebels/rebelsWire";

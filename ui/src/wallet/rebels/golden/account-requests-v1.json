@@ -1,0 +1,156 @@
+[
+ {
+  "call": "fetchDropConfig",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rebels_drops?id=eq.live&select=config",
+  "method": "GET",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": null
+ },
+ {
+  "call": "saveDropConfig",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rpc/rebels_drops_save",
+  "method": "POST",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": "{\"p_secret\":\"s3cret\",\"p_config\":{\"charts\":[{\"id\":\"chart1\",\"name\":\"Drop chart 1\",\"entries\":[{\"key\":\"recharge\",\"weight\":100000},{\"key\":\"supercharge\",\"weight\":40000},{\"key\":\"reargun\",\"weight\":1000},{\"key\":\"vstrafe1\",\"weight\":40000},{\"key\":\"vstrafe2\",\"weight\":10000},{\"key\":\"vstrafe3\",\"weight\":2500},{\"key\":\"vstrafe4\",\"weight\":625},{\"key\":\"strafe1\",\"weight\":40000},{\"key\":\"strafe2\",\"weight\":10000},{\"key\":\"strafe3\",\"weight\":2500},{\"key\":\"strafe4\",\"weight\":625},{\"key\":\"hull1\",\"weight\":40000},{\"key\":\"hull2\",\"weight\":10000},{\"key\":\"hull3\",\"weight\":2500},{\"key\":\"hull4\",\"weight\":625},{\"key\":\"hull5\",\"weight\":156},{\"key\":\"portal\",\"weight\":100},{\"key\":\"drone1\",\"weight\":10000},{\"key\":\"drone2\",\"weight\":2500},{\"key\":\"drone3\",\"weight\":625},{\"key\":\"drone4\",\"weight\":156},{\"key\":\"drone5\",\"weight\":39}]}],\"rules\":[{\"enemy\":\"any\",\"tierMin\":1,\"tierMax\":7,\"chart\":\"chart1\",\"chancePerTier\":0.1}]}}"
+ },
+ {
+  "call": "saveLoadoutRemote",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rpc/rebels_loadout_save",
+  "method": "POST",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": "{\"p_owner_key\":\"Golden Node\",\"p_owner_name\":\"Golden Node\",\"p_points_earned\":0,\"p_points_spent\":0,\"p_owned\":[],\"p_purchases\":[],\"p_items\":{}}"
+ },
+ {
+  "call": "loadLoadoutRemote",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rebels_loadout?owner_key=eq.golden%20node&select=points_earned,points_spent,owned,purchases,items",
+  "method": "GET",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": null
+ },
+ {
+  "call": "forge",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rpc/rebels_loadout_save",
+  "method": "POST",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": "{\"p_owner_key\":\"Golden Node\",\"p_owner_name\":\"Golden Node\",\"p_points_earned\":0,\"p_points_spent\":0,\"p_owned\":[],\"p_purchases\":[],\"p_items\":{\"hull2\":4}}"
+ },
+ {
+  "call": "forge",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rpc/rebels_forge",
+  "method": "POST",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": "{\"p_owner_key\":\"Golden Node\",\"p_key\":\"hull2\"}"
+ },
+ {
+  "call": "recordScore",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rpc/rebels_submit",
+  "method": "POST",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": "{\"p_name\":\"Golden Node\",\"p_points\":1234,\"p_tier_kills\":[1,2,0,0,0,0,0]}"
+ },
+ {
+  "call": "fetchTop best",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rebels_scores?select=name,best,total,games,tier_kills,updated_at&order=best.desc&limit=10",
+  "method": "GET",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": null
+ },
+ {
+  "call": "fetchTop total",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rebels_scores?select=name,best,total,games,tier_kills,updated_at&order=total.desc&limit=100",
+  "method": "GET",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": null
+ },
+ {
+  "call": "myTotals",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rebels_scores?name_key=eq.golden%20node&select=name,best,total,games,tier_kills,updated_at&limit=1",
+  "method": "GET",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": null
+ },
+ {
+  "call": "saveShip",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rpc/rebels_ship_save",
+  "method": "POST",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": "{\"p_owner_key\":\"Golden Node\",\"p_owner_name\":\"Golden Node\",\"p_model\":\"space_SM_Ship_Cruiser_02\",\"p_tier\":2,\"p_name\":\"Nightjar\",\"p_paint\":{\"hull1\":{\"hue\":205,\"sat\":0.52,\"bright\":1,\"overlay\":\"none\"},\"hull2\":{\"hue\":260,\"sat\":0.07,\"bright\":1,\"overlay\":\"none\"},\"accent\":{\"hue\":34,\"sat\":0.68,\"bright\":1,\"overlay\":\"none\"},\"highlight\":{\"hue\":260,\"sat\":0.04,\"bright\":1,\"overlay\":\"none\"},\"engine\":{\"hue\":172,\"sat\":1,\"bright\":1,\"overlay\":\"none\"}},\"p_upgrades\":[\"strafe2\"]}"
+ },
+ {
+  "call": "myFleet",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rebels_ships?owner_key=eq.golden%20node&select=id,model,tier,name,paint,upgrades,is_active,for_sale,price_divi&order=acquired_at.desc",
+  "method": "GET",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": null
+ },
+ {
+  "call": "saveFlyingShip",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rpc/rebels_ship_save",
+  "method": "POST",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": "{\"p_owner_key\":\"Golden Node\",\"p_owner_name\":\"Golden Node\",\"p_model\":\"space_SM_Ship_Fighter_01\",\"p_tier\":1,\"p_name\":\"First\",\"p_paint\":{\"hull1\":{\"hue\":205,\"sat\":0.52,\"bright\":1,\"overlay\":\"none\"},\"hull2\":{\"hue\":260,\"sat\":0.07,\"bright\":1,\"overlay\":\"none\"},\"accent\":{\"hue\":34,\"sat\":0.68,\"bright\":1,\"overlay\":\"none\"},\"highlight\":{\"hue\":260,\"sat\":0.04,\"bright\":1,\"overlay\":\"none\"},\"engine\":{\"hue\":172,\"sat\":1,\"bright\":1,\"overlay\":\"none\"}},\"p_upgrades\":[\"strafe1\"]}"
+ },
+ {
+  "call": "pullFleet",
+  "url": "https://nbnhjstexdlvtwcxopqk.supabase.co/rest/v1/rebels_ships?owner_key=eq.golden%20node&select=id,model,tier,name,paint,upgrades,is_active,for_sale,price_divi&order=acquired_at.desc",
+  "method": "GET",
+  "headers": {
+   "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0",
+   "Content-Type": "application/json",
+   "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ibmhqc3RleGRsdnR3Y3hvcHFrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQyOTQ5MjMsImV4cCI6MjA5OTg3MDkyM30.RxcKVr8mU-XUZCpgfNZvMESRFRomk97AAwPjRIvQZP0"
+  },
+  "body": null
+ }
+]

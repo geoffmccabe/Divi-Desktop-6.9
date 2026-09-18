@@ -13,18 +13,13 @@
 // later. So the table is one row per SHIP, and this is the client for it. The
 // marketplace itself is not built and nothing here pretends otherwise.
 
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "../../supabaseProject";
+import { accountRead, accountCall } from "./rebelsAccount";
 import { playerName } from "./rebelsScores";
 import { platform } from "./platform/current";
 import { loadPaint, type ShipPaint } from "./shipColours";
 import { shipName, shipUpgrades, mergeFleet } from "./shipFleet";
 import { shipCatalog } from "./shipCatalog";
 
-const headers = {
-  apikey: SUPABASE_ANON_KEY,
-  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  "Content-Type": "application/json",
-};
 
 export interface FleetShip {
   id: string;
@@ -59,18 +54,14 @@ export async function saveShip(
   const who = platform().identity.accountKey();
   if (!who) return;
   try {
-    await fetch(`${SUPABASE_URL}/rest/v1/rpc/rebels_ship_save`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        p_owner_key: who,
-        p_owner_name: playerName(),
-        p_model: model,
-        p_tier: tier,
-        p_name: name,
-        p_paint: paint,
-        p_upgrades: upgrades,
-      }),
+    await accountCall("rebels_ship_save", {
+      p_owner_key: who,
+      p_owner_name: playerName(),
+      p_model: model,
+      p_tier: tier,
+      p_name: name,
+      p_paint: paint,
+      p_upgrades: upgrades,
     });
   } catch {
     /* Offline, or the wallet has no network. The local copy still holds. */
@@ -81,12 +72,11 @@ export async function saveShip(
 export async function myFleet(who = platform().identity.accountKey()): Promise<FleetShip[]> {
   if (!who) return [];
   try {
-    const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/rebels_ships` +
+    const res = await accountRead(
+      "rebels_ships" +
         `?owner_key=eq.${encodeURIComponent(who.toLowerCase())}` +
-        `&select=id,model,tier,name,paint,upgrades,is_active,for_sale,price_divi` +
-        `&order=acquired_at.desc`,
-      { headers },
+        "&select=id,model,tier,name,paint,upgrades,is_active,for_sale,price_divi" +
+        "&order=acquired_at.desc",
     );
     if (!res.ok) return [];
     const rows = (await res.json()) as Array<Record<string, unknown>>;
