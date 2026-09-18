@@ -309,6 +309,7 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
             setuplog::log(format!("node software: could not record the install stamp — {e}"));
             format!("cannot record the install: {e}")
         })?;
+    FRESHLY_INSTALLED.store(true, std::sync::atomic::Ordering::Relaxed);
     setuplog::log(format!(
         "node software: install complete (version {DIVID69_VERSION}) at {}",
         target.display()
@@ -348,6 +349,18 @@ pub fn clear_install_error() {
 
 pub fn install_error() -> Option<String> {
     INSTALL_ERROR.lock().ok().and_then(|g| g.clone())
+}
+
+/// True when THIS run downloaded and installed a new node program.
+///
+/// Without this the caller cannot tell "freshly installed" from "was already
+/// there", and a node that is already running gets reused — so the new program
+/// sits on disk, unused, until the machine is rebooted. A user would update,
+/// be told it worked, and still be running the old node.
+static FRESHLY_INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn node_was_just_installed() -> bool {
+    FRESHLY_INSTALLED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Free space on the volume holding the node's data, in whole GB.
@@ -756,6 +769,35 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
             e
         })?
     };
+    // A NEW node program was just installed, but a node from the previous
+    // version may still be running — and spawn_once reuses a running node
+    // rather than starting one. Left alone, the new program sits on disk
+    // unused until the machine is rebooted: the user updates, is told it
+    // worked, and keeps running the old node. That is exactly how a fix for a
+    // node that crashes on startup would fail to reach the people who need it.
+    //
+    // So stop the old one first, gracefully. A node must never be killed
+    // mid-write; if it will not stop in time we leave it alone and say so
+    // rather than forcing it.
+    if node_was_just_installed() {
+        if process::daemon_pid(&cfg.datadir).is_some() {
+            setuplog::log(
+                "bringup: a new node program was installed while the previous one is running — \
+                 stopping it so the new one takes effect",
+            );
+            match process::safe_stop(&rpc, &cfg.datadir, Duration::from_secs(300)) {
+                Ok(d) => setuplog::log(format!(
+                    "bringup: previous node stopped cleanly after {}s",
+                    d.as_secs()
+                )),
+                Err(e) => setuplog::log(format!(
+                    "bringup: the previous node did not stop ({e}); leaving it alone rather than \
+                     forcing it. The new node program takes effect after a restart."
+                )),
+            }
+        }
+    }
+
     // Predictable failure, reported before it happens rather than after.
     setuplog::check_port(crate::reachable::P2P_PORT);
     setuplog::log(format!("bringup: launching node program at {}", bin.display()));
