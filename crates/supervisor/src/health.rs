@@ -65,3 +65,24 @@ mod tests {
         assert_eq!(parse_last_shutdown("no marker here"), LastShutdown::Unknown);
     }
 }
+
+/// The node's own last error, read from its debug.log.
+///
+/// When a node dies after start-up the app could only say "the node isn't
+/// running". The reason was sitting in the node's own file the whole time. A
+/// tester's chain database corrupted three times in a week and every screen he
+/// saw just said the node was not running.
+pub fn last_node_error(datadir: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(datadir.join("debug.log")).ok()?;
+    // Only the tail: these files reach hundreds of megabytes.
+    let tail: Vec<&str> = text.lines().rev().take(400).collect();
+    for line in tail {
+        let l = line.trim();
+        if l.contains("Error:") || l.contains("corruption") || l.contains("Aborted") {
+            // Drop the leading timestamp; the app shows its own.
+            let msg = l.splitn(3, ' ').nth(2).unwrap_or(l).trim();
+            return Some(msg.chars().take(200).collect());
+        }
+    }
+    None
+}

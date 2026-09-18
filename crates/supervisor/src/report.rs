@@ -58,6 +58,13 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
                 "The node program hasn't been installed yet. It downloads on first run — check your internet connection."
                     .to_string(),
             )
+        } else if let Some(why) = health::last_node_error(&cfg.datadir) {
+            // Say WHY. The reason is in the node's own log; not showing it left
+            // users staring at "the node isn't running" with nothing to act on.
+            (
+                Phase::Stopped,
+                format!("The node stopped. Its last message was: {why}"),
+            )
         } else {
             (Phase::Stopped, "The node isn't running.".to_string())
         };

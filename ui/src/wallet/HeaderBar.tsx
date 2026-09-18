@@ -131,7 +131,11 @@ export function HeaderBar() {
             <span className="bl-divi bl-down-amt">NODE NOT RUNNING</span>
             <span className="bl-fiat bl-sync-note">
               {headline ?? "Your balance cannot be read until the node starts."}
-              {" "}Press {navigator.platform.startsWith("Mac") ? "\u2318" : "Ctrl"}-L to copy a
+            </span>
+            {/* Its own line. Run together with the reason above it, this ran off
+                the edge of the panel and was unreadable. */}
+            <span className="bl-fiat bl-sync-note bl-diag-hint">
+              Press {navigator.platform.startsWith("Mac") ? "\u2318" : "Ctrl"}-L to copy a
               diagnostic report.
             </span>
           </span>
