@@ -57,6 +57,47 @@ if ! cargo build --release > "$LOG" 2>&1; then
 fi
 rm -f "$LOG"
 
+# ── Refuse to install an OLDER build over a newer one ────────────────────────
+#
+# Several agents build from separate worktrees whose versions move
+# independently, and each one installs to the same /Applications/DD69.app. An
+# older build landing on top looks exactly like the app "reverting", and the
+# owner cannot tell which work is even being tested. It has happened more than
+# once.
+#
+# So: compare with what is already installed and stop, unless the caller says
+# explicitly that going backwards is intended.
+if [ -f "$PLIST" ]; then
+  INSTALLED=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST" 2>/dev/null || echo "")
+  if [ -n "$INSTALLED" ] && [ "$INSTALLED" != "$VERSION" ]; then
+    NEWEST=$(printf '%s\n%s\n' "$INSTALLED" "$VERSION" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+    if [ "$NEWEST" = "$INSTALLED" ]; then
+      echo "REFUSING to install $VERSION over the installed $INSTALLED."
+      echo ""
+      echo "  That would look like the app reverting, and it hides whichever"
+      echo "  work is actually meant to be under test. Your branch is probably"
+      echo "  behind the release line - merge it before building."
+      echo ""
+      echo "  If you really mean to go backwards, run:"
+      echo "      DD69_ALLOW_DOWNGRADE=1 sh scripts/install-local.sh none"
+      if [ "${DD69_ALLOW_DOWNGRADE:-}" != "1" ]; then
+        undo_bump
+        exit 1
+      fi
+      echo "  DD69_ALLOW_DOWNGRADE=1 set - continuing anyway."
+    fi
+  fi
+fi
+
+# Warn when another DD69 is already running from somewhere else: two windows
+# with different versions is the other half of the same confusion.
+OTHERS=$(pgrep -fl "divi-desktop-69" 2>/dev/null | grep -v "/Applications/DD69.app" | grep -v "^$$ " || true)
+if [ -n "$OTHERS" ]; then
+  echo "NOTE: another Divi Desktop is running from outside /Applications:"
+  echo "$OTHERS" | sed 's/^/    /'
+  echo "  Close it, or its window will be mistaken for this one."
+fi
+
 if [ ! -d "$APP" ]; then
   echo "$APP is not there. Build the bundle once with cargo tauri build."
   exit 1
