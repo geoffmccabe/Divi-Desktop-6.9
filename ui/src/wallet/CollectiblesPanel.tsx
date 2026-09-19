@@ -1,5 +1,9 @@
-import { useEffect, useState, type ChangeEvent } from "react";
-import { nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateCollection, newReceiveAddress } from "./api";
+import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import {
+  nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateCollection, newReceiveAddress,
+  nfdOwned, nfdCollectionMembers,
+  type NfdOwned, type NfdChainItem, type NfdCollectionRead,
+} from "./api";
 import { CollectionImport } from "./CollectionImport";
 
 // Divi Collectibles (NFDs). Mint, view, transfer, and receive collectibles. The
@@ -75,6 +79,26 @@ function traitRarity(items: Item[]): Map<string, number> {
   const total = items.length || 1;
   for (const [k, n] of counts) pct.set(k, Math.round((n / total) * 100));
   return pct;
+}
+
+// A collectible the chain says this wallet owns, turned into a display Item.
+// It carries only what the chain knows (id, owner, pointers, collection). The
+// nicer local metadata (name, thumbnail, traits, tier) is overlaid from local
+// storage when this wallet minted or imported the item; a chain-recovered item
+// (e.g. after a reinstall) shows a short id until it is opened.
+function chainItemToItem(c: NfdChainItem): Item {
+  return {
+    txid: c.id,
+    ownerAddr: c.owner,
+    name: `Collectible ${c.id.slice(0, 8)}…`,
+    mime: "",
+    ts: 0,
+    arweavePtr: c.arweavePtr,
+    contentHash: c.contentHash,
+    thumbPtr: c.thumbPtr,
+    collectionId: c.collectionId ?? undefined,
+    encrypted: c.thumbPtr ? undefined : true,
+  };
 }
 
 function fileToBase64(file: File): Promise<string> {
@@ -234,6 +258,66 @@ export function CollectiblesPanel() {
       /* ignore */
     }
   }, [collections]);
+
+  // ── Chain reads ────────────────────────────────────────────────────────────
+  // The chain is the source of truth for what this wallet owns. We poll the
+  // wallet's own in-process scan and merge it with local metadata, so a
+  // collectible survives a reinstall or a move to a second device. Local storage
+  // is now only a cache for nice names/thumbnails and for a just-minted item the
+  // scan has not reached yet.
+  const [chain, setChain] = useState<NfdOwned | null>(null);
+  useEffect(() => {
+    let live = true;
+    let addr = "";
+    async function tick() {
+      try {
+        if (!addr) addr = await myNfdAddress();
+        const res = await nfdOwned(addr);
+        if (live) setChain(res);
+      } catch {
+        /* node not ready, or feature not open on this chain: keep local view */
+      }
+    }
+    tick();
+    const iv = setInterval(tick, 4000);
+    return () => {
+      live = false;
+      clearInterval(iv);
+    };
+  }, []);
+
+  // Chain existence/ownership, with local metadata overlaid.
+  const displayItems = useMemo<Item[]>(() => {
+    if (!chain || !chain.open) return items; // not read yet / feature closed: local only
+    const byId = new Map<string, Item>();
+    for (const c of chain.items) byId.set(c.id, chainItemToItem(c));
+    for (const l of items) {
+      const onChain = byId.get(l.txid);
+      if (onChain) byId.set(l.txid, { ...onChain, ...l, ownerAddr: onChain.ownerAddr });
+      else if (chain.syncing) byId.set(l.txid, l); // pending mint, not scanned yet
+      // else: fully synced and no longer owned on chain (transferred) -> hide
+    }
+    return [...byId.values()];
+  }, [chain, items]);
+
+  // When browsing a collection, read its FULL membership from the chain (every
+  // item, not only this wallet's), overlaying local metadata where we have it.
+  const [browseChain, setBrowseChain] = useState<NfdCollectionRead | null>(null);
+  useEffect(() => {
+    if (!browsing) {
+      setBrowseChain(null);
+      return;
+    }
+    let live = true;
+    nfdCollectionMembers(browsing)
+      .then((r) => live && setBrowseChain(r))
+      .catch(() => {
+        /* keep the local-only fallback below */
+      });
+    return () => {
+      live = false;
+    };
+  }, [browsing]);
 
   // The wallet's stable NFD address (generated once, reused for receive + claim).
   async function myNfdAddress(): Promise<string> {
@@ -426,12 +510,21 @@ export function CollectiblesPanel() {
     setRecvBusy(false);
   }
 
-  const active = items.find((i) => i.txid === viewing) ?? null;
+  const active = displayItems.find((i) => i.txid === viewing) ?? null;
   const selectedCol = collections.find((c) => c.id === mintInto) ?? null;
   const mintedOut = !!selectedCol && selectedCol.maxSupply > 0 && selectedCol.minted >= selectedCol.maxSupply;
 
   const browseCol = collections.find((c) => c.id === browsing) ?? null;
-  const browseItems = browsing ? items.filter((i) => i.collectionId === browsing) : [];
+  const localInCollection = browsing ? items.filter((i) => i.collectionId === browsing) : [];
+  // Prefer the chain's full membership; fall back to local while it loads.
+  const browseItems: Item[] =
+    browseChain?.open && browseChain.members.length > 0
+      ? browseChain.members.map((c) => {
+          const local = localInCollection.find((i) => i.txid === c.id);
+          const base = chainItemToItem(c);
+          return local ? { ...base, ...local, ownerAddr: base.ownerAddr } : base;
+        })
+      : localInCollection;
   const browseRarity = traitRarity(browseItems);
 
   function setTrait(i: number, patch: Partial<Trait>) {
@@ -614,11 +707,18 @@ export function CollectiblesPanel() {
       <>
       <section className="ts-section">
         <h3 className="ts-head">My Collectibles</h3>
-        {items.length === 0 ? (
-          <p className="wl-note">Nothing yet — mint one above, or claim one you were sent.</p>
+        {chain?.open && chain.syncing && (
+          <p className="wl-note">Reading the chain… your collectibles will finish filling in shortly.</p>
+        )}
+        {displayItems.length === 0 ? (
+          <p className="wl-note">
+            {chain?.open && chain.syncing
+              ? "Reading the chain…"
+              : "Nothing yet — mint one above, or claim one you were sent."}
+          </p>
         ) : (
           <div className="coll-grid">
-            {items.map((it) => (
+            {displayItems.map((it) => (
               <button key={it.txid} className="coll-card" onClick={() => openItem(it)}>
                 {it.thumb ? (
                   <img className="coll-card-thumb" src={it.thumb} alt={it.name} />
@@ -729,8 +829,12 @@ export function CollectiblesPanel() {
               </button>
             </div>
             <p className="wl-note">
-              {browseCol.minted}{browseCol.maxSupply > 0 ? ` of ${browseCol.maxSupply}` : ""} minted.
-              {" "}Rarity is the share of items sharing each trait, across the items in this wallet.
+              {(browseChain?.collection?.minted ?? browseCol.minted)}
+              {browseCol.maxSupply > 0 ? ` of ${browseCol.maxSupply}` : ""} minted.
+              {browseChain?.open
+                ? " Rarity is the share of items sharing each trait, across the whole collection on-chain."
+                : " Rarity is the share of items sharing each trait, across the items in this wallet."}
+              {browseChain?.syncing ? " (still reading the chain…)" : ""}
             </p>
             {browseItems.length === 0 ? (
               <p className="wl-note">No items minted into this collection yet.</p>
