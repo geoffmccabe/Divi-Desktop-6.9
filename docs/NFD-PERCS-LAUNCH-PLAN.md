@@ -19,7 +19,7 @@ The forkless NFD protocol is genuinely built and proven on regtest: the chain no
 - **D1 — Percs reveal model for v1.** Percs are designed as *blind packs* (buy sealed, click Reveal, tier + ultra-rare rolled fairly at reveal). That model needs a new on-chain reveal record, sealed-pack minting, reveal UI/animation, and node-indexer resolution — a real chunk of Phase 5. The simpler alternative is to launch v1 with *fixed tiers baked in at mint* (no reveal step) and add blind-pack reveal as a fast-follow. **Recommendation: decide before Phase 5.** The roll engine (`reveal.rs`) already exists either way.
 - **D2 — Is forging in the launch?** Forging math is built but has no UI and the node doesn't decode the forge record yet. **Recommendation: fast-follow, not in the launch (Phase 6, after go-live).**
 - **D3 — ERC-721 / DIVA bridge.** Definitely post-launch (Phase 8). It does not gate the Divi launch.
-- **D4 — Arweave relay hosting.** The uploader is a small always-on Node service holding a funded key. **Recommendation: Cloudflare Container (not a plain Worker) at `nfds.divi.love`.** Confirmed in Phase 3.
+- **D4 — Arweave storage: RESOLVED (2026-Sep-19) → use GoBanq Assets, not our own funded relay.** The GoBanq agent (repo `Go-Banq/Assets`, service LIVE on devnet) proposed that NFD stop running its own funded Arweave uploader and upload through GoBanq instead (write-up: `/Users/geoffreymccabe/GOBANQ-ASSETS-FOR-NFD-AGENT.md`). This matches Geoff's ecosystem decision that everything creating/storing tokens+NFTs moves to GoBanq (the Money-Transmitter-License holder). It is a small change (our storage layer has three operations; upload maps to one GoBanq call; reads are unchanged), removes the funded key and the heavy `@ardrive/turbo-sdk` dependency from our side, and keeps all our encryption and our on-chain pointer format identical. **Accepted.** Details now drive Phase 3 below.
 
 ---
 
@@ -37,21 +37,26 @@ The forkless NFD protocol is genuinely built and proven on regtest: the chain no
 
 *Why: today the wallet trusts local data on this machine for "what you own." After a reinstall or on a second device your NFDs would vanish. This is the #1 thing that would embarrass us at launch.*
 
-- ☐ 2.1 Decide the read path: point the wallet at the node-side indexer HTTP API that already exists (`/Users/geoffreymccabe/Divi-Blockchain_6.9/contrib/dvxp-scan/src/api.rs`, endpoints `/nfd/{id}`, `/nfds?owner=…`) vs. a wallet-local scan. Recommendation: use the node indexer (it already tracks ownership, collections, reorgs).
+- ☑ 2.1 **DECIDED (2026-Sep-19): in-process chain scan, mirroring the Names feature (`crates/supervisor/src/names.rs`).** Vendor the already-built `nfd-indexer` crate (ownership + collection membership + reorg undo, all tested in the chain repo) into DD69, drive it from the wallet's own node connection, persist a local index that survives restarts, and scan from an NFD activation height (not genesis). This matches the chain team's explicit 2026-Sep-06 decision (wallet stays server-independent and rule-identical to the explorer) and reuses the shipping Names pattern. Rejected: the hosted read-API (breaks self-custody; its persistent store is unfinished) and a bundled indexer subprocess (no doc calls for it; the crate is shaped to embed as a library). Tradeoff accepted: a second lightweight scan loop beside Names, rather than a risky refactor to unify them now (unify post-launch).
 - ☐ 2.2 Wire wallet backend functions to enumerate: NFDs owned by an address, a collection's items, and resolve a recipient's encryption key from chain.
 - ☐ 2.3 Replace localStorage-as-truth in the UI with chain-derived state (keep local only as a cache).
 - ☐ 2.4 Make the collectibles panel and marketplace read from the chain-backed list.
 - **Done when:** mint on regtest, wipe local app data, reopen → collectibles reappear from the chain.
 
-## Phase 3 — Arweave storage live
+## Phase 3 — Arweave storage live (via GoBanq Assets)
 
-*Why: real art must actually be stored. Today storage defaults to a local-folder stub.*
+*Why: real art must actually be stored. Today storage defaults to a local-folder stub. Per D4 we store through GoBanq (which holds the funded key and pays) instead of running our own uploader.*
 
-- ☐ 3.1 Confirm `@ardrive/turbo-sdk` provenance on the npm registry; keep `ignore-scripts=true`.
-- ☐ 3.2 Deploy the relay service (`/Users/geoffreymccabe/dd69-nfd/nfd-relay/server.js`) as a Cloudflare Container at `nfds.divi.love`; store the funding key as a secret; fund the Turbo balance.
-- ☐ 3.3 Turn storage on in the app build (`NFD_STORAGE=relay`) pointed at the relay; the health/balance readout (`nfd_relay_status`) shows green.
-- ☐ 3.4 Add a minimal upload status/retry indication in the mint/import UI (so a failed upload is visible, not silent).
-- **Done when:** mint on regtest with the relay on → art is retrievable from `arweave.net`, encrypted for non-Perc content and public for Percs.
+**What stays exactly as built:** all NFD encryption (`crates/supervisor/src/crypto_nfd.rs` — GoBanq only ever sees opaque bytes, never a key or plaintext); transfer = re-wrap-the-key, no re-upload; the on-chain `arweave_ptr` (same 32-byte ANS-104 id GoBanq returns); reads (`get()` fetches from a public gateway directly, so **viewing a collectible never depends on GoBanq being up** — GoBanq is only in the write path); the local cache.
+
+- ☐ 3.1 (Geoff, prerequisite) Ask Geoff to get us a GoBanq devnet app key for NFD + the base URL (and an SSH tunnel to `127.0.0.1:3894` until `assets-devnet.gobanq.com` DNS exists), with caps: content types `application/octet-stream, application/json, image/png, image/jpeg, image/webp`; per-upload size (propose 10 MB); a daily spend cap. Route the request through Geoff (GoBanq agent builds it).
+- ☐ 3.2 Add a third storage backend (`NFD_STORAGE=gobanq`) beside the local stub and the old relay, in `crates/supervisor/src/nfd_storage.rs`. Upload = one `POST /v1/storage/uploads` with our encrypted bytes; take GoBanq's offered **`?wait=1` synchronous upload** so our Rust makes one blocking call and gets the pointer back (no polling loop, no status proxy). Keep the old relay path for one release as rollback.
+- ☐ 3.3 Auth via **single-use upload tickets**: reduce our existing relay (`nfds.divi.love`) from an uploader to a **ticket issuer** — it keeps our current gate (so it stays our moderation choke point) and hands out a short-lived, single-use, size-capped ticket; it no longer holds any funded key. (Later simplification, GoBanq phase 6: GoBanq issues tickets straight to a wallet that signs a Divi challenge, removing our issuer entirely — deferred, needs a signature-scheme decision.)
+- ☐ 3.4 Add a minimal upload status/retry indication in the mint/import UI, and handle GoBanq's error codes (`BAD_TICKET` → new ticket + retry once; `TOO_LARGE`/`TYPE_NOT_ALLOWED` → don't retry; `DAILY_STORAGE_CAP`/`STORAGE_UNFUNDED` → back off).
+- ☐ 3.5 Prove the round trip on devnet: encrypted bundle → GoBanq pointer → on-chain mint → read back through the gateway → decrypt; confirm the pointer is byte-identical in form to what the old relay produced. Then switch the default to `gobanq`.
+- **Done when:** a mint stores its art through GoBanq and the collectible reads back and decrypts from a public gateway, with our own funded key retired. Rollback at any point = `NFD_STORAGE=relay`; nothing on chain changes.
+
+**Honest tradeoff:** minting now depends on GoBanq being up (viewing does not). That is acceptable and is better custody than us holding a funded key; rollback is a one-setting change.
 
 ## Phase 4 — Treasury and fees
 
@@ -96,6 +101,7 @@ The forkless NFD protocol is genuinely built and proven on regtest: the chain no
 - ☐ 8.3 Build the coordinator process (watch Divi for lock → mint on DIVA; watch DIVA for release → unlock on Divi).
 - ☐ 8.4 Wire the chain indexer to process bridge records 0x07/0x08 with reorg-undo.
 - ☐ 8.5 Prove one Perc round-trip regtest-Divi ↔ devnet-DIVA.
+- ☐ 8.6 (Note) If the bridge ever needs to mint a **Solana**-side NFT, GoBanq already runs the Solana cNFT stack (Bubblegum V2 / MPL Core) and can do it — call GoBanq rather than building a minting path. Same option for a future DiviStore Arweave mirror.
 - **Done when:** one Perc bridges to DIVA and back.
 
 ---
