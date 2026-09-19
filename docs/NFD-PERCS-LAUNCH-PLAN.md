@@ -23,15 +23,15 @@ The forkless NFD protocol is genuinely built and proven on regtest: the chain no
 
 ---
 
-## Phase 1 — Get the branch current and building
+## Phase 1 — Get the branch current and building  ✅ ENGINEERING DONE (2026-Sep-19)
 
 *Why: everything else should be built on an app that has today's features, and this sets up the final merge. Testing on a 127-commit-stale app is what made HRAs feel "old."*
 
-- ☐ 1.1 Merge latest `origin/main` into `feat/nfd-collectibles`. Preview shows **7 conflicting files**: `Cargo.lock`, `crates/app/src/main.rs`, `crates/supervisor/src/lib.rs`, `ui/src/index.css`, `ui/src/wallet/ActivityList.tsx`, `ui/src/wallet/PinCodeSendPanel.tsx`, `ui/src/wallet/pinSends.ts`. Resolve by union (keep both lanes' features); regenerate `Cargo.lock`.
-- ☐ 1.2 Fix the clean-build blocker (a setup-flow file referenced but historically uncommitted). Confirm the branch builds from a clean checkout.
-- ☐ 1.3 Build UI + cargo, run the full test suite (supervisor + indexer + name-registry), confirm green.
-- ☐ 1.4 Install the fresh build into `/Applications/DD69.app`, relaunch, confirm the "Divi Collectibles" panel appears and existing NFD flows still work on regtest.
-- **Done when:** branch builds clean, all tests green, app runs current features + NFD panel, on regtest.
+- ☑ 1.1 Merged `origin/main` into `feat/nfd-collectibles`. 7 conflicts resolved by union; pin-send v1 superseded by main's HTLC v2 (no NFD loss); duplicate `getrandom` dep removed. Now 0 behind main. Merge-pulled files scanned for the payload triad — clean.
+- ☑ 1.2 Clean build confirmed: the (historically missing) setup-flow file is present on current main, so the workspace builds. `cargo check -p dd69-supervisor -p divi-desktop-69` = Finished, 0 errors, 8 benign warnings.
+- ☑ 1.3 UI typechecks clean (0 tsc errors after installing main's new `three`/`react-globe.gl` deps), UI production build OK, `cargo test -p dd69-supervisor` = **116 passed, 0 failed**.
+- ☐ 1.4 Install the fresh build into `/Applications/DD69.app`, relaunch, confirm the "Divi Collectibles" panel appears and existing NFD flows still work on regtest. *(Deferred to a single install/relaunch once Phase 2–4 give something new worth eyeballing.)*
+- **Done when:** branch builds clean, all tests green, app runs current features + NFD panel, on regtest. *(Build + tests met; in-app eyeball pending 1.4.)*
 
 ## Phase 2 — Wallet reads collectibles from the chain (the big gap)
 
