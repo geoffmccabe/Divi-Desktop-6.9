@@ -1,5 +1,11 @@
 [workspace]
 members = ["crates/supervisor", "crates/app", "crates/c2pa-helper", "crates/dvxp-core", "crates/name-registry"]
+# Vendored overlay-scanner crates. Kept out of the member list on purpose: the
+# supervisor depends on dvxp-scan with default-features = false, so its optional
+# `rpc` feature (the only thing that pulls the ureq network stack) never builds
+# into the wallet. Excluding them prevents a bare workspace build from turning
+# that feature back on.
+exclude = ["crates/dvxp-scan", "crates/dmt-indexer", "crates/nfd-indexer"]
 resolver = "2"
 
 [profile.release]

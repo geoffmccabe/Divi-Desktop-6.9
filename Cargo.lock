@@ -1207,6 +1207,7 @@ dependencies = [
  "aes-gcm",
  "base64 0.22.1",
  "dvxp-core",
+ "dvxp-scan",
  "ed25519-dalek",
  "getrandom 0.2.17",
  "hkdf",
@@ -1390,6 +1391,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dmt-indexer"
+version = "0.1.0"
+dependencies = [
+ "dvxp-core",
+ "name-registry",
+ "ripemd",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "dom_query"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1453,6 +1464,17 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 name = "dvxp-core"
 version = "0.1.0"
 dependencies = [
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "dvxp-scan"
+version = "0.1.0"
+dependencies = [
+ "dmt-indexer",
+ "dvxp-core",
+ "nfd-indexer",
+ "serde_json",
  "sha2 0.10.9",
 ]
 
@@ -2972,6 +2994,13 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nfd-indexer"
+version = "0.1.0"
+dependencies = [
+ "dvxp-core",
+]
 
 [[package]]
 name = "nix"

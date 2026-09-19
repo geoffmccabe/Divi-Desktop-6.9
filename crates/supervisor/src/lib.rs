@@ -22,6 +22,7 @@ pub mod mempool;
 pub mod multisig;
 pub mod security;
 pub mod nfd_record;
+pub mod nfd_scan;
 pub mod nfd_storage;
 pub mod skinbuy;
 pub mod process;

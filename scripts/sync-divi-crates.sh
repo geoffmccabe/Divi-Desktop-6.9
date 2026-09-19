@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Sync the vendored protocol crates from the chain repo.
 #
-# `crates/dvxp-core` and `crates/name-registry` are BYTE-IDENTICAL copies of
-# contrib/dvxp-core and contrib/name-registry in geoffmccabe/Divi-Blockchain_6.9,
-# which is where they are normative. They are vendored rather than referenced so
-# that DD69 builds standalone, with no private-repo credentials and no network.
+# `crates/dvxp-core`, `crates/name-registry`, `crates/dvxp-scan`,
+# `crates/dmt-indexer` and `crates/nfd-indexer` are BYTE-IDENTICAL copies of the
+# same-named crates under contrib/ in geoffmccabe/Divi-Blockchain_6.9, which is
+# where they are normative. They are vendored rather than referenced so that
+# DD69 builds standalone, with no private-repo credentials and no network.
 #
 # The rules in those crates must give identical answers in the wallet, the
 # explorer and every indexer. A silent drift between two copies is exactly the
@@ -20,7 +21,7 @@ set -euo pipefail
 
 CHAIN_REPO="${CHAIN_REPO:-$HOME/Divi-Blockchain_6.9}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CRATES=(dvxp-core name-registry)
+CRATES=(dvxp-core name-registry dvxp-scan dmt-indexer nfd-indexer)
 APPLY=0
 [ "${1:-}" = "--apply" ] && APPLY=1
 

@@ -166,6 +166,55 @@ export const nfdTransfer = (ownerAddr: string, mintTxid: string, recipientAddr: 
 export const nfdClaim = (myAddr: string, mintTxid: string, wrapkeyPtr: string) =>
   invoke<string>("nfd_claim", { myAddr, mintTxid, wrapkeyPtr });
 
+// ── Chain reads: what an address owns / a collection holds, from the chain ────
+// These come from the wallet's own in-process scan of the chain, not from local
+// storage, so a collectible reappears after a reinstall or on a second device.
+export interface NfdChainItem {
+  id: string; // mint id (display-order hex txid)
+  owner: string; // base58 Divi address
+  arweavePtr: string;
+  contentHash: string;
+  thumbPtr: string | null;
+  collectionId: string | null;
+  mintHeight: number;
+}
+export interface NfdOwned {
+  open: boolean; // false = feature not active on this chain yet (mainnet pre-launch)
+  syncing: boolean; // true = still reading the chain; list may be incomplete
+  scannedHeight?: number;
+  tip?: number;
+  items: NfdChainItem[];
+}
+export interface NfdSyncState {
+  open: boolean;
+  chain?: string;
+  syncing: boolean;
+  scannedHeight?: number;
+  tip?: number;
+}
+export interface NfdCollectionInfo {
+  id: string;
+  creator: string;
+  maxSupply: number;
+  minted: number;
+  metaPtr: string;
+}
+export interface NfdCollectionRead {
+  open: boolean;
+  syncing: boolean;
+  collection: NfdCollectionInfo | null;
+  members: NfdChainItem[];
+}
+export interface NfdGetRead {
+  open: boolean;
+  syncing: boolean;
+  nfd: NfdChainItem | null;
+}
+export const nfdOwned = (address: string) => invoke<NfdOwned>("nfd_owned", { address });
+export const nfdGet = (id: string) => invoke<NfdGetRead>("nfd_get", { id });
+export const nfdCollectionMembers = (id: string) => invoke<NfdCollectionRead>("nfd_collection_members", { id });
+export const nfdSyncState = () => invoke<NfdSyncState>("nfd_sync_state");
+
 // ── Admin: fees / treasury + Arweave status ──────────────────────────────────
 export interface FeeConfig {
   treasuryAddress: string;

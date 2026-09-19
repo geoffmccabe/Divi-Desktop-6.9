@@ -3,7 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use dd69_supervisor::{bearer, c2pa_read, chaintips, chart, coins, collectibles, collectibles_import, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, skinbuy, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, chart, coins, collectibles, collectibles_import, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, nfd_scan, payreq, poe, price, report, security, skinbuy, wallet};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -2208,6 +2208,52 @@ async fn nfd_relay_status() -> RelayStatusDto {
     .unwrap_or(RelayStatusDto { relay_url: String::new(), reachable: false, balance_winc: None })
 }
 
+/// Collectibles this address owns, read from the chain (not from local storage).
+/// Returns `{ open, syncing, scannedHeight, tip, items: [...] }`.
+#[tauri::command]
+async fn nfd_owned(address: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        nfd_scan::owned(&cfg, &address)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// One collectible by its mint id (display-order hex). `{ open, syncing, nfd }`.
+#[tauri::command]
+async fn nfd_get(id: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        nfd_scan::get(&cfg, &id)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// A collection and its members by collection id (display-order hex).
+/// `{ open, syncing, collection, members: [...] }`.
+#[tauri::command]
+async fn nfd_collection_members(id: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        nfd_scan::collection_members(&cfg, &id)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Chain-read sync state for a poller: `{ open, chain, syncing, scannedHeight, tip }`.
+#[tauri::command]
+async fn nfd_sync_state() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        nfd_scan::sync_state(&cfg)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 fn main() {
     tauri::Builder::default()
         // Community apps load from divi-app://<id>/ so each one gets its own
@@ -2328,6 +2374,10 @@ fn main() {
             nfd_import_read_item,
             nfd_prepare_funding,
             nfd_tx_confirmations,
+            nfd_owned,
+            nfd_get,
+            nfd_collection_members,
+            nfd_sync_state,
             community::community_builtin_apps,
             community::community_app_base,
             community::community_preview_base,
