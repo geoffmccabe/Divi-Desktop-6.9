@@ -1780,6 +1780,47 @@ fn set_node_upnp(enabled: bool) -> Result<(), String> {
     dd69_supervisor::reachable::set_upnp(enabled)
 }
 
+/// Where a service we talk to actually is: resolve its hostname, then
+/// geolocate that address the same way peers are located.
+///
+/// Calls that leave the Divi network used to be drawn at a hardcoded point in
+/// the middle of the Atlantic, meaning "we do not know where this is". It
+/// reads as a real node sitting in the ocean that everything keeps contacting.
+/// A marker that has to be explained is a bug, so we find the real place; when
+/// we cannot, nothing is drawn rather than something invented.
+#[tauri::command]
+async fn service_location(host: String) -> Option<serde_json::Value> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::net::ToSocketAddrs;
+        // Hostname only — no scheme, no path, and nothing that could be turned
+        // into a request somewhere else.
+        let host = host.trim().trim_end_matches('.').to_string();
+        if host.is_empty()
+            || !host
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        {
+            return None;
+        }
+        let ip = (host.as_str(), 443u16)
+            .to_socket_addrs()
+            .ok()?
+            .find(|a| a.is_ipv4())
+            .map(|a| a.ip().to_string())?;
+        let geo = dd69_supervisor::network::geolocate(&[ip.clone()]).into_iter().next()?;
+        Some(serde_json::json!({
+            "ip": ip,
+            "lat": geo.lat,
+            "lon": geo.lon,
+            "city": geo.city,
+            "country": geo.country,
+        }))
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
 /// Health-check nodes and ask a few of them who else they know.
 ///
 /// This is what the U key was always supposed to do. Two things our own node
@@ -3232,6 +3273,7 @@ fn main() {
             update_relaunch,
             node_reachability,
             network_crawl,
+            service_location,
             snapshot_info,
             snapshot_fetch,
             set_node_upnp,

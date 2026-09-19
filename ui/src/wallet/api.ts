@@ -390,6 +390,11 @@ export interface CrawlReply {
   discovered: string[];
 }
 /** Health-check nodes and ask a few of them who else they know. */
+/** Where a service we talk to actually is, so it is not drawn at a made-up point. */
+export interface ServicePlace { ip: string; lat: number; lon: number; city?: string; country?: string }
+export const serviceLocation = (host: string) =>
+  invoke<ServicePlace | null>("service_location", { host });
+
 export const networkCrawl = (ips: string[], ask?: number) =>
   invoke<CrawlReply>("network_crawl", { ips, ask });
 
