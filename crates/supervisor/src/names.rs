@@ -203,8 +203,19 @@ pub struct SyncStatus {
     pub note: String,
 }
 
-fn store_path(kind: &str) -> PathBuf {
-    dd69_config_dir().join(format!("names-{kind}.json"))
+/// The pending-commit store, keyed per chain AND per node exactly like the
+/// index. A commit's salt lives only here until its reveal. One shared file
+/// meant two independent regtest chains, both named "regtest", shared pending
+/// reservations, so a reveal on one went looking for a commit txid that only
+/// exists on the other. Keyed by datadir hash for the same reason index_path is.
+fn pending_path(chain: &str, datadir: &Path) -> PathBuf {
+    let safe: String = chain.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    let safe = if safe.is_empty() { "unknown".to_string() } else { safe };
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    h.update(datadir.as_os_str().as_encoded_bytes());
+    let node: String = h.finalize().iter().take(4).map(|b| format!("{b:02x}")).collect();
+    dd69_config_dir().join(format!("names-pending-{safe}-{node}.json"))
 }
 
 /// The index lives in a PER-CHAIN file.
@@ -1618,7 +1629,7 @@ pub fn commit(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     // Persist BEFORE broadcasting. If we crash between the two, we have a
     // useless salt on disk, which costs nothing. The other order loses the
     // commit's fee and the name.
-    let mut store = read_json(&store_path("pending"));
+    let mut store = read_json(&pending_path(&chain, &cfg.datadir));
 
     // Refuse before spending a reservation fee on something the registry will
     // never honour. Covers lookalikes as well as the exact names.
@@ -1659,7 +1670,7 @@ pub fn commit(cfg: &NodeConfig, input: &str) -> Result<String, String> {
         "txid": Value::Null,
     });
     store[&q.canonical] = entry;
-    write_json(&store_path("pending"), &store)?;
+    write_json(&pending_path(&chain, &cfg.datadir), &store)?;
 
     // Choose the author deliberately, before broadcasting: the reveal twelve
     // blocks later must come from this same address, so it needs to be one that
@@ -1669,7 +1680,7 @@ pub fn commit(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     // The reveal MUST come from this same address or the registry ignores it.
     store[&q.canonical]["txid"] = json!(sent.txid);
     store[&q.canonical]["author"] = json!(sent.author);
-    write_json(&store_path("pending"), &store)?;
+    write_json(&pending_path(&chain, &cfg.datadir), &store)?;
     Ok(sent.txid)
 }
 
@@ -1694,7 +1705,7 @@ pub fn pending(cfg: &NodeConfig) -> Result<Vec<PendingCommit>, String> {
     let chain = chain_name(&rpc);
     let tip = tip_height(&rpc)?;
     let idx = load_index(cfg, &chain);
-    let mut store = read_json(&store_path("pending"));
+    let mut store = read_json(&pending_path(&chain, &cfg.datadir));
     let mut out = Vec::new();
     let mut done: Vec<String> = Vec::new();
 
@@ -1729,7 +1740,7 @@ pub fn pending(cfg: &NodeConfig) -> Result<Vec<PendingCommit>, String> {
                 map.remove(name);
             }
         }
-        write_json(&store_path("pending"), &store)?;
+        write_json(&pending_path(&chain, &cfg.datadir), &store)?;
     }
 
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1744,7 +1755,7 @@ pub fn register(cfg: &NodeConfig, input: &str) -> Result<String, String> {
     let treasury = treasury_address(&chain)?;
     let tip = tip_height(&rpc)?;
 
-    let store = read_json(&store_path("pending"));
+    let store = read_json(&pending_path(&chain, &cfg.datadir));
     let entry = &store[&q.canonical];
     if entry.is_null() {
         return Err(format!(
@@ -1813,13 +1824,15 @@ pub fn register(cfg: &NodeConfig, input: &str) -> Result<String, String> {
 }
 
 /// Forget a reservation this wallet is not going to use.
-pub fn forget_pending(name: &str) -> Result<(), String> {
+pub fn forget_pending(cfg: &NodeConfig, name: &str) -> Result<(), String> {
+    let rpc = RpcClient::new(cfg);
+    let chain = chain_name(&rpc);
     let canonical = charset::canonicalise(name);
-    let mut store = read_json(&store_path("pending"));
+    let mut store = read_json(&pending_path(&chain, &cfg.datadir));
     if let Some(map) = store.as_object_mut() {
         map.remove(&canonical);
     }
-    write_json(&store_path("pending"), &store)
+    write_json(&pending_path(&chain, &cfg.datadir), &store)
 }
 
 /// Attach or replace a record on a name.

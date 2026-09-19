@@ -458,9 +458,7 @@ async fn hra_register(name: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn hra_forget(name: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || names::forget_pending(&name))
-        .await
-        .map_err(|_| "internal error".to_string())?
+    hra_blocking!(move |cfg: &NodeConfig| names::forget_pending(cfg, &name))
 }
 
 #[tauri::command]
