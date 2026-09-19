@@ -27,18 +27,40 @@
   --info: 207 90% 54%;
 
   --font-heading: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-subheading: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-caption: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --panel-bg: 240 6% 10%;
   --panel-opacity: 0.85;
   --panel-radius: 12px;
   --panel-blur: 24px;
   --glow-color: 280 80% 60%;
   --glow-strength: 22px;
+  --panel-bg-image: none;
+  --panel-bg-image-size: cover;
+  --panel-bg-image-repeat: no-repeat;
+  --panel-bg-image-opacity: 1;
   --control-scheme: dark;
   --subpanel-bg: 0 0% 0%;
   --subpanel-opacity: 1;
   --subpanel-outline-width: 0px;
   --subpanel-outline-color: 0 0% 50%;
+  --subpanel-bg-image: none;
+  --subpanel-bg-image-size: cover;
+  --subpanel-bg-image-repeat: no-repeat;
+  --subpanel-bg-image-opacity: 1;
+
+  --map-self: 45 93% 47%;
+  --map-peer-link: 280 80% 60%;
+  --map-network-link: 207 90% 54%;
+  --map-offline: 215 14% 58%;
+  --map-discovery-pulse: 145 80% 50%;
+  --map-activity-pulse: 45 100% 55%;
+  --map-new-node: 177 85% 58%;
+  --map-stake-accent: 353 76% 50%;
+  --map-background: 216 33% 6%;
+  --map-atmosphere: 211 100% 68%;
 }
 
 /* Native controls (scrollbars, dropdown lists, sliders) follow the skin. */
@@ -61,7 +83,12 @@ body {
   font-family: var(--font-body);
   overflow: hidden;
 }
-h1, h2, h3 { font-family: var(--font-heading); }
+h1 { font-family: var(--font-heading); }
+h2, h3 { font-family: var(--font-subheading); }
+/* Fixed-width face for anything numeric/identifier-like — addresses, tx ids,
+   balances, block heights. Previously hardcoded to one fixed font everywhere;
+   now a skin can choose it like any other typography role. */
+code, .mono { font-family: var(--font-mono); }
 
 /* ── Frosted-glass panels — now driven by editable tokens ─────────────────── */
 @layer components {
@@ -81,10 +108,40 @@ h1, h2, h3 { font-family: var(--font-heading); }
     box-shadow: 0 12px 44px rgba(0, 0, 0, 0.4),
       0 0 calc(var(--glow-strength) * 1.6) hsl(var(--glow-color) / 0.6);
   }
+  /* Optional texture/photo behind a panel's content, above its base color.
+     backdrop-filter above already makes .glass-panel a containing block for
+     absolutely-positioned children, so no extra `position` is needed here.
+     z-index:-1 keeps it behind normal in-flow content while staying above the
+     element's own background-color (painted first, as part of the box itself).
+     With no image set (--panel-bg-image: none, the default) this paints
+     nothing — zero change to any panel that hasn't uploaded a texture. */
+  .glass-panel::before {
+    content: "";
+    position: absolute; inset: 0; z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background-image: var(--panel-bg-image, none);
+    background-size: var(--panel-bg-image-size, cover);
+    background-repeat: var(--panel-bg-image-repeat, no-repeat);
+    background-position: center;
+    opacity: var(--panel-bg-image-opacity, 1);
+  }
   .glass-chip {
     @apply backdrop-blur-md rounded-md;
+    position: relative;
     background-color: hsl(var(--subpanel-bg) / var(--subpanel-opacity));
     border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
+  }
+  .glass-chip::before {
+    content: "";
+    position: absolute; inset: 0; z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background-image: var(--subpanel-bg-image, none);
+    background-size: var(--subpanel-bg-image-size, cover);
+    background-repeat: var(--subpanel-bg-image-repeat, no-repeat);
+    background-position: center;
+    opacity: var(--subpanel-bg-image-opacity, 1);
   }
 }
 
@@ -151,6 +208,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 /* ── Style panel controls ─────────────────────────────────────────────────── */
 .style-group { margin-bottom: 22px; }
 .style-group h3 {
+  font-family: var(--font-caption);
   font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.08em;
   color: hsl(var(--muted-foreground)); margin: 0 0 10px;
 }
@@ -197,7 +255,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .style-del { border: none; background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; padding: 4px 8px; }
 .style-note { font-size: 0.78rem; color: hsl(var(--muted-foreground)); margin: 8px 0 14px; }
-.skin-badge { margin-left: 8px; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em;
+.skin-badge { font-family: var(--font-caption); margin-left: 8px; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.05em;
   padding: 1px 6px; border-radius: 999px; background: hsl(var(--success) / 0.25); color: hsl(var(--success)); }
 .sound-test { display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
 .sound-test .wl-btn { padding: 6px 10px; font-size: 0.78rem; }
@@ -231,15 +289,26 @@ h1, h2, h3 { font-family: var(--font-heading); }
   border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
   display: flex; flex-direction: column; gap: 6px;
 }
-.bl-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: hsl(var(--muted-foreground)); }
+.bl-label { font-family: var(--font-caption); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: hsl(var(--muted-foreground)); }
 .bl-amt { font-size: 1.5rem; font-weight: 600; color: hsl(var(--foreground)); display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .bl-divi { white-space: nowrap; }
 .bl-amt em { font-size: 0.85rem; font-style: normal; color: hsl(var(--muted-foreground)); }
+/* Staking amount: 2pt smaller than Spendable, and half the gap before "DIVI". */
+.bl-amt-staking { font-size: 1.33rem; gap: 6px; }
+/* At-a-glance staking health dot next to the "Staking" label. */
+.stake-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+.stake-dot.on { background: hsl(var(--success)); box-shadow: 0 0 5px hsl(var(--success)); }
+/* NOT STAKING alert: red dot that flashes + glows, so it's impossible to miss. */
+.stake-dot.alert { width: 9px; height: 9px; background: hsl(0 90% 55%); animation: stake-alert 1.1s ease-in-out infinite; }
+@keyframes stake-alert { 0%, 100% { opacity: 0.4; box-shadow: 0 0 3px hsl(0 90% 55%); } 50% { opacity: 1; box-shadow: 0 0 9px 2px hsl(0 90% 55%); } }
+.stake-alert-text { color: hsl(0 90% 62%); font-weight: 700; letter-spacing: 0.03em; }
+.stake-cta { font-size: 0.62rem; letter-spacing: 0.05em; color: hsl(0 80% 68%); opacity: 0.9; }
+.stake-cta-setup { color: hsl(45 92% 60%); opacity: 1; } /* setup underway: calm gold, not red alert */
 .bl-sub { width: 100%; font-size: 0.8rem; color: hsl(var(--muted-foreground)); display: flex; gap: 12px; }
 
 .wl-status-head { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
 .wl-dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
-.wl-status-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.wl-status-label { font-family: var(--font-caption); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.08em; }
 .wl-status-line { font-size: 1rem; color: hsl(var(--foreground)); margin: 4px 0 14px; }
 .wl-status-chips { display: flex; flex-direction: column; gap: 8px; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
 .wl-chip-row { display: flex; gap: 8px; }
@@ -253,13 +322,15 @@ h1, h2, h3 { font-family: var(--font-heading); }
   display: flex; align-items: center; gap: 8px; width: 100%; max-width: 460px;
   background: hsl(var(--background) / 0.5); border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 8px 10px;
 }
-.addr-box code { flex: 1; font-family: ui-monospace, monospace; font-size: 0.82rem; color: hsl(var(--foreground)); word-break: break-all; text-align: left; }
+.addr-box code { flex: 1; font-family: var(--font-mono); font-size: 0.82rem; color: hsl(var(--foreground)); word-break: break-all; text-align: left; }
 
 .wl-btn {
   border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 8px 16px; cursor: pointer;
   background: hsl(var(--background) / 0.5); color: hsl(var(--foreground)); font-size: 0.85rem; white-space: nowrap;
 }
 .wl-btn-primary { background: hsl(var(--primary)); border-color: transparent; color: #fff; }
+/* Active-staking state: green, so "Staking · Click to Stop" reads as on/good. */
+.wl-btn-staking { background: hsl(var(--success)); border-color: transparent; color: #fff; opacity: 1; }
 .wl-btn:disabled { opacity: 0.5; cursor: default; }
 .wl-link { border: none; background: none; color: hsl(var(--primary)); cursor: pointer; font-size: 0.85rem; }
 .wl-note { font-size: 0.85rem; color: hsl(var(--muted-foreground)); max-width: 460px; }
@@ -296,7 +367,9 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .act-amt { font-weight: 600; }
 .act-amt.pos { color: hsl(var(--success)); }
 .act-amt.neg { color: hsl(var(--foreground)); }
-.act-addr-full { font-family: ui-monospace, monospace; font-size: 0.72rem; color: hsl(var(--muted-foreground)); word-break: break-all; line-height: 1.5; }
+/* Certificate lock: not income, so shown muted, never green. */
+.act-amt-locked { color: hsl(var(--muted-foreground)); font-weight: 500; }
+.act-addr-full { font-family: var(--font-mono); font-size: 0.72rem; color: hsl(var(--muted-foreground)); word-break: break-all; line-height: 1.5; }
 .act-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .act-time { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
 .act-actions { display: flex; gap: 6px; }
@@ -332,7 +405,41 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .shell {
   position: relative; z-index: 10; height: 100%;
   display: flex; gap: 18px; padding: 26px;
+  transition: gap 220ms ease, padding 220ms ease;
 }
+
+/* ── Focus mode ───────────────────────────────────────────────────────────────
+   A community app can ask for the whole window. Rather than covering the wallet
+   with an overlay (which cannot work anyway: .main-panel has a backdrop-filter,
+   and that makes it the containing block for any fixed-position child, so an
+   overlay is trapped inside the panel), the chrome folds away and the content
+   area simply grows into the space.
+
+   The sidebar and the header stay on screen as thin tabs, a few percent of the
+   window, so nothing is ever unreachable: the wallet must never be able to trap
+   someone inside an app. */
+.shell-focus { gap: 8px; padding: 8px; }
+.shell-focus .col-left { width: 26px; }
+.shell-focus .col-left > *:not(.chrome-tab) { display: none; }
+.shell-focus .header-panel > *:not(.chrome-tab) { display: none; }
+.shell-focus .header-panel { height: 22px; padding: 0; }
+
+.chrome-tab {
+  display: none;
+  align-items: center; justify-content: center;
+  cursor: pointer; border: 0; padding: 0;
+  color: hsl(var(--foreground) / 0.75);
+  background: hsl(var(--panel-bg) / var(--panel-opacity));
+  border-radius: var(--panel-radius);
+  backdrop-filter: blur(var(--panel-blur));
+  -webkit-backdrop-filter: blur(var(--panel-blur));
+  transition: color 140ms ease, background 140ms ease;
+}
+.chrome-tab { border: 1px solid hsl(var(--border) / 0.5); }
+.chrome-tab:hover { color: hsl(var(--primary)); background: hsl(var(--primary) / 0.18); }
+.shell-focus .chrome-tab { display: flex; }
+.shell-focus .col-left > .chrome-tab { width: 26px; flex: 1; }
+.shell-focus .header-panel > .chrome-tab { width: 100%; height: 22px; }
 .col-left { width: 224px; flex-shrink: 0; display: flex; flex-direction: column; gap: 18px; min-height: 0; }
 .col-right { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 18px; min-height: 0; }
 .sidebar {
@@ -363,7 +470,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   background: none; border: none; padding: 0; cursor: pointer; color: inherit; text-align: left; min-width: 0;
 }
 .hdr-lottery { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
-.lot-count { font-family: ui-monospace, monospace; font-size: 1.15rem; font-weight: 600; color: hsl(var(--primary)); }
+.lot-count { font-family: var(--font-mono); font-size: 1.15rem; font-weight: 600; color: hsl(var(--primary)); }
 .lot-when { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
 
 .hdr-addr-panel { flex-direction: column; }
@@ -376,7 +483,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   border: var(--subpanel-outline-width) solid hsl(var(--subpanel-outline-color));
   border-radius: 8px; padding: 9px 10px; cursor: pointer; color: hsl(var(--foreground));
 }
-.addr-toggle-text { flex: 1; font-family: ui-monospace, monospace; font-size: 0.72rem; text-align: left; word-break: break-all; }
+.addr-toggle-text { flex: 1; font-family: var(--font-mono); font-size: 0.72rem; text-align: left; word-break: break-all; }
 .addr-chevron { color: hsl(var(--muted-foreground)); transition: transform 0.2s ease; }
 .addr-chevron.up { transform: rotate(180deg); }
 
@@ -402,7 +509,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em;
   padding: 2px 7px; border-radius: 999px; background: hsl(var(--primary) / 0.25); color: hsl(var(--primary)); flex-shrink: 0;
 }
-.addr-full { font-family: ui-monospace, monospace; font-size: 0.7rem; color: hsl(var(--muted-foreground)); word-break: break-all; }
+.addr-full { font-family: var(--font-mono); font-size: 0.7rem; color: hsl(var(--muted-foreground)); word-break: break-all; }
 .addr-counts { display: flex; gap: 14px; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
 .sidebar-brand { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 0 10px 16.5px; }
 .brand-logo {
@@ -413,14 +520,22 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .sidebar-brand h1 { margin: 0; font-size: 1.2rem; font-weight: 700; color: hsl(var(--foreground)); text-align: center; white-space: nowrap; }
 .sidebar-brand .ver { font-size: 0.63rem; font-weight: 700; color: hsl(var(--primary)); text-align: center; margin-top: -1.2px; }
 /* Nav rows sit 40% closer: gap 4px→2.4px and vertical padding 11px→6.6px. */
-.nav { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 2.4px; }
+/* Sidebar spacing was tightened to fit another entry without widening the
+   column: rows are 1pt smaller (0.92rem -> 0.837rem, since 1pt is 1.333px at a
+   16px root) and the space between them is down 20%, both in the gap and in the
+   vertical padding that makes up most of what reads as the gap. */
+.nav { list-style: none; margin: 0; padding: 0; flex: 1; display: flex; flex-direction: column; gap: 1.92px; }
 .nav-item {
   width: 100%; display: flex; align-items: center; gap: 12px;
-  padding: 6.6px 12px; border: none; border-radius: 10px; cursor: pointer;
+  padding: 5.28px 12px; border: none; border-radius: 10px; cursor: pointer;
   background: transparent; color: hsl(var(--muted-foreground));
-  font-size: 0.92rem; text-align: left;
+  font-size: 0.837rem; text-align: left;
   transition: background 0.15s ease, color 0.15s ease;
 }
+/* A nav label containing a newline wraps onto two lines. Line-height is pulled
+   in tight (1.05) so a two-line row is barely taller than a one-line one, and
+   the rows stay evenly spaced. Single-line labels are unaffected. */
+.nav-item span { white-space: pre-line; line-height: 1.05; }
 .nav-item:hover { background: hsl(var(--primary) / 0.3); color: hsl(var(--foreground)); }
 .nav-item-active { background: hsl(var(--primary) / 0.18); color: hsl(var(--foreground)); }
 .nav-item-active .ic { color: hsl(var(--primary)); }
@@ -512,7 +627,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .ts-fileinfo { display: flex; flex-direction: column; gap: 4px; width: 100%; }
 .ts-filename { font-size: 0.9rem; color: hsl(var(--foreground)); word-break: break-all; }
 .ts-hash {
-  font-family: ui-monospace, monospace; font-size: 0.72rem; color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono); font-size: 0.72rem; color: hsl(var(--muted-foreground));
   word-break: break-all; background: hsl(var(--background) / 0.5); border-radius: 6px; padding: 6px 8px;
 }
 /* Once a file is chosen the panel uses the full width available and splits into
@@ -540,7 +655,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   width: 100%; height: 150px; display: flex; align-items: center; justify-content: center;
   border-radius: 10px; background: hsl(var(--background) / 0.55);
   border: 1px dashed hsl(var(--border));
-  font-family: ui-monospace, monospace; font-size: 1.1rem; font-weight: 700;
+  font-family: var(--font-mono); font-size: 1.1rem; font-weight: 700;
   color: hsl(var(--muted-foreground)); letter-spacing: 0.08em;
 }
 .ts-meta { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0; font-size: 0.8rem; }
@@ -583,7 +698,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 /* Cost is part of the decision, so it sits on the button itself. */
 .ts-anchor { display: inline-flex; align-items: center; gap: 10px; }
 .ts-cost {
-  font-family: ui-monospace, monospace; font-size: 0.74rem; font-weight: 600;
+  font-family: var(--font-mono); font-size: 0.74rem; font-weight: 600;
   padding: 2px 8px; border-radius: 999px;
   background: hsl(0 0% 0% / 0.28); color: hsl(var(--warning));
 }
@@ -608,7 +723,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .poe-card-thumb:hover { border-color: hsl(var(--primary)); }
 .poe-card-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .poe-card-ext {
-  font-family: ui-monospace, monospace; font-size: 0.7rem; font-weight: 700;
+  font-family: var(--font-mono); font-size: 0.7rem; font-weight: 700;
   color: hsl(var(--muted-foreground));
 }
 .poe-card-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
@@ -617,7 +732,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .poe-card-sub, .poe-card-txid { font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
-.poe-card-txid { font-family: ui-monospace, monospace; }
+.poe-card-txid { font-family: var(--font-mono); }
 .poe-card-when { font-size: 0.74rem; font-weight: 600; }
 .poe-card-when.ok { color: hsl(var(--success)); }
 .poe-card-when.pending { color: hsl(var(--warning)); }
@@ -689,7 +804,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .wl-input {
   width: 100%; max-width: 460px; border: 1px solid hsl(var(--border)); border-radius: 8px;
   padding: 9px 12px; background: hsl(var(--background) / 0.5); color: hsl(var(--foreground));
-  font-family: ui-monospace, monospace; font-size: 0.82rem;
+  font-family: var(--font-mono); font-size: 0.82rem;
 }
 .ts-proof {
   width: 100%; border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px;
@@ -783,7 +898,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .stake-size { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); }
 .stake-size em { font-size: 0.72rem; font-style: normal; color: hsl(var(--muted-foreground)); }
 .stake-name { font-size: 0.8rem; color: hsl(var(--muted-foreground)); flex: 1; }
-.stake-full { font-family: ui-monospace, monospace; font-size: 0.7rem; color: hsl(var(--muted-foreground)); word-break: break-all; }
+.stake-full { font-family: var(--font-mono); font-size: 0.7rem; color: hsl(var(--muted-foreground)); word-break: break-all; }
 .stake-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
 .stake-win-big { color: hsl(var(--warning)); }
 .stake-win-small { color: hsl(var(--foreground)); }
@@ -791,12 +906,12 @@ h1, h2, h3 { font-family: var(--font-heading); }
 /* Next-lottery toggle button + lottery dropdown */
 .hdr-lottery-btn { display: inline-flex; align-items: flex-start; gap: 5px; background: none; border: none; cursor: pointer; color: inherit; padding: 0; }
 .lot-mywins { padding: 4px 4px 10px; border-bottom: 1px solid hsl(var(--border) / 0.4); margin-bottom: 8px; }
-.lot-mywins-hdr { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--foreground)); margin-bottom: 6px; }
+.lot-mywins-hdr { font-family: var(--font-caption); font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--foreground)); margin-bottom: 6px; }
 .lot-mywins-row { display: flex; gap: 16px; font-size: 0.9rem; align-items: baseline; }
 .lot-total { margin-left: auto; font-weight: 700; color: hsl(var(--primary)); }
 .lot-trophy-gold { font-size: 1.12em; }
 .lot-trophy-silver { font-size: 0.9em; filter: grayscale(1) brightness(1.6); display: inline-block; }
-.lot-board-hdr { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--foreground)); margin-bottom: 6px; }
+.lot-board-hdr { font-family: var(--font-caption); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--foreground)); margin-bottom: 6px; }
 .lot-board { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .lot-row {
   display: flex; flex-direction: column; gap: 2px; font-size: 0.75rem;
@@ -806,8 +921,8 @@ h1, h2, h3 { font-family: var(--font-heading); }
 }
 .lot-row-top { display: flex; align-items: center; gap: 10px; }
 .lot-rank { color: hsl(var(--primary)); font-weight: 600; flex-shrink: 0; width: 28px; }
-.lot-addr { flex: 1; font-family: ui-monospace, monospace; color: hsl(var(--muted-foreground)); word-break: break-all; }
-.lot-score { font-family: ui-monospace, monospace; color: hsl(var(--primary)); font-weight: 700; flex-shrink: 0; }
+.lot-addr { flex: 1; font-family: var(--font-mono); color: hsl(var(--muted-foreground)); word-break: break-all; }
+.lot-score { font-family: var(--font-mono); color: hsl(var(--primary)); font-weight: 700; flex-shrink: 0; }
 .lot-row-sub { font-size: 0.62rem; color: hsl(var(--muted-foreground)); padding-left: 38px; }
 
 /* Block height that's behind: greyed last-known value with a "+?" hint. */
@@ -817,7 +932,10 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .chip-label { font-size: 0.72rem; color: hsl(var(--muted-foreground)); display: inline-flex; align-items: center; gap: 4px; }
 .chip-num { font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); white-space: nowrap; }
 /* Block-height chip: never let its number be clipped by a transient narrow layout. */
-.wl-chip-row > .glass-chip.blk-chip { min-width: max-content; }
+.wl-chip-row > .glass-chip.blk-chip { min-width: max-content; overflow: visible; }
+/* Guard the block-height number against edge-clipping (first/last char): let it
+   size to its content and never crop, even with the "+?" sync suffix. */
+.wl-status-chips .glass-chip.blk-chip .chip-num { overflow: visible; white-space: nowrap; padding: 0 4px; }
 .chip-num.blk-stale { color: hsl(var(--muted-foreground)); }
 .chip-label-peers { color: hsl(var(--primary)); }
 .chip-label-nodes { color: hsl(210 85% 62%); } /* blue, matches Full Network */
@@ -874,7 +992,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .netmap-tip-blue { border-color: hsl(210 85% 62% / 0.7); }
 .netmap-tip-blue .netmap-tip-title { color: hsl(210 85% 66%); }
 .netmap-tip-blue .netmap-tip-line { color: hsl(210 60% 70%); }
-.netmap-tip-line { font-size: 0.72rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; word-break: break-all; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.netmap-tip-line { font-size: 0.72rem; color: hsl(var(--muted-foreground)); font-family: var(--font-mono); word-break: break-all; display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
 .netmap-tip-won { color: hsl(var(--warning)); font-weight: 700; white-space: nowrap; flex-shrink: 0; }
 .netmap-empty {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
@@ -883,7 +1001,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 
 /* ── Block-chain visualization (moving blocks across the map bottom) ────────── */
 .bv-wrap {
-  position: absolute; left: 0; right: 0; bottom: 10px; height: 130px;
+  position: absolute; left: 46px; right: 0; bottom: 10px; height: 130px;
   pointer-events: none; overflow: hidden; z-index: 4;
 }
 .bv-panel {
@@ -904,17 +1022,17 @@ h1, h2, h3 { font-family: var(--font-heading); }
   83%  { border-color: hsl(300 90% 60%); }
   100% { border-color: hsl(360 90% 60%); }
 }
-.bv-height { font-size: 0.9rem; font-weight: 600; color: hsl(var(--primary)); font-family: ui-monospace, monospace; white-space: nowrap; }
+.bv-height { font-size: 0.9rem; font-weight: 600; color: hsl(var(--primary)); font-family: var(--font-mono); white-space: nowrap; }
 .bv-stake { display: flex; flex-direction: column; gap: 1px; }
 .bv-stake-hdr { font-size: 0.62rem; font-weight: 700; letter-spacing: 0.06em; color: hsl(var(--warning)); }
-.bv-stake-amt { font-size: 0.7rem; font-weight: 600; color: hsl(var(--success)); font-family: ui-monospace, monospace; }
-.bv-stake-line { font-size: 0.58rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; white-space: nowrap; }
-.bv-txs-hdr { font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--muted-foreground)); margin-top: 2px; }
+.bv-stake-amt { font-size: 0.7rem; font-weight: 600; color: hsl(var(--success)); font-family: var(--font-mono); }
+.bv-stake-line { font-size: 0.58rem; color: hsl(var(--muted-foreground)); font-family: var(--font-mono); white-space: nowrap; }
+.bv-txs-hdr { font-family: var(--font-caption); font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.05em; color: hsl(var(--muted-foreground)); margin-top: 2px; }
 .bv-txs { flex: 1; overflow: hidden; position: relative; }
 .bv-txs-inner { display: flex; flex-direction: column; gap: 2px; }
 .bv-txs-inner.bv-scrolling { animation: bv-scroll linear infinite; }
 @keyframes bv-scroll { from { transform: translateY(0); } to { transform: translateY(-50%); } }
-.bv-tx { font-size: 0.6rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; white-space: nowrap; }
+.bv-tx { font-size: 0.6rem; color: hsl(var(--muted-foreground)); font-family: var(--font-mono); white-space: nowrap; }
 /* Nyan cat — a win! vertically centered, right-justified, on top of the stats. */
 .bv-nyan {
   position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
@@ -976,7 +1094,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .cm-row-top { display: flex; justify-content: space-between; align-items: baseline; }
 .cm-amt { font-size: 0.95rem; font-weight: 600; }
 .cm-amt em { font-style: normal; opacity: 0.6; font-size: 0.72em; }
-.cm-when { font-size: 0.82rem; color: hsl(var(--muted-foreground)); font-family: ui-monospace, monospace; }
+.cm-when { font-size: 0.82rem; color: hsl(var(--muted-foreground)); font-family: var(--font-mono); }
 .cm-mature .cm-when { color: hsl(var(--success)); }
 .cm-bar { height: 5px; border-radius: 3px; background: hsl(var(--muted) / 0.5); overflow: hidden; }
 .cm-bar-fill { height: 100%; background: hsl(var(--primary)); border-radius: 3px; transition: width 0.6s ease; }
@@ -992,7 +1110,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   background: hsl(var(--warning) / 0.08); border-radius: 8px; padding: 8px 10px; line-height: 1.45;
 }
 .pw-seed {
-  font-family: ui-monospace, monospace; font-size: 0.85rem; line-height: 1.6; word-spacing: 4px;
+  font-family: var(--font-mono); font-size: 0.85rem; line-height: 1.6; word-spacing: 4px;
   border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 10px 12px; background: hsl(var(--background) / 0.5);
 }
 .pw-check { display: flex; gap: 8px; align-items: flex-start; font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
@@ -1022,6 +1140,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px; align-items: start;
 }
+/* Only collapse to a single column when the window is genuinely narrow. */
 @media (max-width: 680px) {
   .send-grid { grid-template-columns: 1fr; }
 }
@@ -1054,7 +1173,7 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .send-avail { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
 .send-confirm { display: flex; flex-direction: column; gap: 8px; border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 14px; }
 .send-confirm-line { margin: 0; font-size: 0.95rem; }
-.send-confirm-addr { margin: 0; font-family: ui-monospace, monospace; font-size: 0.85rem; word-break: break-all; color: hsl(var(--foreground)); }
+.send-confirm-addr { margin: 0; font-family: var(--font-mono); font-size: 0.85rem; word-break: break-all; color: hsl(var(--foreground)); }
 .send-warn { margin: 0; font-size: 0.8rem; color: hsl(var(--warning)); }
 .send-actions { display: flex; gap: 8px; margin-top: 4px; }
 .send-done { font-size: 1.1rem; font-weight: 600; color: hsl(var(--success)); }
@@ -1157,6 +1276,23 @@ h1, h2, h3 { font-family: var(--font-heading); }
 /* ---- Fast Send arrivals in history ---- */
 .activity-row.fast { border-left: 3px solid hsl(25 95% 56%); padding-left: 9px; }
 .act-fast { color: hsl(25 95% 58%); font-weight: 800; letter-spacing: 0.02em; }
+/* Bearer-certificate send in history/overview */
+.act-bearer { color: hsl(280 60% 70%); font-weight: 700; letter-spacing: 0.02em; }
+
+/* ---- Receive view: incoming-payment watcher ---- */
+.rcv-watch { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.rcv-watch.idle { font-size: 0.8rem; color: hsl(var(--muted-foreground)); margin-bottom: 12px; }
+.rcv-watch-hit {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 13px; border-radius: 10px;
+  border: 1px solid hsl(145 60% 50% / 0.5); background: hsl(145 60% 50% / 0.08);
+  animation: fr-pop 0.25s ease-out;
+}
+.rcv-watch-hit.fast { border-color: hsl(25 95% 56% / 0.6); background: hsl(25 95% 55% / 0.08); }
+.rcv-watch-badge { font-size: 0.72rem; font-weight: 800; letter-spacing: 0.03em; color: hsl(145 65% 52%); }
+.rcv-watch-hit.fast .rcv-watch-badge { color: hsl(25 95% 58%); }
+.rcv-watch-amt { font-size: 1rem; font-weight: 700; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; }
+.rcv-watch-note { font-size: 0.74rem; color: hsl(var(--muted-foreground)); margin-left: auto; }
 
 /* ---- Spendable fiat value (header) ---- */
 /* Fiat value: same size as the DIVI amount, white, right-justified in the row;
@@ -1256,15 +1392,14 @@ h1, h2, h3 { font-family: var(--font-heading); }
 
 /* ---- Nodes-by-country overlay (bottom-left of the map, above the blocks) ---- */
 .nbc {
-  position: absolute; left: 10px; bottom: 150px; z-index: 5;
-  width: 166px; max-height: 34%;
+  position: absolute; right: 10px; top: 10px; z-index: 6;
+  width: 176px; max-height: 72%;
   display: flex; flex-direction: column; gap: 5px;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid hsl(210 85% 62% / 0.7); /* blue, matches the network lines */
   border-radius: 8px; padding: 7px 9px; box-sizing: border-box; font-size: 0.62rem;
 }
 /* Country | FULL count | Lovenode count — the two number columns sit close. */
 .nbc-head, .nbc-row { display: grid; grid-template-columns: 1fr 2.1em 1.6em; align-items: baseline; column-gap: 4px; }
+.nbc-head { padding-right: 14px; } /* room for the absolute close button */
 .nbc-head { font-size: 0.65rem; font-weight: 600; }
 .nbc-title { color: hsl(210 85% 66%); }
 .nbc-h-full { text-align: right; color: hsl(210 60% 72%); }
@@ -1339,6 +1474,40 @@ h1, h2, h3 { font-family: var(--font-heading); }
   transition: background 0.15s, border-color 0.15s;
 }
 .node-map-btn:hover { background: hsl(var(--primary) / 0.28); border-color: hsl(var(--primary) / 0.7); }
+/* Charts + Node Map buttons sit together at the right of the Overview title row. */
+.title-actions { display: flex; align-items: center; gap: 10px; }
+
+/* ---- Divi price chart (Charts view) ---- */
+.pricechart { display: flex; flex-direction: column; height: 100%; }
+.pc-head { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+.pc-back {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  padding: 6px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600;
+  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.14);
+  border: 1px solid hsl(var(--primary) / 0.45);
+}
+.pc-back:hover { background: hsl(var(--primary) / 0.28); }
+.pc-title { margin: 0; font-size: 1.4rem; }
+.pc-summary { display: inline-flex; align-items: baseline; gap: 10px; margin-left: auto; }
+.pc-price { font-size: 1.5rem; font-weight: 700; color: hsl(var(--foreground)); }
+.pc-change { font-size: 0.95rem; font-weight: 600; }
+.pc-change.up { color: #2bd94f; }
+.pc-change.down { color: #ff5252; }
+.pc-ranges { display: flex; gap: 6px; margin-bottom: 12px; }
+.pc-range {
+  cursor: pointer; padding: 5px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
+  color: hsl(var(--muted-foreground)); background: transparent; border: 1px solid hsl(var(--border));
+}
+.pc-range:hover { color: hsl(var(--foreground)); }
+.pc-range.on { color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.2); border-color: hsl(var(--primary) / 0.6); }
+.pc-chartwrap { position: relative; flex: 1; min-height: 340px; }
+.pc-svg { width: 100%; height: 340px; display: block; }
+.pc-empty { display: flex; align-items: center; justify-content: center; height: 340px; color: hsl(var(--muted-foreground)); }
+.pc-hi, .pc-lo, .pc-d0, .pc-d1 { position: absolute; font-size: 0.72rem; color: hsl(var(--muted-foreground)); pointer-events: none; }
+.pc-hi { top: 2px; left: 4px; }
+.pc-lo { bottom: 24px; left: 4px; }
+.pc-d0 { bottom: 4px; left: 4px; }
+.pc-d1 { bottom: 4px; right: 4px; }
 
 /* ---- My Nodes (Settings): switch which node the wallet reads ---- */
 .mynodes { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
@@ -1388,8 +1557,6 @@ h1, h2, h3 { font-family: var(--font-heading); }
   position: absolute; right: 10px; top: 10px; z-index: 6;
   width: 244px; max-height: 72%;
   display: flex; flex-direction: column; gap: 5px;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid hsl(210 85% 62% / 0.7); /* blue, matches the network lines */
   border-radius: 8px; padding: 7px 9px; box-sizing: border-box; font-size: 0.62rem;
 }
 .fn-head { display: flex; align-items: center; justify-content: space-between; }
@@ -1431,18 +1598,63 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .bearer-made-amt { font-size: 1rem; font-weight: 700; color: hsl(var(--foreground)); text-align: center; }
 .bearer-qr { width: 160px; height: 160px; align-self: center; background: #fff; border-radius: 8px; padding: 6px; }
 .bearer-code {
-  font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem; word-break: break-all; cursor: pointer;
+  font-family: var(--font-mono); font-size: 0.72rem; word-break: break-all; cursor: pointer;
   color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.08);
   border: 1px solid hsl(var(--border)); border-radius: 8px; padding: 9px 11px; line-height: 1.4;
 }
-.bearer-code-input { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; resize: vertical; }
+.bearer-code-input { font-family: var(--font-mono); font-size: 0.75rem; resize: vertical; }
 .bearer-history { margin-top: 8px; border-top: 1px solid hsl(var(--border)); padding-top: 10px; }
 .bearer-history-title { font-size: 0.75rem; font-weight: 600; color: hsl(var(--muted-foreground)); margin-bottom: 6px; }
 .bearer-history-row { display: flex; align-items: center; gap: 12px; font-size: 0.82rem; padding: 3px 0; }
 .bearer-history-amt { flex: 1; color: hsl(var(--foreground)); }
 
-/* Node Speed + Mempool triggers sit together at the right of the topbar. */
-.netmap-tools { display: inline-flex; align-items: center; gap: 6px; }
+/* Flat/Globe toggle + hamburger sit at the right of the topbar, with a gap. */
+.netmap-tools { display: inline-flex; align-items: center; gap: 16px; }
+.netmap-burger {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 26px; border-radius: 6px; cursor: pointer;
+  background: hsl(210 85% 62% / 0.14); border: 1px solid hsl(210 85% 62% / 0.5);
+  color: hsl(210 85% 72%); transition: background 0.15s, border-color 0.15s;
+}
+.netmap-burger:hover, .netmap-burger.on { background: hsl(210 85% 62% / 0.32); border-color: hsl(210 85% 62% / 0.9); }
+/* Hamburger dropdown (top-right); each item opens one overlay panel. */
+.netmap-menu {
+  position: absolute; right: 10px; top: 10px; z-index: 8;
+  display: flex; flex-direction: column; min-width: 150px; padding: 5px;
+  background: rgba(0, 0, 0, 0.72); border: 1px solid hsl(210 85% 62% / 0.7); border-radius: 8px;
+}
+.netmap-menu button {
+  background: none; border: none; text-align: left; cursor: pointer;
+  color: hsl(var(--foreground)); font-size: 0.8rem; padding: 7px 9px; border-radius: 6px;
+}
+.netmap-menu button:hover { background: hsl(210 85% 62% / 0.22); }
+/* Blockstream visibility eye (bottom-left, above the blockstream). */
+.netmap-eye {
+  position: absolute; left: 10px; bottom: 66px; z-index: 6; /* vertically centred on the blockstream, in its left gutter */
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 17px; border-radius: 5px; cursor: pointer;
+  background: rgba(0, 0, 0, 0.45); border: 1px solid hsl(210 85% 62% / 0.5);
+  color: hsl(210 85% 72%);
+}
+.netmap-eye:hover { background: hsl(210 85% 62% / 0.28); }
+.bv-dim { transition: opacity 0.3s ease; }
+.nbc-close { position: absolute; top: 4px; right: 6px; background: none; border: none; color: hsl(var(--muted-foreground)); font-size: 1rem; line-height: 1; cursor: pointer; padding: 0 2px; }
+.nbc-close:hover { color: hsl(var(--foreground)); }
+
+/* FLAT | GLOBE segmented toggle. */
+.netmap-viewtoggle { display: inline-flex; border: 1px solid hsl(210 85% 62% / 0.5); border-radius: 6px; overflow: hidden; margin-right: 4px; }
+.netmap-viewtoggle button {
+  background: hsl(210 85% 62% / 0.10); border: none; cursor: pointer;
+  color: hsl(210 60% 74%); font-size: 0.72rem; font-weight: 600; padding: 3px 9px;
+}
+.netmap-viewtoggle button.on { background: hsl(210 85% 62% / 0.34); color: hsl(210 85% 82%); }
+
+/* The 3D globe fills the map area, behind the overlay panels (which are z>=6). */
+.netmap-globe { position: absolute; inset: 0; z-index: 1; }
+.globe-tip {
+  background: rgba(0, 0, 0, 0.8); border: 1px solid hsl(210 85% 62% / 0.6); border-radius: 6px;
+  padding: 4px 7px; font-size: 0.72rem; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums;
+}
 .netmap-mem { font-weight: 700; font-size: 0.9rem; line-height: 1; }
 
 /* Live mempool panel — same frame and top-right anchor as Node Speed; only one
@@ -1451,8 +1663,6 @@ h1, h2, h3 { font-family: var(--font-heading); }
   position: absolute; right: 10px; top: 10px; z-index: 6;
   width: 258px; max-height: 78%;
   display: flex; flex-direction: column; gap: 5px;
-  background: rgba(0, 0, 0, 0.5);
-  border: 1px solid hsl(210 85% 62% / 0.7);
   border-radius: 8px; padding: 7px 9px; box-sizing: border-box; font-size: 0.62rem;
 }
 .mp-count {
@@ -1637,3 +1847,51 @@ h1, h2, h3 { font-family: var(--font-heading); }
 .agent-create-footer { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; display: flex; flex-direction: column; gap: 2px; padding: 7px 4px; background: rgba(8,8,12,0.74); }
 .agent-create-name { font-size: 0.82rem; font-weight: 700; color: #fff; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-create-edit { font-size: 0.62rem; font-weight: 600; letter-spacing: 0.06em; color: hsl(var(--primary)); text-align: center; }
+
+/* ── Skins Gallery: "Publish" inline form under a saved theme (StylePanel.tsx) ── */
+.style-saved-row { flex-wrap: wrap; }
+.style-publish-form {
+  flex-basis: 100%; width: 100%;
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 6px 0 10px; padding: 10px;
+  border: 1px solid hsl(var(--border)); border-radius: 8px;
+}
+.style-publish-form textarea.style-name { resize: vertical; font: inherit; }
+
+/* ── Skins Gallery: browse (SkinsGallery.tsx) + detail (SkinDetail.tsx) ── */
+.skins-gallery { padding: 4px; }
+.gallery-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+.gallery-card {
+  display: flex; flex-direction: column; text-align: left; cursor: pointer;
+  border: 1px solid hsl(var(--border)); border-radius: 10px; overflow: hidden;
+  background: hsl(var(--card) / 0.5); padding: 0; font: inherit; color: inherit;
+}
+.gallery-card:hover { border-color: hsl(var(--primary) / 0.6); }
+.gallery-card-preview {
+  aspect-ratio: 16 / 10; background: hsl(var(--muted, 0 0% 20%) / 0.4) center / cover no-repeat;
+}
+.gallery-card-body { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; }
+.gallery-card-name { font-weight: 700; color: hsl(var(--foreground)); }
+.gallery-card-author { font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
+.gallery-card-price { font-size: 0.78rem; font-weight: 600; color: hsl(var(--primary)); }
+
+.gallery-detail { display: flex; flex-direction: column; gap: 14px; }
+.gallery-detail-body { display: flex; gap: 20px; flex-wrap: wrap; }
+.gallery-detail-preview {
+  width: min(360px, 100%); aspect-ratio: 16 / 10; border-radius: 12px;
+  background: hsl(var(--muted, 0 0% 20%) / 0.4) center / cover no-repeat;
+  border: 1px solid hsl(var(--border));
+}
+.gallery-detail-info { display: flex; flex-direction: column; gap: 8px; min-width: 220px; flex: 1; }
+.gallery-detail-info h2 { margin: 0; color: hsl(var(--foreground)); }
+.gallery-detail-author { margin: 0; font-size: 0.82rem; color: hsl(var(--muted-foreground)); }
+.gallery-detail-desc { margin: 0; color: hsl(var(--foreground)); line-height: 1.5; }
+.gallery-price { margin: 0; font-weight: 700; color: hsl(var(--primary)); }
+
+.gallery-buy-confirm { display: flex; flex-direction: column; gap: 8px; }
+.gallery-buy-actions { display: flex; gap: 8px; }
+.gallery-buy-done { display: flex; flex-direction: column; gap: 4px; }
+.gallery-buy-txid { font-size: 0.72rem; word-break: break-all; opacity: 0.75; }

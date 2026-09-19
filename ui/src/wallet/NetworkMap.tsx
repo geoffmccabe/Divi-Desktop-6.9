@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { networkPeers, probePeers, listNodes, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
-import { loadKnown, recordKnown, type Known } from "./knownPeers";
+import { loadKnown, recordKnown, addMyIps, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
 import { BlockChainViz } from "./BlockChainViz";
 import { PrimerLove } from "./PrimerLove";
 import { usePrimer } from "./primerStore";
 import { FastestNodes, type FastCandidate } from "./FastestNodes";
 import { Mempool } from "./Mempool";
+import { GlobeMap, type GlobePoint, type GlobeArc } from "./GlobeMap";
 import { NewestNodesPanel } from "./NewestNodesPanel";
 import { baselineNewNodes, newNodes, noteSeen, spiralDiameter, takeUnannouncedArrivals, type NewNode } from "./newNodes";
+import { classifyNode } from "./nodeTypes";
+import { pulseActivity, pulseTrigger, makeLegs, legU, holdOp, pingDone, type Leg } from "./activityPulse";
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
@@ -76,7 +79,6 @@ function hslVar(name: string): (a: number) => string {
   const [h, s, l] = m ? [m[1], m[2], m[3]] : ["0", "0", "100"];
   return (a: number) => `hsla(${h}, ${s}%, ${l}%, ${a})`;
 }
-const GREEN = (a: number) => `hsla(145, 80%, 50%, ${a})`;
 
 // Per-arc "flex" animation + colour blend, chosen randomly and kept per peer so
 // each connection arc bends and shifts colour independently.
@@ -136,6 +138,7 @@ function drawSpiral(
   diameter: number,
   now: number,
   highlighted: boolean,
+  baseHue: number,
 ) {
   const dia = highlighted ? diameter * 2 : diameter;
   const outer = dia / 2;
@@ -144,8 +147,8 @@ function drawSpiral(
   // 9 rev/min base (3x the earlier 3 rev/min), 3x faster again when highlighted.
   const revMs = highlighted ? 20000 / 9 : 20000 / 3;
   const spin = ((now % revMs) / revMs) * Math.PI * 2;
-  // hue pulses ±18° around aqua (177) once per second
-  const hue = 177 + 18 * Math.sin((now / 1000) * Math.PI * 2);
+  // hue pulses ±18° around the theme's "new node" hue once per second
+  const hue = baseHue + 18 * Math.sin((now / 1000) * Math.PI * 2);
   const maxT = TURNS * Math.PI * 2;
   const STEPS = 72;
   ctx.save();
@@ -250,15 +253,25 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     label: "this node",
     remote: false,
   });
-  const [showFastest, setShowFastest] = useState(false);
-  const [showMempool, setShowMempool] = useState(false);
-  const [showNewest, setShowNewest] = useState(false);
+  // One overlay panel at a time, chosen from the hamburger menu (all top-right).
+  const [panel, setPanel] = useState<null | "country" | "mempool" | "newest" | "speed">(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [blockDim, setBlockDim] = useState(false); // eye toggle dims the blockstream
+  // FLAT vs GLOBE view. When GLOBE is on, the 2D canvas loop pauses (see draw())
+  // and the WebGL globe renders the same nodes/arcs on top.
+  const [globe, setGlobe] = useState(false);
+  const globeActiveRef = useRef(false);
+  globeActiveRef.current = globe;
   // New-node spirals: the list the draw loop animates, refreshed off the poll (a
   // ref so drawing never triggers a re-render). highlightIp = the row the user is
   // hovering/clicking in the panel → its spiral grows 2x and spins 3x faster.
   const newNodesRef = useRef<NewNode[]>([]);
   const highlightIpRef = useRef<string | null>(null);
   const arrivalFxRef = useRef<Map<string, number>>(new Map()); // ip → flash start ms
+  // Independent gold pings (built per pulse): each a peer + 1-2 network nodes + 4
+  // jittered legs. `lastPulseRef` detects a fresh pulse to rebuild the set.
+  const pingsRef = useRef<{ peer: [number, number]; nets: [number, number][]; legs: Leg[] }[]>([]);
+  const lastPulseRef = useRef(0);
 
   // EVERY node the map knows (live peers + 30-day known), with its country, for
   // the node-speed ping. Read fresh each time the user starts a scan.
@@ -342,6 +355,18 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     newNodesRef.current = newNodes(loadKnown());
   }, []);
 
+  // Press "u" (Update) to fire the gold query ripple — your node pinging the
+  // network and the answer returning. Ignored while typing in a field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if ((e.key === "u" || e.key === "U") && !e.metaKey && !e.ctrlKey && !e.altKey) pulseActivity();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   useEffect(() => {
     if (!nodeId) return;
     let alive = true;
@@ -352,6 +377,27 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     // that appears later (in a subsequent poll) flashes green.
     instantRevealRef.current = true;
     lastProbe.current = performance.now();
+
+    // Register every IP this wallet has ever used as its own node (current +
+    // historical, across all node profiles and the legacy self-location keys),
+    // so old IPs from VPN/ISP/location changes are stripped from the network
+    // list instead of lingering as phantom nodes at your location.
+    try {
+      const selfIps: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key || !(key.startsWith("dd69.selfNode") || key.startsWith("dd69.selfGeo"))) continue;
+        try {
+          const j = JSON.parse(localStorage.getItem(key) || "{}");
+          if (j && typeof j.ip === "string") selfIps.push(j.ip);
+        } catch {
+          /* skip */
+        }
+      }
+      if (selfIps.length) addMyIps(selfIps);
+    } catch {
+      /* best-effort */
+    }
 
     // Self is per-node, so the "your node" marker follows the active node on a
     // switch. The broader network mesh (below) is shared and stays intact.
@@ -455,6 +501,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             saveSelfGeo(nodeId, m[s.selfIp]);
             const g0 = m[s.selfIp];
             saveSelfNode(nodeId, { ip: s.selfIp, lat: g0.lat, lon: g0.lon, city: g0.city, country: g0.country });
+            addMyIps([s.selfIp]); // our current IP is ours, never a network node
           }
           const seen: {
             ip: string;
@@ -463,12 +510,15 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             city?: string;
             country?: string;
             cc?: string;
+            subver?: string;
           }[] = [];
           let newIdx = 0;
           for (const p of s.peers) {
             const pg = m[p.ip];
             if (!pg) continue;
-            seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon, city: pg.city, country: pg.country, cc: pg.countryCode });
+            // Remember the client each peer advertises, so its TYPE persists in
+            // the 90-day store even after it stops being a live peer.
+            seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon, city: pg.city, country: pg.country, cc: pg.countryCode, subver: p.subver });
             probeRef.current.set(p.ip, "online"); // connected = definitely online
             if (!revealed.current.has(p.ip)) {
               // After a switch, reveal already-connected peers as settled (a past
@@ -647,6 +697,12 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     // and halves the render cost (or better, on 120 Hz screens).
     let lastFrame = 0;
     const draw = () => {
+      // GLOBE view is showing: skip all 2D work, just keep the loop alive so it
+      // resumes instantly when the user switches back to FLAT.
+      if (globeActiveRef.current) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
       const nowTs = performance.now();
       if (nowTs - lastFrame < 33) {
         raf = requestAnimationFrame(draw);
@@ -660,12 +716,12 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, w, h);
 
-      const outbound = hslVar("--primary");
-      const inbound = hslVar("--info"); // blue — clearly distinct from purple outbound
+      const outbound = hslVar("--map-peer-link");
+      const inbound = hslVar("--map-network-link"); // clearly distinct from peer-link by default
       // Peer arcs vary their colour between their base and HSB(268,67,100); each
       // arc (and its dot) picks a random point in that range.
-      const primaryHsl = parseHslNums("--primary");
-      const infoHsl = parseHslNums("--info");
+      const primaryHsl = parseHslNums("--map-peer-link");
+      const infoHsl = parseHslNums("--map-network-link");
       const ARC_TARGET: [number, number, number] = [268, 100, 66.5]; // HSB 268,67,100 in HSL
       const mixArcCol = (base: [number, number, number], t: number) => {
         const h = base[0] + (ARC_TARGET[0] - base[0]) * t;
@@ -673,13 +729,15 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
         const l = base[2] + (ARC_TARGET[2] - base[2]) * t;
         return (a: number) => `hsla(${h}, ${s}%, ${l}%, ${a})`;
       };
-      const selfCol = hslVar("--warning");
+      const selfCol = hslVar("--map-self");
+      const GREEN = hslVar("--map-discovery-pulse");
+      const newNodeHue = parseHslNums("--map-new-node")[0];
       const s = snapRef.current;
       const g = geosRef.current;
       const now = performance.now();
       const netOnly = networkOnlyRef.current;
-      const BLUE = (a: number) => `hsla(210, 85%, 62%, ${a})`;
-      const GREY = (a: number) => `hsla(215, 14%, 58%, ${a})`; // remembered but not verified-live now
+      const BLUE = hslVar("--map-network-link");
+      const GREY = hslVar("--map-offline");
       const USER_IS_WINNER = userWonRecently(); // deck out our node right after a win
 
       // The node's true location comes from its own public IP; cache it so it's
@@ -1199,7 +1257,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
               p.inbound ? "Inbound peer" : "Outbound peer",
               `Ping ${Math.round(p.pingMs)} ms · connected ${fmtDur(p.connSecs)}`,
               pg.isp || "",
-              p.subver || "",
+              classifyNode(p.subver).label,
               `Block ${p.height.toLocaleString()}`,
             ].filter(Boolean),
             won: !USER_IS_WINNER && p.ip === winnerRef.current,
@@ -1224,13 +1282,91 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           title: loc || ip,
           lines: [
             loc ? ip : "",
-            online ? "Active now · not connected" : st === "probing" ? "Checking…" : "Seen in the last 30 days",
+            online ? "Active now · not connected" : st === "probing" ? "Checking…" : "Seen in the last 90 days",
             isp,
+            // Node type from the client it last advertised (remembered in the store).
+            kp.subver ? classifyNode(kp.subver).label : "",
           ].filter(Boolean),
           tone: online ? "blue" : undefined,
         });
       }
       pointsRef.current = pts;
+
+      // ── Blockchain-activity ripple (gold) ────────────────────────────────
+      // Each peer gets its OWN independent ping (built once when a pulse fires):
+      // 4 legs — home→peer, peer→1-2 random network nodes, back, back home —
+      // each leg independently jittered ±0.2s. So the map shows many little
+      // round-trips at staggered times, not four synchronised group flashes.
+      const trig = pulseTrigger();
+      if (trig && trig !== lastPulseRef.current && selfXY) {
+        lastPulseRef.current = trig;
+        const netLL: [number, number][] = blueNodes.map(([, kp]) => [kp.lon, kp.lat]);
+        const pings: { peer: [number, number]; nets: [number, number][]; legs: Leg[] }[] = [];
+        for (const p of s?.peers ?? []) {
+          const pg = g[p.ip];
+          if (!pg) continue;
+          const nets: [number, number][] = [];
+          const count = netLL.length ? 1 + Math.floor(Math.random() * 2) : 0; // 1-2
+          for (let i = 0; i < count; i++) nets.push(netLL[Math.floor(Math.random() * netLL.length)]);
+          pings.push({ peer: [pg.lon, pg.lat], nets, legs: makeLegs(trig) });
+        }
+        pingsRef.current = pings;
+      }
+      if (selfXY && pingsRef.current.length) {
+        const GOLD = hslVar("--map-activity-pulse");
+        const ripple = (from: [number, number], to: [number, number], u: number) => {
+          const bez = upArc(from[0], from[1], to[0], to[1], 0.5);
+          ctx.lineWidth = 1;
+          const STEP = 0.1;
+          let prev = bez(0);
+          for (let t = STEP; t <= 1.0001; t += STEP) {
+            const cur = bez(t);
+            const glow = Math.exp(-(((t - u) / 0.25) * ((t - u) / 0.25)));
+            ctx.beginPath();
+            ctx.moveTo(prev[0], prev[1]);
+            ctx.lineTo(cur[0], cur[1]);
+            ctx.strokeStyle = GOLD(0.1 + 0.72 * glow);
+            ctx.stroke();
+            prev = cur;
+          }
+          const [hx, hy] = bez(u);
+          ctx.beginPath();
+          ctx.arc(hx, hy, 5, 0, Math.PI * 2);
+          ctx.fillStyle = GOLD(0.18);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(hx, hy, 2.4, 0, Math.PI * 2);
+          ctx.fillStyle = GOLD(0.95);
+          ctx.fill();
+        };
+        const query = (pt: [number, number], op: number) => {
+          if (op <= 0.02) return;
+          ctx.font = "bold 12px 'Courier New', monospace";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "bottom";
+          ctx.fillStyle = GOLD(op);
+          ctx.fillText("?", pt[0], pt[1] - 6);
+        };
+        for (const pg of pingsRef.current) {
+          if (pingDone(pg.legs, now)) continue;
+          const peerPt = P(pg.peer[0], pg.peer[1]);
+          const netPts = pg.nets.map((n) => P(n[0], n[1]));
+          const [lA, lB, lC, lD] = pg.legs;
+          let u = legU(lA, now);
+          if (u >= 0) ripple(selfXY, peerPt, u); // home → peer
+          u = legU(lB, now);
+          if (u >= 0) for (const np of netPts) ripple(peerPt, np, u); // peer → network
+          u = legU(lC, now);
+          if (u >= 0) for (const np of netPts) ripple(np, peerPt, u); // network → peer
+          u = legU(lD, now);
+          if (u >= 0) ripple(peerPt, selfXY, u); // peer → home
+          query(peerPt, holdOp(lA.t1, lD.t0, now)); // peer holds the query
+          const nq = holdOp(lB.t1, lC.t0, now);
+          for (const np of netPts) query(np, nq); // network nodes hold the query
+        }
+        // Drop finished pings so the loop stays cheap between pulses.
+        if (pingsRef.current.every((pg) => pingDone(pg.legs, now))) pingsRef.current = [];
+      }
 
       // ── New-node spirals (TOP pass) ──────────────────────────────────────
       // Drawn last so a busy/VPN location can never hide them. Spirals sharing a
@@ -1253,7 +1389,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
             // recompute the diameter live so it shrinks over the day boundary
             const dia = spiralDiameter(n.firstSeen);
             if (dia <= 0) return;
-            drawSpiral(ctx, cx, cy, dia, now, highlightIpRef.current === n.ip);
+            drawSpiral(ctx, cx, cy, dia, now, highlightIpRef.current === n.ip, newNodeHue);
             // one-time arrival flash: an expanding aqua ring, ~800ms
             const t0 = arrivalFxRef.current.get(n.ip);
             if (t0 != null) {
@@ -1264,7 +1400,7 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
                 ctx.save();
                 ctx.beginPath();
                 ctx.arc(cx, cy, 6 + p * 26, 0, Math.PI * 2);
-                ctx.strokeStyle = `hsla(177, 85%, 60%, ${0.7 * (1 - p)})`;
+                ctx.strokeStyle = `hsla(${newNodeHue}, 85%, 60%, ${0.7 * (1 - p)})`;
                 ctx.lineWidth = 2;
                 ctx.stroke();
                 ctx.restore();
@@ -1312,6 +1448,43 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }, [snap, geos]);
 
+  // The SAME nodes/arcs the flat map shows, shaped for the globe: self + peers +
+  // the 30-day known network as points, and an arc from our node to each peer.
+  const globeData = useMemo(() => {
+    const pts: GlobePoint[] = [];
+    const arcs: GlobeArc[] = [];
+    const seen = new Set<string>();
+    const push = (ip: string, lat: number, lon: number, kind: GlobePoint["kind"], city?: string, country?: string) => {
+      if (!ip || seen.has(ip) || lat == null || lon == null) return;
+      seen.add(ip);
+      pts.push({ ip, lat, lng: lon, kind, city, country });
+    };
+    const self = selfRef.current;
+    if (self) push(self.ip, self.lat, self.lon, "self", self.city, self.country);
+    // Peers first, and ALWAYS as "peer" — fall back to the stored known-node
+    // coords when the live geo lookup hasn't resolved yet, otherwise a peer would
+    // fall through and get drawn as a blue "net" tower instead of a pink one.
+    for (const p of snap?.peers ?? []) {
+      const g = geos[p.ip];
+      const kp = knownRef.current[p.ip];
+      const lat = g?.lat ?? kp?.lat;
+      const lon = g?.lon ?? kp?.lon;
+      if (lat != null && lon != null) push(p.ip, lat, lon, "peer", g?.city ?? kp?.city, g?.country ?? kp?.country);
+    }
+    const full = { ...loadKnown(), ...knownRef.current };
+    for (const [ip, kp] of Object.entries(full)) push(ip, kp.lat, kp.lon, "net", kp.city, kp.country || geos[ip]?.country);
+    if (self) {
+      for (const p of snap?.peers ?? []) {
+        const g = geos[p.ip];
+        const kp = knownRef.current[p.ip];
+        const lat = g?.lat ?? kp?.lat;
+        const lon = g?.lon ?? kp?.lon;
+        if (lat != null && lon != null) arcs.push({ startLat: self.lat, startLng: self.lon, endLat: lat, endLng: lon });
+      }
+    }
+    return { pts, arcs, center: self };
+  }, [snap, geos]);
+
   return (
     <div className="netmap">
       <div className="netmap-topbar">
@@ -1324,74 +1497,68 @@ export function NetworkMap({ onReturn }: { onReturn?: () => void }) {
           <span className="nm-item"><span className="nm-dot nm-self" /> Your node</span>
         </div>
         <div className="netmap-tools">
+          <div className="netmap-viewtoggle" role="group" aria-label="Map view">
+            <button type="button" className={globe ? "" : "on"} onClick={() => setGlobe(false)}>
+              Flat
+            </button>
+            <button type="button" className={globe ? "on" : ""} onClick={() => setGlobe(true)}>
+              Globe
+            </button>
+          </div>
           <button
             type="button"
-            className={"netmap-fastest" + (showFastest ? " on" : "")}
-            onClick={() => {
-              setShowFastest((v) => !v);
-              setShowMempool(false);
-            }}
-            title="Node speed"
+            className={"netmap-burger" + (menuOpen ? " on" : "")}
+            onClick={() => { setMenuOpen((v) => !v); setPanel(null); }}
+            title="Menu"
           >
-            <Icon name="speed" size={15} />
-          </button>
-          <button
-            type="button"
-            className={"netmap-fastest netmap-mem" + (showMempool ? " on" : "")}
-            onClick={() => {
-              setShowMempool((v) => !v);
-              setShowFastest(false);
-            }}
-            title="Live mempool"
-          >
-            M
+            <Icon name="menu" size={16} />
           </button>
         </div>
       </div>
-      <div className="netmap-canvas-wrap" ref={wrapRef}>
+      <div
+        className="netmap-canvas-wrap"
+        ref={wrapRef}
+        onMouseDown={() => {
+          // Clicking the map (outside any panel/menu, which stop propagation)
+          // closes an open panel and the menu.
+          setPanel(null);
+          setMenuOpen(false);
+        }}
+      >
         <canvas ref={canvasRef} className="netmap-canvas" />
-        <NodesByCountry data={nodesByCountry} />
-        {showFastest && (
-          <FastestNodes
-            getNodes={fastCandidates}
-            origin={activeNode}
-            onClose={() => setShowFastest(false)}
+        {globe && (
+          <GlobeMap
+            points={globeData.pts}
+            arcs={globeData.arcs}
+            center={globeData.center}
+            getWinnerIp={() => (userWonRecently() ? selfRef.current?.ip ?? null : winnerRef.current)}
           />
         )}
-        {showMempool && <Mempool onClose={() => setShowMempool(false)} />}
-        {/* Newest Nodes — bottom-right trigger + panel. Aqua sparkle icon. */}
+        {/* Hamburger menu (top-right): opens one overlay panel at a time. */}
+        {menuOpen && (
+          <div className="netmap-menu" onMouseDown={(e) => e.stopPropagation()}>
+            <button type="button" onClick={() => { setPanel("mempool"); setMenuOpen(false); }}>Mempool</button>
+            <button type="button" onClick={() => { setPanel("newest"); setMenuOpen(false); }}>Newest Nodes</button>
+            <button type="button" onClick={() => { setPanel("speed"); setMenuOpen(false); }}>Node Speed</button>
+            <button type="button" onClick={() => { setPanel("country"); setMenuOpen(false); }}>Nodes by Country</button>
+          </div>
+        )}
+        {panel === "country" && <NodesByCountry data={nodesByCountry} />}
+        {panel === "speed" && <FastestNodes getNodes={fastCandidates} origin={activeNode} />}
+        {panel === "mempool" && <Mempool />}
+        {panel === "newest" && <NewestNodesPanel onHighlight={(ip) => (highlightIpRef.current = ip)} />}
+        {/* Blockstream visibility toggle (eye). Closed => dim to 10%. */}
         <button
           type="button"
-          onClick={() => setShowNewest((v) => !v)}
-          title="Newest nodes"
-          style={{
-            position: "absolute",
-            right: 10,
-            bottom: 10,
-            width: 30,
-            height: 30,
-            borderRadius: 8,
-            border: "1px solid hsl(177 70% 55% / 0.5)",
-            background: showNewest ? "hsl(177 70% 55% / 0.25)" : "rgba(0,0,0,0.4)",
-            color: "hsl(177 85% 62%)",
-            cursor: "pointer",
-            zIndex: 6,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+          className="netmap-eye"
+          onClick={() => setBlockDim((v) => !v)}
+          title={blockDim ? "Show blockstream" : "Hide blockstream"}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-            <path d="M12 2l1.9 5.6L19.5 9l-4.6 3.4L16.5 18 12 14.7 7.5 18l1.6-5.6L4.5 9l5.6-1.4z" />
-          </svg>
+          <Icon name={blockDim ? "eyeOff" : "eye"} size={10} />
         </button>
-        {showNewest && (
-          <NewestNodesPanel
-            onHighlight={(ip) => (highlightIpRef.current = ip)}
-            onClose={() => setShowNewest(false)}
-          />
-        )}
-        {primer.active ? <PrimerLove /> : <BlockChainViz />}
+        <div className="bv-dim" style={{ opacity: blockDim ? 0.1 : 1 }}>
+          {primer.active ? <PrimerLove /> : <BlockChainViz />}
+        </div>
         {hover && (
           <div
             className={"netmap-tip" + (hover.tone === "blue" ? " netmap-tip-blue" : "")}
@@ -1431,7 +1598,7 @@ function NodesByCountry({ data }: { data: [string, number][] }) {
     };
   }, []);
   return (
-    <div className="nbc" ref={ref}>
+    <div className="nbc glass-panel" ref={ref}>
       <div className="nbc-head">
         <span className="nbc-title">Nodes</span>
         <span className="nbc-h-full">FULL</span>

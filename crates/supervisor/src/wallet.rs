@@ -413,6 +413,20 @@ pub fn balance(cfg: &NodeConfig) -> Option<Balance> {
     let rpc = RpcClient::new(cfg);
     let w = rpc.call("getwalletinfo", json!([])).ok()?;
     let f = |k: &str| w[k].as_f64().unwrap_or(0.0);
+    // The amount actually staking is NOT in getwalletinfo (it has no
+    // staking_balance field, so that read was always 0). It lives in
+    // getstakingstatus.staking_balance — the mature coins the node is staking
+    // with. But that field stays non-zero even when the wallet is LOCKED (not
+    // actually staking), so gate it on the real unlock state: a locked encrypted
+    // wallet reports 0 here, which drives the "NOT STAKING" alert correctly.
+    let ss = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
+    let encrypted = w.get("unlocked_until").is_some();
+    let unlocked = !encrypted || w["unlocked_until"].as_i64().map(|u| u != 0).unwrap_or(false);
+    let staking = if unlocked && ss["mintablecoins"].as_bool().unwrap_or(false) {
+        ss["staking_balance"].as_f64().unwrap_or(0.0)
+    } else {
+        0.0
+    };
     Some(Balance {
         // Older Divi exposes spendable_balance; fall back to plain balance.
         spendable: if w.get("spendable_balance").is_some() {
@@ -420,7 +434,7 @@ pub fn balance(cfg: &NodeConfig) -> Option<Balance> {
         } else {
             f("balance")
         },
-        staking: f("staking_balance"),
+        staking,
         pending: f("unconfirmed_balance"),
         immature: f("immature_balance"),
     })
@@ -508,6 +522,10 @@ fn tx_from_json(t: &serde_json::Value) -> Tx {
         "receive"
     } else if cat == "send" {
         "send"
+    } else if cat == "move" {
+        // Internal account transfer, e.g. locking coins into a Bearer/Pin
+        // certificate. Not a real receive; the UI labels/values it specially.
+        "move"
     } else if is_stake_cat(cat) {
         "stake"
     } else {
@@ -539,6 +557,8 @@ pub fn recent(cfg: &NodeConfig, count: i64) -> Vec<Tx> {
                 "receive"
             } else if cat == "send" {
                 "send"
+            } else if cat == "move" {
+                "move" // certificate-creation / internal transfer (see tx_from_json)
             } else if is_stake_cat(cat) {
                 "stake"
             } else {

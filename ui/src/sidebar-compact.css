@@ -1,0 +1,42 @@
+/* Sidebar compaction + scroll, added when the MultiSig entry pushed the list
+   past the column height (2026-Aug-18).
+
+   Kept in its own file (not index.css, which another agent also edits) and using
+   slightly higher-specificity selectors (.sidebar .nav*) so these win over the
+   base rules regardless of stylesheet load order.
+
+   - Every nav row's font is 1pt smaller (0.837rem -> 0.754rem; 1pt = 0.083rem
+     at a 16px root).
+   - The space between rows is down 30%: the gap 1.92 -> 1.344px and the vertical
+     padding 5.28 -> 3.696px (the padding is most of what reads as the gap).
+   - The list scrolls, so the last entry is never pushed out of view; the mouse
+     wheel drives it natively (a real overflow container needs no JS). */
+
+.sidebar .nav {
+  gap: 1.344px;
+  overflow-y: auto;
+  min-height: 0;
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: hsl(var(--primary) / 0.55) transparent;
+}
+
+.sidebar .nav-item {
+  padding-top: 3.696px;
+  padding-bottom: 3.696px;
+  font-size: 0.754rem;
+}
+
+/* A slim, on-brand scrollbar (WebKit/Chromium) rather than a bright OS default. */
+.sidebar .nav::-webkit-scrollbar {
+  width: 6px;
+}
+.sidebar .nav::-webkit-scrollbar-track {
+  background: transparent;
+}
+.sidebar .nav::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--primary) / 0.55);
+  border-radius: 999px;
+}
+.sidebar .nav::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--primary) / 0.85);
+}

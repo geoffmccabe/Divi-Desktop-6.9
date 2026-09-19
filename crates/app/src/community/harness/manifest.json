@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "id": "io.divi.sandbox-test",
+  "name": "Sandbox Escape Test",
+  "version": "1.0.0",
+  "author": { "name": "Divi Desktop", "address": "DNx1cSCMXg73Efg1NFFYuoRvRg5ThmNfHF" },
+  "description": "Tries every way out of the sandbox and reports which ones the wallet blocked.",
+  "permissions": ["balance.read"],
+  "network": [],
+  "display": { "immersive": "on-demand" },
+  "media": { "thumbnail": "thumb.svg" },
+  "price": { "model": "free" }
+}

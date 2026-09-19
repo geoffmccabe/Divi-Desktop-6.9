@@ -24,10 +24,8 @@ const AQUA = "hsl(177 80% 55%)";
 
 export function NewestNodesPanel({
   onHighlight,
-  onClose,
 }: {
   onHighlight: (ip: string | null) => void;
-  onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<NewNode[]>(() => newNodes(loadKnown()));
@@ -59,7 +57,7 @@ export function NewestNodesPanel({
       style={{
         position: "absolute",
         right: 10,
-        bottom: 44,
+        top: 10,
         width: 210,
         maxHeight: 260,
         padding: "8px 10px",
@@ -73,14 +71,6 @@ export function NewestNodesPanel({
     >
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ fontWeight: 700, color: AQUA, letterSpacing: "0.04em" }}>NEWEST NODES</span>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close"
-          style={{ background: "none", border: "none", color: "inherit", cursor: "pointer", opacity: 0.7, fontSize: "0.85rem" }}
-        >
-          ✕
-        </button>
       </div>
 
       {rows.length === 0 ? (
@@ -115,7 +105,7 @@ export function NewestNodesPanel({
               />
               <span style={{ flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 <div style={{ fontWeight: 600 }}>{place(n)}</div>
-                <div style={{ opacity: 0.6, fontFamily: "ui-monospace, monospace", fontSize: "0.66rem" }}>
+                <div style={{ opacity: 0.6, fontFamily: "var(--font-mono)", fontSize: "0.66rem" }}>
                   {shortIp(n.ip)}
                 </div>
               </span>

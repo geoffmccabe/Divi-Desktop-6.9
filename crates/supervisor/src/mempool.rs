@@ -120,3 +120,35 @@ fn classify(rpc: &RpcClient, txid: &str, e: &mut MemEntry) {
         }
     }
 }
+
+pub struct Conflict {
+    pub outpoint: String,
+    pub kept: String,     // the tx this node accepted first (the "winner")
+    pub rejected: String, // the conflicting tx it refused (the "loser")
+    pub time: i64,
+}
+
+/// Recent double-spend conflicts the node has seen (getmempoolconflicts). A
+/// daemon too old to have that RPC just yields an empty list, so this is safe to
+/// poll against any node — the Fast Send fraud check simply stays quiet there.
+pub fn conflicts(cfg: &NodeConfig) -> Vec<Conflict> {
+    let rpc = RpcClient::new(cfg);
+    let v = match rpc.call("getmempoolconflicts", json!([])) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|c| {
+                    Some(Conflict {
+                        outpoint: c["outpoint"].as_str()?.to_string(),
+                        kept: c["kept"].as_str().unwrap_or("").to_string(),
+                        rejected: c["rejected"].as_str().unwrap_or("").to_string(),
+                        time: c["time"].as_i64().unwrap_or(0),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}

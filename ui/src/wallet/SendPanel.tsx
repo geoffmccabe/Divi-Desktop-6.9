@@ -18,6 +18,13 @@ import { PinCodeSendPanel } from "./PinCodeSendPanel";
 import { ContactPicker } from "./ContactPicker";
 import { Identicon } from "./Identicon";
 import { findByAddress, isKnownGood, markSent } from "./contacts";
+import { hraResolve, hraReverse } from "./hra/api";
+import "./hra.css";
+
+// A Divi name rather than an address: 3 to 32 of the name charset, first
+// character a letter. Deliberately loose. Anything that MIGHT be a name gets
+// looked up; the lookup itself decides. Being wrong here only costs a lookup.
+const LOOKS_LIKE_NAME = /^[A-Za-z][A-Za-z0-9!#^\-_+.]{2,31}$/;
 
 // Above this, we nudge the sender that the recipient will likely wait for a
 // confirmation rather than accept instantly. Soft guidance, not a block.
@@ -112,6 +119,63 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
     return () => window.removeEventListener("dd69:sendto", onSendTo);
   }, [acceptHandoff]);
 
+  // ── Divi name resolution ────────────────────────────────────────────────
+  // Type a name instead of an address. The resolved address is NEVER
+  // substituted silently: it is shown in full and the user presses a button to
+  // accept it. A name is a convenience; it must never become a thing that
+  // moves money somewhere the sender has not read.
+  const [nameHit, setNameHit] = useState<{ name: string; address: string } | null>(null);
+  const [nameNote, setNameNote] = useState("");
+
+  useEffect(() => {
+    const t = address.trim();
+    // No separate "is this an address" test: a Divi address is 33 or 34
+    // characters and a name is at most 32, so the length cap already tells them
+    // apart. An explicit address check here was worse than useless, because it
+    // matched any 26-character name and stopped it resolving.
+    if (stage !== "form" || !t || !LOOKS_LIKE_NAME.test(t)) {
+      setNameHit(null);
+      setNameNote("");
+      return;
+    }
+    let alive = true;
+    const id = setTimeout(() => {
+      hraResolve(t)
+        .then((addr) => {
+          if (!alive) return;
+          setNameHit(addr ? { name: t, address: addr } : null);
+          setNameNote(addr ? "" : `No Divi name "${t}" points anywhere. Check the spelling.`);
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setNameHit(null);
+          setNameNote(String(e));
+        });
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(id);
+    };
+  }, [address, stage]);
+
+  // The name the destination publishes for itself, looked up only once the
+  // address is settled and we are on the confirm screen. Purely a recognition
+  // aid: it never replaces the address and never blocks the send.
+  const [reverseName, setReverseName] = useState<string | null>(null);
+  useEffect(() => {
+    if (stage !== "confirm") {
+      setReverseName(null);
+      return;
+    }
+    let alive = true;
+    hraReverse(address.trim())
+      .then((n) => alive && setReverseName(n))
+      .catch(() => alive && setReverseName(null));
+    return () => {
+      alive = false;
+    };
+  }, [stage, address]);
+
   const contactHit = findByAddress(address);
   const knownGood = isKnownGood(address);
   const amount = parseAmount(amountStr);
@@ -140,7 +204,13 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
     } catch (e) {
       return setErr(String(e));
     }
-    if (!ok) return setErr("That doesn't look like a valid DIVI address.");
+    if (!ok) {
+      return setErr(
+        nameHit
+          ? `That is a Divi name, not an address. Press "Use this address" first so you can see where it actually goes.`
+          : "That doesn't look like a valid DIVI address."
+      );
+    }
     setStage("confirm");
   };
 
@@ -209,10 +279,34 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
           className="wl-input"
           value={address}
           onChange={(e) => setAddress(e.target.value)}
-          placeholder="D…"
+          placeholder="D… or a Divi name"
           disabled={stage !== "form"}
           spellCheck={false}
         />
+        {nameNote && <span className="wl-note send-name-note">{nameNote}</span>}
+        {nameHit && (
+          <span className="send-name-hit">
+            <span className="send-name-label">
+              <strong>{nameHit.name.toLowerCase()}</strong> points at
+            </span>
+            {/* Shown in full, never shortened. Reading it is the whole point. */}
+            <span className="send-name-addr">{nameHit.address}</span>
+            <button
+              type="button"
+              className="wl-btn"
+              onClick={() => {
+                setAddress(nameHit.address);
+                setNameHit(null);
+              }}
+            >
+              Use this address
+            </button>
+            <span className="wl-note">
+              Check this matches what they told you. Names are read from your own node, but the
+              network does not police who owns what.
+            </span>
+          </span>
+        )}
         {contactHit && (
           <span className="send-contact">
             {contactHit.contact.emoji ? (
@@ -275,6 +369,14 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
             {fast ? "Fast send" : "Send"} <strong>{fmtDivi(amount ?? 0)} DIVI</strong> to
           </p>
           <p className="send-confirm-addr">{address.trim()}</p>
+          {/* If the destination publishes a name, show it UNDER the address,
+              never instead of it. A name is a recognition aid on a screen whose
+              whole job is getting the address read. */}
+          {reverseName && (
+            <p className="wl-note">
+              This address publishes itself as <strong>{reverseName.toLowerCase()}</strong>
+            </p>
+          )}
           <p className="send-warn">This can’t be undone. Check the address carefully.</p>
           <div className="send-actions">
             <button type="button" className="wl-btn" onClick={() => setStage("form")}>Back</button>

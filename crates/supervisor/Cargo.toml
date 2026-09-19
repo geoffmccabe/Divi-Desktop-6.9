@@ -11,9 +11,19 @@ path = "src/main.rs"
 
 [dependencies]
 serde_json = "1"
+# The normative Divi overlay-record crates, vendored from the chain repo.
+# See crates/name-registry/VENDORED.md and scripts/sync-divi-crates.sh.
+dvxp-core = { path = "../dvxp-core" }
+name-registry = { path = "../name-registry" }
 ureq = "2"
 # Verifies the pinned checksum of the downloaded divid69 before it is installed.
 sha2 = "0.10"
+# Already in the tree via keyring; used directly for commit salts, which must
+# come from a real CSPRNG rather than a hash of a timestamp.
+getrandom = "0.2"
+# Verifies community-app bundle signatures. Already in the tree via c2pa,
+# so this adds no new download or new supply-chain surface.
+ed25519-dalek = "2"
 base64 = "0.22"
 # NFD (Divi Collectibles) encryption core — audited RustCrypto primitives only.
 aes-gcm = "0.10"

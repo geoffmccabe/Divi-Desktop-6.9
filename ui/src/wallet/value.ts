@@ -12,13 +12,19 @@ export interface ValueSettings {
 }
 
 const KEY = "dd69.value";
-// CoinGecko is ON only as a LAST RESORT, so that an unconfigured wallet shows
-// something rather than nothing. Be aware of what it means: CoinGecko prices
-// DIVI off the wrapped ERC-20 on Uniswap (~$3/day of volume), which currently
-// reads about 4.5x LOWER than the CoinMarketCap quote the Divi community uses.
-// For a figure that matches CMC, an admin must add a free CMC key in the Value
-// tab; CoinMarketCap then takes precedence. See crates/supervisor/src/price.rs.
-const DEFAULTS: ValueSettings = { currencies: ["USD"], display: "USD", cmcKey: "", useCoingecko: true };
+// STANDING ORDER: DIVI is priced from CoinMarketCap, everywhere in this app.
+// CoinGecko is therefore OFF by default and should stay off. It prices DIVI off
+// the wrapped ERC-20 on Uniswap (~$3/day of volume), which reads about 4.5x
+// LOWER than the CoinMarketCap quote the Divi community uses. Showing that
+// number is worse than showing none: it is wrong by a factor of four and looks
+// perfectly ordinary. An admin adds a free CMC key in the Value tab and that is
+// the price. See crates/supervisor/src/price.rs and
+// contrib/app-builder/src/price.mjs, which both follow the same rule.
+//
+// The switch is left in place rather than deleted because a wallet with no key
+// and no price is a fair thing for someone to want to escape from — but it is
+// their deliberate act, not our default.
+const DEFAULTS: ValueSettings = { currencies: ["USD"], display: "USD", cmcKey: "", useCoingecko: false };
 
 export function getValueSettings(): ValueSettings {
   try {

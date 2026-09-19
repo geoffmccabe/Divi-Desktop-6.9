@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { aiStatus, aiSetKey, aiClearKey, type AiStatus } from "../../wallet/api";
+import { restartService, setGatewayUrl } from "../../builder/api";
 
 // Admin → AI. Wires the LLMs that power each node's agent.
 //
@@ -25,11 +26,20 @@ function KeyRow({ label, provider, hint, set, onChanged }: KeyRowProps) {
   const [val, setVal] = useState("");
   const [busy, setBusy] = useState(false);
 
+  // The App Builder's service reads the Claude key from the keychain when it
+  // starts, so a key saved after it started would not be seen until the wallet
+  // was reopened. Restarting it here means saving a key just works.
+  const refreshBuilder = async () => {
+    if (provider !== "claude" && provider !== "gateway_token") return;
+    await restartService().catch(() => {});
+  };
+
   const save = async () => {
     setBusy(true);
     try {
       await aiSetKey(provider, val.trim());
       setVal("");
+      await refreshBuilder();
       onChanged();
     } finally {
       setBusy(false);
@@ -39,6 +49,7 @@ function KeyRow({ label, provider, hint, set, onChanged }: KeyRowProps) {
     setBusy(true);
     try {
       await aiClearKey(provider);
+      await refreshBuilder();
       onChanged();
     } finally {
       setBusy(false);
@@ -84,12 +95,15 @@ export function AiPanel() {
         setStatus(s);
         setGateway(s.gateway);
       })
-      .catch(() => setStatus({ claude: false, grok: false, gateway: "" }));
+      .catch(() => setStatus({ claude: false, grok: false, gatewayToken: false, gateway: "" }));
   };
   useEffect(refresh, []);
 
   const saveGateway = async () => {
-    await aiSetKey("gateway", gateway.trim());
+    // A URL, so it goes to a plain settings file rather than the keychain.
+    await setGatewayUrl(gateway.trim());
+    // The builder service reads this when it starts, so it needs to be told.
+    await restartService().catch(() => {});
     setSavedGateway(true);
     setTimeout(() => setSavedGateway(false), 1500);
     refresh();
@@ -116,6 +130,12 @@ export function AiPanel() {
         set={!!status?.claude}
         onChanged={refresh}
       />
+      <p className="wl-note ai-security">
+        This key also powers the <strong>App Builder</strong>. It is yours, set
+        once, here: the people building apps never see it and are never asked for
+        one — they pay in points for what they use. Saving a key here starts the
+        builder using it straight away.
+      </p>
       <KeyRow
         label="xAI (Grok)"
         provider="grok"
@@ -126,10 +146,24 @@ export function AiPanel() {
 
       <h3 className="ai-section-head">DD69 AI Gateway (for all users + subscriptions)</h3>
       <p className="wl-note ai-security">
+        <strong>Prefer this for the App Builder.</strong> The key stays on your
+        server and this wallet holds only a token, which is scoped to that one
+        service and can be revoked on its own. That is also the only arrangement
+        that works once other people are building apps, because a desktop app
+        cannot keep a secret everybody shares.
+      </p>
+      <p className="wl-note ai-security">
         To let every DD69 user access the LLMs under a subscription, point them at a server you
         control. That server holds the real keys, checks each user's subscription, meters usage, and
         bills (DIVI / card / PayPal). This is the only safe way to share one key across users.
       </p>
+      <KeyRow
+        label="Gateway token"
+        provider="gateway_token"
+        hint="the token your gateway expects"
+        set={!!status?.gatewayToken}
+        onChanged={refresh}
+      />
       <label className="admin-field">
         <span>Gateway URL {savedGateway && <em className="ai-set">✓ saved</em>}</span>
         <div className="ai-key-row">

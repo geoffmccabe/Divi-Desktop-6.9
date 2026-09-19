@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Identicon } from "./Identicon";
 import { sortedContacts, TYPE_LABEL, type Contact } from "./contacts";
 
@@ -16,7 +16,19 @@ export function ContactPicker({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const list = sortedContacts();
+
+  // Close the menu when clicking anywhere outside it.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+
   if (list.length === 0) return null;
 
   const pick = (c: Contact) => {
@@ -26,7 +38,7 @@ export function ContactPicker({
   };
 
   return (
-    <div className="cp-wrap">
+    <div className="cp-wrap" ref={wrapRef}>
       <button type="button" className="cp-btn" disabled={disabled} onClick={() => setOpen((v) => !v)}>
         Contacts ▾
       </button>

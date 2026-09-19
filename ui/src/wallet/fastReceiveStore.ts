@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { mempoolSnapshot, txStatus } from "./api";
+import { mempoolSnapshot, mempoolConflicts, txStatus } from "./api";
 
 // Always-on watcher for incoming Fast Send payments. It polls this node's
 // mempool for wallet-bound receives, then follows each one through
@@ -37,6 +37,7 @@ export interface FastRec {
   tier: "checking" | "low" | "medium" | "high" | "confirmed" | "conflicted";
   factors: RatingFactor[];
   warnings: string[];
+  networkConflict?: boolean; // the node reported a double-spend of this payment's coins
 }
 
 interface State {
@@ -95,11 +96,11 @@ function rate(rec: FastRec) {
   const factors: RatingFactor[] = [];
   const warnings: string[] = [];
 
-  if (rec.confirmations < 0) {
+  if (rec.confirmations < 0 || rec.networkConflict) {
     rec.status = "conflicted";
     rec.tier = "conflicted";
     rec.score = 0;
-    rec.factors = [{ label: "Conflicting spend", ok: false, note: "A double-spend of these coins was seen." }];
+    rec.factors = [{ label: "Conflicting spend", ok: false, note: "A double-spend of these coins was seen on the network." }];
     rec.warnings = ["Conflicting transaction detected. Do NOT treat this as received."];
     return;
   }
@@ -187,6 +188,23 @@ async function poll() {
       const s = await txStatus(rec.txid);
       if (s.found) rec.confirmations = s.confirmations;
       rate(rec);
+    }
+    // Network double-spend check: if the node accepted this payment (kept) but
+    // rejected a conflicting spend of the same coins, the payment is under a
+    // double-spend attempt. Empty on daemons without getmempoolconflicts.
+    try {
+      const cf = await mempoolConflicts();
+      if (cf.length) {
+        const kept = new Set(cf.map((c) => c.kept));
+        for (const rec of byId.values()) {
+          if (kept.has(rec.txid) && !rec.networkConflict) {
+            rec.networkConflict = true;
+            rate(rec);
+          }
+        }
+      }
+    } catch {
+      /* ignore — node may not support it */
     }
     // Prune fully-confirmed records older than 10 minutes so the list stays tidy.
     const cutoff = Date.now() - 10 * 60 * 1000;

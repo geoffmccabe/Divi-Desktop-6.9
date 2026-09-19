@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Sandbox Escape Test</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; padding: 18px;
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #12101a; color: #e6e3ee;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  p.sub { margin: 0 0 14px; color: #9d97b5; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 5px 8px; border-bottom: 1px solid #2a2536; vertical-align: top; }
+  td.r { width: 74px; font-weight: 700; }
+  .pass { color: #5fd38d; }
+  .fail { color: #ff7b7b; }
+  .wait { color: #d8b25f; }
+  .note { color: #9d97b5; }
+  #summary { margin-top: 14px; padding: 10px 12px; border-radius: 8px; background: #191527; }
+</style>
+</head>
+<body>
+<h1>Sandbox escape test</h1>
+<p class="sub">
+  Every row below is something a hostile app would try. PASS means the wallet
+  stopped it. Any FAIL is a hole and must be fixed before real apps ship.
+</p>
+<table id="rows"></table>
+<div id="summary" class="wait">Running...</div>
+
+<script src="sdk.js"></script>
+<script>
+(function () {
+  const rows = document.getElementById("rows");
+  let pass = 0, fail = 0;
+  // Every check below must call record() exactly once. Keeping the count here
+  // means the verdict appears as soon as the last one reports, rather than after
+  // an arbitrary wait that could cut an async check off mid-flight.
+  const EXPECTED = 11;
+
+  // A check PASSES when the escape did NOT work.
+  function record(name, blocked, detail) {
+    const tr = document.createElement("tr");
+    const r = document.createElement("td");
+    r.className = "r " + (blocked ? "pass" : "fail");
+    r.textContent = blocked ? "PASS" : "FAIL";
+    const n = document.createElement("td");
+    n.textContent = name;
+    const d = document.createElement("td");
+    d.className = "note";
+    d.textContent = detail || "";
+    tr.append(r, n, d);
+    rows.appendChild(tr);
+    blocked ? pass++ : fail++;
+    if (pass + fail >= EXPECTED) settle();
+  }
+
+  let settled = false;
+  function settle() {
+    if (settled) return;
+    settled = true;
+    const s = document.getElementById("summary");
+    const missing = EXPECTED - (pass + fail);
+    s.className = fail === 0 && missing === 0 ? "pass" : "fail";
+    s.textContent =
+      fail === 0 && missing === 0
+        ? pass + " checks passed. Nothing escaped."
+        : fail + " failed" + (missing > 0 ? ", " + missing + " never reported" : "") +
+          " out of " + EXPECTED + ". Do not ship.";
+  }
+
+  // 1. The wallet's own bridge must not exist in here at all.
+  record("window.__TAURI__ is absent",
+    typeof window.__TAURI__ === "undefined",
+    typeof window.__TAURI__);
+
+  // 2. Reaching the bridge through the parent must throw (opaque origin).
+  try {
+    const t = window.parent.__TAURI__;
+    record("parent.__TAURI__ unreachable", t === undefined, "returned " + typeof t);
+  } catch (e) {
+    record("parent.__TAURI__ unreachable", true, e.name);
+  }
+
+  // 3. Reading the wallet's DOM must throw.
+  try {
+    const n = window.parent.document.body.innerHTML.length;
+    record("parent DOM unreadable", false, "read " + n + " chars");
+  } catch (e) {
+    record("parent DOM unreadable", true, e.name);
+  }
+
+  // 4. The wallet's localStorage must not be reachable.
+  try {
+    const k = window.parent.localStorage.length;
+    record("parent localStorage unreachable", false, "saw " + k + " keys");
+  } catch (e) {
+    record("parent localStorage unreachable", true, e.name);
+  }
+
+  // 5. Our own localStorage is a different, opaque store. Either it throws or it
+  //    is empty; what must never happen is seeing a dd69.* wallet key.
+  try {
+    const keys = Object.keys(localStorage);
+    const leaked = keys.filter((k) => k.startsWith("dd69."));
+    record("no wallet keys in our storage", leaked.length === 0,
+      keys.length + " keys, " + leaked.length + " from the wallet");
+  } catch (e) {
+    record("no wallet keys in our storage", true, e.name);
+  }
+
+  // 6. Cookies must not carry across. In an opaque origin, reading them throws
+  //    outright, which is a stronger result than reading an empty string.
+  try {
+    record("no wallet cookies", document.cookie === "", JSON.stringify(document.cookie));
+  } catch (e) {
+    record("no wallet cookies", true, e.name + " (cookies are unreachable)");
+  }
+
+  // 7. Network must be dead: the app policy says connect-src 'none'.
+  fetch("https://example.com/", { mode: "no-cors" })
+    .then(() => record("outbound fetch blocked", false, "request went out"))
+    .catch((e) => record("outbound fetch blocked", true, e.name));
+
+  // 8. Top-level navigation must be refused by the sandbox.
+  try {
+    const before = window.parent.location.href;
+    record("cannot read parent URL", false, before);
+  } catch (e) {
+    record("cannot read parent URL", true, e.name);
+  }
+
+  // 9. A method that is not in the catalogue must be refused.
+  divi.request("wallet.sendCoins", { to: "D...", amount: 1000 })
+    .then(() => record("unknown method refused", false, "the wallet ran it"))
+    .catch((e) => record("unknown method refused", true, e.message));
+
+  // 10. A real method this app never declared must be refused.
+  divi.request("addresses.read")
+    .then(() => record("undeclared permission refused", false, "returned data"))
+    .catch((e) => record("undeclared permission refused", true, e.message));
+
+  // 11. Positive control. This app DOES declare balance.read, so it must work.
+  //     If this fails, the channel is broken rather than secure, and the passes
+  //     above would be meaningless.
+  divi.balance()
+    .then((b) => {
+      const ok = b && typeof b.spendable === "number";
+      record("declared permission works (control)", ok,
+        ok ? "spendable " + b.spendable : "no data");
+    })
+    .catch((e) => record("declared permission works (control)", false, e.message));
+
+  // Fallback: if a check never reports at all (a hung promise, a thrown error
+  // that stopped the script), say so rather than sitting on "Running..." for
+  // ever, which would read as a pass to a tired eye.
+  setTimeout(settle, 6000);
+})();
+</script>
+</body>
+</html>

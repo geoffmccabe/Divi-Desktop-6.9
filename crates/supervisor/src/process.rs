@@ -14,14 +14,29 @@ pub fn daemon_pid(datadir: &Path) -> Option<i32> {
 }
 
 fn pid_alive(pid: i32) -> bool {
-    // Signal 0 = existence check only. Unix; Windows comes with the Tauri phase.
-    std::process::Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    #[cfg(windows)]
+    {
+        // No `kill` on Windows; ask the task list whether the pid still exists.
+        // `/NH /FO CSV` yields one quoted row per match, e.g. "divid69.exe","1234",...
+        match std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .output()
+        {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")),
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // Signal 0 = existence check only.
+        std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
 }
 
 /// Find a daemon to run, in order of preference:
@@ -44,19 +59,34 @@ pub fn find_divid(explicit: Option<PathBuf>) -> Result<PathBuf, String> {
     if let Some(ours) = crate::install::managed_divid() {
         candidates.push(ours);
     }
-    if let Ok(out) = std::process::Command::new("which").arg("divid").output() {
-        let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    // Look on PATH: `where` on Windows, `which` on Unix. On Windows we look for
+    // our own divid69.exe; on Unix a stock `divid` from an older install.
+    let (finder, needle) = if cfg!(windows) {
+        ("where", "divid69.exe")
+    } else {
+        ("which", "divid")
+    };
+    if let Ok(out) = std::process::Command::new(finder).arg(needle).output() {
+        // `where` can return several lines; take the first.
+        let p = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
         if !p.is_empty() {
             candidates.push(PathBuf::from(p));
         }
     }
+    // Divi Desktop 2.0 unpacks its managed daemon under the user's home on macOS;
+    // the exact layout has varied, so try both known shapes.
+    #[cfg(target_os = "macos")]
     if let Ok(home) = std::env::var("HOME") {
-        // Divi Desktop 2.0 unpacks its managed daemon here at launch; the
-        // exact layout has varied, so try both known shapes.
         let base = PathBuf::from(home).join("Library/Application Support/Divi Desktop/divid/unpacked");
         candidates.push(base.join("divid"));
         candidates.push(base.join("divi_osx/divid"));
     }
+    #[cfg(unix)]
     candidates.push(PathBuf::from("/usr/local/bin/divid"));
     candidates
         .into_iter()
@@ -69,6 +99,9 @@ enum Spawn {
     Running(i32),
     /// The block database is damaged — repairable by rebuilding it.
     Corruption(String),
+    /// A config change (e.g. turning on addressindex) needs the index rebuilt
+    /// from the local block files via a one-time full -reindex.
+    ReindexRequired(String),
     /// Any other refusal to start (config, ports, permissions...).
     Failed(String),
 }
@@ -78,6 +111,14 @@ const CORRUPTION_MARKERS: [&str; 4] = [
     "Error loading block database",
     "Failed to find best block",
     "Error opening block database",
+];
+
+/// divid prints one of these when an index option (addressindex/txindex) was
+/// turned on after the chain was already synced without it. The fix is a full
+/// -reindex, which rebuilds from block files already on disk (no re-download).
+const REINDEX_REQUIRED_MARKERS: [&str; 2] = [
+    "to change -addressindex",
+    "rebuild the database using -reindex",
 ];
 
 /// One launch attempt with a given set of extra flags. Waits until the node's
@@ -105,6 +146,14 @@ fn spawn_once(
     for a in extra_args {
         cmd.arg(a);
     }
+    // On Windows, spawning a console subprocess would flash a black console
+    // window; CREATE_NO_WINDOW suppresses it. No effect (and not compiled) on Unix.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     if cmd.stdout(spawn_log).stderr(spawn_log_err).spawn().is_err() {
         return Spawn::Failed(format!("could not launch {}", divid.display()));
     }
@@ -122,6 +171,9 @@ fn spawn_once(
             let said = std::fs::read_to_string(&spawn_log_path).unwrap_or_default();
             if let Some(line) = said.lines().find(|l| l.contains("Error:")) {
                 let msg = line.trim().to_string();
+                if REINDEX_REQUIRED_MARKERS.iter().any(|m| msg.contains(m)) {
+                    return Spawn::ReindexRequired(msg);
+                }
                 if CORRUPTION_MARKERS.iter().any(|m| msg.contains(m)) {
                     return Spawn::Corruption(msg);
                 }
@@ -169,6 +221,16 @@ pub fn start_with_recovery(
     normal_timeout: Duration,
     repair_timeout: Duration,
 ) -> Result<StartReport, String> {
+    // Repair our own node's conf before every launch. The first-run setup path
+    // writes it only once, so an already-set-up node would never gain a newly
+    // required option (e.g. addressindex, which the treasury/multisig displays
+    // and the governance snapshot depend on). ensure_local_node_conf only edits
+    // a DD69-written conf and is idempotent; when it adds addressindex the node
+    // asks for a one-time -reindex, which the ladder below then performs.
+    if datadir == crate::config::dd69_datadir().as_path() {
+        let _ = crate::install::ensure_local_node_conf();
+    }
+
     // (flag, human label, timeout). None flag = ordinary start.
     let ladder: [(Option<&str>, &str, Duration); 3] = [
         (None, "", normal_timeout),
@@ -190,6 +252,22 @@ pub fn start_with_recovery(
                 last_corruption = msg;
                 // fall through to the next, more aggressive repair rung
                 continue;
+            }
+            Spawn::ReindexRequired(_) => {
+                // An index option was just enabled (addressindex). Rebuild the
+                // index from the on-disk block files once; this is a longer
+                // first start, not a re-download, and only happens the one time.
+                return match spawn_once(divid, datadir, rpc, *timeout, &["-reindex"]) {
+                    Spawn::Running(pid) => Ok(StartReport {
+                        pid,
+                        repaired_with: Some("building the address index".to_string()),
+                    }),
+                    Spawn::Corruption(msg)
+                    | Spawn::Failed(msg)
+                    | Spawn::ReindexRequired(msg) => {
+                        Err(format!("could not build the address index: {msg}"))
+                    }
+                };
             }
             Spawn::Failed(msg) => return Err(msg),
         }

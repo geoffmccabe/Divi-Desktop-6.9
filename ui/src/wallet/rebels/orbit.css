@@ -1,0 +1,132 @@
+/* Divi Rebels: Orbit mode.
+   Every colour, radius and blur comes from a theme token so the game skins with
+   the rest of the wallet. The only literals here are layout numbers. */
+
+.orbit {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  border-radius: var(--panel-radius);
+  overflow: hidden;
+  background: hsl(var(--rebels-ocean));
+}
+
+.orbit-canvas { display: block; width: 100%; height: 100%; cursor: none; }
+
+.orbit-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  color: hsl(var(--rebels-hud));
+  text-shadow: 0 0 calc(var(--glow-strength) * 0.4) hsl(var(--glow-color) / 0.7);
+}
+
+.orbit-tl, .orbit-tr { position: absolute; top: 14px; }
+.orbit-tl { left: 16px; }
+.orbit-tr { right: 16px; text-align: right; }
+.orbit-row { font-size: 12px; letter-spacing: 0.06em; line-height: 1.7; }
+.orbit-big { font-size: 22px; font-weight: 700; letter-spacing: 0.02em; }
+.orbit-dim { opacity: 0.62; }
+
+/* Bars, bottom centre. */
+.orbit-bars {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 22px;
+  align-items: flex-end;
+}
+.orbit-gauge { text-align: center; }
+.orbit-gauge > span {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  opacity: 0.7;
+  margin-bottom: 5px;
+}
+.orbit-pips { display: flex; gap: 4px; }
+.orbit-pip {
+  width: 17px; height: 8px;
+  border: 1px solid hsl(var(--rebels-hud) / 0.5);
+  border-radius: 2px;
+}
+.orbit-pip.on { background: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+.orbit-pip.low.on { background: hsl(var(--destructive)); border-color: hsl(var(--destructive)); }
+.orbit-meter {
+  width: 118px; height: 8px;
+  border: 1px solid hsl(var(--rebels-hud) / 0.5);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.orbit-meter > i { display: block; height: 100%; background: hsl(var(--accent)); }
+.orbit-meter.boost > i { background: hsl(var(--rebels-home)); }
+
+/* The crosshair is the stick position, so it has to be visible at all times. */
+.orbit-cross {
+  position: absolute;
+  width: 46px; height: 46px;
+  margin: -23px 0 0 -23px;
+  border: 1.5px solid hsl(var(--primary));
+  border-radius: 50%;
+  opacity: 0.85;
+}
+.orbit-cross::before, .orbit-cross::after {
+  content: ""; position: absolute; background: hsl(var(--rebels-ship));
+}
+.orbit-cross::before { left: 50%; top: 18px; width: 1.5px; height: 10px; margin-left: -0.75px; }
+.orbit-cross::after { top: 50%; left: 18px; height: 1.5px; width: 10px; margin-top: -0.75px; }
+
+.orbit-dock {
+  position: absolute;
+  left: 50%; top: 62%;
+  transform: translateX(-50%);
+  text-align: center;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+}
+.orbit-dockbar {
+  width: 190px; height: 5px; margin: 7px auto 0;
+  border: 1px solid hsl(var(--rebels-home) / 0.6);
+  border-radius: 3px; overflow: hidden;
+}
+.orbit-dockbar > i { display: block; height: 100%; background: hsl(var(--rebels-home)); }
+
+/* Launch card and the destroyed card share a look. */
+.orbit-card {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  gap: 10px;
+  pointer-events: auto;
+  background: hsl(var(--rebels-ocean) / 0.72);
+  backdrop-filter: blur(var(--panel-blur));
+}
+.orbit-card h2 {
+  font-family: var(--font-heading);
+  font-size: 30px;
+  letter-spacing: 0.1em;
+  margin: 0;
+  color: hsl(var(--primary));
+}
+.orbit-card p { margin: 0; font-size: 13px; color: hsl(var(--rebels-hud)); }
+.orbit-card .orbit-keys { font-size: 12px; opacity: 0.66; line-height: 1.9; }
+.orbit-card button {
+  justify-self: center;
+  margin-top: 8px;
+  padding: 10px 26px;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  letter-spacing: 0.12em;
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  border: none;
+  border-radius: calc(var(--panel-radius) * 0.6);
+  cursor: pointer;
+}
+.orbit-card button:hover { filter: brightness(1.12); }

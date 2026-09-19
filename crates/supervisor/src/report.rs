@@ -82,7 +82,19 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
     };
 
     let blocks = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64());
-    let staking = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
+    let mut staking = rpc.call("getstakingstatus", json!([])).unwrap_or(json!({}));
+    // The node's "staking status" flag FLICKERS — it can read true even when the
+    // wallet is LOCKED and can't actually sign a stake. Recompute it from stable
+    // signals gated on the real unlock state, so "staking" means genuinely
+    // staking: an encrypted wallet must be unlocked (unlocked_until != 0), an
+    // unencrypted one always is; plus mintable coins and peers.
+    let winfo = rpc.call("getwalletinfo", json!([])).unwrap_or(json!({}));
+    let encrypted = winfo.get("unlocked_until").is_some();
+    let unlocked = !encrypted || winfo["unlocked_until"].as_i64().map(|u| u != 0).unwrap_or(false);
+    let actually_staking = unlocked
+        && staking["mintablecoins"].as_bool().unwrap_or(false)
+        && staking["haveconnections"].as_bool().unwrap_or(false);
+    staking["staking status"] = serde_json::json!(actually_staking);
     let tip_age = tip_age_secs(&rpc);
     let h = state::assess(peers, tip_age, &staking);
     StatusReport {

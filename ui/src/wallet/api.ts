@@ -259,6 +259,14 @@ export interface Block {
   stakeAmount: number | null;
 }
 export const recentBlocks = (count: number) => invoke<Block[]>("recent_blocks", { count });
+
+export interface PricePoint {
+  day: string; // YYYY-MM-DD
+  close: number;
+  marketCap: number;
+  volume: number;
+}
+export const priceHistory = () => invoke<PricePoint[]>("price_history");
 export interface StaleBlock {
   height: number;
   status: string;
@@ -309,6 +317,16 @@ export interface MempoolSnap {
 export const mempoolSnapshot = (known: string[]) =>
   invoke<MempoolSnap | null>("mempool_snapshot", { known });
 
+// Double-spend conflicts the node has seen. `kept` is the tx it accepted; a
+// tracked incoming payment whose txid appears as `kept` is under attack.
+export interface MempoolConflict {
+  outpoint: string;
+  kept: string;
+  rejected: string;
+  time: number;
+}
+export const mempoolConflicts = () => invoke<MempoolConflict[]>("mempool_conflicts");
+
 // ---- Bearer transactions (redeemable claim codes) ----
 export interface BearerCreated {
   code: string; // the redeemable code (this IS the money — treat as a secret)
@@ -329,6 +347,128 @@ export const bearerCreate = (amount: number, passphrase?: string) =>
 export const bearerSweep = (code: string, dest: string) =>
   invoke<string>("bearer_sweep", { code, dest });
 export const bearerStatus = (code: string) => invoke<BearerStatus>("bearer_status", { code });
+
+// ---- Pin Code Send: on-chain escrow (HTLC) ----
+export interface EscrowCreated {
+  ticket: string; // shareable, non-secret; lets the receiver see + later claim
+  txid: string;
+  vout: number;
+  amount: number;
+}
+export interface EscrowStatus {
+  funded: boolean;
+  claimed: boolean;
+  amount: number; // what the receiver would get (locked value minus claim fee)
+  confirmations: number;
+  recipient: string;
+  sender: string;
+  locktime: number; // unix time the sender can refund after
+}
+// `code` is the long random release code (generated in the UI); `locktime` is a
+// unix time (sender-refund-after). Sender pays the fee.
+export const escrowCreate = (recipient: string, amount: number, code: string, locktime: number, passphrase?: string) =>
+  invoke<EscrowCreated>("escrow_create", { recipient, amount, code, locktime, passphrase: passphrase ?? null });
+export const escrowStatus = (ticket: string) => invoke<EscrowStatus>("escrow_status", { ticket });
+export const escrowClaim = (ticket: string, code: string, passphrase?: string) =>
+  invoke<string>("escrow_claim", { ticket, code, passphrase: passphrase ?? null });
+export const escrowRefund = (ticket: string, passphrase?: string) =>
+  invoke<string>("escrow_refund", { ticket, passphrase: passphrase ?? null });
+
+// ---- Treasury balances + native multisig ----
+export interface AddrBalance {
+  available: boolean; // false while the address index is still building
+  balance: number;
+  message: string;
+}
+// Balance of ANY address (treasury wallets, a multisig), read from our node's
+// address index.
+export const addressBalance = (address: string) =>
+  invoke<AddrBalance>("address_balance", { address });
+
+export interface MultisigWallet {
+  label: string;
+  address: string;
+  m: number; // signatures required
+  n: number; // total co-signers
+  participants: string[];
+  balance: number;
+  balanceAvailable: boolean;
+  definition: string; // shareable "DVMW1-…" wallet definition (also the backup)
+  createdAt: number;
+}
+export interface MyKey {
+  address: string;
+  pubkey: string;
+}
+// A fresh address + its public key, to hand to co-signers when creating a
+// shared wallet (this wallet keeps the private key so the address can sign).
+export const multisigMyPubkey = () => invoke<MyKey>("multisig_my_pubkey");
+
+export const multisigList = () => invoke<MultisigWallet[]>("multisig_list");
+export const multisigCreate = (m: number, keys: string[], label: string) =>
+  invoke<MultisigWallet>("multisig_create", { m, keys, label });
+// Add a wallet someone else built, from its definition blob.
+export const multisigImport = (definition: string) =>
+  invoke<MultisigWallet>("multisig_import", { definition });
+export const multisigForget = (address: string) => invoke<void>("multisig_forget", { address });
+
+// What a pending spend REALLY does, decoded from the transaction itself
+// (never trusting the blob's own labels).
+export interface SpendOutput {
+  address: string;
+  amount: number;
+  isChange: boolean; // paid back to the shared wallet
+}
+export interface SpendPreview {
+  from: string;
+  mixedSources: boolean; // inputs from more than one address (suspicious)
+  sourceOk: boolean; // inputs really belong to the wallet the spend declares
+  totalIn: number;
+  outputs: SpendOutput[];
+  totalOut: number;
+  fee: number;
+  signed: number;
+  required: number;
+  complete: boolean;
+}
+export const multisigInspect = (blob: string) => invoke<SpendPreview>("multisig_inspect", { blob });
+
+// A shared wallet's deposits + spends, newest first (the treasury audit trail).
+export interface MsActivity {
+  txid: string;
+  amount: number; // + deposit, - spend
+  height: number;
+  time: number; // unix seconds, 0 if unknown
+  confirmations: number;
+}
+export const multisigActivity = (address: string, limit = 25) =>
+  invoke<MsActivity[]>("multisig_activity", { address, limit });
+
+export interface PendingSpend {
+  blob: string; // the shareable pending-spend, passed between co-signers
+  from: string;
+  to: string;
+  amount: number;
+  fee: number;
+  required: number;
+}
+export const multisigPropose = (fromAddress: string, to: string, amount: number) =>
+  invoke<PendingSpend>("multisig_propose", { fromAddress, to, amount });
+
+export interface SignResult {
+  blob: string;
+  complete: boolean;
+  added: boolean; // did this wallet actually add a signature?
+  signed: number;
+  required: number;
+  from: string;
+  to: string;
+  amount: number;
+  fee: number;
+}
+export const multisigSign = (blob: string, passphrase?: string) =>
+  invoke<SignResult>("multisig_sign", { blob, passphrase: passphrase ?? null });
+export const multisigBroadcast = (blob: string) => invoke<string>("multisig_broadcast", { blob });
 
 export const stakingWallets = () => invoke<StakeWallet[]>("staking_wallets");
 export const lotteryInfo = () => invoke<LotteryInfo | null>("lottery_info");
@@ -399,6 +539,22 @@ export const sendCoins = (address: string, amount: number, passphrase?: string) 
 export const fastSend = (address: string, amount: number, passphrase?: string) =>
   invoke<string>("fast_send", { address, amount, passphrase: passphrase ?? null });
 
+// Skins Gallery purchase: one immediate payment to the skin's creator, tagged
+// on-chain with the skin's slug so it can be recognised again later.
+export const buySkin = (payToAddress: string, amount: number, skinRef: string, passphrase?: string) =>
+  invoke<string>("skin_buy", { payToAddress, amount, skinRef, passphrase: passphrase ?? null });
+
+// Skins this wallet has paid for, found by scanning its own outgoing
+// transactions for the tag `buySkin` attaches. `confirmations` of 0 means
+// the payment hasn't landed in a block yet.
+export interface SkinEntitlement {
+  skinRef: string;
+  txid: string;
+  confirmations: number;
+}
+export const skinEntitlements = (count?: number) =>
+  invoke<SkinEntitlement[]>("skin_entitlements", { count: count ?? null });
+
 // Live status of one wallet transaction, for the Fast Send tracker. Negative
 // `confirmations` means the node sees a conflicting (double-spent) transaction.
 export interface TxStatus {
@@ -428,6 +584,8 @@ export const explorerTxUrl = (txid: string) => `https://scan.divi.love/tx/${txid
 export interface AiStatus {
   claude: boolean;
   grok: boolean;
+  /** A token for the gateway. Not a model key: revocable on its own. */
+  gatewayToken: boolean;
   gateway: string;
 }
 export const aiStatus = () => invoke<AiStatus>("ai_status");

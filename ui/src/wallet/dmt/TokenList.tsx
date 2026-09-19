@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { walletAddresses } from "../api";
+import { walletAddresses, type AddrInfo } from "../api";
 import {
   dmtBalances,
   dmtTokensMeta,
@@ -12,6 +12,20 @@ import {
 // anywhere here: under the address-balance model nothing can eat a token by
 // accident, so a guard would only imply a danger that isn't real (spec §11.3).
 
+// wallet_addresses reaches the node over RPC, and that call has no deadline of
+// its own: a stopped node, or one whose RPC threads are wedged, simply never
+// answers. Waiting on it forever left this panel showing "Loading your tokens"
+// with no error and no way out. Nothing here is worth blocking the list for, so
+// give up after a few seconds and carry on with no addresses.
+const ADDRESS_WAIT_MS = 5000;
+
+function addressesOrNone(): Promise<AddrInfo[]> {
+  return Promise.race([
+    walletAddresses().catch(() => [] as AddrInfo[]),
+    new Promise<AddrInfo[]>((resolve) => setTimeout(() => resolve([]), ADDRESS_WAIT_MS)),
+  ]);
+}
+
 export function TokenList() {
   const [rows, setRows] = useState<{ bal: TokenBalance; meta: TokenMeta | null }[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -20,7 +34,7 @@ export function TokenList() {
     let alive = true;
     (async () => {
       try {
-        const addrs = await walletAddresses().catch(() => []);
+        const addrs = await addressesOrNone();
         const bals = await dmtBalances(addrs.map((a) => a.address));
         const metas = await dmtTokensMeta(bals.map((b) => b.tokenId));
         if (!alive) return;

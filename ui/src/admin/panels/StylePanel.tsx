@@ -1,9 +1,14 @@
-import { useState } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 import { TOKENS, TOKEN_GROUPS, type TokenDef } from "../../theme/tokens";
 import { useTheme } from "../../theme/ThemeProvider";
 import { hexToHslTriplet, hslTripletToHex } from "../../theme/color";
 import { playSound, type SoundEvent } from "../../sound";
 import { Icon } from "../../Icon";
+import { iconFileToTokenValue, textureFileToTokenValue } from "../../theme/upload";
+import type { SavedTheme } from "../../theme/store";
+import { publishSkin } from "../../theme/gallery/api";
+import { invoke } from "../../tauri";
+import { loadIdentity } from "../../wallet/nodeIdentity";
 
 function Control({ token }: { token: TokenDef }) {
   const { theme, setToken } = useTheme();
@@ -59,6 +64,10 @@ function Control({ token }: { token: TokenDef }) {
     );
   }
 
+  if (token.type === "icon" || token.type === "image") {
+    return <UploadControl token={token} value={value} onSet={(v) => setToken(token.key, v)} />;
+  }
+
   // range
   const num = parseFloat(value) || 0;
   const shown = token.displayPercent ? `${Math.round(num * 100)}%` : `${num}${token.unit ?? ""}`;
@@ -77,6 +86,189 @@ function Control({ token }: { token: TokenDef }) {
         onChange={(e) => setToken(token.key, `${e.target.value}${token.unit ?? ""}`)}
       />
     </label>
+  );
+}
+
+// Shared control for the two upload token types. "icon" shows a masked
+// preview (so it previews the same auto-tinted way it'll actually render);
+// "image" shows a plain rectangular preview of the texture/photo.
+function UploadControl({
+  token,
+  value,
+  onSet,
+}: {
+  token: TokenDef;
+  value: string;
+  onSet: (v: string) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [err, setErr] = useState("");
+  const isIcon = token.type === "icon";
+  const isSet = value !== token.default;
+
+  const onPick = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setErr("");
+    try {
+      const v = isIcon ? await iconFileToTokenValue(file) : await textureFileToTokenValue(file);
+      onSet(v);
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "Couldn't read that file");
+    }
+  };
+
+  return (
+    <div className="style-row style-upload-row">
+      <span>{token.label}</span>
+      <span className="style-upload">
+        <span
+          className={isIcon ? "style-upload-preview style-upload-preview-icon" : "style-upload-preview"}
+          style={
+            isIcon
+              ? { WebkitMaskImage: value, maskImage: value }
+              : value !== "none"
+              ? { backgroundImage: value, backgroundSize: "cover", backgroundPosition: "center" }
+              : undefined
+          }
+        />
+        <input ref={inputRef} type="file" accept={token.accept} hidden onChange={onPick} />
+        <button type="button" className="style-btn" onClick={() => inputRef.current?.click()}>
+          Upload
+        </button>
+        {isSet && (
+          <button type="button" className="style-del" aria-label="Reset" onClick={() => onSet(token.default)}>
+            ✕
+          </button>
+        )}
+      </span>
+      {err && <p className="style-note style-upload-err">{err}</p>}
+    </div>
+  );
+}
+
+// Inline "Publish to Gallery" form for one saved theme. Expands under its row
+// in "My themes" rather than a separate modal, matching the panel's existing
+// inline-row style. The publishing wallet's own address is what makes a
+// listing "yours" — there is no login system to attach it to instead.
+function PublishControl({ theme }: { theme: SavedTheme }) {
+  const [open, setOpen] = useState(false);
+  const [address, setAddress] = useState<string | null>(null);
+  const [addrErr, setAddrErr] = useState("");
+  const [description, setDescription] = useState("");
+  const [isFree, setIsFree] = useState(true);
+  const [priceDivi, setPriceDivi] = useState("");
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [done, setDone] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const onOpen = async () => {
+    setOpen(true);
+    if (address || addrErr) return;
+    try {
+      const a = await invoke<string | null>("signing_address");
+      if (!a) throw new Error("No signing address — is the node reachable?");
+      setAddress(a);
+    } catch (ex) {
+      setAddrErr(ex instanceof Error ? ex.message : "Couldn't read the wallet's address");
+    }
+  };
+
+  const onPickPreview = (e: ChangeEvent<HTMLInputElement>) => {
+    setPreviewFile(e.target.files?.[0] ?? null);
+  };
+
+  const onPublish = async () => {
+    if (!address) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const saved = await publishSkin({
+        name: theme.name,
+        description,
+        tokens: theme.tokens,
+        isFree,
+        priceDivi: parseFloat(priceDivi) || 0,
+        authorAddress: address,
+        authorName: loadIdentity().name || null,
+        previewFile,
+      });
+      setDone(saved.slug);
+    } catch (ex) {
+      setErr(ex instanceof Error ? ex.message : "Publish failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button type="button" className="style-btn" onClick={onOpen}>
+        Publish
+      </button>
+    );
+  }
+
+  if (done) {
+    return <p className="style-note">Published “{theme.name}” to the Skins Gallery.</p>;
+  }
+
+  return (
+    <div className="style-publish-form">
+      <p className="style-note">
+        {address ? `Publishing as ${address}` : addrErr || "Reading wallet address…"}
+      </p>
+      <textarea
+        className="style-name"
+        placeholder="Describe this skin…"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+        rows={2}
+      />
+      <label className="style-row">
+        <span>Preview image</span>
+        <span className="style-upload">
+          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={onPickPreview} />
+          <button type="button" className="style-btn" onClick={() => fileRef.current?.click()}>
+            {previewFile ? previewFile.name : "Choose image"}
+          </button>
+        </span>
+      </label>
+      <label className="style-row">
+        <span>Free</span>
+        <input type="checkbox" checked={isFree} onChange={(e) => setIsFree(e.target.checked)} />
+      </label>
+      {!isFree && (
+        <label className="style-row">
+          <span>Price (DIVI)</span>
+          <input
+            className="style-name"
+            type="number"
+            min="0"
+            step="0.01"
+            value={priceDivi}
+            onChange={(e) => setPriceDivi(e.target.value)}
+          />
+        </label>
+      )}
+      {err && <p className="style-note style-upload-err">{err}</p>}
+      <div className="style-save">
+        <button type="button" className="style-btn" onClick={() => setOpen(false)} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="style-btn style-btn-primary"
+          disabled={busy || !address || !theme.name.trim()}
+          onClick={onPublish}
+        >
+          {busy ? "Publishing…" : "Publish to Gallery"}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -107,6 +299,15 @@ export function StylePanel() {
       {TOKEN_GROUPS.map((group) => (
         <section key={group} className="style-group">
           <h3>{group}</h3>
+          {group === "Icons" && (
+            <p className="style-note">
+              Upload a simple single-color SVG shape per icon — only its outline matters, since it
+              recolors automatically to match the rest of the skin, just like the built-in set.
+            </p>
+          )}
+          {group === "Maps" && (
+            <p className="style-note">One shared palette for both the 3D globe and the flat network map.</p>
+          )}
           {TOKENS.filter((t) => t.group === group).map((t) => (
             <Control key={t.key} token={t} />
           ))}
@@ -144,10 +345,11 @@ export function StylePanel() {
         {saved.length > 0 && (
           <ul className="style-saved">
             {saved.map((s) => (
-              <li key={s.id}>
+              <li key={s.id} className="style-saved-row">
                 <button type="button" className="style-apply" onClick={() => applySaved(s.id)}>
                   {s.name}
                 </button>
+                <PublishControl theme={s} />
                 <button type="button" className="style-del" aria-label="Delete" onClick={() => deleteSaved(s.id)}>
                   ✕
                 </button>

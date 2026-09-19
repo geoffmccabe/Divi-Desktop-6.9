@@ -1,0 +1,1577 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Divi Rebels</title>
+<style>
+  /* A community app is its own document with its own origin, so none of the
+     wallet's theme variables exist in here. A vector arcade game wants a black
+     field and nothing else anyway, so this is one of the few surfaces where
+     that isolation costs us nothing. */
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #000; color: #d9c7ff;
+    font: 14px/1.4 ui-monospace, "SF Mono", Menlo, monospace;
+    /* The game reads every pointer move. Letting the webview also treat those
+       as scroll or text selection produces a cursor that fights the player. */
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  #wrap { position: relative; width: 100%; height: 100%; }
+  canvas { display: block; width: 100%; height: 100%; background: #000; cursor: none; }
+  /* Shown only when the canvas never came up, so a black screen is never left
+     to speak for itself. */
+  #fallback {
+    position: absolute; inset: 0; display: none; place-content: center;
+    text-align: center; padding: 30px; color: #ff9f9f;
+  }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="screen"></canvas>
+  <div id="fallback">Divi Rebels could not start the display.</div>
+</div>
+
+<!-- The wallet's own SDK, the single shared copy. It is what lets the high
+     score live in this app's private store rather than in browser storage the
+     wallet knows nothing about. There is deliberately no copy of it in this
+     folder: opened as a plain file this simply 404s, window.divi stays
+     undefined, and the score falls back to localStorage. -->
+<script src="sdk.js"></script>
+
+<script>
+"use strict";
+/* ==========================================================================
+   DIVI REBELS
+   An original colour-vector arcade game: three waves, looping and escalating.
+
+   Everything is drawn as glowing line segments on black. There is no 3D
+   library and no scene graph on purpose. A vector game needs a projection, a
+   near-plane clip and a line batcher, and all three fit in a few hundred lines
+   that run anywhere. Pulling in a renderer would cost hundreds of kilobytes
+   inside the wallet binary and buy nothing.
+
+   Coordinate system: the camera sits at (px, py, 0) looking down +Z. The world
+   comes toward it, so an object's z falls every frame and nothing has to track
+   a moving camera. Screen y is flipped at projection time so +Y is up.
+   ========================================================================== */
+
+/* ---------------------------------------------------------------- palette */
+/* Divi purple is the player's colour, pink is danger, and the rest are the
+   cool end of the spectrum so the purple always reads as "you". */
+const C = {
+  player:   "#b45cf5",
+  playerHi: "#e6c2ff",
+  bolt:     "#c77dff",
+  enemy:    "#4fd6ff",
+  enemyHot: "#9df0ff",
+  fire:     "#ff4d9d",
+  station:  "#7a5cff",
+  stationBg:"#2b2068",
+  ground:   "#2f8f7a",
+  groundHi: "#57e0c0",
+  trench:   "#8f6cff",
+  port:     "#ffd24a",
+  hud:      "#a98cf0",
+  warn:     "#ff5c5c",
+  star:     "#5b5170",
+  white:    "#ffffff",
+};
+
+/* --------------------------------------------------------------- tuneables */
+const NEAR = 6;             /* near clip plane, in world units */
+const FAR = 3600;           /* nothing is drawn past this */
+const FOV = 0.82;           /* focal length as a fraction of viewport height */
+const BOLT_SPEED = 1500;    /* player fire, units per second */
+/* How far the crosshair can be thrown from the centre line. This is the number
+   that decides whether the game feels responsive, and the first version had it
+   about five times too small. */
+const AIM_X = 640;
+const AIM_Y = 400;
+/* The depth the crosshair sits at. Shots are fired through it, so anything that
+   appears under the crosshair on screen is on the shot's path whatever its own
+   distance. */
+const ZREF = 700;
+const KEY_RATE = 1100;      /* crosshair travel from the keys, units per second */
+const CRUISE = 260;         /* forward speed of the world past the player */
+const MAX_SHIELD = 6;
+
+/* --------------------------------------------------------------- the canvas */
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d", { alpha: false });
+let VW = 0, VH = 0, CX = 0, CY = 0, F = 600, DPR = 1;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  VW = Math.max(320, window.innerWidth);
+  VH = Math.max(240, window.innerHeight);
+  canvas.width = Math.floor(VW * DPR);
+  canvas.height = Math.floor(VH * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  CX = VW / 2;
+  CY = VH / 2;
+  F = VH * FOV;
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* ------------------------------------------------------------ line batching */
+/* Every segment for a frame is collected first and stroked at the end, grouped
+   by colour and weight. Grouping matters: a wave can put six hundred segments
+   on screen, and stroking each one separately is the difference between a
+   smooth sixty and a slideshow. Grouped, it is about a dozen stroke calls.
+
+   The phosphor look is two passes over the same paths. A wide, dim, additive
+   pass lays down the halo, then a thin bright pass draws the filament. That is
+   far cheaper than shadowBlur, which is per-shape and murders the frame rate. */
+const batch = new Map();
+
+function seg(x1, y1, x2, y2, colour, weight) {
+  const key = colour + "|" + (weight || 1);
+  let list = batch.get(key);
+  if (!list) { list = []; batch.set(key, list); }
+  list.push(x1, y1, x2, y2);
+}
+
+/* Project a world point. Returns null when it sits behind the near plane, so
+   callers must clip rather than assume. */
+function project(x, y, z, out) {
+  if (z < NEAR) return null;
+  const s = F / z;
+  out.x = CX + x * s;
+  out.y = CY - y * s;
+  out.s = s;
+  return out;
+}
+
+const pa = { x: 0, y: 0, s: 0 }, pb = { x: 0, y: 0, s: 0 };
+
+/* Draw a world-space segment, clipping it against the near plane.
+
+   The clip is not optional polish. Without it, any line with one end behind
+   the camera projects to a wild coordinate and paints a streak clean across
+   the screen, which is the single most common way a hand-rolled vector
+   renderer looks broken. */
+const CAM = { x: 0, y: 0 };
+
+function line3(x1, y1, z1, x2, y2, z2, colour, weight) {
+  /* Everything in the world is stored in absolute coordinates and the camera
+     slides around inside it, so the shift happens here, once, rather than at
+     every call site where it would eventually be forgotten in one of them. */
+  x1 -= CAM.x; y1 -= CAM.y; x2 -= CAM.x; y2 -= CAM.y;
+  if (z1 < NEAR && z2 < NEAR) return;
+  if (z1 > FAR && z2 > FAR) return;
+  if (z1 < NEAR) {
+    const t = (NEAR - z1) / (z2 - z1);
+    x1 += (x2 - x1) * t; y1 += (y2 - y1) * t; z1 = NEAR;
+  } else if (z2 < NEAR) {
+    const t = (NEAR - z2) / (z1 - z2);
+    x2 += (x1 - x2) * t; y2 += (y1 - y2) * t; z2 = NEAR;
+  }
+  const a = project(x1, y1, z1, pa);
+  const b = project(x2, y2, z2, pb);
+  if (!a || !b) return;
+  /* A segment wholly off the side of the screen still costs a path entry, and
+     during the trench run most of the wall is exactly that. */
+  if ((a.x < -200 && b.x < -200) || (a.x > VW + 200 && b.x > VW + 200)) return;
+  if ((a.y < -200 && b.y < -200) || (a.y > VH + 200 && b.y > VH + 200)) return;
+  seg(a.x, a.y, b.x, b.y, colour, weight);
+}
+
+/* A model is a flat list of local-space segments: x1,y1,z1,x2,y2,z2 repeated.
+   Drawing one is a translate, a uniform scale and an optional roll about Z,
+   which is all any object in this game needs. Full matrices would be more
+   general and would not draw a single thing this game cannot already draw. */
+function model(m, ox, oy, oz, scale, roll, colour, weight) {
+  const c = roll ? Math.cos(roll) : 1;
+  const s = roll ? Math.sin(roll) : 0;
+  for (let i = 0; i < m.length; i += 6) {
+    let ax = m[i] * scale, ay = m[i + 1] * scale;
+    let bx = m[i + 3] * scale, by = m[i + 4] * scale;
+    if (roll) {
+      const ax2 = ax * c - ay * s, ay2 = ax * s + ay * c;
+      const bx2 = bx * c - by * s, by2 = bx * s + by * c;
+      ax = ax2; ay = ay2; bx = bx2; by = by2;
+    }
+    line3(ox + ax, oy + ay, oz + m[i + 2] * scale,
+          ox + bx, oy + by, oz + m[i + 5] * scale, colour, weight);
+  }
+}
+
+/* Screen-space segment, for the reticle and the HUD frame. */
+function seg2(x1, y1, x2, y2, colour, weight) { seg(x1, y1, x2, y2, colour, weight); }
+
+/* Text goes through the same two-pass glow so it belongs to the same picture.
+   A hand-built stroke font would be more authentic and is a lot of table data
+   for something the bloom pass already sells. */
+const textQueue = [];
+function text(str, x, y, size, colour, align) {
+  textQueue.push({ str, x, y, size, colour, align: align || "center" });
+}
+
+function flush(shake) {
+  ctx.save();
+  if (shake) ctx.translate(shake.x, shake.y);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (let pass = 0; pass < 2; pass++) {
+    ctx.globalCompositeOperation = pass === 0 ? "lighter" : "source-over";
+    for (const [key, list] of batch) {
+      const bar = key.indexOf("|");
+      const colour = key.slice(0, bar);
+      const weight = parseFloat(key.slice(bar + 1));
+      ctx.strokeStyle = colour;
+      ctx.globalAlpha = pass === 0 ? 0.20 : 1;
+      ctx.lineWidth = pass === 0 ? weight * 4.5 : weight * 1.15;
+      ctx.beginPath();
+      for (let i = 0; i < list.length; i += 4) {
+        ctx.moveTo(list[i], list[i + 1]);
+        ctx.lineTo(list[i + 2], list[i + 3]);
+      }
+      ctx.stroke();
+    }
+    for (const t of textQueue) {
+      ctx.font = "bold " + t.size + "px ui-monospace, Menlo, monospace";
+      ctx.textAlign = t.align;
+      ctx.textBaseline = "middle";
+      ctx.strokeStyle = t.colour;
+      ctx.globalAlpha = pass === 0 ? 0.22 : 1;
+      ctx.lineWidth = pass === 0 ? 5 : 1.2;
+      ctx.strokeText(t.str, t.x, t.y);
+    }
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.restore();
+  batch.clear();
+  textQueue.length = 0;
+}
+
+/* -------------------------------------------------------------------- sound */
+/* Every sound is generated. No audio files means nothing to load, nothing to
+   licence, and no questions about what the app is allowed to fetch. The audio
+   context starts suspended in a webview until a real gesture resumes it, so
+   the first fire button press does that. */
+const Sound = (function () {
+  let ac = null, master = null, hum = null, humGain = null, on = true;
+
+  function ensure() {
+    if (ac) return ac;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    ac = new AC();
+    master = ac.createGain();
+    master.gain.value = 0.5;
+    master.connect(ac.destination);
+    return ac;
+  }
+  function wake() {
+    const a = ensure();
+    if (a && a.state === "suspended") a.resume();
+  }
+  function blip(freq, endFreq, dur, type, vol) {
+    if (!on) return;
+    const a = ensure(); if (!a) return;
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = type || "square";
+    o.frequency.setValueAtTime(freq, a.currentTime);
+    o.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), a.currentTime + dur);
+    g.gain.setValueAtTime(vol || 0.18, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0008, a.currentTime + dur);
+    o.connect(g); g.connect(master);
+    o.start(); o.stop(a.currentTime + dur + 0.02);
+  }
+  function noise(dur, cut, vol, sweep) {
+    if (!on) return;
+    const a = ensure(); if (!a) return;
+    const n = Math.floor(a.sampleRate * dur);
+    const buf = a.createBuffer(1, n, a.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = a.createBufferSource(); src.buffer = buf;
+    const f = a.createBiquadFilter(); f.type = "lowpass";
+    f.frequency.setValueAtTime(cut, a.currentTime);
+    if (sweep) f.frequency.exponentialRampToValueAtTime(Math.max(60, cut * 0.12), a.currentTime + dur);
+    const g = a.createGain(); g.gain.value = vol;
+    g.gain.exponentialRampToValueAtTime(0.0008, a.currentTime + dur);
+    src.connect(f); f.connect(g); g.connect(master);
+    src.start();
+  }
+  return {
+    wake,
+    get enabled() { return on; },
+    toggle() {
+      on = !on;
+      if (humGain) humGain.gain.value = on ? 0.05 : 0;
+      return on;
+    },
+    fire()      { blip(1100, 180, 0.16, "square", 0.14); },
+    enemyFire() { blip(420, 120, 0.20, "sawtooth", 0.10); },
+    hitEnemy()  { noise(0.35, 2200, 0.28, true); },
+    hitPlayer() { noise(0.55, 900, 0.40, true); blip(200, 60, 0.45, "sawtooth", 0.18); },
+    bonus()     { blip(600, 1400, 0.18, "triangle", 0.16); },
+    lockOn()    { blip(1500, 1500, 0.06, "sine", 0.10); },
+    bigBoom()   { noise(1.6, 1600, 0.55, true); blip(120, 30, 1.4, "sawtooth", 0.22); },
+    waveUp()    { blip(300, 900, 0.5, "triangle", 0.16); },
+    /* A low engine bed under the whole game. Without it the silences between
+       shots feel like the game has stopped. */
+    engine(run) {
+      const a = ensure(); if (!a) return;
+      if (run && !hum) {
+        hum = a.createOscillator(); hum.type = "sawtooth"; hum.frequency.value = 48;
+        const f = a.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 220;
+        humGain = a.createGain(); humGain.gain.value = on ? 0.05 : 0;
+        hum.connect(f); f.connect(humGain); humGain.connect(master);
+        hum.start();
+      } else if (!run && hum) {
+        try { hum.stop(); } catch (e) { /* already stopped */ }
+        hum = null; humGain = null;
+      }
+    },
+  };
+})();
+
+/* -------------------------------------------------------------------- input */
+/* The crosshair moves with your hand and the ship follows it. That is how the
+   arcade cabinet worked, and getting it backwards is exactly what the first
+   version did: with the crosshair pinned to the centre of the screen there is
+   nothing that visibly moves the way you pushed, so the whole world appears to
+   slide the wrong way.
+
+   Two schemes at once, because a wallet is not a place where anybody expects to
+   learn a control scheme. */
+const Aim = { x: 0, y: 0 };
+const Input = {
+  keys: Object.create(null),
+  firing: false,
+  usedPointer: false,
+};
+
+function clampAim() {
+  Aim.x = Math.max(-AIM_X, Math.min(AIM_X, Aim.x));
+  Aim.y = Math.max(-AIM_Y, Math.min(AIM_Y, Aim.y));
+}
+
+function pointerTo(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  const nx = ((clientX - r.left) / r.width) * 2 - 1;
+  const ny = ((clientY - r.top) / r.height) * 2 - 1;
+  /* Pointer left means crosshair left. Screen y grows downward and world y
+     grows upward, which is the only inversion here and it is a fact about the
+     coordinate systems, not a preference. */
+  Aim.x = nx * AIM_X;
+  Aim.y = -ny * AIM_Y;
+  Input.usedPointer = true;
+}
+canvas.addEventListener("pointermove", (e) => pointerTo(e.clientX, e.clientY));
+canvas.addEventListener("pointerdown", (e) => {
+  pointerTo(e.clientX, e.clientY);
+  Sound.wake();
+  Input.firing = true;
+  e.preventDefault();
+});
+window.addEventListener("pointerup", () => { Input.firing = false; });
+window.addEventListener("keydown", (e) => {
+  /* The wallet is around this frame. Swallowing every key would be rude, so
+     only the ones the game actually uses are claimed. */
+  const k = e.key.toLowerCase();
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "w", "a", "s", "d", "m", "p"].includes(k)) {
+    e.preventDefault();
+  }
+  if (Input.keys[k]) return;
+  Input.keys[k] = true;
+  if (k === " ") { Sound.wake(); Input.firing = true; }
+  if (k === "m") Sound.toggle();
+  if (k === "p") Game.togglePause();
+});
+window.addEventListener("keyup", (e) => {
+  const k = e.key.toLowerCase();
+  Input.keys[k] = false;
+  if (k === " ") Input.firing = false;
+});
+/* Losing the window mid-flight should not leave the throttle stuck open. */
+window.addEventListener("blur", () => {
+  Input.firing = false;
+  for (const k in Input.keys) Input.keys[k] = false;
+});
+
+function keyAxis() {
+  let x = 0, y = 0;
+  if (Input.keys["arrowleft"] || Input.keys["a"]) x -= 1;
+  if (Input.keys["arrowright"] || Input.keys["d"]) x += 1;
+  if (Input.keys["arrowup"] || Input.keys["w"]) y += 1;
+  if (Input.keys["arrowdown"] || Input.keys["s"]) y -= 1;
+  return { x, y };
+}
+
+/* Where the crosshair is on screen. Shots go through this point, so it is also
+   the answer to "what am I about to hit". */
+function aimScreen() {
+  const s = F / ZREF;
+  return { x: CX + (Aim.x - CAM.x) * s, y: CY - (Aim.y - CAM.y) * s };
+}
+
+/* ------------------------------------------------------------- high scores */
+/* Inside the wallet the SDK gives this app its own namespaced bucket. Opened
+   as a plain file it falls back to localStorage, and if both are unavailable
+   the score simply does not survive the session. A game must never fail to
+   start over where it keeps a number. */
+const Scores = (function () {
+  let best = 0;
+  const KEY = "divirebels.best";
+  function load() {
+    if (window.divi && window.divi.storage) {
+      window.divi.storage.get(KEY).then((v) => {
+        const n = parseInt(v, 10);
+        if (!isNaN(n) && n > best) best = n;
+      }).catch(() => {});
+      return;
+    }
+    try {
+      const n = parseInt(localStorage.getItem(KEY) || "0", 10);
+      if (!isNaN(n)) best = n;
+    } catch (e) { /* storage blocked, keep zero */ }
+  }
+  function save(score) {
+    if (score <= best) return;
+    best = score;
+    if (window.divi && window.divi.storage) {
+      window.divi.storage.set(KEY, String(score)).catch(() => {});
+      return;
+    }
+    try { localStorage.setItem(KEY, String(score)); } catch (e) { /* nothing to do */ }
+  }
+  load();
+  return { get best() { return best; }, save };
+})();
+
+/* ------------------------------------------------------------------ models */
+/* Built by little helpers rather than typed out as coordinate tables. The
+   tables would be shorter to read and far more error prone to edit, and a
+   wrong sign in a table shows up as a shape nobody can debug by eye. */
+function polyXY(out, n, r, z, phase) {
+  for (let i = 0; i < n; i++) {
+    const a = phase + (i / n) * Math.PI * 2;
+    const b = phase + ((i + 1) / n) * Math.PI * 2;
+    out.push(Math.cos(a) * r, Math.sin(a) * r, z, Math.cos(b) * r, Math.sin(b) * r, z);
+  }
+}
+function link(out, x1, y1, z1, x2, y2, z2) { out.push(x1, y1, z1, x2, y2, z2); }
+
+/* The enemy interceptor. A hexagonal core between two angled panels: our own
+   silhouette, and the hexagon ties it to the Divi mark. */
+const M_INTERCEPTOR = (function () {
+  const m = [];
+  /* Faceted cockpit ball: two hexagonal rings with a rim between them, plus a
+     front window ring. Six sides is enough to read as round at the size these
+     things are actually seen. */
+  polyXY(m, 6, 0.42, 0.30, 0);
+  polyXY(m, 6, 0.50, 0.00, Math.PI / 6);
+  polyXY(m, 6, 0.42, -0.30, 0);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    const b = a + Math.PI / 6;
+    link(m, Math.cos(a) * 0.42, Math.sin(a) * 0.42, 0.30,
+            Math.cos(b) * 0.50, Math.sin(b) * 0.50, 0.00);
+    link(m, Math.cos(b) * 0.50, Math.sin(b) * 0.50, 0.00,
+            Math.cos(a) * 0.42, Math.sin(a) * 0.42, -0.30);
+  }
+  polyXY(m, 6, 0.26, 0.42, 0);   /* the window, facing you */
+
+  for (const sx of [-1, 1]) {
+    const x = 1.20 * sx;
+    /* The panel is a hexagon standing in the YZ plane, so it presents edge-on
+       as a single bright line when the fighter banks. That flash is most of
+       what makes the shape read in motion. */
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+      const b = ((i + 1) / 6) * Math.PI * 2 + Math.PI / 6;
+      link(m, x, Math.sin(a) * 1.10, Math.cos(a) * 1.10,
+              x, Math.sin(b) * 1.10, Math.cos(b) * 1.10);
+      /* spokes, and the inner frame they meet */
+      link(m, x, Math.sin(a) * 1.10, Math.cos(a) * 1.10,
+              x, Math.sin(a) * 0.38, Math.cos(a) * 0.38);
+      link(m, x, Math.sin(a) * 0.38, Math.cos(a) * 0.38,
+              x, Math.sin(b) * 0.38, Math.cos(b) * 0.38);
+    }
+    /* pylon from the ball out to the panel */
+    link(m, 0.44 * sx, 0.14, 0, x, 0.14, 0);
+    link(m, 0.44 * sx, -0.14, 0, x, -0.14, 0);
+    link(m, 0.44 * sx, 0.14, 0, 0.44 * sx, -0.14, 0);
+  }
+  return m;
+})();
+
+/* The heavier escort that turns up once the loop tightens: a swept dart with
+   forked wingtips, so a second threat is obvious at a glance rather than
+   needing the player to notice a colour change. */
+const M_LANCER = (function () {
+  const m = [];
+  polyXY(m, 6, 0.40, 0.15, 0);
+  polyXY(m, 6, 0.30, -0.65, 0);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    link(m, Math.cos(a) * 0.40, Math.sin(a) * 0.40, 0.15,
+            Math.cos(a) * 0.30, Math.sin(a) * 0.30, -0.65);
+    link(m, Math.cos(a) * 0.40, Math.sin(a) * 0.40, 0.15, 0, 0, 1.15);
+  }
+  for (const sx of [-1, 1]) {
+    const root = 0.36 * sx, tip = 1.55 * sx;
+    link(m, root, 0.05, 0.20, tip, 0.34, -0.95);
+    link(m, tip, 0.34, -0.95, 0.42 * sx, -0.05, -0.80);
+    link(m, root, 0.05, 0.20, 0.42 * sx, -0.05, -0.80);
+    link(m, tip, 0.34, -0.95, tip * 1.12, 0.62, -1.35);
+    link(m, tip, 0.34, -0.95, tip * 1.05, 0.02, -1.40);
+    link(m, tip * 1.12, 0.62, -1.35, tip * 1.05, 0.02, -1.40);
+    link(m, 0.9 * sx, -0.18, -0.30, 0.9 * sx, -0.18, 0.55);
+  }
+  link(m, 0, 0.30, -0.55, 0, 1.00, -1.05);
+  link(m, 0, 1.00, -1.05, 0, 0.28, -0.95);
+  return m;
+})();
+
+/* The reactor port at the end of the trench. Concentric rings with spokes so
+   it pulses convincingly when it is hot. */
+const M_PORT = (function () {
+  const m = [];
+  polyXY(m, 8, 1.0, 0, 0);
+  polyXY(m, 8, 0.62, 0.35, Math.PI / 8);
+  polyXY(m, 8, 0.28, 0.7, 0);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    link(m, Math.cos(a), Math.sin(a), 0, Math.cos(a) * 0.28, Math.sin(a) * 0.28, 0.7);
+  }
+  return m;
+})();
+
+/* ------------------------------------------------------------------- world */
+const W = {
+  stars: [],
+  enemies: [],
+  bolts: [],
+  fire: [],
+  shards: [],
+  towers: [],
+  bars: [],       /* trench catwalks */
+  turrets: [],
+  pops: [],       /* score labels that float and fade */
+};
+
+function reset(list) { list.length = 0; }
+function clearWorld() {
+  reset(W.enemies); reset(W.bolts); reset(W.fire); reset(W.shards);
+  reset(W.towers); reset(W.bars); reset(W.turrets); reset(W.pops);
+}
+
+function makeStars() {
+  W.stars.length = 0;
+  for (let i = 0; i < 90; i++) {
+    W.stars.push({
+      x: (Math.random() - 0.5) * 2600,
+      y: (Math.random() - 0.5) * 1600,
+      z: 120 + Math.random() * (FAR - 120),
+    });
+  }
+}
+makeStars();
+
+/* An explosion is a burst of short segments thrown outward. Wireframe debris
+   is the right idiom here: a particle sprite would be the only filled thing
+   on the screen and would look like it wandered in from another game. */
+function boom(x, y, z, colour, power) {
+  const n = Math.min(26, 8 + Math.floor(power * 5));
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const b = (Math.random() - 0.5) * Math.PI;
+    const sp = (40 + Math.random() * 160) * power;
+    W.shards.push({
+      x, y, z,
+      vx: Math.cos(a) * Math.cos(b) * sp,
+      vy: Math.sin(b) * sp,
+      vz: Math.sin(a) * Math.cos(b) * sp,
+      len: 4 + Math.random() * 10 * power,
+      life: 0.5 + Math.random() * 0.7,
+      max: 1.2,
+      colour,
+    });
+  }
+}
+
+function pop(x, y, z, str) { W.pops.push({ x, y, z, str, life: 1.0 }); }
+
+/* ------------------------------------------------------------------- state */
+const Game = {
+  mode: "attract",     /* attract | intro | play | clear | dead | over */
+  wave: 1,
+  loop: 1,             /* how many times the three waves have been beaten */
+  score: 0,
+  shield: MAX_SHIELD,
+  px: 0, py: 0,        /* camera position, world units */
+  vx: 0, vy: 0,
+  progress: 0,         /* metres flown this wave, or kills, depending on wave */
+  target: 0,
+  paused: false,
+  t: 0,                /* seconds since boot, for anything that wants a clock */
+  modeT: 0,            /* seconds in the current mode */
+  shake: 0,
+  flash: 0,
+  lastFire: 0,
+  portHits: 0,
+  message: "",
+  togglePause() {
+    if (this.mode !== "play") return;
+    this.paused = !this.paused;
+    Sound.engine(!this.paused);
+  },
+};
+
+function setMode(m) {
+  Game.mode = m;
+  Game.modeT = 0;
+}
+
+function startGame() {
+  Game.wave = 1; Game.loop = 1; Game.score = 0; Game.shield = MAX_SHIELD;
+  Game.px = 0; Game.py = 0; Game.vx = 0; Game.vy = 0;
+  Game.paused = false;
+  beginWave();
+}
+
+/* Difficulty is one number, derived, not a pile of per-wave constants that
+   drift apart. Everything that should get harder reads from it. */
+function heat() { return 1 + (Game.loop - 1) * 0.45; }
+
+function beginWave() {
+  clearWorld();
+  Game.progress = 0;
+  Game.portHits = 0;
+  Game.px = 0; Game.py = 0; Game.vx = 0; Game.vy = 0;
+  if (Game.wave === 1) {
+    Game.target = 8 + (Game.loop - 1) * 3;
+    Game.message = "WAVE " + waveNumber() + "  INTERCEPTORS";
+  } else if (Game.wave === 2) {
+    Game.target = 2600 + Game.loop * 300;
+    Game.message = "WAVE " + waveNumber() + "  SURFACE ASSAULT";
+  } else {
+    Game.target = 3400 + Game.loop * 350;
+    Game.message = "WAVE " + waveNumber() + "  THE TRENCH";
+    buildTrench();
+  }
+  setMode("intro");
+  Sound.waveUp();
+}
+
+function waveNumber() { return (Game.loop - 1) * 3 + Game.wave; }
+
+function nextWave() {
+  Game.wave++;
+  if (Game.wave > 3) { Game.wave = 1; Game.loop++; }
+  beginWave();
+}
+
+/* --------------------------------------------------------- trench geometry */
+const TR_HALF = 95;     /* distance from centre line to each wall */
+const TR_FLOOR = -72;
+const TR_ROOF = 72;
+
+/* The trench is laid out once at the start of the wave rather than streamed in.
+   It is a fixed-length run ending at the port, so the player can learn it, and
+   a pre-built list means the obstacle just before the port is never decided by
+   a random number at the worst possible moment. */
+function buildTrench() {
+  const h = heat();
+  let z = 620;
+  while (z < Game.target - 300) {
+    const roll = Math.random();
+    if (roll < 0.45) {
+      /* A catwalk across the trench. Go over it or under it. */
+      const y = TR_FLOOR + 20 + Math.random() * (TR_ROOF - TR_FLOOR - 40);
+      W.bars.push({ kind: "h", z, y, thick: 12 + Math.random() * 10 });
+    } else if (roll < 0.75) {
+      /* A pillar. Pass it on one side. */
+      const x = -TR_HALF + 25 + Math.random() * (TR_HALF * 2 - 50);
+      W.bars.push({ kind: "v", z, x, thick: 14 + Math.random() * 12 });
+    } else {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      W.turrets.push({
+        x: TR_HALF * side, y: TR_FLOOR + 20 + Math.random() * 90, z,
+        side, alive: true, fireAt: 0.6 + Math.random() * 1.2,
+      });
+    }
+    z += 135 + Math.random() * 150 / h;
+  }
+  W.port = { z: Game.target, hot: 0, hits: 0, need: 2 + Math.floor(Game.loop / 2) };
+}
+
+/* ------------------------------------------------------------------ firing */
+function playerFire() {
+  const now = Game.t;
+  if (now - Game.lastFire < 0.20) return;
+  Game.lastFire = now;
+  /* Both bolts are aimed at the crosshair, so they leave the wing roots, meet
+     exactly where you are pointing and carry on. The convergence is theatre and
+     it is most of why firing feels good, but aiming them at the crosshair is
+     also what makes screen-space aiming true at every distance: anything drawn
+     under the crosshair is on this line. */
+  for (const side of [-1, 1]) {
+    const ox = 34 * side, oy = -26;
+    const sx = Game.px + ox, sy = Game.py + oy, sz = NEAR + 2;
+    const dx = Aim.x - sx, dy = Aim.y - sy, dz = ZREF - sz;
+    const d = Math.hypot(dx, dy, dz) || 1;
+    W.bolts.push({
+      x: sx, y: sy, z: sz,
+      vx: (dx / d) * BOLT_SPEED, vy: (dy / d) * BOLT_SPEED, vz: (dz / d) * BOLT_SPEED,
+      life: 1.2,
+    });
+  }
+  Sound.fire();
+}
+
+function enemyShoot(x, y, z, speed) {
+  /* Aimed at where the player is now, not where they will be. Leading the
+     target is more correct and much less fun: an arcade game wants shots you
+     can see coming and slide away from. */
+  const dx = Game.px - x, dy = Game.py - y, dz = -z;
+  const d = Math.hypot(dx, dy, dz) || 1;
+  W.fire.push({
+    x, y, z,
+    vx: (dx / d) * speed, vy: (dy / d) * speed, vz: (dz / d) * speed,
+    life: 4,
+  });
+  Sound.enemyFire();
+}
+
+function hurt(amount) {
+  if (Game.mode !== "play") return;
+  Game.shield -= amount;
+  Game.shake = 1;
+  Game.flash = 1;
+  Sound.hitPlayer();
+  if (Game.shield <= 0) {
+    Game.shield = 0;
+    boom(Game.px, Game.py, 40, C.warn, 2.4);
+    Sound.bigBoom();
+    Scores.save(Game.score);
+    setMode("dead");
+  }
+}
+
+function award(points, x, y, z) {
+  Game.score += points;
+  if (x !== undefined) pop(x, y, z, "+" + points);
+}
+
+/* ------------------------------------------------------------- wave updates */
+function updateWave1(dt) {
+  const h = heat();
+  /* Keep a rolling number of attackers in the air rather than spawning a fixed
+     formation, so the pressure stays even however fast the player shoots. */
+  const want = Math.min(7, 3 + Math.floor(Game.loop));
+  if (W.enemies.length < want && Math.random() < dt * (5 + h * 2)) {
+    const lancer = Game.loop > 1 && Math.random() < 0.3;
+    W.enemies.push({
+      x: (Math.random() - 0.5) * 420,
+      y: (Math.random() - 0.5) * 260,
+      z: 900 + Math.random() * 320,
+      vx: 0, vy: 0,
+      phase: Math.random() * Math.PI * 2,
+      speed: (150 + Math.random() * 90) * h,
+      hp: lancer ? 2 : 1,
+      kind: lancer ? "lancer" : "int",
+      scale: lancer ? 20 : 16,
+      roll: 0, rollv: (Math.random() - 0.5) * 1.1,
+      fireAt: 0.8 + Math.random() * 1.6 / h,
+    });
+  }
+
+  for (let i = W.enemies.length - 1; i >= 0; i--) {
+    const e = W.enemies[i];
+    e.z -= (e.speed + CRUISE * 0.4) * dt;
+    e.phase += dt * 1.4;
+    /* Weaving keeps them from being a shooting gallery, and the weave is tied
+       to their own phase so two on screen never move as a pair. */
+    e.x += Math.cos(e.phase) * 70 * dt;
+    e.y += Math.sin(e.phase * 0.8) * 45 * dt;
+    e.roll += e.rollv * dt;
+    e.fireAt -= dt;
+    if (e.fireAt <= 0 && e.z > 120 && e.z < 800) {
+      enemyShoot(e.x, e.y, e.z, 380 + 60 * h);
+      e.fireAt = (1.4 + Math.random() * 1.8) / h;
+    }
+    if (e.z < NEAR) {
+      /* Flown past. A near miss costs nothing but the shot you did not take. */
+      W.enemies.splice(i, 1);
+    }
+  }
+
+  if (Game.progress >= Game.target) {
+    setMode("clear");
+    Sound.bonus();
+  }
+}
+
+function updateWave2(dt) {
+  const h = heat();
+  Game.progress += CRUISE * dt;
+
+  /* Towers are streamed in ahead of the player. Spacing tightens with the
+     loop, which is the whole difficulty curve for this wave. */
+  if (Math.random() < dt * (2.4 + h * 1.2)) {
+    const gun = Math.random() < 0.45;
+    W.towers.push({
+      x: (Math.random() - 0.5) * 700,
+      z: 1200 + Math.random() * 200,
+      h: 70 + Math.random() * 190,
+      gun,
+      alive: true,
+      fireAt: gun ? 0.7 + Math.random() : 1e9,
+    });
+  }
+
+  for (let i = W.towers.length - 1; i >= 0; i--) {
+    const t = W.towers[i];
+    t.z -= CRUISE * dt;
+    if (t.alive && t.gun) {
+      t.fireAt -= dt;
+      if (t.fireAt <= 0 && t.z > 150 && t.z < 900) {
+        enemyShoot(t.x, TR_FLOOR + t.h, t.z, 330 + 70 * h);
+        t.fireAt = (1.6 + Math.random() * 2.0) / h;
+      }
+    }
+    /* Flying into one hurts. The test is deliberately generous on x so a clear
+       miss never registers as a hit, which is the failure players never
+       forgive. */
+    if (t.alive && t.z < 30 && t.z > -10) {
+      if (Math.abs(t.x - Game.px) < 26 && Game.py < TR_FLOOR + t.h + 10) {
+        t.alive = false;
+        boom(t.x, TR_FLOOR + t.h, t.z, C.groundHi, 1.6);
+        hurt(1);
+      }
+    }
+    if (t.z < -60) W.towers.splice(i, 1);
+  }
+
+  if (Game.progress >= Game.target) {
+    setMode("clear");
+    Sound.bonus();
+  }
+}
+
+function updateWave3(dt) {
+  const h = heat();
+  Game.progress += CRUISE * dt;
+
+  for (let i = W.bars.length - 1; i >= 0; i--) {
+    const b = W.bars[i];
+    b.z -= CRUISE * dt;
+    if (b.z < 26 && b.z > -6 && !b.done) {
+      b.done = true;
+      const hitH = b.kind === "h" && Math.abs(Game.py - b.y) < b.thick + 12;
+      const hitV = b.kind === "v" && Math.abs(Game.px - b.x) < b.thick + 14;
+      if (hitH || hitV) {
+        boom(Game.px, Game.py, 20, C.trench, 1.4);
+        hurt(1);
+      }
+    }
+    if (b.z < -60) W.bars.splice(i, 1);
+  }
+
+  for (let i = W.turrets.length - 1; i >= 0; i--) {
+    const t = W.turrets[i];
+    t.z -= CRUISE * dt;
+    if (t.alive) {
+      t.fireAt -= dt;
+      if (t.fireAt <= 0 && t.z > 120 && t.z < 800) {
+        enemyShoot(t.x, t.y, t.z, 360 + 70 * h);
+        t.fireAt = (1.3 + Math.random() * 1.6) / h;
+      }
+    }
+    if (t.z < -60) W.turrets.splice(i, 1);
+  }
+
+  const p = W.port;
+  if (p) {
+    p.z -= CRUISE * dt;
+    p.hot = Math.max(0, p.hot - dt * 2);
+    /* Reaching the port without killing it means the run failed, not that the
+       player died. Escaping over the top costs a shield and resets the run,
+       which keeps the wave winnable rather than ending the game on a miss. */
+    if (p.z < 20 && p.hits < p.need) {
+      hurt(1);
+      if (Game.mode === "play") {
+        Game.progress = 0;
+        clearWorld();
+        buildTrench();
+        Game.message = "MISSED THE PORT  GOING ROUND AGAIN";
+        Game.modeT = 0;
+      }
+    }
+  }
+}
+
+/* Walls, catwalks and the port all live in wave three's own bounds. Clamping
+   there rather than in the shared mover keeps the other two waves open. */
+function playerBounds() {
+  if (Game.wave === 3) {
+    return { x: TR_HALF - 18, yLo: TR_FLOOR + 16, yHi: TR_ROOF - 16 };
+  }
+  if (Game.wave === 2) {
+    return { x: 380, yLo: TR_FLOOR + 22, yHi: 240 };
+  }
+  return { x: 330, yLo: -220, yHi: 220 };
+}
+
+/* --------------------------------------------------------- shared movement */
+function updateCommon(dt) {
+  const b = playerBounds();
+
+  /* The keys push the crosshair at a steady rate. The pointer sets it outright,
+     and whichever was used last wins, so both can be used in one session
+     without either yanking control away from the other. */
+  const k = keyAxis();
+  if (k.x || k.y) {
+    Aim.x += k.x * KEY_RATE * dt;
+    Aim.y += k.y * KEY_RATE * dt;
+    clampAim();
+  }
+
+  /* The ship flies toward where you are pointing, but it only has as much room
+     as the wave gives it: full deflection puts it exactly at the edge of its
+     bounds and never past them. Mapping through the bounds like this is what
+     stops the trench run from pinning you against a wall every time you aim at
+     something on the far side of it. */
+  const midY = (b.yLo + b.yHi) / 2, halfY = (b.yHi - b.yLo) / 2;
+  const tx = (Aim.x / AIM_X) * b.x;
+  const ty = midY + (Aim.y / AIM_Y) * halfY;
+
+  /* The ship lags the crosshair, and that lag is the whole feeling of mass. The
+     crosshair itself never lags, which is why aiming stays crisp. */
+  const stiff = 15, damp = 7.6;
+  Game.vx += ((tx - Game.px) * stiff - Game.vx * damp) * dt;
+  Game.vy += ((ty - Game.py) * stiff - Game.vy * damp) * dt;
+  Game.px += Game.vx * dt;
+  Game.py += Game.vy * dt;
+  if (Game.px < -b.x) { Game.px = -b.x; Game.vx = 0; }
+  if (Game.px > b.x) { Game.px = b.x; Game.vx = 0; }
+  if (Game.py < b.yLo) { Game.py = b.yLo; Game.vy = 0; }
+  if (Game.py > b.yHi) { Game.py = b.yHi; Game.vy = 0; }
+
+  if (Input.firing) playerFire();
+
+  /* -------- player bolts, and everything they can hit -------- */
+  for (let i = W.bolts.length - 1; i >= 0; i--) {
+    const s = W.bolts[i];
+    const z0 = s.z, x0 = s.x, y0 = s.y;
+    s.x += s.vx * dt; s.y += s.vy * dt; s.z += s.vz * dt;
+    s.life -= dt;
+    let spent = false;
+
+    const at = (z) => {
+      const t = (z - z0) / (s.z - z0 || 1);
+      return { x: x0 + (s.x - x0) * t, y: y0 + (s.y - y0) * t };
+    };
+
+    for (let j = W.enemies.length - 1; j >= 0 && !spent; j--) {
+      const e = W.enemies[j];
+      if (e.z < z0 || e.z > s.z) continue;
+      const p = at(e.z);
+      if (Math.hypot(p.x - e.x, p.y - e.y) < e.scale * 1.7) {
+        spent = true;
+        e.hp--;
+        if (e.hp <= 0) {
+          boom(e.x, e.y, e.z, C.enemyHot, 1.3);
+          Sound.hitEnemy();
+          const pts = e.kind === "lancer" ? 200 : 100;
+          award(pts, e.x, e.y, e.z);
+          W.enemies.splice(j, 1);
+          Game.progress++;
+        } else {
+          Sound.lockOn();
+        }
+      }
+    }
+
+    for (let j = W.towers.length - 1; j >= 0 && !spent; j--) {
+      const t = W.towers[j];
+      if (!t.alive || t.z < z0 || t.z > s.z) continue;
+      const p = at(t.z);
+      const top = TR_FLOOR + t.h;
+      if (Math.abs(p.x - t.x) < 26 && p.y > TR_FLOOR - 10 && p.y < top + 22) {
+        spent = true;
+        t.alive = false;
+        boom(t.x, top, t.z, C.groundHi, 1.5);
+        Sound.hitEnemy();
+        award(t.gun ? 150 : 75, t.x, top, t.z);
+      }
+    }
+
+    for (let j = W.turrets.length - 1; j >= 0 && !spent; j--) {
+      const t = W.turrets[j];
+      if (!t.alive || t.z < z0 || t.z > s.z) continue;
+      const p = at(t.z);
+      if (Math.abs(p.x - t.x) < 30 && Math.abs(p.y - t.y) < 24) {
+        spent = true;
+        t.alive = false;
+        boom(t.x, t.y, t.z, C.trench, 1.2);
+        Sound.hitEnemy();
+        award(125, t.x, t.y, t.z);
+      }
+    }
+
+    /* Shooting down an incoming shot. Small points, but it teaches the player
+       that the pink things are hittable, which is the difference between the
+       trench feeling unfair and feeling tight. */
+    for (let j = W.fire.length - 1; j >= 0 && !spent; j--) {
+      const f = W.fire[j];
+      if (Math.abs(f.z - s.z) > 60) continue;
+      if (Math.hypot(f.x - s.x, f.y - s.y) < 26) {
+        spent = true;
+        boom(f.x, f.y, f.z, C.fire, 0.7);
+        award(25, f.x, f.y, f.z);
+        W.fire.splice(j, 1);
+      }
+    }
+
+    const p = W.port;
+    if (!spent && p && p.hits < p.need && p.z >= z0 && p.z <= s.z) {
+      const q = at(p.z);
+      if (Math.hypot(q.x - 0, q.y - (TR_FLOOR + 26)) < 34) {
+        spent = true;
+        p.hits++;
+        p.hot = 1;
+        boom(0, TR_FLOOR + 26, p.z, C.port, 1.1);
+        Sound.lockOn();
+        if (p.hits >= p.need) {
+          Sound.bigBoom();
+          boom(0, TR_FLOOR + 26, p.z, C.port, 3);
+          award(1000 * Game.loop);
+          setMode("clear");
+        }
+      }
+    }
+
+    if (spent || s.life <= 0 || s.z > FAR) W.bolts.splice(i, 1);
+  }
+
+  /* -------- incoming fire -------- */
+  for (let i = W.fire.length - 1; i >= 0; i--) {
+    const f = W.fire[i];
+    f.x += f.vx * dt; f.y += f.vy * dt; f.z += f.vz * dt;
+    f.life -= dt;
+    if (f.z <= NEAR) {
+      if (Math.hypot(f.x - Game.px, f.y - Game.py) < 30) hurt(1);
+      W.fire.splice(i, 1);
+      continue;
+    }
+    if (f.life <= 0) W.fire.splice(i, 1);
+  }
+
+  /* -------- debris and score labels -------- */
+  for (let i = W.shards.length - 1; i >= 0; i--) {
+    const s = W.shards[i];
+    s.x += s.vx * dt; s.y += s.vy * dt; s.z += (s.vz - CRUISE) * dt;
+    s.life -= dt;
+    if (s.life <= 0 || s.z < NEAR) W.shards.splice(i, 1);
+  }
+  for (let i = W.pops.length - 1; i >= 0; i--) {
+    const p = W.pops[i];
+    p.z -= CRUISE * dt;
+    p.y += 30 * dt;
+    p.life -= dt * 0.9;
+    if (p.life <= 0 || p.z < NEAR) W.pops.splice(i, 1);
+  }
+
+  /* Stars drift past in every wave. They are the only thing on screen during
+     the quiet second after a wave clears. */
+  for (const st of W.stars) {
+    st.z -= CRUISE * 0.5 * dt;
+    if (st.z < 80) {
+      st.z = FAR;
+      st.x = (Math.random() - 0.5) * 2600;
+      st.y = (Math.random() - 0.5) * 1600;
+    }
+  }
+
+  Game.shake = Math.max(0, Game.shake - dt * 2.6);
+  Game.flash = Math.max(0, Game.flash - dt * 2.2);
+}
+
+/* ----------------------------------------------------------------- drawing */
+function drawStars() {
+  for (const s of W.stars) {
+    /* A star is a segment one unit long. There is no point-drawing primitive
+       in this renderer and adding one for ninety dots is not worth a second
+       code path. */
+    line3(s.x, s.y, s.z, s.x + 1.2, s.y, s.z, C.star, 1);
+  }
+}
+
+/* The station hanging in space during wave one. It never gets closer: it is a
+   backdrop that tells you what you are attacking, not an object you can reach. */
+function drawStation(t, cy) {
+  const R = 780, Z = 2100;
+  if (cy === undefined) cy = -60;
+  const spin = t * 0.05;
+  /* Dimmer while it is only scenery, full brightness on the title screen
+     where it is the subject. */
+  const tone = Game.mode === "play" || Game.mode === "intro" ? C.stationBg : C.station;
+  for (let ring = -3; ring <= 3; ring++) {
+    const y = (ring / 4) * R;
+    const rr = Math.sqrt(Math.max(0, R * R - y * y));
+    let px = null, py = null, pz = null;
+    for (let i = 0; i <= 24; i++) {
+      const a = (i / 24) * Math.PI * 2;
+      const x = Math.cos(a) * rr, z = Z + Math.sin(a) * rr;
+      if (px !== null && z > Z - rr * 0.98) line3(px, py + cy, pz, x, y + cy, z, tone, 1);
+      px = x; py = y; pz = z;
+    }
+  }
+  for (let i = 0; i < 12; i++) {
+    const a = spin + (i / 12) * Math.PI * 2;
+    let px = null, pz = null, py = null;
+    for (let j = 0; j <= 12; j++) {
+      const b = -Math.PI / 2 + (j / 12) * Math.PI;
+      const x = Math.cos(b) * Math.cos(a) * R;
+      const y = Math.sin(b) * R;
+      const z = Z + Math.cos(b) * Math.sin(a) * R;
+      if (px !== null && z > Z - R * 0.2) line3(px, py + cy, pz, x, y + cy, z, tone, 1);
+      px = x; py = y; pz = z;
+    }
+  }
+  /* The equatorial trench, so wave three has somewhere it obviously happens. */
+  let px = null, py = null, pz = null;
+  for (let i = 0; i <= 30; i++) {
+    const a = (i / 30) * Math.PI * 2;
+    const x = Math.cos(a) * R * 1.005, z = Z + Math.sin(a) * R * 1.005;
+    if (px !== null && z > Z - R * 0.9) line3(px, py + cy, pz, x, 18 + cy, z,
+      tone === C.station ? C.trench : C.stationBg, 2);
+    px = x; py = 18; pz = z;
+  }
+}
+
+function drawEnemies() {
+  for (const e of W.enemies) {
+    const m = e.kind === "lancer" ? M_LANCER : M_INTERCEPTOR;
+    const col = e.hp > 1 ? C.enemyHot : C.enemy;
+    model(m, e.x, e.y, e.z, e.scale, e.roll, col, e.z < 300 ? 2 : 1);
+  }
+}
+
+function drawBolts() {
+  for (const s of W.bolts) {
+    line3(s.x, s.y, s.z, s.x - s.vx * 0.03, s.y - s.vy * 0.03, s.z - 55, C.bolt, 2);
+  }
+}
+
+/* Incoming fire is a cross rather than a ball. It stays legible when it is one
+   pixel across at the far end of the trench, and it is unmistakably not one of
+   the player's own bolts. */
+function drawFire() {
+  for (const f of W.fire) {
+    const r = 9;
+    line3(f.x - r, f.y, f.z, f.x + r, f.y, f.z, C.fire, 2);
+    line3(f.x, f.y - r, f.z, f.x, f.y + r, f.z, C.fire, 2);
+    line3(f.x - r * 0.7, f.y - r * 0.7, f.z, f.x + r * 0.7, f.y + r * 0.7, f.z, C.fire, 1);
+    line3(f.x - r * 0.7, f.y + r * 0.7, f.z, f.x + r * 0.7, f.y - r * 0.7, f.z, C.fire, 1);
+  }
+}
+
+function drawShards() {
+  for (const s of W.shards) {
+    const f = s.life / s.max;
+    if (f <= 0) continue;
+    const d = s.len * (0.4 + f);
+    const n = Math.hypot(s.vx, s.vy, s.vz) || 1;
+    line3(s.x, s.y, s.z, s.x - (s.vx / n) * d, s.y - (s.vy / n) * d, s.z - (s.vz / n) * d,
+          s.colour, f > 0.6 ? 2 : 1);
+  }
+}
+
+/* The surface: a receding grid. The scroll offset is what makes speed
+   readable, and it is the cheapest single effect in the game. */
+function drawGround() {
+  const S = 130;
+  const off = Game.progress % S;
+  for (let i = 1; i < 11; i++) {
+    const z = i * S - off;
+    line3(-1100, TR_FLOOR, z, 1100, TR_FLOOR, z, C.ground, z < 300 ? 2 : 1);
+  }
+  for (let i = -8; i <= 8; i++) {
+    const x = i * 140;
+    line3(x, TR_FLOOR, NEAR + 20, x, TR_FLOOR, 11 * S - off, C.ground, 1);
+  }
+  /* A horizon, so the plain has an edge and the towers have something to
+     stand against. */
+  line3(-2400, TR_FLOOR + 4, FAR, 2400, TR_FLOOR + 4, FAR, C.groundHi, 2);
+}
+
+function drawTowers() {
+  for (const t of W.towers) {
+    if (!t.alive) continue;
+    const top = TR_FLOOR + t.h, base = TR_FLOOR;
+    const wb = 22, wt = 13;
+    const corners = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+    for (let i = 0; i < 4; i++) {
+      const a = corners[i], b = corners[(i + 1) % 4];
+      line3(t.x + a[0] * wb, base, t.z + a[1] * wb, t.x + b[0] * wb, base, t.z + b[1] * wb, C.ground, 1);
+      line3(t.x + a[0] * wt, top, t.z + a[1] * wt, t.x + b[0] * wt, top, t.z + b[1] * wt, C.groundHi, 2);
+      line3(t.x + a[0] * wb, base, t.z + a[1] * wb, t.x + a[0] * wt, top, t.z + a[1] * wt, C.ground, 1);
+    }
+    if (t.gun) {
+      /* A gun tower wears its threat on top: a bright cap and a barrel. */
+      const g = 17;
+      polyCapXZ(t.x, top + 16, t.z, g, C.fire);
+      line3(t.x, top + 16, t.z, t.x, top + 16, t.z - g * 1.6, C.fire, 2);
+      line3(t.x, top, t.z, t.x, top + 16, t.z, C.fire, 1);
+    }
+  }
+}
+
+function polyCapXZ(cx, cy, cz, r, colour) {
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2, b = ((i + 1) / 6) * Math.PI * 2;
+    line3(cx + Math.cos(a) * r, cy, cz + Math.sin(a) * r,
+          cx + Math.cos(b) * r, cy, cz + Math.sin(b) * r, colour, 2);
+  }
+}
+
+function drawTrench() {
+  const S = 110;
+  const off = Game.progress % S;
+  const ribs = 20;
+  for (let i = 0; i < ribs; i++) {
+    const z = i * S - off + 20;
+    if (z < NEAR) continue;
+    const w = z < 400 ? 2 : 1;
+    /* A rib is the U of the trench cross-section: down one wall, across the
+       floor, up the other. Ribs are what actually convey the speed. */
+    line3(-TR_HALF, TR_ROOF, z, -TR_HALF, TR_FLOOR, z, C.trench, w);
+    line3(-TR_HALF, TR_FLOOR, z, TR_HALF, TR_FLOOR, z, C.trench, w);
+    line3(TR_HALF, TR_FLOOR, z, TR_HALF, TR_ROOF, z, C.trench, w);
+  }
+  const far = ribs * S - off + 20;
+  for (const yy of [TR_ROOF, TR_FLOOR + 46, TR_FLOOR]) {
+    for (const sx of [-1, 1]) {
+      line3(TR_HALF * sx, yy, NEAR + 10, TR_HALF * sx, yy, far, C.trench, yy === TR_ROOF ? 2 : 1);
+    }
+  }
+  line3(0, TR_FLOOR, NEAR + 10, 0, TR_FLOOR, far, C.trench, 1);
+}
+
+function drawBars() {
+  for (const b of W.bars) {
+    if (b.z < NEAR) continue;
+    const w = b.z < 350 ? 2 : 1;
+    if (b.kind === "h") {
+      const t = b.thick;
+      line3(-TR_HALF, b.y - t, b.z, TR_HALF, b.y - t, b.z, C.trench, w);
+      line3(-TR_HALF, b.y + t, b.z, TR_HALF, b.y + t, b.z, C.trench, w);
+      for (let i = -2; i <= 2; i++) {
+        const x = i * (TR_HALF / 2.5);
+        line3(x, b.y - t, b.z, x, b.y + t, b.z, C.trench, 1);
+      }
+    } else {
+      const t = b.thick;
+      line3(b.x - t, TR_FLOOR, b.z, b.x - t, TR_ROOF, b.z, C.trench, w);
+      line3(b.x + t, TR_FLOOR, b.z, b.x + t, TR_ROOF, b.z, C.trench, w);
+      for (let i = 0; i <= 3; i++) {
+        const y = TR_FLOOR + (i / 3) * (TR_ROOF - TR_FLOOR);
+        line3(b.x - t, y, b.z, b.x + t, y, b.z, C.trench, 1);
+      }
+    }
+  }
+}
+
+function drawTurrets() {
+  for (const t of W.turrets) {
+    if (!t.alive || t.z < NEAR) continue;
+    const r = 15, inward = -t.side * 22;
+    line3(t.x, t.y - r, t.z - r, t.x, t.y + r, t.z - r, C.fire, 2);
+    line3(t.x, t.y + r, t.z - r, t.x, t.y + r, t.z + r, C.fire, 2);
+    line3(t.x, t.y + r, t.z + r, t.x, t.y - r, t.z + r, C.fire, 2);
+    line3(t.x, t.y - r, t.z + r, t.x, t.y - r, t.z - r, C.fire, 2);
+    line3(t.x, t.y, t.z, t.x + inward, t.y, t.z - 10, C.fire, 2);
+  }
+}
+
+function drawPort(t) {
+  const p = W.port;
+  if (!p || p.z < NEAR - 20) return;
+  /* The end wall, so the trench visibly stops rather than fading out. */
+  for (let i = 0; i <= 6; i++) {
+    const y = TR_FLOOR + (i / 6) * (TR_ROOF - TR_FLOOR);
+    line3(-TR_HALF, y, p.z, TR_HALF, y, p.z, C.trench, 1);
+  }
+  for (let i = -3; i <= 3; i++) {
+    const x = (i / 3) * TR_HALF;
+    line3(x, TR_FLOOR, p.z, x, TR_ROOF, p.z, C.trench, 1);
+  }
+  const done = p.hits >= p.need;
+  const pulse = done ? 1 : 0.75 + Math.sin(t * 7) * 0.25 + p.hot * 0.6;
+  model(M_PORT, 0, TR_FLOOR + 26, p.z - 4, 30 * pulse, t * 0.6, C.port, 2);
+}
+
+/* --------------------------------------------------------------------- HUD */
+/* Drawn in screen space. The reticle is a hexagon because that is the Divi
+   mark, and because a hexagon reads as "targeting" at any size. */
+function drawReticle() {
+  const a = aimScreen();
+  /* Kept on screen even at full deflection near a wall, where the ship is
+     clamped and the crosshair would otherwise swing out of sight. */
+  const m = 24;
+  const x = Math.max(m, Math.min(VW - m, a.x));
+  const y = Math.max(m, Math.min(VH - m, a.y));
+  const r = Math.min(VW, VH) * 0.048;
+  const pts = [];
+  for (let i = 0; i < 6; i++) {
+    const t = (i / 6) * Math.PI * 2 - Math.PI / 2;
+    pts.push([x + Math.cos(t) * r, y + Math.sin(t) * r]);
+  }
+  for (let i = 0; i < 6; i++) {
+    const p = pts[i], q = pts[(i + 1) % 6];
+    /* Broken sides, so the reticle frames the target instead of enclosing it. */
+    seg2(p[0], p[1], p[0] + (q[0] - p[0]) * 0.28, p[1] + (q[1] - p[1]) * 0.28, C.player, 2);
+    seg2(p[0] + (q[0] - p[0]) * 0.72, p[1] + (q[1] - p[1]) * 0.72, q[0], q[1], C.player, 2);
+  }
+  seg2(x - 5, y, x + 5, y, C.playerHi, 2);
+  seg2(x, y - 5, x, y + 5, C.playerHi, 2);
+
+  /* A faint tether back to the ship, which sits at the centre of the view. It
+     is the only thing that shows how far you have thrown the crosshair, and
+     without it a hard turn reads as the world drifting for no reason. */
+  const shipX = CX, shipY = CY + VH * 0.36;
+  const dx = x - shipX, dy = y - shipY;
+  const len = Math.hypot(dx, dy) || 1;
+  seg2(shipX + (dx / len) * 26, shipY + (dy / len) * 26,
+       x - (dx / len) * r * 1.5, y - (dy / len) * r * 1.5, C.player, 1);
+  /* The ship itself, a small chevron, so there is something of yours on screen. */
+  seg2(shipX - 20, shipY + 8, shipX, shipY - 8, C.playerHi, 2);
+  seg2(shipX, shipY - 8, shipX + 20, shipY + 8, C.playerHi, 2);
+}
+
+function drawShieldBar() {
+  const w = 22, gap = 7, total = MAX_SHIELD * w + (MAX_SHIELD - 1) * gap;
+  const x0 = CX - total / 2, y = VH - 42;
+  for (let i = 0; i < MAX_SHIELD; i++) {
+    const x = x0 + i * (w + gap);
+    const lit = i < Game.shield;
+    const col = !lit ? "#3a2f52" : (Game.shield <= 2 ? C.warn : C.player);
+    seg2(x, y, x + w, y, col, lit ? 3 : 1);
+    seg2(x, y + 7, x + w, y + 7, col, lit ? 3 : 1);
+    seg2(x, y, x, y + 7, col, 1);
+    seg2(x + w, y, x + w, y + 7, col, 1);
+  }
+  text("SHIELDS", CX, VH - 62, 12, Game.shield <= 2 ? C.warn : C.hud);
+}
+
+function drawHud() {
+  text("SCORE " + Game.score, 26, 30, 18, C.hud, "left");
+  text("BEST " + Math.max(Scores.best, Game.score), VW - 26, 30, 14, C.hud, "right");
+  const label = Game.wave === 1 ? "INTERCEPTORS" : Game.wave === 2 ? "SURFACE" : "TRENCH";
+  text("WAVE " + waveNumber() + "  " + label, CX, 30, 14, C.hud);
+
+  /* Progress reads differently per wave, so it is labelled rather than shown
+     as a bare bar that means three different things. */
+  if (Game.wave === 1) {
+    text("TARGETS " + Math.min(Game.progress, Game.target) + " / " + Game.target, CX, 52, 12, C.hud);
+  } else if (Game.wave === 2) {
+    const pct = Math.min(100, Math.round((Game.progress / Game.target) * 100));
+    text("SECTOR " + pct + "%", CX, 52, 12, C.hud);
+  } else {
+    const p = W.port;
+    const left = p ? Math.max(0, Math.round(p.z)) : 0;
+    text("PORT " + left + "m" + (p && p.hits ? "   HITS " + p.hits + "/" + p.need : ""), CX, 52, 12,
+         p && p.z < 600 ? C.port : C.hud);
+  }
+  drawShieldBar();
+}
+
+/* Damage is a red frame rather than a filled wash. A translucent rectangle
+   would be the only solid surface in a game made entirely of lines. */
+function drawFlash() {
+  if (Game.flash <= 0) return;
+  const a = Game.flash;
+  const w = 3 + a * 10;
+  seg2(0, w / 2, VW, w / 2, C.warn, w);
+  seg2(0, VH - w / 2, VW, VH - w / 2, C.warn, w);
+  seg2(w / 2, 0, w / 2, VH, C.warn, w);
+  seg2(VW - w / 2, 0, VW - w / 2, VH, C.warn, w);
+}
+
+function drawPops() {
+  for (const p of W.pops) {
+    if (p.z < NEAR) continue;
+    const s = F / p.z;
+    const x = CX + (p.x - CAM.x) * s, y = CY - (p.y - CAM.y) * s;
+    if (x < -50 || x > VW + 50) continue;
+    text(p.str, x, y, Math.max(10, Math.min(26, 900 * s)), C.playerHi);
+  }
+}
+
+/* ------------------------------------------------------------- attract mode */
+function drawAttract(t) {
+  drawStars();
+  /* Dropped low on the title screen so the station rises into frame from
+     underneath and leaves the top third clear for the name. */
+  drawStation(t, -900);
+  /* A couple of interceptors wheeling about, so the title screen is not still. */
+  for (let i = 0; i < 3; i++) {
+    const a = t * 0.5 + i * 2.1;
+    model(M_INTERCEPTOR, Math.cos(a) * 420, -120 + Math.sin(a * 0.7) * 70,
+          520 + Math.sin(a) * 220, 20, a * 0.4, C.enemy, 1);
+  }
+  text("DIVI REBELS", CX, VH * 0.18, Math.min(72, VW * 0.11), C.player);
+  text("A VECTOR ASSAULT IN THREE WAVES", CX, VH * 0.18 + 46, 14, C.hud);
+  text("BEST " + Scores.best, CX, VH * 0.18 + 84, 15, C.port);
+
+  if (Math.floor(t * 1.6) % 2 === 0) {
+    text("CLICK OR PRESS SPACE TO FLY", CX, VH * 0.44, 20, C.playerHi);
+  }
+  text("MOVE: MOUSE OR ARROWS      FIRE: CLICK OR SPACE", CX, VH * 0.44 + 38, 12, C.hud);
+  text("M MUTES     P PAUSES", CX, VH * 0.44 + 58, 12, C.hud);
+}
+
+/* -------------------------------------------------------------------- frame */
+let last = performance.now();
+let running = true;
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  /* A tab that was hidden comes back with an enormous gap. Clamping stops the
+     world jumping a hundred metres and killing the player during the frame
+     they were not watching. */
+  let dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (!running) return;
+  Game.t += dt;
+  Game.modeT += dt;
+
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, VW, VH);
+
+  if (Game.mode === "play" && Game.paused) {
+    dt = 0;
+  }
+
+  CAM.x = Game.px; CAM.y = Game.py;
+
+  switch (Game.mode) {
+    case "attract":
+      CAM.x = Math.sin(Game.t * 0.2) * 40;
+      CAM.y = Math.cos(Game.t * 0.15) * 20;
+      for (const st of W.stars) {
+        st.z -= CRUISE * 0.25 * dt;
+        if (st.z < 80) { st.z = FAR; st.x = (Math.random() - 0.5) * 2600; st.y = (Math.random() - 0.5) * 1600; }
+      }
+      drawAttract(Game.t);
+      if (Input.firing) { Input.firing = false; Sound.wake(); startGame(); }
+      break;
+
+    case "intro":
+      drawWorld(Game.t, 0);
+      text(Game.message, CX, CY - 90, Math.min(30, VW * 0.045), C.playerHi);
+      if (Game.modeT > 1.9) { setMode("play"); Sound.engine(true); }
+      break;
+
+    case "play":
+      if (!Game.paused) {
+        updateCommon(dt);
+        if (Game.wave === 1) updateWave1(dt);
+        else if (Game.wave === 2) updateWave2(dt);
+        else updateWave3(dt);
+      }
+      drawWorld(Game.t, dt);
+      drawHud();
+      if (Game.paused) text("PAUSED", CX, CY - 90, 34, C.playerHi);
+      if (Game.message && Game.modeT < 3.4) text(Game.message, CX, CY - 120, 18, C.port);
+      break;
+
+    case "clear":
+      updateCommon(dt);
+      drawWorld(Game.t, dt);
+      drawHud();
+      text("WAVE CLEAR", CX, CY - 100, 40, C.port);
+      text("SHIELD BONUS " + Game.shield * 100, CX, CY - 58, 16, C.hud);
+      if (Game.modeT > 2.6) {
+        Game.score += Game.shield * 100;
+        /* A shield back between waves, capped, so a long run stays survivable
+           without ever making the player invulnerable. */
+        Game.shield = Math.min(MAX_SHIELD, Game.shield + 1);
+        Scores.save(Game.score);
+        nextWave();
+      }
+      break;
+
+    case "dead":
+      updateCommon(dt);
+      drawWorld(Game.t, dt);
+      Sound.engine(false);
+      text("SHIELDS GONE", CX, CY - 60, 44, C.warn);
+      text("SCORE " + Game.score, CX, CY, 22, C.hud);
+      if (Game.modeT > 3.0) setMode("over");
+      break;
+
+    case "over":
+      drawStars();
+      drawStation(Game.t);
+      text("GAME OVER", CX, VH * 0.34, Math.min(60, VW * 0.09), C.warn);
+      text("SCORE " + Game.score, CX, VH * 0.34 + 54, 24, C.hud);
+      text("BEST " + Scores.best, CX, VH * 0.34 + 82, 16, C.hud);
+      if (Game.modeT > 1.2 && Math.floor(Game.t * 1.6) % 2 === 0) {
+        text("CLICK OR PRESS SPACE TO FLY AGAIN", CX, VH * 0.68, 18, C.playerHi);
+      }
+      if (Game.modeT > 1.2 && Input.firing) { Input.firing = false; startGame(); }
+      break;
+  }
+
+  drawFlash();
+
+  const sh = Game.shake > 0
+    ? { x: (Math.random() - 0.5) * Game.shake * 18, y: (Math.random() - 0.5) * Game.shake * 18 }
+    : null;
+  flush(sh);
+}
+
+function drawWorld(t, dt) {
+  drawStars();
+  if (Game.wave === 1) drawStation(t);
+  if (Game.wave === 2) { drawGround(); drawTowers(); }
+  if (Game.wave === 3) { drawTrench(); drawBars(); drawTurrets(); drawPort(t); }
+  drawEnemies();
+  drawFire();
+  drawBolts();
+  drawShards();
+  drawPops();
+  drawReticle();
+}
+
+/* Pausing when the window goes away is not politeness, it is the difference
+   between coming back to your game and coming back to a wreck. */
+document.addEventListener("visibilitychange", () => {
+  running = !document.hidden;
+  last = performance.now();
+  if (document.hidden) {
+    Sound.engine(false);
+  } else if (Game.mode === "play" && !Game.paused) {
+    Sound.engine(true);
+  }
+});
+
+/* If anything above threw, the canvas would sit black for ever with no clue
+   why. The wallet's own rule is that a surface never lies about its state. */
+try {
+  requestAnimationFrame(frame);
+} catch (err) {
+  document.getElementById("fallback").style.display = "grid";
+}
+window.addEventListener("error", () => {
+  if (Game.t < 0.5) document.getElementById("fallback").style.display = "grid";
+});
+</script>
+</body>
+</html>

@@ -4,11 +4,13 @@
 // Voting, proposals and live tallies arrive in later phases.
 
 import "./governance.css";
+import "../multisig/multisig.css";
 import { Icon } from "../../Icon";
 import { openUrl } from "../api";
 import { HeroBanner } from "./HeroBanner";
 import { VoterGrid } from "./VoterGrid";
 import { ProposalCardMock } from "./ProposalCardMock";
+import { TreasuryStrip } from "../multisig/TreasuryStrip";
 
 // Invite link for the existing "Divi Love Project" Telegram group.
 const TELEGRAM_URL = "https://t.me/+eivUE-J6EYtjMzIx";
@@ -16,6 +18,8 @@ const TELEGRAM_URL = "https://t.me/+eivUE-J6EYtjMzIx";
 export function GovernancePreview() {
   return (
     <div className="gov">
+      <TreasuryStrip />
+
       <HeroBanner />
 
       <section className="ts-section">

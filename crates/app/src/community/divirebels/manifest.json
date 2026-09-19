@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "id": "io.divi.rebels",
+  "name": "Divi Rebels",
+  "version": "1.0.0",
+  "author": {
+    "name": "Divi Desktop",
+    "address": "DNx1cSCMXg73Efg1NFFYuoRvRg5ThmNfHF"
+  },
+  "description": "A colour-vector arcade run in three waves: interceptors, the surface, and the trench.",
+  "permissions": [
+    "storage"
+  ],
+  "network": [],
+  "display": {
+    "immersive": "on-demand"
+  },
+  "media": {
+    "thumbnail": "thumb.svg"
+  },
+  "price": {
+    "model": "free"
+  }
+}

@@ -31,9 +31,16 @@ export const ICONS: Record<string, string> = {
   send: svg("<path d='M22 2 11 13'/><path d='M22 2 15 22 11 13 2 9Z'/>"),
   receive: svg("<path d='M12 3v12'/><path d='M7 10l5 5 5-5'/><path d='M4 20h16'/>"),
   speed: svg("<polygon points='13 2 3 14 12 14 11 22 21 10 12 10 13 2'/>"), // lightning = fastest nodes
+  menu: svg("<path d='M3 6h18'/><path d='M3 12h18'/><path d='M3 18h18'/>"), // hamburger
+  eye: svg("<path d='M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z'/><circle cx='12' cy='12' r='3'/>"),
+  eyeOff: svg("<path d='M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z'/><path d='M3 3 21 21'/>"),
   history: svg("<circle cx='12' cy='12' r='9'/><path d='M12 7v5l3 2'/>"),
   // svgrepo "woman" glyph, thicker variant (stroke 18.506 + padded viewBox).
   agent: filledIcon(WOMAN_VIEWBOX, WOMAN_PATH, 18.506),
+  // At-sign: the universally readable "this is an address" mark.
+  hra: svg(
+    "<circle cx='12' cy='12' r='4'/><path d='M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.9 7.9'/>"
+  ),
   addressbook: svg(
     "<rect x='3' y='4' width='18' height='16' rx='2'/><circle cx='9' cy='11' r='2.4'/><path d='M5.5 17c.8-2 2-3 3.5-3s2.7 1 3.5 3'/><path d='M15 10h3'/><path d='M15 14h3'/>"
   ),
@@ -56,6 +63,26 @@ export const ICONS: Record<string, string> = {
   // Classical columned building = governance / the "house" that votes.
   governance: svg(
     "<path d='M3 9l9-5 9 5'/><path d='M4 9h16'/><path d='M5 20V10'/><path d='M9.5 20V10'/><path d='M14.5 20V10'/><path d='M19 20V10'/><path d='M3 20h18'/>"
+  ),
+  // A plain cross, for dismissing a dialog.
+  close: svg("<path d='M18 6 6 18M6 6l12 12'/>"),
+  // A simple checkmark, for success confirmations.
+  check: svg("<path d='M20 6 9 17l-5-5'/>"),
+  // Two overlapping keys = a shared wallet that needs more than one signer.
+  multisig: svg(
+    "<circle cx='7.5' cy='8' r='3.2'/><path d='M9.7 10.3 17 17.6'/><path d='M14.5 15.1l2 2'/><path d='M17 17.6l1.6-1.6 1.8 1.8-1.6 1.6'/><circle cx='16.5' cy='7.5' r='3.2'/><path d='M14.3 9.7 7 17'/><path d='M9.5 15.1l-2 2'/><path d='M7 17l-1.6-1.6-1.8 1.8 1.6 1.6'/>"
+  ),
+  // Chevrons for the folded-away sidebar and header in focus mode. They point
+  // the way the panel will come back from.
+  chevronRight: svg("<path d='M9 5l7 7-7 7'/>"),
+  chevronDown: svg("<path d='M5 9l7 7 7-7'/>"),
+  // Code brackets over a build square = writing an app.
+  appbuilder: svg(
+    "<path d='M9 8 5 12l4 4'/><path d='M15 8l4 4-4 4'/><rect x='2.5' y='3' width='19' height='18' rx='2.5'/>"
+  ),
+  // Four tiles = a grid of community apps.
+  communityapps: svg(
+    "<rect x='3' y='3' width='7' height='7' rx='1.5'/><rect x='14' y='3' width='7' height='7' rx='1.5'/><rect x='3' y='14' width='7' height='7' rx='1.5'/><rect x='14' y='14' width='7' height='7' rx='1.5'/>"
   ),
   note: svg("<path d='M9 18V5l12-2v13'/><circle cx='6' cy='18' r='3'/><circle cx='18' cy='16' r='3'/>"),
   external: svg("<path d='M15 3h6v6'/><path d='M10 14 21 3'/><path d='M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'/>"),

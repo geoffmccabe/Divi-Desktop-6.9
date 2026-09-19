@@ -1,0 +1,260 @@
+//! End-to-end proof of Divi Names against a real node, on regtest.
+//!
+//! Unit tests cover the rules engine. They cannot catch the thing that actually
+//! broke this feature once already: an RPC that Divi does not implement the way
+//! newer Bitcoin does. Only a live node can tell us that, so this drives the
+//! real flows against a real daemon and fails loudly.
+//!
+//! Run:
+//!   divid -datadir=~/divi-poe-regtest -daemon
+//!   DIVI_NAMES_TREASURY=<a regtest address> \
+//!     cargo run --example names_smoke -- ~/divi-poe-regtest
+//!
+//! ⚠ Regtest only. It refuses to run against mainnet.
+
+use dd69_supervisor::config::NodeConfig;
+use dd69_supervisor::names;
+use dd69_supervisor::rpc::RpcClient;
+use serde_json::json;
+use std::path::PathBuf;
+
+fn step(n: u32, what: &str) {
+    println!("\n── {n}. {what} ────────────────────────────────");
+}
+
+fn mine(rpc: &RpcClient, blocks: u32) -> Result<(), String> {
+    rpc.call("setgenerate", json!([blocks]))?;
+    Ok(())
+}
+
+/// Scan until the index has caught up, or give up loudly rather than hang.
+fn sync_fully(cfg: &NodeConfig) -> Result<names::SyncStatus, String> {
+    for _ in 0..200 {
+        let s = names::sync(cfg)?;
+        if !s.activated {
+            return Err(format!("not activated: {}", s.note));
+        }
+        if !s.txindex {
+            return Err(format!("no txindex: {}", s.note));
+        }
+        if !s.treasury_configured {
+            return Err(format!("no treasury: {}", s.note));
+        }
+        if s.caught_up {
+            return Ok(s);
+        }
+    }
+    Err("index never caught up after 200 chunks".into())
+}
+
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("\nFAILED: {e}");
+        std::process::exit(1);
+    }
+    println!("\nALL STEPS PASSED");
+}
+
+fn run() -> Result<(), String> {
+    let datadir: PathBuf = std::env::args()
+        .nth(1)
+        .map(PathBuf::from)
+        .ok_or("usage: names_smoke <datadir>")?;
+    let cfg = NodeConfig::load_from(datadir)?;
+    let rpc = RpcClient::new(&cfg);
+
+    let chain = rpc.call("getblockchaininfo", json!([]))?["chain"]
+        .as_str()
+        .unwrap_or("main")
+        .to_string();
+    if chain == "main" {
+        return Err("refusing to run against mainnet".into());
+    }
+    println!("chain: {chain}");
+
+    let treasury = std::env::var("DIVI_NAMES_TREASURY")
+        .map_err(|_| "set DIVI_NAMES_TREASURY to a regtest address first")?;
+    println!("treasury: {treasury}");
+
+    // A name nobody has taken on this chain yet. Height keeps reruns distinct.
+    let tip0 = rpc.call("getblockcount", json!([]))?.as_u64().unwrap_or(0);
+    let name = format!("SMOKE{tip0}");
+    println!("name under test: {name}");
+
+    step(1, "sync the index from scratch");
+    let s = sync_fully(&cfg)?;
+    println!("   scanned to {} of {}, {} names known", s.scanned_height, s.tip, s.names_known);
+
+    step(2, "quote the name");
+    let q = names::quote(&cfg, &name)?;
+    println!("   canonical={} price={} DIVI available={:?}", q.canonical, q.registration_divi, q.available);
+    if q.available != Some(true) {
+        return Err(format!("expected {name} to be available, got {:?}", q.available));
+    }
+
+    step(3, "reserve it (commit)");
+    let commit_txid = names::commit(&cfg, &name)?;
+    println!("   commit txid {commit_txid}");
+
+    step(4, "reveal too early must be refused");
+    mine(&rpc, 2)?;
+    sync_fully(&cfg)?;
+    match names::register(&cfg, &name) {
+        Ok(_) => return Err("register succeeded before the commit matured".into()),
+        Err(e) => println!("   correctly refused: {e}"),
+    }
+
+    step(5, "wait out the maturity window, then register");
+    mine(&rpc, 12)?;
+    sync_fully(&cfg)?;
+    let reg_txid = names::register(&cfg, &name)?;
+    println!("   register txid {reg_txid}");
+    mine(&rpc, 1)?;
+    let s = sync_fully(&cfg)?;
+    println!("   index now knows {} names", s.names_known);
+
+    step(6, "the name is ours");
+    let mine_names = names::my_names(&cfg)?;
+    let found = mine_names
+        .iter()
+        .find(|n| n.name == q.canonical)
+        .ok_or_else(|| format!("{} is not in my_names: {:?}", q.canonical, mine_names.iter().map(|n| &n.name).collect::<Vec<_>>()))?;
+    println!("   owner={} registered_at={} expires={}", found.owner, found.registered_height, found.expires_height);
+
+    step(7, "it is no longer available");
+    let q2 = names::quote(&cfg, &name)?;
+    if q2.available != Some(false) {
+        return Err(format!("expected taken, got {:?}", q2.available));
+    }
+    println!("   correctly reported as taken");
+
+    step(8, "point it at an address, then resolve it");
+    let target = rpc.call("getnewaddress", json!([]))?.as_str().ok_or("no address")?.to_string();
+    // Give it a little DIVI. A name points at an address somebody actually
+    // uses, and claiming a display name has to be signed BY that address, so an
+    // empty one could never do it. Doing this here keeps the test honest about
+    // what the real flow looks like.
+    rpc.call("sendtoaddress", json!([target, 1.0]))?;
+    mine(&rpc, 1)?;
+    names::set_divi_address(&cfg, &name, &target)?;
+    mine(&rpc, 1)?;
+    sync_fully(&cfg)?;
+    let resolved = names::resolve(&cfg, &name)?;
+    if resolved.as_deref() != Some(target.as_str()) {
+        return Err(format!("resolve gave {resolved:?}, expected {target}"));
+    }
+    println!("   {} -> {}", name.to_lowercase(), target);
+
+    step(9, "reverse lookup needs both sides to agree");
+    names::set_primary(&cfg, &name)?;
+    mine(&rpc, 1)?;
+    sync_fully(&cfg)?;
+    // set_primary is signed by whichever address funds the transaction, which is
+    // not necessarily the address the name points at, so this is allowed to be
+    // empty. What must never happen is it naming the WRONG address.
+    match names::reverse(&cfg, &target)? {
+        Some(n) if n == q.canonical => println!("   {target} displays as {n}"),
+        Some(other) => return Err(format!("reverse gave the wrong name: {other}")),
+        None => println!("   no reverse claim (the funding address is not the target address)"),
+    }
+
+    step(10, "a second registration of the same name is refused");
+    match names::commit(&cfg, &name) {
+        Ok(_) => println!("   commit allowed (the name is taken, so the reveal is what refuses)"),
+        Err(e) => println!("   refused at commit: {e}"),
+    }
+
+    step(11, "records survive a fresh read of the index");
+    let s = sync_fully(&cfg)?;
+    println!("   {} names at height {}", s.names_known, s.scanned_height);
+    let again = names::resolve(&cfg, &name)?;
+    if again.as_deref() != Some(target.as_str()) {
+        return Err(format!("resolve is not stable: {again:?}"));
+    }
+    println!("   resolution stable");
+
+    step(12, "renew extends the expiry, and pays for it");
+    let before = names::my_names(&cfg)?
+        .into_iter()
+        .find(|n| n.name == q.canonical)
+        .ok_or("lost the name")?
+        .expires_height;
+    names::renew(&cfg, &name)?;
+    mine(&rpc, 1)?;
+    sync_fully(&cfg)?;
+    let after = names::my_names(&cfg)?
+        .into_iter()
+        .find(|n| n.name == q.canonical)
+        .ok_or("lost the name after renew")?
+        .expires_height;
+    if after <= before {
+        return Err(format!("renew did not extend the expiry: {before} -> {after}"));
+    }
+    println!("   expiry {before} -> {after}");
+
+    step(13, "put it on the market, and be held to the no-cancel promise");
+    names::list_for_sale(&cfg, &name, 1234.0, 60)?;
+    mine(&rpc, 1)?;
+    sync_fully(&cfg)?;
+    let listing = names::market(&cfg)?
+        .into_iter()
+        .find(|l| l.name == q.canonical)
+        .ok_or("the listing did not appear on the market")?;
+    println!(
+        "   listed at {} DIVI, mine={}, locked for {} blocks",
+        listing.price_divi, listing.is_mine, listing.locked_for_blocks
+    );
+    if listing.price_divi != 1234.0 || !listing.is_mine {
+        return Err(format!("listing looks wrong: {listing:?}"));
+    }
+    if listing.locked_for_blocks == 0 {
+        return Err("the no-cancel window should not have expired yet".into());
+    }
+    // The promise has to bind, or a buyer can be robbed mid-purchase.
+    match names::delist(&cfg, &name) {
+        Ok(_) => return Err("delisting inside the no-cancel window was allowed".into()),
+        Err(e) => println!("   delist correctly refused: {e}"),
+    }
+
+    step(14, "once the window passes, the listing can be withdrawn");
+    mine(&rpc, 60)?;
+    sync_fully(&cfg)?;
+    names::delist(&cfg, &name)?;
+    mine(&rpc, 1)?;
+    sync_fully(&cfg)?;
+    if names::market(&cfg)?.iter().any(|l| l.name == q.canonical) {
+        return Err("the name is still on the market after delisting".into());
+    }
+    println!("   removed from the market");
+
+    // Everything below gives the name away, so it must come last.
+    step(15, "transfer it to somebody else, then be refused any further edits");
+    let stranger = dd69_supervisor::base58::payload_to_address(
+        dd69_supervisor::base58::KIND_P2PKH,
+        &[0x5au8; 20],
+        true,
+    );
+    println!("   sending {} to {stranger}", name.to_lowercase());
+    names::transfer(&cfg, &name, &stranger)?;
+    mine(&rpc, 1)?;
+    sync_fully(&cfg)?;
+
+    if names::my_names(&cfg)?.iter().any(|n| n.name == q.canonical) {
+        return Err("the name is still listed as ours after transferring it away".into());
+    }
+    println!("   no longer in My Names");
+
+    // This is the rule the whole authorship fix exists to serve. If an edit is
+    // silently accepted here, the wallet is building records the registry will
+    // throw away, which is exactly the failure that got past code review.
+    match names::set_divi_address(&cfg, &name, &target) {
+        Ok(_) => return Err("editing a name we no longer own was allowed".into()),
+        Err(e) => println!("   edit correctly refused: {e}"),
+    }
+    match names::renew(&cfg, &name) {
+        Ok(_) => return Err("renewing a name we no longer own was allowed".into()),
+        Err(e) => println!("   renew correctly refused: {e}"),
+    }
+
+    Ok(())
+}

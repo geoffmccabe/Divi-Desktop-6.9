@@ -3,9 +3,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use dd69_supervisor::{bearer, c2pa_read, chaintips, coins, collectibles, collectibles_import, config, config::NodeConfig, fastsend, mempool, network, payreq, poe, price, report, security, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, chart, coins, collectibles, collectibles_import, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, skinbuy, wallet};
 use serde::Serialize;
 use serde_json::Value;
+
+// Serves community app bundles over their own url scheme. Kept in its own module
+// so this file only gains the three lines that wire it in.
+mod community;
+
+// Starts the small Node process the App Builder needs, so nobody has to open a
+// terminal to use a feature in a desktop wallet.
+mod builder_service;
 
 #[derive(Serialize)]
 struct BalanceDto {
@@ -302,6 +310,259 @@ async fn poe_verify(txid: String, hash: String) -> Result<PoeProofDto, String> {
     .map_err(|_| "internal error".to_string())?
 }
 
+// ── Human Readable Addresses (Divi Names) ─────────────────────────────────
+//
+// Every one of these is a thin wrapper: the rules live in the vendored
+// `name-registry` crate and the flows in `supervisor::names`, so the wallet, an
+// explorer and any indexer answer identically. Nothing here decides anything.
+
+macro_rules! hra_blocking {
+    ($body:expr) => {
+        tauri::async_runtime::spawn_blocking(move || {
+            let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+            #[allow(clippy::redundant_closure_call)]
+            ($body)(&cfg)
+        })
+        .await
+        .map_err(|_| "internal error".to_string())?
+    };
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HraQuoteDto {
+    canonical: String,
+    registration_divi: u64,
+    renewal_divi: u64,
+    can_be_ticker: bool,
+    available: Option<bool>,
+    owner: Option<String>,
+}
+
+/// Validate and price a typed name, and say whether it is taken.
+#[tauri::command]
+async fn hra_quote(input: String) -> Result<HraQuoteDto, String> {
+    hra_blocking!(move |cfg: &NodeConfig| {
+        names::quote(cfg, &input).map(|q| HraQuoteDto {
+            canonical: q.canonical,
+            registration_divi: q.registration_divi,
+            renewal_divi: q.renewal_divi,
+            can_be_ticker: q.can_be_ticker,
+            available: q.available,
+            owner: q.owner,
+        })
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HraSyncDto {
+    activated: bool,
+    activation_height: u64,
+    scanned_height: u64,
+    tip: u64,
+    caught_up: bool,
+    names_known: u64,
+    treasury_configured: bool,
+    txindex: bool,
+    note: String,
+}
+
+/// Read another chunk of the chain into the local name index.
+#[tauri::command]
+async fn hra_sync() -> Result<HraSyncDto, String> {
+    hra_blocking!(move |cfg: &NodeConfig| {
+        names::sync(cfg).map(|s| HraSyncDto {
+            activated: s.activated,
+            activation_height: s.activation_height,
+            scanned_height: s.scanned_height,
+            tip: s.tip,
+            caught_up: s.caught_up,
+            names_known: s.names_known,
+            treasury_configured: s.treasury_configured,
+            txindex: s.txindex,
+            note: s.note,
+        })
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HraPendingDto {
+    name: String,
+    txid: String,
+    commit_height: u64,
+    blocks_remaining: u64,
+    ready: bool,
+}
+
+#[tauri::command]
+async fn hra_pending() -> Result<Vec<HraPendingDto>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| {
+        names::pending(cfg).map(|v| {
+            v.into_iter()
+                .map(|p| HraPendingDto {
+                    name: p.name,
+                    txid: p.txid,
+                    commit_height: p.commit_height,
+                    blocks_remaining: p.blocks_remaining,
+                    ready: p.ready,
+                })
+                .collect()
+        })
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HraNameDto {
+    name: String,
+    owner: String,
+    divi_address: Option<String>,
+    registered_height: u64,
+    expires_height: u64,
+    records: Vec<(u8, String)>,
+    is_primary: bool,
+    listed_price_divi: Option<f64>,
+    from_reserve: bool,
+    perpetual: bool,
+}
+
+#[tauri::command]
+async fn hra_my_names() -> Result<Vec<HraNameDto>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| {
+        names::my_names(cfg).map(|v| {
+            v.into_iter()
+                .map(|n| HraNameDto {
+                    name: n.name,
+                    owner: n.owner,
+                    divi_address: n.divi_address,
+                    registered_height: n.registered_height,
+                    expires_height: n.expires_height,
+                    records: n.records,
+                    is_primary: n.is_primary,
+                    listed_price_divi: n.listed_price_divi,
+                    from_reserve: n.from_reserve,
+                    perpetual: n.perpetual,
+                })
+                .collect()
+        })
+    })
+}
+
+/// Step 1: reserve a name by publishing only a salted hash of it.
+#[tauri::command]
+async fn hra_commit(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::commit(cfg, &name))
+}
+
+/// Step 2: reveal the name and pay the registration fee.
+#[tauri::command]
+async fn hra_register(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::register(cfg, &name))
+}
+
+#[tauri::command]
+async fn hra_forget(name: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || names::forget_pending(&name))
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+#[tauri::command]
+async fn hra_set_divi_address(name: String, address: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::set_divi_address(cfg, &name, &address))
+}
+
+#[tauri::command]
+async fn hra_set_record(name: String, key: u8, valueHex: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::set_record(cfg, &name, key, &valueHex))
+}
+
+#[tauri::command]
+async fn hra_clear_record(name: String, keys: Vec<u8>) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::clear_record(cfg, &name, keys))
+}
+
+#[tauri::command]
+async fn hra_transfer(name: String, newOwner: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::transfer(cfg, &name, &newOwner))
+}
+
+#[tauri::command]
+async fn hra_set_primary(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::set_primary(cfg, &name))
+}
+
+#[tauri::command]
+async fn hra_renew(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::renew(cfg, &name))
+}
+
+/// Look up the Divi address a name points at, from THIS wallet's own index.
+/// Never asks a remote service: a wrong answer here sends money to a stranger.
+#[tauri::command]
+async fn hra_resolve(name: String) -> Result<Option<String>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::resolve(cfg, &name))
+}
+
+/// The name an address displays as, if both directions agree.
+///
+/// Decoration for an address already on screen, so it degrades to "no name"
+/// rather than an error when the index is behind. That asymmetry is
+/// deliberate: showing nothing costs the user nothing, whereas a wrong forward
+/// resolution moves money.
+#[tauri::command]
+async fn hra_reverse(address: String) -> Result<Option<String>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::reverse(cfg, &address))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HraListingDto {
+    name: String,
+    seller: String,
+    price_divi: f64,
+    fee_divi: f64,
+    locked_for_blocks: u64,
+    is_mine: bool,
+}
+
+/// Every name currently for sale.
+#[tauri::command]
+async fn hra_market() -> Result<Vec<HraListingDto>, String> {
+    hra_blocking!(move |cfg: &NodeConfig| {
+        names::market(cfg).map(|v| {
+            v.into_iter()
+                .map(|l| HraListingDto {
+                    name: l.name,
+                    seller: l.seller,
+                    price_divi: l.price_divi,
+                    fee_divi: l.fee_divi,
+                    locked_for_blocks: l.locked_for_blocks,
+                    is_mine: l.is_mine,
+                })
+                .collect()
+        })
+    })
+}
+
+#[tauri::command]
+async fn hra_list_for_sale(name: String, priceDivi: f64, minLifetimeBlocks: u64) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::list_for_sale(cfg, &name, priceDivi, minLifetimeBlocks))
+}
+
+#[tauri::command]
+async fn hra_delist(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::delist(cfg, &name))
+}
+
+/// Buy a listed name. One transaction pays the seller and claims it.
+#[tauri::command]
+async fn hra_buy(name: String) -> Result<String, String> {
+    hra_blocking!(move |cfg: &NodeConfig| names::buy(cfg, &name))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct StakeWalletDto {
@@ -443,6 +704,32 @@ struct MemEntryDto {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ConflictDto {
+    outpoint: String,
+    kept: String,
+    rejected: String,
+    time: i64,
+}
+
+/// Recent double-spend conflicts the node saw. Empty on daemons without the RPC.
+#[tauri::command]
+async fn mempool_conflicts() -> Vec<ConflictDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        NodeConfig::load()
+            .map(|cfg| {
+                mempool::conflicts(&cfg)
+                    .into_iter()
+                    .map(|c| ConflictDto { outpoint: c.outpoint, kept: c.kept, rejected: c.rejected, time: c.time })
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct MempoolDto {
     tip: i64,
     best_hash: String,
@@ -576,6 +863,34 @@ async fn recent_blocks(count: i64) -> Vec<BlockDto> {
         wallet::recent_blocks(&cfg, count.clamp(1, 20))
             .into_iter()
             .map(|b| BlockDto { height: b.height, time: b.time, txids: b.txids, stake_winner: b.stake_winner, stake_amount: b.stake_amount })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PricePointDto {
+    day: String,
+    close: f64,
+    market_cap: f64,
+    volume: f64,
+}
+
+/// Daily DIVI price history (oldest first) for the in-app price chart, read from
+/// the Supabase series backfilled from CoinMarketCap.
+#[tauri::command]
+async fn price_history() -> Vec<PricePointDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        chart::price_history()
+            .into_iter()
+            .map(|p| PricePointDto {
+                day: p.day,
+                close: p.close.unwrap_or(0.0),
+                market_cap: p.market_cap.unwrap_or(0.0),
+                volume: p.volume.unwrap_or(0.0),
+            })
             .collect()
     })
     .await
@@ -847,10 +1162,13 @@ async fn ai_clear_key(provider: String) -> Result<(), String> {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AiStatusDto {
     /// Whether each key is present — the values themselves are never returned.
     claude: bool,
     grok: bool,
+    /// A token for the gateway, which is not a model key.
+    gateway_token: bool,
     /// The gateway URL is not a secret, so it's safe to show.
     gateway: String,
 }
@@ -861,10 +1179,18 @@ async fn ai_status() -> AiStatusDto {
     tauri::async_runtime::spawn_blocking(|| AiStatusDto {
         claude: security::ai_get("claude").is_some(),
         grok: security::ai_get("grok").is_some(),
-        gateway: security::ai_get("gateway").unwrap_or_default(),
+        gateway_token: security::ai_get("gateway_token").is_some(),
+        // From a plain file, not the keychain: a URL is not a secret, and
+        // keeping it there cost a permission prompt for no protection.
+        gateway: builder_service::read_gateway_url().unwrap_or_default(),
     })
     .await
-    .unwrap_or(AiStatusDto { claude: false, grok: false, gateway: String::new() })
+    .unwrap_or(AiStatusDto {
+        claude: false,
+        grok: false,
+        gateway_token: false,
+        gateway: String::new(),
+    })
 }
 
 // ── My Nodes: switch which node the wallet reads (Desktop, or a personal node
@@ -982,6 +1308,53 @@ async fn fast_send(address: String, amount: f64, passphrase: Option<String>) -> 
     .map_err(|e| e.to_string())?
 }
 
+/// Buy a Skins Gallery skin: one immediate payment to the creator, tagged
+/// on-chain with the skin's id/slug so it can be recognised again later
+/// (see `skinbuy.rs`). Not a payment request -- the buyer pays right now.
+#[tauri::command]
+async fn skin_buy(
+    pay_to_address: String,
+    amount: f64,
+    skin_ref: String,
+    passphrase: Option<String>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        skinbuy::buy(&cfg, &pay_to_address, amount, &skin_ref, passphrase.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SkinEntitlementDto {
+    skin_ref: String,
+    txid: String,
+    confirmations: i64,
+}
+
+/// Skins this wallet has paid for, by scanning its own outgoing transactions
+/// for the `SKINBUY1:` tag `skin_buy` attaches (see `skinbuy.rs`). Zero
+/// confirmations means the payment is still unconfirmed, not yet owned.
+#[tauri::command]
+async fn skin_entitlements(count: Option<i64>) -> Result<Vec<SkinEntitlementDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        skinbuy::entitlements(&cfg, count.unwrap_or(200)).map(|list| {
+            list.into_iter()
+                .map(|e| SkinEntitlementDto {
+                    skin_ref: e.skin_ref,
+                    txid: e.txid,
+                    confirmations: e.confirmations,
+                })
+                .collect()
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PayReqDto {
@@ -1060,6 +1433,391 @@ async fn bearer_status(code: String) -> Result<BearerStatusDto, String> {
             value: s.value,
             receivable: s.receivable,
             confirmations: s.confirmations,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+// ---- Pin Code Send: on-chain escrow (HTLC) ----
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EscrowCreatedDto {
+    ticket: String,
+    txid: String,
+    vout: u32,
+    amount: f64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EscrowStatusDto {
+    funded: bool,
+    claimed: bool,
+    amount: f64,
+    confirmations: i64,
+    recipient: String,
+    sender: String,
+    locktime: u32,
+}
+
+/// Create an escrow: lock `amount` to `recipient`, refundable to the sender after
+/// `locktime` (unix), unlockable only by revealing `code` (a long random release
+/// code generated in the UI). Sender pays the fee.
+#[tauri::command]
+async fn escrow_create(
+    recipient: String,
+    amount: f64,
+    code: String,
+    locktime: u32,
+    passphrase: Option<String>,
+) -> Result<EscrowCreatedDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        escrow::create(&cfg, &recipient, amount, &code, locktime, passphrase.as_deref()).map(|e| EscrowCreatedDto {
+            ticket: e.ticket,
+            txid: e.txid,
+            vout: e.vout,
+            amount: e.amount,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// What a ticket holder can see without the code (committed amount, parties, refund date).
+#[tauri::command]
+async fn escrow_status(ticket: String) -> Result<EscrowStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        escrow::status(&cfg, &ticket).map(|s| EscrowStatusDto {
+            funded: s.funded,
+            claimed: s.claimed,
+            amount: s.amount,
+            confirmations: s.confirmations,
+            recipient: s.recipient,
+            sender: s.sender,
+            locktime: s.locktime,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Recipient claims by revealing the code (their wallet must own the recipient address).
+#[tauri::command]
+async fn escrow_claim(ticket: String, code: String, passphrase: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        escrow::claim(&cfg, &ticket, &code, passphrase.as_deref())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Sender reclaims after the timelock (no code needed).
+#[tauri::command]
+async fn escrow_refund(ticket: String, passphrase: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        escrow::refund(&cfg, &ticket, passphrase.as_deref())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+// ---- MultiSig (native P2SH N-of-M) + treasury balances ----
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AddrBalanceDto {
+    available: bool,
+    balance: f64,
+    message: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultisigWalletDto {
+    label: String,
+    address: String,
+    m: u32,
+    n: u32,
+    participants: Vec<String>,
+    balance: f64,
+    balance_available: bool,
+    definition: String,
+    created_at: i64,
+}
+
+impl From<multisig::WalletView> for MultisigWalletDto {
+    fn from(w: multisig::WalletView) -> Self {
+        MultisigWalletDto {
+            label: w.label,
+            address: w.address,
+            m: w.m,
+            n: w.n,
+            participants: w.participants,
+            balance: w.balance,
+            balance_available: w.balance_available,
+            definition: w.definition,
+            created_at: w.created_at,
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpendOutputDto {
+    address: String,
+    amount: f64,
+    is_change: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SpendPreviewDto {
+    from: String,
+    mixed_sources: bool,
+    source_ok: bool,
+    total_in: f64,
+    outputs: Vec<SpendOutputDto>,
+    total_out: f64,
+    fee: f64,
+    signed: u32,
+    required: u32,
+    complete: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingSpendDto {
+    blob: String,
+    from: String,
+    to: String,
+    amount: f64,
+    fee: f64,
+    required: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SignResultDto {
+    blob: String,
+    complete: bool,
+    added: bool,
+    signed: u32,
+    required: u32,
+    from: String,
+    to: String,
+    amount: f64,
+    fee: f64,
+}
+
+/// Confirmed balance of any address (treasury wallets, or a multisig), via the
+/// node's address index. `available=false` (with a reason) rather than an error
+/// when the index is still building, so the UI can show "unavailable" calmly.
+#[tauri::command]
+async fn address_balance(address: String) -> Result<AddrBalanceDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        Ok(match multisig::address_balance(&cfg, &address) {
+            Ok(balance) => AddrBalanceDto { available: true, balance, message: String::new() },
+            Err(msg) => AddrBalanceDto { available: false, balance: 0.0, message: msg },
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Every multisig wallet this app knows, each with a freshly read balance.
+#[tauri::command]
+async fn multisig_list() -> Result<Vec<MultisigWalletDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        Ok(multisig::list_wallets(&cfg).into_iter().map(Into::into).collect())
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Create an m-of-n P2SH multisig address from a set of co-signer keys
+/// (hex pubkeys or addresses the node knows). Derives + stores it; imports
+/// nothing and needs no unlock.
+#[tauri::command]
+async fn multisig_create(m: u32, keys: Vec<String>, label: String) -> Result<MultisigWalletDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::create_wallet(&cfg, m, keys, &label).map(|w| MultisigWalletDto {
+            definition: multisig::definition_blob(&w),
+            label: w.label,
+            address: w.address,
+            m: w.m,
+            n: w.n,
+            participants: w.participants,
+            balance: 0.0,
+            balance_available: false,
+            created_at: w.created_at,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Add a shared wallet someone else built, from its definition blob. Imports it
+/// so this wallet can co-sign; derives the same address as everyone else.
+#[tauri::command]
+async fn multisig_import(definition: String) -> Result<MultisigWalletDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::import_wallet(&cfg, &definition).map(|w| MultisigWalletDto {
+            definition: multisig::definition_blob(&w),
+            label: w.label,
+            address: w.address,
+            m: w.m,
+            n: w.n,
+            participants: w.participants,
+            balance: 0.0,
+            balance_available: false,
+            created_at: w.created_at,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Decode the REAL transaction a pending spend will make, so the signer can
+/// verify the recipient and amount before approving.
+#[tauri::command]
+async fn multisig_inspect(blob: String) -> Result<SpendPreviewDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::inspect_spend(&cfg, &blob).map(|p| SpendPreviewDto {
+            from: p.from,
+            mixed_sources: p.mixed_sources,
+            source_ok: p.source_ok,
+            total_in: p.total_in,
+            outputs: p
+                .outputs
+                .into_iter()
+                .map(|o| SpendOutputDto { address: o.address, amount: o.amount, is_change: o.is_change })
+                .collect(),
+            total_out: p.total_out,
+            fee: p.fee,
+            signed: p.signed,
+            required: p.required,
+            complete: p.complete,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Remove a multisig wallet from this app's list (local only; moves no coins).
+#[tauri::command]
+async fn multisig_forget(address: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || multisig::forget_wallet(&address))
+        .await
+        .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ActivityDto {
+    txid: String,
+    amount: f64,
+    height: i64,
+    time: i64,
+    confirmations: i64,
+}
+
+/// Recent deposits and spends for a shared wallet (the treasury audit trail).
+#[tauri::command]
+async fn multisig_activity(address: String, limit: Option<usize>) -> Result<Vec<ActivityDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::wallet_activity(&cfg, &address, limit.unwrap_or(25)).map(|list| {
+            list.into_iter()
+                .map(|a| ActivityDto {
+                    txid: a.txid,
+                    amount: a.amount,
+                    height: a.height,
+                    time: a.time,
+                    confirmations: a.confirmations,
+                })
+                .collect()
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Propose a spend from a multisig wallet. Returns a shareable blob the
+/// co-signers add their signatures to. Signs nothing.
+#[tauri::command]
+async fn multisig_propose(fromAddress: String, to: String, amount: f64) -> Result<PendingSpendDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::propose_spend(&cfg, &fromAddress, &to, amount).map(|p| PendingSpendDto {
+            blob: p.blob,
+            from: p.from,
+            to: p.to,
+            amount: p.amount,
+            fee: p.fee,
+            required: p.required,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Add this wallet's signature to a pending spend and hand back the updated blob.
+#[tauri::command]
+async fn multisig_sign(blob: String, passphrase: Option<String>) -> Result<SignResultDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::sign_spend(&cfg, &blob, passphrase.as_deref()).map(|s| SignResultDto {
+            blob: s.blob,
+            complete: s.complete,
+            added: s.added,
+            signed: s.signed,
+            required: s.required,
+            from: s.from,
+            to: s.to,
+            amount: s.amount,
+            fee: s.fee,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Broadcast a fully-signed multisig spend. Returns the txid.
+#[tauri::command]
+async fn multisig_broadcast(blob: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::broadcast_spend(&cfg, &blob)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MyKeyDto {
+    address: String,
+    pubkey: String,
+}
+
+/// A fresh address + its public key, to hand to co-signers when creating a
+/// shared wallet (the wallet keeps the private key so this address can sign).
+#[tauri::command]
+async fn multisig_my_pubkey() -> Result<MyKeyDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        multisig::new_shareable_pubkey(&cfg).map(|k| MyKeyDto {
+            address: k.address,
+            pubkey: k.pubkey,
         })
     })
     .await
@@ -1452,21 +2210,24 @@ async fn nfd_relay_status() -> RelayStatusDto {
 
 fn main() {
     tauri::Builder::default()
+        // Community apps load from divi-app://<id>/ so each one gets its own
+        // origin and its own content policy. See crates/app/src/community.rs for
+        // why inline frame content would not work here.
+        .register_uri_scheme_protocol(community::SCHEME, community::handle)
         .setup(|_app| {
-            // First-launch bring-up: create the config, download and verify
-            // divid69, and start the node — all in the background so the window
-            // opens immediately and the UI shows sync progress via node_status.
-            // Idempotent, so on later launches this is a near-instant no-op.
-            tauri::async_runtime::spawn_blocking(|| {
-                let _ = dd69_supervisor::install::first_run_bringup(|stage| {
-                    println!("[bringup] {stage}");
-                });
-            });
+            // NOTE: first-launch node bring-up (dd69_supervisor::setup::begin) is
+            // temporarily backed out to unbreak main — its `setup` module was
+            // referenced here but never committed. The setup owner will re-land it.
+            // The App Builder's service, started beside the wallet. In the
+            // background because finding Node can involve asking a login shell,
+            // and the window must not wait on that.
+            tauri::async_runtime::spawn_blocking(builder_service::start);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             node_status,
             recent_blocks,
+            price_history,
             c2pa_inspect,
             payment_request_create,
             payment_requests_inbox,
@@ -1486,6 +2247,25 @@ fn main() {
             open_url,
             poe_timestamp,
             poe_verify,
+            hra_quote,
+            hra_sync,
+            hra_pending,
+            hra_my_names,
+            hra_commit,
+            hra_register,
+            hra_forget,
+            hra_set_divi_address,
+            hra_set_record,
+            hra_clear_record,
+            hra_transfer,
+            hra_set_primary,
+            hra_renew,
+            hra_resolve,
+            hra_reverse,
+            hra_market,
+            hra_list_for_sale,
+            hra_delist,
+            hra_buy,
             staking_wallets,
             lottery_info,
             lottery_wins,
@@ -1495,9 +2275,25 @@ fn main() {
             probe_peers,
             ping_nodes,
             mempool_snapshot,
+            mempool_conflicts,
             bearer_create,
             bearer_sweep,
             bearer_status,
+            escrow_create,
+            escrow_status,
+            escrow_claim,
+            escrow_refund,
+            address_balance,
+            multisig_list,
+            multisig_create,
+            multisig_import,
+            multisig_inspect,
+            multisig_activity,
+            multisig_forget,
+            multisig_propose,
+            multisig_sign,
+            multisig_broadcast,
+            multisig_my_pubkey,
             coin_maturity,
             wallet_status,
             unlock_wallet,
@@ -1510,6 +2306,8 @@ fn main() {
             resume_staking,
             send_coins,
             fast_send,
+            skin_buy,
+            skin_entitlements,
             tx_status,
             divi_prices,
             ai_set_key,
@@ -1529,8 +2327,23 @@ fn main() {
             nfd_import_open,
             nfd_import_read_item,
             nfd_prepare_funding,
-            nfd_tx_confirmations
+            nfd_tx_confirmations,
+            community::community_builtin_apps,
+            community::community_app_base,
+            community::community_preview_base,
+            builder_service::builder_service_status,
+            builder_service::builder_service_restart,
+            builder_service::set_gateway_url,
+            builder_service::gateway_url
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Divi Desktop 6.9");
+        .build(tauri::generate_context!())
+        .expect("error while running Divi Desktop 6.9")
+        .run(|_app, event| {
+            // Stop the App Builder service with the wallet. Leaving a service
+            // running after its window has closed is how somebody ends up with
+            // three of them and no idea why the port is busy.
+            if matches!(event, tauri::RunEvent::ExitRequested { .. }) {
+                builder_service::stop();
+            }
+        });
 }

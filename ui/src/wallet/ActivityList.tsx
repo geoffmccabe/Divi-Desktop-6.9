@@ -3,8 +3,8 @@ import { openUrl, explorerTxUrl, type Tx } from "./api";
 import { useTransactions, type TxStatus } from "./useTransactions";
 import { confDisplay } from "./confirmations";
 import { isFastTxid } from "./fastReceiveStore";
-import { isBearerReceivedTxid, isBearerSentTxid } from "./bearerCodes";
-import { isPinSentTxid } from "./pinSends";
+import { loadBearerCodes } from "./bearerCodes";
+import { loadPinSends } from "./pinSends";
 import { fmtDivi, relTime } from "../status";
 import { Icon } from "../Icon";
 
@@ -26,7 +26,10 @@ const FILTERS: { id: string; label: string; c: string; disabled?: boolean; title
   { id: "lottery", label: "Lottery", c: "var(--primary)", disabled: true, title: "Coming soon — lottery wins currently appear under Stakes" },
 ];
 
-function Row({ t }: { t: Tx }) {
+// `cert`: if this tx is a Bearer/Pin certificate the wallet created, the type
+// and the clean intended amount (from our local record), so the row can name it
+// and show "700 DIVI" rather than the funded "700.0001".
+function Row({ t, cert }: { t: Tx; cert?: { type: "pin" | "bearer"; amount: number } }) {
   const [copied, setCopied] = useState(false);
   // Flash the confirmation count gold each time a new confirmation lands.
   const prevConf = useRef(t.confirmations);
@@ -61,13 +64,9 @@ function Row({ t }: { t: Tx }) {
   const deadStyle = { color: "hsl(var(--muted-foreground))" };
   // Fast Send arrivals get an orange badge so they stand out in history.
   const fast = isReceive && !dead && isFastTxid(t.txid);
-  // Bearer claims/sends carry no on-chain marker, so we label ones this app
-  // created or redeemed (tracked locally by txid).
-  const bearerRecv = isReceive && !dead && !fast && isBearerReceivedTxid(t.txid);
-  // Funding a Bearer/Pin certificate is a self-transfer (the certificate address
-  // is in this wallet), which the node reports as a "send" leg. We label that.
-  const bearerSent = t.kind === "send" && isBearerSentTxid(t.txid);
-  const pinSent = t.kind === "send" && isPinSentTxid(t.txid);
+  // A "move" is coins locked into a Bearer/Pin certificate (still yours until
+  // claimed): NOT income, so it must not read as a green "+amount received".
+  const isMove = t.kind === "move";
 
   return (
     <li className={"activity-row" + (fast ? " fast" : "")}>
@@ -83,34 +82,40 @@ function Row({ t }: { t: Tx }) {
                 ? inMempool
                   ? "FAST SEND!"
                   : "FAST SEND · RECEIVED"
-                : bearerRecv
-                  ? inMempool
-                    ? "BEARER · INCOMING"
-                    : "BEARER · RECEIVED"
-                  : inMempool
-                    ? "INCOMING TRANSACTION"
-                    : "TRANSACTION RECEIVED"}
+                : inMempool
+                  ? "INCOMING TRANSACTION"
+                  : "TRANSACTION RECEIVED"}
           </span>
         ) : t.kind === "stake" ? (
           <span className={dead ? "act-kind" : "act-kind act-stake-earned"} style={dead ? deadStyle : undefined}>
             {dead ? "Stake Orphaned" : "Stake Earned!"}
           </span>
+        ) : isMove ? (
+          <span className="act-kind act-bearer" style={dead ? deadStyle : undefined}>
+            {cert?.type === "pin"
+              ? "🔒 Locked in a Pin Code Send"
+              : cert?.type === "bearer"
+                ? "🎟 Locked in a Bearer Certificate"
+                : "Locked in a Certificate"}
+          </span>
         ) : (
           <span className={"act-kind act-" + t.kind} style={dead ? deadStyle : undefined}>
-            {bearerSent
-              ? "Bearer Certificate Created"
-              : pinSent
-                ? "Pin Code Send Created"
-                : KIND_LABEL[t.kind] ?? "Transaction"}
+            {KIND_LABEL[t.kind] ?? "Transaction"}
           </span>
         )}
-        <span
-          className={dead ? "act-amt" : "act-amt " + (t.amount < 0 ? "neg" : "pos")}
-          style={dead ? { ...deadStyle, textDecoration: "line-through" } : undefined}
-        >
-          {t.amount > 0 ? "+" : ""}
-          {fmtDivi(t.amount)} DIVI
-        </span>
+        {isMove ? (
+          <span className="act-amt act-amt-locked" style={dead ? deadStyle : undefined}>
+            {fmtDivi(cert ? cert.amount : Math.abs(t.amount))} DIVI
+          </span>
+        ) : (
+          <span
+            className={dead ? "act-amt" : "act-amt " + (t.amount < 0 ? "neg" : "pos")}
+            style={dead ? { ...deadStyle, textDecoration: "line-through" } : undefined}
+          >
+            {t.amount > 0 ? "+" : ""}
+            {fmtDivi(t.amount)} DIVI
+          </span>
+        )}
       </div>
       {t.address && <div className="act-addr-full">{t.address}</div>}
       <div className="act-bottom">
@@ -158,11 +163,17 @@ function statusText(s: TxStatus, n: number): string {
 export function ActivityList() {
   const { txs, status, refresh } = useTransactions();
   const [filter, setFilter] = useState("all");
-  const base = filter === "all" ? txs : txs.filter((t) => t.kind === filter);
-  // Hide the misleading "+amount in" leg of a Bearer/Pin certificate funding.
-  // It's a self-transfer into our own certificate address, so the node reports
-  // both a receive and a send leg; the receive leg reads like a phantom gain.
-  const shown = base.filter((t) => !(t.amount > 0 && (isBearerSentTxid(t.txid) || isPinSentTxid(t.txid))));
+  // Bearer/Pin certificate funding txs created on this machine, mapped to the
+  // clean intended amount, so history can name them and show "700" not "700.0001".
+  const pinAmt = new Map(loadPinSends().map((p) => [p.txid, p.amount]));
+  const bearerAmt = new Map(loadBearerCodes().map((b) => [b.txid, b.amount]));
+  const certOf = (txid: string): { type: "pin" | "bearer"; amount: number } | undefined =>
+    pinAmt.has(txid)
+      ? { type: "pin", amount: pinAmt.get(txid)! }
+      : bearerAmt.has(txid)
+        ? { type: "bearer", amount: bearerAmt.get(txid)! }
+        : undefined;
+  const shown = filter === "all" ? txs : txs.filter((t) => t.kind === filter);
   const bad = status.state === "unreachable";
   const ok = status.state === "uptodate";
   const working = status.state === "loading" || status.state === "checking" || status.state === "parsing" || status.state === "syncing";
@@ -201,7 +212,7 @@ export function ActivityList() {
       </div>
       <ul className="activity">
         {shown.map((t, i) => (
-          <Row key={t.txid + i} t={t} />
+          <Row key={t.txid + i} t={t} cert={certOf(t.txid)} />
         ))}
         {ok && shown.length === 0 && (
           <li className="wl-empty">{filter === "all" ? "No transactions yet." : "No matching transactions."}</li>

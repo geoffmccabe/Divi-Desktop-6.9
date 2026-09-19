@@ -3,11 +3,43 @@
 // copy can sync this across devices once the login layer exists. Entries that
 // haven't been seen in a while are treated as dead and pruned.
 
-// The broader Divi network we've seen over 30 days — shared across nodes, since
+// The broader Divi network we've seen over 90 days — shared across nodes, since
 // it's the same network whichever node you view from. (Your own node and its
 // direct peers are what change on switch; those are handled in NetworkMap.)
 const KEY = "dd69.knownPeers";
-const TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days → considered dead, removed
+const TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days → considered dead, removed
+
+// Every IP THIS wallet's own node has ever reported as its own. Your public IP
+// changes with VPNs / ISPs / travel, and each old IP would otherwise linger in
+// the shared network store for 90 days as a phantom node at your location. We
+// remember them all and always strip them from the network list + store, so
+// your own past IPs never masquerade as separate nodes. (Your CURRENT node still
+// shows: that comes from the node-identity path in NetworkMap, not this store.)
+const MYKEY = "dd69.myIps";
+export function loadMyIps(): Set<string> {
+  try {
+    const a = JSON.parse(localStorage.getItem(MYKEY) || "[]");
+    return new Set(Array.isArray(a) ? a : []);
+  } catch {
+    return new Set();
+  }
+}
+export function addMyIps(ips: string[]): void {
+  const s = loadMyIps();
+  let changed = false;
+  for (const ip of ips) if (ip && !s.has(ip)) { s.add(ip); changed = true; }
+  if (!changed) return;
+  try {
+    localStorage.setItem(MYKEY, JSON.stringify([...s]));
+  } catch {
+    /* storage unavailable */
+  }
+  // Purge them from the shared store right away.
+  const k = parse(localStorage.getItem(KEY));
+  let kch = false;
+  for (const ip of ips) if (k[ip]) { delete k[ip]; kch = true; }
+  if (kch) save(k);
+}
 
 export interface KnownPeer {
   lat: number;
@@ -16,6 +48,10 @@ export interface KnownPeer {
   country?: string;
   cc?: string; // ISO-2 country code, for "City, US" labels
   lastSeen: number;
+  /** Last user-agent this node advertised (getpeerinfo subver). Remembered so
+   *  the node's TYPE (nodeTypes.ts) still shows when it's offline and no longer
+   *  a live peer. Optional — older stored entries won't have it. */
+  subver?: string;
 }
 export type Known = Record<string, KnownPeer>;
 
@@ -53,9 +89,10 @@ export function loadKnown(): Known {
   } catch {
     /* enumerate best-effort */
   }
-  // Drop anything not seen in 30 days.
+  // Drop anything not seen in 90 days, plus any of our own past IPs.
+  const my = loadMyIps();
   for (const ip of Object.keys(k)) {
-    if (now - (k[ip]?.lastSeen ?? 0) > TTL_MS) {
+    if (now - (k[ip]?.lastSeen ?? 0) > TTL_MS || my.has(ip)) {
       delete k[ip];
       changed = true;
     }
@@ -65,8 +102,12 @@ export function loadKnown(): Known {
 }
 
 function save(k: Known) {
+  // Never persist our own node's IPs as network nodes.
+  const my = loadMyIps();
+  const out: Known = {};
+  for (const ip of Object.keys(k)) if (!my.has(ip)) out[ip] = k[ip];
   try {
-    localStorage.setItem(KEY, JSON.stringify(k));
+    localStorage.setItem(KEY, JSON.stringify(out));
   } catch {
     /* storage unavailable */
   }
@@ -75,7 +116,7 @@ function save(k: Known) {
 /// Record the currently-seen located peers, refreshing their lastSeen.
 export function recordKnown(
   prev: Known,
-  seen: { ip: string; lat: number; lon: number; city?: string; country?: string; cc?: string }[]
+  seen: { ip: string; lat: number; lon: number; city?: string; country?: string; cc?: string; subver?: string }[]
 ): Known {
   const now = Date.now();
   // Merge onto what is ON DISK, not just the caller's in-memory copy.
@@ -89,7 +130,16 @@ export function recordKnown(
   // the 30-day prune in loadKnown remains the single place entries are removed.
   const k = { ...loadKnown(), ...prev };
   for (const s of seen)
-    k[s.ip] = { lat: s.lat, lon: s.lon, city: s.city, country: s.country, cc: s.cc, lastSeen: now };
+    k[s.ip] = {
+      lat: s.lat,
+      lon: s.lon,
+      city: s.city,
+      country: s.country,
+      cc: s.cc,
+      lastSeen: now,
+      // Keep the last-known subver if this sighting didn't carry one.
+      subver: s.subver || k[s.ip]?.subver,
+    };
   save(k);
   return k;
 }
