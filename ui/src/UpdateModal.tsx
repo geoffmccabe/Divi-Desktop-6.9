@@ -50,20 +50,17 @@ export function UpdateModal({ info, onClose }: { info: UpdateInfo; onClose: () =
     };
   }, [onClose, phase]);
 
-  /* The update is on disk, but THIS process is still the old binary. Until it
-     is replaced the wallet looks untouched and goes on advertising the same
-     update, which reads as an updater that did nothing. So restart into it,
-     after a beat so the user sees what happened. The node is a separate
-     process and keeps running. */
-  useEffect(() => {
-    if (phase !== "ready") return;
-    const t = setTimeout(() => {
-      updateRelaunch().catch(() => {
-        /* Refused: the manual button in the modal is the fallback. */
-      });
-    }, 2200);
-    return () => clearTimeout(t);
-  }, [phase]);
+  /* The update is on disk, but THIS process is still the old binary, so the
+     wallet goes on looking untouched until it is restarted.
+
+     This used to restart BY ITSELF two seconds after the download finished.
+     That is the wrong call: the owner may be mid-send, mid-typing, or simply
+     reading the screen, and an app that closes itself without being asked is
+     alarming even when it is doing the right thing. Geoff, 2026-Sep-20: "it
+     doesn't give me a chance to click the restart button. It just restarts."
+     So nothing happens now until Restart is clicked, and Later is always
+     available — the update is already on disk and applies on the next launch
+     either way. */
 
   const run = async () => {
     setPhase("working"); setErr(""); setGot(0);
@@ -105,18 +102,9 @@ export function UpdateModal({ info, onClose }: { info: UpdateInfo; onClose: () =
 
           {phase === "ready" ? (
             <p className="wl-note">
-              Version {info.latest} is installed. <strong>Restarting now</strong> to finish.
-              Your node keeps running throughout, so syncing and staking are not
-              interrupted.
-              <br />
-              <button
-                type="button"
-                className="wl-btn"
-                style={{ marginTop: 10 }}
-                onClick={() => { updateRelaunch().catch(() => {}); }}
-              >
-                Restart now
-              </button>
+              Version {info.latest} is installed. Restart the wallet to finish — or
+              carry on and it will be running the moment you next open it. Your node
+              keeps running throughout, so syncing and staking are not interrupted.
             </p>
           ) : (
             <>
@@ -161,9 +149,21 @@ export function UpdateModal({ info, onClose }: { info: UpdateInfo; onClose: () =
             </div>
           )}
 
+          {/* One row, and the action the owner most likely wants is the
+              leftmost one in it: Update now, then Restart once it is on disk.
+              Cancel/Later sits to its right and is never the default. */}
           <div className="upd-actions">
             {phase === "idle" && (
               <button className="upd-go" onClick={run}>Update now</button>
+            )}
+            {phase === "ready" && (
+              <button
+                type="button"
+                className="upd-go"
+                onClick={() => { updateRelaunch().catch(() => {}); }}
+              >
+                Restart now
+              </button>
             )}
             {phase === "working" && <span className="wl-note">Downloading and installing…</span>}
             {phase === "failed" && url && (
