@@ -127,7 +127,7 @@ export function HeaderBar() {
             gone" when they are on chain and merely not counted yet. No fiat
             line either, since there is nothing honest to convert. */}
         {nodeDown ? (
-          <span className="bl-amt">
+          <span className="bl-amt bl-amt-stack">
             <span className="bl-divi bl-down-amt">NODE NOT RUNNING</span>
             <span className="bl-fiat bl-sync-note">
               {headline ?? "Your balance cannot be read until the node starts."}
@@ -140,7 +140,7 @@ export function HeaderBar() {
             </span>
           </span>
         ) : syncing ? (
-          <span className="bl-amt">
+          <span className="bl-amt bl-amt-stack">
             <span className="bl-divi bl-sync-amt">STILL SYNCING…</span>
             <span className="bl-fiat bl-sync-note">
               Coins sent to you appear here as your node catches up

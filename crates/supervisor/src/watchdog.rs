@@ -40,6 +40,7 @@ const MIN_BETWEEN_RESTARTS: Duration = Duration::from_secs(600);
 /// Run forever, watching the node. Intended to be spawned once at startup.
 pub fn run() {
     let mut strikes: u32 = 0;
+    let mut absent: u32 = 0;
     let mut last_restart: Option<Instant> = None;
 
     loop {
@@ -50,11 +51,48 @@ pub fn run() {
         if cfg.remote {
             continue;
         }
-        // Not running at all is a different problem, handled at start-up.
+        // NOT RUNNING AT ALL. This used to be skipped, on the assumption that
+        // start-up handles it. Start-up only runs once. If the node stops while
+        // the wallet is open — it was stopped and not restarted, it crashed, or
+        // the machine put it to sleep — nothing brought it back and the wallet
+        // simply said NODE NOT RUNNING until the owner restarted everything.
         let Some(pid) = crate::process::daemon_pid(&cfg.datadir) else {
-            strikes = 0;
+            absent += 1;
+            // Two checks of grace, so we never race the start-up sequence that
+            // is probably already starting one.
+            if absent < 2 {
+                continue;
+            }
+            if let Some(t) = last_restart {
+                if t.elapsed() < MIN_BETWEEN_RESTARTS {
+                    continue;
+                }
+            }
+            crate::applog::log("watchdog: the node is not running — starting it");
+            crate::setuplog::log("watchdog: node was not running — starting it automatically");
+            last_restart = Some(Instant::now());
+            absent = 0;
+            let rpc = RpcClient::new(&cfg);
+            let Some(bin) = crate::install::managed_divid() else { continue };
+            match crate::process::start_with_recovery(
+                &bin,
+                &cfg.datadir,
+                &rpc,
+                Duration::from_secs(180),
+                Duration::from_secs(1800),
+            ) {
+                Ok(rep) => {
+                    crate::applog::log(format!("watchdog: node started (pid {})", rep.pid));
+                    crate::setuplog::log(format!("watchdog: node started (pid {})", rep.pid));
+                }
+                Err(e) => {
+                    crate::applog::log(format!("watchdog: could not start the node — {e}"));
+                    crate::setuplog::log(format!("watchdog: COULD NOT START THE NODE — {e}"));
+                }
+            }
             continue;
         };
+        absent = 0;
 
         if pulse(&cfg) {
             if strikes > 0 {
