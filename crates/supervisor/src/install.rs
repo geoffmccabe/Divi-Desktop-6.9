@@ -437,7 +437,7 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                 l.trim_start()
                     .strip_prefix("rpcthreads=")
                     .and_then(|v| v.trim().parse::<u32>().ok())
-                    .map(|n| n < 16)
+                    .map(|n| n < 64)
                     .unwrap_or(false)
             });
             let fix_threads = !has_threads || weak_threads;
@@ -479,7 +479,7 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                     fixed.push_str("addressindex=1\n");
                 }
                 if fix_threads {
-                    fixed.push_str("rpcthreads=16\n");
+                    fixed.push_str("rpcthreads=64\n");
                 }
                 if fix_queue {
                     fixed.push_str("rpcworkqueue=64\n");
@@ -531,7 +531,7 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
          # incoming connections.\n\
          upnp=1\n\
          discover=1\n\
-         rpcthreads=16\n\
+         rpcthreads=64\n\
          rpcworkqueue=64\n\
          maxconnections=32\n\
          # addressindex lets the node report balances/UTXOs for ANY address, not\n\

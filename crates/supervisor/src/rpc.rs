@@ -116,6 +116,37 @@ impl RpcClient {
         }
     }
 
+    /// A one-shot health check with a short deadline and its OWN connection.
+    ///
+    /// Deliberately not pooled: the pooled agents keep connections alive, and a
+    /// kept-alive connection occupies one of the node's worker threads for as
+    /// long as it lives. Using the pool to ask "are you alive?" would make the
+    /// watchdog part of the very problem it exists to detect. This opens a
+    /// connection, asks, and closes it.
+    ///
+    /// The question is "does it answer at all", not "is it quick", so a short
+    /// timeout is the point: a wedged node never answers however long we wait.
+    pub fn pulse(&self, timeout: Duration) -> bool {
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(4))
+            .timeout_read(timeout)
+            .timeout_write(Duration::from_secs(4))
+            .max_idle_connections(0)
+            .build();
+        let body = json!({"jsonrpc":"1.0","id":"pulse","method":"getblockcount","params":[]});
+        match agent
+            .post(&self.url)
+            .set("Authorization", &self.auth)
+            .set("Connection", "close")
+            .send_string(&body.to_string())
+        {
+            Ok(_) => true,
+            // A node still starting up DID answer; that is not a wedge.
+            Err(ureq::Error::Status(_, _)) => true,
+            Err(_) => false,
+        }
+    }
+
     // Send the request and return the full JSON-RPC envelope ({result, error}),
     // or Err only on a transport/parse failure.
     fn send(&self, method: &str, params: Value) -> Result<Value, String> {

@@ -3151,6 +3151,11 @@ fn main() {
                     }
                 });
             }
+            // Watch the node and restart it if it stops answering. It can end
+            // up alive but unresponsive, and until now the only cure was for
+            // the owner to quit and reopen the wallet.
+            std::thread::spawn(dd69_supervisor::watchdog::run);
+
             // The App Builder's service, started beside the wallet, in the
             // background so the window need not wait on finding Node.
             tauri::async_runtime::spawn_blocking(builder_service::start);
