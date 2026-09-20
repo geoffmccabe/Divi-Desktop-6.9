@@ -11,13 +11,30 @@ export function Sidebar({ active, onSelect }: { active: string; onSelect: (id: s
   const [flashOn, setFlashOn] = useState(false); // toggles the version/UPDATE swap
   const [modal, setModal] = useState(false);
 
-  // Ask on mount, then re-check hourly, so a wallet left open for days still
-  // notices a release instead of only ever checking at launch.
+  /* ── HOW OFTEN TO LOOK FOR A RELEASE ──────────────────────────────────
+     This used to ask on mount and then once an HOUR. A release published
+     while the wallet is open therefore stayed invisible for up to sixty
+     minutes, and Geoff hit that twice: "I'm on 13.1 and it's not asking for
+     an update", with the new version sitting on the server the whole time.
+
+     What is being fetched is a sixty-byte JSON file. Asking every ten
+     minutes costs nothing measurable, and asking again whenever the window
+     comes back to the front means that stepping away and returning -- which
+     is exactly what someone does while waiting for a build -- picks it up
+     at once. */
   useEffect(() => {
     const check = () => updateCheck().then(setUpd).catch(() => {});
     check();
-    const id = setInterval(check, 60 * 60 * 1000);
-    return () => clearInterval(id);
+    const id = setInterval(check, 10 * 60 * 1000);
+    const onFocus = () => check();
+    const onVisible = () => document.visibilityState === "visible" && check();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   // When an update is available, flash between the version and "UPDATE TO vX".
