@@ -87,17 +87,33 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
     let peers = match peers {
         Some(p) => p,
         None => {
-            // Running (pid present) but the RPC connection didn't answer even on
-            // retry. We do NOT know why (often the legacy node briefly refuses a
-            // connection), so we don't claim "busy" — just that we're reaching
-            // for it. The UI keeps the last-known good status during brief misses.
-            return StatusReport {
-                running: true,
-                phase: Phase::Starting,
-                headline: "Connecting to the node…".into(),
-                blocks: None,
-                peers: None,
-                last_shutdown,
+            // The peer count did not come back. That call is one of the
+            // heavier ones, and under RPC contention it can time out while the
+            // node is perfectly alive and answering everything else. Saying
+            // "Connecting to the node" then is simply wrong, and it contradicts
+            // the balance sitting on screen right beside it.
+            //
+            // So ask the cheapest question there is before concluding anything.
+            let alive = rpc.call("getblockcount", json!([])).ok().and_then(|v| v.as_i64());
+            return match alive {
+                Some(h) => StatusReport {
+                    // It IS answering; we just could not get the peer count this
+                    // time. Report what we know and leave the count unknown.
+                    running: true,
+                    phase: Phase::Syncing,
+                    headline: "Connected. Still counting peers…".into(),
+                    blocks: Some(h),
+                    peers: None,
+                    last_shutdown,
+                },
+                None => StatusReport {
+                    running: true,
+                    phase: Phase::Starting,
+                    headline: "Connecting to the node…".into(),
+                    blocks: None,
+                    peers: None,
+                    last_shutdown,
+                },
             }
         }
     };
