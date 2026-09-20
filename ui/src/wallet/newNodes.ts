@@ -164,7 +164,12 @@ export interface NewNode {
 }
 
 /** Nodes still within their spiral window, newest first, capped at `limit`. */
-export function newNodes(known: Known = loadKnown(), now = Date.now(), limit = 10): NewNode[] {
+/**
+ * `limit` was 10, from when new nodes trickled in one or two at a time from our
+ * own peers. A discovery run now returns a hundred or more at once, so all but
+ * ten of them appeared as ordinary dots and the arrival was invisible.
+ */
+export function newNodes(known: Known = loadKnown(), now = Date.now(), limit = 250): NewNode[] {
   const reg = loadReg();
   const out: NewNode[] = [];
   for (const [ip, firstSeen] of Object.entries(reg)) {

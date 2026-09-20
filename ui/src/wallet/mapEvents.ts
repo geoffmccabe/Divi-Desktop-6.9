@@ -319,7 +319,7 @@ type CountCb = (c: { nodes: number; peers: number }) => void;
 const countSubs = new Set<CountCb>();
 
 function notifyCounts() {
-  const c = { nodes: confirmed.size, peers: peers.size };
+  const c = { nodes: Math.max(onMap, confirmed.size), peers: peers.size };
   for (const cb of [...countSubs]) {
     try {
       cb(c);
@@ -331,14 +331,31 @@ function notifyCounts() {
 
 export function onMapCounts(cb: CountCb): () => void {
   countSubs.add(cb);
-  cb({ nodes: confirmed.size, peers: peers.size });
+  cb({ nodes: Math.max(onMap, confirmed.size), peers: peers.size });
   return () => {
     countSubs.delete(cb);
   };
 }
 
+/**
+ * How many nodes the map is currently drawing.
+ *
+ * The count used to be "nodes that answered us this session", which is a real
+ * number but not the one on screen: discovery returns many nodes that are
+ * genuinely on the network and simply cannot be dialled from here, and every
+ * one of them is drawn. So the map filled with dots while the counter fell,
+ * which reads as the network shrinking.
+ */
+let onMap = 0;
+
+export function setMapNodeCount(n: number) {
+  if (n === onMap) return;
+  onMap = n;
+  notifyCounts();
+}
+
 export function mapCounts() {
-  return { nodes: confirmed.size, peers: peers.size };
+  return { nodes: Math.max(onMap, confirmed.size), peers: peers.size };
 }
 
 // Keep the tallies in step with reality by watching our own event stream.

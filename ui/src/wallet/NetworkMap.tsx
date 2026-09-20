@@ -6,7 +6,7 @@ import { emitPeerCount } from "./peerEvents";
 /* The map's animation system: every act of communication the app performs is
    drawn here, and nothing is drawn that isn't really happening. The trigger
    catalog lives in mapEvents.ts; see docs/MAP_ANIMATION_V2.md. */
-import { beginProbeWave, emitMap, setMapSelf, type ProbeTarget } from "./mapEvents";
+import { beginProbeWave, emitMap, setMapSelf, setMapNodeCount, type ProbeTarget } from "./mapEvents";
 import { startMapFeedBridge } from "./mapFeedBridge";
 import { drawMapAnim } from "./mapAnimRender";
 import { BlockChainViz } from "./BlockChainViz";
@@ -582,6 +582,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           knownRef.current = recordKnown(knownRef.current, seen);
           noteSeen(seen.map((x) => x.ip));
           newNodesRef.current = newNodes(knownRef.current);
+          setMapNodeCount(Object.keys(knownRef.current).length);
           for (const n of seen) {
             emitMap("node.discovered", { lat: n.lat, lon: n.lon, ip: n.ip });
           }
@@ -635,6 +636,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   useEffect(() => {
     baselineNewNodes();
     newNodesRef.current = newNodes(loadKnown());
+    setMapNodeCount(Object.keys(loadKnown()).length);
   }, []);
 
   // Press "u" (Update) to fire the gold query ripple — your node pinging the
@@ -885,6 +887,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           // and fire the one-time arrival cue for genuinely brand-new nodes.
           noteSeen(seen.map((x) => x.ip));
           newNodesRef.current = newNodes(knownRef.current);
+          setMapNodeCount(Object.keys(knownRef.current).length);
           for (const arr of takeUnannouncedArrivals(knownRef.current)) {
             arrivalFxRef.current.set(arr.ip, performance.now());
             playSound("receive");
