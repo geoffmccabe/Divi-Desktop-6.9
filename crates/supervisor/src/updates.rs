@@ -66,9 +66,21 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     false
 }
 
-/// Installed security tools that could interrupt a new build, by friendly name.
-/// Best-effort and read-only.
+/// Installed security tools that could interrupt a new build, by friendly
+/// name. Best-effort and read-only.
+///
+/// ANSWERED ONCE PER RUN. On Windows this shells out to PowerShell, which is
+/// slow and — before CREATE_NO_WINDOW was added below — visible. Software
+/// like this is not installed while the wallet is open, so asking repeatedly
+/// buys nothing and, through a re-rendering caller, cost Joseph a screen full
+/// of console windows on 2026-Sep-20.
 pub fn security_tools() -> Vec<String> {
+    use std::sync::OnceLock;
+    static CACHE: OnceLock<Vec<String>> = OnceLock::new();
+    CACHE.get_or_init(security_tools_uncached).clone()
+}
+
+fn security_tools_uncached() -> Vec<String> {
     let mut found = Vec::new();
     #[cfg(target_os = "macos")]
     {
@@ -99,8 +111,20 @@ pub fn security_tools() -> Vec<String> {
                 "Get-CimInstance -Namespace root/SecurityCenter2 -ClassName {class} | \
                  Select-Object -ExpandProperty displayName"
             );
+            // CREATE_NO_WINDOW. Without it every one of these opens a
+            // visible console window on the user's desktop. The update
+            // dialog called this on a React effect that re-ran on each
+            // render, and the sidebar behind it re-renders every 1.3
+            // seconds to flash the UPDATE label -- so two console windows
+            // appeared, twice a second, for as long as the dialog was
+            // open. Joseph, 2026-Sep-20, on Windows: "it opened many
+            // powershell windows over and over and got stuck in a loop."
+            // The call site is fixed too; this makes it harmless anyway.
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             if let Ok(out) = std::process::Command::new("powershell")
                 .args(["-NoProfile", "-NonInteractive", "-Command", &cmd])
+                .creation_flags(CREATE_NO_WINDOW)
                 .output()
             {
                 for line in String::from_utf8_lossy(&out.stdout).lines() {

@@ -980,6 +980,31 @@ struct StakeStartDto {
     message: String,
 }
 
+#[derive(Serialize)]
+struct StakeReasonDto {
+    staking: bool,
+    reason: String,
+    /// False when the node could not be asked. The button must not present a
+    /// guess as the node's answer.
+    known: bool,
+}
+
+/// The node's own one-line answer to "why am I not staking".
+#[tauri::command]
+async fn staking_reason() -> StakeReasonDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else {
+            return StakeReasonDto { staking: false, reason: String::new(), known: false };
+        };
+        match wallet::staking_reason(&cfg) {
+            Some((staking, reason)) => StakeReasonDto { staking, reason, known: true },
+            None => StakeReasonDto { staking: false, reason: String::new(), known: false },
+        }
+    })
+    .await
+    .unwrap_or(StakeReasonDto { staking: false, reason: String::new(), known: false })
+}
+
 /// Start staking (staking-only-unlocks an encrypted wallet with the passphrase).
 #[tauri::command]
 async fn start_staking(passphrase: Option<String>) -> StakeStartDto {
@@ -1639,7 +1664,8 @@ async fn setup_log_report() -> String {
 #[tauri::command]
 async fn setup_log_save() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let text = dd69_supervisor::setuplog::report();
+        // The FULL log goes to the file; the short one is for pasting.
+        let text = dd69_supervisor::setuplog::report_full();
         // No new crate for this: HOME on macOS and Linux, USERPROFILE on
         // Windows, which is how the rest of the supervisor already finds the
         // user's folders.
@@ -3212,6 +3238,7 @@ fn main() {
             chain_orphans,
             lottery_board,
             start_staking,
+            staking_reason,
             wallet_balance,
             wallet_addresses,
             new_receive_address,

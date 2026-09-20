@@ -633,6 +633,14 @@ export interface StakeStart {
   message: string;
 }
 export const startStaking = (passphrase?: string) => invoke<StakeStart>("start_staking", { passphrase: passphrase ?? null });
+export interface StakeReason {
+  staking: boolean;
+  reason: string;
+  /** False when the node could not be asked — show nothing rather than a guess. */
+  known: boolean;
+}
+/** The node's own one-line answer to "why am I not staking". */
+export const stakingReason = () => invoke<StakeReason>("staking_reason");
 export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");
 export const newReceiveAddress = () => invoke<string>("new_receive_address");
 export const recentActivity = () => invoke<Tx[]>("recent_activity");

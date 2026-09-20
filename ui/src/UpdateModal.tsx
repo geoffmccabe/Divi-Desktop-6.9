@@ -26,10 +26,26 @@ export function UpdateModal({ info, onClose }: { info: UpdateInfo; onClose: () =
   const [err, setErr] = useState("");
   const unlisten = useRef<Array<() => void>>([]);
 
+  /* ── ASK FOR THE SECURITY-TOOL LIST EXACTLY ONCE ──────────────────────
+     This call used to live in the effect below, whose dependencies are
+     [onClose, phase]. onClose is written inline at the call site, so it is
+     a new function on every render of the sidebar -- and the sidebar
+     re-renders every 1.3 seconds to flash the UPDATE label. The effect
+     therefore re-ran twice a second, and on Windows each run spawned two
+     PowerShell processes, each of which opened a console window. Joseph,
+     2026-Sep-20: "it opened many powershell windows over and over and got
+     stuck in a loop."
+
+     An empty dependency list is the fix: the answer cannot change while
+     this dialog is open. (The Rust side now caches it and hides the
+     console too, so no single mistake can do this again.) */
+  useEffect(() => {
+    securityTools().then(setTools).catch(() => setTools([]));
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && phase !== "working" && onClose();
     window.addEventListener("keydown", onKey);
-    securityTools().then(setTools).catch(() => setTools([]));
 
     // Subscribe to the updater's progress. Uses the global Tauri event API
     // (withGlobalTauri); guarded so a missing API can never break the modal.

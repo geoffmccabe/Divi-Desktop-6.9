@@ -324,6 +324,27 @@ fn trim_file_if_huge() {
 /// The full copy-pasteable report for ⌘L: a live header plus the entire
 /// persistent log (all sessions), so nothing that happened is missing. Falls
 /// back to the in-memory lines if the file can't be read. Contains no secrets.
+/// The banner `session_start` writes. Used to find where this run begins.
+const SESSION_BANNER: &str = "DD69 setup session started";
+
+/// How much of the log a short report may carry. Sized to paste into a chat
+/// message: WhatsApp and similar refuse very long pastes outright, which is
+/// how Joseph ended up unable to send his log at all on 2026-Sep-20 ("it
+/// wouldn't do it because it said they were too long") -- the full file was
+/// 60 KB and growing.
+const SHORT_LIMIT: usize = 6_000;
+/// When the current session alone is over the limit, keep this much of its
+/// beginning (which says what was installed, found and configured) and spend
+/// the rest on the end (what just went wrong).
+const HEAD_KEEP: usize = 1_600;
+
+/// THE SHORT REPORT: everything a diagnosis normally needs, small enough to
+/// paste into a message.
+///
+/// The whole log is still written to disk and still available in full from
+/// the Save button; what changed is that the thing offered for pasting is no
+/// longer the entire file. A 60 KB wall of text that a chat app refuses to
+/// send is not a diagnostic, it is a dead end.
 pub fn report() -> String {
     let header = format!(
         "DD69 Setup Log\n\
@@ -344,7 +365,7 @@ pub fn report() -> String {
     if let Some(p) = file_path() {
         if let Ok(text) = std::fs::read_to_string(&p) {
             if !text.trim().is_empty() {
-                return format!("{header}{text}");
+                return format!("{header}{}", shorten(&text, &p.display().to_string()));
             }
         }
     }
@@ -359,4 +380,138 @@ pub fn report() -> String {
         })
         .unwrap_or_default();
     format!("{header}{body}\n")
+}
+
+/// Cut a whole log down to the current run, then to something pasteable.
+///
+/// Both ends matter and the middle rarely does: the start of a session says
+/// what was found and configured, the end says what just happened. So when
+/// the session is still too long, the middle is what goes, and the cut is
+/// announced rather than silently made.
+fn shorten(text: &str, path: &str) -> String {
+    // Everything since this run began. Earlier runs are in the file.
+    let (body, dropped_sessions) = match text.rfind(SESSION_BANNER) {
+        // Back up to the start of that line so the banner reads properly.
+        Some(i) => {
+            let start = text[..i].rfind('\n').map(|n| n + 1).unwrap_or(0);
+            (&text[start..], text[..start].matches(SESSION_BANNER).count())
+        }
+        None => (text, 0),
+    };
+
+    let note = |extra: String| {
+        format!(
+            "{extra}Full log: {path}\n\
+             ──────────────────────────────────────────────\n"
+        )
+    };
+
+    if body.len() <= SHORT_LIMIT {
+        let extra = if dropped_sessions > 0 {
+            format!("(this run only; {dropped_sessions} earlier run(s) are in the file)\n")
+        } else {
+            String::new()
+        };
+        return format!("{}{body}", note(extra));
+    }
+
+    // Too long even for one run: keep both ends, drop the middle.
+    let head_end = char_boundary(body, HEAD_KEEP);
+    let tail_start = char_boundary(body, body.len().saturating_sub(SHORT_LIMIT - HEAD_KEEP));
+    let cut = tail_start.saturating_sub(head_end);
+    format!(
+        "{}{}\n\n  … {} characters from the middle of this run left out …\n\n{}",
+        note(format!(
+            "(this run only, middle trimmed; {dropped_sessions} earlier run(s) are in the file)\n"
+        )),
+        &body[..head_end],
+        cut,
+        &body[tail_start..],
+    )
+}
+
+/// Round a byte index down to a character boundary, so slicing never panics
+/// on a multi-byte character (the log carries em dashes and box drawing).
+fn char_boundary(s: &str, mut i: usize) -> usize {
+    if i >= s.len() {
+        return s.len();
+    }
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+#[cfg(test)]
+mod short_report_tests {
+    use super::*;
+
+    fn line(n: usize) -> String {
+        format!("[2026-09-20 20:00:00 UTC] filler line {n} with enough text to add up\n")
+    }
+
+    #[test]
+    fn only_the_current_run_is_kept() {
+        let mut t = String::new();
+        t.push_str(&format!("[ts] {SESSION_BANNER}\n"));
+        t.push_str("[ts] an OLD run that must not be pasted\n");
+        t.push_str(&format!("[ts] {SESSION_BANNER}\n"));
+        t.push_str("[ts] the run we care about\n");
+        let out = shorten(&t, "/tmp/x.txt");
+        assert!(out.contains("the run we care about"));
+        assert!(!out.contains("an OLD run"));
+        assert!(out.contains("1 earlier run(s)"));
+    }
+
+    #[test]
+    fn a_huge_single_run_keeps_both_ends_and_says_so() {
+        let mut t = format!("[ts] {SESSION_BANNER}\n[ts] FIRST-THING\n");
+        for n in 0..400 {
+            t.push_str(&line(n));
+        }
+        t.push_str("[ts] LAST-THING\n");
+        assert!(t.len() > SHORT_LIMIT, "test fixture must exceed the limit");
+        let out = shorten(&t, "/tmp/x.txt");
+        // Both ends survive: what was set up, and what just happened.
+        assert!(out.contains("FIRST-THING"));
+        assert!(out.contains("LAST-THING"));
+        assert!(out.contains("left out"));
+        // And the point of the exercise: it fits in a chat message.
+        assert!(out.len() < SHORT_LIMIT + 400, "still too long: {}", out.len());
+    }
+
+    #[test]
+    fn multibyte_characters_never_split() {
+        // The log is full of em dashes and box drawing; slicing mid-character
+        // would panic, and it would panic exactly when someone is already
+        // trying to report a problem.
+        let mut t = format!("[ts] {SESSION_BANNER}\n");
+        while t.len() < SHORT_LIMIT * 2 {
+            t.push_str("[ts] ─────── em—dash — line ───────\n");
+        }
+        let out = shorten(&t, "/tmp/x.txt");
+        assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn a_short_log_is_passed_through_whole() {
+        let t = format!("[ts] {SESSION_BANNER}\n[ts] all of it\n");
+        let out = shorten(&t, "/tmp/x.txt");
+        assert!(out.contains("all of it"));
+        assert!(!out.contains("left out"));
+    }
+}
+
+/// THE WHOLE LOG, every run of it. What the Save-to-file path writes.
+pub fn report_full() -> String {
+    let head = format!(
+        "DD69 Setup Log (full)\ngenerated: {}\napp version: {}\n\
+         ──────────────────────────────────────────────\n",
+        stamp(now_ms()),
+        app_version(),
+    );
+    match file_path().and_then(|p| std::fs::read_to_string(p).ok()) {
+        Some(t) if !t.trim().is_empty() => format!("{head}{t}"),
+        _ => report(),
+    }
 }

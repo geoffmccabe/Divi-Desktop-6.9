@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { stakingWallets, lotteryWins, startStaking, type StakeWallet, type LotteryWin } from "./api";
+import { stakingWallets, lotteryWins, startStaking, stakingReason, type StakeWallet, type LotteryWin } from "./api";
 import { nodeStatus } from "../bridge";
 import { loadNames } from "./addressNames";
 import { setStakingDesired, stakingDesired, setStakingSetupPending } from "./stakeWin";
@@ -73,11 +73,25 @@ export function StartStaking({ onStarted }: { onStarted?: () => void }) {
             if (c) setStakingSetupPending(false); // a pending confirm just expired
             confirm.current = null;
             setState((prev) => (prev === "needpass" ? prev : isStaking ? "staking" : "idle"));
-            // Don't echo the node's sync/status headline under the staking button —
-            // it already shows in the status panel (bottom-left); showing it twice
-            // is noise. Only staking-specific reasons (maturity, password) appear,
-            // set by go()/stop().
-            setReason(null);
+            /* ── SAY WHY IT IS NOT STAKING ────────────────────────────────
+               This used to clear the reason on every poll, to avoid echoing
+               the node's generic sync headline. It also threw away the one
+               sentence that mattered. Geoff's node on 2026-Sep-20 reported
+               walletunlocked false with every other precondition true, and
+               the button said nothing at all: "it won't stake... it just
+               doesn't work."
+
+               So ask the node the staking question specifically. Its answer
+               ("Not staking: the wallet is locked. Unlock it to start
+               staking.") is exactly what is needed, and it is never the
+               generic headline. Silence only when the node did not answer. */
+            if (!isStaking) {
+              stakingReason()
+                .then((r) => alive && setReason(r.known && !r.staking ? r.reason : null))
+                .catch(() => alive && setReason(null));
+            } else {
+              setReason(null);
+            }
           }
         }
       } catch {

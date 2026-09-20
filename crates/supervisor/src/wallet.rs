@@ -116,6 +116,23 @@ pub struct StakeStart {
 /// (`walletpassphrase pass 0 true`) — it can stake but not spend — using the
 /// supplied passphrase; if none is supplied it asks for one. An unencrypted
 /// wallet stakes automatically, so this just reports the status/reason.
+/// Why the node is not staking, in one sentence, straight from
+/// getstakingstatus.
+///
+/// The node has always known this -- "Not staking: the wallet is locked" --
+/// and the staking button threw the sentence away, leaving a button that
+/// could be pressed forever with no explanation. Geoff, 2026-Sep-20: "it
+/// won't stake... it just doesn't work", on a node reporting walletunlocked
+/// false and every other precondition true.
+///
+/// Returns None when the node could not be asked, which is not the same as
+/// "no reason" and must not be shown as one.
+pub fn staking_reason(cfg: &NodeConfig) -> Option<(bool, String)> {
+    let s = RpcClient::new(cfg).call("getstakingstatus", json!([])).ok()?;
+    let active = s["staking status"].as_bool().unwrap_or(false);
+    Some((active, crate::state::staking_sentence(&s)))
+}
+
 pub fn start_staking(cfg: &NodeConfig, passphrase: Option<&str>) -> StakeStart {
     let rpc = RpcClient::new(cfg);
     let winfo = match rpc.call("getwalletinfo", json!([])) {
