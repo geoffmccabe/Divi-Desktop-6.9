@@ -2527,3 +2527,25 @@ code, .mono { font-family: var(--font-mono); }
 .gallery-buy-actions { display: flex; gap: 8px; }
 .gallery-buy-done { display: flex; flex-direction: column; gap: 4px; }
 .gallery-buy-txid { font-size: 0.72rem; word-break: break-all; opacity: 0.75; }
+
+/* ── Style panel: icon/texture upload preview swatch, left of the Upload
+   button — this had no CSS at all before, so the swatch existed in the
+   markup but was invisible (0 size, no fill). "icon" tokens are masked
+   like every other icon in the app (shape from the token value, filled
+   with the current text color); "image" tokens (panel textures) get a
+   plain bordered box so an unset texture still reads as an empty swatch
+   rather than nothing. ── */
+.style-upload { display: inline-flex; align-items: center; gap: 8px; }
+.style-upload-preview {
+  display: inline-block; flex-shrink: 0;
+  width: 28px; height: 28px; border-radius: 6px;
+  border: 1px solid hsl(var(--border));
+  background-color: hsl(var(--background) / 0.5);
+}
+.style-upload-preview-icon {
+  border: none;
+  background-color: hsl(var(--foreground));
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: 70%; mask-size: 70%;
+}
