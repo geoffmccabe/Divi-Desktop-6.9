@@ -515,6 +515,12 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   const baseRef = useRef<HTMLCanvasElement | null>(null);
   // Peers seen in the last 30 days (grey at startup), and the live probe result.
   const knownRef = useRef<Known>({});
+  /** Every node we know of, stored plus in-memory. THE one definition of "how
+   *  many nodes", shared by the bottom-left counter and the by-country list.
+   *  They used to count different things — 76 against 219 for the USA alone —
+   *  which just reads as the app contradicting itself. */
+  const allKnownNodes = () => ({ ...loadKnown(), ...knownRef.current });
+
   const probeRef = useRef<Map<string, ProbeState>>(new Map());
   // v2: which IPs were peers on the LAST poll, so we can fire node.peer once on
   // connect and node.lost once on disconnect, rather than every poll.
@@ -582,7 +588,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           knownRef.current = recordKnown(knownRef.current, seen);
           noteSeen(seen.map((x) => x.ip));
           newNodesRef.current = newNodes(knownRef.current);
-          setMapNodeCount(Object.keys(knownRef.current).length);
+          setMapNodeCount(Object.keys(allKnownNodes()).length);
           for (const n of seen) {
             emitMap("node.discovered", { lat: n.lat, lon: n.lon, ip: n.ip });
           }
@@ -636,7 +642,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   useEffect(() => {
     baselineNewNodes();
     newNodesRef.current = newNodes(loadKnown());
-    setMapNodeCount(Object.keys(loadKnown()).length);
+    setMapNodeCount(Object.keys(allKnownNodes()).length);
   }, []);
 
   // Press "u" (Update) to fire the gold query ripple — your node pinging the
@@ -887,7 +893,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           // and fire the one-time arrival cue for genuinely brand-new nodes.
           noteSeen(seen.map((x) => x.ip));
           newNodesRef.current = newNodes(knownRef.current);
-          setMapNodeCount(Object.keys(knownRef.current).length);
+          setMapNodeCount(Object.keys(allKnownNodes()).length);
           for (const arr of takeUnannouncedArrivals(knownRef.current)) {
             arrivalFxRef.current.set(arr.ip, performance.now());
             playSound("receive");
