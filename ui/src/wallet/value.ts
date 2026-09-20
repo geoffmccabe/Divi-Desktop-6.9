@@ -130,7 +130,10 @@ export async function fetchPrices(force = false): Promise<DiviPrices> {
  * never fabricated, but its absence is now always explained.
  */
 export type DiviValue =
-  | { state: "ok"; value: string; code: string; recovered?: boolean }
+  /** `unit` is the price of ONE DIVI, already formatted, so the header can
+      show the rate that produced `value` beside it rather than making the
+      reader take the conversion on trust. */
+  | { state: "ok"; value: string; code: string; unit: string; recovered?: boolean }
   | { state: "loading" }
   | { state: "unavailable"; reason: string };
 
@@ -208,5 +211,12 @@ export function useDiviValue(diviAmount: number | null): DiviValue {
     // different problem from being offline, and worth saying so.
     return { state: "unavailable", reason: `No ${display} price` };
   }
-  return { state: "ok", ...fiatParts(diviAmount * per, display), recovered };
+  return {
+    state: "ok",
+    ...fiatParts(diviAmount * per, display),
+    // decimalsFor widens below a cent, so a ~$0.0013 DIVI keeps four
+    // significant figures instead of rounding to $0.00.
+    unit: fiatParts(per, display).value,
+    recovered,
+  };
 }

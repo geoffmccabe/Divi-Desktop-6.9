@@ -6,6 +6,9 @@ export const PHASE_COLOR: Record<string, string> = {
   synced: "var(--success)",
   syncing: "var(--warning)",
   "no-peers": "var(--warning)",
+  // Momentarily could not read the sync state. Amber, not red: nothing is
+  // known to be wrong, we simply did not get an answer this cycle.
+  checking: "var(--warning)",
   starting: "var(--warning)",
   crashed: "var(--destructive)",
   stopped: "var(--muted-foreground)",
@@ -17,6 +20,7 @@ export const PHASE_LABEL: Record<string, string> = {
   synced: "Synced",
   syncing: "Syncing",
   "no-peers": "Connecting",
+  checking: "Checking",
   starting: "Starting",
   crashed: "Needs repair",
   stopped: "Stopped",

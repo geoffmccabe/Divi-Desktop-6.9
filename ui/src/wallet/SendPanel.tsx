@@ -81,6 +81,10 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
   const [err, setErr] = useState<string | null>(null);
   const [txid, setTxid] = useState("");
   const [broadcastAt, setBroadcastAt] = useState(0);
+  /* Whether the wallet will actually let a send through, checked BEFORE the
+     confirm screen is shown rather than discovered by pressing the button.
+     "unsure" is a real answer here and is shown as one. */
+  const [lock, setLock] = useState<"open" | "locked" | "unsure">("unsure");
 
   useEffect(() => {
     let alive = true;
@@ -215,19 +219,52 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
     setStage("confirm");
   };
 
-  // Confirm: decide whether a password is needed, then send.
+  /* Find out the lock state as soon as the confirm screen appears, so the
+     screen can say what will happen instead of the user finding out by
+     pressing a button that then seems to do nothing. */
+  useEffect(() => {
+    if (stage !== "confirm") return;
+    let live = true;
+    walletStatus()
+      .then((st) => {
+        if (!live) return;
+        if (st.known === false) return setLock("unsure");
+        const open = !st.encrypted || (getAskMode() === "open" && st.unlocked);
+        setLock(open ? "open" : "locked");
+      })
+      .catch(() => live && setLock("unsure"));
+    return () => { live = false; };
+  }, [stage]);
+
+  /* Confirm: decide whether a password is needed, then send.
+
+     ── WHEN WE DO NOT KNOW, ASK ──────────────────────────────────────────
+     This used to send whenever it believed no password was needed — and
+     "believed" included every case where the node could not be asked, since
+     an unreadable wallet state came back as "not encrypted, unlocked". The
+     send then failed with "the wallet is locked", printed below the buttons
+     where it was easy to miss, with nothing to click. Geoff, 2026-Sep-20:
+     "the Confirm and Send button in Send doesn't work. I've clicked it
+     multiple times and it's not doing anything."
+
+     Being asked for a password once more than strictly necessary costs a
+     few seconds. Sending without checking costs a button that does nothing
+     and a user who does not know why. So an unknown state goes to the
+     password step, which is also the way to fix it. */
   const confirmSend = async () => {
     setErr(null);
     try {
       const st = await walletStatus();
-      const needsPass = st.encrypted && !(getAskMode() === "open" && st.unlocked);
+      const unsure = st.known === false;
+      const needsPass = unsure || (st.encrypted && !(getAskMode() === "open" && st.unlocked));
       if (needsPass) {
         setStage("password");
         return;
       }
       await doSend();
-    } catch (e) {
-      setErr(String(e));
+    } catch {
+      // Even the status call failing is not a reason to send blind.
+      setStage("password");
     }
   };
 
@@ -380,8 +417,28 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
             </p>
           )}
           <p className="send-warn">This can’t be undone. Check the address carefully.</p>
+          {/* Say the wallet is locked BEFORE the button is pressed. The
+              node's own words for this were appearing under the buttons,
+              easy to miss and with nothing to act on. */}
+          {lock !== "open" && (
+            <p className="send-locked">
+              {lock === "locked"
+                ? "Your wallet is locked. You will be asked for your password."
+                : "Your node has not said whether the wallet is locked. You will be asked for your password."}
+            </p>
+          )}
           <div className="send-actions">
             <button type="button" className="wl-btn" onClick={() => setStage("form")}>Back</button>
+            {/* Directly left of Confirm & send, where Geoff asked for it. */}
+            {lock !== "open" && (
+              <button
+                type="button"
+                className="wl-btn send-unlock"
+                onClick={() => { setErr(null); setStage("password"); }}
+              >
+                Unlock
+              </button>
+            )}
             <button type="button" className="wl-btn wl-btn-primary" onClick={confirmSend}>Confirm &amp; send</button>
           </div>
         </div>
@@ -392,10 +449,20 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
           className="send-confirm"
           onSubmit={(e) => {
             e.preventDefault();
-            doSend(pass);
+            /* Empty means "no password", not "the password is empty". The
+               node is only asked to unlock when one was actually typed, so
+               an unencrypted wallet can get through this step rather than
+               being stuck at a prompt for a password it does not have. */
+            doSend(pass || undefined);
           }}
         >
           <p className="send-confirm-line">Enter your wallet password to send.</p>
+          {lock === "unsure" && (
+            <p className="wl-note">
+              Your node did not say whether this wallet has a password. If it does not,
+              leave this empty and press Send.
+            </p>
+          )}
           <input
             className="wl-input"
             type="password"
@@ -406,7 +473,9 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
           />
           <div className="send-actions">
             <button type="button" className="wl-btn" onClick={() => { setStage("confirm"); setPass(""); }}>Back</button>
-            <button type="submit" className="wl-btn wl-btn-primary" disabled={!pass}>Unlock &amp; send</button>
+            <button type="submit" className="wl-btn wl-btn-primary" disabled={!pass && lock !== "unsure"}>
+              {pass ? "Unlock & send" : "Send"}
+            </button>
           </div>
         </form>
       )}

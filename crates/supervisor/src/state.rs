@@ -18,6 +18,10 @@ pub enum Phase {
     Syncing,
     Synced,
     Staking,
+    /// We could not work out where the node is up to THIS cycle -- the
+    /// block-time query did not come back in time. Distinct from Syncing,
+    /// which is a claim that the node is genuinely behind.
+    Checking,
 }
 
 impl Phase {
@@ -31,6 +35,7 @@ impl Phase {
             Phase::Syncing => "syncing",
             Phase::Synced => "synced",
             Phase::Staking => "staking",
+            Phase::Checking => "checking",
         }
     }
 }
@@ -70,9 +75,23 @@ pub fn assess(peers: i64, tip_age_secs: Option<i64>, staking: &Value) -> Health 
     }
     // Tip age unknown (the block-time query didn't answer this cycle): don't
     // invent a number — say we're checking. Never print a bogus "N days behind".
+    /* ── NOT KNOWING IS NOT THE SAME AS BEING BEHIND ───────────────────
+       This used to return Phase::Syncing when the tip-age query simply did
+       not answer. Every screen that asks "is the wallet caught up" then
+       said no -- and the Spendable panel, which deliberately hides the
+       balance while syncing, replaced a correct figure with STILL SYNCING.
+
+       That is what Geoff saw on 2026-Sep-20 when he pressed Start Staking:
+       "in the Spendable panel, I suddenly lose the amount spendable, which
+       shouldn't happen". Starting staking makes several RPC calls at once,
+       one poll's block-time query loses its turn, and a healthy synced
+       wallet declared itself mid-sync.
+
+       Checking is its own phase now. Callers keep showing what they last
+       knew rather than asserting something they cannot support. */
     let Some(tip_age_secs) = tip_age_secs else {
         return Health {
-            phase: Phase::Syncing,
+            phase: Phase::Checking,
             headline: "Connected — checking sync status…".into(),
         };
     };
@@ -155,8 +174,20 @@ mod tests {
     #[test]
     fn unknown_tip_age_never_shows_a_number() {
         let h = assess(8, None, &staking_on());
-        assert_eq!(h.phase, Phase::Syncing);
+        // Checking, NOT Syncing. Reporting "syncing" here made every screen
+        // that asks "are we caught up" answer no, and the Spendable panel
+        // hides the balance when the answer is no -- so a single missed
+        // block-time query wiped a correct balance off the screen.
+        assert_eq!(h.phase, Phase::Checking);
         assert!(!h.headline.contains("behind"));
+    }
+
+    #[test]
+    fn checking_is_not_syncing() {
+        // The distinction the Spendable panel depends on: a node that did not
+        // answer must never be presented as a node that is behind.
+        assert_ne!(Phase::Checking.slug(), Phase::Syncing.slug());
+        assert_eq!(Phase::Checking.slug(), "checking");
     }
 
     #[test]

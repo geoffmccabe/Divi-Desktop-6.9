@@ -57,7 +57,13 @@ export function HeaderBar() {
       try {
         const st = await nodeStatus();
         if (alive) {
-          setCaughtUp(st.phase === "synced" || st.phase === "staking");
+          /* Only a POSITIVE report changes this. "checking" means the node
+             did not answer the sync question this cycle, and "no-peers" is
+             about the network, not about the balance being wrong -- neither
+             is grounds for wiping a figure that was correct a moment ago.
+             Pressing Start Staking used to do exactly that. */
+          if (st.phase === "synced" || st.phase === "staking") setCaughtUp(true);
+          else if (st.phase === "syncing") setCaughtUp(false);
           // A node that is not RUNNING is not "catching up". Treating every
           // non-synced state as syncing told a user whose node had never
           // started that it was "STILL SYNCING", forever, with nothing
@@ -140,14 +146,13 @@ export function HeaderBar() {
             </span>
           </span>
         ) : syncing ? (
+          /* No explanatory second line here. One was added unasked and Geoff
+             removed it; the label says enough. */
           <span className="bl-amt bl-amt-stack">
             <span className="bl-divi bl-sync-amt">STILL SYNCING…</span>
-            <span className="bl-fiat bl-sync-note">
-              Coins sent to you appear here as your node catches up
-            </span>
           </span>
         ) : (
-        <span className="bl-amt">
+        <span className="bl-amt bl-amt-stack">
           <span className="bl-divi">
             {spend ? (
               <>
@@ -171,9 +176,12 @@ export function HeaderBar() {
               <span className="bl-price-dot bl-price-dot-trying" /> …
             </span>
           ) : (
-            <span className={"bl-fiat" + (fiat.recovered ? " bl-fiat-recovered" : "")}>
+            <span className={"bl-fiat bl-fiat-line" + (fiat.recovered ? " bl-fiat-recovered" : "")}>
               {fiat.recovered && <span className="bl-price-dot bl-price-dot-ok" />}
               {fiat.value} <span className="bl-fiat-code">{fiat.code}</span>
+              {/* The rate that produced the figure to its left. Smaller, and
+                  on the same line -- see .bl-rate, which keeps it there. */}
+              <span className="bl-rate">(1 DIVI={fiat.unit})</span>
             </span>
           )}
         </span>

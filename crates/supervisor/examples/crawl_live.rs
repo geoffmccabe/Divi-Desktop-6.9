@@ -13,5 +13,5 @@ fn main() {
     let new: Vec<_> = found.iter().filter(|a| !ips.contains(a)).collect();
     println!("total distinct addresses learned: {}", found.len());
     println!("NOT among the nodes we asked (invisible to us before): {}", new.len());
-    for a in new.iter().take(12) { println!("    {a}"); }
+    for a in new.iter() { println!("    {a}"); }
 }

@@ -98,7 +98,9 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
 
   const phase = status?.phase ?? "unreachable";
   const color = PHASE_COLOR[phase] ?? "var(--muted-foreground)";
-  const working = phase === "syncing" || phase === "no-peers" || phase === "starting" || phase === "unreachable";
+  const working =
+    phase === "syncing" || phase === "no-peers" || phase === "starting" ||
+    phase === "unreachable" || phase === "checking";
   const caughtUp = phase === "synced" || phase === "staking";
 
   // Targets the displayed counts climb toward (freshest reading, kept last-good).

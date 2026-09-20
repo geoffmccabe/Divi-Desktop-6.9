@@ -25,20 +25,66 @@ pub struct WalletStatus {
     pub encrypted: bool,
     pub unlocked: bool,
     pub staking_only: bool,
+    /// False when the node could not be asked. NOT KNOWING IS ITS OWN STATE
+    /// and callers must treat it as such — see the note on `status()`.
+    pub known: bool,
     pub status: String, // raw encryption_status: unencrypted/unlocked/locked/locked-anonymization
 }
 
 /// Current lock state, from getwalletinfo.
+///
+/// ── WHY `known` EXISTS ────────────────────────────────────────────────────
+/// This used to read:
+///
+/// ```text
+/// let w = rpc.call("getwalletinfo", ...).unwrap_or(json!({}));
+/// let status = w["encryption_status"].as_str().unwrap_or("unencrypted");
+/// ```
+///
+/// so ANY failure to ask — a node still starting, a busy spell, a timeout —
+/// came back as "unencrypted", which is to say "encrypted: false, unlocked:
+/// true". The most reassuring answer possible, produced by not knowing.
+///
+/// The send screen then concluded that no password was needed, skipped the
+/// prompt entirely, and sent. The node answered "the wallet is locked", which
+/// appeared as text below the fold with no way to act on it. Geoff,
+/// 2026-Sep-20: "the Confirm and Send button in Send doesn't work. I've
+/// clicked it multiple times and it's not doing anything." It also explains
+/// the earlier "I had to click it twice": the first call failed and reported
+/// unencrypted, the second succeeded and reported locked, so the second one
+/// prompted.
+///
+/// A guess is now labelled as a guess. On a money path the caller must resolve
+/// an unknown by ASKING for the password: being asked once too often is a
+/// small annoyance, and sending without checking is a dead button.
 pub fn status(cfg: &NodeConfig) -> WalletStatus {
     let rpc = RpcClient::new(cfg);
-    let w = rpc.call("getwalletinfo", json!([])).unwrap_or(json!({}));
-    let status = w["encryption_status"].as_str().unwrap_or("unencrypted").to_string();
+    let Ok(w) = rpc.call("getwalletinfo", json!([])) else {
+        return WalletStatus {
+            // Assume the careful thing: encrypted and locked. Never "unlocked".
+            encrypted: true,
+            unlocked: false,
+            staking_only: false,
+            known: false,
+            status: "unknown".into(),
+        };
+    };
+    // A reply that carries no encryption_status is equally uninformative.
+    let Some(status) = w["encryption_status"].as_str().map(str::to_string) else {
+        return WalletStatus {
+            encrypted: true,
+            unlocked: false,
+            staking_only: false,
+            known: false,
+            status: "unknown".into(),
+        };
+    };
     let encrypted = status != "unencrypted";
     // "locked-anonymization" is Divi's name for staking-only unlock (can stake,
     // can't send). Treat it as unlocked-for-staking.
     let unlocked = matches!(status.as_str(), "unencrypted" | "unlocked");
     let staking_only = status == "locked-anonymization";
-    WalletStatus { encrypted, unlocked, staking_only, status }
+    WalletStatus { encrypted, unlocked, staking_only, known: true, status }
 }
 
 /// Unlock the wallet. `staking_only` = true keeps sends locked; `seconds` = 0

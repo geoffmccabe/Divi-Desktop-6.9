@@ -1074,6 +1074,10 @@ struct WalletStatusDto {
     unlocked: bool,
     staking_only: bool,
     remembered: bool,
+    /// False when we could not find out. The send screen must ask for the
+    /// password rather than assume, since assuming is what produced a Confirm
+    /// button that appeared to do nothing.
+    known: bool,
     status: String,
 }
 
@@ -1082,11 +1086,14 @@ struct WalletStatusDto {
 async fn wallet_status() -> WalletStatusDto {
     tauri::async_runtime::spawn_blocking(|| {
         let Ok(cfg) = NodeConfig::load() else {
+            // No node configured: nothing is known about any wallet, and
+            // "unlocked: true" would be a claim we cannot support.
             return WalletStatusDto {
                 encrypted: false,
-                unlocked: true,
+                unlocked: false,
                 staking_only: false,
                 remembered: false,
+                known: false,
                 status: "no-node".into(),
             };
         };
@@ -1096,15 +1103,17 @@ async fn wallet_status() -> WalletStatusDto {
             unlocked: s.unlocked,
             staking_only: s.staking_only,
             remembered: security::recall().is_some(),
+            known: s.known,
             status: s.status,
         }
     })
     .await
     .unwrap_or(WalletStatusDto {
         encrypted: false,
-        unlocked: true,
+        unlocked: false,
         staking_only: false,
         remembered: false,
+        known: false,
         status: "error".into(),
     })
 }

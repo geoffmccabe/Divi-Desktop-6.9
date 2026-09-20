@@ -661,6 +661,10 @@ export interface WalletStatus {
   unlocked: boolean;
   stakingOnly: boolean;
   remembered: boolean;
+  /** False when the node could not be asked, so none of the above is a fact.
+      Anything that moves money must ask for the password rather than assume:
+      a failed read used to arrive here looking like "unencrypted, unlocked". */
+  known: boolean;
   status: string;
 }
 export const walletStatus = () => invoke<WalletStatus>("wallet_status");
