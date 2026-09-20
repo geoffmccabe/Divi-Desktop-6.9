@@ -186,7 +186,24 @@ fn spawn_once(
         // Daemon printed a fatal line and died? Classify and stop waiting.
         if daemon_pid(datadir).is_none() && started.elapsed() > Duration::from_secs(3) {
             let said = std::fs::read_to_string(&spawn_log_path).unwrap_or_default();
-            if let Some(line) = said.lines().find(|l| l.contains("Error:")) {
+            /* ── WHAT COUNTS AS THE NODE'S LAST WORDS ─────────────────────
+               This looked only for a line containing "Error:". A C runtime
+               assertion does not say "Error:" -- it says
+
+                 Assertion failed: instance != nullptr, file
+                 ChainstateManager.cpp, line 102 ... in AppInit()
+
+               so the classifier below (which has handled "Assertion failed"
+               all along) was never reached. The launch fell through to the
+               "exited early" log line and tried again, and again, for the
+               full 180 seconds: Joseph's log on 2026-Sep-20 has seventy
+               identical crashes in a row, none of them classified, before
+               the wallet finally reported a TIMEOUT rather than the crash
+               that had already happened seventy times.
+
+               A process that died is a process that died. Take the first
+               line that looks fatal by ANY of these signs. */
+            if let Some(line) = said.lines().find(|l| looks_fatal(l)) {
                 let msg = line.trim().to_string();
                 crate::setuplog::log(format!("node launch: node reported an error and exited — {msg}"));
                 if REINDEX_REQUIRED_MARKERS.iter().any(|m| msg.contains(m)) {
@@ -267,6 +284,28 @@ pub struct StartReport {
 /// Rung 3 (restore from the daily snapshot) is a future step — it needs the
 /// download+verify code — and is surfaced as a clear message rather than
 /// pretended.
+/// Signs that a line is the node's last words.
+///
+/// "Error:" alone is not enough. A C runtime assertion prints
+/// `Assertion failed: ... in AppInit()` with no "Error:" anywhere, and
+/// because the classifier only matched "Error:", seventy consecutive
+/// identical crashes in Joseph's log on 2026-Sep-20 were each logged as
+/// "exited early" and retried, until the launch gave up after 180 seconds
+/// and reported a TIMEOUT instead of the crash that had already happened
+/// seventy times.
+const FATAL_SIGNS: [&str; 6] = [
+    "Error:",
+    "Assertion failed",
+    "terminate called",
+    "Segmentation fault",
+    "Aborted",
+    "panicked at",
+];
+
+fn looks_fatal(line: &str) -> bool {
+    FATAL_SIGNS.iter().any(|sign| line.contains(sign))
+}
+
 pub fn start_with_recovery(
     divid: &Path,
     datadir: &Path,
@@ -375,5 +414,40 @@ mod tests {
     fn benign_error_is_not_corruption() {
         let benign = "Error: Unable to bind to 0.0.0.0:51472";
         assert!(!CORRUPTION_MARKERS.iter().any(|m| benign.contains(m)));
+    }
+}
+
+#[cfg(test)]
+mod fatal_line_tests {
+    use super::looks_fatal;
+
+    #[test]
+    fn a_c_assertion_is_fatal_even_without_the_word_error() {
+        // Joseph's Windows node, verbatim. This is the line that used to be
+        // ignored, causing a 180-second retry loop instead of a diagnosis.
+        let line = "Assertion failed: instance != nullptr, file ChainstateManager.cpp, \
+                    line 102 | | C:\\...\\divid69.exe in AppInit()";
+        assert!(looks_fatal(line));
+        assert!(!line.contains("Error:"), "the point of the test is that it does not");
+    }
+
+    #[test]
+    fn the_nodes_own_error_lines_still_count() {
+        assert!(looks_fatal(
+            "Error: Unable to bind to 0.0.0.0:51472 on this computer. DIVI Core is probably already running."
+        ));
+    }
+
+    #[test]
+    fn crashes_without_a_message_of_their_own_count_too() {
+        assert!(looks_fatal("Segmentation fault"));
+        assert!(looks_fatal("terminate called after throwing an instance of 'std::runtime_error'"));
+    }
+
+    #[test]
+    fn ordinary_startup_chatter_is_not_fatal() {
+        assert!(!looks_fatal("Loading block index..."));
+        assert!(!looks_fatal("UPnP Port Mapping successful."));
+        assert!(!looks_fatal("init message: Verifying wallet..."));
     }
 }
