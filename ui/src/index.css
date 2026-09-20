@@ -1666,37 +1666,13 @@ code, .mono { font-family: var(--font-mono); }
 /* Charts + Node Map buttons sit together at the right of the Overview title row. */
 .title-actions { display: flex; align-items: center; gap: 10px; }
 
-/* ---- Divi price chart (Charts view) ---- */
-.pricechart { display: flex; flex-direction: column; height: 100%; }
-.pc-head { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
-.pc-back {
-  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
-  padding: 6px 12px; border-radius: 8px; font-size: 0.85rem; font-weight: 600;
-  color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.14);
-  border: 1px solid hsl(var(--primary) / 0.45);
-}
-.pc-back:hover { background: hsl(var(--primary) / 0.28); }
-.pc-title { margin: 0; font-size: 1.4rem; }
-.pc-summary { display: inline-flex; align-items: baseline; gap: 10px; margin-left: auto; }
-.pc-price { font-size: 1.5rem; font-weight: 700; color: hsl(var(--foreground)); }
-.pc-change { font-size: 0.95rem; font-weight: 600; }
-.pc-change.up { color: #2bd94f; }
-.pc-change.down { color: #ff5252; }
-.pc-ranges { display: flex; gap: 6px; margin-bottom: 12px; }
-.pc-range {
-  cursor: pointer; padding: 5px 14px; border-radius: 7px; font-size: 0.82rem; font-weight: 600;
-  color: hsl(var(--muted-foreground)); background: transparent; border: 1px solid hsl(var(--border));
-}
-.pc-range:hover { color: hsl(var(--foreground)); }
-.pc-range.on { color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.2); border-color: hsl(var(--primary) / 0.6); }
-.pc-chartwrap { position: relative; flex: 1; min-height: 340px; }
-.pc-svg { width: 100%; height: 340px; display: block; }
-.pc-empty { display: flex; align-items: center; justify-content: center; height: 340px; color: hsl(var(--muted-foreground)); }
-.pc-hi, .pc-lo, .pc-d0, .pc-d1 { position: absolute; font-size: 0.72rem; color: hsl(var(--muted-foreground)); pointer-events: none; }
-.pc-hi { top: 2px; left: 4px; }
-.pc-lo { bottom: 24px; left: 4px; }
-.pc-d0 { bottom: 4px; left: 4px; }
-.pc-d1 { bottom: 4px; right: 4px; }
+/* The chart's styles used to be in this file TWICE. The older copy set
+   .pc-svg { height: 340px } while the chart itself draws 380 units tall, so
+   the browser clipped everything below 340 -- the bottom of the plot and the
+   whole horizontal axis, at every window size. Geoff reported it twice; the
+   first fix went into the scan.divi.love chart, which is a different chart in
+   a different codebase. The dead copy is gone. Do not reintroduce a fixed
+   .pc-svg height: the height is measured from the panel now (PriceChart.tsx). */
 
 /* ---- My Nodes (Settings): switch which node the wallet reads ---- */
 .mynodes { display: flex; flex-direction: column; gap: 12px; margin-top: 6px; }
@@ -2061,6 +2037,33 @@ code, .mono { font-family: var(--font-mono); }
   border: 1px solid hsl(var(--primary) / 0.45);
 }
 .pc-back:hover { background: hsl(var(--primary) / 0.28); }
+
+/* Chart picker, between Overview and the title. It carries .pc-back as well,
+   so its border, radius, colour and -- because the vertical padding and font
+   size are the ones .pc-back already sets -- its height match the Overview
+   button exactly. Only the horizontal padding is narrowed, since it holds an
+   icon rather than a word. */
+.pc-menuwrap { position: relative; display: inline-flex; }
+.pc-burger { padding-left: 9px; padding-right: 9px; }
+.pc-burger.on { background: hsl(var(--primary) / 0.3); }
+.pc-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+  min-width: 208px; padding: 5px; border-radius: 9px;
+  display: flex; flex-direction: column; gap: 2px;
+  background: hsl(var(--card) / 0.98); border: 1px solid hsl(var(--primary) / 0.45);
+  box-shadow: 0 8px 24px hsl(0 0% 0% / 0.45);
+}
+.pc-menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; padding: 7px 10px; border-radius: 6px; cursor: pointer;
+  font-size: 0.82rem; text-align: left;
+  color: hsl(var(--foreground)); background: transparent; border: none;
+}
+.pc-menu-item:hover:not(:disabled) { background: hsl(var(--primary) / 0.2); }
+.pc-menu-item.on { background: hsl(var(--primary) / 0.26); font-weight: 600; }
+.pc-menu-item:disabled { color: hsl(var(--muted-foreground)); cursor: default; }
+.pc-menu-soon { font-size: 0.67rem; opacity: 0.75; white-space: nowrap; }
+
 .pc-title { margin: 0; font-size: 1.4rem; }
 .pc-summary { display: inline-flex; align-items: baseline; gap: 10px; margin-left: auto; }
 .pc-price { font-size: 1.5rem; font-weight: 700; color: hsl(var(--foreground)); }
@@ -2074,11 +2077,14 @@ code, .mono { font-family: var(--font-mono); }
 }
 .pc-range:hover { color: hsl(var(--foreground)); }
 .pc-range.on { color: hsl(var(--foreground)); background: hsl(var(--primary) / 0.2); border-color: hsl(var(--primary) / 0.6); }
-.pc-plot { position: relative; flex: 1; min-height: 380px; cursor: crosshair; user-select: none; }
+/* The plot takes whatever height is left in the panel. min-height is a floor
+   for a very short window, and matches MIN_H in PriceChart.tsx -- the chart
+   measures this box and draws to fit it, so the two must not disagree. */
+.pc-plot { position: relative; flex: 1; min-height: 260px; cursor: crosshair; user-select: none; overflow: hidden; }
 .pc-plot.dragging { cursor: grabbing; }
 .pc-hint { margin-left: auto; align-self: center; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
 .pc-svg { display: block; }
-.pc-empty { display: flex; align-items: center; justify-content: center; height: 380px; color: hsl(var(--muted-foreground)); }
+.pc-empty { display: flex; align-items: center; justify-content: center; height: 100%; color: hsl(var(--muted-foreground)); }
 /* axis gridlines + labels */
 .pc-grid { stroke: hsl(var(--foreground) / 0.10); stroke-width: 1; }
 .pc-ylabel { fill: hsl(var(--muted-foreground)); font-size: 11px; text-anchor: end; }

@@ -17,7 +17,30 @@ const RANGES: { key: string; label: string; days: number }[] = [
   { key: "ALL", label: "All", days: Infinity },
 ];
 
-const H = 380, ML = 62, MR = 16, MT = 14, MB = 26;
+/* WHICH CHARTS EXIST. Only the price chart is built. The rest are listed so
+   the menu shows the whole plan and says plainly that they are not ready --
+   an empty chart that looks broken is worse than one that admits it is not
+   written yet. Each becomes `ready` as its data source lands; see
+   docs/CHARTS-PLAN.md for what each one needs. */
+const CHARTS: { key: string; label: string; ready: boolean }[] = [
+  { key: "price", label: "DIVI Price", ready: true },
+  { key: "mcap", label: "Market Cap", ready: false },
+  { key: "wallets", label: "Wallets Holding DIVI", ready: false },
+  { key: "newwallets", label: "New Wallets per Day", ready: false },
+  { key: "nodes", label: "Nodes on the Network", ready: false },
+  { key: "txs", label: "Transactions per Day", ready: false },
+];
+
+/* MARGINS. MB is the strip below the plot that the date labels sit in; it has
+   to be tall enough for an 11px label plus its descenders and a little air,
+   and the labels are drawn 8 units up from the bottom edge. Anything less and
+   the axis is trimmed even when the chart itself fits. */
+const ML = 62, MR = 16, MT = 14, MB = 30;
+/* A floor, not a fixed size. The chart's height is measured from the panel it
+   sits in (see the ResizeObserver below) so it fills the space available and
+   its axis is never outside the box; this is only what to use before the
+   first measurement lands, and how small it may ever get. */
+const MIN_H = 260;
 const DAY = 86400_000;
 const MIN_SPAN = 2 * 3600_000; // don't zoom in past ~2 hours
 const MAX_RENDER = 1500; // path point cap (downsample beyond this)
@@ -55,11 +78,14 @@ export function PriceChart({ onReturn }: { onReturn: () => void }) {
   const [raw, setRaw] = useState<{ ts: string; close: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [W, setW] = useState(0);
+  const [H, setH] = useState(MIN_H);
   const [view, setView] = useState<{ s: number; e: number } | null>(null);
   const [preset, setPreset] = useState<number | null>(7);
   const [hoverX, setHoverX] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
+  const menuRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef(view);
   const geomRef = useRef<{ plotW: number }>({ plotW: 0 });
@@ -74,10 +100,32 @@ export function PriceChart({ onReturn }: { onReturn: () => void }) {
 
   useEffect(() => {
     const el = wrapRef.current; if (!el) return;
-    const ro = new ResizeObserver(() => setW(el.clientWidth));
-    ro.observe(el); setW(el.clientWidth);
+    /* Measure BOTH dimensions. Height used to be a constant, and the panel
+       was free to be shorter than that constant, which is exactly how the
+       axis ended up outside the visible box. */
+    const measure = () => {
+      setW(el.clientWidth);
+      setH(Math.max(MIN_H, Math.round(el.clientHeight)));
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(el); measure();
     return () => ro.disconnect();
   }, []);
+
+  // Click anywhere else, or press Escape, and the chart menu closes.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const away = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => {
+      document.removeEventListener("mousedown", away);
+      document.removeEventListener("keydown", esc);
+    };
+  }, [menuOpen]);
 
   const all = useMemo<Pt[]>(
     () => raw.map((p) => ({ t: Date.parse(p.ts), c: p.close })).filter((p) => p.c > 0 && !Number.isNaN(p.t)),
@@ -93,7 +141,7 @@ export function PriceChart({ onReturn }: { onReturn: () => void }) {
   }, [all, view]);
 
   const model = useMemo(() => {
-    if (W <= ML + MR || !view || all.length < 2) return null;
+    if (W <= ML + MR || H <= MT + MB || !view || all.length < 2) return null;
     const plotW = W - ML - MR, plotH = H - MT - MB;
     const [i0, i1] = sliceIdx(all, view.s, view.e);
     const visible = all.slice(i0, i1);
@@ -115,7 +163,7 @@ export function PriceChart({ onReturn }: { onReturn: () => void }) {
       change: visible[0].c > 0 ? ((visible[visible.length - 1].c - visible[0].c) / visible[0].c) * 100 : 0,
       last: visible[visible.length - 1].c,
     };
-  }, [W, view, all]);
+  }, [W, H, view, all]);
 
   // keep refs fresh for the wheel/drag listeners
   viewRef.current = view;
@@ -184,6 +232,41 @@ export function PriceChart({ onReturn }: { onReturn: () => void }) {
     <div className="pricechart">
       <div className="pc-head">
         <button type="button" className="pc-back" onClick={onReturn}>← Overview</button>
+        {/* Which chart to show. Styled from .pc-back so it is the same height
+            and weight as the Overview button beside it. The other charts are
+            not built yet and say so rather than pretending to be empty. */}
+        <div className="pc-menuwrap" ref={menuRef}>
+          <button
+            type="button"
+            className={"pc-back pc-burger" + (menuOpen ? " on" : "")}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            aria-label="Choose a chart"
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <svg viewBox="0 0 16 12" width="15" height="11" aria-hidden="true">
+              <path d="M1 1.5h14M1 6h14M1 10.5h14" stroke="currentColor"
+                strokeWidth="1.7" strokeLinecap="round" fill="none" />
+            </svg>
+          </button>
+          {menuOpen && (
+            <div className="pc-menu" role="menu">
+              {CHARTS.map((c) => (
+                <button
+                  key={c.key}
+                  type="button"
+                  role="menuitem"
+                  className={"pc-menu-item" + (c.key === "price" ? " on" : "")}
+                  disabled={!c.ready}
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <span>{c.label}</span>
+                  {!c.ready && <span className="pc-menu-soon">not built yet</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <h2 className="pc-title">DIVI Price</h2>
         {model && (
           <span className="pc-summary">
