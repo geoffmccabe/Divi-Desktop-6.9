@@ -203,7 +203,9 @@ fn spawn_once(
 
                A process that died is a process that died. Take the first
                line that looks fatal by ANY of these signs. */
-            if let Some(line) = said.lines().find(|l| looks_fatal(l)) {
+            // The LAST fatal line, not the first. A node can grumble on its
+            // way down; what killed it is the thing it said last.
+            if let Some(line) = said.lines().filter(|l| looks_fatal(l)).next_back() {
                 let msg = line.trim().to_string();
                 crate::setuplog::log(format!("node launch: node reported an error and exited — {msg}"));
                 if REINDEX_REQUIRED_MARKERS.iter().any(|m| msg.contains(m)) {
@@ -302,8 +304,19 @@ const FATAL_SIGNS: [&str; 6] = [
     "panicked at",
 ];
 
+/// Chatter that carries the word "Error:" and means nothing. The node writes
+/// RPCAcceptHandler errors constantly in perfect health -- 1,307 of them in
+/// Geoff's log, with no real errors at all beside them -- so matching on
+/// "Error:" alone picks up noise and presents it as the reason the node died.
+/// That is how Joseph was twice told his node's "last message" was an RPC
+/// accept error, which explained nothing and pointed nowhere.
+fn is_noise(line: &str) -> bool {
+    const NOISE: [&str; 3] = ["RPCAcceptHandler", "connect() to", "socket send error"];
+    NOISE.iter().any(|n| line.contains(n))
+}
+
 fn looks_fatal(line: &str) -> bool {
-    FATAL_SIGNS.iter().any(|sign| line.contains(sign))
+    !is_noise(line) && FATAL_SIGNS.iter().any(|sign| line.contains(sign))
 }
 
 pub fn start_with_recovery(
@@ -449,5 +462,18 @@ mod fatal_line_tests {
         assert!(!looks_fatal("Loading block index..."));
         assert!(!looks_fatal("UPnP Port Mapping successful."));
         assert!(!looks_fatal("init message: Verifying wallet..."));
+    }
+
+    #[test]
+    fn rpc_accept_noise_is_not_a_crash_however_much_it_says_error() {
+        // A healthy node writes this constantly. Treating it as fatal is how
+        // "The node stopped. Its last message was: RPCAcceptHandler: Error:"
+        // got shown to a user twice, explaining nothing.
+        assert!(!looks_fatal("RPCAcceptHandler: Error: Invalid argument"));
+        assert!(!looks_fatal(
+            "RPCAcceptHandler: Error: The I/O operation has been aborted because of either a \
+             thread exit or an application request"
+        ));
+        assert!(!looks_fatal("connect() to 1.2.3.4:51472 failed after select(): Connection refused"));
     }
 }

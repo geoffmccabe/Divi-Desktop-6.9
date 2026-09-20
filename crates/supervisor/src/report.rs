@@ -66,7 +66,17 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
                 format!("The node stopped. Its last message was: {why}"),
             )
         } else {
-            (Phase::Stopped, "The node isn't running.".to_string())
+            /* No error anywhere -- which is the normal case after a clean
+               shutdown, and used to be papered over by quoting RPC accept
+               chatter as if it were a cause of death. Say the true thing,
+               and say what to do next. */
+            (
+                Phase::Stopped,
+                "The node isn't running, and it didn't report an error — so it was most likely \
+                 shut down cleanly. It should start again on its own; if it doesn't, press \
+                 Ctrl-L (⌘-L on a Mac) a minute from now and send the diagnostic."
+                    .to_string(),
+            )
         };
         return StatusReport { running: false, phase, headline, blocks: None, peers: None, last_shutdown };
     }
