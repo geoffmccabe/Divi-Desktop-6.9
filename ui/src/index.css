@@ -1077,6 +1077,21 @@ code, .mono { font-family: var(--font-mono); }
   border: 1px solid hsl(var(--map-peer-link)); cursor: pointer;
 }
 .netmap-dd69bar button:hover { background: hsl(var(--map-peer-link) / 0.25); }
+
+/* "This map is frozen." Sits along the bottom of the map, wide enough to read
+   in one line on a narrow window and wrapping rather than clipping on a very
+   narrow one. Amber, not fuchsia: it is a warning, not part of the theme's
+   ordinary furniture. */
+.netmap-frozen {
+  position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 7;
+  padding: 8px 14px; border-radius: 9px; max-width: 100%;
+  font-size: 0.78rem; line-height: 1.35; text-align: center;
+  color: #ffe9c2; background: rgba(46, 28, 8, 0.93);
+  border: 1px solid rgba(240, 168, 58, 0.66);
+  box-shadow: 0 3px 16px rgba(240, 168, 58, 0.22);
+  pointer-events: none;
+}
+.netmap-frozen b { color: #ffc768; }
 /* .bl-amt is a flex ROW, so a reason and a hint placed inside it were laid
    out side by side and ran off the edge of the panel, unreadable. When the
    panel is showing a message rather than a figure, stack them instead. */
@@ -1570,6 +1585,20 @@ code, .mono { font-family: var(--font-mono); }
 .nbc-full { text-align: right; color: hsl(210 60% 72%); font-variant-numeric: tabular-nums; }
 .nbc-love { text-align: right; color: hsl(330 85% 72%); font-variant-numeric: tabular-nums; } /* pink */
 .nbc-empty { color: hsl(var(--muted-foreground)); }
+
+/* Copy List. Centred under the list and outside the scrolling area, so it
+   stays put however long the list gets. */
+.nbc-foot { display: flex; justify-content: center; padding-top: 5px; flex: 0 0 auto; }
+.nbc-copy {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 11px; border-radius: 7px; cursor: pointer;
+  font-size: 0.62rem; letter-spacing: 0.04em;
+  color: hsl(var(--foreground)); background: hsl(var(--panel-bg) / 0.9);
+  border: 1px solid hsl(var(--map-peer-link) / 0.7);
+  transition: background 0.15s;
+}
+.nbc-copy:hover:not(:disabled) { background: hsl(var(--map-peer-link) / 0.28); }
+.nbc-copy:disabled { opacity: 0.45; cursor: default; }
 
 /* ---- PrimerLove: fast blockchain loader, shown over the block stream ---- */
 .primer {

@@ -89,10 +89,29 @@ fn shared_agent() -> &'static ureq::Agent {
     })
 }
 
+/// What came back when we took the node's pulse.
+///
+/// Three outcomes, not two, because the cure for one of them is the disease
+/// for the others: restarting a node that is merely still loading its chain
+/// index throws away the loading work and starts it again, forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pulse {
+    /// It replied — including a refusal like "still starting up". It is alive.
+    Answered,
+    /// The RPC port accepted a connection and then nothing came back. This,
+    /// and only this, is a wedge.
+    Silent,
+    /// Nothing is listening on the RPC port yet: still loading, or shutting
+    /// down. Not a fault, and never a reason to restart.
+    NotListening,
+}
+
 /// Minimal JSON-RPC client for the local divid. Local loopback only.
 pub struct RpcClient {
     url: String,
     auth: String,
+    host: String,
+    port: u16,
 }
 
 /// Project rule: no raw daemon error ever reaches a user. Errors are turned
@@ -113,6 +132,8 @@ impl RpcClient {
         RpcClient {
             url: format!("http://{}:{}/", cfg.rpc_host, cfg.rpc_port),
             auth: format!("Basic {}", token),
+            host: cfg.rpc_host.clone(),
+            port: cfg.rpc_port,
         }
     }
 
@@ -126,7 +147,7 @@ impl RpcClient {
     ///
     /// The question is "does it answer at all", not "is it quick", so a short
     /// timeout is the point: a wedged node never answers however long we wait.
-    pub fn pulse(&self, timeout: Duration) -> bool {
+    pub fn pulse(&self, timeout: Duration) -> Pulse {
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(4))
             .timeout_read(timeout)
@@ -140,11 +161,35 @@ impl RpcClient {
             .set("Connection", "close")
             .send_string(&body.to_string())
         {
-            Ok(_) => true,
+            Ok(_) => Pulse::Answered,
             // A node still starting up DID answer; that is not a wedge.
-            Err(ureq::Error::Status(_, _)) => true,
-            Err(_) => false,
+            Err(ureq::Error::Status(_, _)) => Pulse::Answered,
+            // Nothing came back. WHY matters enormously, and the old code threw
+            // that away by returning a bare false. A refused connection means
+            // the RPC server is not up — a node still loading the chain index,
+            // or one on its way out — and restarting either is pointless or
+            // harmful. Only a connection that is ACCEPTED and then goes silent
+            // is the wedge this watchdog exists for.
+            // Deciding WHICH of the two it is from ureq's error text would be
+            // guesswork, so we ask the socket directly instead. It is one
+            // connect, and it is unambiguous.
+            Err(_) => {
+                if self.port_accepts(Duration::from_secs(4)) {
+                    Pulse::Silent
+                } else {
+                    Pulse::NotListening
+                }
+            }
         }
+    }
+
+    /// Can anything at all be connected to on the RPC port?
+    fn port_accepts(&self, timeout: Duration) -> bool {
+        use std::net::{TcpStream, ToSocketAddrs};
+        let Ok(mut addrs) = (self.host.as_str(), self.port).to_socket_addrs() else {
+            return false;
+        };
+        addrs.any(|a| TcpStream::connect_timeout(&a, timeout).is_ok())
     }
 
     // Send the request and return the full JSON-RPC envelope ({result, error}),

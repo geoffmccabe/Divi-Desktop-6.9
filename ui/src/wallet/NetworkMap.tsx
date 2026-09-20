@@ -497,6 +497,10 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   const [geos, setGeos] = useState<Record<string, Geo>>({});
   const [hover, setHover] = useState<HoverPoint | null>(null);
   const pointsRef = useRef<HoverPoint[]>([]);
+  // When the node last told us something true. Drives the "this map is frozen"
+  // notice; see the note by the poll below.
+  const lastGoodPoll = useRef(0);
+  const [stale, setStale] = useState<number | null>(null);
 
   const geosRef = useRef(geos);
   geosRef.current = geos;
@@ -743,6 +747,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       try {
         const s = await networkPeers();
         if (!alive || !s) return;
+        lastGoodPoll.current = performance.now();
+        setStale(null);
         setSnap(s);
         /* self.ok / self.fail are emitted by the Rust side now (rpc.rs), which
            sees EVERY call rather than just this poll. Emitting here too would
@@ -910,11 +916,27 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         /* keep last — the red "node did not answer" rings come from rpc.rs */
       }
     };
+    /* ── SAYING SO WHEN THE MAP IS NOT LIVE ──────────────────────────────
+       When the node stops answering, this poll quietly keeps the last
+       picture on screen. Spirals carry on turning, peers stay pink, and
+       none of it is true any more. Geoff, 2026-Sep-20: "it appears to be
+       broken because it's not animating or doing anything while it's
+       thinking... we shouldn't just see nothing happening."
+
+       A map that is wrong in a way nobody can see is worse than an empty
+       one, so every successful poll stamps the clock, and if that stamp
+       goes stale the map says outright that what is drawn is frozen. */
+    const tick = () => {
+      const since = performance.now() - lastGoodPoll.current;
+      setStale(lastGoodPoll.current > 0 && since > 35000 ? Math.round(since / 1000) : null);
+    };
     poll();
+    const staleId = setInterval(tick, 5000);
     const id = setInterval(poll, 10000);
     return () => {
       alive = false;
       clearInterval(id);
+      clearInterval(staleId);
     };
   }, [nodeId]);
 
@@ -1986,6 +2008,15 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             <button type="button" onClick={() => setDd69Only(false)}>RETURN TO NORMAL MAP</button>
           </div>
         )}
+        {/* The map is showing a remembered picture, not a live one. Said
+            plainly, because a frozen map that looks live is a lie. */}
+        {stale !== null && (
+          <div className="netmap-frozen" onMouseDown={(e) => e.stopPropagation()}>
+            <b>This map is frozen.</b> The node has not answered for{" "}
+            {stale < 120 ? `${stale} seconds` : `${Math.round(stale / 60)} minutes`}, so nothing
+            here is live. Press ⌘L to copy a diagnostic.
+          </div>
+        )}
         {rebels && (
           <div className="netmap-game" onMouseDown={(e) => e.stopPropagation()}>
             <RebelsHud ctl={rebels} onExit={() => setRebels((c) => { c?.dispose(); return null; })} />
@@ -2037,8 +2068,55 @@ export function NetworkMap({ onReturn, autoplay = false }: {
 // Bottom-left overlay: node counts by country, scrollable. Styled like the
 // moving blocks below it but blue-bordered to match the network lines. It stops
 // wheel/mousedown from reaching the map so scrolling it doesn't zoom or pan.
+/** The pre-clipboard-API way of copying. Still the reliable fallback when the
+    async clipboard is refused, and it works inside a click without waiting. */
+function legacyCopy(text: string): boolean {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("style", "position:fixed;left:-9999px;top:0;opacity:0");
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 function NodesByCountry({ data }: { data: [string, number][] }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
+
+  /* ── PASTING THIS INTO A SPREADSHEET ────────────────────────────────────
+     Sheets, Excel and Numbers all split a pasted block on TAB characters
+     and newlines, so tab-separated text lands in three real columns with
+     no import step and no "split text to columns" afterwards. Commas would
+     not: a country like "Korea, Republic of" would break its own row in
+     half. A header row comes first so the columns are labelled. */
+  const asTsv = () =>
+    ["Country\tFull nodes\tLovenodes", ...data.map(([c, n]) => `${c}\t${n}\t0`)].join("\n");
+
+  /* Called straight from the click, with the text already in hand: the
+     clipboard is only writable while the click is still live, so there is
+     deliberately nothing awaited before the write. */
+  const copy = () => {
+    const text = asTsv();
+    const done = () => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done, () => {
+        if (legacyCopy(text)) done();
+      });
+      return;
+    }
+    if (legacyCopy(text)) done();
+  };
+
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -2069,6 +2147,18 @@ function NodesByCountry({ data }: { data: [string, number][] }) {
             </div>
           ))
         )}
+      </div>
+      <div className="nbc-foot">
+        <button type="button" className="nbc-copy" onClick={copy} disabled={!data.length}>
+          {/* Two overlapping sheets — the usual "copy" glyph. */}
+          <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+            <rect x="5.2" y="1.6" width="9.2" height="11" rx="1.6"
+              fill="none" stroke="currentColor" strokeWidth="1.3" />
+            <path d="M10.8 14.4H3.2a1.6 1.6 0 0 1-1.6-1.6V4.4"
+              fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+          </svg>
+          {copied ? "Copied" : "Copy List"}
+        </button>
       </div>
     </div>
   );

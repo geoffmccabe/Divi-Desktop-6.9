@@ -80,6 +80,21 @@ pub fn node_silent(reason: &str) {
     push("self.fail", None, Some(reason.to_string()));
 }
 
+/// How long since ANY ordinary RPC call came back, if one ever has.
+///
+/// Every call in the app funnels through `RpcClient::send`, which stamps this
+/// on success, so it is the truest available answer to "is the node talking to
+/// us". The watchdog leans on it rather than on a probe of its own: a probe
+/// can fail for reasons of its own making (a fresh socket this node's ageing
+/// accept loop dislikes, a timeout tuned too tight), and on 2026-Sep-20 one
+/// did exactly that — it declared a node dead eighteen seconds after that node
+/// had accepted a block in 28 milliseconds, and the restart that followed hung
+/// the wallet for a quarter of an hour. Real traffic cannot lie in that way.
+pub fn since_answer() -> Option<Duration> {
+    let last = LAST_OK.lock().unwrap_or_else(|e| e.into_inner());
+    last.map(|t| t.elapsed())
+}
+
 /// The chain moved. Emitted only on a genuine change of height, so a poll that
 /// returns the same block produces nothing.
 pub fn block_height(height: i64) {

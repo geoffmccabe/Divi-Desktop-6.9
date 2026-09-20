@@ -1619,6 +1619,35 @@ async fn setup_log_report() -> String {
         .unwrap_or_else(|_| "setup log unavailable".into())
 }
 
+/// Write the same report to a file on the Desktop and return its full path.
+///
+/// The clipboard can refuse. WebKit only allows a clipboard write while the
+/// keystroke that asked for it is still "live", and reading the log first —
+/// a round trip into this process — is long enough to lose that. When it does
+/// refuse, the owner must not be left with nothing: Geoff, 2026-Sep-20, "when
+/// I do it gives me an error message, 'Could not copy the setup log' so that's
+/// broken too." A file he can drag is a better dead end than a toast.
+#[tauri::command]
+async fn setup_log_save() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let text = dd69_supervisor::setuplog::report();
+        // No new crate for this: HOME on macOS and Linux, USERPROFILE on
+        // Windows, which is how the rest of the supervisor already finds the
+        // user's folders.
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .map_err(|_| "could not find your home folder".to_string())?;
+        let home = std::path::PathBuf::from(home);
+        let desktop = home.join("Desktop");
+        let dir = if desktop.is_dir() { desktop } else { home };
+        let path = dir.join("DD69-setup-log.txt");
+        std::fs::write(&path, text).map_err(|e| format!("could not write the file: {e}"))?;
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .unwrap_or_else(|_| Err("could not save the setup log".into()))
+}
+
 /// This install's node identity: a stable id (survives IP changes) plus the
 /// user's chosen node name. Read on startup so the map can label the user's own
 /// node and, later, group its many IPs into one.
@@ -3270,6 +3299,7 @@ fn main() {
             restart_node,
             node_logs,
             setup_log_report,
+            setup_log_save,
             node_identity,
             set_node_name,
             update_check,
