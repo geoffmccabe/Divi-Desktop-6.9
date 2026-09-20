@@ -1069,6 +1069,14 @@ code, .mono { font-family: var(--font-mono); }
    panel instead of running off the edge, where they were unreadable. */
 .bl-sync-note { display: block; white-space: normal; overflow-wrap: anywhere; max-width: 26rem; }
 .bl-diag-hint { margin-top: 2px; opacity: 0.85; }
+/* Return control for the DD69-only map view. */
+.netmap-dd69bar { position: absolute; top: 12px; right: 12px; z-index: 6; }
+.netmap-dd69bar button {
+  font-size: 0.72rem; letter-spacing: 0.06em; padding: 7px 12px; border-radius: 8px;
+  background: hsl(var(--panel-bg) / 0.92); color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--map-peer-link)); cursor: pointer;
+}
+.netmap-dd69bar button:hover { background: hsl(var(--map-peer-link) / 0.25); }
 .bl-down-amt {
   color: hsl(var(--map-dead));
   font-size: 1.05rem;

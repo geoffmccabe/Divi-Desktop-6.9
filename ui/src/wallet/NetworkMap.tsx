@@ -182,6 +182,46 @@ function parseHslNums(name: string): [number, number, number] {
 
 // Dark sunglasses drawn above the centre of a node's circle (the "face"), scaled
 // to it — the stake-winner marker. Drawn last so nothing covers it.
+/**
+ * A heart marking a node that runs this software.
+ *
+ * `beat` runs 0..1 and blends purple to fuchsia, so the whole set pulses
+ * together and reads as one population rather than scattered dots.
+ */
+function drawHeart(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  beat: number,
+  isSelf: boolean,
+) {
+  // 280 is the peer purple, 320 the fuchsia; slide between them.
+  const hue = 280 + (320 - 280) * beat;
+  const col = `hsl(${hue}, 85%, ${58 + beat * 10}%)`;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(r / 16, r / 16);
+  ctx.beginPath();
+  // Two lobes and a point, drawn about the origin.
+  ctx.moveTo(0, 5);
+  ctx.bezierCurveTo(-2, 1, -8, -1, -8, -6);
+  ctx.bezierCurveTo(-8, -11, -3, -12, 0, -8);
+  ctx.bezierCurveTo(3, -12, 8, -11, 8, -6);
+  ctx.bezierCurveTo(8, -1, 2, 1, 0, 5);
+  ctx.closePath();
+  ctx.fillStyle = col;
+  ctx.shadowColor = col;
+  ctx.shadowBlur = 14 + beat * 10;
+  ctx.fill();
+  if (isSelf) {
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(255,255,255,0.9)";
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawGlasses(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number) {
   const s = Math.max(6, r * 1.5); // glasses half-width
   const gy = cy - r * 0.35; // sit above centre
@@ -335,6 +375,12 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   // One overlay panel at a time, chosen from the hamburger menu (all top-right).
   const [panel, setPanel] = useState<null | "country" | "mempool" | "newest" | "speed">(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  /* DD69-only view. A node announces which software it runs in its subversion
+     string; ours carries a "dd69" marker. Anyone else shipping node software
+     can identify themselves the same way, with their own marker. */
+  const [dd69Only, setDd69Only] = useState(false);
+  const dd69OnlyRef = useRef(false);
+  dd69OnlyRef.current = dd69Only;
   // First-run install side-panel. Opens automatically when the node still needs
   // setting up; also openable from the menu to preview/re-run. installingRef is
   // read by the draw loop to flash the user's own node red while setting up.
@@ -1712,6 +1758,42 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         ctx.restore();
       }
 
+
+      // ── DD69-only view ───────────────────────────────────────────────────
+      // Everything else is hidden and the nodes running this software are drawn
+      // as hearts that pulse between purple and fuchsia. A node says which
+      // software it runs in its subversion string; ours carries "dd69".
+      if (dd69OnlyRef.current) {
+        ctx.save();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        // Dim the rest of the map so only the hearts read.
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillRect(0, 0, w, h);
+        const beat = (Math.sin(nowTs / 420) + 1) / 2; // purple <-> fuchsia
+        let found = 0;
+        for (const [ip, kp] of Object.entries(knownRef.current)) {
+          const sv = (kp.subver ?? "").toLowerCase();
+          if (!sv.includes("dd69")) continue;
+          if (typeof kp.lat !== "number" || typeof kp.lon !== "number") continue;
+          found++;
+          const [hx, hy] = P(kp.lon, kp.lat);
+          drawHeart(ctx, hx, hy, 9, beat, ip === (snapRef.current?.selfIp ?? ""));
+        }
+        // Our own node counts: it runs this software by definition.
+        if (selfXY) drawHeart(ctx, selfXY[0], selfXY[1], 11, beat, true);
+        ctx.font = "12px 'Courier New', Courier, monospace";
+        ctx.textAlign = "left";
+        ctx.fillStyle = "rgba(255,255,255,0.85)";
+        ctx.fillText(
+          found === 0
+            ? "No other DD69 nodes seen yet — they appear as they upgrade."
+            : `${found + 1} DD69 node${found ? "s" : ""}`,
+          16,
+          h - 16,
+        );
+        ctx.restore();
+      }
+
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
@@ -1886,7 +1968,13 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             <button type="button" onClick={() => { setPanel("newest"); setMenuOpen(false); }}>Newest Nodes</button>
             <button type="button" onClick={() => { setPanel("speed"); setMenuOpen(false); }}>Node Speed</button>
             <button type="button" onClick={() => { setPanel("country"); setMenuOpen(false); }}>Nodes by Country</button>
+            <button type="button" onClick={() => { setDd69Only(true); setMenuOpen(false); }}>DD69 Nodes</button>
             <button type="button" onClick={() => { setSetupOpen(true); setMenuOpen(false); }}>Set up wallet</button>
+          </div>
+        )}
+        {dd69Only && (
+          <div className="netmap-dd69bar" onMouseDown={(e) => e.stopPropagation()}>
+            <button type="button" onClick={() => setDd69Only(false)}>RETURN TO NORMAL MAP</button>
           </div>
         )}
         {rebels && (
