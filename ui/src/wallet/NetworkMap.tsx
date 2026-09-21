@@ -499,7 +499,9 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   const pointsRef = useRef<HoverPoint[]>([]);
   // When the node last told us something true. Drives the "this map is frozen"
   // notice; see the note by the poll below.
-  const lastGoodPoll = useRef(0);
+  /* How many polls IN A ROW have actually been attempted and failed. Not
+     elapsed time -- see the note by the poll. */
+  const missedPolls = useRef(0);
   const [stale, setStale] = useState<number | null>(null);
 
   const geosRef = useRef(geos);
@@ -746,8 +748,14 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     const poll = async () => {
       try {
         const s = await networkPeers();
-        if (!alive || !s) return;
-        lastGoodPoll.current = performance.now();
+        if (!alive) return;
+        if (!s) {
+          // Asked, got nothing back. That is a miss, and it is counted --
+          // but one or two in a row is an ordinary busy spell, not a fault.
+          missedPolls.current += 1;
+          return;
+        }
+        missedPolls.current = 0;
         setStale(null);
         setSnap(s);
         /* self.ok / self.fail are emitted by the Rust side now (rpc.rs), which
@@ -916,20 +924,44 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         /* keep last — the red "node did not answer" rings come from rpc.rs */
       }
     };
-    /* ── SAYING SO WHEN THE MAP IS NOT LIVE ──────────────────────────────
-       When the node stops answering, this poll quietly keeps the last
-       picture on screen. Spirals carry on turning, peers stay pink, and
-       none of it is true any more. Geoff, 2026-Sep-20: "it appears to be
-       broken because it's not animating or doing anything while it's
-       thinking... we shouldn't just see nothing happening."
+    /* ── SAYING SO WHEN THE MAP IS NOT LIVE, AND ONLY THEN ───────────────
+       When the node really does stop answering, this poll quietly keeps the
+       last picture on screen -- spirals turning, peers pink, none of it
+       true. Worth saying out loud.
 
-       A map that is wrong in a way nobody can see is worse than an empty
-       one, so every successful poll stamps the clock, and if that stamp
-       goes stale the map says outright that what is drawn is frozen. */
+       But the first version of this warning measured ELAPSED TIME since the
+       last good poll, and that is not the same thing at all. A browser
+       throttles timers in a background tab and stops them entirely while
+       the machine sleeps, so no poll is even ATTEMPTED -- and on returning
+       to the app the clock had moved and the map announced the node had
+       been silent for minutes. Geoff, 2026-Sep-21, on a node whose log
+       showed 36 peers and a healthy reply: "please stop it from writing
+       stupid messages unless it's real."
+
+       Which is the same error this whole day has been spent removing:
+       reporting not-knowing as a definite bad state. So count actual
+       failures instead. Four polls in a row that were really made and
+       really came back empty is about forty seconds of genuine silence,
+       and cannot be produced by a sleeping laptop. */
+    const MISSES_BEFORE_WARNING = 4;
     const tick = () => {
-      const since = performance.now() - lastGoodPoll.current;
-      setStale(lastGoodPoll.current > 0 && since > 35000 ? Math.round(since / 1000) : null);
+      if (document.visibilityState !== "visible") return; // nothing is being polled
+      setStale(
+        missedPolls.current >= MISSES_BEFORE_WARNING
+          ? missedPolls.current * 10
+          : null,
+      );
     };
+    /* Coming back to the window: whatever happened while it was away is not
+       evidence of anything. Start again from a clean slate and ask now. */
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      missedPolls.current = 0;
+      setStale(null);
+      void poll();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
     poll();
     const staleId = setInterval(tick, 5000);
     const id = setInterval(poll, 10000);
@@ -937,6 +969,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       alive = false;
       clearInterval(id);
       clearInterval(staleId);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
     };
   }, [nodeId]);
 
@@ -2012,9 +2046,10 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             plainly, because a frozen map that looks live is a lie. */}
         {stale !== null && (
           <div className="netmap-frozen" onMouseDown={(e) => e.stopPropagation()}>
-            <b>This map is frozen.</b> The node has not answered for{" "}
-            {stale < 120 ? `${stale} seconds` : `${Math.round(stale / 60)} minutes`}, so nothing
-            here is live. Press ⌘L to copy a diagnostic.
+            <b>The node has gone quiet.</b> It hasn't answered for about{" "}
+            {stale < 120 ? `${stale} seconds` : `${Math.round(stale / 60)} minutes`}, so what's on
+            the map is the last thing we knew rather than what's happening now. It usually comes
+            back on its own.
           </div>
         )}
         {rebels && (
