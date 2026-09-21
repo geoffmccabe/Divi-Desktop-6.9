@@ -16,8 +16,8 @@ The forkless NFD protocol is genuinely built and proven on regtest: the chain no
 
 ## Decisions needed from Geoff (surfaced, not blocking the early phases)
 
-- **D1 — Percs reveal model for v1.** Percs are designed as *blind packs* (buy sealed, click Reveal, tier + ultra-rare rolled fairly at reveal). That model needs a new on-chain reveal record, sealed-pack minting, reveal UI/animation, and node-indexer resolution — a real chunk of Phase 5. The simpler alternative is to launch v1 with *fixed tiers baked in at mint* (no reveal step) and add blind-pack reveal as a fast-follow. **Recommendation: decide before Phase 5.** The roll engine (`reveal.rs`) already exists either way.
-- **D2 — Is forging in the launch?** Forging math is built but has no UI and the node doesn't decode the forge record yet. **Recommendation: fast-follow, not in the launch (Phase 6, after go-live).**
+- **D1 — RESOLVED (2026-Sep-20): sealed packs you reveal.** Percs launch as *blind packs*: buy sealed, click Reveal, tier + ultra-rare rolled fairly at that moment. This is the full vision and the bigger build — Phase 5 includes a new on-chain reveal record, sealed-pack minting, reveal UI/animation, and (critically) teaching the normative chain indexer to decode + apply the reveal. The roll engine (`crates/supervisor/src/reveal.rs`) already exists.
+- **D2 — RESOLVED (2026-Sep-20): forging is IN the first launch.** So Phase 6 moves into the critical path (before go-live), not a fast-follow. The forge roll math exists; the remaining work is chain-repo indexer decode/apply/undo for the forge record, a forge command + UI, and a tier-art registry.
 - **D3 — ERC-721 / DIVA bridge.** Definitely post-launch (Phase 8). It does not gate the Divi launch.
 - **D4 — Arweave storage: RESOLVED (2026-Sep-19) → use GoBanq Assets, not our own funded relay.** The GoBanq agent (repo `Go-Banq/Assets`, service LIVE on devnet) proposed that NFD stop running its own funded Arweave uploader and upload through GoBanq instead (write-up: `/Users/geoffreymccabe/GOBANQ-ASSETS-FOR-NFD-AGENT.md`). This matches Geoff's ecosystem decision that everything creating/storing tokens+NFTs moves to GoBanq (the Money-Transmitter-License holder). It is a small change (our storage layer has three operations; upload maps to one GoBanq call; reads are unchanged), removes the funded key and the heavy `@ardrive/turbo-sdk` dependency from our side, and keeps all our encryption and our on-chain pointer format identical. **Accepted.** Details now drive Phase 3 below.
 
@@ -119,6 +119,8 @@ The chain **reader** is fenced off mainnet until launch (`MAINNET_ACTIVATION = N
 
 The wallet can already *emit* forge (0x05) and bridge (0x07/0x08) records, but the node indexer does **not** decode them yet. Do not expose forge or bridge in the shipping UI until the node side reads the matching record — otherwise a user action would produce a transaction the network ignores. (Phases 6 and 8 close this.)
 
-## Critical path to launch (Percs, no forging, no bridge)
+## Critical path to launch (per Geoff's 2026-Sep-20 decisions: sealed-pack reveal + forging both in launch)
 
-Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 7. Phases 6 and 8 are fast-follows.
+Phase 1 ✅ → Phase 2 ✅ → Phase 4 (treasury/fees) → Phase 3 (GoBanq storage) → **Phase 5 (Percs sealed-pack reveal + ultra-rares)** → **Phase 6 (forging)** → Phase 7 (merge to main + launch). Phase 8 (DIVA bridge) remains post-launch.
+
+**Scope reality (honest):** Phases 5 and 6 are the large remaining builds, and both need work in the chain repo `/Users/geoffreymccabe/Divi-Blockchain_6.9/contrib/nfd-indexer` (the normative index must learn to decode + apply the new reveal record and the forge record, each with a reorg-undo entry), which is then re-vendored into DD69 via `scripts/sync-divi-crates.sh`. That is cross-repo and likely needs coordination with the chain agent. This is a multi-step effort, not a single sitting.
