@@ -30,6 +30,7 @@ DATADIR="$DIVI_HOME/data"
 BIN="/usr/local/bin/divid69"
 
 log() { echo "[$(date -u +%H:%M:%S)] $*"; }
+trap 'echo "[$(date -u +%H:%M:%S)] FAILED at line $LINENO (exit $?)"' ERR
 
 # ── 1. user ────────────────────────────────────────────────────────────────
 if ! id -u "$DIVI_USER" >/dev/null 2>&1; then
@@ -95,7 +96,13 @@ EOF
 fi
 
 # ── 4. chain snapshot, verified, before first start ────────────────────────
-blk=$(find "$DATADIR/blocks" -maxdepth 1 -name 'blk*' 2>/dev/null | wc -l)
+# A missing blocks/ folder is the normal first-run case, not an error. Under
+# `set -o pipefail` a failing find would silently end the whole script here,
+# which is exactly what happened on the first run of this file.
+blk=0
+if [ -d "$DATADIR/blocks" ]; then
+  blk=$(find "$DATADIR/blocks" -maxdepth 1 -name 'blk*' | wc -l)
+fi
 if [ "$blk" -lt 3 ]; then
   log "no chain here yet — fetching the snapshot (this is ~5 GB)"
   snap="$DIVI_HOME/DIVI-snapshot.tar.gz"
