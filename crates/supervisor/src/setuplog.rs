@@ -234,9 +234,33 @@ pub fn check_port(port: u16) {
             log(format!("port {port}: free"));
         }
         Err(e) => {
-            log(format!("port {port}: ALREADY IN USE ({e}) — another Divi node is probably running"));
-            if let Some(who) = port_holder(port) {
-                log(format!("port {port}: held by → {who}"));
+            /* ── DO NOT SHOUT AT THE NORMAL CASE ──────────────────────────
+               By far the commonest reason this port is busy is our OWN node
+               from the previous session, still running exactly as intended.
+               Logging that as "ALREADY IN USE — another Divi node is
+               probably running" made a perfectly ordinary start look like a
+               fault; Geoff read his own healthy log on 2026-Sep-21 and
+               reasonably concluded something was broken.
+
+               So name the holder first, and only sound an alarm when it is
+               something we do not recognise. */
+            let who = port_holder(port);
+            let ours = who
+                .as_deref()
+                .map(|w| w.contains("divid69"))
+                .unwrap_or(false);
+            if ours {
+                log(format!(
+                    "port {port}: in use by our own node ({}) — normal, it will be reused",
+                    who.as_deref().unwrap_or("divid69")
+                ));
+            } else {
+                log(format!(
+                    "port {port}: ALREADY IN USE ({e}) — another Divi node is probably running"
+                ));
+                if let Some(who) = who {
+                    log(format!("port {port}: held by → {who}"));
+                }
             }
         }
     }

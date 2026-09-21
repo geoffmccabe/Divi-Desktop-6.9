@@ -2,15 +2,56 @@ use crate::rpc::RpcClient;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+/// Our own record of the node's process id.
+///
+/// ── WHY WE HAVE TO KEEP THIS OURSELVES ───────────────────────────────────
+/// The node writes divid.pid only when it runs as a daemon, and Windows has
+/// no daemon mode, so on Windows that file NEVER EXISTS. Everything that
+/// asked "is the node running?" by looking for it therefore always got the
+/// answer "no" -- while the node was running perfectly.
+///
+/// The damage that did, from Joseph's log of 2026-Sep-21 on 69.13.11: his
+/// node started cleanly, opened all three databases, and began loading the
+/// block index (a two-minute job). The wallet, unable to see a pid file,
+/// logged "node process vanished" a hundred and twelve times, and the
+/// watchdog concluded the node was not running and started a SECOND one.
+/// The second could not take the data-directory lock the first was holding,
+/// died with "Cannot obtain a lock on data directory", and tripped the
+/// ChainstateManager assertion on its way out. That assertion -- the thing
+/// we have chased for three days -- was this time entirely self-inflicted.
+///
+/// So we write down the id ourselves the moment we spawn it.
+const OUR_PID_FILE: &str = "dd69-node.pid";
+
+/// Record the id of a node we just started.
+pub fn remember_pid(datadir: &Path, pid: i32) {
+    let _ = std::fs::write(datadir.join(OUR_PID_FILE), pid.to_string());
+}
+
+/// Forget it once the node is known to be gone, so a recycled id can never
+/// be mistaken for a running node.
+pub fn forget_pid(datadir: &Path) {
+    let _ = std::fs::remove_file(datadir.join(OUR_PID_FILE));
+}
+
+fn read_pid_file(path: &Path) -> Option<i32> {
+    std::fs::read_to_string(path).ok()?.trim().parse().ok()
+}
+
 /// The daemon's pid, if it is actually alive (a stale pid file doesn't count).
+///
+/// Prefers the node's own divid.pid, which survives a restart of the wallet
+/// and is written on the platforms that have a daemon mode; falls back to
+/// the id we wrote down ourselves, which is all Windows ever has.
 pub fn daemon_pid(datadir: &Path) -> Option<i32> {
-    let pid = std::fs::read_to_string(datadir.join("divid.pid")).ok()?;
-    let pid: i32 = pid.trim().parse().ok()?;
-    if pid_alive(pid) {
-        Some(pid)
-    } else {
-        None
+    for name in ["divid.pid", OUR_PID_FILE] {
+        if let Some(pid) = read_pid_file(&datadir.join(name)) {
+            if pid_alive(pid) {
+                return Some(pid);
+            }
+        }
     }
+    None
 }
 
 fn pid_alive(pid: i32) -> bool {
@@ -18,11 +59,21 @@ fn pid_alive(pid: i32) -> bool {
     {
         // No `kill` on Windows; ask the task list whether the pid still exists.
         // `/NH /FO CSV` yields one quoted row per match, e.g. "divid69.exe","1234",...
+        //
+        // The image name is checked too, not just the number: process ids are
+        // recycled, and mistaking some unrelated program for the node would
+        // be worse than not finding it at all.
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         match std::process::Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output()
         {
-            Ok(o) => String::from_utf8_lossy(&o.stdout).contains(&format!("\"{pid}\"")),
+            Ok(o) => {
+                let out = String::from_utf8_lossy(&o.stdout);
+                out.contains(&format!("\"{pid}\"")) && out.to_lowercase().contains("divid")
+            }
             Err(_) => false,
         }
     }
@@ -135,56 +186,72 @@ fn spawn_once(
     } else {
         format!("start with {}", extra_args.join(" "))
     };
-    if let Some(pid) = daemon_pid(datadir) {
-        crate::setuplog::log(format!("node launch: already running (pid {pid}) — reusing it"));
-        return Spawn::Running(pid);
-    }
-    crate::setuplog::log(format!("node launch: {attempt} — {}", divid.display()));
     let spawn_log_path = datadir.join("dd69-spawn.log");
-    let Ok(spawn_log) = std::fs::File::create(&spawn_log_path) else {
-        crate::setuplog::log(format!("node launch: cannot write in {}", datadir.display()));
-        return Spawn::Failed(format!("cannot write in {}", datadir.display()));
-    };
-    let Ok(spawn_log_err) = spawn_log.try_clone() else {
-        return Spawn::Failed("cannot open spawn log".into());
-    };
-    let mut cmd = std::process::Command::new(divid);
-    /* Belt and braces. The config layer already strips the Windows
-       extended-length prefix, but this is the one place a path is actually
-       handed to the node, and handing it \\?\... is what silently broke
-       every Windows install: LevelDB reads that as a relative path, glues it
-       onto the working directory, cannot lock the block index, and the node
-       dies in AppInit. Strip it here too, so no future caller can
-       reintroduce it. */
-    let datadir = crate::config::strip_extended_prefix(datadir);
-    let datadir = datadir.as_path();
-    cmd.arg(format!("-conf={}", datadir.join("divi.conf").display()))
-        .arg(format!("-datadir={}/", datadir.display()));
-    for a in extra_args {
-        cmd.arg(a);
+
+    /* ── A PROCESS EXISTING IS NOT A NODE WORKING ─────────────────────────
+       This used to see a live process id and return Running immediately,
+       without asking the node anything at all. A node that is wedged --
+       process alive, port open, answering nothing -- sailed straight
+       through, and the wallet reported "RESULT: the node started".
+
+       Geoff, 2026-Sep-21: his log said the node started and was reused as
+       pid 68587; the node had in fact stopped answering, and the wallet had
+       no idea because it never asked. Nothing downstream could recover,
+       because as far as bring-up was concerned everything had gone fine.
+
+       So a reused process now has to prove itself on exactly the same terms
+       as a freshly started one: it must answer. It drops into the same wait
+       loop below, which is patient with a node still loading its chain and
+       honest about one that never replies. */
+    let existing = daemon_pid(datadir);
+    if let Some(pid) = existing {
+        crate::setuplog::log(format!(
+            "node launch: a node is already running (pid {pid}) — checking it answers before              reusing it"
+        ));
+    } else {
+        crate::setuplog::log(format!("node launch: {attempt} — {}", divid.display()));
     }
-    // On Windows, spawning a console subprocess would flash a black console
-    // window; CREATE_NO_WINDOW suppresses it. No effect (and not compiled) on Unix.
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    // Keep the child's real process id. On Windows the node writes no pid
-    // file at all (there is no daemon mode there), so this is the only id we
-    // will ever have for it -- see the note where the RPC answers.
-    let spawned_pid = match cmd.stdout(spawn_log).stderr(spawn_log_err).spawn() {
-        Ok(child) => child.id() as i32,
-        Err(e) => {
-            // The OS refused to start the process at all — the classic cases are a
-            // missing/blocked binary (macOS Gatekeeper) or a permissions problem.
-            crate::setuplog::log(format!(
-                "node launch: OPERATING SYSTEM REFUSED to start the node — {e} ({})",
-                divid.display()
-            ));
-            return Spawn::Failed(format!("could not launch {}: {e}", divid.display()));
+
+    if let Some(pid) = existing {
+        /* Give it the same patience a starting node gets -- a node loading a
+           four-million-block index answers nothing for a couple of minutes,
+           and that is not a fault. But if it never answers, say so plainly
+           and name the cure. Do NOT fall through to the repair rungs: they
+           would each try to start a second node, every one of which would
+           fail to bind the port this one is holding, and the owner would be
+           told another wallet is running when it is this one. */
+        let deadline = Instant::now();
+        while deadline.elapsed() < timeout {
+            if rpc.call("getblockcount", serde_json::json!([])).is_ok() {
+                crate::setuplog::log(format!(
+                    "node launch: the running node answered — reusing it (pid {pid})"
+                ));
+                return Spawn::Running(pid);
+            }
+            if !pid_alive(pid) {
+                crate::setuplog::log(
+                    "node launch: the node that was running has exited — starting a fresh one",
+                );
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(2));
         }
+        if pid_alive(pid) {
+            crate::setuplog::log(format!(
+                "node launch: the node (pid {pid}) is running but has not answered in {}s",
+                timeout.as_secs()
+            ));
+            return Spawn::Failed(format!(
+                "A Divi node is already running on this computer (process {pid}) but it is not \
+                 responding. It has to be stopped before another can start. Quit any other Divi \
+                 wallet, or restart the computer if none is open."
+            ));
+        }
+    }
+
+    let spawned_pid = match spawn_node(divid, datadir, extra_args, &spawn_log_path) {
+        Ok(pid) => pid,
+        Err(e) => return Spawn::Failed(e),
     };
 
     let started = Instant::now();
@@ -208,6 +275,7 @@ fn spawn_once(
                a restart of the wallet, and otherwise the id of the process
                we just spawned, which we now keep. */
             let pid = daemon_pid(datadir).unwrap_or(spawned_pid);
+            remember_pid(datadir, pid);
             crate::setuplog::log(format!("node launch: node answered — running (pid {pid})"));
             return Spawn::Running(pid);
         }
@@ -270,9 +338,24 @@ fn spawn_once(
                     said.trim().lines().rev().take(3).collect::<Vec<_>>().join(" | ")
                 ));
             } else {
+                // Platform-specific, because the causes are completely
+                // different and Joseph was told about macOS Gatekeeper on a
+                // Windows machine, which is worse than saying nothing.
+                #[cfg(target_os = "macos")]
                 crate::setuplog::log(
-                    "node launch: node process vanished with NO output — on macOS this is the \
-                     signature of Gatekeeper killing an unsigned binary (Killed: 9)",
+                    "node launch: the node process is gone and said nothing — on macOS this is \
+                     the signature of Gatekeeper killing an unsigned binary (Killed: 9)",
+                );
+                #[cfg(windows)]
+                crate::setuplog::log(
+                    "node launch: cannot see the node process yet and it has said nothing — \
+                     usually it is simply still loading the block index, which takes a couple \
+                     of minutes on this chain",
+                );
+                #[cfg(all(not(target_os = "macos"), not(windows)))]
+                crate::setuplog::log(
+                    "node launch: the node process is gone and said nothing — check that the \
+                     binary is executable and not blocked by security software",
                 );
             }
         }
@@ -314,6 +397,70 @@ pub struct StartReport {
 /// Rung 3 (restore from the daily snapshot) is a future step — it needs the
 /// download+verify code — and is surfaced as a clear message rather than
 /// pretended.
+/// Start the node program and return the process id of the child.
+///
+/// Split out so that a node which is ALREADY running can be put through the
+/// same "does it actually answer" check as a freshly started one, instead of
+/// being waved through on the strength of its process existing.
+fn spawn_node(
+    divid: &Path,
+    datadir: &Path,
+    extra_args: &[&str],
+    spawn_log_path: &Path,
+) -> Result<i32, String> {
+    let Ok(spawn_log) = std::fs::File::create(spawn_log_path) else {
+        crate::setuplog::log(format!("node launch: cannot write in {}", datadir.display()));
+        return Err(format!("cannot write in {}", datadir.display()));
+    };
+    let Ok(spawn_log_err) = spawn_log.try_clone() else {
+        return Err("cannot open spawn log".into());
+    };
+    let mut cmd = std::process::Command::new(divid);
+    /* Belt and braces. The config layer already strips the Windows
+       extended-length prefix, but this is the one place a path is actually
+       handed to the node, and handing it \\?\... is what silently broke
+       every Windows install: LevelDB reads that as a relative path, glues it
+       onto the working directory, cannot lock the block index, and the node
+       dies in AppInit. Strip it here too, so no future caller can
+       reintroduce it. */
+    let datadir = crate::config::strip_extended_prefix(datadir);
+    let datadir = datadir.as_path();
+    cmd.arg(format!("-conf={}", datadir.join("divi.conf").display()))
+        .arg(format!("-datadir={}/", datadir.display()));
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    // On Windows, spawning a console subprocess would flash a black console
+    // window; CREATE_NO_WINDOW suppresses it. No effect (and not compiled) on Unix.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    // Keep the child's real process id. On Windows the node writes no pid
+    // file at all (there is no daemon mode there), so this is the only id we
+    // will ever have for it.
+    match cmd.stdout(spawn_log).stderr(spawn_log_err).spawn() {
+        Ok(child) => {
+            let pid = child.id() as i32;
+            // Immediately, before anything can ask whether it is running.
+            // On Windows this is the only record that will ever exist.
+            crate::process::remember_pid(datadir, pid);
+            Ok(pid)
+        }
+        Err(e) => {
+            // The OS refused to start the process at all — the classic cases are a
+            // missing/blocked binary (macOS Gatekeeper) or a permissions problem.
+            crate::setuplog::log(format!(
+                "node launch: OPERATING SYSTEM REFUSED to start the node — {e} ({})",
+                divid.display()
+            ));
+            Err(format!("could not launch {}: {e}", divid.display()))
+        }
+    }
+}
+
 /// Signs that a line is the node's last words.
 ///
 /// "Error:" alone is not enough. A C runtime assertion prints
@@ -427,6 +574,10 @@ pub fn safe_stop(rpc: &RpcClient, datadir: &Path, timeout: Duration) -> Result<D
         if !pid_alive(pid) {
             let secs = started.elapsed().as_secs();
             crate::applog::log(format!("shutdown: node saved and exited cleanly after {secs}s"));
+            // Our record is only meaningful while that process lives. Clear
+            // it now, so a recycled process id can never be read back as a
+            // running node.
+            forget_pid(datadir);
             return Ok(started.elapsed());
         }
         std::thread::sleep(Duration::from_millis(250));
@@ -455,6 +606,40 @@ mod tests {
     fn benign_error_is_not_corruption() {
         let benign = "Error: Unable to bind to 0.0.0.0:51472";
         assert!(!CORRUPTION_MARKERS.iter().any(|m| benign.contains(m)));
+    }
+}
+
+#[cfg(test)]
+mod our_pid_file_tests {
+    use super::*;
+
+    #[test]
+    fn we_remember_and_forget_the_nodes_process_id() {
+        let dir = std::env::temp_dir().join(format!("dd69-pid-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Our own process id is certainly alive, which makes it a usable
+        // stand-in for a running node here.
+        let me = std::process::id() as i32;
+        remember_pid(&dir, me);
+        assert_eq!(read_pid_file(&dir.join(OUR_PID_FILE)), Some(me));
+
+        forget_pid(&dir);
+        assert_eq!(read_pid_file(&dir.join(OUR_PID_FILE)), None);
+        // With nothing recorded and no divid.pid, nothing is claimed to run.
+        assert_eq!(daemon_pid(&dir), None);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_dead_process_id_is_not_a_running_node() {
+        let dir = std::env::temp_dir().join(format!("dd69-pid-dead-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // An id that cannot belong to a live process.
+        std::fs::write(dir.join(OUR_PID_FILE), "2147483646").unwrap();
+        assert_eq!(daemon_pid(&dir), None, "a stale record must never count as running");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
 
