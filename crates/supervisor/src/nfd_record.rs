@@ -94,6 +94,27 @@ pub fn op_meta_script(payload_hex: &str) -> String {
     }
 }
 
+/// Reverse the byte order of a 32-byte txid hex.
+///
+/// A txid REFERENCE embedded in a record (a collection id, a transferred NFD's
+/// mint id) goes on the wire in the node's INTERNAL byte order, because that is
+/// the order the indexer keys collectibles and collections by (it hashes the raw
+/// tx). Callers here work in display/RPC order (the reverse), so an embedded txid
+/// is byte-reversed on encode and reversed back on decode. This function is its
+/// own inverse. Non-txid fields (Arweave pointers, content hashes, wrapkey
+/// pointers, traits pointers) are NOT txids and must NOT be reversed.
+fn swap_txid_order(hex: &str) -> String {
+    let b = hex.as_bytes();
+    let mut out = String::with_capacity(b.len());
+    let mut i = b.len();
+    while i >= 2 {
+        i -= 2;
+        out.push(b[i] as char);
+        out.push(b[i + 1] as char);
+    }
+    out
+}
+
 /// Encode a MINT. The HAS_THUMB / IN_COLLECTION flags are derived from the
 /// optional pointers, so flags and appended data can never disagree. Optional
 /// fields are appended in flag-bit order: thumb (bit1), then collection (bit2).
@@ -134,8 +155,8 @@ pub fn encode_mint(
         out.push_str(&t.to_lowercase());
     }
     if let Some((cid, tp)) = collection {
-        out.push_str(&cid.to_lowercase());
-        out.push_str(&tp.to_lowercase());
+        out.push_str(&swap_txid_order(&cid.to_lowercase())); // txid ref -> internal order
+        out.push_str(&tp.to_lowercase()); // traits_ptr is an Arweave id, not a txid
     }
     Ok(out)
 }
@@ -150,6 +171,12 @@ pub fn encode_collection_create(max_supply: u32, meta_ptr: &str) -> Result<Strin
 }
 
 /// Encode a FORGE: the two same-tier input NFDs (by mint txid) + the collection.
+///
+/// NOTE (2026-Sep-20): the txid refs here (input_a, input_b, collection_id) are
+/// still written in display order. When FORGE (0x05) is wired into the indexer
+/// (Phase 6), they must be run through `swap_txid_order` on encode + decode, the
+/// same as MINT/TRANSFER, or the indexer will not match them. Not done now
+/// because there is no forge indexer path to test against yet.
 pub fn encode_forge(input_a: &str, input_b: &str, collection_id: &str) -> Result<String, String> {
     for (n, v) in [("input_a", input_a), ("input_b", input_b), ("collection_id", collection_id)] {
         if !is_hex_len(v, 32) {
@@ -251,7 +278,7 @@ pub fn encode_transfer(mint_txid: &str, new_owner: &str, wrapkey_ptr: &str) -> R
     Ok(format!(
         "{}{}{}{}",
         prefix(SUB_TRANSFER),
-        mint_txid.to_lowercase(),
+        swap_txid_order(&mint_txid.to_lowercase()), // txid ref -> internal order
         new_owner.to_lowercase(),
         wrapkey_ptr.to_lowercase()
     ))
@@ -327,7 +354,9 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
                 None
             };
             let (collection_id, traits_ptr) = if in_coll {
-                (Some(body[off..off + 64].to_string()), Some(body[off + 64..off + 128].to_string()))
+                // collection_id is a txid ref (internal order on the wire) -> display;
+                // traits_ptr is an Arweave id, left as-is.
+                (Some(swap_txid_order(&body[off..off + 64])), Some(body[off + 64..off + 128].to_string()))
             } else {
                 (None, None)
             };
@@ -341,7 +370,7 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
             })
         }
         SUB_TRANSFER if body.len() == 170 => Some(NfdRecord::Transfer {
-            mint_txid: body[0..64].to_string(),
+            mint_txid: swap_txid_order(&body[0..64]), // txid ref (internal order) -> display
             new_owner: body[64..106].to_string(), // 21 bytes packed (kind + hash160)
             wrapkey_ptr: body[106..170].to_string(),
         }),

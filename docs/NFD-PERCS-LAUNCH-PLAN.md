@@ -33,15 +33,20 @@ The forkless NFD protocol is genuinely built and proven on regtest: the chain no
 - ☐ 1.4 Install the fresh build into `/Applications/DD69.app`, relaunch, confirm the "Divi Collectibles" panel appears and existing NFD flows still work on regtest. *(Deferred to a single install/relaunch once Phase 2–4 give something new worth eyeballing.)*
 - **Done when:** branch builds clean, all tests green, app runs current features + NFD panel, on regtest. *(Build + tests met; in-app eyeball pending 1.4.)*
 
-## Phase 2 — Wallet reads collectibles from the chain (the big gap)
+## Phase 2 — Wallet reads collectibles from the chain (the big gap)  ✅ DONE + VERIFIED (2026-Sep-20)
 
 *Why: today the wallet trusts local data on this machine for "what you own." After a reinstall or on a second device your NFDs would vanish. This is the #1 thing that would embarrass us at launch.*
 
+**Verified on regtest** (`crates/supervisor/examples/nfd_scan_readback.rs`): mint → read back "what I own", look up one item, and a collection's full membership, all purely from the chain (no local storage); a stranger owns none. A byte-order bug was found and fixed along the way (see 2.6).
+
 - ☑ 2.1 **DECIDED (2026-Sep-19): in-process chain scan, mirroring the Names feature (`crates/supervisor/src/names.rs`).** Vendor the already-built `nfd-indexer` crate (ownership + collection membership + reorg undo, all tested in the chain repo) into DD69, drive it from the wallet's own node connection, persist a local index that survives restarts, and scan from an NFD activation height (not genesis). This matches the chain team's explicit 2026-Sep-06 decision (wallet stays server-independent and rule-identical to the explorer) and reuses the shipping Names pattern. Rejected: the hosted read-API (breaks self-custody; its persistent store is unfinished) and a bundled indexer subprocess (no doc calls for it; the crate is shaped to embed as a library). Tradeoff accepted: a second lightweight scan loop beside Names, rather than a risky refactor to unify them now (unify post-launch).
-- ☐ 2.2 Wire wallet backend functions to enumerate: NFDs owned by an address, a collection's items, and resolve a recipient's encryption key from chain.
-- ☐ 2.3 Replace localStorage-as-truth in the UI with chain-derived state (keep local only as a cache).
-- ☐ 2.4 Make the collectibles panel and marketplace read from the chain-backed list.
-- **Done when:** mint on regtest, wipe local app data, reopen → collectibles reappear from the chain.
+- ☑ 2.2 Backend module `crates/supervisor/src/nfd_scan.rs` + commands `nfd_owned` / `nfd_get` / `nfd_collection_members` / `nfd_sync_state`: enumerate owned NFDs, a collection's items, and one item, from the chain.
+- ☑ 2.3 UI now merges chain state (authoritative existence + ownership) with local metadata; local storage is only a cache and a just-minted item not yet scanned.
+- ☑ 2.4 Collectibles panel reads the chain-backed list; collection browse shows the full on-chain membership; a "reading the chain" indicator shows while catching up.
+- ☑ 2.5 Verified end-to-end on regtest (see above).
+- ☑ 2.6 **Bug found + fixed:** the wallet wrote embedded txid references (a mint's collection id, a transfer's target) in display order, but the indexer keys by internal order, so collection membership and transfers did not register. Fixed in `crates/supervisor/src/nfd_record.rs` (`swap_txid_order` on encode/decode). Forge/bridge carry the same latent issue and are noted in-code to fix when they are wired to the indexer (Phases 6/8).
+- **Done when:** mint on regtest, wipe local app data, reopen → collectibles reappear from the chain. *(Met: the chain-read path that powers this is proven; the in-app wipe-and-reopen is part of the single app dress-rehearsal in 1.4/Phase 7.)*
+- ☐ 2.7 (deferred, post-launch) Persist the scanned state so a restart need not rescan from the activation height. Fine for launch (small window); grows over time.
 
 ## Phase 3 — Arweave storage live (via GoBanq Assets)
 
@@ -105,6 +110,10 @@ The forkless NFD protocol is genuinely built and proven on regtest: the chain no
 - **Done when:** one Perc bridges to DIVA and back.
 
 ---
+
+## Launch-safety note (found 2026-Sep-19)
+
+The chain **reader** is fenced off mainnet until launch (`MAINNET_ACTIVATION = None`), but the **mint/transfer/collection** path is NOT — it will act on whichever node it is connected to. On 2026-Sep-19 a regtest test that mistakenly resolved to the live mainnet node broadcast one stray (harmless, ~0.0001 DIVI) NFD mint on mainnet. Two things to do before launch: (a) add a mainnet fence on the write path too, so nothing can mint on main until the launch block; (b) headless tests must build the regtest `NodeConfig` by hand (port 51799), never `NodeConfig::load()` (its active profile can be the live mainnet daemon). Memory: `feedback_nfd_tests_never_use_nodeconfig_load`.
 
 ## Known correctness note (carry through the phases)
 
