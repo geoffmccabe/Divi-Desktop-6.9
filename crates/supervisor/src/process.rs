@@ -255,6 +255,9 @@ fn spawn_once(
     };
 
     let started = Instant::now();
+    let mut log_size: u64 = 0;
+    let mut last_log_growth = Instant::now();
+    let mut patience_noted = false;
     loop {
         if rpc.call("getblockcount", serde_json::json!([])).is_ok() {
             /* ── ANSWERING IS PROOF. A PID FILE IS NOT. ────────────────────
@@ -281,7 +284,15 @@ fn spawn_once(
         }
         // Daemon printed a fatal line and died? Classify and stop waiting.
         if daemon_pid(datadir).is_none() && started.elapsed() > Duration::from_secs(3) {
-            let said = std::fs::read_to_string(&spawn_log_path).unwrap_or_default();
+            // Its own output first; failing that, the tail of its debug.log,
+            // which is where "Block database corruption detected" is written.
+            let mut said = std::fs::read_to_string(&spawn_log_path).unwrap_or_default();
+            if !said.lines().any(looks_fatal) {
+                if let Ok(dbg) = std::fs::read_to_string(datadir.join("debug.log")) {
+                    let tail: Vec<&str> = dbg.lines().rev().take(80).collect();
+                    said = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
+                }
+            }
             /* ── WHAT COUNTS AS THE NODE'S LAST WORDS ─────────────────────
                This looked only for a line containing "Error:". A C runtime
                assertion does not say "Error:" -- it says
@@ -359,7 +370,35 @@ fn spawn_once(
                 );
             }
         }
-        if started.elapsed() >= timeout {
+        /* ── A TIMEOUT IS FOR A NODE THAT HAS STOPPED, NOT ONE THAT IS SLOW ──
+           This fired on the clock alone. Joseph's laptop, 2026-Sep-21: the
+           node was alive and loading a damaged block index -- slow, but
+           working -- and at 180 seconds the wallet declared "failed, no
+           output" and walked away. Twenty seconds later the node reported
+           "Block database corruption detected", which is the exact message
+           that triggers the automatic repair. Nobody was listening.
+
+           So the clock only counts while the node is NOT making progress.
+           If the process is alive and still writing to its log, it gets
+           more time, up to a hard ceiling that a genuinely stuck node
+           cannot talk its way past. A dead process or a silent one still
+           times out as before. */
+        let quiet_for = last_log_growth.elapsed();
+        if node_log_grew(datadir, &mut log_size) {
+            last_log_growth = Instant::now();
+        }
+        let still_working = pid_alive(spawned_pid) && quiet_for < Duration::from_secs(120);
+        let hard_ceiling = started.elapsed() >= timeout.max(Duration::from_secs(1800));
+        if started.elapsed() >= timeout && still_working && !hard_ceiling {
+            if !patience_noted {
+                patience_noted = true;
+                crate::setuplog::log(format!(
+                    "node launch: {}s and no answer yet, but the node is alive and still writing \
+                     to its log — giving it longer (it is probably loading the block index)",
+                    timeout.as_secs()
+                ));
+            }
+        } else if started.elapsed() >= timeout {
             let said = std::fs::read_to_string(&spawn_log_path).unwrap_or_default();
             let hint = said
                 .lines()
@@ -461,6 +500,16 @@ fn spawn_node(
     }
 }
 
+/// Has the node's own log grown since we last looked? Cheap, and the most
+/// honest sign that a node which has not answered yet is nonetheless alive
+/// and doing something -- loading a block index, most often.
+fn node_log_grew(datadir: &Path, seen: &mut u64) -> bool {
+    let now = std::fs::metadata(datadir.join("debug.log")).map(|m| m.len()).unwrap_or(0);
+    let grew = now > *seen;
+    *seen = now;
+    grew
+}
+
 /// Signs that a line is the node's last words.
 ///
 /// "Error:" alone is not enough. A C runtime assertion prints
@@ -491,7 +540,16 @@ fn is_noise(line: &str) -> bool {
 }
 
 fn looks_fatal(line: &str) -> bool {
-    !is_noise(line) && FATAL_SIGNS.iter().any(|sign| line.contains(sign))
+    if is_noise(line) {
+        return false;
+    }
+    // The repair markers are fatal in their own right. They were only
+    // consulted AFTER a line had matched FATAL_SIGNS, so a corruption report
+    // that did not happen to say "Error:" was never classified, and the
+    // repair ladder it exists to trigger never ran.
+    FATAL_SIGNS.iter().any(|sign| line.contains(sign))
+        || CORRUPTION_MARKERS.iter().any(|m| line.contains(m))
+        || REINDEX_REQUIRED_MARKERS.iter().any(|m| line.contains(m))
 }
 
 pub fn start_with_recovery(
@@ -693,7 +751,7 @@ mod our_pid_file_tests {
 
 #[cfg(test)]
 mod fatal_line_tests {
-    use super::looks_fatal;
+    use super::{looks_fatal, CORRUPTION_MARKERS};
 
     #[test]
     fn a_c_assertion_is_fatal_even_without_the_word_error() {
@@ -703,6 +761,17 @@ mod fatal_line_tests {
                     line 102 | | C:\\...\\divid69.exe in AppInit()";
         assert!(looks_fatal(line));
         assert!(!line.contains("Error:"), "the point of the test is that it does not");
+    }
+
+    #[test]
+    fn a_corruption_report_is_fatal_even_without_the_word_error() {
+        // Joseph's node, 2026-Sep-21. This is the line that triggers the
+        // automatic repair, and it was never being classified because it
+        // does not contain "Error:".
+        let line = "loading block database : Block database corruption detected! \
+                    Failed to find best block in block index";
+        assert!(looks_fatal(line));
+        assert!(CORRUPTION_MARKERS.iter().any(|m| line.contains(m)));
     }
 
     #[test]
