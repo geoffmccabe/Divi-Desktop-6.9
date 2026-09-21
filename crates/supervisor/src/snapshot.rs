@@ -125,6 +125,17 @@ pub fn chain_already_present() -> bool {
         .unwrap_or(false)
 }
 
+/// Is a node running right now?
+///
+/// Asked over RPC rather than by looking for a pid file, because Windows has
+/// no daemon mode and the node writes no pid file there at all. An answer to
+/// a cheap call is proof; the absence of a file proves nothing.
+pub fn node_is_running() -> bool {
+    let Ok(cfg) = crate::config::NodeConfig::load() else { return false };
+    crate::rpc::RpcClient::new(&cfg).pulse(std::time::Duration::from_secs(5))
+        == crate::rpc::Pulse::Answered
+}
+
 /// Stream the archive to disk, resuming if a previous attempt left part of it.
 ///
 /// Returns the SHA-256 of the complete file. A 4.7 GB download on a home
@@ -262,6 +273,28 @@ fn hash_file(path: &Path) -> Result<String, String> {
 pub fn install(archive: &Path, progress: &dyn Fn(Progress)) -> Result<(), String> {
     if chain_already_present() {
         return Err("there is already a blockchain here, so the snapshot was not unpacked".into());
+    }
+    /* ── NEVER UNPACK UNDER A RUNNING NODE ────────────────────────────────
+       A node holds its block database open and writes to it constantly.
+       Replacing those files beneath it corrupts both the files and the
+       node, and the node's own complaint afterwards ("a fatal internal
+       error occurred") gives no hint of what happened to it.
+
+       This nearly happened to Joseph on 2026-Sep-21. His node had started
+       and was syncing, but the wallet had wrongly decided it had failed
+       (it wanted a pid file Windows never writes), so the fresh-install
+       path went and fetched a 5 GB snapshot and unpacked it on top of a
+       live node. chain_already_present() did not stop it because the node
+       had only been running eight minutes and had not yet written enough
+       block files to look like a real chain.
+
+       A running node is the thing to check for, not a chain. */
+    if node_is_running() {
+        return Err(
+            "the node is running, so the snapshot was not unpacked — it must be stopped first, \
+             because replacing the blockchain underneath a running node damages both"
+                .into(),
+        );
     }
     let datadir = crate::config::dd69_datadir();
     std::fs::create_dir_all(&datadir).map_err(|e| format!("cannot create {}: {e}", datadir.display()))?;

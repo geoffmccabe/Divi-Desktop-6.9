@@ -1968,7 +1968,44 @@ async fn snapshot_fetch(app: tauri::AppHandle) -> Result<String, String> {
             );
         };
         let (archive, digest) = dd69_supervisor::snapshot::download(&emit)?;
-        dd69_supervisor::snapshot::install(&archive, &emit)?;
+
+        /* Stop the node before replacing the blockchain under it, and start
+           it again afterwards. Downloading alongside a running node is fine
+           and takes the longest; only the unpack is exclusive, so the node
+           keeps syncing for as much of this as possible. */
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        let rpc = dd69_supervisor::rpc::RpcClient::new(&cfg);
+        let was_running = dd69_supervisor::snapshot::node_is_running();
+        if was_running {
+            emit(dd69_supervisor::snapshot::Progress {
+                done: 0,
+                total: None,
+                stage: "Stopping the node so the blockchain can be replaced safely…".into(),
+            });
+            // safe_stop never forces: forcing is what corrupts the chain.
+            dd69_supervisor::process::safe_stop(&rpc, &cfg.datadir, std::time::Duration::from_secs(1200))
+                .map_err(|e| format!("could not stop the node before unpacking: {e}"))?;
+        }
+
+        let outcome = dd69_supervisor::snapshot::install(&archive, &emit);
+
+        if was_running {
+            if let Some(bin) = dd69_supervisor::install::managed_divid() {
+                emit(dd69_supervisor::snapshot::Progress {
+                    done: 0,
+                    total: None,
+                    stage: "Starting the node again…".into(),
+                });
+                let _ = dd69_supervisor::process::start_with_recovery(
+                    &bin,
+                    &cfg.datadir,
+                    &rpc,
+                    std::time::Duration::from_secs(180),
+                    std::time::Duration::from_secs(1800),
+                );
+            }
+        }
+        outcome?;
         Ok(digest)
     })
     .await

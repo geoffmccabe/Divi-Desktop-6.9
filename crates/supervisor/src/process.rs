@@ -171,26 +171,45 @@ fn spawn_once(
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    if let Err(e) = cmd.stdout(spawn_log).stderr(spawn_log_err).spawn() {
-        // The OS refused to start the process at all — the classic cases are a
-        // missing/blocked binary (macOS Gatekeeper) or a permissions problem.
-        crate::setuplog::log(format!(
-            "node launch: OPERATING SYSTEM REFUSED to start the node — {e} ({})",
-            divid.display()
-        ));
-        return Spawn::Failed(format!("could not launch {}: {e}", divid.display()));
-    }
+    // Keep the child's real process id. On Windows the node writes no pid
+    // file at all (there is no daemon mode there), so this is the only id we
+    // will ever have for it -- see the note where the RPC answers.
+    let spawned_pid = match cmd.stdout(spawn_log).stderr(spawn_log_err).spawn() {
+        Ok(child) => child.id() as i32,
+        Err(e) => {
+            // The OS refused to start the process at all — the classic cases are a
+            // missing/blocked binary (macOS Gatekeeper) or a permissions problem.
+            crate::setuplog::log(format!(
+                "node launch: OPERATING SYSTEM REFUSED to start the node — {e} ({})",
+                divid.display()
+            ));
+            return Spawn::Failed(format!("could not launch {}: {e}", divid.display()));
+        }
+    };
 
     let started = Instant::now();
     loop {
         if rpc.call("getblockcount", serde_json::json!([])).is_ok() {
-            return match daemon_pid(datadir) {
-                Some(pid) => {
-                    crate::setuplog::log(format!("node launch: node answered — running (pid {pid})"));
-                    Spawn::Running(pid)
-                }
-                None => Spawn::Failed("node answered RPC but wrote no pid file".into()),
-            };
+            /* ── ANSWERING IS PROOF. A PID FILE IS NOT. ────────────────────
+               This used to demand a divid.pid file even after the node had
+               answered an RPC call, and report "node answered RPC but wrote
+               no pid file" as a FAILURE if it was missing.
+
+               Windows has no daemon mode, so the node never writes that file
+               there. Joseph's laptop on 2026-Sep-21: the node started, loaded
+               the wallet, opened its P2P threads, connected to a peer at
+               height 4,224,101 and answered us -- and the wallet declared
+               THE NODE DID NOT START, whereupon the watchdog tried to start
+               a second one and the fresh-install path went off to fetch a
+               snapshot on top of a node that was already running.
+
+               A node that answers RPC is running. That is not a matter of
+               opinion. Use the pid file when it exists, because it survives
+               a restart of the wallet, and otherwise the id of the process
+               we just spawned, which we now keep. */
+            let pid = daemon_pid(datadir).unwrap_or(spawned_pid);
+            crate::setuplog::log(format!("node launch: node answered — running (pid {pid})"));
+            return Spawn::Running(pid);
         }
         // Daemon printed a fatal line and died? Classify and stop waiting.
         if daemon_pid(datadir).is_none() && started.elapsed() > Duration::from_secs(3) {
