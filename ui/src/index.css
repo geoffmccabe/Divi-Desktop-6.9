@@ -1092,6 +1092,16 @@ code, .mono { font-family: var(--font-mono); }
   pointer-events: none;
 }
 .netmap-frozen b { color: #ffc768; }
+/* The message must be selectable, and copyable without selecting. */
+.netmap-frozen { pointer-events: auto; display: flex; align-items: center; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.netmap-frozen-text { user-select: text; cursor: text; }
+.netmap-frozen-copy {
+  flex: 0 0 auto; padding: 4px 11px; border-radius: 7px; cursor: pointer;
+  font-size: 0.72rem; white-space: nowrap;
+  color: #ffe9c2; background: rgba(240, 168, 58, 0.16);
+  border: 1px solid rgba(240, 168, 58, 0.6);
+}
+.netmap-frozen-copy:hover { background: rgba(240, 168, 58, 0.3); }
 /* .bl-amt is a flex ROW, so a reason and a hint placed inside it were laid
    out side by side and ran off the edge of the panel, unreadable. When the
    panel is showing a message rather than a figure, stack them instead. */

@@ -559,6 +559,33 @@ pub fn start_with_recovery(
     ))
 }
 
+/// Ask the operating system to pass on a polite shutdown request.
+///
+/// SIGTERM on Unix, which divid handles exactly as it handles the `stop`
+/// RPC: flush the chain, close the databases, exit. On Windows, taskkill
+/// WITHOUT /F, which is the request-to-close, not the force.
+///
+/// Never SIGKILL, and never taskkill /F. Forcing a node mid-flush is what
+/// corrupts the block database, and no amount of impatience justifies it.
+fn request_stop_via_signal(pid: i32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string()])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
 /// The one rule this whole project exists to enforce: never kill divid.
 /// Ask it to stop over RPC, then WAIT for the process to actually exit —
 /// the flush between "stop" and exit is the 9-13 s corruption window.
@@ -568,7 +595,28 @@ pub fn safe_stop(rpc: &RpcClient, datadir: &Path, timeout: Duration) -> Result<D
         return Err("daemon is not running".into());
     };
     crate::applog::log(format!("shutdown: asking the node to stop and save (pid {pid})"));
-    rpc.call("stop", serde_json::json!([]))?;
+
+    /* ── ASKING OVER RPC IS NOT THE ONLY WAY TO ASK ───────────────────────
+       This used to be `rpc.call("stop")?` -- return immediately if the call
+       fails. But the node this function exists to rescue is a WEDGED one,
+       and a wedged node cannot accept the stop command either. So the one
+       case it was written for was the one case it gave up on instantly.
+       The watchdog then logged "the node would not stop; leaving it alone",
+       and nothing ever recovered. Geoff's node sat wedged for fifteen hours
+       on 2026-Sep-21 with the watchdog silent throughout.
+
+       When the command cannot be delivered, send SIGTERM instead. That is
+       NOT a kill: it is the same polite request, and the node handles it
+       with exactly the same clean shutdown and flush as the RPC command.
+       SIGKILL remains forbidden, here and everywhere -- that is the one
+       that corrupts the chain. */
+    if let Err(e) = rpc.call("stop", serde_json::json!([])) {
+        crate::applog::log(format!(
+            "shutdown: the node would not take the stop command ({e}) — asking the operating \
+             system to pass on the same request instead (a graceful signal, never a kill)"
+        ));
+        request_stop_via_signal(pid);
+    }
     let started = Instant::now();
     while started.elapsed() < timeout {
         if !pid_alive(pid) {

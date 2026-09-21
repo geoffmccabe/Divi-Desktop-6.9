@@ -67,6 +67,23 @@ const TRAFFIC_IS_FRESH: Duration = Duration::from_secs(90);
 /// costs minutes of shutdown plus minutes of index loading; a loop of them
 /// never lets the node finish either.
 const MIN_BETWEEN_RESTARTS: Duration = Duration::from_secs(3600);
+/// The longest a node may go without answering ANY RPC call before we act,
+/// whatever its log is doing.
+///
+/// log_progress() exists to stop us shooting a node that is busy flushing
+/// chain state. But a wedged node is not silent either: its network thread
+/// keeps writing "connect() to … failed" every twenty seconds or so, and the
+/// watchdog checks every thirty. So the log had almost always moved between
+/// checks, strikes were reset every single time, and the strike count could
+/// never reach its limit. Geoff's node was wedged for FIFTEEN HOURS on
+/// 2026-Sep-21 -- answering 0 of 8 calls, port open, doing nothing -- and the
+/// watchdog logged nothing at all in that time, because a peer-connection
+/// failure every twenty seconds counted as "busy, not wedged".
+///
+/// A node flushing its chain takes about fifteen minutes. Past twenty, log
+/// noise stops being an excuse.
+const MAX_SILENCE: Duration = Duration::from_secs(1200);
+
 /// How long the RPC port may be absent before we accept the node is not coming
 /// up on its own. Loading the chain index takes a couple of minutes; a stuck
 /// shutdown can take fifteen. This is past both.
@@ -97,6 +114,9 @@ pub fn run() {
     let mut last_restart: Option<Instant> = None;
     let mut not_listening_since: Option<Instant> = None;
     let mut log_seen: Option<(u64, SystemTime)> = None;
+    // When the node last gave us an answer of any kind. Log activity may
+    // excuse a silence, but not an unlimited one -- see MAX_SILENCE.
+    let mut answered_at = Instant::now();
 
     loop {
         std::thread::sleep(CHECK_EVERY);
@@ -163,6 +183,7 @@ pub fn run() {
                 }
                 strikes = 0;
                 not_listening_since = None;
+                answered_at = Instant::now();
                 continue;
             }
         }
@@ -177,6 +198,7 @@ pub fn run() {
                 }
                 strikes = 0;
                 not_listening_since = None;
+                answered_at = Instant::now();
                 continue;
             }
             // Not up yet, or on its way down. Either way, restarting it is the
@@ -207,7 +229,9 @@ pub fn run() {
                 // whole time and cannot answer RPC while it does. That is
                 // busy, not broken, and shooting it is how the database gets
                 // damaged.
-                if log_progress(&cfg.datadir, &mut log_seen) {
+                let busy = log_progress(&cfg.datadir, &mut log_seen);
+                let silent_for = answered_at.elapsed();
+                if busy && silent_for < MAX_SILENCE {
                     if strikes > 0 {
                         crate::applog::log(
                             "watchdog: no RPC answer, but the node is still writing to its log — \
@@ -216,6 +240,15 @@ pub fn run() {
                     }
                     strikes = 0;
                     continue;
+                }
+                if busy {
+                    // Still writing, but it has not answered us in twenty
+                    // minutes. Writing peer-connection failures is not work.
+                    crate::applog::log(format!(
+                        "watchdog: the node has written to its log but has answered nothing for \
+                         {} minutes — that is wedged, not busy",
+                        silent_for.as_secs() / 60
+                    ));
                 }
                 strikes += 1;
                 crate::applog::log(format!(
@@ -335,6 +368,18 @@ mod tests {
     fn a_missing_log_is_never_held_against_the_node() {
         let mut seen = None;
         assert!(log_progress(Path::new("/dd69/definitely/not/here"), &mut seen));
+    }
+
+    #[test]
+    fn log_noise_cannot_excuse_silence_for_ever() {
+        // A wedged node still writes a failed peer connection every ~20s, and
+        // the watchdog looks every 30s, so "the log moved" was true on almost
+        // every check and reset the strikes each time. The ceiling is what
+        // stops that becoming a permanent excuse. It must be longer than a
+        // real chain flush (about fifteen minutes) and far shorter than the
+        // fifteen HOURS a node was once left wedged.
+        assert!(MAX_SILENCE > Duration::from_secs(15 * 60));
+        assert!(MAX_SILENCE < Duration::from_secs(60 * 60));
     }
 
     #[test]

@@ -8,6 +8,7 @@ import { emitPeerCount } from "./peerEvents";
    catalog lives in mapEvents.ts; see docs/MAP_ANIMATION_V2.md. */
 import { beginProbeWave, emitMap, setMapSelf, setMapNodeCount, type ProbeTarget } from "./mapEvents";
 import { startMapFeedBridge } from "./mapFeedBridge";
+import { copySetupLogNow } from "./SetupLogHotkey";
 import { drawMapAnim } from "./mapAnimRender";
 import { BlockChainViz } from "./BlockChainViz";
 import { createRebels, type RebelsController } from "./rebels/rebelsController";
@@ -503,6 +504,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
      elapsed time -- see the note by the poll. */
   const missedPolls = useRef(0);
   const [stale, setStale] = useState<number | null>(null);
+  const [copiedDiag, setCopiedDiag] = useState<string | null>(null);
 
   const geosRef = useRef(geos);
   geosRef.current = geos;
@@ -2043,13 +2045,32 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           </div>
         )}
         {/* The map is showing a remembered picture, not a live one. Said
-            plainly, because a frozen map that looks live is a lie. */}
+            plainly, because a map that looks live when it is not is a lie.
+            Selectable, and with its own copy button — Geoff, 2026-Sep-21:
+            "It's not text so I can't copy/paste it and it doesn't have a
+            copy button (of course it should)." Any message worth showing is
+            worth being able to send to someone. */}
         {stale !== null && (
           <div className="netmap-frozen" onMouseDown={(e) => e.stopPropagation()}>
-            <b>The node has gone quiet.</b> It hasn't answered for about{" "}
-            {stale < 120 ? `${stale} seconds` : `${Math.round(stale / 60)} minutes`}, so what's on
-            the map is the last thing we knew rather than what's happening now. It usually comes
-            back on its own.
+            <span className="netmap-frozen-text">
+              <b>The node has gone quiet.</b> It hasn't answered for about{" "}
+              {stale < 120 ? `${stale} seconds` : `${Math.round(stale / 60)} minutes`}, so what's
+              on the map is the last thing we knew rather than what's happening now. It usually
+              comes back on its own.
+            </span>
+            <button
+              type="button"
+              className="netmap-frozen-copy"
+              onClick={() => {
+                /* The whole diagnostic, not just this sentence — that is what
+                   is actually useful to send. Kept warm by SetupLogHotkey, so
+                   the clipboard write happens inside the click. */
+                void copySetupLogNow().then((r) => setCopiedDiag(r.ok ? "Copied" : "Press ⌘L"));
+                window.setTimeout(() => setCopiedDiag(null), 2500);
+              }}
+            >
+              {copiedDiag ?? "Copy details"}
+            </button>
           </div>
         )}
         {rebels && (
