@@ -23,11 +23,23 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-pub const SNAPSHOT_URL: &str = "https://snapshots.diviproject.org/dist/DIVI-snapshot.tar.gz";
-/// Where a published checksum would live. Checked on every run: the moment the
-/// snapshot server starts publishing one, verification turns itself on with no
-/// change here and no new release.
-pub const SNAPSHOT_SHA_URL: &str = "https://snapshots.diviproject.org/dist/DIVI-snapshot.tar.gz.sha256";
+/// OUR OWN MIRROR, with a checksum published beside it.
+///
+/// This used to point at snapshots.diviproject.org, which publishes no
+/// checksum of any kind -- so the wallet had no way to tell a good 5 GB
+/// download from a truncated or altered one, and every new user depended on
+/// a server the Divi team neither owns nor monitors. (It is alive and still
+/// being regenerated, which was itself news.)
+///
+/// nodes.divi.love is the scanner box in the UK. A weekly systemd timer
+/// (divi-snapshot.timer) re-fetches the upstream archive, proves it is a
+/// complete gzip before touching anything, and swaps the file and its
+/// .sha256 into place together so the two are never out of step.
+pub const SNAPSHOT_URL: &str = "https://nodes.divi.love/snapshot/DIVI-snapshot.tar.gz";
+/// The checksum, published beside the archive and refreshed with it. This is
+/// no longer hypothetical: it exists, so every snapshot download is now
+/// verified end to end.
+pub const SNAPSHOT_SHA_URL: &str = "https://nodes.divi.love/snapshot/DIVI-snapshot.tar.gz.sha256";
 
 /// The checksum the server says the archive should have, if it publishes one.
 ///
@@ -42,6 +54,27 @@ pub fn published_hash() -> Option<String> {
         Some(first)
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::*;
+
+    #[test]
+    fn the_snapshot_and_its_checksum_come_from_the_same_place() {
+        // If these ever drift apart, the wallet verifies one server's file
+        // against another server's hash, which is worse than not checking.
+        assert_eq!(SNAPSHOT_SHA_URL, format!("{SNAPSHOT_URL}.sha256"));
+    }
+
+    #[test]
+    fn we_serve_it_ourselves_over_https() {
+        assert!(SNAPSHOT_URL.starts_with("https://"));
+        assert!(
+            SNAPSHOT_URL.contains("divi.love"),
+            "the snapshot must come from infrastructure we control"
+        );
     }
 }
 
