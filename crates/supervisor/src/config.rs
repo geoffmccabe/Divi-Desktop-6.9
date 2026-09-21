@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Where the node lives and how to talk to it. Read from the standard Divi
 /// datadir for this platform (or an explicit override) and its divi.conf.
@@ -171,6 +171,59 @@ pub fn parse_conf(text: &str) -> HashMap<String, String> {
         .collect()
 }
 
+
+/// An absolute data directory the node can actually use.
+///
+/// ── THE WINDOWS BUG THIS EXISTS FOR ───────────────────────────────────────
+/// std::fs::canonicalize on Windows returns an EXTENDED-LENGTH path:
+///
+///   \\?\C:\Users\Joseph\AppData\Roaming\DD69\data
+///
+/// The node accepts that and echoes it back happily ("Using data directory
+/// \\?\C:\..."). LevelDB, which stores the block index, does not: it does
+/// not recognise \\?\ as marking an absolute path, so it treats the whole
+/// thing as RELATIVE and appends it to the process's working directory. The
+/// result, from Joseph's log on 2026-Sep-20:
+///
+///   IO error: C:\Users\Joseph\AppData\Roaming\DD69\divid\unpacked\
+///             \\?\C:\Users\Joseph\AppData\Roaming\DD69\data\blocks\
+///             index\LOCK: Could not lock file.
+///
+/// Two paths concatenated. It cannot lock a file in a directory that does
+/// not exist, so it throws leveldb_error, AppInit fails, the
+/// ChainstateManager is never constructed -- and the assertion everyone has
+/// been chasing (`instance != nullptr`) fires on the way out. That assertion
+/// was the SYMPTOM. This was the cause.
+///
+/// It could only ever affect Windows, because canonicalize adds the prefix
+/// on no other platform -- which is exactly why every Windows tester failed
+/// on the same wall while macOS was fine.
+///
+/// So: make it absolute, then strip the prefix. Never hand \\?\ to the node.
+pub fn absolute_datadir(dir: &Path) -> PathBuf {
+    let abs = std::fs::canonicalize(dir).unwrap_or_else(|_| {
+        if dir.is_absolute() {
+            dir.to_path_buf()
+        } else {
+            std::env::current_dir().map(|c| c.join(dir)).unwrap_or_else(|_| dir.to_path_buf())
+        }
+    });
+    strip_extended_prefix(&abs)
+}
+
+/// Turn \\?\C:\x into C:\x, and \\?\UNC\server\share into
+/// \\server\share. Everything else is returned untouched.
+pub fn strip_extended_prefix(p: &Path) -> PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    p.to_path_buf()
+}
+
 impl NodeConfig {
     pub fn load() -> Result<Self, String> {
         // Settings → My Nodes (nodes.json) is the source of truth for which node
@@ -229,8 +282,10 @@ impl NodeConfig {
 
     pub fn load_from(datadir: PathBuf) -> Result<Self, String> {
         // divid resolves relative -conf/-datadir paths against each other,
-        // silently doubling them. Absolute paths only, always.
-        let datadir = std::fs::canonicalize(&datadir).unwrap_or(datadir);
+        // silently doubling them. Absolute paths only, always -- but see
+        // absolute_datadir: on Windows, "absolute" must not mean the
+        // extended-length form canonicalize hands back.
+        let datadir = absolute_datadir(&datadir);
         let conf_path = datadir.join("divi.conf");
         let conf = std::fs::read_to_string(&conf_path)
             .map_err(|e| format!("cannot read {}: {}", conf_path.display(), e))?;
@@ -268,5 +323,46 @@ mod tests {
         // value containing '=' keeps everything after the first '='
         assert_eq!(m.get("rpcpassword").unwrap(), "p=w");
         assert!(!m.contains_key("bad line"));
+    }
+}
+
+#[cfg(test)]
+mod extended_path_tests {
+    use super::*;
+
+    #[test]
+    fn the_windows_prefix_is_removed() {
+        // What canonicalize hands back on Windows, and what LevelDB needs.
+        assert_eq!(
+            strip_extended_prefix(Path::new(r"\\?\C:\Users\Joseph\AppData\Roaming\DD69\data")),
+            PathBuf::from(r"C:\Users\Joseph\AppData\Roaming\DD69\data")
+        );
+    }
+
+    #[test]
+    fn a_network_share_keeps_working() {
+        assert_eq!(
+            strip_extended_prefix(Path::new(r"\\?\UNC\server\share\dd69")),
+            PathBuf::from(r"\\server\share\dd69")
+        );
+    }
+
+    #[test]
+    fn ordinary_paths_are_untouched() {
+        for p in [r"C:\Users\Joseph\data", "/Users/geoff/Library/Application Support/DD69/data"] {
+            assert_eq!(strip_extended_prefix(Path::new(p)), PathBuf::from(p));
+        }
+    }
+
+    #[test]
+    fn the_result_is_never_the_shape_that_broke_leveldb() {
+        // The one invariant that matters: whatever we hand the node, it must
+        // not start with the prefix LevelDB mis-parses as a relative path.
+        let out = absolute_datadir(Path::new("."));
+        assert!(
+            !out.to_string_lossy().starts_with(r"\\?\"),
+            "handed the node an extended-length path again: {}",
+            out.display()
+        );
     }
 }

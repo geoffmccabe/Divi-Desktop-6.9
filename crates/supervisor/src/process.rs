@@ -149,6 +149,15 @@ fn spawn_once(
         return Spawn::Failed("cannot open spawn log".into());
     };
     let mut cmd = std::process::Command::new(divid);
+    /* Belt and braces. The config layer already strips the Windows
+       extended-length prefix, but this is the one place a path is actually
+       handed to the node, and handing it \\?\... is what silently broke
+       every Windows install: LevelDB reads that as a relative path, glues it
+       onto the working directory, cannot lock the block index, and the node
+       dies in AppInit. Strip it here too, so no future caller can
+       reintroduce it. */
+    let datadir = crate::config::strip_extended_prefix(datadir);
+    let datadir = datadir.as_path();
     cmd.arg(format!("-conf={}", datadir.join("divi.conf").display()))
         .arg(format!("-datadir={}/", datadir.display()));
     for a in extra_args {
