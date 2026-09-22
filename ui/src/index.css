@@ -1093,7 +1093,8 @@ code, .mono { font-family: var(--font-mono); }
 }
 .netmap-frozen b { color: #ffc768; }
 /* Right-click menu on a map node. Reuses the dropdown look. */
-.netmap-ctx { position: absolute; z-index: 30; min-width: 200px; padding: 6px; }
+/* right:auto, or the dropdown's own right:10px would pin this to the corner. */
+.netmap-ctx { position: absolute; right: auto; z-index: 30; min-width: 200px; padding: 6px; }
 .netmap-ctx-head { font-size: 0.8rem; font-weight: 700; color: hsl(45 100% 60%); padding: 4px 8px 6px; display: flex; flex-direction: column; gap: 2px; }
 .netmap-ctx-head small { font-weight: 400; color: hsl(var(--muted-foreground)); font-size: 0.7rem; }
 .netmap-ctx-note { font-size: 0.74rem; color: hsl(var(--foreground)); padding: 6px 8px; border-top: 1px solid hsl(var(--border)); }
