@@ -207,7 +207,7 @@ export function StartStaking({ onStarted }: { onStarted?: () => void }) {
         onClick={() => (state === "staking" ? stop() : go())}
       >
         {state === "checking" ? (
-          <span className="stk-checking">Checking blockchain<Ellipsis /></span>
+          <span className="stk-checking">Setting up staking, a couple of minutes on a large wallet<Ellipsis /></span>
         ) : state === "staking" ? (
           <span className="stk-two">
             <strong>STAKING NOW</strong>

@@ -9,6 +9,7 @@ import { emitPeerCount } from "./peerEvents";
 import { beginProbeWave, emitMap, setMapSelf, setMapNodeCount, type ProbeTarget } from "./mapEvents";
 import { startMapFeedBridge } from "./mapFeedBridge";
 import { copySetupLogNow } from "./SetupLogHotkey";
+import { stakingSetupPending } from "./stakeWin";
 import { drawMapAnim } from "./mapAnimRender";
 import { BlockChainViz } from "./BlockChainViz";
 import { createRebels, type RebelsController } from "./rebels/rebelsController";
@@ -527,9 +528,24 @@ export function NetworkMap({ onReturn, autoplay = false }: {
    *  many nodes", shared by the bottom-left counter and the by-country list.
    *  They used to count different things — 76 against 219 for the USA alone —
    *  which just reads as the app contradicting itself. */
-  const allKnownNodes = () => ({ ...loadKnown(), ...knownRef.current });
 
   const probeRef = useRef<Map<string, ProbeState>>(new Map());
+  // Bumped whenever a probe wave settles, so the count and the country list recompute.
+  const [probeTick, setProbeTick] = useState(0);
+  /* THE NUMBER THE WALLET CALLS "NODES". Not every address we have ever
+     heard of: after the crawl that is 600-plus, most of them nodes that
+     answered someone weeks ago and may be long gone. Geoff, 2026-Sep-22:
+     "625 which I think must be wrong... we don't have that many nodes."
+     A node counts when this wallet has verified it alive: it is a peer
+     right now, or it answered our last probe. The by-country list uses the
+     same rule, so the two figures cannot disagree. */
+  const verifiedNodes = (): Set<string> => {
+    const v = new Set<string>();
+    for (const p of snapRef.current?.peers ?? []) v.add(p.ip);
+    for (const [ip, st] of probeRef.current) if (st === "online") v.add(ip);
+    for (const ip of myNodeIpsRef.current) v.add(ip);
+    return v;
+  };
   // v2: which IPs were peers on the LAST poll, so we can fire node.peer once on
   // connect and node.lost once on disconnect, rather than every poll.
   const peeredRef = useRef<Set<string>>(new Set());
@@ -576,6 +592,9 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       for (const r of reply.results) {
         probeRef.current.set(r.ip, r.alive ? "online" : "offline");
       }
+      setProbeTick((t) => t + 1);
+      {
+      }
 
       // Learned second-hand from other nodes' address books: the ones our own
       // node has never connected to and so could never show.
@@ -596,7 +615,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           knownRef.current = recordKnown(knownRef.current, seen);
           noteSeen(seen.map((x) => x.ip));
           newNodesRef.current = newNodes(knownRef.current);
-          setMapNodeCount(Object.keys(allKnownNodes()).length);
+          setMapNodeCount(verifiedNodes().size);
           for (const n of seen) {
             emitMap("node.discovered", { lat: n.lat, lon: n.lon, ip: n.ip });
           }
@@ -650,7 +669,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   useEffect(() => {
     baselineNewNodes();
     newNodesRef.current = newNodes(loadKnown());
-    setMapNodeCount(Object.keys(allKnownNodes()).length);
+    setMapNodeCount(verifiedNodes().size);
   }, []);
 
   // Press "u" (Update) to fire the gold query ripple — your node pinging the
@@ -810,6 +829,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
                 resolveWave?.(res.map((r) => ({ ip: r.ip, online: r.online })));
                 for (const r of res) probeRef.current.set(r.ip, r.online ? "online" : "offline");
                 for (const ip of kips) if (probeRef.current.get(ip) === "probing") probeRef.current.set(ip, "offline");
+                setMapNodeCount(verifiedNodes().size);
+                setProbeTick((t) => t + 1);
                 // First search finished: fade the leftover green lines out one per
                 // second (nodes that didn't answer and didn't become peers), rather
                 // than all vanishing together.
@@ -909,7 +930,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           // and fire the one-time arrival cue for genuinely brand-new nodes.
           noteSeen(seen.map((x) => x.ip));
           newNodesRef.current = newNodes(knownRef.current);
-          setMapNodeCount(Object.keys(allKnownNodes()).length);
+          setMapNodeCount(verifiedNodes().size);
           for (const arr of takeUnannouncedArrivals(knownRef.current)) {
             arrivalFxRef.current.set(arr.ip, performance.now());
             playSound("receive");
@@ -951,6 +972,17 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     const MISSES_BEFORE_WARNING = 6;
     const tick = () => {
       if (document.visibilityState !== "visible") return; // nothing is being polled
+      /* Starting staking on a large wallet stops the node answering for a
+         minute or two while it goes through every coin under its lock.
+         Geoff's 20.5M-DIVI wallet, 2026-Sep-22: no blocks processed for two
+         minutes after pressing Start Staking, then four at once. That is the
+         node working, at the wallet's own request, and warning about it is
+         crying wolf. The staking button says "setting up" for that time. */
+      if (stakingSetupPending()) {
+        missedPolls.current = 0;
+        setStale(null);
+        return;
+      }
       setStale(
         missedPolls.current >= MISSES_BEFORE_WARNING
           ? missedPolls.current * 10
@@ -1182,10 +1214,17 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       // a node you connected to yesterday belongs on the map even if it's offline
       // or firewalled right now (most nodes won't accept our probe). Verified-live
       // ones draw blue; the rest draw faint grey. Cap high, not at 40.
+      /* Every known node is drawn. This was capped at the 150 most recently
+         seen, from when the map knew of about ninety. After the crawl it
+         knows of six hundred, and the cap silently dropped the rest -- the
+         crawl-found ones had only ever been visible as spirals, so when the
+         spirals were reset they vanished. Geoff, 2026-Sep-22: "we have lost
+         on the map so many nodes... like Nigeria and Vietnam." A few hundred
+         dots cost nothing to draw. */
       const blueNodes = Object.entries(knownRef.current)
         .filter(([ip]) => !liveIps.has(ip))
         .sort((a, b) => b[1].lastSeen - a[1].lastSeen)
-        .slice(0, 150);
+        .slice(0, 2000);
 
       // ── View transform: auto-fit into the viewport with a 2% margin, or honour
       // the user's manual pan/zoom. project() = full-world pixels; the view then
@@ -1898,9 +1937,12 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     // not the map's in-memory ref which could momentarily read low. Overlaid
     // with the ref so any self-nodes the map injected are still included.
     const full = { ...loadKnown(), ...knownRef.current };
-    for (const [ip, kp] of Object.entries(full)) add(ip, kp.country || geos[ip]?.country);
+    const alive = verifiedNodes();
+    for (const [ip, kp] of Object.entries(full)) {
+      if (alive.has(ip)) add(ip, kp.country || geos[ip]?.country);
+    }
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  }, [snap, geos]);
+  }, [snap, geos, probeTick]);
 
   // What to call a tower. Same sources the map's own tooltips use, so the
   // cockpit and the tooltip never disagree about where you are.
