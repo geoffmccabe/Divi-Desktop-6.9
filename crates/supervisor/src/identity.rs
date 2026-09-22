@@ -78,5 +78,11 @@ pub fn set_name(name: &str, source: &str) -> serde_json::Value {
     let clean: String = name.trim().chars().take(40).collect();
     let src = if source == "agent" { "agent" } else { "custom" };
     write(&id, &clean, src);
+    /* Announce it. The node puts -uacomment into its user agent (BIP 14), so
+       every peer and every DD69 map sees "DIVI Core: 3.0.0.0-dd69.2(<name>)"
+       and can show the name the owner chose. The node reads its settings at
+       start, so the announcement changes at the next restart. Only a settings
+       file DD69 wrote is touched; a failure here is not a failure to name. */
+    let _ = crate::install::set_conf_flag("uacomment", &clean);
     serde_json::json!({ "id": id, "name": clean, "nameSource": src })
 }

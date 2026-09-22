@@ -20,8 +20,8 @@
 # Safe to run again: every step checks for its own result first.
 set -euo pipefail
 
-DIVID_URL="https://scan.divi.love/downloads/divid69-69.0.3-linux-x86_64.tar.gz"
-DIVID_SHA="d1380d1d51345c87050e1689c69faca89339c0a2b32dbf4c89b613fd9ece6497"
+DIVID_URL="https://scan.divi.love/downloads/divid69-69.0.4-linux-x86_64.tar.gz"
+DIVID_SHA="0b1bb3b558f5e44cf78c9674f8869f00007a696f19b23a0e47f2ec3fc9bcae3d"
 SNAP_URL="https://nodes.divi.love/snapshot/DIVI-snapshot.tar.gz"
 
 DIVI_USER="divi"
@@ -89,6 +89,8 @@ maxconnections=64
 dbcache=512
 # This machine has a public address of its own; no UPnP needed.
 upnp=0
+# Announced in the node's user agent (BIP 14 comment) so maps can name it.
+uacomment=${NODE_NAME:-$(hostname)}
 EOF
   chown "$DIVI_USER:$DIVI_USER" "$CONF"
   chmod 600 "$CONF"

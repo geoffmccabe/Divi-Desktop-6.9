@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 /// download" and keeps whatever it has — including a node that crashes on
 /// startup. 69.0.2 carries the fix for that crash, so every install must fetch
 /// it rather than keep the copy it already trusts.
-pub const DIVID69_VERSION: &str = "69.0.3";
+pub const DIVID69_VERSION: &str = "69.0.4";
 
 const BASE_URL: &str = "https://scan.divi.love/downloads";
 
@@ -79,14 +79,14 @@ struct Artifact {
 fn artifact() -> Option<Artifact> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     return Some(Artifact {
-        file: "divid69-69.0.3-macos-arm64.tar.gz",
-        sha256: "00127350dab23a765260152ac6198193b894f456e7904e86f3b9898dc55bbfdb",
+        file: "divid69-69.0.4-macos-arm64.tar.gz",
+        sha256: "2122a63ebe36ed4023e98b50926f33c4a82143b17828c7a6a152d14dee6862d2",
     });
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     return Some(Artifact {
-        file: "divid69-69.0.3-linux-x86_64.tar.gz",
-        sha256: "d1380d1d51345c87050e1689c69faca89339c0a2b32dbf4c89b613fd9ece6497",
+        file: "divid69-69.0.4-linux-x86_64.tar.gz",
+        sha256: "0b1bb3b558f5e44cf78c9674f8869f00007a696f19b23a0e47f2ec3fc9bcae3d",
     });
 
     // Windows x86_64: packaged the same way (.tar.gz, which Windows 10+ extracts
@@ -94,8 +94,8 @@ fn artifact() -> Option<Artifact> {
     // the in-tree depends system) and published to scan.divi.love/downloads.
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     return Some(Artifact {
-        file: "divid69-69.0.3-windows-x86_64.tar.gz",
-        sha256: "4a010fdd23a0370f14e9518bb04100f2c7832f7954a0b28b1239738dd3bb4216",
+        file: "divid69-69.0.4-windows-x86_64.tar.gz",
+        sha256: "50d14344322bc0624f324c44c7269c863cb0b75ffe4796d25a0149dc4bdb7907",
     });
 
     #[cfg(not(any(

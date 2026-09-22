@@ -818,9 +818,9 @@ struct ProbeDto {
 
 /// Probe known peer IPs for reachability (TCP connect to the Divi P2P port).
 #[tauri::command]
-async fn probe_peers(ips: Vec<String>) -> Vec<ProbeDto> {
+async fn probe_peers(ips: Vec<String>, timeout_ms: Option<u64>) -> Vec<ProbeDto> {
     tauri::async_runtime::spawn_blocking(move || {
-        network::probe(&ips, 51472)
+        network::probe_with_timeout(&ips, 51472, timeout_ms.unwrap_or(2500))
             .into_iter()
             .map(|(ip, online)| ProbeDto { ip, online })
             .collect()

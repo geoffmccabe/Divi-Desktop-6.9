@@ -89,24 +89,55 @@ pub struct Geo {
 /// reachable right now" signal — honest, and all the webview-side map needs to
 /// light a known peer as online. Bounded parallelism, short timeout.
 pub fn probe(ips: &[String], port: u16) -> Vec<(String, bool)> {
+    probe_with_timeout(ips, port, 2500)
+}
+
+/// The same probe with a caller-chosen patience.
+///
+/// EVERY address given is probed. This used to stop after the first eighty:
+/// fine when the map knew of ninety nodes, but after the network crawl it
+/// knows of six hundred, and five hundred of them were never asked at all --
+/// permanently "offline" for want of a question. A bounded pool of workers
+/// keeps the thread count sane; a few hundred addresses finish in seconds.
+///
+/// `timeout_ms` is the caller's to choose, because one size does not fit: a
+/// first pass over the whole network wants to be quick, but a node that has
+/// missed once deserves a longer, more patient second look before it is
+/// written off. Declaring a node dead after one 2.5-second try from an
+/// overloaded machine was how the count flickered.
+pub fn probe_with_timeout(ips: &[String], port: u16, timeout_ms: u64) -> Vec<(String, bool)> {
     use std::net::{TcpStream, ToSocketAddrs};
-    let handles: Vec<_> = ips
-        .iter()
-        .take(80)
-        .cloned()
-        .map(|ip| {
-            std::thread::spawn(move || {
+    use std::sync::{Arc, Mutex};
+    let queue: Arc<Mutex<Vec<String>>> =
+        Arc::new(Mutex::new(ips.iter().take(4000).cloned().collect()));
+    let out: Arc<Mutex<Vec<(String, bool)>>> = Arc::new(Mutex::new(Vec::new()));
+    let workers = ips.len().clamp(1, 64);
+    let timeout = Duration::from_millis(timeout_ms.clamp(500, 20_000));
+    let handles: Vec<_> = (0..workers)
+        .map(|_| {
+            let queue = Arc::clone(&queue);
+            let out = Arc::clone(&out);
+            std::thread::spawn(move || loop {
+                let ip = match queue.lock().ok().and_then(|mut q| q.pop()) {
+                    Some(ip) => ip,
+                    None => break,
+                };
                 let ok = format!("{ip}:{port}")
                     .to_socket_addrs()
                     .ok()
                     .and_then(|mut a| a.next())
-                    .map(|sa| TcpStream::connect_timeout(&sa, Duration::from_millis(2500)).is_ok())
+                    .map(|sa| TcpStream::connect_timeout(&sa, timeout).is_ok())
                     .unwrap_or(false);
-                (ip, ok)
+                if let Ok(mut o) = out.lock() {
+                    o.push((ip, ok));
+                }
             })
         })
         .collect();
-    handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    for h in handles {
+        let _ = h.join();
+    }
+    out.lock().map(|o| o.clone()).unwrap_or_default()
 }
 
 /// Time a TCP connection to each node's P2P port as a latency measure. Returns

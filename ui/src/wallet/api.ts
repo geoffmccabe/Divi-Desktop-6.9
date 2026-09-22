@@ -427,7 +427,8 @@ export interface Probe {
   ip: string;
   online: boolean;
 }
-export const probePeers = (ips: string[]) => invoke<Probe[]>("probe_peers", { ips });
+/** `timeoutMs` is how patient each probe is; see probeSchedule.ts for who gets how much. */
+export const probePeers = (ips: string[], timeoutMs?: number) => invoke<Probe[]>("probe_peers", { ips, timeoutMs: timeoutMs ?? null });
 
 export interface NodePing {
   ip: string;

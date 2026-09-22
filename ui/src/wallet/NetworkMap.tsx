@@ -9,6 +9,7 @@ import { emitPeerCount } from "./peerEvents";
 import { beginProbeWave, emitMap, setMapSelf, setMapNodeCount, type ProbeTarget } from "./mapEvents";
 import { startMapFeedBridge } from "./mapFeedBridge";
 import { copySetupLogNow } from "./SetupLogHotkey";
+import { announcedName, counts as probeCounts, loadRecords, observe, plan, saveRecords, type ProbeRecord } from "./probeSchedule";
 import { stakingSetupPending } from "./stakeWin";
 import { drawMapAnim } from "./mapAnimRender";
 import { BlockChainViz } from "./BlockChainViz";
@@ -298,6 +299,8 @@ type ProbeState = "probing" | "online" | "offline";
 interface HoverPoint {
   x: number;
   y: number;
+  /** The name the node's owner gave it, announced in its user agent. "" = none. */
+  name?: string;
   title: string;
   lines: string[];
   tone?: "blue"; // active-but-not-connected background node
@@ -530,6 +533,10 @@ export function NetworkMap({ onReturn, autoplay = false }: {
    *  which just reads as the app contradicting itself. */
 
   const probeRef = useRef<Map<string, ProbeState>>(new Map());
+  /* Per-node liveness with memory: misses, when asked, when it last answered.
+     Persisted, so the once-a-day recheck of a node written off survives a
+     restart. See probeSchedule.ts for the rules. */
+  const recordsRef = useRef<Map<string, ProbeRecord>>(loadRecords());
   // Bumped whenever a probe wave settles, so the count and the country list recompute.
   const [probeTick, setProbeTick] = useState(0);
   /* THE NUMBER THE WALLET CALLS "NODES". Not every address we have ever
@@ -542,7 +549,11 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   const verifiedNodes = (): Set<string> => {
     const v = new Set<string>();
     for (const p of snapRef.current?.peers ?? []) v.add(p.ip);
-    for (const [ip, st] of probeRef.current) if (st === "online") v.add(ip);
+    for (const [ip, st] of probeRef.current) {
+      if (st === "online") v.add(ip);
+      // A node that missed once or twice is still counted; only "down" is not.
+      else if (st === "offline" && probeCounts(recordsRef.current.get(ip)) && recordsRef.current.get(ip)?.aliveAt) v.add(ip);
+    }
     for (const ip of myNodeIpsRef.current) v.add(ip);
     return v;
   };
@@ -805,7 +816,12 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         const probeGap = firstProbeDone.current ? 60000 : 8000;
         if (s.peers.length >= 1 && nowMs - lastProbe.current > probeGap) {
           lastProbe.current = nowMs;
-          const kips = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
+          const all = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
+          /* Who is due, and how patiently. A node believed alive gets the quick
+             routine question; one that just missed gets a longer wait; one
+             written off is asked once a day with the longest wait. */
+          const p = plan(recordsRef.current, all, Date.now());
+          const kips = [...p.quick, ...p.patient];
           if (kips.length) {
             for (const ip of kips) if (probeRef.current.get(ip) === "offline") probeRef.current.set(ip, "probing");
             // v2: announce the wave we are ACTUALLY sending. Each node gets a
@@ -823,12 +839,21 @@ export function NetworkMap({ onReturn, autoplay = false }: {
               }
               resolveWave = beginProbeWave(targets);
             }
-            probePeers(kips)
-              .then((res) => {
+            Promise.all([
+              p.quick.length ? probePeers(p.quick, p.timeoutQuick) : Promise.resolve([]),
+              p.patient.length ? probePeers(p.patient, p.timeoutPatient) : Promise.resolve([]),
+            ])
+              .then(([a, b]) => {
+                const res = [...a, ...b];
                 if (!alive) return;
                 resolveWave?.(res.map((r) => ({ ip: r.ip, online: r.online })));
-                for (const r of res) probeRef.current.set(r.ip, r.online ? "online" : "offline");
+                const now = Date.now();
+                for (const r of res) {
+                  recordsRef.current.set(r.ip, observe(recordsRef.current.get(r.ip), r.online, now));
+                  probeRef.current.set(r.ip, r.online ? "online" : "offline");
+                }
                 for (const ip of kips) if (probeRef.current.get(ip) === "probing") probeRef.current.set(ip, "offline");
+                saveRecords(recordsRef.current);
                 setMapNodeCount(verifiedNodes().size);
                 setProbeTick((t) => t + 1);
                 // First search finished: fade the leftover green lines out one per
@@ -1283,6 +1308,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           kp,
           xy: P(kp.lon, kp.lat),
           online: probeRef.current.get(ip) === "online", // verified reachable right now
+          // Missed once or twice, being rechecked: drawn dimmer, still a node.
+          unsure: probeRef.current.get(ip) !== "online" && probeCounts(recordsRef.current.get(ip)) && !!recordsRef.current.get(ip)?.aliveAt,
         }));
         // Mesh lines to each node's 3–5 nearest neighbours (faint, slowly pulsing).
         //
@@ -1396,7 +1423,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           const r = 3.2 + 1.0 * Math.sin(now / 1300 + phaseOf(b.ip)); // 2× diameter — easier to see
           ctx.beginPath();
           ctx.arc(b.xy[0], b.xy[1], r, 0, Math.PI * 2);
-          ctx.fillStyle = b.online ? BLUE(0.35) : GREY(0.3); // blue = verified-live, grey = remembered
+          ctx.fillStyle = b.online ? BLUE(0.35) : b.unsure ? BLUE(0.18) : GREY(0.3); // blue = live, dim blue = missed once or twice, grey = not answering
           ctx.fill();
           const env = labelPulse(now, b.ip, 20000, 50000, 3000);
           if (env > 0.02) {
@@ -1407,7 +1434,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
               ctx.font = "10px 'Courier New', Courier, monospace";
               ctx.textAlign = "left";
               ctx.textBaseline = "middle";
-              ctx.fillStyle = b.online ? BLUE(0.3 * env) : GREY(0.3 * env);
+              ctx.fillStyle = b.online ? BLUE(0.3 * env) : b.unsure ? BLUE(0.16 * env) : GREY(0.3 * env);
               ctx.fillText(label, lx, ly);
             }
           }
@@ -1705,6 +1732,9 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         if (liveNow.has(ip) || !drawnBlue.has(ip)) continue;
         const st = probeRef.current.get(ip) ?? "probing";
         const online = st === "online";
+        const rec = recordsRef.current.get(ip);
+        const unsure = !online && st !== "probing" && probeCounts(rec) && !!rec?.aliveAt;
+        const name = announcedName(kp.subver);
         const [x, y] = P(kp.lon, kp.lat);
         const loc = [kp.city || g[ip]?.city, kp.country || g[ip]?.country].filter(Boolean).join(", ");
         const isp = g[ip]?.isp || "";
@@ -1712,9 +1742,18 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           x,
           y,
           title: loc || ip,
+          name,
           lines: [
             loc ? ip : "",
-            online ? "Active now · not connected" : st === "probing" ? "Checking…" : "Seen in the last 90 days",
+            online
+              ? "Active now · not connected"
+              : st === "probing"
+                ? "Checking…"
+                : unsure
+                  ? `Missed ${rec?.misses ?? 1} check${(rec?.misses ?? 1) === 1 ? "" : "s"} · trying again soon`
+                  : rec?.aliveAt
+                    ? "Not answering · rechecked daily"
+                    : "Seen in the last 90 days",
             isp,
             // Node type from the client it last advertised (remembered in the store).
             kp.subver ? classifyNode(kp.subver).label : "",
@@ -2156,6 +2195,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
               top: Math.max(8, hover.y - 10),
             }}
           >
+            {hover.name && <div className="netmap-tip-name">{hover.name}</div>}
             <div className="netmap-tip-title">{hover.title}</div>
             {hover.lines.map((l, i) => (
               <div key={i} className="netmap-tip-line">

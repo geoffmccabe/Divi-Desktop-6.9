@@ -1173,6 +1173,8 @@ code, .mono { font-family: var(--font-mono); }
   border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.4);
 }
 .netmap-tip-title { font-size: 0.82rem; font-weight: 600; color: hsl(var(--foreground)); margin-bottom: 3px; }
+/* The name a node's owner gave it. Bold, gold, first. Absent when there is none. */
+.netmap-tip-name { font-size: 0.86rem; font-weight: 700; color: hsl(45 100% 60%); margin-bottom: 2px; }
 .netmap-tip-blue { border-color: hsl(210 85% 62% / 0.7); }
 .netmap-tip-blue .netmap-tip-title { color: hsl(210 85% 66%); }
 .netmap-tip-blue .netmap-tip-line { color: hsl(210 60% 70%); }
