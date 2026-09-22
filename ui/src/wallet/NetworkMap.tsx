@@ -945,7 +945,10 @@ export function NetworkMap({ onReturn, autoplay = false }: {
        failures instead. Four polls in a row that were really made and
        really came back empty is about forty seconds of genuine silence,
        and cannot be produced by a sleeping laptop. */
-    const MISSES_BEFORE_WARNING = 4;
+    // Six, not four. The map's poll asks for the whole peer list, which is a
+    // heavier question than the watchdog's, and on a heavily loaded machine
+    // it can miss a few in a row while the node is otherwise answering.
+    const MISSES_BEFORE_WARNING = 6;
     const tick = () => {
       if (document.visibilityState !== "visible") return; // nothing is being polled
       setStale(
@@ -2065,7 +2068,12 @@ export function NetworkMap({ onReturn, autoplay = false }: {
                 /* The whole diagnostic, not just this sentence — that is what
                    is actually useful to send. Kept warm by SetupLogHotkey, so
                    the clipboard write happens inside the click. */
-                void copySetupLogNow().then((r) => setCopiedDiag(r.ok ? "Copied" : "Press ⌘L"));
+                const shown =
+                  `Map warning: "The node has gone quiet." ` +
+                  `No answer to the map's peer poll for about ${stale} seconds ` +
+                  `(${missedPolls.current} polls in a row came back empty). ` +
+                  `Copied at ${new Date().toISOString()}.`;
+                void copySetupLogNow(shown).then((r) => setCopiedDiag(r.ok ? "Copied" : "Press ⌘L"));
                 window.setTimeout(() => setCopiedDiag(null), 2500);
               }}
             >

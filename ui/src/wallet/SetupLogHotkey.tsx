@@ -54,8 +54,16 @@ export type CopyOutcome =
  * If it is refused anyway, the log is written to a file on the Desktop so
  * there is always some way to get it out of the app.
  */
-export function copySetupLogNow(): Promise<CopyOutcome> {
-  const text = ready || "(the setup log had not loaded yet — try again in a moment)";
+export function copySetupLogNow(shownOnScreen?: string): Promise<CopyOutcome> {
+  /* Whatever message the person pressed the button ABOUT goes first. The
+     setup log knows nothing about what the map or a panel is displaying, so
+     a copy taken from a warning used to omit the warning itself. Geoff,
+     2026-Sep-22: "your copy button is bad and doesn't include the damn
+     error message it's supposed to include." */
+  const head = shownOnScreen
+    ? `WHAT THE APP WAS SHOWING WHEN THIS WAS COPIED:\n${shownOnScreen}\n\n`
+    : "";
+  const text = head + (ready || "(the setup log had not loaded yet — try again in a moment)");
 
   // Synchronous fallback first if the async API is missing entirely.
   const viaTextarea = (): boolean => {
