@@ -21,7 +21,85 @@ on:
     tags: ["v*"]
 
 jobs:
+  # ── THE NODE GATE ─────────────────────────────────────────────────────────
+  # Starts a REAL node with the wallet's own node-management code on each
+  # platform, and tries the exact mistakes that reached users in September
+  # 2026: a path the block database could not read, a process the wallet could
+  # not see, a second node started on top of the first. `build` below NEEDS
+  # this, so an installer that cannot run its own node is never produced.
+  # See ops/gate/node-gate.sh.
+  node-gate:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            archive: divid69-windows-x86_64.tar.gz
+            exe: divid69.exe
+            cli: dd69.exe
+          - os: ubuntu-22.04
+            archive: divid69-linux-x86_64.tar.gz
+            exe: divid69
+            cli: dd69
+          - os: macos-latest
+            archive: divid69-macos-arm64.tar.gz
+            exe: divid69
+            cli: dd69
+    name: Node gate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+        shell: bash
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: gate-${{ matrix.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            gate-${{ matrix.os }}-
+
+      - name: Linux system deps
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config libssl-dev
+
+      - name: Build the node-management command-line tool
+        run: cargo build -p dd69-supervisor --bin dd69
+        shell: bash
+
+      # The SAME published node program users get, checked against the SAME
+      # checksum the wallet pins, read out of the wallet's own source so the
+      # two can never drift apart.
+      - name: Fetch the published node program and verify it
+        shell: bash
+        run: |
+          set -euo pipefail
+          WANT=$(grep -A1 'file: "${{ matrix.archive }}"' crates/supervisor/src/install.rs | grep -oE '[0-9a-f]{64}')
+          [ -n "$WANT" ] || { echo "could not read the pinned checksum for ${{ matrix.archive }}"; exit 1; }
+          curl -fsSL --retry 3 -o node.tar.gz "https://scan.divi.love/downloads/${{ matrix.archive }}"
+          if command -v sha256sum >/dev/null; then GOT=$(sha256sum node.tar.gz | cut -d' ' -f1); else GOT=$(shasum -a 256 node.tar.gz | cut -d' ' -f1); fi
+          [ "$GOT" = "$WANT" ] || { echo "checksum mismatch: got $GOT want $WANT"; exit 1; }
+          mkdir -p nodebin && tar -xzf node.tar.gz -C nodebin
+          FOUND=$(find nodebin -type f -name '${{ matrix.exe }}' | head -1)
+          [ -n "$FOUND" ] || { echo "archive has no ${{ matrix.exe }}"; exit 1; }
+          chmod +x "$FOUND" || true
+          echo "DIVID=$PWD/$FOUND" >> "$GITHUB_ENV"
+
+      - name: Run the node gate
+        shell: bash
+        run: bash ops/gate/node-gate.sh "$PWD/target/debug/${{ matrix.cli }}" "$DIVID"
+
   build:
+    needs: node-gate
     strategy:
       fail-fast: false
       matrix:

@@ -125,6 +125,34 @@ pub fn seed_words(cfg: &NodeConfig) -> Result<String, String> {
         .ok_or_else(|| "This wallet has no recoverable seed phrase.".to_string())
 }
 
+/// The seed words of a password-protected wallet.
+///
+/// The node will only hand over the seed while the wallet is FULLY unlocked,
+/// so this unlocks it for a few seconds, reads the words, and then puts the
+/// wallet back exactly as it found it. That last part matters: a wallet that
+/// was unlocked for staking only must go back to staking only. Simply letting
+/// the short unlock expire would leave it fully locked, and looking at your
+/// seed phrase would silently stop your staking. Sends already do the same.
+pub fn seed_words_with_pass(cfg: &NodeConfig, pass: &str) -> Result<String, String> {
+    let before = status(cfg);
+    if before.known && !before.encrypted {
+        return seed_words(cfg);
+    }
+    let rpc = RpcClient::new(cfg);
+    rpc.call("walletpassphrase", json!([pass, 20, false]))
+        .map_err(|_| "That password didn't unlock the wallet.".to_string())?;
+    let words = seed_words(cfg);
+    // Back to how it was, whether or not the read worked. A wallet that was
+    // already fully unlocked is left alone: locking it would be us changing
+    // something the owner had set.
+    if before.staking_only {
+        let _ = rpc.call("walletpassphrase", json!([pass, 0, true]));
+    } else if !(before.known && before.unlocked) {
+        let _ = rpc.call("walletlock", json!([]));
+    }
+    words
+}
+
 // ---- OS credential store (opt-in "remember password") --------------------
 
 pub fn remember(pass: &str) -> Result<(), String> {

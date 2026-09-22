@@ -165,7 +165,7 @@ export function PasswordPanel() {
   };
 
   return (
-    <section className="set-section">
+    <section className="set-section sec-card">
       <h3 className="set-title">Password</h3>
 
       {st === null ? (
@@ -221,12 +221,6 @@ export function PasswordPanel() {
         </>
       )}
 
-      <h4 className="pw-sub">Two-factor (2FA)</h4>
-      <p className="set-note pw-soon">
-        Email / DiviGo two-factor is planned. Note it protects the app, not the keys — anyone with
-        your wallet file and password bypasses it — and it needs an email/DiviGo backend, so it’s a
-        later add.
-      </p>
     </section>
   );
 }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PasswordPanel } from "./PasswordPanel";
+import { SecurityPanel } from "./SecurityPanel";
 import { CoinMaturity } from "./CoinMaturity";
 import { MyNodes } from "./MyNodes";
 import { LogsPanel } from "./LogsPanel";
@@ -11,7 +11,7 @@ import { NetworkReachPanel } from "./NetworkReachPanel";
 const TABS = [
   { id: "nodes", label: "My Nodes" },
   { id: "network", label: "Network" },
-  { id: "password", label: "Password" },
+  { id: "password", label: "Security" },
   { id: "maturity", label: "Coin Maturity" },
   { id: "logs", label: "Logs" },
 ];
@@ -37,7 +37,7 @@ export function SettingsView() {
       <div className="set-body">
         {active === "nodes" && <MyNodes />}
         {active === "network" && <NetworkReachPanel />}
-        {active === "password" && <PasswordPanel />}
+        {active === "password" && <SecurityPanel />}
         {active === "maturity" && <CoinMaturity />}
         {active === "logs" && <LogsPanel />}
       </div>

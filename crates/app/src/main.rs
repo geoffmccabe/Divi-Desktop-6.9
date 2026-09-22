@@ -1195,6 +1195,17 @@ async fn wallet_seed() -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// Seed words of a password-protected wallet: unlock briefly, read, restore.
+#[tauri::command]
+async fn wallet_seed_unlock(passphrase: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        security::seed_words_with_pass(&cfg, &passphrase)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Save / clear the passphrase in the OS credential store (opt-in).
 #[tauri::command]
 async fn remember_password(passphrase: String) -> Result<(), String> {
@@ -3343,6 +3354,7 @@ fn main() {
             change_passphrase,
             encrypt_wallet,
             wallet_seed,
+            wallet_seed_unlock,
             remember_password,
             forget_password,
             resume_staking,

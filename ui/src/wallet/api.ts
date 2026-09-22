@@ -683,6 +683,8 @@ export const changePassphrase = (oldPass: string, newPass: string) =>
   invoke<void>("change_passphrase", { old: oldPass, new: newPass });
 export const encryptWallet = (passphrase: string) => invoke<string>("encrypt_wallet", { passphrase });
 export const walletSeed = () => invoke<string>("wallet_seed");
+/** Seed of a password-protected wallet: unlocks briefly, reads, then puts the wallet back as it was. */
+export const walletSeedUnlock = (passphrase: string) => invoke<string>("wallet_seed_unlock", { passphrase });
 export const rememberPassword = (passphrase: string) => invoke<void>("remember_password", { passphrase });
 export const forgetPassword = () => invoke<void>("forget_password");
 export const resumeStaking = () => invoke<StakeStart>("resume_staking");
