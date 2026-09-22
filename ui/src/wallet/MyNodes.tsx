@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listNodes, setActiveNode, nodeIdentity, setNodeName, setNodeLabel, type NodeInfo } from "./api";
+import { listNodes, setActiveNode, nodeIdentity, setNodeName, setNodeLabel, restartNode, type NodeInfo } from "./api";
 import { setActiveNodeId } from "./activeNode";
 
 // "My Nodes" settings tab: pick which node the wallet reads. Desktop (this
@@ -89,6 +89,12 @@ export function MyNodes() {
     setNote("");
     try {
       await setActiveNode(id);
+      /* Bring the chosen node up NOW. Switching used to only record the
+         choice; the local node then sat stopped until the watchdog noticed
+         a minute later, and in the meantime the map called it "gone quiet".
+         Geoff, 2026-Sep-22: switched back to Desktop, copied a warning
+         thirteen seconds into a start that takes two minutes. */
+      void restartNode().catch(() => {});
       setActive(id);
       setActiveNodeId(id);
       /* Everyone: the map repoints, and the shell remounts every panel so

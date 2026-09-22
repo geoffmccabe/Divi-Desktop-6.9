@@ -37,7 +37,7 @@ export function SecurityPanel() {
       </p>
       <div className="sec-grid">
         <PasswordPanel />
-        <SeedPhrasePanel />
+        <SeedPhrasePanel nodeLabel={where ?? "this node"} />
         <TwoFactorPanel />
       </div>
     </div>

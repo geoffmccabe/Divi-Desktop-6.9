@@ -428,6 +428,8 @@ export interface Probe {
   online: boolean;
 }
 /** `timeoutMs` is how patient each probe is; see probeSchedule.ts for who gets how much. */
+/** Ask our node to connect to another. keep=true keeps it; false connects once. */
+export const peerAdd = (ip: string, keep: boolean) => invoke<string>("peer_add", { ip, keep });
 export const probePeers = (ips: string[], timeoutMs?: number) => invoke<Probe[]>("probe_peers", { ips, timeoutMs: timeoutMs ?? null });
 
 export interface NodePing {
@@ -686,6 +688,15 @@ export const encryptWallet = (passphrase: string) => invoke<string>("encrypt_wal
 export const walletSeed = () => invoke<string>("wallet_seed");
 /** Seed of a password-protected wallet: unlocks briefly, reads, then puts the wallet back as it was. */
 export const walletSeedUnlock = (passphrase: string) => invoke<string>("wallet_seed_unlock", { passphrase });
+export interface SeedCheck { ok: boolean; problem: string; wordCount: number; seedHex: string }
+/** Read a pasted phrase in any shape; says whether it is real and gives its hex form. Touches nothing. */
+export const seedCheck = (phrase: string) => invoke<SeedCheck>("seed_check", { phrase });
+export interface Holdings { divi: number; addressCount: number; known: boolean }
+export const walletHoldings = () => invoke<Holdings>("wallet_holdings");
+/** Replace the active node's wallet with one restored from the phrase. Old file is renamed, not deleted. */
+export const restoreReplace = (phrase: string) => invoke<string>("restore_replace", { phrase });
+/** Create a second local node from the phrase; chain copied from the active local node. Returns its id. */
+export const restoreSecondNode = (phrase: string, label: string) => invoke<string>("restore_second_node", { phrase, label });
 export const rememberPassword = (passphrase: string) => invoke<void>("remember_password", { passphrase });
 export const forgetPassword = () => invoke<void>("forget_password");
 export const resumeStaking = () => invoke<StakeStart>("resume_staking");
@@ -855,5 +866,7 @@ export interface NodesResp {
 }
 export const listNodes = () => invoke<NodesResp>("list_nodes");
 export const setActiveNode = (id: string) => invoke<void>("set_active_node", { id });
+/** Bring the active node up now (idempotent; reuses a running one). */
+export const restartNode = () => invoke<void>("restart_node");
 /** Rename one of your remote nodes (its label). */
 export const setNodeLabel = (id: string, label: string) => invoke<void>("set_node_label", { id, label });

@@ -1206,6 +1206,117 @@ async fn wallet_seed_unlock(passphrase: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+// ── Restoring from a seed phrase ────────────────────────────────────────────
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SeedCheckDto {
+    ok: bool,
+    /// Why not, in plain words. Empty when ok.
+    problem: String,
+    word_count: usize,
+    /// The same secret as 64 hex bytes: what the node calls the HD seed.
+    /// Empty unless ok.
+    seed_hex: String,
+}
+
+/// Read a pasted phrase in any shape, say whether it is a real seed phrase,
+/// and if so give back its hex form. Pure; touches no node and no disk.
+#[tauri::command]
+async fn seed_check(phrase: String) -> SeedCheckDto {
+    let words = dd69_supervisor::seedphrase::normalize(&phrase);
+    match dd69_supervisor::seedphrase::check(&words) {
+        Ok(()) => SeedCheckDto {
+            ok: true,
+            problem: String::new(),
+            word_count: words.len(),
+            seed_hex: dd69_supervisor::seedphrase::to_seed_hex(&words, ""),
+        },
+        Err(problem) => SeedCheckDto { ok: false, problem, word_count: words.len(), seed_hex: String::new() },
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HoldingsDto {
+    divi: f64,
+    address_count: usize,
+    known: bool,
+}
+
+/// What the active node's wallet holds, for the "you will lose this" warning.
+#[tauri::command]
+async fn wallet_holdings() -> HoldingsDto {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else {
+            return HoldingsDto { divi: 0.0, address_count: 0, known: false };
+        };
+        match dd69_supervisor::restore::holdings(&cfg) {
+            Some(h) => HoldingsDto { divi: h.divi, address_count: h.address_count, known: true },
+            None => HoldingsDto { divi: 0.0, address_count: 0, known: false },
+        }
+    })
+    .await
+    .unwrap_or(HoldingsDto { divi: 0.0, address_count: 0, known: false })
+}
+
+/// Replace the ACTIVE node's wallet with one restored from the phrase.
+/// The previous wallet file is renamed, never deleted.
+#[tauri::command]
+async fn restore_replace(phrase: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let words = dd69_supervisor::seedphrase::normalize(&phrase);
+        dd69_supervisor::seedphrase::check(&words)?;
+        let seed = dd69_supervisor::seedphrase::to_seed_hex(&words, "");
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        dd69_supervisor::restore::replace_wallet(&cfg, &seed)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Create a SECOND local node from the phrase, copying the chain from the
+/// active local node so nothing is downloaded. Returns the new node's id.
+#[tauri::command]
+async fn restore_second_node(app: tauri::AppHandle, phrase: String, label: String) -> Result<String, String> {
+    use tauri::Emitter;
+    tauri::async_runtime::spawn_blocking(move || {
+        let words = dd69_supervisor::seedphrase::normalize(&phrase);
+        dd69_supervisor::seedphrase::check(&words)?;
+        let seed = dd69_supervisor::seedphrase::to_seed_hex(&words, "");
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        if cfg.remote {
+            return Err("Select a local node first; the chain is copied from it.".into());
+        }
+        let emit = |stage: &str| {
+            let _ = app.emit("dd69://restore-progress", serde_json::json!({ "stage": stage }));
+        };
+        dd69_supervisor::restore::create_second_node(&cfg.datadir, &label, &seed, &emit)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Ask OUR node to connect to another node: "add" keeps it on the node's
+/// list of addresses to keep connected to; "onetry" connects once. This is
+/// the node's own addnode call; nothing here talks to the other node directly.
+#[tauri::command]
+async fn peer_add(ip: String, keep: bool) -> Result<String, String> {
+    // An IP and nothing else. This goes into an RPC call on the money path.
+    if !ip.chars().all(|c| c.is_ascii_hexdigit() || c == '.' || c == ':') || ip.len() > 45 {
+        return Err("that is not an address".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
+        let rpc = dd69_supervisor::rpc::RpcClient::new(&cfg);
+        let mode = if keep { "add" } else { "onetry" };
+        rpc.call("addnode", serde_json::json!([format!("{ip}:51472"), mode]))
+            .map(|_| if keep { "Added. Your node will keep a connection to it.".to_string() } else { "Asked your node to connect once.".to_string() })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Save / clear the passphrase in the OS credential store (opt-in).
 #[tauri::command]
 async fn remember_password(passphrase: String) -> Result<(), String> {
@@ -3334,6 +3445,7 @@ fn main() {
             geolocate_ips,
             self_geo,
             probe_peers,
+            peer_add,
             ping_nodes,
             mempool_snapshot,
             mempool_conflicts,
@@ -3363,6 +3475,10 @@ fn main() {
             encrypt_wallet,
             wallet_seed,
             wallet_seed_unlock,
+            seed_check,
+            wallet_holdings,
+            restore_replace,
+            restore_second_node,
             remember_password,
             forget_password,
             resume_staking,

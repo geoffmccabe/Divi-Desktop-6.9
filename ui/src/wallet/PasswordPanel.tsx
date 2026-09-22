@@ -3,7 +3,6 @@ import {
   walletStatus,
   encryptWallet,
   changePassphrase,
-  walletSeed,
   rememberPassword,
   forgetPassword,
   type WalletStatus,
@@ -19,29 +18,19 @@ const MODES: { id: AskMode; label: string; hint: string }[] = [
   { id: "open", label: "Leave open", hint: "Fully unlocked — sends need no password. Least secure." },
 ];
 
-// First-time encryption: force a seed backup, then set the password.
+// First-time password. The seed backup now lives in its own Seed Phrase
+// panel beside this one, so this does one thing: set the password.
 function SetPassword({ onDone }: { onDone: () => void }) {
-  const [step, setStep] = useState<"seed" | "password">("seed");
-  const [seed, setSeed] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [p1, setP1] = useState("");
   const [p2, setP2] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const showSeed = async () => {
-    setErr(null);
-    try {
-      setSeed(await walletSeed());
-    } catch (e) {
-      setErr(String(e));
-    }
-  };
-
   const encrypt = async () => {
     setErr(null);
     if (p1.length < 8) return setErr("Use at least 8 characters.");
-    if (p1 !== p2) return setErr("The two passwords don’t match.");
+    if (p1 !== p2) return setErr("The two passwords don\u2019t match.");
     setBusy(true);
     try {
       await encryptWallet(p1);
@@ -55,38 +44,19 @@ function SetPassword({ onDone }: { onDone: () => void }) {
   return (
     <div className="pw-box">
       <div className="pw-warn">
-        ⚠ There is no password reset. If you lose this password, your coins are gone forever. Back up
-        your seed phrase first.
+        There is no password reset. Lose this password and the coins in this wallet are gone unless
+        you have its seed phrase (see the Seed Phrase panel).
       </div>
-      {step === "seed" ? (
-        <>
-          {!seed ? (
-            <button type="button" className="wl-btn" onClick={showSeed}>
-              Show my seed phrase
-            </button>
-          ) : (
-            <>
-              <div className="pw-seed">{seed}</div>
-              <label className="pw-check">
-                <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
-                I’ve written these words down and stored them somewhere safe.
-              </label>
-              <button type="button" className="wl-btn wl-btn-primary" disabled={!saved} onClick={() => setStep("password")}>
-                Continue
-              </button>
-            </>
-          )}
-        </>
-      ) : (
-        <>
-          <input className="wl-input" type="password" placeholder="New password" value={p1} onChange={(e) => setP1(e.target.value)} />
-          <input className="wl-input" type="password" placeholder="Confirm password" value={p2} onChange={(e) => setP2(e.target.value)} />
-          <button type="button" className="wl-btn wl-btn-primary" disabled={busy} onClick={encrypt}>
-            {busy ? "Encrypting…" : "Protect my wallet"}
-          </button>
-        </>
-      )}
-      {err && <p className="pw-err">{err}</p>}
+      <label className="pw-check">
+        <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
+        I have written down this wallet\u2019s seed phrase.
+      </label>
+      <input className="wl-input" type="password" placeholder="New password" value={p1} onChange={(e) => setP1(e.target.value)} disabled={!saved} />
+      <input className="wl-input" type="password" placeholder="Repeat it" value={p2} onChange={(e) => setP2(e.target.value)} disabled={!saved} />
+      <button type="button" className="wl-btn wl-btn-primary" disabled={busy || !saved || !p1} onClick={encrypt}>
+        {busy ? "Setting\u2026" : "Set password"}
+      </button>
+      {err && <p className="pw-msg">{err}</p>}
     </div>
   );
 }

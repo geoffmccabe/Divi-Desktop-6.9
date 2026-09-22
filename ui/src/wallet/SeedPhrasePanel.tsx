@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { walletSeed, walletSeedUnlock, walletStatus, type WalletStatus } from "./api";
+import { RestoreFromSeed } from "./RestoreFromSeed";
 
 // Seed Phrase: its own panel, because it is its own thing. The seed is the
 // wallet. The password only protects the copy of it on this machine. They
@@ -10,7 +11,7 @@ import { walletSeed, walletSeedUnlock, walletStatus, type WalletStatus } from ".
 
 const HIDE_AFTER_MS = 60_000;
 
-export function SeedPhrasePanel() {
+export function SeedPhrasePanel({ nodeLabel }: { nodeLabel: string }) {
   const [st, setSt] = useState<WalletStatus | null>(null);
   const [pass, setPass] = useState("");
   const [seed, setSeed] = useState<string | null>(null);
@@ -51,9 +52,8 @@ export function SeedPhrasePanel() {
     <section className="set-section sec-card">
       <h3 className="set-title">Seed Phrase</h3>
       <p className="set-note">
-        These words ARE the wallet. Anyone who has them can take every coin in it, from any
-        computer, without your password. Write them on paper and keep the paper somewhere safe.
-        Never type them into a website, a chat, or a photo.
+        The seed phrase IS the wallet on <strong>{nodeLabel}</strong>. Anyone with these words can
+        take every coin in it, from any computer, without the password. Write them on paper.
       </p>
 
       {seed ? (
@@ -88,9 +88,10 @@ export function SeedPhrasePanel() {
       )}
       {msg && <p className="pw-msg">{msg}</p>}
       <p className="pw-msg">
-        There is no copy button here on purpose: a seed phrase on the clipboard can be read by any
-        other program on the computer.
+        No copy button here on purpose: a seed phrase on the clipboard can be read by any other
+        program on the computer.
       </p>
+      <RestoreFromSeed nodeLabel={nodeLabel} onDone={() => walletStatus().then(setSt).catch(() => {})} />
     </section>
   );
 }

@@ -173,6 +173,48 @@ pub fn set_label(id: &str, label: &str) -> Result<(), String> {
         .map_err(|e| format!("cannot save nodes.json: {e}"))
 }
 
+/// Add a second LOCAL node profile (its own data folder and ports) and make
+/// it the active one. Used when a seed phrase is restored into a new node
+/// rather than over this one.
+pub fn add_local_profile(
+    id: &str,
+    label: &str,
+    datadir: &Path,
+    rpc_user: &str,
+    rpc_pass: &str,
+    rpc_port: u16,
+) -> Result<(), String> {
+    let mut v: Value = std::fs::read_to_string(nodes_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| json!({ "nodes": [] }));
+    if !v.get("nodes").map(|n| n.is_array()).unwrap_or(false) {
+        v["nodes"] = json!([]);
+    }
+    let clean: String = label.trim().chars().take(40).collect();
+    v["nodes"].as_array_mut().unwrap().push(json!({
+        "id": id,
+        "label": if clean.is_empty() { "Restored node".to_string() } else { clean },
+        "mode": "local",
+        "datadir": datadir.to_string_lossy(),
+        "rpc_host": "127.0.0.1",
+        "rpc_port": rpc_port,
+        "rpc_user": rpc_user,
+        "rpc_pass": rpc_pass,
+    }));
+    v["active"] = json!(id);
+    let dir = dd69_config_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    std::fs::write(nodes_path(), serde_json::to_string_pretty(&v).unwrap_or_default())
+        .map_err(|e| format!("cannot save nodes.json: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(nodes_path(), std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
 fn home() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
 }

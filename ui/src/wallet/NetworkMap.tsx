@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { networkPeers, probePeers, listNodes, nodeIdentity, networkCrawl, type Peer, type Geo } from "./api";
+import { networkPeers, probePeers, listNodes, nodeIdentity, networkCrawl, peerAdd, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, addMyIps, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
@@ -9,6 +9,7 @@ import { emitPeerCount } from "./peerEvents";
 import { beginProbeWave, emitMap, setMapSelf, setMapNodeCount, type ProbeTarget } from "./mapEvents";
 import { startMapFeedBridge } from "./mapFeedBridge";
 import { copySetupLogNow } from "./SetupLogHotkey";
+import { nodeStatus } from "../bridge";
 import { announcedName, counts as probeCounts, loadRecords, observe, plan, saveRecords, type ProbeRecord } from "./probeSchedule";
 import { stakingSetupPending } from "./stakeWin";
 import { drawMapAnim } from "./mapAnimRender";
@@ -301,6 +302,10 @@ interface HoverPoint {
   y: number;
   /** The name the node's owner gave it, announced in its user agent. "" = none. */
   name?: string;
+  /** The node's address, for the right-click menu. Absent for our own node. */
+  ip?: string;
+  /** Already connected to our node. */
+  isPeer?: boolean;
   title: string;
   lines: string[];
   tone?: "blue"; // active-but-not-connected background node
@@ -520,6 +525,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   };
   const [geos, setGeos] = useState<Record<string, Geo>>({});
   const [hover, setHover] = useState<HoverPoint | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; ip: string; isPeer: boolean; label: string; note: string | null; busy: boolean } | null>(null);
   const pointsRef = useRef<HoverPoint[]>([]);
   // When the node last told us something true. Drives the "this map is frozen"
   // notice; see the note by the poll below.
@@ -527,6 +533,16 @@ export function NetworkMap({ onReturn, autoplay = false }: {
      elapsed time -- see the note by the poll. */
   const missedPolls = useRef(0);
   const [stale, setStale] = useState<number | null>(null);
+  /* The node's phase as the wallet reports it, so the map can tell "starting"
+     from "was talking and stopped". */
+  const nodePhaseRef = useRef<string>("");
+  useEffect(() => {
+    let alive = true;
+    const ask = () => nodeStatus().then((s) => { if (alive) nodePhaseRef.current = s.phase; }).catch(() => {});
+    ask();
+    const id = setInterval(ask, 5000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
   const [copiedDiag, setCopiedDiag] = useState<string | null>(null);
 
   const geosRef = useRef(geos);
@@ -1036,6 +1052,16 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         setStale(null);
         return;
       }
+      /* A node that is STARTING is not a node that has gone quiet. It
+         answers nothing while it loads the block index, one to two minutes
+         on this chain. Ask the wallet what state the node is in and keep
+         silent while it is starting or still checking. */
+      const ph = nodePhaseRef.current;
+      if (ph === "starting" || ph === "checking" || ph === "stopped" || ph === "crashed" || ph === "unreachable") {
+        missedPolls.current = 0;
+        setStale(null);
+        return;
+      }
       setStale(
         missedPolls.current >= MISSES_BEFORE_WARNING
           ? missedPolls.current * 10
@@ -1200,6 +1226,29 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     wrap.addEventListener("mouseleave", onLeave);
     wrap.addEventListener("wheel", onWheel, { passive: false });
     wrap.addEventListener("dblclick", onDbl);
+    /* ── RIGHT-CLICK A NODE ────────────────────────────────────────────────
+       Geoff, 2026-Sep-20: "right-click on any node in the map to attempt to
+       ping it and make it a peer." The menu offers a real handshake ping,
+       adding it as a kept peer, connecting once, and copying the address.
+       Everything it does is drawn on the map like any other real event. */
+    const onContext = (e: MouseEvent) => {
+      e.preventDefault();
+      const rect = wrap.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      let best: HoverPoint | null = null;
+      let bestD = 18 * 18;
+      for (const pt of pointsRef.current) {
+        const d = (pt.x - mx) ** 2 + (pt.y - my) ** 2;
+        if (d < bestD) { bestD = d; best = pt; }
+      }
+      if (best?.ip) {
+        setHover(null);
+        setMenu({ x: mx, y: my, ip: best.ip, isPeer: !!best.isPeer, label: best.name || best.title, note: null, busy: false });
+      } else {
+        setMenu(null);
+      }
+    };
+    wrap.addEventListener("contextmenu", onContext);
     wrap.addEventListener("mousedown", onDown);
     window.addEventListener("mouseup", onUp);
 
@@ -1738,6 +1787,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           pts.push({
             x,
             y,
+            ip: p.ip,
+            isPeer: true,
             title: pg.city ? `${pg.city}, ${pg.country}` : p.ip,
             lines: [
               p.ip,
@@ -1769,6 +1820,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         pts.push({
           x,
           y,
+          ip,
+          isPeer: false,
           title: loc || ip,
           name,
           lines: [
@@ -1980,6 +2033,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       wrap.removeEventListener("mouseleave", onLeave);
       wrap.removeEventListener("wheel", onWheel);
       wrap.removeEventListener("dblclick", onDbl);
+      wrap.removeEventListener("contextmenu", onContext);
       wrap.removeEventListener("mousedown", onDown);
       window.removeEventListener("mouseup", onUp);
     };
@@ -2215,7 +2269,52 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             {primer.active ? <PrimerLove /> : <BlockChainViz />}
           </div>
         )}
-        {hover && (
+        {menu && (
+          <div
+            className="netmap-menu netmap-ctx"
+            style={{ left: Math.min(menu.x + 8, (wrapRef.current?.clientWidth ?? 9999) - 230), top: Math.max(8, menu.y - 8) }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <div className="netmap-ctx-head">{menu.label}<small>{menu.ip}</small></div>
+            <button type="button" disabled={menu.busy} onClick={() => {
+              setMenu((m) => m && { ...m, busy: true, note: "Pinging\u2026" });
+              const kp = knownRef.current[menu.ip];
+              const resolve = kp ? beginProbeWave([{ ip: menu.ip, lat: kp.lat, lon: kp.lon }]) : null;
+              networkCrawl([menu.ip], 0).then((r) => {
+                const hit = r.results.find((x) => x.ip === menu.ip);
+                resolve?.([{ ip: menu.ip, online: !!hit?.alive }]);
+                if (hit?.alive) {
+                  probeRef.current.set(menu.ip, "online");
+                  if (kp && hit.subver) knownRef.current = { ...knownRef.current, [menu.ip]: { ...kp, subver: hit.subver } };
+                }
+                setMenu((m) => m && { ...m, busy: false, note: hit?.alive ? `Answered. ${hit.subver || "Divi node"}, block ${hit.height}` : "No answer." });
+              }).catch((e) => setMenu((m) => m && { ...m, busy: false, note: String(e) }));
+            }}>Ping it</button>
+            {!menu.isPeer && (
+              <button type="button" disabled={menu.busy} onClick={() => {
+                setMenu((m) => m && { ...m, busy: true, note: "Asking your node to connect\u2026" });
+                const kp = knownRef.current[menu.ip];
+                if (kp) emitMap("node.seek", { lat: kp.lat, lon: kp.lon, ip: menu.ip });
+                peerAdd(menu.ip, true).then((r) => setMenu((m) => m && { ...m, busy: false, note: r }))
+                  .catch((e) => setMenu((m) => m && { ...m, busy: false, note: String(e) }));
+              }}>Add as peer</button>
+            )}
+            {!menu.isPeer && (
+              <button type="button" disabled={menu.busy} onClick={() => {
+                setMenu((m) => m && { ...m, busy: true, note: "Connecting once\u2026" });
+                const kp = knownRef.current[menu.ip];
+                if (kp) emitMap("node.seek", { lat: kp.lat, lon: kp.lon, ip: menu.ip });
+                peerAdd(menu.ip, false).then((r) => setMenu((m) => m && { ...m, busy: false, note: r }))
+                  .catch((e) => setMenu((m) => m && { ...m, busy: false, note: String(e) }));
+              }}>Connect once</button>
+            )}
+            <button type="button" onClick={() => { navigator.clipboard?.writeText(menu.ip); setMenu((m) => m && { ...m, note: "Address copied." }); }}>Copy address</button>
+            {menu.note && <div className="netmap-ctx-note">{menu.note}</div>}
+            <button type="button" className="netmap-ctx-close" onClick={() => setMenu(null)}>Close</button>
+          </div>
+        )}
+        {hover && !menu && (
           <div
             className={"netmap-tip" + (hover.tone === "blue" ? " netmap-tip-blue" : "")}
             style={{

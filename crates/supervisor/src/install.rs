@@ -443,6 +443,10 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
     let datadir = crate::config::dd69_datadir();
     let conf = datadir.join("divi.conf");
     if conf.is_file() {
+        // A seed phrase is written here for exactly one start during a
+        // restore and removed afterwards; if anything interrupted that, it
+        // must not stay. See restore.rs.
+        crate::restore::scrub_conf(&conf);
         // One-time repairs to confs WE wrote (never anyone else's node):
         //   1. 69.0.1 included an rpcallowip line that made the RPC port listen
         //      on every interface instead of loopback only — strip it.

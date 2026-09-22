@@ -1092,6 +1092,12 @@ code, .mono { font-family: var(--font-mono); }
   pointer-events: none;
 }
 .netmap-frozen b { color: #ffc768; }
+/* Right-click menu on a map node. Reuses the dropdown look. */
+.netmap-ctx { position: absolute; z-index: 30; min-width: 200px; padding: 6px; }
+.netmap-ctx-head { font-size: 0.8rem; font-weight: 700; color: hsl(45 100% 60%); padding: 4px 8px 6px; display: flex; flex-direction: column; gap: 2px; }
+.netmap-ctx-head small { font-weight: 400; color: hsl(var(--muted-foreground)); font-size: 0.7rem; }
+.netmap-ctx-note { font-size: 0.74rem; color: hsl(var(--foreground)); padding: 6px 8px; border-top: 1px solid hsl(var(--border)); }
+.netmap-ctx-close { opacity: 0.7; }
 /* The message must be selectable, and copyable without selecting. */
 .netmap-frozen { pointer-events: auto; display: flex; align-items: center; gap: 12px; justify-content: center; flex-wrap: wrap; }
 .netmap-frozen-text { user-select: text; cursor: text; }
@@ -1264,6 +1270,20 @@ code, .mono { font-family: var(--font-mono); }
 .sec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; align-items: start; width: 100%; }
 .sec-card { min-width: 0; }
 .sec-card .pw-seed { user-select: text; word-spacing: 0.35em; line-height: 1.9; }
+/* Restore from seed phrase */
+.rs-box { margin-top: 10px; padding-top: 10px; border-top: 1px solid hsl(var(--border)); }
+.rs-phrase { width: 100%; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.rs-bad { color: hsl(var(--destructive)); }
+.rs-good { color: hsl(var(--success)); }
+.rs-key { display: flex; flex-direction: column; gap: 4px; width: 100%; min-width: 0; }
+.rs-key-label { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
+.rs-key-hex { font-size: 0.72rem; word-break: break-all; user-select: text; padding: 6px 8px; border-radius: 6px; background: hsl(var(--card) / 0.8); border: 1px solid hsl(var(--border)); }
+.rs-choose { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.rs-option { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; border: 1px solid hsl(var(--border)); cursor: pointer; }
+.rs-option.on { border-color: hsl(var(--primary) / 0.7); background: hsl(var(--primary) / 0.1); }
+.rs-option span { display: flex; flex-direction: column; gap: 2px; }
+.rs-option small { font-size: 0.76rem; color: hsl(var(--muted-foreground)); }
+.rs-warn { padding: 8px 10px; border-radius: 8px; font-size: 0.8rem; line-height: 1.45; color: #ffe9c2; background: rgba(46, 28, 8, 0.9); border: 1px solid rgba(240, 168, 58, 0.6); }
 .set-note { font-size: 0.85rem; color: hsl(var(--muted-foreground)); margin: 0; line-height: 1.5; }
 
 /* ---- Info "?" dot ---- */
