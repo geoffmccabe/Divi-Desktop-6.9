@@ -855,3 +855,5 @@ export interface NodesResp {
 }
 export const listNodes = () => invoke<NodesResp>("list_nodes");
 export const setActiveNode = (id: string) => invoke<void>("set_active_node", { id });
+/** Rename one of your remote nodes (its label). */
+export const setNodeLabel = (id: string, label: string) => invoke<void>("set_node_label", { id, label });

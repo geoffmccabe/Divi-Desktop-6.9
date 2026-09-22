@@ -143,6 +143,36 @@ pub fn set_active(id: &str) -> Result<(), String> {
         .map_err(|e| format!("cannot save nodes.json: {e}"))
 }
 
+/// Rename one of the owner's own nodes. Each node has ITS OWN name: the
+/// desktop node's lives in node-identity.json and is announced by the local
+/// node; a remote node's is its label in nodes.json. This used to be one
+/// name for the whole install, so switching to the Europe node still showed
+/// the desktop node's name. Geoff, 2026-Sep-22: "each node has its own name."
+pub fn set_label(id: &str, label: &str) -> Result<(), String> {
+    if id == "desktop" {
+        return Err("the desktop node's name is set through its identity".into());
+    }
+    let mut v: Value = std::fs::read_to_string(nodes_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .ok_or_else(|| "no nodes.json".to_string())?;
+    let clean: String = label.trim().chars().take(40).collect();
+    let mut hit = false;
+    if let Some(arr) = v.get_mut("nodes").and_then(|n| n.as_array_mut()) {
+        for n in arr.iter_mut() {
+            if n.get("id").and_then(|x| x.as_str()) == Some(id) {
+                n["label"] = json!(clean);
+                hit = true;
+            }
+        }
+    }
+    if !hit {
+        return Err(format!("unknown node '{id}'"));
+    }
+    std::fs::write(nodes_path(), serde_json::to_string_pretty(&v).unwrap_or_default())
+        .map_err(|e| format!("cannot save nodes.json: {e}"))
+}
+
 fn home() -> PathBuf {
     PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
 }

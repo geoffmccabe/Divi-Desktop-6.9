@@ -384,6 +384,25 @@ export function NetworkMap({ onReturn, autoplay = false }: {
      string; ours carries a "dd69" marker. Anyone else shipping node software
      can identify themselves the same way, with their own marker. */
   const [dd69Only, setDd69Only] = useState(false);
+  /* Opening the hearts view runs a real handshake over every known node so
+     the view reflects what each node announces NOW, not what it announced
+     the last time it happened to be a peer. Also every thirty minutes. */
+  const lastAnnounceRefresh = useRef(0);
+  useEffect(() => {
+    if (!dd69Only) return;
+    if (Date.now() - lastAnnounceRefresh.current < 60_000) return;
+    lastAnnounceRefresh.current = Date.now();
+    void runNetworkRefresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dd69Only]);
+  useEffect(() => {
+    const id = setInterval(() => {
+      lastAnnounceRefresh.current = Date.now();
+      void runNetworkRefresh();
+    }, 30 * 60_000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const dd69OnlyRef = useRef(false);
   dd69OnlyRef.current = dd69Only;
   // First-run install side-panel. Opens automatically when the node still needs
@@ -602,10 +621,19 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       resolve(reply.results.map((r) => ({ ip: r.ip, online: r.alive })));
       for (const r of reply.results) {
         probeRef.current.set(r.ip, r.alive ? "online" : "offline");
+        /* Remember what it called itself. The handshake returns each node's
+           user agent, and this was being thrown away: the map only ever
+           learned a node's user agent from getpeerinfo, i.e. from nodes we
+           happened to be connected to. So a node that upgraded to a build
+           announcing "dd69" -- the UK and Europe servers, Andy -- stayed
+           filed under its OLD announcement unless it was a peer, and the
+           hearts view could not find it. Geoff, 2026-Sep-22: "only see my
+           own node with a heart." */
+        if (r.alive && r.subver && knownRef.current[r.ip]) {
+          knownRef.current = { ...knownRef.current, [r.ip]: { ...knownRef.current[r.ip], subver: r.subver } };
+        }
       }
       setProbeTick((t) => t + 1);
-      {
-      }
 
       // Learned second-hand from other nodes' address books: the ones our own
       // node has never connected to and so could never show.

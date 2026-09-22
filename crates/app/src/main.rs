@@ -1704,6 +1704,14 @@ async fn node_identity() -> serde_json::Value {
         .unwrap_or_else(|_| serde_json::json!({ "id": "", "name": "", "nameSource": "custom" }))
 }
 
+/// Rename one of the owner's remote nodes (its label in nodes.json).
+#[tauri::command]
+async fn set_node_label(id: String, label: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || config::set_label(&id, &label))
+        .await
+        .unwrap_or_else(|_| Err("failed to rename the node".into()))
+}
+
 /// Set (or clear) this node's name. `source` is "custom" for a typed name, or
 /// "agent" when the name comes from the node's registered Agent identity.
 #[tauri::command]
@@ -3387,6 +3395,7 @@ fn main() {
             setup_log_save,
             node_identity,
             set_node_name,
+            set_node_label,
             update_check,
             security_tools,
             update_install,

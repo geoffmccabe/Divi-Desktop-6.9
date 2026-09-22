@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listNodes, setActiveNode, nodeIdentity, setNodeName, type NodeInfo } from "./api";
+import { listNodes, setActiveNode, nodeIdentity, setNodeName, setNodeLabel, type NodeInfo } from "./api";
 import { setActiveNodeId } from "./activeNode";
 
 // "My Nodes" settings tab: pick which node the wallet reads. Desktop (this
@@ -26,13 +26,29 @@ export function MyNodes() {
         setActiveNodeId(r.active);
       })
       .catch(() => {});
+  /* The name box belongs to whichever node is ACTIVE. The desktop node's
+     name is this install's identity (and is announced by the local node);
+     a remote node's name is its label. It used to show the desktop node's
+     name whatever was selected. */
+  const loadNameFor = (activeId: string, list: NodeInfo[]) => {
+    if (activeId === "desktop") {
+      nodeIdentity()
+        .then((i) => { setNodeId(i.id); setName(i.name); setSavedName(i.name); })
+        .catch(() => {});
+    } else {
+      const n = list.find((x) => x.id === activeId);
+      setNodeId("");
+      setName(n?.label ?? "");
+      setSavedName(n?.label ?? "");
+    }
+  };
   useEffect(() => {
-    refresh();
-    nodeIdentity()
-      .then((i) => {
-        setNodeId(i.id);
-        setName(i.name);
-        setSavedName(i.name);
+    listNodes()
+      .then((r) => {
+        setNodes(r.nodes);
+        setActive(r.active);
+        setActiveNodeId(r.active);
+        loadNameFor(r.active, r.nodes);
       })
       .catch(() => {});
   }, []);
@@ -42,18 +58,30 @@ export function MyNodes() {
     setNameBusy(true);
     setNameNote("");
     try {
-      const i = await setNodeName(name.trim(), "custom");
-      setName(i.name);
-      setSavedName(i.name);
-      // Let the map pick up the new name immediately.
-      window.dispatchEvent(new CustomEvent("dd69:nodename", { detail: i }));
-      setNameNote(i.name ? "Saved. Your node will show this name." : "Name cleared.");
+      if (active === "desktop") {
+        const i = await setNodeName(name.trim(), "custom");
+        setName(i.name);
+        setSavedName(i.name);
+        // Let the map pick up the new name immediately.
+        window.dispatchEvent(new CustomEvent("dd69:nodename", { detail: i }));
+        setNameNote(i.name ? "Saved. Announced to the network at the node's next restart." : "Name cleared.");
+      } else {
+        await setNodeLabel(active, name.trim());
+        setSavedName(name.trim());
+        await refresh();
+        setNameNote("Saved.");
+      }
     } catch (e) {
       setNameNote(String(e));
     } finally {
       setNameBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (active) loadNameFor(active, nodes);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active]);
 
   const choose = async (id: string) => {
     if (id === active || busy) return;
@@ -81,7 +109,9 @@ export function MyNodes() {
       {/* This computer's node name — a fun label that rides with a stable id, so
           your node stays "one node" even when your IP changes as you travel. */}
       <div className="nodename-box">
-        <label className="nodename-label" htmlFor="nodename-input">Node name</label>
+        <label className="nodename-label" htmlFor="nodename-input">
+          Node name{active && active !== "desktop" ? ` for ${nodes.find((n) => n.id === active)?.label ?? active}` : " for this computer's node"}
+        </label>
         <div className="nodename-row">
           <input
             id="nodename-input"
