@@ -109,11 +109,45 @@ export function cleanupLegacySeed(): void {
 export function baselineNewNodes(now = Date.now()): void {
   cleanupLegacySeed(); // heal installs that already saved the old Costa Rica seed
   const reg = loadReg();
-  if (Object.keys(reg).length > 0) return; // already seeded
   const old = now - (NEW_DAYS + 1) * DAY_MS; // older than the window ⇒ not new
-  const k = loadKnown();
-  for (const ip of Object.keys(k)) reg[ip] = old;
+  if (Object.keys(reg).length === 0) {
+    const k = loadKnown();
+    for (const ip of Object.keys(k)) reg[ip] = old;
+    saveReg(reg);
+  }
+  rebaselineAfterCrawl(reg, old);
+}
+
+/* ── ONE-TIME RESET AFTER THE NETWORK CRAWL ──────────────────────────────
+   The seed above only runs on a brand-new install. The U-key crawl then
+   started asking every peer for ITS peers, and an install that had known
+   about ninety nodes suddenly learned of hundreds -- every one of them
+   registered "first seen today", every one of them a spiral. Geoff,
+   2026-Sep-22: "hundreds of them are showing as spirals on the map and it's
+   ruining the node map."
+
+   So, once per install: everything known at this moment becomes "existing".
+   From here on a spiral means a node this wallet has genuinely never seen
+   before. Guarded by a flag so it can never re-freeze a real newcomer, and
+   the flag is versioned so a future reset is one line. */
+const REBASELINE_FLAG = "dd69.newNodes.rebaseline.v2";
+
+function rebaselineAfterCrawl(reg: Reg, old: number): void {
+  try {
+    if (localStorage.getItem(REBASELINE_FLAG)) return;
+  } catch {
+    return;
+  }
+  for (const ip of Object.keys(reg)) reg[ip] = old;
+  for (const ip of Object.keys(loadKnown())) reg[ip] = old;
   saveReg(reg);
+  // No arrival cue for any of them either: they did not arrive, we noticed.
+  try {
+    localStorage.setItem(ANNOUNCED, JSON.stringify(Object.keys(reg)));
+    localStorage.setItem(REBASELINE_FLAG, String(Date.now()));
+  } catch {
+    /* storage unavailable */
+  }
 }
 
 /**

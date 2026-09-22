@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 /// download" and keeps whatever it has — including a node that crashes on
 /// startup. 69.0.2 carries the fix for that crash, so every install must fetch
 /// it rather than keep the copy it already trusts.
-pub const DIVID69_VERSION: &str = "69.0.2";
+pub const DIVID69_VERSION: &str = "69.0.3";
 
 const BASE_URL: &str = "https://scan.divi.love/downloads";
 
@@ -64,6 +64,13 @@ const SEED_PEERS: &[&str] = &[
 /// Archive name and its pinned SHA-256, per platform. A platform with no entry
 /// simply has no managed daemon yet and falls back to whatever is on the
 /// system.
+///
+/// THE VERSION IS IN THE FILE NAME. Once, a new node program was published
+/// under the same file name the previous wallet pinned, and every fresh
+/// install of that wallet failed its checksum until the file was put back.
+/// With the version in the name, an old wallet keeps finding the file it
+/// expects, a new wallet finds its own, and publishing one can never break
+/// the other.
 struct Artifact {
     file: &'static str,
     sha256: &'static str,
@@ -72,14 +79,14 @@ struct Artifact {
 fn artifact() -> Option<Artifact> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     return Some(Artifact {
-        file: "divid69-macos-arm64.tar.gz",
-        sha256: "cdd12abb1af3f538582fe0cc6b8544a9a85200019b5b437ac1e681be88c29af9",
+        file: "divid69-69.0.3-macos-arm64.tar.gz",
+        sha256: "00127350dab23a765260152ac6198193b894f456e7904e86f3b9898dc55bbfdb",
     });
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     return Some(Artifact {
-        file: "divid69-linux-x86_64.tar.gz",
-        sha256: "0b2d0b4346e353b8c2879ddefa1e4f5114c7111324e411e04b23daf1623ef79e",
+        file: "divid69-69.0.3-linux-x86_64.tar.gz",
+        sha256: "d1380d1d51345c87050e1689c69faca89339c0a2b32dbf4c89b613fd9ece6497",
     });
 
     // Windows x86_64: packaged the same way (.tar.gz, which Windows 10+ extracts
@@ -87,8 +94,8 @@ fn artifact() -> Option<Artifact> {
     // the in-tree depends system) and published to scan.divi.love/downloads.
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     return Some(Artifact {
-        file: "divid69-windows-x86_64.tar.gz",
-        sha256: "02176c9462205b763c4334bbf74e6972a99dd68acd4ac63698274547528f3c2f",
+        file: "divid69-69.0.3-windows-x86_64.tar.gz",
+        sha256: "4a010fdd23a0370f14e9518bb04100f2c7832f7954a0b28b1239738dd3bb4216",
     });
 
     #[cfg(not(any(
@@ -192,6 +199,32 @@ pub fn ensure_divid69(progress: impl Fn(&str)) -> Result<PathBuf, String> {
             std::env::consts::ARCH
         ));
         return Err("no divid69 build is published for this platform yet".into());
+    }
+
+    /* An UPGRADE, not a first install: the old program is here and may be
+       running. Stop it politely before touching the file. On Windows a
+       running program cannot be replaced at all, and on every platform a
+       node that keeps running the old program after a "successful" install
+       is how a fix fails to reach the people who need it. Never forced. */
+    if target.is_file() {
+        if let Ok(cfg) = crate::config::NodeConfig::load() {
+            if crate::process::daemon_pid(&cfg.datadir).is_some() {
+                setuplog::log(format!(
+                    "node software: upgrading to {DIVID69_VERSION} — stopping the running node first"
+                ));
+                let rpc = crate::rpc::RpcClient::new(&cfg);
+                match crate::process::safe_stop(&rpc, &cfg.datadir, std::time::Duration::from_secs(1200)) {
+                    Ok(d) => setuplog::log(format!("node software: node stopped cleanly after {}s", d.as_secs())),
+                    Err(e) => {
+                        setuplog::log(format!(
+                            "node software: the running node would not stop ({e}) — not upgrading \
+                             under it; will try again next start"
+                        ));
+                        return Ok(target);
+                    }
+                }
+            }
+        }
     }
 
     let url = format!("{BASE_URL}/{}", art.file);

@@ -34,15 +34,15 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            archive: divid69-windows-x86_64.tar.gz
+            archive: divid69-69.0.3-windows-x86_64.tar.gz
             exe: divid69.exe
             cli: dd69.exe
           - os: ubuntu-22.04
-            archive: divid69-linux-x86_64.tar.gz
+            archive: divid69-69.0.3-linux-x86_64.tar.gz
             exe: divid69
             cli: dd69
           - os: macos-latest
-            archive: divid69-macos-arm64.tar.gz
+            archive: divid69-69.0.3-macos-arm64.tar.gz
             exe: divid69
             cli: dd69
     name: Node gate (${{ matrix.os }})

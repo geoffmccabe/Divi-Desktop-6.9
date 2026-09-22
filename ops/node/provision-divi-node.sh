@@ -20,8 +20,8 @@
 # Safe to run again: every step checks for its own result first.
 set -euo pipefail
 
-DIVID_URL="https://scan.divi.love/downloads/divid69-linux-x86_64.tar.gz"
-DIVID_SHA="0b2d0b4346e353b8c2879ddefa1e4f5114c7111324e411e04b23daf1623ef79e"
+DIVID_URL="https://scan.divi.love/downloads/divid69-69.0.3-linux-x86_64.tar.gz"
+DIVID_SHA="d1380d1d51345c87050e1689c69faca89339c0a2b32dbf4c89b613fd9ece6497"
 SNAP_URL="https://nodes.divi.love/snapshot/DIVI-snapshot.tar.gz"
 
 DIVI_USER="divi"
