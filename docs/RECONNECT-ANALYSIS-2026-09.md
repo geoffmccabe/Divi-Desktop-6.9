@@ -20,7 +20,11 @@ Measured on Geoff's Mac, node restart at 02:18:56:
 | Results applied ALL AT ONCE when the slowest probe finishes | end of wave | app |
 | Nodes light up on the map | ~100 s after the node started at best; ~3 minutes at worst | |
 
-So the network itself reconnects in seconds. The wait is made of three
+Correction from the code trace: nodes that are actual PEERS of our node go
+live on the first 10-second poll, no probe needed. It is the other verified
+nodes (the ones we are not directly connected to) that wait for the wave.
+
+So the network itself reconnects in seconds. The wait is made of four
 things, all ours:
 
 1. **The node's own load (81 s).** Sixty-nine seconds of that is reading the
@@ -38,6 +42,16 @@ things, all ours:
    dead address that takes 12 seconds to time out. And on the day the daily
    recheck of written-off addresses comes due, that one wave is ~400 slow
    probes and the map sits still for over a minute.
+
+4. **The animation lags the truth by up to a minute.** Answers arrive in one
+   lump, then the map shows them one node every 90 ms, each with a 1.9 s arc
+   and ring. Six hundred addresses in a wave means the last answer is drawn
+   ~54 s after it was known. Pure presentation.
+
+Also: one deliberate line at startup (`NetworkMap.tsx`, the "dim ghosts"
+choice) forces every remembered node to "offline", and the live peer list is
+never cached, so after a node restart there are no peer lines until the
+first successful poll.
 
 ## What "optimistic" can mean here, honestly
 
@@ -63,6 +77,9 @@ honest:
 - **Never let the daily recheck block the live wave.** Written-off addresses
   are rechecked in their own slow lane (a few at a time in the background),
   never in the same wave as the nodes people are looking at.
+- **Animate only what changed, and cap the stagger.** A wave that confirms
+  what was already drawn should draw nothing; the few real changes get the
+  arc. A full wave resolves in a few seconds, not a minute.
 - **Do not wait for the node to load to show the network.** The probes come
   from the app, not from the node; the map can show the network alive while
   the node is still reading its block index, with the node's own pin
@@ -88,7 +105,7 @@ honest:
 
 ## Cost and risk
 
-Five contained changes in `ui/src/wallet/NetworkMap.tsx`,
+Six contained changes in `ui/src/wallet/NetworkMap.tsx`,
 `ui/src/wallet/probeSchedule.ts` and the probe command in
 `crates/app/src/main.rs` / `crates/supervisor/src/network.rs`. The rules in
 `probeSchedule.ts` are pure and tested, so "assumed alive" and "answers as
