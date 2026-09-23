@@ -504,7 +504,15 @@ fn spawn_node(
 /// honest sign that a node which has not answered yet is nonetheless alive
 /// and doing something -- loading a block index, most often.
 fn node_log_grew(datadir: &Path, seen: &mut u64) -> bool {
-    let now = std::fs::metadata(datadir.join("debug.log")).map(|m| m.len()).unwrap_or(0);
+    // The node writes debug.log in its data folder on the main chain and in
+    // a sub-folder on the test chains. The gate runs on the test chain, and
+    // on a slow Windows runner the first-run key generation ran past the
+    // start timeout with this looking in the wrong place, so a working node
+    // got no extra time and the build was refused.
+    let now = ["debug.log", "regtest/debug.log", "testnet3/debug.log"]
+        .iter()
+        .map(|f| std::fs::metadata(datadir.join(f)).map(|m| m.len()).unwrap_or(0))
+        .sum::<u64>();
     let grew = now > *seen;
     *seen = now;
     grew
