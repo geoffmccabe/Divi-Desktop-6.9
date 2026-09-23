@@ -68,6 +68,24 @@ box; nodes-over-time exists nowhere and must start being recorded
 Done when: all five draw real data, and a daily node snapshot has been
 running for at least a week.
 
+### A7. Spikeworld keeps changing its blocks (2026-Sep-23)
+Cause measured, not guessed: five detail levels, and the finest arrived 13
+cubes from the nose where a two-cube block is nine degrees of screen; every
+swap moved a quarter of the cubes, and it happened as an overlap (two
+surfaces) or a hole. Done in 69.13.26: swaps happen all at once, dissolve
+over a third of a second, and refine earlier (22 cubes); the rules are flown
+in a test (`ui/src/wallet/rebels/voxel/voxelLod.test.ts`) that holds no
+overlap, no hole, and a ceiling on what moves. NOT done: it still refines as
+you approach (any detail system does); if that is still too much, the one
+remaining lever is the room size Geoff chose (10 cubes): at 20 cubes a fine
+chunk costs a third as much and full detail can reach 128 cubes. His call.
+
+### A8. The node wedges about once a day (2026-Sep-21, 22, 23)
+One request holds the node's lock for hours; the node program has no
+symbols, so 69.13.25 names every slow request in the setup log and restarts a
+wedged node in about eight minutes instead of forty. Next wedge: read the
+`rpc:` lines and fix that request.
+
 ---
 
 ## B. The node and wallet core (the Bug Hell analysis)
