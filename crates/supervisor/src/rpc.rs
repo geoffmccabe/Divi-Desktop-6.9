@@ -63,6 +63,38 @@ fn is_slow_call(method: &str) -> bool {
     matches!(method, "sendtoaddress" | "sendmany" | "walletpassphrase" | "sendrawtransaction" | "fundrawtransaction")
 }
 
+/* ---- WHICH REQUEST WEDGED THE NODE ----
+   Three days running (2026-Sep-21, 22, 23) Geoff's node stopped answering
+   while still following the chain. A thread sample showed why: one RPC
+   request spinning at full CPU for hours with the node's main lock held, so
+   every other request queued behind it for ever. The node program ships
+   without symbols, so the sample could not say WHICH request. This can: any
+   request that takes longer than a few seconds, or never answers, is written
+   to the setup log by name. The wedge then names itself. Timeouts are noted
+   once per request name every few minutes, because a wedged node fails every
+   poll and the log would otherwise fill with the same line. */
+const SLOW_AFTER: Duration = Duration::from_secs(5);
+const TIMEOUT_NOTE_EVERY: Duration = Duration::from_secs(300);
+
+fn note_slow(method: &str, took: Duration, no_answer: bool) {
+    if took < SLOW_AFTER {
+        return;
+    }
+    let secs = took.as_secs();
+    if !no_answer {
+        crate::setuplog::log(format!("rpc: {method} took {secs}s to answer"));
+        return;
+    }
+    static LAST: OnceLock<Mutex<std::collections::HashMap<String, std::time::Instant>>> = OnceLock::new();
+    let mut last = LAST.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+    let now = std::time::Instant::now();
+    let due = last.get(method).map_or(true, |t| now.duration_since(*t) >= TIMEOUT_NOTE_EVERY);
+    if due {
+        last.insert(method.to_string(), now);
+        crate::setuplog::log(format!("rpc: {method} gave no answer after {secs}s"));
+    }
+}
+
 fn slow_agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
@@ -201,10 +233,12 @@ impl RpcClient {
         // (spawn_blocking) so waiting never freezes anything.
         let _slot = Slot::take();
         let agent = if is_slow_call(method) { slow_agent() } else { shared_agent() };
+        let started = std::time::Instant::now();
         let resp = agent
             .post(&self.url)
             .set("Authorization", &self.auth)
             .send_string(&body.to_string());
+        note_slow(method, started.elapsed(), resp.is_err() && !matches!(resp, Err(ureq::Error::Status(_, _))));
         // Every RPC call in the app funnels through here, which makes this the
         // one honest place to tell the map whether the node is answering. A
         // non-200 with a JSON body still means the node ANSWERED: it disagreed

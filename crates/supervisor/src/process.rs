@@ -221,6 +221,7 @@ fn spawn_once(
            fail to bind the port this one is holding, and the owner would be
            told another wallet is running when it is this one. */
         let deadline = Instant::now();
+        let mut last_pulse = crate::rpc::Pulse::NotListening;
         while deadline.elapsed() < timeout {
             if rpc.call("getblockcount", serde_json::json!([])).is_ok() {
                 crate::setuplog::log(format!(
@@ -234,17 +235,41 @@ fn spawn_once(
                 );
                 break;
             }
+            /* A "still loading" refusal is an answer; only an accepted
+               connection that returns nothing is a wedge. */
+            last_pulse = rpc.pulse(Duration::from_secs(8));
             std::thread::sleep(Duration::from_secs(2));
         }
-        if pid_alive(pid) {
+        if pid_alive(pid) && last_pulse != crate::rpc::Pulse::Silent {
             crate::setuplog::log(format!(
-                "node launch: the node (pid {pid}) is running but has not answered in {}s",
+                "node launch: the node (pid {pid}) is still starting up after {}s — leaving it to \
+                 finish",
                 timeout.as_secs()
             ));
             return Spawn::Failed(format!(
-                "A Divi node is already running on this computer (process {pid}) but it is not \
-                 responding. It has to be stopped before another can start. Quit any other Divi \
-                 wallet, or restart the computer if none is open."
+                "The node (process {pid}) is still starting up. Give it a few more minutes."
+            ));
+        }
+        if pid_alive(pid) {
+            /* ---- IT IS OUR NODE, SO STOP IT OURSELVES ----
+               This used to tell the owner to "quit any other Divi wallet, or
+               restart the computer". But the pid came from THIS data folder's
+               pid file: it is the node this app started, wedged, and nobody
+               else's. Telling Geoff to reboot for that (2026-Sep-23, three
+               days running) was passing our own job to him. So it is asked to
+               stop, politely and never forced, and the watchdog starts a fresh
+               one the moment it has gone. A wedged node can take several
+               minutes to get out; that is the chain being saved, not a fault. */
+            crate::setuplog::log(format!(
+                "node launch: the node (pid {pid}) is running but has not answered in {}s — \
+                 it is wedged; asking it to stop, a fresh one starts automatically once it has",
+                timeout.as_secs()
+            ));
+            request_stop_via_signal(pid);
+            return Spawn::Failed(format!(
+                "The node (process {pid}) is running but not answering, so it is being stopped \
+                 and will be restarted automatically. This can take several minutes while it \
+                 saves the chain. Nothing to do."
             ));
         }
     }

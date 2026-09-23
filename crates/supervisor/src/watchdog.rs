@@ -89,22 +89,77 @@ const MAX_SILENCE: Duration = Duration::from_secs(1200);
 /// shutdown can take fifteen. This is past both.
 const MAX_NOT_LISTENING: Duration = Duration::from_secs(1800);
 
-/// Has the node written to its own log since we last looked? A node flushing
-/// chain state, loading an index or talking to peers writes constantly, and a
-/// node doing that is doing work — whatever its RPC port is doing. This is the
-/// check that stops us shooting a node that is busy rather than stuck.
-fn log_progress(datadir: &Path, seen: &mut Option<(u64, SystemTime)>) -> bool {
-    let Ok(m) = std::fs::metadata(datadir.join("debug.log")) else {
+/// A node that is plainly RUNNING (accepting blocks, talking to peers) and
+/// still answers no request is wedged, and this is how long it gets before we
+/// say so. Short, because nothing healthy does that for five minutes, and
+/// because the alternative was measured: on 2026-Sep-23 Geoff's node accepted
+/// a new block every minute for two hours while answering nothing, and the
+/// wallet was dead the whole time. A thread sample showed one RPC request
+/// spinning with the node's main lock held.
+const RUNNING_SILENCE: Duration = Duration::from_secs(300);
+/// Strikes for that case: three minutes on top, so a single slow spell (one
+/// big request that does finish) is not shot for it.
+const RUNNING_STRIKES: u32 = 6;
+
+/// What the node has written to its own log since we last looked.
+struct Progress {
+    /// Anything at all.
+    moved: bool,
+    /// Heavy work that legitimately blocks RPC: flushing, loading, verifying,
+    /// rescanning. "Accepted a block" and "connect() failed" are NOT heavy
+    /// work; they are what a running node writes all day, and a node writing
+    /// them while answering nothing is wedged, not busy.
+    heavy: bool,
+}
+
+/// Has the node written to its own log since we last looked, and was it doing
+/// real work when it did? A node flushing chain state or loading an index
+/// cannot answer RPC while it does, and shooting it is what damages the
+/// database. That, and only that, is the excuse this check grants.
+fn log_progress(datadir: &Path, seen: &mut Option<(u64, SystemTime)>) -> Progress {
+    let path = datadir.join("debug.log");
+    let Ok(m) = std::fs::metadata(&path) else {
         // No log to judge by: give the node the benefit of the doubt.
-        return true;
+        return Progress { moved: true, heavy: true };
     };
     let now = (m.len(), m.modified().unwrap_or(SystemTime::UNIX_EPOCH));
-    let moved = match *seen {
-        Some(before) => now != before,
+    let before = *seen;
+    *seen = Some(now);
+    let Some(before) = before else {
+        return Progress { moved: true, heavy: true };
+    };
+    if now == before {
+        return Progress { moved: false, heavy: false };
+    }
+    // Read what was appended (bounded), and look at what it says.
+    let heavy = match read_appended(&path, before.0, now.0) {
+        Some(text) => looks_heavy(&text),
+        // Could not read it: the old benefit of the doubt.
         None => true,
     };
-    *seen = Some(now);
-    moved
+    Progress { moved: true, heavy }
+}
+
+fn read_appended(path: &Path, from: u64, to: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    const CAP: u64 = 256 * 1024;
+    let mut f = std::fs::File::open(path).ok()?;
+    // A rotated or truncated log: read its tail instead.
+    let start = if to > from { to.saturating_sub((to - from).min(CAP)) } else { to.saturating_sub(CAP) };
+    f.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::new();
+    f.take(CAP).read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Lines the node writes only while doing work that holds its main lock for a
+/// long time. Chain-following chatter is deliberately not on this list.
+fn looks_heavy(text: &str) -> bool {
+    const HEAVY: [&str; 12] = [
+        "Flush", "flush", "Writing", "Committing", "LoadBlockIndex", "Loading block index",
+        "Verifying", "Rescan", "rescan", "Rewinding", "Opening LevelDB", "Shutdown",
+    ];
+    HEAVY.iter().any(|h| text.contains(h))
 }
 
 /// Run forever, watching the node. Intended to be spawned once at startup.
@@ -229,9 +284,15 @@ pub fn run() {
                 // whole time and cannot answer RPC while it does. That is
                 // busy, not broken, and shooting it is how the database gets
                 // damaged.
-                let busy = log_progress(&cfg.datadir, &mut log_seen);
+                let progress = log_progress(&cfg.datadir, &mut log_seen);
                 let silent_for = answered_at.elapsed();
-                if busy && silent_for < MAX_SILENCE {
+                // Heavy work (flushing, loading) is an excuse, for as long as
+                // MAX_SILENCE allows. Ordinary chatter is an excuse only for
+                // the first few minutes: a node that keeps accepting blocks
+                // and never answers is the wedge itself, not a busy spell.
+                let excused = progress.moved
+                    && silent_for < if progress.heavy { MAX_SILENCE } else { RUNNING_SILENCE };
+                if excused {
                     if strikes > 0 {
                         crate::applog::log(
                             "watchdog: no RPC answer, but the node is still writing to its log — \
@@ -241,21 +302,23 @@ pub fn run() {
                     strikes = 0;
                     continue;
                 }
-                if busy {
-                    // Still writing, but it has not answered us in twenty
-                    // minutes. Writing peer-connection failures is not work.
+                let running = progress.moved && !progress.heavy;
+                let needed = if running { RUNNING_STRIKES } else { STRIKES };
+                strikes += 1;
+                if running {
                     crate::applog::log(format!(
-                        "watchdog: the node has written to its log but has answered nothing for \
-                         {} minutes — that is wedged, not busy",
+                        "watchdog: the node is running (still accepting blocks and talking to \
+                         peers) but has answered no request for {} minutes ({strikes} of \
+                         {needed}) — pid {pid}",
                         silent_for.as_secs() / 60
                     ));
+                } else {
+                    crate::applog::log(format!(
+                        "watchdog: the RPC port accepts connections but answers nothing, and the \
+                         node has written nothing to its log ({strikes} of {needed}) — pid {pid}"
+                    ));
                 }
-                strikes += 1;
-                crate::applog::log(format!(
-                    "watchdog: the RPC port accepts connections but answers nothing, and the node \
-                     has written nothing to its log ({strikes} of {STRIKES}) — pid {pid}"
-                ));
-                if strikes < STRIKES {
+                if strikes < needed {
                     continue;
                 }
             }
@@ -354,12 +417,19 @@ mod tests {
         let mut seen = None;
         // The first look has nothing to compare against and must never be
         // read as "stuck" — that alone would restart a node on sight.
-        assert!(log_progress(&dir, &mut seen));
+        assert!(log_progress(&dir, &mut seen).moved);
         // Nothing written since: no progress.
-        assert!(!log_progress(&dir, &mut seen));
-        // The node wrote a line: it is doing work.
-        std::fs::write(&log, b"starting\nnew best block\n").unwrap();
-        assert!(log_progress(&dir, &mut seen));
+        assert!(!log_progress(&dir, &mut seen).moved);
+        // The node wrote ordinary chatter: it moved, but that is not heavy
+        // work, and a node writing only this while answering nothing is
+        // wedged (2026-Sep-23: a new block a minute for two hours, no answers).
+        std::fs::write(&log, b"starting\nUpdateTip: new best=abc height=1\nconnect() to 1.2.3.4 failed\n").unwrap();
+        let p = log_progress(&dir, &mut seen);
+        assert!(p.moved && !p.heavy);
+        // A flush IS heavy work, and excuses a silence.
+        std::fs::write(&log, b"starting\nUpdateTip: new best=abc height=1\nconnect() to 1.2.3.4 failed\nWriting info to mncache.dat...\n").unwrap();
+        let p = log_progress(&dir, &mut seen);
+        assert!(p.moved && p.heavy);
 
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -367,7 +437,8 @@ mod tests {
     #[test]
     fn a_missing_log_is_never_held_against_the_node() {
         let mut seen = None;
-        assert!(log_progress(Path::new("/dd69/definitely/not/here"), &mut seen));
+        let p = log_progress(Path::new("/dd69/definitely/not/here"), &mut seen);
+        assert!(p.moved && p.heavy);
     }
 
     #[test]
@@ -378,6 +449,10 @@ mod tests {
         // stops that becoming a permanent excuse. It must be longer than a
         // real chain flush (about fifteen minutes) and far shorter than the
         // fifteen HOURS a node was once left wedged.
+        // And a node that is plainly running gets far less: five minutes of
+        // unanswered requests plus three of strikes, not thirty in all.
+        assert!(RUNNING_SILENCE + CHECK_EVERY * RUNNING_STRIKES <= Duration::from_secs(10 * 60));
+        assert!(RUNNING_SILENCE < MAX_SILENCE);
         assert!(MAX_SILENCE > Duration::from_secs(15 * 60));
         assert!(MAX_SILENCE < Duration::from_secs(60 * 60));
     }
