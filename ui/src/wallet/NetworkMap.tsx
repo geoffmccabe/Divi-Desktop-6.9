@@ -2111,8 +2111,18 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       const lon = g?.lon ?? kp?.lon;
       if (lat != null && lon != null) push(p.ip, lat, lon, "peer", g?.city ?? kp?.city, g?.country ?? kp?.country);
     }
+    /* ---- ONLY NODES VERIFIED ALIVE ----
+       This drew every address the app had ever heard of (about six hundred)
+       while the count next to it said 118, and the game's towers are these
+       towers. Geoff: "one or the other is wrong." The count is the honest
+       one: peers, nodes that answered a probe, and our own. So the globe
+       draws that set and nothing that has never answered or is known down. */
     const full = { ...loadKnown(), ...knownRef.current };
-    for (const [ip, kp] of Object.entries(full)) push(ip, kp.lat, kp.lon, "net", kp.city, kp.country || geos[ip]?.country);
+    for (const ip of verifiedNodes()) {
+      const kp = full[ip];
+      if (!kp) continue;
+      push(ip, kp.lat, kp.lon, "net", kp.city, kp.country || geos[ip]?.country);
+    }
     if (self) {
       for (const p of snap?.peers ?? []) {
         const g = geos[p.ip];

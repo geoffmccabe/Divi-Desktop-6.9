@@ -57,9 +57,71 @@ export function output(): AudioNode | null {
     analyser.fftSize = 1024;
     samples = new Float32Array(new ArrayBuffer(analyser.fftSize * 4));
     master.connect(analyser);
-    analyser.connect(c.destination);
+    connectToSpeakers(c, analyser);
   }
   return master;
+}
+
+/* ---- TWO WAYS TO THE SPEAKERS ----
+   2026-Sep-23, Geoff's Mac: the test tone reached the output meter at a
+   healthy level, the engine said "running", the Mac's default output was
+   its own speakers at 69% and not muted, and he heard nothing. So the sound
+   is made and then lost between this page and the speakers, inside WebKit's
+   own Web Audio output. A browser has a SECOND route to the speakers, the
+   one that plays audio files: hand the whole bus to an <audio> element as
+   a stream and let the media pipeline carry it. Same trick people use on
+   iOS to get Web Audio past the silent switch.
+
+   Which route is used is a setting, so the test button can try both and a
+   machine where the direct route works keeps it. Default: the bridge on a
+   Mac inside the desktop app (where it was proven silent), direct elsewhere. */
+export type SoundRoute = "direct" | "bridge";
+const ROUTE_KEY = "dd69.sound.route";
+let bridgeEl: HTMLAudioElement | null = null;
+let bridgeWantsPlay = false;
+
+export function soundRoute(): SoundRoute {
+  try {
+    const v = localStorage.getItem(ROUTE_KEY);
+    if (v === "direct" || v === "bridge") return v;
+  } catch { /* no storage */ }
+  const mac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform ?? "");
+  const desktop = typeof window !== "undefined" && !!(window as unknown as { __TAURI__?: unknown }).__TAURI__;
+  return mac && desktop ? "bridge" : "direct";
+}
+
+export function setSoundRoute(r: SoundRoute): void {
+  try { localStorage.setItem(ROUTE_KEY, r); } catch { /* no storage */ }
+  rebuildAudio();
+}
+
+function connectToSpeakers(c: AudioContext, from: AudioNode): void {
+  if (soundRoute() !== "bridge" || typeof document === "undefined" || !c.createMediaStreamDestination) {
+    from.connect(c.destination);
+    return;
+  }
+  try {
+    const dest = c.createMediaStreamDestination();
+    from.connect(dest);
+    const el = document.createElement("audio");
+    el.autoplay = true;
+    el.setAttribute("playsinline", "");
+    el.srcObject = dest.stream;
+    el.volume = 1;
+    bridgeEl = el;
+    /* Playing needs a gesture. Most first calls come from one; if not, the
+       next gesture's settle() tries again. */
+    el.play().then(() => { bridgeWantsPlay = false; }).catch(() => { bridgeWantsPlay = true; });
+  } catch {
+    from.connect(c.destination);
+  }
+}
+
+/** The bridge's own state, for the black box and the test. */
+export function bridgeState(): string {
+  if (soundRoute() !== "bridge") return "direct";
+  if (!bridgeEl) return "bridge: not built";
+  return `bridge: ${bridgeEl.paused ? "PAUSED" : "playing"}${bridgeWantsPlay ? ", waiting for a click" : ""}`;
 }
 
 /** What is actually reaching the speakers right now, as an RMS level. Zero
@@ -192,6 +254,8 @@ export function rebuildAudio(): void {
   rebuilds++;
   const old = ctx;
   ctx = null; master = null; analyser = null; samples = null;
+  try { if (bridgeEl) { bridgeEl.pause(); bridgeEl.srcObject = null; } } catch { /* gone */ }
+  bridgeEl = null; bridgeWantsPlay = false;
   /* The new context starts its clock at zero, so the old reading would look
      like a clock that had gone backwards and the watchdog would call it a
      stall and rebuild again, for ever. */
@@ -390,6 +454,9 @@ export function settleAudioFromGesture(): "none" | "kick" | "rebuild" {
   if (did === "kick") kickAudio();
   else if (did === "rebuild") rebuildAudio();
   else if (ctx && ctx.state !== "running") void ctx.resume();
+  if (bridgeEl && (bridgeWantsPlay || bridgeEl.paused)) {
+    bridgeEl.play().then(() => { bridgeWantsPlay = false; }).catch(() => { bridgeWantsPlay = true; });
+  }
   return did;
 }
 
@@ -422,6 +489,7 @@ export function audioHealth(): Record<string, unknown> {
     ctxAge: ctx ? Math.round(ctx.currentTime) : 0,
     sampleRate: ctx?.sampleRate ?? 0,
     bus: !!master,
+    route: bridgeState(),
   };
 }
 
@@ -470,8 +538,36 @@ export function soundProblem(): string {
   return "";
 }
 
-/** Play one short tone through the SAME bus as everything else and report
- *  whether the output meter moved. Proof, not inference. */
+/** A short sine as a WAV file, for the media-file route of the test. */
+function beepWav(freq: number, seconds: number, gain: number): string {
+  const rate = 22050;
+  const n = Math.round(rate * seconds);
+  const buf = new ArrayBuffer(44 + n * 2);
+  const v = new DataView(buf);
+  const str = (o: number, t: string) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+  str(0, "RIFF"); v.setUint32(4, 36 + n * 2, true); str(8, "WAVE");
+  str(12, "fmt "); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, "data"); v.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    const env = Math.min(1, i / 400, (n - i) / 400);
+    v.setInt16(44 + i * 2, Math.round(Math.sin((2 * Math.PI * freq * i) / rate) * gain * env * 32767), true);
+  }
+  let bin = "";
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return "data:audio/wav;base64," + btoa(bin);
+}
+
+/**
+ * Three beeps, three routes, so one press says which of them reaches the
+ * ears. Proof, not inference:
+ *   1. LOW-MIDDLE (660 Hz) through the bus and whichever route is in use.
+ *   2. LOW (330 Hz) straight into WebKit's own Web Audio output, bypassing
+ *      the bus and any bridge.
+ *   3. HIGH (1320 Hz) as an ordinary audio FILE, the media pipeline alone.
+ * Geoff's Mac, 2026-Sep-23: route 1 reached the meter and was not heard.
+ */
 export function soundTest(): Promise<{ state: string; volume: number; meterMoved: boolean; detail: string }> {
   return new Promise((resolve) => {
     const c = getCtx();
@@ -479,28 +575,38 @@ export function soundTest(): Promise<{ state: string; volume: number; meterMoved
     const volume = masterVolume();
     if (!c || !out) return resolve({ state: "none", volume, meterMoved: false, detail: "no audio engine" });
     if ((c.state as string) !== "running") void c.resume();
+    const level = Math.max(0.05, volume);
     try {
-      const osc = c.createOscillator();
-      const g = c.createGain();
-      osc.type = "sine";
-      osc.frequency.value = 660;
-      g.gain.value = Math.max(0.05, volume);
-      osc.connect(g).connect(out);
       const t = c.currentTime;
-      osc.start(t);
-      osc.stop(t + 0.35);
+      /* 1: the bus */
+      const o1 = c.createOscillator(); const g1 = c.createGain();
+      o1.type = "sine"; o1.frequency.value = 660; g1.gain.value = level;
+      o1.connect(g1).connect(out); o1.start(t); o1.stop(t + 0.35);
+      /* 2: direct to WebKit's output, no bus */
+      const o2 = c.createOscillator(); const g2 = c.createGain();
+      o2.type = "sine"; o2.frequency.value = 330; g2.gain.value = level;
+      o2.connect(g2).connect(c.destination); o2.start(t + 0.6); o2.stop(t + 0.95);
+      /* 3: a file, the media pipeline alone */
+      let fileNote = "";
+      try {
+        const el = new Audio(beepWav(1320, 0.35, level));
+        el.volume = 1;
+        setTimeout(() => { el.play().catch((e) => { fileNote = ` (file refused: ${String(e).slice(0, 60)})`; }); }, 1200);
+      } catch (e) {
+        fileNote = ` (file failed: ${String(e).slice(0, 60)})`;
+      }
       let peak = 0;
       const start = performance.now();
       const tick = () => {
         peak = Math.max(peak, outputLevel());
-        if (performance.now() - start < 500) requestAnimationFrame(tick);
+        if (performance.now() - start < 1800) requestAnimationFrame(tick);
         else resolve({
           state: c.state,
           volume,
           meterMoved: peak > 0.002,
-          detail: peak > 0.002
-            ? `tone reached the output (level ${peak.toFixed(3)})`
-            : `engine says "${c.state}" but the output meter did not move: sound is not reaching the speakers`,
+          detail: `three beeps played: 1 LOW-MID via ${bridgeState()}, 2 LOW direct, 3 HIGH as a file. `
+            + (peak > 0.002 ? `Bus meter moved (${peak.toFixed(3)}).` : "Bus meter did NOT move.")
+            + fileNote + " Which did you hear?",
         });
       };
       requestAnimationFrame(tick);
