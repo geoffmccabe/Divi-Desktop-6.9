@@ -1817,16 +1817,6 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     damageScale: 1,
   };
 
-  /* ---- THE WORLD THE LOCAL FIGHT IS STEPPED IN NEAR EARTH ----
-     Same shape as the room's, with the map's own towers. Used only when the
-     room is not live; see the frame below. */
-  const _earthWorld: CombatWorld = {
-    tips: [],
-    playerPos: new THREE.Vector3(),
-    playerFwd: new THREE.Vector3(0, 0, 1),
-    damageScale: 1,
-  };
-
   /** Set once the heart's guards have been sent, so they are sent once. */
   let guardsSent = false;
   /** Set when the heart reaches zero, so the outcome fires once. */
@@ -2379,20 +2369,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       frameHeartGuards(flight);
       frameHeartHits();
       if (peers) peers.draw([], camera);
-    } else {
-      /* ---- NOT IN THE ROOM, NOT AT SPIKEWORLD: FLY ALONE, BUT NOT EMPTY ----
-         This branch used to draw an empty sky. If the socket to the room was
-         not live (blocked, dropped, the server down), nothing anywhere spawned
-         an enemy and nothing said why. Geoff, 2026-Sep-22: "there are no
-         enemies appearing at all." The simulation that runs on the server is
-         the same code that runs here at Spikeworld; run it here near Earth
-         too, so the game is a game whether or not the room can be reached.
-         The HUD's OfflineBanner says the room is not live. */
-      _earthWorld.tips = tipList;
-      _earthWorld.playerPos = flight.pos;
-      _earthWorld.playerFwd = flight.fwd;
-      stepCombat(combat, dt, _earthWorld);
-      if (peers) peers.draw([], camera);
+    } else if (peers) {
+      peers.draw([], camera);
     }
 
     dflow.add("room", performance.now() - tRoom);
