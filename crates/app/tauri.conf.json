@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Divi Desktop 69.13.25",
+  "productName": "Divi Desktop 69",
   "version": "69.13.25",
   "identifier": "io.diviproject.desktop69",
   "build": {
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Divi Desktop 69.13.25",
+        "title": "Divi Desktop",
         "width": 1408,
         "height": 900,
         "minWidth": 1120,

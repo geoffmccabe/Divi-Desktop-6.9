@@ -71,15 +71,20 @@ def main() -> None:
 
     conf["version"] = now
     # Both of these are shown to people, and both have drifted before.
-    conf["productName"] = f"Divi Desktop {now}"
-    conf["app"]["windows"][0]["title"] = f"Divi Desktop {now}"
+    # The product name and window title are NOT versioned. They were once,
+    # and on 2026-Sep-23 this stamped the version into the app's own name, so
+    # the build came out as "Divi Desktop 69.13.25.app": a differently named
+    # bundle every release, which the updater replaces in place by name. The
+    # sidebar shows the version; the name stays "Divi Desktop 69".
+    conf["productName"] = "Divi Desktop 69"
+    conf["app"]["windows"][0]["title"] = "Divi Desktop"
 
     with open(CONF, "w") as f:
         json.dump(conf, f, indent=2)
         f.write("\n")
 
     print(f"{was} -> {now}")
-    print("  version, productName and the window title are all updated.")
+    print("  version updated; the product name and window title stay as they are.")
     print("  The sidebar reads it at build time, so nothing else to change.")
 
 
