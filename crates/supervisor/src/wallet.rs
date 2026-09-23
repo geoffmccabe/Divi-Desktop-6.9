@@ -60,16 +60,15 @@ pub fn addresses(cfg: &NodeConfig) -> Vec<AddrInfo> {
             ordered.push(m.clone());
         }
     }
-    let mut accounts: Vec<String> = vec![String::new()];
-    if let Ok(v) = rpc.call("listaccounts", json!([0])) {
-        if let Some(obj) = v.as_object() {
-            for k in obj.keys() {
-                if !k.is_empty() {
-                    accounts.push(k.clone());
-                }
-            }
-        }
-    }
+    /* ---- THE DEFAULT ACCOUNT ONLY ----
+       This used to ask `listaccounts` for every account name first. That
+       call computes a BALANCE for each account by walking every transaction
+       in the wallet, with the node's main lock held, and on Geoff's wallet
+       (thousands of stakes) it took 50 to 170 seconds, every 90 seconds,
+       with every other request queued behind it: the "wedge" of 2026-Sep-21
+       to 23, named by the slow-request log on Sep-23. The app only ever
+       uses the default account, so the names were never needed. */
+    let accounts: Vec<String> = vec![String::new()];
     for acct in &accounts {
         if let Ok(v) = rpc.call("getaddressesbyaccount", json!([acct])) {
             if let Some(arr) = v.as_array() {

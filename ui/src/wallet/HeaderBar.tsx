@@ -88,7 +88,9 @@ export function HeaderBar() {
     pollLight();
     pollAddrs();
     const idLight = setInterval(pollLight, 12000);
-    const idAddrs = setInterval(pollAddrs, 90000);
+    /* Ten minutes, not ninety seconds: this walks the wallet's history on
+       the node, and addresses change only when the owner makes one. */
+    const idAddrs = setInterval(pollAddrs, 600000);
     return () => {
       alive = false;
       clearInterval(idLight);
