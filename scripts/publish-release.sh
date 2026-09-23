@@ -92,7 +92,8 @@ done
 [ "$L" = "$V" ] || fail "latest.json still says '$L' after 15 minutes"
 for f in Universal.dmg Windows-x64-setup.exe Linux-x86_64.deb macos-update.app.tar.gz; do
   local_size=$(stat -f %z "$OUT/Divi-Desktop-$V-$f")
-  remote_size=$(curl -sI -L -H "User-Agent: Mozilla/5.0" "https://scan.divi.love/downloads/Divi-Desktop-$V-$f" | tr -d '\r' | awk 'tolower($1)=="content-length:"{s=$2} END{print s+0}')
+  # A real download, not a HEAD: the CDN sends some files without a length.
+  remote_size=$(curl -s -o /dev/null -w '%{size_download}' -L -H "User-Agent: Mozilla/5.0" "https://scan.divi.love/downloads/Divi-Desktop-$V-$f")
   [ "$remote_size" = "$local_size" ] || fail "$f: served $remote_size bytes, built $local_size"
   echo "  served: $f ($remote_size bytes)"
 done
