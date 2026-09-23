@@ -1255,6 +1255,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     atSpikeworld = !atSpikeworld;
     if (atSpikeworld) {
       homeAgain.copy(flight.pos);
+      /* A full rack for the trip. There is no tower out there to resupply
+         at, and a ship that arrived with the room's count of zero found its
+         torpedo key did nothing, silently. Geoff, 2026-Sep-22: "torpedoes
+         don't work at all in spikeworld." */
+      flight.torpedoes = MAX_TORPEDOES;
       if (!spikeworld) {
         spikeworld = makeVoxelPlanet(SPIKEWORLD_AT);
         scene.add(spikeworld.group);
@@ -1812,8 +1817,20 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     damageScale: 1,
   };
 
+  /* ---- THE WORLD THE LOCAL FIGHT IS STEPPED IN NEAR EARTH ----
+     Same shape as the room's, with the map's own towers. Used only when the
+     room is not live; see the frame below. */
+  const _earthWorld: CombatWorld = {
+    tips: [],
+    playerPos: new THREE.Vector3(),
+    playerFwd: new THREE.Vector3(0, 0, 1),
+    damageScale: 1,
+  };
+
   /** Set once the heart's guards have been sent, so they are sent once. */
   let guardsSent = false;
+  /** Set when the heart reaches zero, so the outcome fires once. */
+  let heartDown = false;
 
   /**
    * The heart's sixty, launched when the ship crosses into the cavity.
@@ -1883,7 +1900,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     }
     if (took <= 0) return;
     const left = spikeworld.hitHeart(took);
-    pulseHealth(left, h.max);
+    pulseHealth(left, h.max, "HEART");
+    /* Zero used to do nothing: the code said "cannot be killed yet" and
+       meant it. Now it is an event: the guards stand down, and the HUD
+       says so. What the heart drops, and what comes next, is the plan's
+       open "making it a place" phase; this is the minimum that makes
+       reaching zero mean something. */
+    if (left <= 0 && !heartDown) {
+      heartDown = true;
+      combat.enemies.length = 0;
+      combat.flocks.length = 0;
+      setHud({ note: "THE HEART IS DOWN", noteAt: performance.now() });
+      playShipExplosion(2);
+    }
   }
 
   function frameSpikeworld(camera: THREE.PerspectiveCamera): void {
@@ -2350,8 +2379,20 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       frameHeartGuards(flight);
       frameHeartHits();
       if (peers) peers.draw([], camera);
-    } else if (peers) {
-      peers.draw([], camera);
+    } else {
+      /* ---- NOT IN THE ROOM, NOT AT SPIKEWORLD: FLY ALONE, BUT NOT EMPTY ----
+         This branch used to draw an empty sky. If the socket to the room was
+         not live (blocked, dropped, the server down), nothing anywhere spawned
+         an enemy and nothing said why. Geoff, 2026-Sep-22: "there are no
+         enemies appearing at all." The simulation that runs on the server is
+         the same code that runs here at Spikeworld; run it here near Earth
+         too, so the game is a game whether or not the room can be reached.
+         The HUD's OfflineBanner says the room is not live. */
+      _earthWorld.tips = tipList;
+      _earthWorld.playerPos = flight.pos;
+      _earthWorld.playerFwd = flight.fwd;
+      stepCombat(combat, dt, _earthWorld);
+      if (peers) peers.draw([], camera);
     }
 
     dflow.add("room", performance.now() - tRoom);
@@ -2381,8 +2422,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         const aim = backwards;
         const tail = tailOf(flight.pos, flight.fwd, SHIP_LENGTH);
         fireShot("torp", tail, aim);
+        if (!inRoomsWorld()) flight.torpedoes -= 1; // the room counts its own
         torpSentAt = performance.now();
         playTorpedoSound();
+      } else {
+        setHud({ note: "NO TORPEDOES: dock at a tower to resupply", noteAt: performance.now() });
       }
     } else if (res.heavyPress) {
       const slot = weaponAt("secondary", weapons.secondary);
@@ -2403,8 +2447,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         }
         else if (flight.torpedoes > 0) {
           fireShot("torp", shipModel && flight.view > 0.01 ? shipBelly(flight) : shipNose(flight), flight.fwd);
+          if (!inRoomsWorld()) flight.torpedoes -= 1; // the room counts its own
           torpSentAt = performance.now();
           playTorpedoSound();
+        } else {
+          /* Silence here was the whole bug: a press that did nothing. */
+          setHud({ note: "NO TORPEDOES: dock at a tower to resupply", noteAt: performance.now() });
         }
       }
     }

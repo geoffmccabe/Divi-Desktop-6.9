@@ -470,7 +470,13 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   // the controller is handed THIS scene, THESE towers and THESE links through
   // GlobeMap's flight hook, and only adds a ship. Everything carries on
   // animating while you fly through it.
+  /* Whether the game is running, readable from inside the canvas handlers,
+     which close over the first render. Map popups over the cockpit were the
+     result of not having this: Geoff, 2026-Sep-22, "while I'm playing it
+     still is bringing up modals for various nodes". */
+  const rebelsRef = useRef<RebelsController | null>(null);
   const [rebels, setRebels] = useState<RebelsController | null>(null);
+  rebelsRef.current = rebels;
   const playing = rebels !== null;
   /* Asked to start flying: the same thing the play button does, once. The
      controller attaches itself to the globe when the globe is ready, so it is
@@ -1153,6 +1159,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     let dragging = false;
     let dsx = 0, dsy = 0, dtx = 0, dty = 0;
     const onMove = (e: MouseEvent) => {
+      if (rebelsRef.current) { setHover(null); return; } // the game owns the mouse
       if (dragging) {
         const v = viewRef.current;
         v.tx = dtx + (e.clientX - dsx);
@@ -1232,6 +1239,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
        adding it as a kept peer, connecting once, and copying the address.
        Everything it does is drawn on the map like any other real event. */
     const onContext = (e: MouseEvent) => {
+      if (rebelsRef.current) return; // the game owns the mouse
       e.preventDefault();
       const rect = wrap.getBoundingClientRect();
       const mx = e.clientX - rect.left, my = e.clientY - rect.top;
@@ -2216,7 +2224,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             "It's not text so I can't copy/paste it and it doesn't have a
             copy button (of course it should)." Any message worth showing is
             worth being able to send to someone. */}
-        {stale !== null && (
+        {stale !== null && !rebels && (
           <div className="netmap-frozen" onMouseDown={(e) => e.stopPropagation()}>
             <span className="netmap-frozen-text">
               <b>The node has gone quiet.</b> It hasn't answered for about{" "}
@@ -2269,7 +2277,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             {primer.active ? <PrimerLove /> : <BlockChainViz />}
           </div>
         )}
-        {menu && (
+        {menu && !rebels && (
           <div
             className="netmap-menu netmap-ctx"
             style={{ left: Math.min(menu.x + 8, (wrapRef.current?.clientWidth ?? 9999) - 230), top: Math.max(8, menu.y - 8) }}
@@ -2314,7 +2322,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             <button type="button" className="netmap-ctx-close" onClick={() => setMenu(null)}>Close</button>
           </div>
         )}
-        {hover && !menu && (
+        {hover && !menu && !rebels && (
           <div
             className={"netmap-tip" + (hover.tone === "blue" ? " netmap-tip-blue" : "")}
             style={{

@@ -79,7 +79,11 @@ function toArrayBuffer(url: string): Promise<ArrayBuffer> {
  */
 export function resumeAudio(): void {
   const ctx = audioContext();
-  if (ctx && ctx.state === "suspended") void ctx.resume();
+  /* "interrupted" is WebKit's state after another app took the audio
+     hardware, a sleep, or a call. It never recovers on its own, and this
+     used to check only "suspended", so a Mac that had slept came back to a
+     silent game for the rest of the session. */
+  if (ctx && (ctx.state as string) !== "running") void ctx.resume();
   /* AND GIVE A PREVIOUS FAILURE ANOTHER GO.
      `failed` used to be a one-way latch: anything that went wrong once, at any
      point, silenced the game for the rest of the session with no way back. The

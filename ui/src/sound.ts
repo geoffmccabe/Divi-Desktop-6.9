@@ -455,6 +455,61 @@ export function masterVolume(): number {
   return Number.isFinite(v) ? v : 0.15;
 }
 
+/* ── WHY THE GAME IS SILENT, IN ONE LINE ──────────────────────────────────
+   Every game sound scales by the theme's Volume and returns early at zero,
+   with no sign anywhere that this is why. After a dozen "fixes" reasoned
+   from the code, the one thing missing was a way to SEE the engine's state
+   on the machine that is silent. This is that: a plain sentence the HUD
+   shows, and "" when there is nothing wrong. */
+export function soundProblem(): string {
+  if (!(masterVolume() > 0)) return "Sound is off: Volume is 0 in Theme > Sounds";
+  if (!ctx) return "";
+  if (ctx.state === "suspended") return "Sound engine is paused; click or press a key to wake it";
+  if ((ctx.state as string) === "interrupted") return "Sound engine was interrupted by another app; restarting it";
+  if (ctx.state === "closed") return "Sound engine closed; restarting it";
+  return "";
+}
+
+/** Play one short tone through the SAME bus as everything else and report
+ *  whether the output meter moved. Proof, not inference. */
+export function soundTest(): Promise<{ state: string; volume: number; meterMoved: boolean; detail: string }> {
+  return new Promise((resolve) => {
+    const c = getCtx();
+    const out = output();
+    const volume = masterVolume();
+    if (!c || !out) return resolve({ state: "none", volume, meterMoved: false, detail: "no audio engine" });
+    if ((c.state as string) !== "running") void c.resume();
+    try {
+      const osc = c.createOscillator();
+      const g = c.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 660;
+      g.gain.value = Math.max(0.05, volume);
+      osc.connect(g).connect(out);
+      const t = c.currentTime;
+      osc.start(t);
+      osc.stop(t + 0.35);
+      let peak = 0;
+      const start = performance.now();
+      const tick = () => {
+        peak = Math.max(peak, outputLevel());
+        if (performance.now() - start < 500) requestAnimationFrame(tick);
+        else resolve({
+          state: c.state,
+          volume,
+          meterMoved: peak > 0.002,
+          detail: peak > 0.002
+            ? `tone reached the output (level ${peak.toFixed(3)})`
+            : `engine says "${c.state}" but the output meter did not move: sound is not reaching the speakers`,
+        });
+      };
+      requestAnimationFrame(tick);
+    } catch (e) {
+      resolve({ state: c.state, volume, meterMoved: false, detail: String(e) });
+    }
+  });
+}
+
 export type SoundEvent = "click" | "send" | "receive" | "peer";
 
 const DEFAULT_FREQ: Record<SoundEvent, string> = { click: "660", send: "880", receive: "523", peer: "300" };

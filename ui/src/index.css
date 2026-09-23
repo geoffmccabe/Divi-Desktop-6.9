@@ -1092,6 +1092,11 @@ code, .mono { font-family: var(--font-mono); }
   pointer-events: none;
 }
 .netmap-frozen b { color: #ffc768; }
+/* Game HUD: sound status + test. Bottom centre, small, out of the crosshair. */
+.orbit-sound-test { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 12; font-size: 0.68rem; padding: 3px 9px; border-radius: 6px; cursor: pointer; opacity: 0.55; color: hsl(var(--foreground)); background: rgba(0,0,0,0.5); border: 1px solid hsl(var(--border)); }
+.orbit-sound-test:hover { opacity: 1; }
+.orbit-sound-line { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 12; display: flex; gap: 10px; align-items: center; font-size: 0.74rem; padding: 6px 12px; border-radius: 8px; color: #ffe9c2; background: rgba(46,28,8,0.92); border: 1px solid rgba(240,168,58,0.6); max-width: 90%; }
+.orbit-sound-line .orbit-sound-test { position: static; transform: none; opacity: 1; }
 /* Right-click menu on a map node. Reuses the dropdown look. */
 /* right:auto, or the dropdown's own right:10px would pin this to the corner. */
 .netmap-ctx { position: absolute; right: auto; z-index: 30; min-width: 200px; padding: 6px; }

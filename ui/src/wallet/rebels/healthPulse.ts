@@ -6,12 +6,12 @@
 // the shield every frame and guessing when it went down, which cannot tell a
 // hit apart from the slow repair running backwards.
 
-let state = { current: 0, max: 1, at: -1 };
+let state: { current: number; max: number; at: number; label?: string } = { current: 0, max: 1, at: -1 };
 const subs = new Set<() => void>();
 
 /** Show the bar now, with what is left and out of what. */
-export function pulseHealth(current: number, max: number): void {
-  state = { current: Math.max(0, current), max: Math.max(1, max), at: performance.now() };
+export function pulseHealth(current: number, max: number, label?: string): void {
+  state = { current: Math.max(0, current), max: Math.max(1, max), at: performance.now(), label };
   subs.forEach((f) => f());
 }
 

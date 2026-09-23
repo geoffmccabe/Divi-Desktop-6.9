@@ -16,8 +16,7 @@ import { FlightReadout, CornerInfo, DockPanel, ScoreCorner, GaugeBars } from "./
 import { useFullScreen } from "./cockpit/useFullScreen";
 import {
   HitFlash, DiedBanner, WaveBanner, AimMarks, ExitButton, FullScreenButton,
-  NoteLine, OfflineBanner,
-} from "./cockpit/overlays";
+  NoteLine, OfflineBanner, SoundLine } from "./cockpit/overlays";
 import { NoLaunchCard, CockpitPanels, LaunchCard, DeathCard } from "./cockpit/cards";
 
 export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () => void }) {
@@ -40,6 +39,7 @@ export function RebelsHud({ ctl, onExit }: { ctl: RebelsController; onExit: () =
       <NoLaunchCard hud={hud} />
       <NoteLine hud={hud} />
       <OfflineBanner hud={hud} />
+      <SoundLine hud={hud} />
       <RebelsHealthBar />
       <CockpitPanels c={c} />
       <LaunchCard ctl={ctl} c={c} />

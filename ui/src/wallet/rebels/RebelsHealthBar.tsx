@@ -62,7 +62,15 @@ export function RebelsHealthBar() {
       <div className="rebels-healthbar-frame">
         <div style={{ width: `${pct}%`, height: "100%", background: fillGradient(pct) }} />
       </div>
-      <div className="rebels-healthbar-pct">{fmtPct(pct)}</div>
+      {/* The heart's bar carries its number: the million, ticking down with
+          every hit. Geoff, 2026-Sep-22: "there's no million counter". */}
+      {st.label ? (
+        <div className="rebels-healthbar-pct">
+          {st.label} {Math.round(st.current).toLocaleString()} / {Math.round(st.max).toLocaleString()}
+        </div>
+      ) : (
+        <div className="rebels-healthbar-pct">{fmtPct(pct)}</div>
+      )}
     </div>
   );
 }

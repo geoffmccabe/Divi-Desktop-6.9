@@ -3,6 +3,8 @@
 // way back to the map.
 
 import type { HudState } from "../rebelsController";
+import { useEffect, useState } from "react";
+import { soundProblem, soundTest } from "../../../sound";
 
 /** Everything behind the cockpit inverted, for the tenth of a second after a hit. */
 export function HitFlash({ on }: { on: boolean }) {
@@ -129,6 +131,39 @@ export function OfflineBanner({ hud }: { hud: HudState }) {
   return (
     <div className="orbit-offline">
       {hud.room === "refused" ? "LOST THE FIGHT: RETRYING" : "RECONNECTING"}
+    </div>
+  );
+}
+
+
+/* ── SOUND, VISIBLY ────────────────────────────────────────────────────────
+   A line that says why the game is silent, when it is, and a Test button
+   that plays a tone through the real output bus and reports whether the
+   output meter moved. Shown while flying; nothing shown when all is well. */
+export function SoundLine({ hud }: { hud: HudState }) {
+  const [problem, setProblem] = useState("");
+  const [result, setResult] = useState<string | null>(null);
+  useEffect(() => {
+    const id = setInterval(() => setProblem(soundProblem()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  if (!hud.launched) return null;
+  const test = () => {
+    setResult("testing\u2026");
+    void soundTest().then((r) => setResult(`${r.meterMoved ? "OK" : "SILENT"}: ${r.detail} (engine ${r.state}, volume ${r.volume})`));
+  };
+  if (!problem && !result) {
+    return (
+      <button type="button" className="orbit-sound-test" onClick={test} title="Play a test tone and report what the sound engine did">
+        Test sound
+      </button>
+    );
+  }
+  return (
+    <div className="orbit-sound-line">
+      {problem && <span>{problem}</span>}
+      {result && <span>{result}</span>}
+      <button type="button" className="orbit-sound-test" onClick={test}>Test sound</button>
     </div>
   );
 }
