@@ -1913,10 +1913,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     const st = spikeworld.stats();
     if (st.built !== voxBuilt) {
       voxBuilt = st.built;
-      /* The `gone` tally is the one to read first. Every reason in it except
-         "replaced" is rock taken away with nothing covering its ground, which
-         is what Geoff kept seeing as "big groups appearing and disappearing".
-         It should stay empty of those. */
+      /* The `gone` tally is the one to read first. "replaced", "coarser" and
+         "waiting" are swaps with something else covering the ground (see
+         voxelLod); "evicted" and "dust" are rock taken away with nothing
+         covering it, which is what Geoff kept seeing as "big groups
+         appearing and disappearing". Those two should stay near zero. */
       const why = Object.entries(st.gone).map(([k, n]) => `${k} ${n}`).join(", ");
       dflow.note(`vox: ${st.chunks} kept, ${st.shown} shown, ${st.triangles} triangles,`
         + ` ${st.dropped} refused by the budget, ${st.built} built, ${st.queued} waiting`

@@ -292,7 +292,17 @@ const LOOK_COS = 0.45;
  * million triangles for the same steadiness; defaulting coarse costs 705,000,
  * which is less than the scheme it replaces.
  */
-const SPLIT_IN = 0.35;
+/* ---- 0.35 WAS TOO LATE ----
+   At 0.35 the finest level arrived when a box was 12.6 cubes off, at which
+   distance a two-cube block is nine degrees of the screen, about 150 pixels,
+   and a quarter of those blocks moving is the whole wall in front of the
+   ship rearranging. Every level had the same problem: 16-cube blocks were
+   held until 182 cubes, where they are 85 pixels. Refining at 0.6 of the ring
+   halves the size of every pop (flown in voxelFlight: the biggest block that
+   moves in view falls from 9 to 5 degrees) and the dissolve in voxelDissolve
+   then softens what is left. It costs about a tenth more triangles at the
+   worst viewpoint, well inside the allowance. */
+const SPLIT_IN = 0.6;
 const SPLIT_OUT = 2.8;
 
 /**
