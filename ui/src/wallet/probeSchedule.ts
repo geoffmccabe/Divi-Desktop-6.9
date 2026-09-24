@@ -155,24 +155,39 @@ export function chunks<T>(list: T[], size = CHUNK): T[][] {
  * probe call has one timeout: a quick routine pass, and a slower one for the
  * nodes that deserve more time.
  */
+/** How many written-off addresses the slow lane asks per pass (a minute). */
+export const RECHECK_PER_PASS = 16;
+
 export function plan(
   records: Map<string, ProbeRecord>,
   candidates: string[],
   now: number,
-): { quick: string[]; patient: string[]; timeoutQuick: number; timeoutPatient: number } {
+): {
+  quick: string[]; patient: string[]; recheck: string[];
+  timeoutQuick: number; timeoutPatient: number; timeoutRecheck: number;
+} {
   const quick: string[] = [];
   const patient: string[] = [];
-  let timeoutPatient: number = TIMEOUT_MS.retry;
+  const recheck: Array<{ ip: string; askedAt: number }> = [];
   for (const ip of candidates) {
-    const d = due(records.get(ip), now);
+    const r = records.get(ip);
+    const d = due(r, now);
     if (!d.ask) continue;
-    if (d.timeoutMs <= TIMEOUT_MS.routine) quick.push(ip);
-    else {
-      patient.push(ip);
-      timeoutPatient = Math.max(timeoutPatient, d.timeoutMs);
-    }
+    /* ---- THE SLOW LANE ----
+       Written-off addresses used to ride in the same wave as the live
+       network, four hundred of them with a twelve-second wait each on the
+       day the daily recheck landed, and the whole map sat still behind
+       them. They go in their own lane now: a few per pass, in their own
+       call, and never in the wave the player is looking at. */
+    if (r && r.state === "down") recheck.push({ ip, askedAt: r.askedAt });
+    else if (d.timeoutMs <= TIMEOUT_MS.routine) quick.push(ip);
+    else patient.push(ip);
   }
-  return { quick, patient, timeoutQuick: TIMEOUT_MS.routine, timeoutPatient };
+  recheck.sort((a, b) => a.askedAt - b.askedAt); // longest unasked first
+  return {
+    quick, patient, recheck: recheck.slice(0, RECHECK_PER_PASS).map((r) => r.ip),
+    timeoutQuick: TIMEOUT_MS.routine, timeoutPatient: TIMEOUT_MS.retry, timeoutRecheck: TIMEOUT_MS.recheck,
+  };
 }
 
 // ── Persistence, so the daily recheck survives a restart ──────────────────

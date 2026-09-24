@@ -908,6 +908,9 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       const all = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
       const p = plan(recordsRef.current, all, Date.now());
       const kips = [...p.quick, ...p.patient];
+      /* The slow lane runs alongside and is not waited for: a few written-off
+         addresses with a long timeout, never holding the live wave. */
+      void runWave(p.recheck, p.timeoutRecheck, true);
       await Promise.all([runWave(p.quick, p.timeoutQuick, true), runWave(p.patient, p.timeoutPatient, true)]);
       if (!alive) return;
       const now = Date.now();

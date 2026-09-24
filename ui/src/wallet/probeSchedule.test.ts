@@ -21,6 +21,7 @@ import {
   MISSES_BEFORE_DOWN,
   observe,
   plan,
+  RECHECK_PER_PASS,
   TIMEOUT_MS,
 } from "./probeSchedule";
 
@@ -76,6 +77,23 @@ describe("planning a pass", () => {
     expect(p.quick).toEqual(["a"]);
     expect(p.patient).toEqual(["b"]);
     expect(p.timeoutPatient).toBe(TIMEOUT_MS.retry);
+  });
+  it("written-off addresses ride in their own slow lane, a few per pass, longest-unasked first", () => {
+    const m = new Map();
+    const D = 24 * 60 * 60_000;
+    for (let i = 0; i < 40; i++) {
+      let r = fresh();
+      for (let k = 0; k < MISSES_BEFORE_DOWN; k++) r = observe(r, false, T0 - 2 * D - i * 1000);
+      m.set(`down${i}`, r);
+    }
+    m.set("live", observe(fresh(), true, T0 - INTERVAL_MS.routine - 1));
+    const p = plan(m, [...m.keys()], T0);
+    expect(p.quick).toEqual(["live"]);
+    expect(p.patient).toEqual([]);
+    expect(p.recheck.length).toBe(RECHECK_PER_PASS);
+    expect(p.recheck[0]).toBe("down39"); // asked longest ago
+    expect(p.timeoutRecheck).toBe(TIMEOUT_MS.recheck);
+    expect(p.timeoutPatient).toBe(TIMEOUT_MS.retry); // no longer stretched to 12 s by the rechecks
   });
 });
 
