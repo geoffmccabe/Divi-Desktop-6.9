@@ -31,9 +31,9 @@ done
 
 rm -rf "$WORK"; mkdir -p "$WORK"; cd "$WORK"
 gh run download "$RUN" --repo $REPO >/dev/null 2>&1 || { sleep 60; gh run download "$RUN" --repo $REPO; }
-MAC=$(find . -name "divid69-macos-arm64.tar.gz" | head -1)
-LIN=$(find . -name "divid69-linux-x86_64.tar.gz" | head -1)
-WIN=$(find . -name "divid69-windows-x86_64.tar.gz" | head -1)
+MAC=$(find . -type f -name "divid69-macos-arm64.tar.gz" | head -1)
+LIN=$(find . -type f -name "divid69-linux-x86_64.tar.gz" | head -1)
+WIN=$(find . -type f -name "divid69-windows-x86_64.tar.gz" | head -1)
 for f in "$MAC" "$LIN" "$WIN"; do [ -n "$f" ] && [ -s "$f" ] || { find . -type f | head -20; fail "a daemon tarball is missing"; }; done
 
 # The macOS binary must run here and report the expected version.
@@ -71,7 +71,7 @@ git add public/downloads/divid69-$V-*.tar.gz && git commit -q -m "Publish divid6
 
 for f in macos-arm64 linux-x86_64 windows-x86_64; do
   local_size=$(stat -f %z "$OUT/divid69-$V-$f.tar.gz"); remote_size=0
-  for try in 1 2 3 4 5 6 7 8 9; do
+  for try in $(seq 1 24); do
     remote_size=$(curl -s -o /dev/null -w '%{size_download}' -L -H "User-Agent: Mozilla/5.0" "https://scan.divi.love/downloads/divid69-$V-$f.tar.gz")
     [ "$remote_size" = "$local_size" ] && break; sleep 20
   done
