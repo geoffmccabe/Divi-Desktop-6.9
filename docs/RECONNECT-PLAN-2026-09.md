@@ -1,7 +1,12 @@
 # Plan: make the network map reconnect (nearly) instantly
 
 Written 2026-Sep-23. Companion to `RECONNECT-ANALYSIS-2026-09.md`, which
-has the measurements. This is the build plan; nothing here is built yet.
+has the measurements.
+
+STATUS 2026-Sep-23 evening: steps 0, 1, 2, 3 and 4 shipped together in
+69.13.28 (the stopwatch line reports memory-drawn and confirmed times
+separately, so the before/after is still readable). Step 5 (true streaming
+from Rust) waits on the stopwatch numbers; step 6 (cleanup) is open.
 
 ## The goal, as a number
 
