@@ -504,14 +504,38 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
             //      which is a deliberate choice made in Settings.
             let has_upnp = text.lines().any(|l| l.trim_start().starts_with("upnp="));
             let fix_upnp = !has_upnp;
-            if ours && (has_allowip || !has_addressindex || fix_threads || fix_queue || fix_upnp) {
+            //   6. ROOM FOR INCOMING CONNECTIONS. Measured 2026-Sep-24 on
+            //      Geoff's node and the UK scanner: every connection was
+            //      outbound, zero inbound. The 26 seed addnodes each hold an
+            //      outbound connection and, with maxconnections=32, use up
+            //      the whole budget, so a reachable DD69 node could never
+            //      accept anyone and DD69 nodes were grey to each other. The
+            //      seed list shrinks to eight (it only matters on a fresh
+            //      node with an empty peer database) and the ceiling rises
+            //      to 64, leaving about forty slots for incoming peers.
+            let addnode_count = text.lines().filter(|l| l.trim_start().starts_with("addnode=")).count();
+            let weak_max = text.lines().any(|l| {
+                l.trim_start().strip_prefix("maxconnections=").and_then(|v| v.trim().parse::<u32>().ok()).map(|n| n < 64).unwrap_or(false)
+            });
+            let fix_slots = addnode_count > 8 || weak_max;
+            if ours && (has_allowip || !has_addressindex || fix_threads || fix_queue || fix_upnp || fix_slots) {
+                let mut kept_seeds = 0usize;
                 let mut fixed: String = text
                     .lines()
                     .filter(|l| !l.trim_start().starts_with("rpcallowip="))
                     .filter(|l| !(fix_threads && l.trim_start().starts_with("rpcthreads=")))
                     .filter(|l| !(fix_queue && l.trim_start().starts_with("rpcworkqueue=")))
+                    .filter(|l| !(fix_slots && l.trim_start().starts_with("maxconnections=")))
+                    .filter(|l| {
+                        if !(fix_slots && l.trim_start().starts_with("addnode=")) { return true; }
+                        kept_seeds += 1;
+                        kept_seeds <= 8
+                    })
                     .map(|l| format!("{l}\n"))
                     .collect();
+                if fix_slots {
+                    fixed.push_str("maxconnections=64\n");
+                }
                 if !has_addressindex {
                     fixed.push_str("addressindex=1\n");
                 }
@@ -527,7 +551,7 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                 }
                 let _ = std::fs::write(&conf, fixed);
                 restrict_to_owner(&conf);
-                crate::setuplog::log("node settings: repaired existing divi.conf (updated one or more of: rpcallowip removed, addressindex, rpcthreads, rpcworkqueue, upnp)");
+                crate::setuplog::log("node settings: repaired existing divi.conf (updated one or more of: rpcallowip removed, addressindex, rpcthreads, rpcworkqueue, upnp, room for incoming connections)");
             } else {
                 crate::setuplog::log("node settings: existing divi.conf is already correct");
             }
@@ -570,7 +594,7 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
          discover=1\n\
          rpcthreads=64\n\
          rpcworkqueue=64\n\
-         maxconnections=32\n\
+         maxconnections=64\n\
          # addressindex lets the node report balances/UTXOs for ANY address, not\n\
          # just the wallet's own: the treasury + multisig displays and the\n\
          # governance stake snapshot all rely on it.\n\
@@ -582,7 +606,10 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
     // It only needs one of these to work once; after that the node saves its own
     // peer database and never relies on this list again.
     body.push_str("\n# Known-live peers, so a fresh node connects without waiting on DNS seeds.\n");
-    for ip in SEED_PEERS {
+    // Eight, not all of them: each addnode holds an outbound connection for
+    // the life of the node, and a long list uses up the room that incoming
+    // peers would take (see the repair above, 2026-Sep-24).
+    for ip in SEED_PEERS.iter().take(8) {
         body.push_str("addnode=");
         body.push_str(ip);
         body.push('\n');
@@ -591,7 +618,7 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
     restrict_to_owner(&conf);
     crate::setuplog::log(format!(
         "node settings: new divi.conf written (credentials generated; {} seed peers seeded)",
-        SEED_PEERS.len()
+        SEED_PEERS.len().min(8)
     ));
     Ok(datadir)
 }
