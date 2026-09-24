@@ -1783,6 +1783,16 @@ async fn setup_log_report() -> String {
 /// refuse, the owner must not be left with nothing: Geoff, 2026-Sep-20, "when
 /// I do it gives me an error message, 'Could not copy the setup log' so that's
 /// broken too." A file he can drag is a better dead end than a toast.
+/// One line from the interface into the setup log: the map's reconnect
+/// stopwatch, so a machine reports its own numbers. Short, plain text only.
+#[tauri::command]
+async fn setup_log_note(line: String) {
+    let clean: String = line.chars().filter(|c| !c.is_control()).take(300).collect();
+    if !clean.is_empty() {
+        dd69_supervisor::setuplog::log(clean);
+    }
+}
+
 #[tauri::command]
 async fn setup_log_save() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
@@ -3509,6 +3519,7 @@ fn main() {
             node_logs,
             setup_log_report,
             setup_log_save,
+            setup_log_note,
             node_identity,
             set_node_name,
             set_node_label,

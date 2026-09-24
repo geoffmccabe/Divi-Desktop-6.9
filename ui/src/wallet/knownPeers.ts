@@ -143,3 +143,27 @@ export function recordKnown(
   save(k);
   return k;
 }
+
+// ── Last session's peers ────────────────────────────────────────────────────
+// The live peer list was never remembered, so after a restart the map had no
+// idea who it had been talking to until the first poll answered, and after a
+// node restart that is eighty seconds away. Saved every poll, read at mount,
+// and used for the first probe wave (see probeSchedule.firstWave).
+const PEERS_KEY = "dd69.lastPeers";
+
+export function saveLastPeers(scope: string, ips: string[]): void {
+  try {
+    localStorage.setItem(`${PEERS_KEY}.${scope}`, JSON.stringify(ips.slice(0, 64)));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+export function loadLastPeers(scope: string): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(`${PEERS_KEY}.${scope}`) || "[]");
+    return Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+  } catch {
+    return [];
+  }
+}

@@ -340,6 +340,8 @@ export const priceHistory = () => invoke<PricePoint[]>("price_history");
 export const setupLogReport = () => invoke<string>("setup_log_report");
 /** Write the setup log to a file on the Desktop; returns its full path. */
 export const saveSetupLog = () => invoke<string>("setup_log_save");
+/** One line into the setup log (the map's reconnect stopwatch). */
+export const noteSetupLog = (line: string) => invoke<void>("setup_log_note", { line }).catch(() => {});
 
 // This install's node identity: a stable id (survives IP changes) + node name.
 export interface NodeIdentity { id: string; name: string; nameSource: string }

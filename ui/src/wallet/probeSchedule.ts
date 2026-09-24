@@ -81,6 +81,75 @@ export function observe(r: ProbeRecord | undefined, answered: boolean, now: numb
 export const counts = (r: ProbeRecord | undefined): boolean =>
   !r || r.state !== "down";
 
+// ── Optimism, and the rule that keeps it honest ────────────────────────────
+//
+// The map used to start from zero every time it opened: every remembered
+// node drawn as a dim ghost until the first probe wave came back, ten to
+// forty seconds later, and up to a minute more to animate. Geoff: "it should
+// be able to nearly instantly reconnect if we do it right and are optimistic
+// about reconnecting with peers that were recent peers."
+//
+// So old evidence is trusted until contradicted. A node that answered within
+// the last day, and has not been written off, is ASSUMED alive: drawn and
+// counted from the first frame, and asked at once. If it then misses three
+// probes it goes grey exactly as it always did. Nothing new is invented; the
+// evidence is simply used a day longer.
+
+/** How long an answer stays good enough to draw on. */
+export const ASSUME_WINDOW_MS = 24 * 60 * 60_000;
+
+export function assumedAlive(r: ProbeRecord | undefined, now: number): boolean {
+  if (!r || r.state === "down" || !(r.aliveAt > 0)) return false;
+  return now - r.aliveAt <= ASSUME_WINDOW_MS;
+}
+
+/** At mount everything assumed is due NOW, whatever the clock says: memory
+ *  drew it, the first wave confirms it. Returns a new map. */
+export function markDueNow(records: Map<string, ProbeRecord>, now: number): Map<string, ProbeRecord> {
+  const out = new Map<string, ProbeRecord>();
+  for (const [ip, r] of records) {
+    out.set(ip, assumedAlive(r, now) ? { ...r, askedAt: 0 } : r);
+  }
+  return out;
+}
+
+/** The first, tiny wave the moment the map opens: last session's peers,
+ *  then the most recently confirmed nodes, up to `limit` in all. Quick
+ *  timeout: these are the nodes most likely to answer at once. */
+export const FIRST_WAVE_LIMIT = 48;
+export const FIRST_WAVE_TIMEOUT_MS = 1500;
+
+export function firstWave(
+  records: Map<string, ProbeRecord>,
+  lastPeers: string[],
+  now: number,
+  limit = FIRST_WAVE_LIMIT,
+): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const ip of lastPeers) {
+    if (!seen.has(ip)) { seen.add(ip); out.push(ip); }
+  }
+  const recent = [...records.entries()]
+    .filter(([ip, r]) => !seen.has(ip) && assumedAlive(r, now))
+    .sort((a, b) => b[1].aliveAt - a[1].aliveAt);
+  for (const [ip] of recent) {
+    if (out.length >= limit) break;
+    seen.add(ip);
+    out.push(ip);
+  }
+  return out;
+}
+
+/** Split a wave so answers can be applied as each part returns, rather
+ *  than when the slowest probe in the whole wave finishes. */
+export const CHUNK = 48;
+export function chunks<T>(list: T[], size = CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
 /**
  * Pick this pass's targets. Returns them grouped by patience, because one
  * probe call has one timeout: a quick routine pass, and a slower one for the

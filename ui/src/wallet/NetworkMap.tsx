@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { networkPeers, probePeers, listNodes, nodeIdentity, networkCrawl, peerAdd, type Peer, type Geo } from "./api";
+import { networkPeers, probePeers, noteSetupLog, listNodes, nodeIdentity, networkCrawl, peerAdd, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
-import { loadKnown, recordKnown, addMyIps, type Known } from "./knownPeers";
+import { loadKnown, recordKnown, addMyIps, loadLastPeers, saveLastPeers, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
 /* The map's animation system: every act of communication the app performs is
    drawn here, and nothing is drawn that isn't really happening. The trigger
@@ -10,7 +10,11 @@ import { beginProbeWave, emitMap, setMapSelf, setMapNodeCount, type ProbeTarget 
 import { startMapFeedBridge } from "./mapFeedBridge";
 import { copySetupLogNow } from "./SetupLogHotkey";
 import { nodeStatus } from "../bridge";
-import { announcedName, counts as probeCounts, loadRecords, observe, plan, saveRecords, type ProbeRecord } from "./probeSchedule";
+import {
+  announcedName, assumedAlive, chunks, counts as probeCounts, firstWave, FIRST_WAVE_TIMEOUT_MS, loadRecords, markDueNow,
+  observe, plan, saveRecords, type ProbeRecord,
+} from "./probeSchedule";
+import { ReconnectClock } from "./reconnectClock";
 import { stakingSetupPending } from "./stakeWin";
 import { drawMapAnim } from "./mapAnimRender";
 import { BlockChainViz } from "./BlockChainViz";
@@ -294,7 +298,9 @@ function drawSpiral(
   ctx.restore();
 }
 
-type ProbeState = "probing" | "online" | "offline";
+/* "assumed": answered within the last day, drawn and counted as alive from
+   the first frame, being confirmed by the first wave. See probeSchedule. */
+type ProbeState = "probing" | "online" | "offline" | "assumed";
 
 
 interface HoverPoint {
@@ -591,7 +597,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     const v = new Set<string>();
     for (const p of snapRef.current?.peers ?? []) v.add(p.ip);
     for (const [ip, st] of probeRef.current) {
-      if (st === "online") v.add(ip);
+      if (st === "online" || st === "assumed") v.add(ip);
       // A node that missed once or twice is still counted; only "down" is not.
       else if (st === "offline" && probeCounts(recordsRef.current.get(ip)) && recordsRef.current.get(ip)?.aliveAt) v.add(ip);
     }
@@ -689,7 +695,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     }
   };
 
-  const lastProbe = useRef(0); // last re-ping time (re-ping every 60s)
+  /* The reconnect stopwatch: one line into the setup log per map open. */
+  const clockRef = useRef<ReconnectClock | null>(null);
   const arcFx = useRef<Map<string, ArcFx>>(new Map()); // per-peer flex + colour state
   // Clicking our own node toggles "network only": hide the purple peer layer and
   // brighten the blue network so it isn't covered up.
@@ -757,7 +764,6 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     // (settled/online), never a fake "searching" sweep. Only a genuinely new peer
     // that appears later (in a subsequent poll) flashes green.
     instantRevealRef.current = true;
-    lastProbe.current = performance.now();
 
     // Register every IP this wallet has ever used as its own node (current +
     // historical, across all node profiles and the legacy self-location keys),
@@ -804,14 +810,26 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       }
     }
 
-    // Remembered nodes start as DIM GHOSTS (grey), NOT pre-lit as online. The
-    // map must show what the node is actually experiencing right now, not a
-    // memory of the network: a node only lights up once it's genuinely a live
-    // peer (pink) or the app has just verified it's reachable (blue). Until then
-    // it's a faint "seen before, not confirmed now" dot. This is what makes the
-    // wake-up honest — an isolated node looks isolated, then the network comes
-    // alive around it as it actually connects and verifies.
-    for (const ip of Object.keys(knownRef.current)) probeRef.current.set(ip, "offline");
+    /* ---- DRAW FROM MEMORY FIRST, VERIFY SECOND ----
+       Remembered nodes used to start as dim ghosts until the first probe
+       wave answered, ten to forty seconds after opening and up to a minute
+       more to animate. Geoff: "it should be able to nearly instantly
+       reconnect if we do it right and are optimistic". So a node that
+       answered within the last day is drawn and counted as alive at once
+       ("assumed"), and the first wave, sent this same moment, confirms or
+       corrects it. Three misses still send it grey. Nodes that never
+       answered, or were written off, start dim as before. */
+    const now0 = Date.now();
+    recordsRef.current = markDueNow(recordsRef.current, now0);
+    const assumed: string[] = [];
+    for (const ip of Object.keys(knownRef.current)) {
+      if (myNodeIpsRef.current.has(ip)) continue;
+      const yes = assumedAlive(recordsRef.current.get(ip), now0);
+      probeRef.current.set(ip, yes ? "assumed" : "offline");
+      if (yes) assumed.push(ip);
+    }
+    clockRef.current = new ReconnectClock(now0, assumed);
+    setMapNodeCount(verifiedNodes().size);
 
     const ips = Object.keys(knownRef.current);
     if (ips.length) {
@@ -827,6 +845,97 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   useEffect(() => {
     if (!nodeId) return;
     let alive = true;
+
+    /* ---- THE PROBE WAVES ----
+       Answers are applied as each part of a wave returns (parts of 48), not
+       when the slowest probe in the whole wave finishes; a node that answers
+       in 200 ms is blue in 200 ms. The animation gets only the nodes that
+       were NOT already drawn alive (ghosts being checked), and its stagger
+       is capped so a whole wave finishes drawing within three seconds
+       rather than a minute. */
+    const applyAnswers = (res: { ip: string; online: boolean }[]) => {
+      const now = Date.now();
+      for (const r of res) {
+        recordsRef.current.set(r.ip, observe(recordsRef.current.get(r.ip), r.online, now));
+        probeRef.current.set(r.ip, r.online ? "online" : "offline");
+        if (r.online) clockRef.current?.confirm(r.ip, now);
+      }
+      setMapNodeCount(verifiedNodes().size);
+      setProbeTick((t) => t + 1);
+      const c = clockRef.current;
+      if (c && c.shouldReport(now)) void noteSetupLog(c.report(now).line);
+    };
+    const runWave = async (list: string[], timeoutMs: number, animate: boolean): Promise<void> => {
+      if (!list.length) return;
+      for (const ip of list) if (probeRef.current.get(ip) === "offline") probeRef.current.set(ip, "probing");
+      let resolveWave: ReturnType<typeof beginProbeWave> | null = null;
+      if (animate) {
+        const targets: ProbeTarget[] = [];
+        for (const ip of list) {
+          if (probeRef.current.get(ip) !== "probing") continue; // already drawn alive: nothing to show
+          const kp = knownRef.current[ip];
+          if (kp && typeof kp.lat === "number" && typeof kp.lon === "number") targets.push({ ip, lat: kp.lat, lon: kp.lon });
+        }
+        if (targets.length) resolveWave = beginProbeWave(targets, Math.min(90, 3000 / targets.length));
+      }
+      const results: { ip: string; online: boolean }[] = [];
+      await Promise.all(
+        chunks(list).map((part) =>
+          probePeers(part, timeoutMs)
+            .then((res) => {
+              if (!alive) return;
+              results.push(...res);
+              applyAnswers(res);
+            })
+            .catch(() => {
+              if (!alive) return;
+              for (const ip of part) {
+                results.push({ ip, online: false });
+                probeRef.current.set(ip, "offline");
+              }
+            }),
+        ),
+      );
+      if (!alive) return;
+      resolveWave?.(results.map((r) => ({ ip: r.ip, online: r.online })));
+      for (const ip of list) if (probeRef.current.get(ip) === "probing") probeRef.current.set(ip, "offline");
+      saveRecords(recordsRef.current);
+      setMapNodeCount(verifiedNodes().size);
+      setProbeTick((t) => t + 1);
+    };
+    /* The whole known network, by how much doubt there is about each node. */
+    const runMainWave = async (): Promise<void> => {
+      const all = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
+      const p = plan(recordsRef.current, all, Date.now());
+      const kips = [...p.quick, ...p.patient];
+      await Promise.all([runWave(p.quick, p.timeoutQuick, true), runWave(p.patient, p.timeoutPatient, true)]);
+      if (!alive) return;
+      const now = Date.now();
+      const c = clockRef.current;
+      if (c) {
+        c.waveDone(now);
+        if (c.shouldReport(now)) void noteSetupLog(c.report(now).line);
+      }
+      // First search finished: fade the leftover green lines out one per
+      // second (nodes that didn't answer and didn't become peers), rather
+      // than all vanishing together.
+      if (!firstProbeDone.current) {
+        firstProbeDone.current = true;
+        let slot = performance.now();
+        for (const ip of kips) {
+          if (probeRef.current.get(ip) === "offline") {
+            slot += 1000;
+            greenExit.current.set(ip, slot);
+          }
+        }
+      }
+    };
+    /* At once: last session's peers and the freshest memories, quick timeout.
+       Then the whole network two seconds later, and every minute after. */
+    void runWave(firstWave(recordsRef.current, loadLastPeers(nodeId), Date.now()), FIRST_WAVE_TIMEOUT_MS, false);
+    const firstMain = setTimeout(() => { void runMainWave(); }, 2000);
+    const mainId = setInterval(() => { void runMainWave(); }, 60000);
+
     const poll = async () => {
       try {
         const s = await networkPeers();
@@ -855,76 +964,16 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           const idx = Math.floor(((nowW / 60000) % s.peers.length + s.peers.length) % s.peers.length);
           winnerRef.current = s.peers[idx].ip;
         }
-        // As soon as the node has ANY live peer, start (re)pinging the remembered
-        // network to see which nodes are actually reachable right now — the first
-        // pass ~8s after opening (so the wake-up "comes alive" quickly), then every
-        // 60s. Each wave flips a ghost to "probing" (a green checking-pulse) before
-        // it settles to blue (verified reachable), pink (a real peer) or fades out
-        // (dead). This is the visible sense of the node reaching out and learning
-        // the network, in step with what it's actually doing.
-        const nowMs = performance.now();
-        const probeGap = firstProbeDone.current ? 60000 : 8000;
-        if (s.peers.length >= 1 && nowMs - lastProbe.current > probeGap) {
-          lastProbe.current = nowMs;
-          const all = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
-          /* Who is due, and how patiently. A node believed alive gets the quick
-             routine question; one that just missed gets a longer wait; one
-             written off is asked once a day with the longest wait. */
-          const p = plan(recordsRef.current, all, Date.now());
-          const kips = [...p.quick, ...p.patient];
-          if (kips.length) {
-            for (const ip of kips) if (probeRef.current.get(ip) === "offline") probeRef.current.set(ip, "probing");
-            // v2: announce the wave we are ACTUALLY sending. Each node gets a
-            // green arc out, grey rings when it lands, then gold or red when
-            // its real answer arrives. resolveWave() carries the results back.
-            let resolveWave: ReturnType<typeof beginProbeWave> | null = null;
-            {
-              const targets: ProbeTarget[] = [];
-              for (const ip of kips) {
-                const kp = knownRef.current[ip];
-                // Only nodes whose location we actually know can be animated.
-                if (kp && typeof kp.lat === "number" && typeof kp.lon === "number") {
-                  targets.push({ ip, lat: kp.lat, lon: kp.lon });
-                }
-              }
-              resolveWave = beginProbeWave(targets);
-            }
-            Promise.all([
-              p.quick.length ? probePeers(p.quick, p.timeoutQuick) : Promise.resolve([]),
-              p.patient.length ? probePeers(p.patient, p.timeoutPatient) : Promise.resolve([]),
-            ])
-              .then(([a, b]) => {
-                const res = [...a, ...b];
-                if (!alive) return;
-                resolveWave?.(res.map((r) => ({ ip: r.ip, online: r.online })));
-                const now = Date.now();
-                for (const r of res) {
-                  recordsRef.current.set(r.ip, observe(recordsRef.current.get(r.ip), r.online, now));
-                  probeRef.current.set(r.ip, r.online ? "online" : "offline");
-                }
-                for (const ip of kips) if (probeRef.current.get(ip) === "probing") probeRef.current.set(ip, "offline");
-                saveRecords(recordsRef.current);
-                setMapNodeCount(verifiedNodes().size);
-                setProbeTick((t) => t + 1);
-                // First search finished: fade the leftover green lines out one per
-                // second (nodes that didn't answer and didn't become peers), rather
-                // than all vanishing together.
-                if (!firstProbeDone.current) {
-                  firstProbeDone.current = true;
-                  let slot = performance.now();
-                  for (const ip of kips) {
-                    if (probeRef.current.get(ip) === "offline") {
-                      slot += 1000;
-                      greenExit.current.set(ip, slot);
-                    }
-                  }
-                }
-              })
-              .catch(() => {
-                // The whole wave failed, so every node in it is unanswered.
-                resolveWave?.(kips.map((ip) => ({ ip, online: false })));
-                for (const ip of kips) probeRef.current.set(ip, "offline");
-              });
+        /* The probe waves run on the map's own clock now (see runMainWave
+           below), not on this poll and not on the node having a peer. */
+        saveLastPeers(nodeId, s.peers.map((p) => p.ip));
+        {
+          const c = clockRef.current;
+          if (c && s.peers.length) {
+            const nowC = Date.now();
+            c.peerSeen(nowC);
+            for (const p of s.peers) c.confirm(p.ip, nowC);
+            if (c.shouldReport(nowC)) void noteSetupLog(c.report(nowC).line);
           }
         }
         const ips = s.peers.map((p) => p.ip);
@@ -1082,6 +1131,14 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       setStale(null);
       void poll();
     };
+    /* Coming back from hidden (a sleep, another window): the recent peers
+       are asked again at once, so a laptop that woke up sees its network
+       confirmed in a second rather than at the next minute's wave. */
+    const onShown = () => {
+      if (document.visibilityState !== "visible") return;
+      void runWave(firstWave(recordsRef.current, loadLastPeers(nodeId), Date.now()), FIRST_WAVE_TIMEOUT_MS, false);
+    };
+    document.addEventListener("visibilitychange", onShown);
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
     poll();
@@ -1091,7 +1148,10 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       alive = false;
       clearInterval(id);
       clearInterval(staleId);
+      clearTimeout(firstMain);
+      clearInterval(mainId);
       document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("visibilitychange", onShown);
       window.removeEventListener("focus", onVisible);
     };
   }, [nodeId]);
@@ -1392,7 +1452,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           ip,
           kp,
           xy: P(kp.lon, kp.lat),
-          online: probeRef.current.get(ip) === "online", // verified reachable right now
+          online: probeRef.current.get(ip) === "online" || probeRef.current.get(ip) === "assumed", // verified, or trusted from the last day
           // Missed once or twice, being rechecked: drawn dimmer, still a node.
           unsure: probeRef.current.get(ip) !== "online" && probeCounts(recordsRef.current.get(ip)) && !!recordsRef.current.get(ip)?.aliveAt,
         }));
@@ -1818,9 +1878,11 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       for (const [ip, kp] of Object.entries(knownRef.current)) {
         if (liveNow.has(ip) || !drawnBlue.has(ip)) continue;
         const st = probeRef.current.get(ip) ?? "probing";
-        const online = st === "online";
+        const online = st === "online" || st === "assumed";
         const rec = recordsRef.current.get(ip);
         const unsure = !online && st !== "probing" && probeCounts(rec) && !!rec?.aliveAt;
+        const agoMin = rec?.aliveAt ? Math.max(1, Math.round((Date.now() - rec.aliveAt) / 60000)) : 0;
+        const ago = agoMin >= 120 ? `${Math.round(agoMin / 60)} h ago` : `${agoMin} min ago`;
         const name = announcedName(kp.subver);
         const [x, y] = P(kp.lon, kp.lat);
         const loc = [kp.city || g[ip]?.city, kp.country || g[ip]?.country].filter(Boolean).join(", ");
@@ -1834,7 +1896,9 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           name,
           lines: [
             loc ? ip : "",
-            online
+            st === "assumed"
+              ? `Last confirmed ${ago} · checking now`
+              : online
               ? "Active now · not connected"
               : st === "probing"
                 ? "Checking…"

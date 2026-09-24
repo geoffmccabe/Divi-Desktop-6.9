@@ -6,3 +6,5 @@ OUT="${TMPDIR:-/tmp}/probe-tests.mjs"
 cd "$ROOT/ui"
 npx esbuild src/wallet/probeSchedule.test.ts --bundle --platform=node --format=esm --outfile="$OUT" --log-level=warning
 node "$OUT"
+npx esbuild src/wallet/reconnectClock.test.ts --bundle --platform=node --format=esm --outfile="${TMPDIR:-/tmp}/reconnect-tests.mjs" --log-level=warning
+node "${TMPDIR:-/tmp}/reconnect-tests.mjs"
