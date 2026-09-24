@@ -65,6 +65,8 @@ s = pin(s, "macos-arm64", sm); s = pin(s, "linux-x86_64", sl); s = pin(s, "windo
 open(p, "w").write(s)
 PY
 grep -n "DIVID69_VERSION: &str\|sha256: \"" "$INSTALL" | head -4
+# The wallet's own node gate names the archives too.
+sed -i '' "s/divid69-[0-9.]*-\(windows-x86_64\|linux-x86_64\|macos-arm64\)\.tar\.gz/divid69-$V-\1.tar.gz/g" /Users/geoffreymccabe/dd69-mapanim/.github/workflows/build-apps.yml
 
 cd "$SITE"
 git add public/downloads/divid69-$V-*.tar.gz && git commit -q -m "Publish divid69 $V" && git push origin HEAD:main 2>&1 | tail -1
