@@ -49,17 +49,25 @@ export function NetworkReachPanel() {
 
   return (
     <div className="reach-panel">
-      <div className={"reach-status " + (r.reachable ? "reach-ok" : "reach-hidden")}>
+      <div className={"reach-status " + (r.reachable || r.helpers.length ? "reach-ok" : "reach-hidden")}>
         <strong>
           {r.reachable
             ? "Other nodes can reach you"
-            : "Other nodes cannot reach you"}
+            : r.helpers.length
+              ? `Reachable through ${r.helpers.length} helper node${r.helpers.length === 1 ? "" : "s"}`
+              : "Other nodes cannot reach you"}
         </strong>
         <p className="wl-note">
           {r.reachable ? (
             <>
               Your node accepts incoming connections, so it appears on the
               network like any other full node.
+            </>
+          ) : r.helpers.length ? (
+            <>
+              Your router blocks incoming connections, so other nodes reach you
+              through {r.helpers.join(", ")}. Nothing to set up; your node
+              chose them and will choose others if they go away.
             </>
           ) : (
             <>
@@ -74,6 +82,7 @@ export function NetworkReachPanel() {
       <div className="reach-facts">
         <div><span>Connections you made</span><b>{r.outbound}</b></div>
         <div><span>Connections made to you</span><b>{r.inbound}</b></div>
+        {r.relaySupported && <div><span>Home nodes you are helping</span><b>{r.helping}</b></div>}
         <div><span>Peer port</span><b>{r.port}</b></div>
         {r.addresses.length > 0 && (
           <div><span>Your public address</span><b>{r.addresses.join(", ")}</b></div>

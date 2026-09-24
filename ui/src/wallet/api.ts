@@ -373,6 +373,10 @@ export interface Reachability {
   port: number;
   addresses: string[];
   known: boolean;
+  /** Peer relay (node 69.0.5+): helpers that accepted this node. */
+  helpers: string[];
+  helping: number;
+  relaySupported: boolean;
 }
 export const nodeReachability = () => invoke<Reachability>("node_reachability");
 

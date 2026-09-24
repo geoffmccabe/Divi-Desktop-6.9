@@ -32,6 +32,13 @@ pub struct Reachability {
     pub addresses: Vec<String>,
     /// True once we are confident, rather than merely still starting up.
     pub known: bool,
+    /// ---- PEER RELAY (docs/PEER-RELAY-SPEC.md, node 69.0.5) ----
+    /// Helpers that accepted us: reachable THROUGH them even with no port.
+    pub helpers: Vec<String>,
+    /// Home nodes this node is carrying for.
+    pub helping: u32,
+    /// Whether the node supports the relay at all (older nodes do not).
+    pub relay_supported: bool,
 }
 
 /// The peer port. Not the RPC port, which must stay closed to the world.
@@ -70,6 +77,21 @@ pub fn status(cfg: &NodeConfig) -> Reachability {
             r.reachable = nets
                 .iter()
                 .any(|n| n["reachable"].as_bool().unwrap_or(false));
+        }
+        // The relay (node 69.0.5+): helpers that accepted us, and how many
+        // home nodes we carry. An older node has no "relay" field.
+        if let Some(relay) = net.get("relay").filter(|v| v.is_object()) {
+            r.relay_supported = true;
+            if let Some(list) = relay["helpers"].as_array() {
+                for h in list {
+                    if h["accepted"].as_bool().unwrap_or(false) {
+                        if let Some(a) = h["helper"].as_str() {
+                            r.helpers.push(a.to_string());
+                        }
+                    }
+                }
+            }
+            r.helping = relay["helping_nodes"].as_array().map(|a| a.len() as u32).unwrap_or(0);
         }
     }
     // An advertised address or a single inbound connection is proof, whatever

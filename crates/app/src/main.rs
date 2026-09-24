@@ -1960,6 +1960,9 @@ struct ReachabilityDto {
     port: u16,
     addresses: Vec<String>,
     known: bool,
+    helpers: Vec<String>,
+    helping: u32,
+    relay_supported: bool,
 }
 
 /// Can the rest of the network reach this node, or does it only dial out?
@@ -1974,7 +1977,7 @@ fn node_reachability() -> ReachabilityDto {
         return ReachabilityDto {
             reachable: false, inbound: 0, outbound: 0, listening: false,
             upnp: false, port: dd69_supervisor::reachable::P2P_PORT,
-            addresses: vec![], known: false,
+            addresses: vec![], known: false, helpers: vec![], helping: 0, relay_supported: false,
         };
     };
     let r = dd69_supervisor::reachable::status(&cfg);
@@ -1987,6 +1990,9 @@ fn node_reachability() -> ReachabilityDto {
         port: r.port,
         addresses: r.addresses,
         known: r.known,
+        helpers: r.helpers,
+        helping: r.helping,
+        relay_supported: r.relay_supported,
     }
 }
 
