@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState , useLayoutEffect } from "react";
 import { networkPeers, probePeers, noteSetupLog, listNodes, nodeIdentity, networkCrawl, peerAdd, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, addMyIps, loadLastPeers, saveLastPeers, type Known } from "./knownPeers";
@@ -538,6 +538,51 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   const [geos, setGeos] = useState<Record<string, Geo>>({});
   const [hover, setHover] = useState<HoverPoint | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; ip: string; isPeer: boolean; label: string; note: string | null; busy: boolean } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuH, setMenuH] = useState(240);
+  useLayoutEffect(() => {
+    if (menu && menuRef.current) setMenuH(menuRef.current.offsetHeight);
+  });
+  useEffect(() => {
+    if (!menu) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenu(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menu]);
+  /* ---- CONNECTING TO A NODE, WITH AN ANSWER ----
+     "Add as peer" put the address on the node's keep-connected list and
+     stopped there; the node walks that list every two minutes, so nothing
+     happened on screen and a second click hit "already added". Now both
+     buttons ask for an immediate try and then WATCH the peer list for up to
+     45 seconds: the fuchsia dot and the line come from that list the moment
+     the node reports the connection, and the menu says so, or says plainly
+     that the other node did not accept the connection. */
+  const connectTo = (ip: string, keep: boolean) => {
+    setMenu((m) => m && { ...m, busy: true, note: keep ? "Adding, and connecting\u2026" : "Connecting\u2026" });
+    const kp = knownRef.current[ip];
+    if (kp) emitMap("node.seek", { lat: kp.lat, lon: kp.lon, ip });
+    const started = Date.now();
+    const watch = async (): Promise<void> => {
+      for (;;) {
+        const s = await networkPeers().catch(() => null);
+        if (s && s.peers.some((p) => p.ip === ip)) {
+          setSnap(s);
+          setMenu((m) => m && { ...m, busy: false, isPeer: true, note: keep ? "Connected. Your node will keep this connection." : "Connected." });
+          return;
+        }
+        const secs = Math.round((Date.now() - started) / 1000);
+        if (secs >= 45) {
+          setMenu((m) => m && { ...m, busy: false, note: "Your node tried for 45 seconds and it did not connect. That node may not accept incoming connections, or may be full." });
+          return;
+        }
+        setMenu((m) => m && { ...m, note: `Connecting\u2026 ${secs}s` });
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    };
+    peerAdd(ip, keep)
+      .then(() => watch())
+      .catch((e) => setMenu((m) => m && { ...m, busy: false, note: String(e).replace(/^Error:\s*/i, "") }));
+  };
   const pointsRef = useRef<HoverPoint[]>([]);
   // When the node last told us something true. Drives the "this map is frozen"
   // notice; see the note by the poll below.
@@ -680,7 +725,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             }));
           if (!seen.length) return;
           knownRef.current = recordKnown(knownRef.current, seen);
-          noteSeen(seen.map((x) => x.ip));
+          /* Heard of, not seen: these are NOT registered as new. An address
+             earns its spiral when it first answers (see applyAnswers). */
           newNodesRef.current = newNodes(knownRef.current);
           setMapNodeCount(verifiedNodes().size);
           for (const n of seen) {
@@ -855,10 +901,17 @@ export function NetworkMap({ onReturn, autoplay = false }: {
        rather than a minute. */
     const applyAnswers = (res: { ip: string; online: boolean }[]) => {
       const now = Date.now();
+      const alive: string[] = [];
       for (const r of res) {
         recordsRef.current.set(r.ip, observe(recordsRef.current.get(r.ip), r.online, now));
         probeRef.current.set(r.ip, r.online ? "online" : "offline");
-        if (r.online) clockRef.current?.confirm(r.ip, now);
+        if (r.online) { clockRef.current?.confirm(r.ip, now); alive.push(r.ip); }
+      }
+      /* A node that just answered for the first time ever is genuinely new
+         to this wallet: registered now, so it gets its spiral. */
+      if (alive.length) {
+        noteSeen(alive);
+        newNodesRef.current = newNodes(knownRef.current);
       }
       setMapNodeCount(verifiedNodes().size);
       setProbeTick((t) => t + 1);
@@ -2356,8 +2409,14 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         )}
         {menu && !rebels && (
           <div
+            ref={menuRef}
             className="netmap-menu netmap-ctx"
-            style={{ left: Math.min(menu.x + 8, (wrapRef.current?.clientWidth ?? 9999) - 230), top: Math.max(8, menu.y - 8) }}
+            style={{
+              left: Math.min(menu.x + 8, (wrapRef.current?.clientWidth ?? 9999) - 230),
+              /* Kept inside the map: near the bottom the menu used to run off
+                 it and the Close button with it. */
+              top: Math.max(8, Math.min(menu.y - 8, (wrapRef.current?.clientHeight ?? 9999) - menuH - 8)),
+            }}
             onMouseDown={(e) => e.stopPropagation()}
             onContextMenu={(e) => e.preventDefault()}
           >
@@ -2377,22 +2436,10 @@ export function NetworkMap({ onReturn, autoplay = false }: {
               }).catch((e) => setMenu((m) => m && { ...m, busy: false, note: String(e) }));
             }}>Ping it</button>
             {!menu.isPeer && (
-              <button type="button" disabled={menu.busy} onClick={() => {
-                setMenu((m) => m && { ...m, busy: true, note: "Asking your node to connect\u2026" });
-                const kp = knownRef.current[menu.ip];
-                if (kp) emitMap("node.seek", { lat: kp.lat, lon: kp.lon, ip: menu.ip });
-                peerAdd(menu.ip, true).then((r) => setMenu((m) => m && { ...m, busy: false, note: r }))
-                  .catch((e) => setMenu((m) => m && { ...m, busy: false, note: String(e) }));
-              }}>Add as peer</button>
+              <button type="button" disabled={menu.busy} onClick={() => connectTo(menu.ip, true)}>Add as peer</button>
             )}
             {!menu.isPeer && (
-              <button type="button" disabled={menu.busy} onClick={() => {
-                setMenu((m) => m && { ...m, busy: true, note: "Connecting once\u2026" });
-                const kp = knownRef.current[menu.ip];
-                if (kp) emitMap("node.seek", { lat: kp.lat, lon: kp.lon, ip: menu.ip });
-                peerAdd(menu.ip, false).then((r) => setMenu((m) => m && { ...m, busy: false, note: r }))
-                  .catch((e) => setMenu((m) => m && { ...m, busy: false, note: String(e) }));
-              }}>Connect once</button>
+              <button type="button" disabled={menu.busy} onClick={() => connectTo(menu.ip, false)}>Connect once</button>
             )}
             <button type="button" onClick={() => { navigator.clipboard?.writeText(menu.ip); setMenu((m) => m && { ...m, note: "Address copied." }); }}>Copy address</button>
             {menu.note && <div className="netmap-ctx-note">{menu.note}</div>}

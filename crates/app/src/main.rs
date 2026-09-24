@@ -1309,9 +1309,22 @@ async fn peer_add(ip: String, keep: bool) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
         let rpc = dd69_supervisor::rpc::RpcClient::new(&cfg);
-        let mode = if keep { "add" } else { "onetry" };
-        rpc.call("addnode", serde_json::json!([format!("{ip}:51472"), mode]))
-            .map(|_| if keep { "Added. Your node will keep a connection to it.".to_string() } else { "Asked your node to connect once.".to_string() })
+        let target = format!("{ip}:51472");
+        if keep {
+            /* On the keep-connected list, AND tried now. The node's own walk
+               of that list runs every two minutes, so "add" alone showed
+               nothing for two minutes and Geoff took it for broken. Being
+               on the list already is not a failure. */
+            match rpc.call("addnode", serde_json::json!([target.clone(), "add"])) {
+                Ok(_) => {}
+                Err(e) if e.to_lowercase().contains("already added") => {}
+                Err(e) => return Err(e),
+            }
+        }
+        /* One immediate attempt. The node connects synchronously here, so a
+           refusal comes back as an error rather than silence. */
+        rpc.call("addnode", serde_json::json!([target, "onetry"]))
+            .map(|_| if keep { "On your node's list, and connecting now\u{2026}".to_string() } else { "Connecting now\u{2026}".to_string() })
     })
     .await
     .map_err(|e| e.to_string())?

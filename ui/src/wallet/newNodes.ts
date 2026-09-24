@@ -130,7 +130,15 @@ export function baselineNewNodes(now = Date.now()): void {
    From here on a spiral means a node this wallet has genuinely never seen
    before. Guarded by a flag so it can never re-freeze a real newcomer, and
    the flag is versioned so a future reset is one line. */
-const REBASELINE_FLAG = "dd69.newNodes.rebaseline.v2";
+/* v3, 2026-Sep-24: it happened again. The crawl learns addresses from OTHER
+   nodes' peer lists and every one of them was registered "first seen today"
+   on hearing about it, alive or not. Geoff: "very covered with spirals
+   again". So a second reset, and the rule that stops a third: an address is
+   registered only when it is VERIFIED alive (a real peer, or it answered a
+   probe), never on merely being heard of. A spiral now means a live node
+   this wallet had never seen before, which is what it was always meant to
+   mean. */
+const REBASELINE_FLAG = "dd69.newNodes.rebaseline.v3";
 
 function rebaselineAfterCrawl(reg: Reg, old: number): void {
   try {
