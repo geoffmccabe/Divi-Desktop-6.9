@@ -93,7 +93,14 @@ done
 for f in Universal.dmg Windows-x64-setup.exe Linux-x86_64.deb macos-update.app.tar.gz; do
   local_size=$(stat -f %z "$OUT/Divi-Desktop-$V-$f")
   # A real download, not a HEAD: the CDN sends some files without a length.
-  remote_size=$(curl -s -o /dev/null -w '%{size_download}' -L -H "User-Agent: Mozilla/5.0" "https://scan.divi.love/downloads/Divi-Desktop-$V-$f")
+  # And a few tries: the edge can still hand out the fallback page for a
+  # minute after latest.json has switched (seen on 69.13.28).
+  remote_size=0
+  for try in 1 2 3 4 5 6; do
+    remote_size=$(curl -s -o /dev/null -w '%{size_download}' -L -H "User-Agent: Mozilla/5.0" "https://scan.divi.love/downloads/Divi-Desktop-$V-$f")
+    [ "$remote_size" = "$local_size" ] && break
+    sleep 20
+  done
   [ "$remote_size" = "$local_size" ] || fail "$f: served $remote_size bytes, built $local_size"
   echo "  served: $f ($remote_size bytes)"
 done
