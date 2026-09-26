@@ -279,11 +279,11 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   flushRoom();
   const h = ctl.hud();
   /* The effects layer, the player's guard shell, the cockpit's mandala
-     shield, the sky, and the layer the other ships are drawn in: the
-     connection is opened at attach now, since the fight runs on the server
-     and there is nothing to fly into until it is up. */
+     shield, the sky, the layer the other ships are drawn in, and the Threshold
+     Gate over the Pacific: the connection is opened at attach now, since the
+     fight runs on the server and there is nothing to fly into until it is up. */
   ok("attach adds its own objects to the map's scene",
-     g.scene.children.length === before + 5, `${before} -> ${g.scene.children.length}`);
+     g.scene.children.length === before + 6, `${before} -> ${g.scene.children.length}`);
   ok("attach reports ready", h.ready && h.broken === null);
   ok("it uses the real towers it was handed", h.towers === 2, `${h.towers} towers`);
   ok("it knows which tower is yours", h.homeName === "San Jose, Costa Rica", h.homeName);
@@ -573,7 +573,7 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   await settle();
   ctl.attach({ ...g, selfIp: "self-ip" });
   flushRoom();
-  ok("re-attaching does not pile up scenery", g.scene.children.length === before + 5,
+  ok("re-attaching does not pile up scenery", g.scene.children.length === before + 6,
      `${g.scene.children.length - before} objects`);
   ctl.detach();
   await settle();

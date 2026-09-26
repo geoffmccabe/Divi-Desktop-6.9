@@ -34,8 +34,17 @@ import {
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE, STAKE_BONUS, STAKE_BONUS_MS,
   BULLET_SPEED, BULLET_LIFE, CONVERGE,
+  spawnFleet, rollLaserDamage, MINI_DAMAGE, LASER_MAX, TORPEDO_DAMAGE,
   type CombatState, type CombatWorld, type PlayerBody,
 } from "../../../ui/src/wallet/rebels/rebelsCombat";
+import { HEART_GUARD, HEART_GUARD_COUNT } from "../../../ui/src/wallet/rebels/rebelsFlock";
+/* Spikeworld's dimensions. That folder deliberately imports nothing from the
+   game, the DOM or three.js, precisely so the room can share its numbers: the
+   heart the room defends and the heart the cockpit draws are the same sphere
+   because they are the same constants. */
+import {
+  HEART_HP, R_HEART, R_INNER, R_OUTER, SKY_EDGE, ARRIVAL_OUT, toWorld,
+} from "../../../ui/src/wallet/rebels/voxel/voxelWorld";
 import {
   MAX_SHIELD, MAX_AMMO, MAX_TORPEDOES, MAX_GUARDS, GUARD_SECONDS, GUARD_ABSORB, CRASH_DAMAGE,
   BOOST,
@@ -53,7 +62,7 @@ import { DEFAULT_DROP_CONFIG, type DropConfig } from "../../../ui/src/wallet/reb
 import { ammoFor, torpedoesFor, topSpeedFor, shieldMaxFor, recharge, supercharge, SUPER_BOOST_MULT, type Extras } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
-  type PaintWire, type PaintPart, nextRoom,
+  type PaintWire, type PaintPart, nextRoom, regionOf, type RegionName,
 } from "./protocol";
 import { runRoomCheat } from "./cheats";
 import { stateMessages } from "./broadcast";
@@ -75,6 +84,26 @@ const MAX_FRAME = 2048;
 /* Thirty seconds down, or ten with a VIP Pass among the seat's gear. The
    figures are the item catalogue's, so the shop and the room agree. */
 const RESPAWN_SECONDS = RESPAWN_WAIT;
+
+/* ---- Spikeworld's own numbers ----
+   Its centre is the room's origin: in this region the cockpit reports where it
+   is RELATIVE TO THE HEART, so nothing on the wire is ever more than a few
+   thousand units from zero and the same validator that guards Earth orbit
+   guards this. See rebelsRoom.ts, `origin`. */
+/** The heart's radius in world units, the sphere rounds are tested against. */
+const HEART_RADIUS = toWorld(R_HEART);
+/** Inside the shell's inner face, with margin, which is where the guards wake. */
+const HEART_CAVITY = toWorld(R_INNER - 10);
+/** Where an arriving or respawning ship is put: just outside the shell. */
+const SPIKE_ARRIVAL = toWorld(R_OUTER + ARRIVAL_OUT);
+/** How far out a ship may get in Spikeworld before it is somewhere else. Its
+ *  own sky, with room to turn around in past the arrival point. */
+const SPIKE_CEILING = toWorld(R_OUTER + SKY_EDGE);
+/** How long the heart waits before sending another flock, once the last one is
+ *  gone. Long enough to get in and do some damage; short enough to be a fight. */
+const GUARD_REARM_SECONDS = 25;
+/** How much damage is taken before the heart's health is written to storage. */
+const HEART_SAVE_EVERY = 2000;
 
 /** A thousand kills is a hundred DIVI. */
 const KILLS_PER_PAYOUT = 1000;
@@ -237,9 +266,30 @@ const GLOBAL_EVENTS = new Set(["waveStart", "dragon", "dragonGone"]);
 
 export class RebelsRoom {
   private seats = new Map<string, Seat>();
-  /** This room's own name ("earth", "earth-2"...), read from the address it is
-   *  reached at, so a full room can say which overflow room comes next. */
+  /** This room's own name ("earth", "earth-2", "spike"...), read from the
+   *  address it is reached at, so a full room can say which overflow room comes
+   *  next. */
   private roomName = "earth";
+  /** Which world this room IS. Read from the name once, in fetch, and then
+   *  never guessed at again: everything that differs between Earth orbit and
+   *  Spikeworld asks this one field. */
+  private region: RegionName = "earth";
+  /* ---- SPIKEWORLD'S HEART ----
+     The million, shared. On Earth the thing everyone is fighting is a wave and
+     it belongs to the simulation; here it is one sphere with one number, and
+     the whole point of making Spikeworld a room is that the number is the SAME
+     number for everybody in it. One player chipping at it while another sleeps
+     is progress the second player comes back to. */
+  private heartHp = HEART_HP;
+  /** Set once the guards have been launched, so they launch once per flock. */
+  private guardsOut = false;
+  /** Seconds until the heart may send another flock, counted only while there
+   *  are none left. A heart that re-armed instantly could never be reached. */
+  private guardWait = 0;
+  /** Seconds of damage not yet written down. The heart survives the object
+   *  going to sleep, so it is saved, but not on every hit. */
+  private heartSaveAt = 0;
+  private heartLoaded = false;
   private combat: CombatState = createCombat();
   private world: CombatWorld;
   private tips: THREE.Vector3[] = [];
@@ -265,7 +315,10 @@ export class RebelsRoom {
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const named = /^\/room\/([A-Za-z0-9_-]{1,40})/.exec(url.pathname);
-    if (named) this.roomName = named[1];
+    if (named) {
+      this.roomName = named[1];
+      this.region = regionOf(named[1]) ?? "earth";
+    }
 
     if (url.pathname.endsWith("/state")) {
       return Response.json({
@@ -355,7 +408,13 @@ export class RebelsRoom {
     this.combat.drops = this.drops;
     void this.refreshDrops();
     this.now = 0;
-    startWave(this.combat, 1);
+    /* ---- WAVES ARE AN EARTH THING ----
+       Geoff: "if a player goes to spikeworld then it's like the game is over
+       for them because they're in another game." Spikeworld has its own fight
+       and it is not a wave: nothing is started here, so combat.wave stays null
+       and the simulation's own "wave cleared, send the next" never fires. */
+    if (this.region === "earth") startWave(this.combat, 1);
+    else void this.loadHeart();
     this.timer = setInterval(() => {
       try { this.step(); } catch { /* one bad tick must not stop the room */ }
     }, 1000 / HZ);
@@ -390,6 +449,104 @@ export class RebelsRoom {
       }
     }
     this.world.wings = bodies.length ? bodies : undefined;
+  }
+
+  /* ================= SPIKEWORLD ==================================
+     Everything below here runs only when this room IS Spikeworld. The Earth
+     room never touches it, and Spikeworld never starts a wave: they are one
+     class because they are one simulation, and they differ in what is put in
+     front of the players, not in how any of it is stepped. */
+
+  /** Read the heart's remaining health back after the object has been asleep.
+   *  Once only: after that the field in memory is the truth and storage is a
+   *  copy of it. */
+  private async loadHeart(): Promise<void> {
+    if (this.heartLoaded) return;
+    this.heartLoaded = true;
+    try {
+      const saved = await this.state.storage.get<number>("heartHp");
+      if (typeof saved === "number" && Number.isFinite(saved) && saved >= 0) {
+        this.heartHp = Math.min(HEART_HP, saved);
+      }
+    } catch { /* nothing saved, or storage unhappy */ }
+  }
+
+  private async saveHeart(): Promise<void> {
+    try { await this.state.storage.put("heartHp", this.heartHp); } catch { /* later */ }
+  }
+
+  /**
+   * The heart, its guards, and what the players are doing to it.
+   *
+   * THE HEART IS NOT AN ENEMY, deliberately: it does not fly, it does not
+   * dodge, and putting it through the fighter and flock AI would cost a
+   * thousand ticks of pathfinding for a sphere that never moves. So the rounds
+   * are tested against it here, as one sphere, which is all it is. This is the
+   * same test the cockpit used to do alone (frameHeartHits in
+   * rebelsController.ts); it moved here so that two players shooting it are
+   * wearing down ONE million rather than a million each.
+   */
+  private stepHeart(): void {
+    const c = this.combat;
+    /* ---- the guards ----
+       Launched when somebody crosses into the cavity, not when they arrive in
+       the region: the flock is the heart's answer to being approached. */
+    const guards = c.enemies.filter((e) => e.drone).length;
+    if (this.guardsOut && guards === 0) {
+      this.guardsOut = false;
+      this.guardWait = GUARD_REARM_SECONDS;
+    }
+    if (this.guardWait > 0) this.guardWait -= DT;
+    if (!this.guardsOut && this.guardWait <= 0 && this.heartHp > 0) {
+      const inside = (this.world.players ?? []).find((p) => p.pos.length() < HEART_CAVITY);
+      if (inside) {
+        this.guardsOut = true;
+        const toward = inside.pos.clone().normalize();
+        spawnFleet(c, HEART_GUARD.tier, inside.pos, inside.fwd, {
+          count: HEART_GUARD_COUNT,
+          /* Off the heart's surface, on that pilot's side of it, so they are
+             seen leaving it rather than appearing around it. */
+          from: toward.clone().multiplyScalar(HEART_RADIUS + 40),
+          home: new THREE.Vector3(),
+        });
+      }
+    }
+
+    /* ---- what the players are doing to it ----
+       Every round that reached the sphere, whoever fired it. Hostile rounds
+       are the guards' own and pass straight through: the heart does not shoot
+       itself down. */
+    if (this.heartHp <= 0) return;
+    /* The stake bonus is per shooter and the field is allowed to be a flat
+       number, so read it the one way that covers both. */
+    const ds = this.world.damageScale;
+    const bonus = (owner: string) => (typeof ds === "function" ? ds(owner) : ds ?? 1);
+    let took = 0;
+    for (let i = c.bullets.length - 1; i >= 0; i--) {
+      const b = c.bullets[i];
+      if (b.hostile) continue;
+      if (b.pos.length() > HEART_RADIUS) continue;
+      took += rollLaserDamage() * (b.mini ? MINI_DAMAGE : 1) * (b.scale ?? 1)
+        * bonus(b.owner ?? "");
+      c.bullets.splice(i, 1);
+    }
+    for (let i = c.torpedoes.length - 1; i >= 0; i--) {
+      const t = c.torpedoes[i];
+      if (t.pos.length() > HEART_RADIUS) continue;
+      took += LASER_MAX * TORPEDO_DAMAGE * bonus(t.owner ?? "");
+      c.torpedoes.splice(i, 1);
+      c.events.push({ kind: "torpedoBlast", at: t.pos.clone(), power: 6, who: "" });
+    }
+    if (took <= 0) return;
+    this.heartHp = Math.max(0, this.heartHp - took);
+    /* Written down every few seconds of damage rather than every hit: a
+       minigun is twenty writes a second and the number only has to survive the
+       object going to sleep. */
+    this.heartSaveAt += took;
+    if (this.heartSaveAt >= HEART_SAVE_EVERY || this.heartHp <= 0) {
+      this.heartSaveAt = 0;
+      void this.saveHeart();
+    }
   }
 
   private refreshRoster(): void {
@@ -434,7 +591,23 @@ export class RebelsRoom {
     if (this.world.players!.length === 0) { clearEvents(this.combat); return; }
     this.stepWings();
 
+    /* ---- NOTHING OF EARTH'S WANDERS INTO SPIKEWORLD ----
+       The simulation has two spawners of its own that owe nothing to a wave: a
+       roll every five seconds for a natural swarm, and the dragon's minute.
+       Both are Earth's. Leaving them running out here put the occasional
+       yellow tier-one flock inside a hollow world whose whole population is
+       meant to be the heart's sixty, which is the same thing Geoff said about
+       the waves: "that's a separate game."
+
+       Held rather than deleted, and held every tick rather than once: a reset
+       (everybody dying) builds a fresh CombatState with the clocks back at
+       zero, and a one-off would be lost with it. */
+    if (this.region === "spike") {
+      this.combat.flockClock = -1e6;
+      this.combat.dragonClock = -1e6;
+    }
     stepCombat(this.combat, DT, this.world);
+    if (this.region === "spike") this.stepHeart();
     /* Gems move; their saved positions should not go stale. */
     this.gemSaveAt += DT;
     if (this.gemSaveAt >= 30 && this.combat.gems.length) { this.gemSaveAt = 0; void this.saveGems(); }
@@ -684,14 +857,26 @@ export class RebelsRoom {
     this.combat = createCombat();
     this.combat.gems = gems;
     for (const o of this.seats.values()) o.tally.clear();
-    startWave(this.combat, 1);
+    if (this.region === "earth") startWave(this.combat, 1);
+    else {
+      /* The heart is NOT reset by everybody dying. It is the thing being worn
+         down and a million is meant to take a while; handing it back its full
+         health every time the last pilot is killed would make it unkillable by
+         anyone who is not immortal. Only its guards start again. */
+      this.guardsOut = false;
+      this.guardWait = 0;
+    }
   }
 
   private revive(s: Seat): void {
     s.dead = false;
     this.refill(s);
-    /* Back on your own pad, which is where a launch happens. */
-    s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
+    /* Back on your own pad, which is where a launch happens. In Spikeworld
+       there are no pads and no ground: everybody comes back where everybody
+       arrives, just outside the shell, which is the one place in this world
+       that is reliably empty. */
+    if (this.region === "spike") s.body.pos.copy(s.home);
+    else s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
     this.refreshRoster();
     /* ---- AND TELL THEM, OR THE COUNTDOWN NEVER ENDS ----
        A revived seat is not FLYING until its player launches again, so with
@@ -810,11 +995,25 @@ export class RebelsRoom {
     /* Gear: known keys only, bounded, and the magazine and rack sized from
        the items in it exactly as the solo game sizes them. */
     this.applyGear(seat, Array.isArray(m.gear) ? m.gear : [], true, m.drones);
-    seat.home.copy(home).normalize().multiplyScalar(R);
-    /* Kept as sent, mast and all: the surface point alone cannot say how
-       tall the thing is, and docking is measured to the mast. */
-    seat.homeTip.copy(home);
-    seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 8);
+    /* ---- WHERE THIS SHIP BELONGS ----
+       On Earth, a tower on the surface: the point is pulled onto the globe
+       because a pad is a place on a planet and the client's number is only a
+       direction the room trusts.
+
+       In Spikeworld there is no globe to pull it onto and no towers to dock at.
+       Everybody arrives, and comes back, at the one place outside the shell,
+       which is where the gate home stands. */
+    if (this.region === "spike") {
+      seat.home.set(0, 0, SPIKE_ARRIVAL);
+      seat.homeTip.copy(seat.home);
+      seat.body.pos.copy(seat.home);
+    } else {
+      seat.home.copy(home).normalize().multiplyScalar(R);
+      /* Kept as sent, mast and all: the surface point alone cannot say how
+         tall the thing is, and docking is measured to the mast. */
+      seat.homeTip.copy(home);
+      seat.body.pos.copy(seat.home).normalize().multiplyScalar(R + 8);
+    }
     seat.joined = true;
     this.refreshRoster();
     this.sendYou(seat);
@@ -927,13 +1126,24 @@ export class RebelsRoom {
     const p = vec(m.p), f = vec(m.f);
     if (!p || !f || f.lengthSq() < 1e-6) return this.strike(seat, "bad transform");
 
-    /* The world got a great deal taller when the flight model was freed: the
+    /* ---- IS THAT A PLACE IN THIS WORLD? ----
+       The world got a great deal taller when the flight model was freed: the
        ceiling went from thirty units to eight planet radii, so a player really
        can be out in space. The bound follows it rather than being a number of
        its own, or honest pilots would start being snapped back the moment they
-       climbed. */
+       climbed.
+
+       AND IT IS A DIFFERENT WORLD IN SPIKEWORLD. There is no ground there and
+       no sky in Earth's sense: a ship flies from just outside the shell right
+       down to the heart, which is a few hundred units from this region's zero.
+       Judging that by Earth's floor put every arriving pilot "outside the
+       world" and snapped them back to their pad, which the room then read as a
+       ship sitting inside the heart. One bound per region, and no exceptions
+       anywhere else. */
     const alt = p.length();
-    if (alt < R + MIN_ALT - 2 || alt > R + MAX_ALT + 2) {
+    const low = this.region === "spike" ? 0 : R + MIN_ALT - 2;
+    const high = this.region === "spike" ? SPIKE_CEILING : R + MAX_ALT + 2;
+    if (alt < low || alt > high) {
       return this.snapBack(seat, "outside the world");
     }
 
@@ -1318,7 +1528,10 @@ export class RebelsRoom {
 
   private broadcastState(): void {
     /* The picture for each player is built in broadcast.ts; the room sends it. */
-    for (const [s, text] of stateMessages(this.combat, [...this.seats.values()], this.tick)) {
+    /* Spikeworld's heart, on every state message: it is one number and it is
+       the thing the whole region is about. */
+    const extra = this.region === "spike" ? { hp: Math.round(this.heartHp) } : undefined;
+    for (const [s, text] of stateMessages(this.combat, [...this.seats.values()], this.tick, extra)) {
       try { s.ws.send(text); } catch { this.leave(s); }
     }
     /* Gauges every half second rather than every tick: they change slowly and

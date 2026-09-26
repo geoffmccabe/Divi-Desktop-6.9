@@ -21,7 +21,7 @@
 
 import * as THREE from "three";
 import {
-  CUBE, CHUNK, R_OUTER, R_INNER, R_HEART, WORLD_RADIUS, SKY_EDGE, HEART_HP, toWorld,
+  CUBE, CHUNK, R_OUTER, R_INNER, R_HEART, WORLD_RADIUS, SKY_EDGE, HEART_HP, ARRIVAL_OUT, toWorld,
 } from "./voxelWorld";
 import { spokeDirections } from "./voxelField";
 import { meshChunk, FACE_SHADE, type ChunkMesh } from "./voxelMesh";
@@ -105,6 +105,16 @@ export interface VoxelPlanet {
    * worse than one that sits there at nothing.
    */
   hitHeart(damage: number): number;
+  /**
+   * The heart's health, as somebody else counted it.
+   *
+   * In a room the million is the ROOM'S number, not this cockpit's: two pilots
+   * shooting the heart are wearing down one heart, and the only way that is
+   * true is if neither of them keeps their own tally. So the room sends it and
+   * this writes it down. Returns true if it actually changed, so the caller
+   * knows whether to bring the bar up.
+   */
+  setHeart(hp: number): boolean;
   /** For DFlow: what it is costing right now. */
   stats(): {
     chunks: number; triangles: number; queued: number; built: number;
@@ -381,6 +391,14 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
   }
 
   const _eye = new THREE.Vector3();
+  /* Dimming, not reddening: the colour stays the heart's own so it is still
+     recognisably the thing you came for, and only the brightness says how it
+     is doing. */
+  const dimHeart = (): void => {
+    const left = heartHp / HEART_HP;
+    heartMesh.mat.color.setHex(HEART_COLOUR).multiplyScalar(0.35 + 0.65 * left);
+  };
+
   return {
     group,
     centre: centre.clone(),
@@ -709,12 +727,18 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
     hitHeart: (damage) => {
       if (!(damage > 0)) return heartHp;
       heartHp = Math.max(0, heartHp - damage);
-      /* Dimming, not reddening: the colour stays the heart's own so it is
-         still recognisably the thing you came for, and only the brightness
-         says how it is doing. */
-      const left = heartHp / HEART_HP;
-      heartMesh.mat.color.setHex(HEART_COLOUR).multiplyScalar(0.35 + 0.65 * left);
+      dimHeart();
       return heartHp;
+    },
+    setHeart: (hp) => {
+      if (!Number.isFinite(hp)) return false;
+      const next = Math.max(0, Math.min(HEART_HP, hp));
+      /* A tenth of a point is not a change worth a health bar: the room rounds
+         to whole points, so anything smaller is float noise. */
+      if (Math.abs(next - heartHp) < 0.5) return false;
+      heartHp = next;
+      dimHeart();
+      return true;
     },
     stats: () => ({
       chunks: live.size, triangles: triangleCount, queued: queue.length, built,
@@ -739,7 +763,7 @@ export function makeVoxelPlanet(centre: THREE.Vector3, seed = 0): VoxelPlanet {
 /** Where a ship should arrive: just outside the surface, facing in. In WORLD
  *  units, relative to the planet's centre. */
 export function arrivalOffset(): THREE.Vector3 {
-  return new THREE.Vector3(0, 0, toWorld(R_OUTER + SKY_EDGE * 0.35));
+  return new THREE.Vector3(0, 0, toWorld(R_OUTER + ARRIVAL_OUT));
 }
 
 /** How far from Earth's centre a ship has to be allowed to go to be here. */

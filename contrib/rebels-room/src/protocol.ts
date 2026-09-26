@@ -327,20 +327,44 @@ export type ServerMessage =
  * ever locked out. "p1" to "p14" are held for the planet shards (network plan,
  * phase 7). Anything else is refused at the door, because every name is a Durable
  * Object and a name anyone could invent is an object anyone could create.
+ *
+ * "spike" is THE SECOND REGION, and it overflows the same way. Geoff: "for
+ * spikeworld, make it multiplayer now as a second region." It is a room in
+ * exactly the sense earth is: one Durable Object, the same simulation, the same
+ * wire. What differs is what the room puts in it (see REGIONS in room.ts): no
+ * Earth waves, no towers, a guarded heart instead.
+ *
+ * The two are separate objects, so an Earth fight and a Spikeworld fight run at
+ * the same time without either paying for the other, and a player who flies
+ * through the gate leaves one roster and joins the other.
  */
 export const ROOM_OVERFLOW_MAX = 16;
+/** The regions a player can be in. One name each; the overflow rooms of a
+ *  region are the same region with a number after them. */
+export const REGION_NAMES = ["earth", "spike"] as const;
+export type RegionName = (typeof REGION_NAMES)[number];
+
+/** Which region a room name belongs to, or null if it is not a region room.
+ *  One reader for the name, so the door, the room and the cockpit cannot
+ *  disagree about what "spike-3" is. */
+export function regionOf(name: string): RegionName | null {
+  const m = /^(earth|spike)(?:-(\d{1,2}))?$/.exec(name);
+  if (!m) return null;
+  if (m[2] !== undefined && !(Number(m[2]) >= 2 && Number(m[2]) <= ROOM_OVERFLOW_MAX)) return null;
+  return m[1] as RegionName;
+}
+
 export function roomNameOk(name: string): boolean {
-  const m = /^earth(?:-(\d{1,2}))?$/.exec(name);
-  if (m) return m[1] === undefined || (Number(m[1]) >= 2 && Number(m[1]) <= ROOM_OVERFLOW_MAX);
+  if (regionOf(name)) return true;
   const p = /^p(\d{1,2})$/.exec(name);
   return !!p && Number(p[1]) >= 1 && Number(p[1]) <= 14;
 }
 /** Where to send someone when this room is full, or "" when there is nowhere. */
 export function nextRoom(name: string): string {
-  const m = /^earth(?:-(\d{1,2}))?$/.exec(name);
+  const m = /^(earth|spike)(?:-(\d{1,2}))?$/.exec(name);
   if (!m) return "";
-  const n = m[1] === undefined ? 1 : Number(m[1]);
-  return n < ROOM_OVERFLOW_MAX ? `earth-${n + 1}` : "";
+  const n = m[2] === undefined ? 1 : Number(m[2]);
+  return n < ROOM_OVERFLOW_MAX ? `${m[1]}-${n + 1}` : "";
 }
 /** A guest id worth trusting as a key: long, random-looking, nothing odd in it. */
 export function guestIdOk(id: unknown): id is string {

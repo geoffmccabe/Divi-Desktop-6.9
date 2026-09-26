@@ -30,12 +30,14 @@ import {
 import { platform } from "./platform/current";
 import type { Pilot } from "./platform/platform";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
-import { R, MAX_ALT, EARTH_D } from "./orbitWorld";
+import { R, MAX_ALT } from "./orbitWorld";
 import { makeVoxelPlanet, arrivalOffset, type VoxelPlanet } from "./voxel/voxelPlanet";
+import { SPIKEWORLD_CENTRE } from "./rebelsRegions";
+import { makeGate, gatePosition, GATE_REACH, type Gate } from "./rebelsGate";
 import { HEART_GUARD, HEART_GUARD_COUNT } from "./rebelsFlock";
 import { hitRock, bounceVelocity, bounceDamage } from "./voxel/voxelCollide";
 import {
-  DISTANCE_IN_EARTHS, WORLD_RADIUS, SKY_EDGE, CUBE, R_INNER,
+  WORLD_RADIUS, SKY_EDGE, CUBE, R_INNER,
   SPIKEWORLD_NEAR, SPIKEWORLD_FAR,
 } from "./voxel/voxelWorld";
 import { createSpace, type SpaceBody } from "./spaceEnvironment";
@@ -356,8 +358,17 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      Its centre is a thousand Earth diameters out, which is where Geoff wants
      it; the Threshold Gate will be the way players get there, and until that is
      built this key is the only way anybody sees it. */
-  const SPIKEWORLD_AT = new THREE.Vector3(0, 0, DISTANCE_IN_EARTHS * EARTH_D);
+  const SPIKEWORLD_AT = SPIKEWORLD_CENTRE;
   let spikeworld: VoxelPlanet | null = null;
+  /* ---- THE THRESHOLD GATE ----
+     Two of them: one hanging over the Pacific in Earth orbit, one at the arrival
+     point outside Spikeworld's shell. Flying into either one is the trip, which
+     is the whole of how a player gets between the two regions. See
+     rebelsGate.ts. */
+  let earthGate: Gate | null = null;
+  let spikeGate: Gate | null = null;
+  /** Kept so the prompt is only shown when it changes, rather than every frame. */
+  let gatePrompt = false;
   let voxBuilt = -1;
   let stopItemUser: (() => void) | null = null;
   const _voxLook = new THREE.Vector3();
@@ -1244,11 +1255,15 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /**
    * Go to Spikeworld, or come home.
    *
-   * A LOOK-AROUND TRIP, and deliberately not more than that yet: while it is on
-   * the ship stops reporting to the room and ignores its corrections, because
-   * the room's world is Earth's neighbourhood and a ship two hundred thousand
-   * units outside it would be snapped back every tick. Nothing here is
-   * multiplayer and nothing here collides; that is Phase 5.
+   * A CHANGE OF REGION, which is a change of ROOM. Geoff: "for spikeworld, make
+   * it multiplayer now as a second region." The seat in the room being left is
+   * given up and a seat in the other one is taken, so everybody inside
+   * Spikeworld is in one fight with one heart between them, and nobody is left
+   * as an unflown body in Earth orbit for the waves to shoot at.
+   *
+   * It used to call `room.away()` and run the whole fight in this cockpit
+   * alone. What is left of that is the fallback: with no room, or a room that
+   * is down, the same simulation still runs here for one pilot.
    */
   function toggleSpikeworld(): void {
     if (!flight || !scene || !camera) return;
@@ -1259,14 +1274,23 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         spikeworld = makeVoxelPlanet(SPIKEWORLD_AT);
         scene.add(spikeworld.group);
       }
+      /* The way home, standing exactly where the ship is about to arrive. Blue,
+         because that is what is on the other side of it. */
+      if (!spikeGate) {
+        spikeGate = makeGate(SPIKEWORLD_AT.clone().add(arrivalOffset()), 0x63b7ff);
+        scene.add(spikeGate.group);
+      }
       /* Out of Earth's neighbourhood, which needs the ceiling lifted: the
          flight model stops a ship at MAX_ALT, about 4,600 units, and this is
          forty times that. */
-      /* Out of the fight. Without this the room goes on simulating the ship
-         at the last place it was told about and the fighters there go on
-         shooting it, which is exactly what happened on the first trip: damage
-         from enemies two hundred thousand units away. */
-      room?.away();
+      /* ---- OUT OF EARTH'S ROOM AND INTO SPIKEWORLD'S ----
+         Both halves matter. Leaving stops the room simulating a ship at the
+         last place it was told about, which on the first trip meant damage
+         from enemies two hundred thousand units away. Arriving is the new
+         half: the Spikeworld room is where the other pilots out here are, and
+         where the heart's million is kept. */
+      room?.travel("spike", SPIKEWORLD_AT.clone().add(arrivalOffset()));
+      room?.fly();
       /* ---- A CLEAN SKY OUT THERE ----
          Whatever the wire last put in the fight belongs to Earth: fighters, a
          wave, wreckage, coins. None of it followed the ship out here, it was
@@ -1284,6 +1308,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       flight.pos.copy(SPIKEWORLD_AT).add(arrivalOffset());
       flight.alt = flight.pos.length() - R;
       flight.speed = 0;
+      /* Standing in the return gate, so it must not fire. Asking it now, with
+         the ship inside it, is what disarms it: see `entered`. */
+      spikeGate?.entered(flight.pos);
+      gatePrompt = false;
       /* Far enough to see the planet, near enough to keep the cockpit sharp.
          The planet is 9,000 units across and the arrival is just outside it. */
       /* ---- THE DEPTH BUFFER, WHICH IS THE WHOLE FLICKER ----
@@ -1322,6 +1350,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         farAtHome = null; nearAtHome = null;
       }
       flight.pos.copy(homeAgain.lengthSq() > 1 ? homeAgain : new THREE.Vector3(0, 0, R + 40));
+      /* And the same on this side: coming home puts the ship back where it left
+         from, which is inside the Pacific gate. */
+      earthGate?.entered(flight.pos);
+      gatePrompt = false;
       /* And the local fight is over. The room's next state message refills
          all of this; leaving it behind would draw the heart's guards in Earth
          orbit for a frame. */
@@ -1330,11 +1362,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       combat.torpedoes.length = 0;
       combat.flocks.length = 0;
       guardsSent = false;
-      /* Back in the fight, which flying alone also starts over. */
+      /* Back in Earth's room, and back in its fight, which flying alone also
+         starts over. */
+      room?.travel("earth", homeTip());
       room?.fly();
       flight.alt = flight.pos.length() - R;
       flight.speed = 0;
       if (spikeworld) { spikeworld.dispose(); spikeworld = null; }
+      if (spikeGate) { scene.remove(spikeGate.group); spikeGate.dispose(); spikeGate = null; }
       setHud({ note: "BACK IN EARTH ORBIT", noteAt: performance.now() });
     }
   }
@@ -1349,11 +1384,17 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
    * background. A game that refused to start because a server was down would be
    * a worse game than one that was briefly alone.
    */
-  function connectRoom(): void {
-    if (room) return;
-    const home = homeIndex >= 0 && tipList[homeIndex]
+  /** This player's pad on Earth: where a death puts the ship back. One reader,
+   *  because both joining a room and coming home from Spikeworld need it. */
+  function homeTip(): THREE.Vector3 {
+    return homeIndex >= 0 && tipList[homeIndex]
       ? tipList[homeIndex].clone()
       : new THREE.Vector3(0, 0, R);
+  }
+
+  function connectRoom(): void {
+    if (room) return;
+    const home = homeTip();
     const paint = loadPaint();
     /* Who this player is, as the door answers it: the node and its chosen name
        in the app. */
@@ -1685,19 +1726,28 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
    * reports are: the room's own bound cannot be got wrong, and a flag can be
    * left set by a path nobody thought of.
    */
-  const inRoomsWorld = (): boolean => !!flight && flight.pos.length() <= R + MAX_ALT + 2;
+  const inRoomsWorld = (): boolean => {
+    if (!flight) return false;
+    /* ---- IN SPIKEWORLD, THE ROOM'S WORLD IS SPIKEWORLD ----
+       Measured from the heart, because that is where the Spikeworld room's
+       zero is, and out to the edge of its sky. Before this was a region the
+       only possible answer out here was "no", which is why the guns fired
+       locally and the torpedoes did not fire at all. */
+    if (atSpikeworld) {
+      return flight.pos.distanceTo(SPIKEWORLD_AT) <= WORLD_RADIUS + SKY_EDGE * CUBE;
+    }
+    return flight.pos.length() <= R + MAX_ALT + 2;
+  };
 
   /**
    * Fire, wherever the ship is.
    *
    * In the room's world the room fires it, decides the hit and sends the round
-   * back. Outside it, at Spikeworld, the round is shown locally: the shot is
-   * seen and heard, it flies the same simulation the room would have flown it
-   * with, and it hits nothing, because there is nothing out there to hit YET.
-   * The heart and the orange flock need the whole fight running locally, which
-   * is the next piece (see docs/DIVI-REBELS-SPIKEWORLD-COMBAT-PLAN.md); this
-   * is so that pulling the trigger does something in the meantime instead of
-   * spending a strike.
+   * back, and BOTH regions are the room's world now: Earth orbit measured from
+   * the planet, Spikeworld measured from the heart. What is left below is the
+   * fight with no room in it at all, which is the solo game and a room that is
+   * down: the round is shown locally, flying the same simulation, and the
+   * heart and its guards are stepped here too.
    */
   function fireShot(
     kind: "main" | "mini" | "beam" | "torp",
@@ -1884,6 +1934,38 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     if (took <= 0) return;
     const left = spikeworld.hitHeart(took);
     pulseHealth(left, h.max);
+  }
+
+  /**
+   * The gates: turn them, and take anybody who reaches one.
+   *
+   * ONE RULE, BOTH WAYS. The gate over the Pacific sends a ship to Spikeworld
+   * and the gate outside Spikeworld's shell sends it home, and both of them are
+   * the same call into the same function that the test key uses. There is no
+   * separate "arrive" path to get wrong.
+   *
+   * The Spikeworld gate is built when Spikeworld is, and sits exactly where a
+   * ship arrives, which is why gates disarm themselves on the way through: a
+   * gate you land inside would send you straight back.
+   */
+  function frameGates(dt: number, flight: Flight, camera: THREE.PerspectiveCamera): void {
+    const here = atSpikeworld ? spikeGate : earthGate;
+    earthGate?.step(dt, camera.position);
+    spikeGate?.step(dt, camera.position);
+    if (!here) return;
+    /* The prompt, while it is in reach of being seen but not yet reached. */
+    const near = here.distance(flight.pos) < GATE_REACH * 9;
+    if (near !== gatePrompt) {
+      gatePrompt = near;
+      if (near) {
+        setHud({
+          note: atSpikeworld ? "THRESHOLD GATE: FLY IN TO RETURN TO EARTH"
+                             : "THRESHOLD GATE: FLY IN FOR SPIKEWORLD",
+          noteAt: performance.now(),
+        });
+      }
+    }
+    if (here.entered(flight.pos)) toggleSpikeworld();
   }
 
   function frameSpikeworld(camera: THREE.PerspectiveCamera): void {
@@ -2147,18 +2229,20 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     if (inRoom && room) {
       room.step(dt);
       /* ---- NEVER SEND WHAT THE ROOM WILL REFUSE ----
-         The room's world is Earth's neighbourhood and it rejects any coordinate
-         past a hundred thousand outright, as "bad transform", with a strike
-         against the seat; twenty strikes and the socket is closed. Spikeworld
-         sits at two hundred thousand, so every report from there was a strike,
-         and Geoff was kicked mid-flight: "it crashed at some point and said
-         'refused bad transform'".
+         A room rejects any coordinate outside its own world outright, as "bad
+         transform", with a strike against the seat; enough strikes and the
+         socket is closed. That used to be the reason Spikeworld could not be
+         multiplayer: it sits two hundred thousand units out, every report from
+         there was a strike, and Geoff was kicked mid-flight ("it crashed at
+         some point and said 'refused bad transform'").
 
+         Both worlds are now somebody's room, so the question is which one this
+         ship is in, and inRoomsWorld answers it against the right bound: Earth
+         orbit measured from the planet, Spikeworld measured from the heart.
          Gated on the POSITION rather than on a flag, because a flag can be
-         cleared by a path nobody thought of: backing out to the map while away
-         cleared it and left the ship still two hundred thousand units out. The
-         room's own bound cannot be got wrong. */
-      if (flight.pos.length() <= R + MAX_ALT + 2) {
+         cleared by a path nobody thought of; the room's own bound cannot be
+         got wrong. */
+      if (inRoomsWorld()) {
         room.report(flight.pos, flight.fwd, flight.guardFor > 0);
       }
 
@@ -2327,17 +2411,28 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           ? { wave: room.wave, waveAt: performance.now() }
           : { wave: 0 });
       }
+      /* ---- THE HEART, AS THE ROOM COUNTS IT ----
+         One million between everybody in Spikeworld. The cockpit does not keep
+         its own tally while it is in a room: it writes down the room's, and
+         brings the bar up whenever the number moves, which under fire from two
+         pilots means it simply stays up. */
+      if (spikeworld && room.heartHp !== null) {
+        if (spikeworld.setHeart(room.heartHp)) {
+          pulseHealth(room.heartHp, spikeworld.heart().max);
+        }
+      }
       /* Once. others() builds a fresh array each call. */
       const crew = room.others();
       if (peers) peers.draw(crew, camera);
       /* How many are in the WORLD, not how many are on screen. */
       setHud({ crew: room.crew() });
     } else if (atSpikeworld) {
-      /* ---- THE FIGHT AT SPIKEWORLD, RUN HERE ----
-         One pilot, the same simulation, and nothing of Earth's: no waves and no
-         wandering flocks, because a player who has gone out there has left that
-         game (see the waves test in the room). What IS out here is the heart's
-         sixty guards, and they are sent once, when the ship crosses into the
+      /* ---- THE FIGHT AT SPIKEWORLD WITH NO ROOM TO RUN IT ----
+         The room runs this fight now (Spikeworld is its own region), so this
+         branch is what is left when there is no room: the solo game, and a
+         server that is down. One pilot, the same simulation, and nothing of
+         Earth's: no waves and no wandering flocks. What IS out here is the
+         heart's sixty guards, sent once, when the ship crosses into the
          cavity. */
       _voxWorld.playerPos = flight.pos;
       _voxWorld.playerFwd = flight.fwd;
@@ -2742,20 +2837,21 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         if (atSpikeworld) frameVoxelBounce(flight);
         frameShipAndCamera(dt, flight, camera);
         frameSpikeworld(camera);
+        frameGates(dt, flight, camera);
         frameShield(flight, camera);
         frameSky(dt, flight);
         /* Whether the fight belongs to a room. Worked out before the guns,
            because it decides whether a trigger pull is a shot or a request. */
         /* ---- WHOSE FIGHT IS IT, OUT THERE ----
-           Not the room's. The ship stops reporting its position at Spikeworld
-           (the room's world is Earth's neighbourhood and would snap it back
-           from two hundred thousand units out), so the room has no idea where
-           the player is and cannot referee anything. The cockpit therefore
-           runs the same simulation file the room runs, for one pilot, which is
-           exactly the arrangement the solo game always had. Multiplayer out
-           there is Phase 5 and this is the shape it will take: the room steps
-           this same file. */
-        const inRoom = !!room && room.status() === "live" && !atSpikeworld;
+           The room's, the same as Earth's. Spikeworld is a SECOND REGION now:
+           its own room, its own roster, the same simulation file stepped on the
+           same server. This used to read `&& !atSpikeworld`, because the room's
+           world was Earth's neighbourhood and a ship two hundred thousand units
+           outside it was snapped back every tick; that is gone, because the
+           Spikeworld room measures from the heart rather than from Earth (see
+           rebelsRegions.ts). The local fight below is now only what it always
+           should have been: what happens while there is no room to be in. */
+        const inRoom = !!room && room.status() === "live";
         const backwards = frameGuns(dt, flight, camera, fx, res);
         frameRoom(dt, flight, camera, inRoom);
         frameTorpedo(flight, res, backwards);
@@ -2878,6 +2974,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            finished reading the launch card. */
         space = createSpace();
         scene.add(space.group);
+
+        /* The gate, with the sky, for the same reason: it is always there, it
+           is part of the world rather than part of a run, and a player should
+           be able to see where Spikeworld is reached from before they launch. */
+        earthGate = makeGate(gatePosition(R), 0xff8a4a);
+        scene.add(earthGate.group);
 
         /* And the stars behind all of it. The scene belongs to the Node Map,
            which is used outside the game, so whatever background it had is
@@ -3127,6 +3229,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
           camera.updateProjectionMatrix();
         }
         flight.pos.copy(homeAgain.lengthSq() > 1 ? homeAgain : new THREE.Vector3(0, 0, R + 40));
+      /* And the same on this side: coming home puts the ship back where it left
+         from, which is inside the Pacific gate. */
+      earthGate?.entered(flight.pos);
+      gatePrompt = false;
         flight.alt = flight.pos.length() - R;
         flight.speed = 0;
       }
@@ -3149,6 +3255,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         sky?.restore();
         sky = null;
         if (space) { scene.remove(space.group); space.dispose(); space = null; }
+        if (earthGate) { scene.remove(earthGate.group); earthGate.dispose(); earthGate = null; }
+        if (spikeGate) { scene.remove(spikeGate.group); spikeGate.dispose(); spikeGate = null; }
         if (fx) scene.remove(fx.group);
       }
       for (const r of enemyShields) r.dispose();

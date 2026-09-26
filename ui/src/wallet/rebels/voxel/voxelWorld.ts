@@ -199,6 +199,11 @@ export const DISTANCE_IN_EARTHS = 1000;
  * stops at nine thousand in any case. Together they are a hundredfold better
  * than the pair they replace.
  */
+/** How far outside the shell a ship arrives, in cubes past the outer radius.
+ *  A plain number rather than a vector so the room (a Cloudflare Worker with no
+ *  three.js) can place an arriving ship at exactly the spot the cockpit does. */
+export const ARRIVAL_OUT = SKY_EDGE * 0.35;
+
 export const SPIKEWORLD_NEAR = 3;
 export const SPIKEWORLD_FAR = 10000;
 

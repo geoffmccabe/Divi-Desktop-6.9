@@ -32,7 +32,15 @@ export interface BroadcastSeat {
  * One state message per seat, as [seat, the text to send]. Takes this tick's
  * fired and stopped rounds out of the combat state, as the room always did.
  */
-export function stateMessages<S extends BroadcastSeat>(combat: CombatState, seats: S[], tick: number): Array<[S, string]> {
+export function stateMessages<S extends BroadcastSeat>(
+  combat: CombatState,
+  seats: S[],
+  tick: number,
+  /** Whatever this region has that Earth does not. Spikeworld puts its heart's
+   *  remaining health here, so every cockpit in the room draws ONE bar with the
+   *  same number on it. Spread into each state message as it is. */
+  extra?: Record<string, unknown>,
+): Array<[S, string]> {
   const messages: Array<[S, string]> = [];
 
   const c = combat;
@@ -171,6 +179,7 @@ export function stateMessages<S extends BroadcastSeat>(combat: CombatState, seat
       t: "s" as const,
       n: tick,
       w: c.wave?.n ?? 0,
+      ...extra,
       P: pickedP.out,
       E: pickedE.out,
       ...(() => {

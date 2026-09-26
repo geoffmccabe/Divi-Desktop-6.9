@@ -369,7 +369,6 @@ async function main() {
     ok("the wallet's policy lets the socket reach the room", connect.includes(`wss://${host}`), connect.slice(0, 120));
   }
 
-  console.log(out.join("\n"));
   /* A fired direction crosses the wire at a tenth of a degree, not a tenth
    of a unit: rounding a unit vector to 0.1 bends it by up to five degrees,
    which at the guns' convergence is a miss of several ship lengths. */
@@ -438,7 +437,120 @@ async function main() {
     }
   }
 
-console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
+  /* ================= REGIONS: SPIKEWORLD IS A SECOND ROOM =================
+     Geoff: "for spikeworld, make it multiplayer now as a second region."
+
+     The question this section exists for is the one that could silently ruin
+     everything: Spikeworld's centre is about two hundred thousand units from
+     Earth, and the room refuses any coordinate past a hundred thousand. So
+     every position in the Spikeworld room goes on the wire RELATIVE TO THE
+     HEART, and comes back off it in world coordinates. If that translation is
+     missing on the way in, ships appear at Earth; if it is missing on the way
+     out, every single message is refused and the region is simply dead. */
+  {
+    const Reg = await import("./rebelsRegions");
+    const Vox = await import("./voxel/voxelWorld");
+
+    sent.length = 0; opened = 0;
+    const room = R.joinRoom({
+      node: "1.2.3.4", name: "Traveller",
+      home: new THREE.Vector3(0, 0, 100),
+      ship: "space_SM_Ship_Fighter_01",
+    });
+    sock!.accept();
+    sock!.deliver({ t: "hi", id: "seat-1" });
+    ok("a cockpit starts in Earth's room", sock!.url.endsWith("/room/earth"), sock!.url);
+    ok("and says it is in the earth region", room.region() === "earth", room.region());
+
+    /* ---- out to Spikeworld ---- */
+    const before = opened;
+    room.travel("spike", Reg.SPIKEWORLD_CENTRE.clone());
+    ok("travelling opens a socket to the OTHER room",
+       opened === before + 1 && sock!.url.endsWith("/room/spike"), sock!.url);
+    ok("and the cockpit knows which region it is in", room.region() === "spike", room.region());
+    sock!.accept();
+    sock!.deliver({ t: "hi", id: "seat-2" });
+    room.step(0.2);                         /* past the report's own rate limit */
+
+    /* A ship just outside Spikeworld's shell, in WORLD coordinates. */
+    const shellOut = Vox.toWorld(Vox.R_OUTER + Vox.ARRIVAL_OUT);
+    const shipAt = Reg.SPIKEWORLD_CENTRE.clone().add(new THREE.Vector3(0, 0, shellOut));
+    sent.length = 0;
+    room.report(shipAt, new THREE.Vector3(0, 0, -1), false);
+    const tf = last();
+    const worst = Math.max(...(tf.p as number[]).map(Math.abs));
+    ok("a Spikeworld position goes on the wire measured from the HEART",
+       Math.abs(tf.p[2] - shellOut) < 0.2, `z ${tf.p[2]} against ${shellOut}`);
+    /* THE WHOLE REASON THE ORIGIN EXISTS. Without it this is 205,760 and the
+       room throws the message away. */
+    ok("so it is inside the bound the room enforces", worst < 1e5,
+       `${Math.round(worst)} against the room's 100000`);
+
+    /* ---- and back the other way ---- */
+    sock!.deliver({ t: "s", n: 1, w: 0, hp: 999000 });
+    ok("the heart's health arrives with the state", room.heartHp === 999000, `${room.heartHp}`);
+
+    /* ---- coming home ---- */
+    const beforeHome = opened;
+    room.travel("earth", new THREE.Vector3(0, 0, 100));
+    ok("coming home opens a socket back to earth",
+       opened === beforeHome + 1 && sock!.url.endsWith("/room/earth"), sock!.url);
+    sock!.accept();
+    sock!.deliver({ t: "hi", id: "seat-3" });
+    room.step(0.2);
+    sent.length = 0;
+    room.report(new THREE.Vector3(0, 0, 140), new THREE.Vector3(0, 0, 1), false);
+    ok("and an Earth position is reported plainly again", last().p[2] === 140, `${last().p[2]}`);
+    ok("the heart is forgotten on the way out of Spikeworld", room.heartHp === null,
+       `${room.heartHp}`);
+    room.close();
+  }
+
+  /* ================= THE THRESHOLD GATE =================
+     Geoff: "move the portal to teleport to it closer to the orbit so it's
+     basically exactly above the center of the pacific ocean on earth." */
+  {
+    const G = await import("./rebelsGate");
+    const W = await import("./orbitWorld");
+
+    const at = G.gatePosition(W.R);
+    /* Back to latitude and longitude, which is the only honest way to check
+       "above the Pacific": the vector itself says nothing a reader can judge.
+       Inverting llToVec exactly, rather than approximately. */
+    const lat = 90 - Math.acos(at.y / at.length()) * (180 / Math.PI);
+    const lon = ((Math.atan2(at.z, -at.x) * (180 / Math.PI) - 180) + 540) % 360 - 180;
+    ok("the gate is on the equator", Math.abs(lat) < 0.001, `${lat.toFixed(3)} degrees`);
+    ok("and out in the middle of the Pacific", Math.abs(lon - (-160)) < 0.001,
+       `${lon.toFixed(3)} degrees`);
+    ok("in low orbit, not out with the planets",
+       Math.abs(at.length() - (W.R + G.GATE_ALTITUDE)) < 0.001 && G.GATE_ALTITUDE < W.MAX_ALT / 20,
+       `${at.length().toFixed(1)} from Earth's centre, ${G.GATE_ALTITUDE} up`);
+    /* Reachable means reachable: a gate above the ceiling is a gate nobody
+       can fly to. */
+    ok("and well inside the room's own world", at.length() < W.R + W.MAX_ALT,
+       `${at.length().toFixed(1)} against ${(W.R + W.MAX_ALT).toFixed(1)}`);
+
+    const gate = G.makeGate(at, 0xff8a4a);
+    const near = at.clone().add(new THREE.Vector3(0, G.GATE_REACH * 0.5, 0));
+    const away = at.clone().add(new THREE.Vector3(0, G.GATE_CLEAR * 1.5, 0));
+    ok("flying into it goes through", gate.entered(near) === true);
+    /* ---- AND NOT STRAIGHT BACK AGAIN ----
+       The return gate stands where a ship arrives, so without this a player
+       arrives inside it, it fires, and they are sent home; then they arrive
+       inside the other one, and so on, for ever. */
+    ok("and it will not fire again while the ship is still in it",
+       gate.entered(near) === false);
+    ok("leaving does not fire it either", gate.entered(away) === false);
+    ok("but coming back does", gate.entered(near) === true);
+    gate.dispose();
+  }
+
+  /* Printed HERE, at the end, and not in the middle. It used to be in the
+     middle, so every test written after that line was counted and never shown:
+     twenty-eight passes nobody could read, and a failure among them would have
+     been a bare number with no name on it. */
+  console.log(out.join("\n"));
+  console.log(`${out.filter((l) => l.startsWith("PASS")).length} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);
 }
 

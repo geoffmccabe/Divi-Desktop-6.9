@@ -30,6 +30,7 @@ import {
 } from "./rebelsWire";
 import { platform } from "./platform/current";
 import { DEFAULT_ROOM_BASE } from "./platform/defaults";
+import { regionOrigin, regionOfRoom, type RegionName } from "./rebelsRegions";
 
 /** Everything the cockpit needs to know about somebody else in the room. */
 /** One round, as the room announced it. */
@@ -178,6 +179,9 @@ export interface Room {
    *  included. They point where their owner points. */
   wings: Array<{ owner: string; slot: number; pos: THREE.Vector3; hull: number; hullMax: number; tier: number }>;
   wave: number;
+  /** Spikeworld's heart, as the room counts it: one million between everybody
+   *  in the region. Null in any region that has no heart. */
+  heartHp: number | null;
   gauges: RoomGauges | null;
   /** Anything that happened this tick, for sound and sparks. Drained. */
   takeEvents(): RoomEvent[];
@@ -210,6 +214,21 @@ export interface Room {
    * left behind at the last reported place. `fly` brings it back.
    */
   away(): void;
+  /**
+   * Go to another region: leave this room and join that one.
+   *
+   * Not a teleport and not a reconnect-with-a-different-name: the seat in the
+   * room being left is given up, because a seat held in Earth orbit while its
+   * player is inside Spikeworld is a ship other people can see and shoot at
+   * that nobody is flying. The new room is joined with the same identity, the
+   * same ship and the same paint, and the purse follows because the purse lives
+   * in the ledger and the ledger is one object for the whole game.
+   *
+   * `home` is where a death puts the ship in the new region.
+   */
+  travel(region: RegionName, home?: THREE.Vector3): void;
+  /** Which region this room is. */
+  region(): RegionName;
   /** The resupply finished at a tower: the room refills the seat, having
    *  checked the ship really is at one. */
   dock(): void;
@@ -281,8 +300,7 @@ interface Opts {
  *  reconnects in about a second. */
 export const HIDDEN_RELEASE_MS = 3 * 60_000;
 
-/** The cockpit's vectors, for the rows it unpacks (rebelsWire.ts). */
-const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+
 
 export function joinRoom(opts: Opts): Room {
   let ws: WebSocket | null = null;
@@ -291,8 +309,25 @@ export function joinRoom(opts: Opts): Room {
      next (earth-2, earth-3...), and the socket goes straight there. After any
      ordinary disconnect it starts again from earth, so the shared world fills
      back up as people leave rather than everyone staying scattered. */
-  let roomName = ROOM_NAME;
+  let roomName: string = ROOM_NAME;
   let hopTo: string | null = null;
+  /* ---- WHICH WORLD, AND WHERE ITS ZERO IS ----
+     See rebelsRegions.ts. Every position on the wire is relative to this, so
+     the Spikeworld room never sees a coordinate two hundred thousand units from
+     its origin and the wire's own sanity check keeps working unchanged. Earth's
+     origin is zero, so on Earth these two lines do nothing at all. */
+  let region: RegionName = regionOfRoom(ROOM_NAME);
+  const origin = regionOrigin(region);
+  /** Where this ship goes back to when it dies, in the CURRENT region. */
+  let homeHere = opts.home.clone();
+
+  /** A vector off the wire, put back into world coordinates. Every unpack in
+   *  rebelsWire.ts is handed this, which is why there is one place to do it. */
+  const V = (x: number, y: number, z: number) =>
+    new THREE.Vector3(x + origin.x, y + origin.y, z + origin.z);
+  /** And the other direction: a world position as this region measures it. */
+  const out = (v: THREE.Vector3): [number, number, number] =>
+    [round1(v.x - origin.x), round1(v.y - origin.y), round1(v.z - origin.z)];
   /* ---- a hidden tab gives its seat back ---- */
   let resting = false;
   let hiddenTimer: ReturnType<typeof setTimeout> | null = null;
@@ -348,17 +383,18 @@ export function joinRoom(opts: Opts): Room {
     beams: [],
     gems: [],
     wave: 0,
+    heartHp: null,
     gauges: null,
     takeEvents() { const out = events.slice(); events.length = 0; return out; },
     report(pos, fwd, guard) {
       if (!ws || status !== "live") return;
       if (sinceReport < 1 / REPORT_HZ) return;
       sinceReport = 0;
-      send({ t: "tf", p: xyz(pos), f: dir(fwd), ...(guard ? { g: 1 as const } : {}) });
+      send({ t: "tf", p: out(pos), f: dir(fwd), ...(guard ? { g: 1 as const } : {}) });
     },
     fire(kind, pos, fwd, aim, weapon, up) {
       send({
-        t: "fire", k: kind, p: xyz(pos), f: dir(fwd),
+        t: "fire", k: kind, p: out(pos), f: dir(fwd),
         ...(aim ? { a: dir(aim) } : {}), ...(weapon ? { w: weapon } : {}), ...(up ? { u: dir(up) } : {}),
       });
     },
@@ -366,6 +402,41 @@ export function joinRoom(opts: Opts): Room {
     use(k) { send({ t: "use", k }); },
     fly() { send({ t: "fly" }); },
     away() { send({ t: "away" }); },
+    region: () => region,
+    travel(to, home) {
+      if (to === region) return;
+      region = to;
+      const o = regionOrigin(to);
+      origin.copy(o);
+      roomName = to;
+      homeHere = home ? home.clone() : o.clone();
+      /* Everything held about the old region is about to be wrong by two
+         hundred thousand units, so none of it is kept: the new room's first
+         state message describes the new world completely. */
+      forgetWorld();
+      /* Leave properly. The seat is given up by closing, not by `away`: an
+           `away` seat is still in the roster and still holds one of the room's
+           places, and holding a place in Earth orbit while flying inside
+           Spikeworld is how a room fills up with nobody. */
+      hopTo = to;
+      retries = 0;
+      retryAt = 0;
+      const going = ws;
+      ws = null;
+      if (going) {
+        /* Deaf and mute before it is closed. Its onclose would otherwise run
+           AFTER the new socket is open and wipe the new room's first state
+           message, and its onmessage would deliver Earth's last tick into
+           Spikeworld. */
+        going.onclose = null;
+        going.onmessage = null;
+        going.onerror = null;
+        going.onopen = null;
+        try { going.close(1000, "travelling"); } catch { /* already gone */ }
+      }
+      setStatus("connecting");
+      open();
+    },
     dock() { send({ t: "dock" }); },
     cheat(code) { send({ t: "cheat", code }); },
     bonus() { send({ t: "bonus" }); },
@@ -433,6 +504,25 @@ export function joinRoom(opts: Opts): Room {
     try { ws.send(JSON.stringify(msg)); } catch { /* the close handler deals with it */ }
   }
 
+  /** Everything the room told us, dropped. Called when a socket closes and
+   *  when travelling: in both cases what is held describes a world this cockpit
+   *  is no longer in, and drawing one more frame of it would draw Earth's
+   *  fighters inside Spikeworld. */
+  function forgetWorld(): void {
+    players.clear();
+    room.enemies.length = 0;
+    shots.length = 0;
+    spent.length = 0;
+    room.coins.length = 0;
+    room.torpedoes.length = 0;
+    room.junk.length = 0;
+    room.wings.length = 0;
+    room.beams.length = 0;
+    room.gems.length = 0;
+    room.gauges = null;
+    room.heartHp = null;
+  }
+
   function open(): void {
     if (closed || ws) return;
     setStatus(retries === 0 ? "connecting" : "retrying");
@@ -451,7 +541,7 @@ export function joinRoom(opts: Opts): Room {
         t: "join",
         node: opts.node,
         name: opts.name,
-        home: xyz(opts.home),
+        home: out(homeHere),
         ship: opts.ship,
         ...(opts.door ? { door: opts.door } : {}),
         ...(opts.guest ? { guest: opts.guest } : {}),
@@ -469,17 +559,7 @@ export function joinRoom(opts: Opts): Room {
     sock.onerror = () => { /* onclose follows */ };
     sock.onclose = () => {
       if (ws === sock) ws = null;
-      players.clear();
-      room.enemies.length = 0;
-      shots.length = 0;
-      spent.length = 0;
-      room.coins.length = 0;
-      room.torpedoes.length = 0;
-      room.junk.length = 0;
-      room.wings.length = 0;
-      room.beams.length = 0;
-      room.gems.length = 0;
-      room.gauges = null;
+      forgetWorld();
       if (closed) return;
       if (hopTo) {
         /* Sent on by a full room: go now, not after a backoff. */
@@ -489,8 +569,11 @@ export function joinRoom(opts: Opts): Room {
         retryAt = 0;
         return;
       }
-      /* Anything else starts over from the shared world. */
-      roomName = ROOM_NAME;
+      /* Anything else starts over from the shared world OF THIS REGION. A
+         player inside Spikeworld whose connection blips belongs back in
+         Spikeworld, not dropped into Earth orbit two hundred thousand units
+         from the ship they are flying. */
+      roomName = region;
       if (!resting) backoff();
     };
   }
@@ -514,7 +597,7 @@ export function joinRoom(opts: Opts): Room {
         /* This room is full. Try the one it names; if it names none, every
            overflow room is taken, so wait and try earth again. */
         const next = typeof m.next === "string" ? m.next : "";
-        hopTo = /^earth(-\d{1,2})?$/.test(next) ? next : null;
+        hopTo = new RegExp(`^${region}(-\\d{1,2})?$`).test(next) ? next : null;
         dflow.note(`room ${roomName} full${hopTo ? `, moving to ${hopTo}` : ", every room full"}`);
         return;
       }
@@ -553,10 +636,14 @@ export function joinRoom(opts: Opts): Room {
 
       case "s": {
         room.wave = Number(m.w) || 0;
+        /* Spikeworld's heart, when this room has one. */
+        room.heartHp = typeof m.hp === "number" && Number.isFinite(m.hp) ? m.hp : null;
         const P = (m.P ?? []) as PlayerRow[];
         for (const p of players_.values()) p.seen = false;
         for (const row of P) {
-          const ship = unpackPlayer(row, (x, y, z) => ({ x, y, z }));
+          const ship = unpackPlayer(row, (x, y, z) => ({
+            x: x + origin.x, y: y + origin.y, z: z + origin.z,
+          }));
           const id = ship.id;
           const p = players_.get(id) ?? blank(id);
           /* The newest report becomes the target and the CURRENT drawn
@@ -670,7 +757,7 @@ export function joinRoom(opts: Opts): Room {
           const at = Array.isArray(e.at) ? (e.at as number[]) : [0, 0, 0];
           events.push({
             kind: String(e.k ?? ""),
-            at: new THREE.Vector3(at[0] ?? 0, at[1] ?? 0, at[2] ?? 0),
+            at: V(at[0] ?? 0, at[1] ?? 0, at[2] ?? 0),
             power: Number(e.p) || 1,
             who: e.who ? String(e.who) : undefined,
             tier: e.tier as number | undefined,
@@ -727,7 +814,10 @@ export function joinRoom(opts: Opts): Room {
         const at = Array.isArray(m.p) ? (m.p as number[]) : null;
         events.push({
           kind: "denied", power: 1,
-          at: at ? new THREE.Vector3(at[0], at[1], at[2]) : new THREE.Vector3(),
+          /* Through V, like every other position off the wire: the room's
+             correction is in this region's coordinates, and snapping a ship
+             to a raw one would put it where Earth's origin is. */
+          at: at ? V(at[0], at[1], at[2]) : new THREE.Vector3(),
           who: String(m.why ?? ""),
           ...(at ? { snap: true as const } : {}),
         });
@@ -764,9 +854,6 @@ export function joinRoom(opts: Opts): Room {
  * and a mock agrees with whatever mistake you have made on both sides of it.
  * Two real cockpits against the deployed room found it in one run.
  */
-function xyz(v: THREE.Vector3): [number, number, number] {
-  return [round1(v.x), round1(v.y), round1(v.z)];
-}
 const round1 = (n: number) => Math.round(n * 10) / 10;
 /* A DIRECTION is a unit vector: rounding it to a tenth per axis bends it by
    up to five degrees, which at the guns' convergence distance is a miss of
