@@ -503,6 +503,34 @@ async function main() {
     ok("and an Earth position is reported plainly again", last().p[2] === 140, `${last().p[2]}`);
     ok("the heart is forgotten on the way out of Spikeworld", room.heartHp === null,
        `${room.heartHp}`);
+
+    /* ---- AND THE HANDOVER FLAG IS NOT LEFT SET ----
+       hopTo is the FULL-ROOM handover, read by the close handler to go
+       somewhere other than home with no backoff. Travelling must not leave it
+       set: the next ordinary disconnect would then go to the wrong region and,
+       because hopTo skips the backoff, a room that refused them would be
+       reconnected to once a frame. Proved by dropping the socket twice over
+       and watching where the cockpit goes and how eagerly. */
+    const spikeTrips = [0, 0];
+    for (let drop = 0; drop < 2; drop++) {
+      const at = opened;
+      sock!.close();
+      /* Not enough time to have earned a retry. A hopTo would reconnect
+         anyway, because hopTo is the thing that skips the wait. */
+      room.step(0.05);
+      if (opened > at) spikeTrips[0]++;
+      clock += 20_000;                      /* and now it has earned one */
+      room.step(0.05);
+      if (opened > at) spikeTrips[1]++;
+      if (sock!.url.endsWith("/room/spike")) spikeTrips[0] += 100;
+      sock!.accept();
+      sock!.deliver({ t: "hi", id: `after-${drop}` });
+    }
+    ok("a disconnect after travelling does not reconnect instantly",
+       spikeTrips[0] === 0, `${spikeTrips[0]} early reconnects`);
+    ok("it does reconnect once it has waited", spikeTrips[1] === 2, `${spikeTrips[1]} of 2`);
+    ok("and it goes home to earth, not back to spike",
+       sock!.url.endsWith("/room/earth"), sock!.url);
     room.close();
   }
 
@@ -542,6 +570,15 @@ async function main() {
        gate.entered(near) === false);
     ok("leaving does not fire it either", gate.entered(away) === false);
     ok("but coming back does", gate.entered(near) === true);
+    /* A ship whose position has gone bad must NOT count as through the gate:
+       every comparison against NaN is false, so the obvious `!(d > reach)`
+       says yes to it. */
+    const nowhere = new THREE.Vector3(NaN, NaN, NaN);
+    const fresh = G.makeGate(at, 0xff8a4a);
+    ok("a ship with no position does not fall through it", fresh.entered(nowhere) === false);
+    ok("and the gate is still armed for a real ship afterwards",
+       fresh.entered(near) === true);
+    fresh.dispose();
     gate.dispose();
   }
 

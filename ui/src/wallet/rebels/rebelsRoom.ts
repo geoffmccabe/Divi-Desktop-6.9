@@ -414,11 +414,17 @@ export function joinRoom(opts: Opts): Room {
          hundred thousand units, so none of it is kept: the new room's first
          state message describes the new world completely. */
       forgetWorld();
-      /* Leave properly. The seat is given up by closing, not by `away`: an
-           `away` seat is still in the roster and still holds one of the room's
-           places, and holding a place in Earth orbit while flying inside
-           Spikeworld is how a room fills up with nobody. */
-      hopTo = to;
+      /* ---- hopTo IS NOT SET HERE, and that is deliberate ----
+         It is the full-room handover: a flag the CLOSE handler reads to go
+         somewhere other than home without a backoff. Travelling sets roomName
+         itself and opens the socket itself, so setting it as well would leave
+         it set for ever - the old socket's close handler is detached and never
+         clears it. Two things would then be wrong at once: the next ordinary
+         disconnect would send the player to the wrong region, and because
+         hopTo skips the backoff, a room that refused them would be reconnected
+         to once a frame. A client that turns one outage into a flood against
+         its own server is exactly what backoff exists to prevent. */
+      hopTo = null;
       retries = 0;
       retryAt = 0;
       const going = ws;

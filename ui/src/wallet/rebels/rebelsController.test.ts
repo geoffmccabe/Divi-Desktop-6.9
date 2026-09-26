@@ -1640,6 +1640,54 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   setPlatform({ ...HEADLESS, id: "test-app-identity", identity: appIdentity, cheats: createCheats });
 }
 
+// 24. THE PLAIN GAME ON EARTH: launch, fly, and the fighters turn up.
+//
+// Geoff, on the browser version: "there are no enemy ships at all! ... No
+// waves, no ships, why are there no enemies like there should be?"
+//
+// Everything about that symptom - no enemies AND no wave number - is the shape
+// of a cockpit that is not in a room, because the fight belongs to the room
+// and there is no local fight in Earth orbit any more. The chain has a lot of
+// links in it, and the tests around this one each check a link. This checks the
+// WHOLE of it, the way a player uses it: attach, launch, fly level, and see
+// fighters. Nothing clever, no cheat key, no fleet sent by hand.
+//
+// It also stands guard over the Threshold Gate, which is new and is the one
+// thing in this frame that can move a ship out of Earth's room without being
+// asked. A gate that fired on its own would empty the sky exactly like this.
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  ctl.launch();
+  /* Through the approach and the dive, into ordinary flight. */
+  for (let i = 0; i < 60 * 8; i++) ctl.frame(1 / 60);
+
+  const until = Date.now() + 10_000;
+  while (ctl.hud().contacts === 0 && Date.now() < until) { ctl.frame(1 / 60); restMs(1); }
+
+  ok("the cockpit is in the room", ctl.hud().room === "live", ctl.hud().room);
+  ok("a wave is running", ctl.hud().wave > 0, `wave ${ctl.hud().wave}`);
+  ok("and there are fighters in the sky", ctl.hud().contacts > 0,
+     `${ctl.hud().contacts} contacts, the room has `
+     + `${(server?.combat as { enemies: unknown[] } | undefined)?.enemies.length ?? "?"}`);
+
+  /* ---- AND THE SHIP IS STILL IN EARTH ORBIT ----
+     The gate over the Pacific is the only thing that can take a ship out of
+     this room on its own. If it ever fires unasked the sky empties, the wave
+     number goes to nothing, and it looks exactly like the fight was deleted.
+     Two minutes of ordinary flying is long enough to go most of the way round
+     the globe. */
+  for (let i = 0; i < 60 * 40; i++) ctl.frame(1 / 60);
+  ok("forty seconds of flying does not fall through the gate by itself",
+     ctl.hud().room === "live" && !ctl.hud().note.includes("SPIKEWORLD"),
+     `room ${ctl.hud().room}, note "${ctl.hud().note}"`);
+  ok("and the fighters are still there afterwards", ctl.hud().contacts > 0,
+     `${ctl.hud().contacts} contacts`);
+  ctl.detach();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

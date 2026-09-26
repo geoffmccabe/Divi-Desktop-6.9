@@ -141,11 +141,17 @@ export function makeGate(at: THREE.Vector3, colour: number): Gate {
     },
     entered(shipPos) {
       const d = shipPos.distanceTo(group.position);
+      /* ---- ASKED THE SAFE WAY ROUND ----
+         `d <= REACH`, not `!(d > REACH)`. Every comparison against NaN is
+         false, so the negated form answers "yes, you are through the gate" for
+         a ship whose position has gone bad - and the one thing a gate must
+         never do is fire on a ship that is not there. Written this way a NaN
+         simply never opens it. */
       if (!armed) {
-        if (d > GATE_CLEAR) armed = true;
+        if (d >= GATE_CLEAR) armed = true;
         return false;
       }
-      if (d > GATE_REACH) return false;
+      if (!(d <= GATE_REACH)) return false;
       armed = false;
       return true;
     },
