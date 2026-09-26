@@ -3,6 +3,7 @@ import { NAV } from "./nav";
 import { Icon } from "./Icon";
 import { AdminGear } from "./admin/AdminGear";
 import { updateCheck, type UpdateInfo } from "./wallet/api";
+import { nodeStatus } from "./bridge";
 import { UpdateModal } from "./UpdateModal";
 import logo from "./assets/divi-logo.png";
 
@@ -43,6 +44,33 @@ export function Sidebar({ active, onSelect }: { active: string; onSelect: (id: s
     const id = setInterval(() => setFlashOn((v) => !v), 1300);
     return () => clearInterval(id);
   }, [upd?.available]);
+
+  /* ---- A BROKEN NODE AND A WAITING UPDATE: SAY SO, ONCE ----
+     JimF, 2026-Sep-21 to 26: five days on 69.12.6 with a node that crashed
+     on every start (the Windows path bug fixed in 69.13), while the sidebar
+     quietly flashed UPDATE. A flashing label is not enough for someone
+     staring at "node did not start". If a newer build exists and the node is
+     crashed or stopped, the update window opens on its own, once per
+     version offered. */
+  useEffect(() => {
+    if (!upd?.available || !upd.latest) return;
+    let alive = true;
+    const key = `dd69.update.offered.${upd.latest}`;
+    const look = async () => {
+      try {
+        if (localStorage.getItem(key)) return;
+      } catch { /* no storage: still offer */ }
+      const st = await nodeStatus().catch(() => null);
+      if (!alive || !st) return;
+      if (st.phase === "crashed" || st.phase === "stopped") {
+        try { localStorage.setItem(key, String(Date.now())); } catch { /* fine */ }
+        setModal(true);
+      }
+    };
+    void look();
+    const id = setInterval(look, 30 * 1000);
+    return () => { alive = false; clearInterval(id); };
+  }, [upd?.available, upd?.latest]);
 
   const canUpdate = !!upd?.available;
 
