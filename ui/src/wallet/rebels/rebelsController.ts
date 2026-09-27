@@ -2575,9 +2575,30 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* The flock kill itself is the server's: it is the only thing
            that sees every member and every shooter, and it arrives as its
            own event (flockDown), below. */
-        if (ev.tier) {
+        /* ---- WHOSE KILL, AND WRITING IT DOWN ----
+           Two things were wrong here and they had the same cause: in a room
+           the fight is the SERVER'S, and this cockpit only watches it.
+
+           First, every fighter that went down anywhere in view was counted as
+           this player's, including ones somebody else shot.
+
+           Second, and this is Geoff's "everything is resetting to zero": the
+           run is filed from combat.tierKills, which the simulation increments
+           as it kills things - and in a room that simulation is running on the
+           server, so the cockpit's copy never moved off zero. Five games, five
+           thousand points, and seven zeroes filed every time. Next session the
+           lifetime row came back from the server still empty, and the tally on
+           the card read nought.
+
+           So the kill is written down HERE, where the room's word for it
+           arrives, when it was ours. Solo there is no room and the simulation
+           in this cockpit IS the fight, so it has already counted it and this
+           must not count it twice. */
+        const mine = !room || room.status() !== "live" || !ev.who || ev.who === room.me();
+        if (ev.tier && mine) {
           lifetimeTiers[ev.tier - 1] = (lifetimeTiers[ev.tier - 1] ?? 0) + 1;
           setHud({ tierKills: lifetimeTiers.slice() });
+          if (room && room.status() === "live") combat.tierKills[ev.tier - 1] += 1;
         }
       } else if (ev.kind === "enemyHit") {
         /* Points are exactly the damage that landed, so a shot into a
