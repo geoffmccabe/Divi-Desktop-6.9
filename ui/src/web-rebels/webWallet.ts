@@ -59,9 +59,16 @@ import { idbAll, idbPut } from "./webStore";
  */
 export const DIVI_COIN_TYPE = 301;
 
-/** Where a Divi wallet keeps its first receiving key. Plain BIP44, exactly as
- *  hdchain.cpp walks it: purpose / coin type / account hardened, then change
- *  and index. */
+/**
+ * Where a Divi wallet keeps its first receiving key. Plain BIP44, exactly as
+ * hdchain.cpp walks it: purpose / coin type / account hardened, then change and
+ * index.
+ *
+ * ⚠ If you are here because 301 looks wrong, read DIVI_COIN_TYPE above before
+ * changing it. The 119 you may have seen in chainparams.cpp is a different
+ * constant for a different job, and swapping it in produces a real, valid,
+ * D-prefixed address that nobody holds the key to.
+ */
 export const DIVI_PATH = `m/44'/${DIVI_COIN_TYPE}'/0'/0`;
 
 /** The byte that makes an address start with D. `base58Prefixes[PUBKEY_ADDRESS]`
