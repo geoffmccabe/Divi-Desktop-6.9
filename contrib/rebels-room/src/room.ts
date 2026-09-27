@@ -139,6 +139,12 @@ interface Seat {
      The cost is honest: two players behind one home router share an account,
      and a VPN moves yours. Both are stated in the panel. */
   account: string;
+  /** The address this socket connected FROM, kept even after `account` is
+   *  replaced by a guest's own key. A guest's key is a string the CLIENT
+   *  chooses, so one machine can present unlimited accounts; this is the thing
+   *  it cannot choose, and it is what the ledger rate-limits earnings against.
+   *  See EARN_PER_DAY in ledger.ts. */
+  from: string;
   /** Came in through divi.love/rebels without signing in. Banked to its own
    *  account (see onJoin) and cannot cash out until signed in. */
   guest: boolean;
@@ -357,7 +363,7 @@ export class RebelsRoom {
     const id = `s${this.nextSeat++}`;
     const seat: Seat = {
       id, ws, node: "", name: "", ship: "", paint: undefined,
-      account: from, guest: false, lastClaim: -99,
+      account: from, from, guest: false, lastClaim: -99,
       gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, shieldMax: MAX_SHIELD, topSpeed: topSpeedFor(), lastBeam: -99,
       extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99, lastDock: -99, lastGear: -99, hurtWindow: -99, hurtSpent: 0, bonusUntil: -99,
       sawShips: new Set(), sawEnemies: new Set(),

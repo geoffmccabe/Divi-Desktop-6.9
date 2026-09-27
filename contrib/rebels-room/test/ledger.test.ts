@@ -6,7 +6,7 @@
 //
 // Run: sh scripts/run-rebels-ledger-tests.sh
 
-import { RebelsLedger, MIN_CLAIM, ADDRESS } from "../src/ledger";
+import { RebelsLedger, MIN_CLAIM, ADDRESS, EARN_PER_DAY, dayOf } from "../src/ledger";
 
 const out: string[] = [];
 let failures = 0;
@@ -170,7 +170,63 @@ async function main() {
     ok("with the games counted", rows[0].games === 2, `${rows[0].games}`);
   }
 
-  console.log(out.join("\n"));
+  /* ================= THE DAY'S EARNING ALLOWANCE =================
+   A Divi Sphere is a whole DIVI now and nothing limited how fast they could be
+   gathered. A person playing hard for an hour earns a few thousand; a script
+   playing all night would earn a hundred and forty thousand, every night. */
+{
+  const { led } = newLedger();
+  const credit = (node: string, divi: number, from: string) =>
+    led.fetch(new Request("https://ledger/credit", {
+      method: "POST", headers: { "CF-Binding": "1" },
+      body: JSON.stringify({ node, divi, from }),
+    }));
+  const owed = async (node: string) => {
+    const r = await led.fetch(new Request(`https://rebels.test/ledger/balance?node=${encodeURIComponent(node)}`, { headers: auth }));
+    return (await r.json() as { divi: number }).divi;
+  };
+
+  /* An ordinary session is untouched: the cap is far above one. */
+  await credit("one", 900, "1.1.1.1");
+  ok("an ordinary session is credited in full", await owed("one") === 900, `${await owed("one")}`);
+
+  /* Past the allowance, only the allowance. */
+  await credit("one", EARN_PER_DAY, "1.1.1.1");
+  ok("a day's earnings stop at the allowance", await owed("one") === EARN_PER_DAY,
+     `${await owed("one")} of ${EARN_PER_DAY}`);
+
+  /* And going on earning adds nothing more. */
+  await credit("one", 5000, "1.1.1.1");
+  ok("and playing on past it earns nothing further", await owed("one") === EARN_PER_DAY,
+     `${await owed("one")}`);
+
+  /* ---- THE ONE THAT MATTERS ----
+     A guest's account key is a string their own browser invents, so a script
+     can present a brand new account whenever it likes. If the allowance were
+     per account that would hand it a brand new allowance every time and the
+     cap would be worth nothing at all. It is counted against the address too. */
+  await credit("a-completely-new-account", 5000, "1.1.1.1");
+  ok("a fresh account from the same address gets NO fresh allowance",
+     await owed("a-completely-new-account") === 0,
+     `${await owed("a-completely-new-account")} DIVI`);
+
+  /* Somebody else, genuinely elsewhere, is unaffected. */
+  await credit("two", 900, "2.2.2.2");
+  ok("a different address is not punished for the first one", await owed("two") === 900,
+     `${await owed("two")}`);
+}
+
+/* ---- and it is a DAY, not for ever ---- */
+{
+  ok("the day is the UTC date, so it does not depend on where this runs",
+     dayOf(Date.UTC(2026, 8, 26, 23, 30)) === "2026-09-26", dayOf(Date.UTC(2026, 8, 26, 23, 30)));
+  ok("and it turns over at midnight UTC",
+     dayOf(Date.UTC(2026, 8, 27, 0, 30)) === "2026-09-27");
+  ok("the allowance is generous for a person and mean to a farm",
+     EARN_PER_DAY >= 5000 && EARN_PER_DAY <= 20000, `${EARN_PER_DAY} DIVI a day`);
+}
+
+console.log(out.join("\n"));
   /* ---------------------------------------------------- cashing out ----
      The player's half (over the binding) and London's half (with the secret),
      in the order they happen. */

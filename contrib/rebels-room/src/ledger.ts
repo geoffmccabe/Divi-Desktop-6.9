@@ -26,6 +26,32 @@
    COIN_VALUE in rebelsCombat.ts. */
 /** Nothing under a hundred can be claimed. It may build up indefinitely. */
 export const MIN_CLAIM = 100;
+
+/**
+ * The most DIVI one player can EARN in a day. Not the most they can be paid:
+ * that is the payout service's global cap, which is the real backstop.
+ *
+ * This exists because a Divi Sphere is worth a whole DIVI now and nothing else
+ * limited how fast they could be collected. A person who plays hard for an hour
+ * earns a few thousand; a script that plays all night would earn a hundred and
+ * forty thousand, every night, for ever. The cap is set well above any human
+ * session and well below any tireless one, so it is invisible to players and
+ * fatal to farms.
+ *
+ * ⚠ IT IS COUNTED AGAINST THE CONNECTING ADDRESS AS WELL AS THE ACCOUNT, and
+ * that second half is the one that matters. A guest's account key is a string
+ * their own browser makes up (guestIdOk in protocol.ts only checks its shape),
+ * so a script can mint a fresh account whenever it likes and would otherwise
+ * get a fresh allowance with it. The address it connects from is the thing it
+ * cannot choose.
+ */
+export const EARN_PER_DAY = 10_000;
+
+/** Which day it is, for the allowance. UTC so it does not depend on where the
+ *  object happens to be running. */
+export function dayOf(at = Date.now()): string {
+  return new Date(at).toISOString().slice(0, 10);
+}
 /** How long London has to confirm a send before the reservation is released. */
 const RESERVE_SECONDS = 600;
 
@@ -57,6 +83,10 @@ interface Account {
   score: number;
   best: number;
   games: number;
+  /** Which day `today` counts, and how much has been earned in it. See
+   *  EARN_PER_DAY. */
+  day?: string;
+  today?: number;
   /** DIVI earned and not yet claimed. */
   divi: number;
   /** DIVI paid out, ever. */
@@ -151,8 +181,17 @@ export class RebelsLedger {
     await this.state.storage.put(`a:${a.node}`, a);
   }
 
+  /** What one connecting address has earned today, across every account it has
+   *  presented. Kept apart from the accounts because it is not an account: it
+   *  is a rate limit, and it is thrown away when the day turns. */
+  private async ipDay(from: string, today: string): Promise<{ day: string; today: number }> {
+    const held = await this.state.storage.get<{ day: string; today: number }>(`ip:${from}`);
+    if (held && held.day === today) return held;
+    return { day: today, today: 0 };
+  }
+
   private async credit(req: Request): Promise<Response> {
-    let body: { node?: string; name?: string; kills?: number; divi?: number; score?: number; flocks?: number; gems?: number[]; items?: Record<string, number> };
+    let body: { node?: string; name?: string; kills?: number; divi?: number; score?: number; flocks?: number; gems?: number[]; items?: Record<string, number>; from?: string };
     try { body = await req.json(); } catch { return new Response("bad", { status: 400 }); }
     const node = String(body.node ?? "").slice(0, 80);
     if (!node) return new Response("bad", { status: 400 });
@@ -163,6 +202,22 @@ export class RebelsLedger {
 
     const a = await this.load(node);
     if (body.name) a.name = String(body.name).slice(0, 40);
+
+    /* ---- THE DAY'S ALLOWANCE ----
+       Whichever is smaller: what this account has left today, or what the
+       address it is playing from has left. Minting new accounts does not buy
+       more, which is the whole point. */
+    const today = dayOf();
+    if (a.day !== today) { a.day = today; a.today = 0; }
+    const from = String(body.from ?? "").slice(0, 80);
+    const ip = from ? await this.ipDay(from, today) : null;
+    const room = Math.max(0, Math.min(
+      EARN_PER_DAY - (a.today ?? 0),
+      ip ? EARN_PER_DAY - ip.today : EARN_PER_DAY,
+    ));
+    const allowed = Math.min(divi, room);
+    a.today = (a.today ?? 0) + allowed;
+    if (ip) { ip.today += allowed; await this.state.storage.put(`ip:${from}`, ip); }
     a.kills += kills;
     a.flocks = (a.flocks ?? 0) + clamp(body.flocks, 0, 10_000);
     if (Array.isArray(body.gems)) {
@@ -182,9 +237,9 @@ export class RebelsLedger {
     a.score += score;
     a.games += score > 0 ? 1 : 0;
     a.best = Math.max(a.best, score);
-    a.divi += divi;
+    a.divi += allowed;
     await this.save(a);
-    return Response.json({ ok: true, divi: a.divi, kills: a.kills });
+    return Response.json({ ok: true, divi: a.divi, kills: a.kills, capped: allowed < divi });
   }
 
   private async balance(req: Request): Promise<Response> {

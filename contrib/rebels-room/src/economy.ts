@@ -11,6 +11,8 @@ export interface Bankable {
   node: string;
   name: string;
   kills: number;
+  /** The connecting address, for rate limiting. See Seat.from in room.ts. */
+  from?: string;
   divi: number;
   score: number;
   flocks: number;
@@ -39,7 +41,12 @@ export async function bankRun(binding: LedgerBinding, s: Bankable): Promise<void
   try {
     await ledger(binding).fetch("https://ledger/credit", {
       method: "POST",
-      body: JSON.stringify({ node: s.account || s.node, name: s.name, kills, divi, score, flocks, gems, items }),
+      body: JSON.stringify({
+        node: s.account || s.node, name: s.name, kills, divi, score, flocks, gems, items,
+        /* Where this player really is, for the ledger's daily earning limit. A
+           guest's account key is theirs to invent; this is not. */
+        from: s.from ?? "",
+      }),
     });
   } catch {
     s.kills += kills; s.divi += divi; s.score += score; s.flocks += flocks;
