@@ -19,6 +19,8 @@
 // balance comes back — so a failed send loses the player nothing, and a
 // duplicated one is refused because the amount was already taken out.
 
+import { guestIdOk } from "./protocol";
+
 /** A thousand kills is a hundred DIVI. Geoff's terms, in one place. */
 export const KILLS_PER_PAYOUT = 1000;
 export const DIVI_PER_PAYOUT = 100;
@@ -111,6 +113,27 @@ export class RebelsLedger {
       return this.request(req);
     }
 
+    /* ---- A PILOT NUMBER, HANDED OUT IN ORDER ----
+       Geoff: "can't you just start the pilot numbers at 000001 and go up from
+       there?" Yes, and it is the only thing that makes them genuinely unique:
+       random numbers collide by the birthday problem long before the space runs
+       out, and no amount of extra digits fixes that.
+
+       It has to be handed out by something that can see every number already
+       given, which a browser cannot. This object can: a Durable Object runs one
+       request at a time, so a counter in its storage cannot give the same
+       number to two people however many ask at once. That is the whole reason
+       it lives here rather than in the database - no migration, and no locking
+       to get wrong.
+
+       PUBLIC, unlike everything below, because the page needs its name before
+       it has joined anything. Nothing is revealed by it and nothing can be
+       taken: the worst a flood of invented guest ids can do is use up low
+       numbers, and since the display simply grows past six digits that costs
+       later players a longer name and nothing else. It is idempotent per guest,
+       so an honest client asking twice gets the same number twice. */
+    if (path === "pilot") return this.pilot(req);
+
     /* Everything below is the payout conversation, and every one of them needs
        the shared secret. Compared in constant time, since it is a secret being
        compared against attacker-supplied input. */
@@ -124,6 +147,29 @@ export class RebelsLedger {
     if (path === "reject") return this.reject(req);
     if (path === "top") return this.top();
     return new Response("not found", { status: 404 });
+  }
+
+  /**
+   * This guest's pilot number, given out in order and remembered.
+   *
+   * The number, not the name: how it is written ("Pilot 000042") is the
+   * cockpit's business, and the padding has to be free to grow.
+   */
+  private async pilot(req: Request): Promise<Response> {
+    if (req.method !== "POST") return new Response("post only", { status: 405 });
+    let body: unknown;
+    try { body = await req.json(); } catch { return Response.json({ error: "bad body" }, { status: 400 }); }
+    const guest = (body as { guest?: unknown })?.guest;
+    if (!guestIdOk(guest)) return Response.json({ error: "bad guest" }, { status: 400 });
+
+    const key = `pilot:${guest}`;
+    const held = await this.state.storage.get<number>(key);
+    if (typeof held === "number" && held > 0) return Response.json({ pilot: held });
+
+    /* One at a time, by the object's own nature, so this cannot double-issue. */
+    const next = ((await this.state.storage.get<number>("pilotNext")) ?? 0) + 1;
+    await this.state.storage.put({ [key]: next, pilotNext: next });
+    return Response.json({ pilot: next });
   }
 
   private authorised(req: Request): boolean {
