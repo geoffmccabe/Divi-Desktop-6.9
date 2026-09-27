@@ -45,6 +45,26 @@ export interface RebelsIdentity {
    * never share a loadout.
    */
   accountKey(): string;
+  /**
+   * True when this player's account IS this device.
+   *
+   * A web guest has no sign-in and no node: what they have earned lives in this
+   * browser (IndexedDB, see web-rebels/webStore.ts) and nowhere else, which is
+   * exactly how Geoff described it - "a device-based account... a separate
+   * account than their divi-node based account".
+   *
+   * It matters because the leaderboard is filed under the player's NAME, and
+   * pilot numbers repeat: two guests who draw the same one share a row and add
+   * to each other's totals. Everything else a guest owns is already kept apart
+   * by accountKey above; their own lifetime figures are the one thing that was
+   * not, and asking the network for them was how somebody else's kills could
+   * turn up on your card. So for a device account the device answers, and the
+   * network row stays what it is - a leaderboard.
+   *
+   * Absent or false for the app, where the node is the account and the network
+   * row is the right answer across machines.
+   */
+  onDevice?(): boolean;
 }
 
 /**

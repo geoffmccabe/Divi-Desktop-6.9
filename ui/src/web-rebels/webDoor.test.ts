@@ -88,9 +88,21 @@ function ok(name: string, cond: boolean, extra = "") {
   const store = new Map<string, string>();
   const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => { store.set(k, v); } };
   const first = guestName(storage, () => 0.5);
-  ok("a guest is Pilot and four digits", /^Pilot \d{4}$/.test(first), first);
+  /* Six digits now. Geoff: "we need far more than that." Four was nine
+     thousand names, which two players in any hundred already share. */
+  ok("a guest is Pilot and six digits", /^Pilot \d{6}$/.test(first), first);
   ok("and keeps that name on the next visit", guestName(storage, () => 0.9) === first);
-  ok("without storage it is still a name", /^Pilot \d{4}$/.test(guestName(null)));
+  ok("without storage it is still a name", /^Pilot \d{6}$/.test(guestName(null)));
+  /* ---- AND AN OLD FOUR-DIGIT NAME IS STILL THEIRS ----
+     Anybody already playing has one. Refusing it would hand them a new
+     identity and a fresh start, which is the very thing being fixed. */
+  const held = new Map<string, string>([["rebels.web.pilot", "Pilot 7595"]]);
+  const oldStore = {
+    getItem: (k: string) => held.get(k) ?? null,
+    setItem: (k: string, v: string) => { held.set(k, v); },
+  };
+  ok("an old four-digit pilot keeps their name",
+     guestName(oldStore) === "Pilot 7595", guestName(oldStore));
 
   const id = guestId(storage);
   ok("a guest has a private id, long and plain", /^[A-Za-z0-9-]{16,64}$/.test(id), id);
@@ -145,6 +157,68 @@ function ok(name: string, cond: boolean, extra = "") {
   let threw = false;
   try { door.earned!(NaN); door.earned!(-1); } catch { threw = true; }
   ok("nonsense earnings do not throw out of the game loop", !threw);
+}
+
+/* ---- A GUEST'S OWN FIGURES COME FROM THEIR DEVICE ----
+   Geoff: "A user should be able to come back repeatedly and keep playing and
+   accumulate in the game... with a separate account than their divi-node based
+   account."
+
+   The leaderboard is filed under the player's NAME, and pilot numbers repeat -
+   even at six digits, two players in any thousand share one. So asking the
+   network for a guest's OWN lifetime row was asking a question it cannot
+   answer correctly: back came a stranger's totals, or, when nobody had
+   submitted under that number yet, zeroes over a perfectly good local tally. */
+{
+  const kept = new Map<string, string>();
+  const store = {
+    getItem: (k: string) => kept.get(k) ?? null,
+    setItem: (k: string, v: string) => { kept.set(k, v); },
+    removeItem: (k: string) => { kept.delete(k); },
+  };
+  const door = createWebDoor({
+    storage: store,
+    name: () => "Pilot 123456",
+    guest: () => "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  });
+  ok("a web guest's account is their device", door.identity.onDevice?.() === true);
+
+  const { setPlatform } = await import("../wallet/rebels/platform/current");
+  const scores = await import("../wallet/rebels/rebelsScores");
+  setPlatform(door);
+
+  /* A run, filed the way the game files one. */
+  scores.recordScore(500, [0, 3, 0, 0, 0, 0, 0]);
+  /* And a name-twin's row, which is what the network would hand back: the same
+     pilot number, somebody else's numbers. Put straight into the device's own
+     table under a DIFFERENT name so it cannot be mistaken for ours. */
+  scores.recordScore(99999, [9, 9, 9, 9, 9, 9, 9], "Somebody Else");
+
+  /* The network is not asked at all, so a fetch here would be a bug. If one
+     goes out it throws, and the totals come back wrong or not at all. */
+  const realFetch = globalThis.fetch;
+  let asked = 0;
+  (globalThis as { fetch: unknown }).fetch = (...a: unknown[]) => {
+    asked++;
+    return (realFetch as (...x: unknown[]) => Promise<Response>)(...a);
+  };
+  const mine = await scores.myTotals();
+  (globalThis as { fetch: unknown }).fetch = realFetch;
+
+  ok("their lifetime row is the one on this device", mine.total === 500 && mine.games === 1,
+     `total ${mine.total} over ${mine.games} games`);
+  ok("with the kills they actually made", mine.tierKills[1] === 3,
+     `tier two: ${mine.tierKills[1]}`);
+  ok("and a name-twin's numbers are not theirs", mine.total !== 99999, `${mine.total}`);
+  ok("and the network was never asked for them", asked === 0, `${asked} calls`);
+
+  /* ---- AND IT ACCUMULATES, which is the whole point ---- */
+  scores.recordScore(250, [0, 2, 0, 0, 0, 0, 0]);
+  const again = await scores.myTotals();
+  ok("coming back and playing again adds to it",
+     again.total === 750 && again.games === 2 && again.tierKills[1] === 5,
+     `total ${again.total} over ${again.games} games, tier two ${again.tierKills[1]}`);
+  ok("and the best single run is the best of them", again.best === 500, `${again.best}`);
 }
 
 console.log(out.join("\n"));

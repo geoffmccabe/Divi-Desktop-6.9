@@ -1857,6 +1857,68 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.detach();
 }
 
+// 27. THE KILLS ARE WRITTEN DOWN, so they are still there next time.
+//
+// Geoff: "it's supposed to be storing my stats, kills, achievements, etc,
+// locally in a device-based account (indexeddb) but it's not doing that...
+// everything is resetting to zero."
+//
+// The storing worked. The COUNTING did not. A finished run is filed from
+// combat.tierKills, which the simulation increments as it kills things - and in
+// a room that simulation is the SERVER'S, so this cockpit's copy never moved
+// off zero. Measured on the live web game: five games, 5,147 points and seven
+// zeroes filed every single time, on the device and on the server both. Next
+// session the lifetime row came back empty and the tally read nought, which is
+// exactly what "resetting to zero" looks like from the outside.
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  ctl.launch();
+  for (let i = 0; i < 60 * 8; i++) ctl.frame(1 / 60);
+  calmSky();
+
+  const seats = (server as unknown as { seats: Map<string, { id: string; flying: boolean }> }).seats;
+  const me = [...seats.values()].at(-1)!;
+  const fight = () => server!.combat as import("./rebelsCombat").CombatState;
+
+  /* A tier-three fighter going down, credited to this pilot, put in exactly
+     where the room puts one. The next report drives a tick, which broadcasts
+     it, which is how the cockpit hears about any kill. */
+  const killAt = new THREE.Vector3(0, 0, R + 30);
+  fight().events.push({ kind: "enemyDown", at: killAt, power: 3, tier: 3, who: me.id });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+
+  ok("a kill the room credits to this pilot shows on the card",
+     (ctl.hud().tierKills[2] ?? 0) >= 1, `tier three: ${ctl.hud().tierKills[2]}`);
+
+  /* ---- AND SOMEBODY ELSE'S KILL IS NOT MINE ----
+     Every fighter that went down in view used to be counted as this player's,
+     which in a room full of people is everybody's kills on one card. */
+  const before = ctl.hud().tierKills.slice();
+  fight().events.push({ kind: "enemyDown", at: killAt, power: 3, tier: 5, who: "somebody-else" });
+  for (let i = 0; i < 30; i++) ctl.frame(1 / 60);
+  ok("and a kill credited to somebody else is not",
+     (ctl.hud().tierKills[4] ?? 0) === (before[4] ?? 0),
+     `tier five: ${before[4]} -> ${ctl.hud().tierKills[4]}`);
+
+  /* ---- THE CLAIM: IT SURVIVES THE RUN ----
+     Dying files the run, which is the path every run actually takes. What is
+     written is what a returning player's card is built from. */
+  (server as unknown as { down(s: unknown): void }).down(me);
+  const until = Date.now() + 8000;
+  while (!ctl.hud().dead && Date.now() < until) { ctl.frame(1 / 60); restMs(1); }
+  ok("(setup) the run ended", ctl.hud().dead, `dead ${ctl.hud().dead}`);
+  const filed = JSON.parse(localStorage.getItem("dd69.rebels.scores") ?? '{"rows":[]}') as
+    { rows: Array<{ name: string; tierKills: number[] }> };
+  const total = filed.rows.reduce((n, r) => n + (r.tierKills?.[2] ?? 0), 0);
+  ok("and the finished run is filed with the kill in it, not with a zero",
+     total >= 1, `tier three filed: ${total} across ${filed.rows.length} rows; `
+     + `rows ${JSON.stringify(filed.rows).slice(0, 160)}`);
+  ctl.detach();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

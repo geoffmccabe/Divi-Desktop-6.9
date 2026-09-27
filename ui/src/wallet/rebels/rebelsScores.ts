@@ -165,6 +165,18 @@ export async function fetchTop(by: "best" | "total", limit = KEEP): Promise<Scor
 export async function myTotals(name = playerName()): Promise<ScoreRow> {
   const local = topByTotal(1000).find((r) => r.name === name)
     ?? { name, best: 0, total: 0, games: 0, tierKills: noKills(), at: 0 };
+  /* ---- A DEVICE ACCOUNT ANSWERS FOR ITSELF ----
+     A web guest's account IS this browser, and the network row is filed under
+     their pilot number, which repeats: two guests who draw the same one share
+     a row and add to each other's totals. Asking the network for a guest's own
+     figures was therefore asking a question it cannot answer correctly, and
+     what came back overwrote a perfectly good local tally with somebody else's
+     - or, when nobody had submitted under that number yet, with zeroes.
+
+     Everything else a guest owns is already kept apart by their private id
+     (accountKey); this was the one thing that was not. The network row stays
+     exactly as it is, because as a LEADERBOARD it is fine. */
+  if (platform().identity.onDevice?.()) return local;
   try {
     const res = await accountRead(
       "rebels_scores" +
