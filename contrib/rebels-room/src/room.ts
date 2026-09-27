@@ -105,8 +105,6 @@ const GUARD_REARM_SECONDS = 25;
 /** How much damage is taken before the heart's health is written to storage. */
 const HEART_SAVE_EVERY = 2000;
 
-/** A thousand kills is a hundred DIVI. */
-
 /* ---- what the room believes about one player ---- */
 /**
  * One wingman on one seat.
