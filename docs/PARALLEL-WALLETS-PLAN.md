@@ -38,36 +38,44 @@ main staking address.
   for phones, not vaults, and is not in our node branch. It does not
   collide with this plan.
 
-## Design (defaults, change any)
+## Design (Geoff's answers, 2026-Sep-27)
 
-1. **Keys: derived from the node's own seed**, accounts 1000 and up
-   (`m/44'/301'/(1000+n)'/0/i`). One 12-word backup restores every wallet
-   on any DD69. The app stores NO keys: only names, the next index, and
-   flags. A wallet's keys are re-derived when needed, which needs the node
-   wallet unlocked, exactly like sending today.
-2. **Purpose:** separating funds. No separate password per wallet.
-3. **Sending and receiving:** each wallet panel has Receive (its addresses)
-   and Send (from that wallet). The main Send/Receive screens stay the
-   staking wallet's. The header total stays the staking wallet only.
-4. **Vault staking:** per address, default on. Coins arriving at a plain
-   address do not stake; the app offers "Stake these" which moves them into
-   a vault owned by that address and managed by the node's staking key.
-   Rewards accrue in the vault and show in the wallet's balance. Unticked:
-   coins sit unstaked. Reclaiming from a vault is a spend signed by the
-   owner key (the app's), which needs one small node RPC (below).
+1. **Keys: each wallet has its own 12-word seed**, made by the app, shown
+   once for backup, restorable in any Divi wallet (standard path
+   `m/44'/301'/0'/0/i`). The app stores the seed encrypted in its data
+   folder (`wallets.json`): by default under a random key kept in the
+   operating system's keychain (no extra password to remember); optionally
+   under a password the user sets for that wallet.
+2. **Purpose:** separate pots (coins held for children, a game pool, a
+   savings account). Separate password optional, off by default.
+3. **Sending and receiving:** the main Send and Receive screens get a
+   "which wallet" choice, defaulting to the node's own (staking) wallet.
+   Each wallet panel also has its own Receive and Send.
+4. **Vault staking:** per address, default on. Coins in a vault owned by a
+   wallet's key are that wallet's coins, and stake rewards are paid into the
+   vault itself, so they show in that wallet with no sending at all. Where a
+   LOTTERY win on a vault-staked block is paid is to be verified in the node
+   code before it is promised.
 5. **Limit:** 20 per node.
-6. **HRA:** a name bought from a wallet's Get HRA both points at and is
-   owned by that wallet's address. An existing name can be moved into a
-   wallet from the HRA tab (`transfer`).
-7. **Names of addresses** (white) are local labels, stored by the app.
+6. **HRA:** a name can be bought for any address. The HRA tab will say
+   plainly when the address that pays is not the address the name will
+   point at, and suggest buying from the target address, since most people
+   will want the name and its token in the same wallet. Moving an existing
+   name into a wallet uses `transfer`.
+7. **Header total includes every wallet.** With more than one wallet, a
+   dropdown to the right of the word DIVI opens a panel listing each wallet
+   with its DIVI and US-dollar value, as multi-account Solana wallets do.
+8. **Names of addresses** (white) are local labels, stored by the app.
 
 ## Phases
 
 ### Phase 0. Foundation (no UI). The riskiest part; it holds money.
-- `crates/supervisor/src/wallets.rs`: derive account keys from the seed
-  (BIP32 with the `secp256k1` crate, verified on crates.io before use);
-  addresses (base58, P2PKH, prefix as the node); a store of wallets and
-  labels under the app's data folder (`wallets.json`, no secrets).
+- `crates/supervisor/src/wallets.rs`: make a seed (12 words, BIP 39),
+  derive keys (BIP 32 with the `secp256k1` crate, verified on crates.io
+  before use), addresses (base58, P2PKH, prefix as the node); a store of
+  wallets, encrypted seeds, labels and flags under the app's data folder
+  (`wallets.json`); the keychain-held default key; optional per-wallet
+  password.
 - Balance and coins per address through the address index.
 - Sending from a wallet: build with `createrawtransaction`, sign with
   `signrawtransaction` + the derived key, broadcast. Fees as the node does.
