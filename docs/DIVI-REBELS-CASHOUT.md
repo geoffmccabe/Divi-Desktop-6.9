@@ -80,3 +80,48 @@ No account has reached 100 DIVI yet, so the full chain (request, reserve,
 send, confirm) has been exercised only by the unit tests on the ledger and
 room, and by the service's dry run against the live ledger. The first real
 payout should be watched in the journal.
+
+---
+
+## The Divi Rebels payout address (received 2026-Sep-27, NOT yet in use)
+
+Geoff, relayed through the gameplay session: *"D6V6dP2L5CN386Wg1LZF7KszXxuuSDvmmd
+for the Divi Rebels address"*. He describes it as a child address of his Scanner
+node wallet, to be the source rewards are paid from.
+
+```
+D6V6dP2L5CN386Wg1LZF7KszXxuuSDvmmd
+```
+
+**Verified twice, independently, before being written down.** Both sessions
+checked it by different code: the gameplay session through the game's own
+`isDiviAddress`, this one through a base58check decoder written from the node
+source with nothing in common with it. Both agree: 34 characters, version byte
+30 (mainnet, which is what makes it start with D), a 20-byte hash160 payload,
+and a checksum that passes. Both also proved their checker was strict rather
+than permissive by bending one character in the middle and watching it fail, so
+the pass means something.
+
+### Nothing points at it yet, and that is deliberate
+
+The payout service still pays from the London hot wallet
+(`/usr/local/bin/divi-rebels-payout.py`, see above). Three things have to happen
+before this address sends a coin, and none has:
+
+1. **Geoff confirms the address directly**, to whoever is about to wire it in.
+   It reached this session through a relay between two agents. Relaying is how a
+   character goes missing, and a wrong payout address is the single mistake in
+   this whole system that cannot be undone: the coins land somewhere real that
+   nobody holds the key to. Two independent checksum checks prove the address is
+   WELL FORMED. They cannot prove it is the address he meant.
+2. **The guest sign-in gate is decided.** Web guests cannot cash out at all
+   today (`mayCashOut` refuses every guest), and that gate is currently the only
+   thing standing between us and unlimited free accounts, because a guest's
+   account key is a string their own browser invents. Paying guests means
+   loosening it, and how far is a money decision.
+3. **The rate is settled.** A Divi Sphere is one whole DIVI, so a fighter pays 5
+   and a player clearing waves earns roughly 5,850 an hour, against a wallet
+   holding about 1,880 and a global cap of 2,000 a day. Nothing can be stolen at
+   those numbers, but the first serious player empties the float.
+
+Until all three, this section is a record and not a configuration.
