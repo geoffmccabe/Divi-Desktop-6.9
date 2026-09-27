@@ -35,7 +35,7 @@ async function main() {
   type Ctl = import("./rebelsController").RebelsController;
 
   const base: Hud = {
-    ready: false, speed: 0, alt: 0, shields: 2000, shieldMax: 2000, ammo: 120,
+    ready: false, speed: 0, alt: 0, shields: 2000, shieldMax: 2000, ammo: 240,
     torpedoes: 4, inFlight: 0, hitAt: 0, guards: 3, guarding: false, boost: 1,
     dock: 0, dockName: "", homeName: "London, UK", homeDist: 0, towers: 0, view: 0, throttle: 1,
     room: "off", crew: 0, points: 0, fps: 0, simMs: 0, drawCalls: 0, pixelRatio: 0, flocks: 0, superBoost: false, superMult: 2,
@@ -47,7 +47,11 @@ async function main() {
   };
   const flying: Partial<Hud> = {
     ready: true, room: "live", launched: true, speed: 1.37, alt: 3.2, throttle: 0.8, towers: 212, homeDist: 4.4,
-    shields: 1400, ammo: 87.25, torpedoes: 3, guards: 2, boost: 0.6, fps: 58, simMs: 2.34, drawCalls: 311, pixelRatio: 2,
+    /* Scaled with the magazine when it doubled, so this situation still
+       depicts what it was drawn to depict: a bar about three quarters full.
+       Left at 87.25 it would have become a third of a bar, and the recording
+       would quietly stop being a picture of a ship in good shape. */
+    shields: 1400, ammo: 174.5, torpedoes: 3, guards: 2, boost: 0.6, fps: 58, simMs: 2.34, drawCalls: 311, pixelRatio: 2,
     nearTower: 6.25, contacts: 2, kills: 14, score: 12345, divi: 3.456, points: 1234.9, tierKills: [9, 4, 1, 0, 0, 0, 0],
   };
   const states: [string, Partial<Hud>][] = [

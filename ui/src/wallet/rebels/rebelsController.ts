@@ -1766,7 +1766,19 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     from: THREE.Vector3, fwd: THREE.Vector3,
     aim?: THREE.Vector3, weapon?: string, up?: THREE.Vector3,
   ): void {
-    if (inRoomsWorld()) { room?.fire(kind, from, fwd, aim, weapon, up); return; }
+    /* ---- ONLY HAND IT OVER IF THERE IS SOMEBODY TO HAND IT TO ----
+       This read `if (inRoomsWorld()) { room?.fire(...); return; }`, and that
+       `?.` was the whole of Geoff's "the guns don't fire in the spikeworld. I
+       hear them, but I see no bullets... torpedoes also make a launch sound but
+       I don't see them". With no live room the call did nothing at all and the
+       function returned anyway, so the trigger made its noise and no round was
+       ever created - not by the room, because there was none, and not here,
+       because we had already given up. The fall-through below is the answer and
+       it was sitting right there. */
+    if (room && room.status() === "live" && inRoomsWorld()) {
+      room.fire(kind, from, fwd, aim, weapon, up);
+      return;
+    }
     /* ---- A TORPEDO IS A REAL THING OUT HERE ----
        This used to return without doing anything, so at Spikeworld the
        torpedo simply did not exist: no round, no flight, no blast. Geoff:
@@ -2502,9 +2514,12 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
            set it off. */
         const mineInAir = performance.now() - torpSentAt < TORPEDO_FUSE * 1000 && combat.torpedoes.length > 0;
         if (mineInAir) {
-          /* Set it off where the fight for it is: the room's, or the local one
-             out at Spikeworld, which the room knows nothing about. */
-          if (inRoomsWorld()) room?.detonate();
+          /* Set it off where the fight for it is: the room's, or the local
+             one, which the room knows nothing about. The same `room?.` that
+             swallowed the shots swallowed the blast - Geoff: the torpedoes
+             "make no explosions" - so this asks whether there is anybody
+             there before handing it over, exactly as firing does. */
+          if (room && room.status() === "live" && inRoomsWorld()) room.detonate();
           else detonateOldest(combat, _voxWorld);
           torpSentAt = 0;
         }

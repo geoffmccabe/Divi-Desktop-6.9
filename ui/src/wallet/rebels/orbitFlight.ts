@@ -33,8 +33,39 @@ import { R, MIN_ALT, MAX_ALT, cruiseScale } from "./orbitWorld";
    has to be re-tuned. Actually scaling the world would move all of it. */
 export const CRUISE = 8;       /* globe units per second, about 512 km/s of Earth */
 export const BOOST = 19;
-/** How long a full tank of boost lasts, in seconds. */
-export const BOOST_SECONDS = 12;
+/**
+ * How long a full tank of boost lasts, in seconds.
+ *
+ * Four times what it was. Geoff: "I want to make the boost work a lot more, so
+ * 4x the amount of boosts by making it so that a boost now only removes a
+ * fraction of the boost indicator." The tank is unchanged and the gauge is
+ * unchanged; a second of boost simply takes a quarter of the bite out of it
+ * that it used to. It went 6 -> 12 once before for the same reason.
+ */
+export const BOOST_SECONDS = 48;
+
+/* ---- CARRIED SPEED, WHICH IS WHAT SPACE ACTUALLY DOES ----
+   Geoff: "allow all boosts to increase velocity by more and more, so after a
+   boost it doesn't slow down unless the users boosts in the opposite
+   direction. So it's more like real space."
+
+   The flight model is a DRAG model: speed eases toward a target, and letting go
+   of boost eases it back down to cruise. That is aeroplane physics, and it is
+   wrong for space. So boosting now also pours into a separate carried speed
+   that nothing bleeds away: let go and you keep it, for ever, until you turn
+   round and boost it off again.
+
+   It is bounded, and it has to be. The room refuses a position report further
+   from the last one than the ship could possibly have travelled, and that check
+   is what stops a client teleporting onto somebody's tail; it reads its bound
+   from topSpeedFor below. An unbounded carried speed would either be snapped
+   back by the room or would force that check to be abandoned. */
+/** The most carried speed a ship can build up, as a multiple of one boost. */
+export const DRIFT_MAX_MULT = 4;
+/** How hard boosting pours into it, in units per second per second. At this
+ *  rate a pilot holding boost reaches the cap in about eight seconds, so the
+ *  build-up is something you feel happening rather than a switch. */
+export const DRIFT_ACCEL = 9.5;
 /** TAB's multiple of boost, before any item. Geoff: "a super-boost that
  *  doubled the speed and used two boosts at once." */
 export const SUPER_BOOST_MULT = 2;
@@ -43,7 +74,26 @@ export const SUPER_BOOST_MULT = 2;
  *  bound a position change: super boost plus a diagonal slide. */
 export function topSpeedFor(extras: Extras = NO_EXTRAS): number {
   const slide = Math.max(1, extras.strafeMult, extras.vstrafeMult ?? 1);
-  return BOOST * Math.max(1, extras.superMult) + STRAFE_SPEED * slide * 1.42;
+  /* Carried speed AND a boost on top of it AND a diagonal slide: the three
+     stack, and this number is a bound rather than a speed anybody holds. The
+     room sizes its anti-teleport budget from it, so it must not be optimistic
+     - a bound that is too low snaps honest pilots backwards. */
+  return driftCap(extras) + BOOST * Math.max(1, extras.superMult) + STRAFE_SPEED * slide * 1.42;
+}
+
+/**
+ * The ceiling on carried speed for this ship.
+ *
+ * Four boosts' worth, and deliberately NOT multiplied by super boost as well.
+ * Super already pours into the carry twice as fast, which is the benefit worth
+ * having; letting it raise the ceiling too took the bound to a hundred and
+ * ninety-six units a second - right round the globe in three seconds - and
+ * every unit of that is slack in the room's anti-teleport check, which is the
+ * one thing standing between a modified client and appearing on somebody's
+ * tail. Fast, bounded, and the bound is still meaningful.
+ */
+export function driftCap(_extras: Extras = NO_EXTRAS): number {
+  return BOOST * DRIFT_MAX_MULT;
 }
 export const YAW_RATE = 1.5;   /* radians per second at full stick */
 /** Roll, in radians a second. Quicker than yaw: rolling is how you point a
@@ -116,7 +166,12 @@ export const MAX_SHIELD = 2000;
 /** What flying into the planet or clipping a tower costs. A quarter of a full
  *  shield: enough to matter, not enough to end a run on one clumsy moment. */
 export const CRASH_DAMAGE = 250;
-export const MAX_AMMO = 120;
+/** Rounds in a full magazine. Doubled from 120 on Geoff's word: "double the
+ *  amount of bullets for all the guns (but don't change torpedoes)". Every gun
+ *  draws from this one magazine - the mini gun at a quarter of a round a shot,
+ *  the main gun at one - so doubling it here doubles all of them at once and
+ *  leaves the torpedo rack, which is counted separately, alone. */
+export const MAX_AMMO = 240;
 import { MINI_AMMO, MINI_INTERVAL } from "./rebelsCombat";
 
 export const MAX_TORPEDOES = 4;
@@ -177,6 +232,9 @@ export interface Flight {
   speed: number;
   bank: number;
   boost: number;      /* 0..1 of the boost cells */
+  /** Speed carried out of past boosts, which nothing bleeds away. See
+   *  DRIFT_ACCEL: this is what makes flight feel like space rather than air. */
+  drift: number;
   /** TAB held with fuel to burn: for the gauge and the sound. */
   superOn: boolean;
   shields: number;
@@ -368,6 +426,7 @@ export function createFlight(at: THREE.Vector3, extras: Extras = NO_EXTRAS): Fli
     speed: CRUISE,
     bank: 0,
     boost: 1,
+    drift: 0,
     superOn: false,
     shields: shieldMaxFor(extras),
     ammo: ammoFor(extras),
@@ -490,15 +549,41 @@ export function stepFlight(
      effectively double the amount of boost time available." */
   if (wantBoost) f.boost = Math.max(0, f.boost - (dt / BOOST_SECONDS) * (wantSuper ? f.extras.superMult : 1));
   const openSpace = cruiseScale(f.alt);
+
+  /* ---- CARRIED SPEED ----
+     Boosting pours into it and nothing bleeds it away; boosting with the
+     throttle pulled back pours it out again. That is the whole of "it doesn't
+     slow down unless the users boosts in the opposite direction".
+
+     Which way it goes is read off the LEVER rather than off a new key, because
+     the lever already means "the way I want to be going": hold boost with the
+     throttle forward and you gather speed, hold it with the throttle in reverse
+     and you shed it. Nothing new to learn and nothing new to bind. */
+  const cap = driftCap(f.extras);
+  if (wantBoost) {
+    const push = DRIFT_ACCEL * dt * (wantSuper ? f.extras.superMult : 1);
+    f.drift = f.throttle < 0
+      ? Math.max(0, f.drift - push)
+      : Math.min(cap, f.drift + push);
+  }
+  /* The full-stop key means STOPPED, and it has to mean it here too, or a
+     pilot who has built up seventy units a second has no way back down except
+     flying backwards for ten seconds. */
+  if (stick.fullStop) f.drift = 0;
+
   /* Boost ignores the lever: it is a button that means "everything you have",
      and having to remember to push the throttle up first would make it feel
      broken exactly when it is wanted. */
-  let target = wantSuper ? BOOST * f.extras.superMult * openSpace
+  let target = (wantSuper ? BOOST * f.extras.superMult * openSpace
     : wantBoost ? BOOST * openSpace
-    : CRUISE * openSpace * f.throttle;
+    : CRUISE * openSpace * f.throttle)
+    /* ...plus everything past boosts left behind. Added to the target rather
+       than to the speed so it goes through the same easing: carried speed
+       arrives smoothly instead of snapping the ship forward. */
+    + f.drift;
   /* Docked means STOPPED. Not slowed: stopped. Being handed fuel while drifting
      past is not docking, and it was what happened before. */
-  if (f.dock > 0) target = 0;
+  if (f.dock > 0) { target = 0; f.drift = 0; }
 
   /* Braking to a halt is quick and docking brakes hardest, because the resupply
      itself only lasts a second or two: at the ordinary rate the ship was still

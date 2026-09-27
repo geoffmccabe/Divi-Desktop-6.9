@@ -16,6 +16,7 @@ import {
   DOCK_SECONDS, DOCK_RANGE, type Stick,
   BOOST_SECONDS,
   SUPER_BOOST_MULT,
+  driftCap, DRIFT_MAX_MULT,
   topSpeedFor,
   STRAFE_SPEED,
   BOOST,
@@ -266,18 +267,25 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const f = createFlight(pad);
   run(f, 60, stick({ boosting: true }));
   ok("boost accelerates", f.speed > CRUISE * 1.5, `speed ${f.speed.toFixed(1)}`);
-  /* A full tank is BOOST_SECONDS (twelve; it was six). Run past it. */
+  /* A full tank is BOOST_SECONDS (forty-eight; it was twelve, and six before
+     that). Run past it. */
   run(f, 60 * (BOOST_SECONDS + 1), stick({ boosting: true }));
   ok("boost runs dry", f.boost === 0, `boost ${f.boost.toFixed(2)}`);
-  ok("after twelve seconds, not six", BOOST_SECONDS === 12);
-  /* Long enough to settle back: a longer boost climbs higher, into faster
-     open space, and the fall to cruise takes a few seconds. */
+  /* Geoff: "4x the amount of boosts by making it so that a boost now only
+     removes a fraction of the boost indicator." */
+  ok("a boost takes a quarter of the bite it used to", BOOST_SECONDS === 48, `${BOOST_SECONDS}s`);
+  /* ---- WHAT A DRY BOOST FALLS BACK TO, WHICH IS NO LONGER CRUISE ----
+     It used to ease all the way down to cruise, and that is precisely the
+     thing Geoff asked to change: "after a boost it doesn't slow down unless
+     the users boosts in the opposite direction." What it falls back to now is
+     cruise PLUS everything the boosting left behind, and it stays there.
+     Measured at this altitude, because a long boost climbs a few hundred units
+     into faster open space. */
   run(f, 60 * 6, stick({ boosting: true }));
-  /* Against cruise AT THIS ALTITUDE: fourteen seconds of boost carries the
-     ship a few hundred units up, where open space is already a little faster. */
-  ok("dry boost falls back to cruise, never to a stop",
-     Math.abs(f.speed - CRUISE * cruiseScale(f.alt)) < 0.5,
-     `speed ${f.speed.toFixed(1)} vs ${(CRUISE * cruiseScale(f.alt)).toFixed(1)} at alt ${f.alt.toFixed(0)}, boost ${f.boost.toFixed(2)}, throttle ${f.throttle.toFixed(2)}`);
+  const settled = CRUISE * cruiseScale(f.alt) + f.drift;
+  ok("a dry boost falls back to cruise PLUS what it carried, not to cruise",
+     Math.abs(f.speed - settled) < 0.5 && f.drift > 0,
+     `speed ${f.speed.toFixed(1)} vs ${settled.toFixed(1)} (cruise ${(CRUISE * cruiseScale(f.alt)).toFixed(1)} + carried ${f.drift.toFixed(1)}) at alt ${f.alt.toFixed(0)}`);
 }
 
 // 5b. Super boost: twice the speed, twice the burn; and the slides.
@@ -290,7 +298,9 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const g = createFlight(pad);
   run(g, 60 * 3, stick({ boosting: true }));
   ok("and burns fuel twice as fast", Math.abs((1 - f.boost) - 2 * (1 - g.boost)) < 0.02, `super used ${(1 - f.boost).toFixed(2)}, boost used ${(1 - g.boost).toFixed(2)}`);
-  ok("a full tank of super lasts six seconds", BOOST_SECONDS / SUPER_BOOST_MULT === 6);
+  /* Four times what it was, along with the ordinary tank. */
+  ok("a full tank of super lasts twenty-four seconds",
+     BOOST_SECONDS / SUPER_BOOST_MULT === 24, `${BOOST_SECONDS / SUPER_BOOST_MULT}s`);
   const h = createFlight(pad, { torpedoes: 0, magazine: 0, superMult: 3, strafeMult: 2 });
   run(h, 60 * 3, stick({ superBoost: true }));
   ok("a 3x item makes it three times boost", h.speed > BOOST * 2.5 * cruiseScale(h.alt), `speed ${h.speed.toFixed(1)}`);
@@ -312,8 +322,70 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const p2 = s3.pos.clone();
   run(s3, 60, stick({ strafe: 1 }));
   ok("a 2x strafe item doubles the slide", s3.pos.distanceTo(p2) > STRAFE_SPEED * 1.6 * cruiseScale(s3.alt), `${s3.pos.distanceTo(p2).toFixed(2)}`);
-  ok("the top speed the room budgets for counts super boost and a diagonal slide",
-     Math.abs(topSpeedFor() - (BOOST * 2 + STRAFE_SPEED * 1.42)) < 1e-9 && topSpeedFor({ torpedoes: 0, magazine: 0, superMult: 3, strafeMult: 1 }) > topSpeedFor());
+  /* ---- AND IT COUNTS CARRIED SPEED TOO ----
+     The three stack: what past boosts left behind, a boost held on top of it,
+     and a diagonal slide. The room refuses a report further than this bound
+     allows, so leaving carried speed out of it would snap honest pilots
+     backwards the moment they had built any up. */
+  ok("the room's budget counts carried speed, super boost and a diagonal slide",
+     Math.abs(topSpeedFor() - (driftCap() + BOOST * 2 + STRAFE_SPEED * 1.42)) < 1e-9
+       && topSpeedFor({ torpedoes: 0, magazine: 0, superMult: 3, strafeMult: 1 }) > topSpeedFor(),
+     `${topSpeedFor().toFixed(1)} a second`);
+}
+
+// 5b. CARRIED SPEED: space does not have brakes.
+//
+// Geoff: "allow all boosts to increase velocity by more and more, so after a
+// boost it doesn't slow down unless the users boosts in the opposite
+// direction. So it's more like real space."
+//
+// The flight model is a drag model - speed eases toward a target - which is
+// aeroplane physics. Boost now also pours into a carried speed that nothing
+// bleeds away, so letting go of the button keeps what you gathered. The way
+// back down is to pull the throttle back and boost against it.
+{
+  const f = createFlight(pad);
+  /* Gather some. */
+  run(f, 60 * 6, stick({ boosting: true }));
+  const gathered = f.drift;
+  ok("boosting builds carried speed", gathered > 10, `${gathered.toFixed(1)} units a second carried`);
+
+  /* ---- AND LETTING GO KEEPS IT ----
+     This is the whole claim. Under the old model the ship eased back to cruise
+     within a few seconds of releasing the button. */
+  const fastAt = f.speed;
+  run(f, 60 * 10, stick({}));
+  ok("letting go of boost does not bleed it off", Math.abs(f.drift - gathered) < 1e-6,
+     `${gathered.toFixed(1)} -> ${f.drift.toFixed(1)}`);
+  ok("and the ship is still moving at speed ten seconds later",
+     f.speed > CRUISE * 2 && f.speed > fastAt * 0.5,
+     `${fastAt.toFixed(1)} -> ${f.speed.toFixed(1)}, cruise is ${CRUISE}`);
+
+  /* ---- BOOSTING THE OTHER WAY IS THE BRAKE ---- */
+  run(f, 60 * 4, stick({ boosting: true, throttle: -1 }));
+  ok("boosting against the throttle sheds it", f.drift < gathered,
+     `${gathered.toFixed(1)} -> ${f.drift.toFixed(1)}`);
+  run(f, 60 * 20, stick({ boosting: true, throttle: -1 }));
+  ok("and it comes all the way off, without going negative", f.drift === 0, `${f.drift}`);
+
+  /* ---- BOUNDED, BECAUSE THE ROOM READS THAT BOUND ----
+     A report further from the last one than the ship could have travelled is
+     refused as a teleport. An unbounded carried speed would either be snapped
+     back by the room or force that check to be given up. */
+  const g = createFlight(pad);
+  run(g, 60 * 120, stick({ boosting: true }));
+  ok("carried speed has a ceiling", g.drift <= driftCap(g.extras) + 1e-6,
+     `${g.drift.toFixed(1)} against a cap of ${driftCap(g.extras).toFixed(1)}`);
+  ok("and the room's bound covers everything at once",
+     topSpeedFor(g.extras) >= driftCap(g.extras) + BOOST,
+     `top ${topSpeedFor(g.extras).toFixed(1)}, cap ${driftCap(g.extras).toFixed(1)}`);
+  ok("which is four boosts' worth of carry", DRIFT_MAX_MULT === 4, `${DRIFT_MAX_MULT}`);
+
+  /* ---- AND THE FULL-STOP KEY STILL MEANS STOPPED ----
+     Or a pilot carrying seventy units a second has no way down but flying
+     backwards for ten seconds. */
+  run(g, 2, stick({ fullStop: true }));
+  ok("full stop drops the carried speed too", g.drift === 0, `${g.drift}`);
 }
 
 // 6. Guns fire, cost ammo, and stop when empty. What comes OUT of them is the
@@ -571,9 +643,13 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 
 // 8b4. The magazine.
 {
-  ok("a full load is 120 rounds", MAX_AMMO === 120, `${MAX_AMMO}`);
+  /* Doubled on Geoff's word: "double the amount of bullets for all the guns
+     (but don't change torpedoes)". One magazine feeds every gun, so this is
+     the only number that had to move. */
+  ok("a full load is 240 rounds", MAX_AMMO === 240, `${MAX_AMMO}`);
   const f = createFlight(pad);
-  ok("and a ship launches with all of them", f.ammo === 120, `${f.ammo}`);
+  ok("and a ship launches with all of them", f.ammo === 240, `${f.ammo}`);
+  ok("the torpedo rack is untouched by that", torpedoesFor() === 4, `${torpedoesFor()}`);
 }
 
 // 8c2. The mini gun.

@@ -490,7 +490,15 @@ const home: [number, number, number] = [0, 0, R + 8];
   const room = newRoom();
   const ws = new FakeSocket();
   const seat = join(room, ws, "fast-a");
-  ok("a stock ship is budgeted for super boost plus a slide", seat.topSpeed > BOOST * 2 && seat.topSpeed < BOOST * 2.5, `${seat.topSpeed.toFixed(1)}`);
+  /* ---- AND FOR CARRIED SPEED, WHICH IS MOST OF IT NOW ----
+     Boosting builds a speed that nothing bleeds away (see DRIFT_MAX_MULT in
+     orbitFlight.ts), so the budget has to cover four boosts' worth of carry
+     plus a boost held on top of it plus a diagonal slide. A budget that left
+     the carry out would snap an honest pilot backwards the moment they had
+     built any up, which is the worst bug this check can have. */
+  ok("a stock ship is budgeted for carried speed, super boost and a slide",
+     seat.topSpeed > BOOST * 6 && seat.topSpeed < BOOST * 7,
+     `${seat.topSpeed.toFixed(1)} a second, which is ${(seat.topSpeed / BOOST).toFixed(1)} boosts`);
   /* Two boosts' worth of movement in one report: fine. */
   room.now = 1;
   (seat as any).lastTf = 0.95;

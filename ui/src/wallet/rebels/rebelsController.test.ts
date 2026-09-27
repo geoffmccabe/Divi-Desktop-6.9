@@ -105,13 +105,46 @@ const socketJobs: Array<() => void> = [];
 function flushRoom() {
   while (socketJobs.length) socketJobs.shift()!();
 }
-function freshServer() {
+/**
+ * ONE ROOM PER NAME, because that is what the real world has.
+ *
+ * The fake socket used to seat every connection into a single room whatever
+ * address it had been opened at, so "earth" and "spike" were the same object
+ * and every Spikeworld test was quietly measuring an Earth room. That is
+ * exactly the gap that let the guns bug through: out there the region was not
+ * really a region, so nothing about the region could be tested.
+ *
+ * A room decides which region it IS from the address it is reached at, and it
+ * does so in `fetch` before it awaits anything - so asking it for its /state
+ * page sets the region synchronously and answers with a plain JSON response
+ * rather than trying to upgrade a websocket, which is not a thing that exists
+ * in node.
+ */
+const rooms = new Map<string, NonNullable<typeof server>>();
+function freshServer(name = "earth") {
   roomStorage.map.clear();
   const { RebelsRoom } = serverModule;
   const s = new RebelsRoom({ storage: roomStorage } as never, roomEnv) as never as NonNullable<typeof server>;
+  void (s as unknown as { fetch(r: Request): Promise<Response> })
+    .fetch(new Request(`https://x/room/${name}/state`)).catch(() => { /* nothing to do with us */ });
+  rooms.set(name, s);
   server = s;
   s.setDropsForTests(null, () => 0.99);
   return s;
+}
+/** The room at this address, made if this is the first socket to ask for it. */
+function roomAt(name: string): NonNullable<typeof server> {
+  const held = rooms.get(name);
+  /* A room nobody is left in is a room the next block should not inherit. */
+  if (held && (held as unknown as { seats: Map<string, unknown> }).seats.size > 0) {
+    server = held;
+    return held;
+  }
+  return freshServer(name);
+}
+/** Which room a socket address is for. */
+function roomNameIn(url: string): string {
+  return /\/room\/([A-Za-z0-9_-]+)/.exec(url)?.[1] ?? "earth";
 }
 /**
  * EMPTY THE ROOM'S SKY, for a block that is about the controls rather than
@@ -147,8 +180,9 @@ function calmSky(keep?: { pos: THREE.Vector3 } | null): void {
   onmessage: ((e: { data: string }) => void) | null = null;
   onclose: ((e: unknown) => void) | null = null;
   onerror: ((e: unknown) => void) | null = null;
-  constructor() {
+  constructor(public url = "wss://test/room/earth") {
     const client = this;
+    const where = roomNameIn(url);
     const handlers: Record<string, ((e: unknown) => void)[]> = {};
     const half = {
       accept() {},
@@ -163,17 +197,20 @@ function calmSky(keep?: { pos: THREE.Vector3 } | null): void {
          that left fighters in the sky changed what the next block measured:
          a fleet cheat that should have sent twenty-four sent six, because
          the cap was already full of somebody else's test. */
-      if (!server || (server as unknown as { seats: Map<string, unknown> }).seats.size === 0) freshServer();
-      server!.seat(half as never, "test-account");
+      const mine = roomAt(where);
+      mine.seat(half as never, "test-account");
       /* The server's twenty-a-second timer is not wanted here: step() is
          called from the reports below instead. */
-      server!.stop();
+      mine.stop();
       client.onopen?.();
     });
     this.send = (text: string) => {
       for (const fn of handlers.message ?? []) fn({ data: text });
-      /* One server tick per position report, which is the real rate. */
-      try { if ((JSON.parse(text) as { t?: string }).t === "tf") server?.step(); } catch { /* not ours */ }
+      /* One server tick per position report, which is the real rate, and on
+         THIS socket's own room rather than on whichever was made last. */
+      try {
+        if ((JSON.parse(text) as { t?: string }).t === "tf") rooms.get(where)?.step();
+      } catch { /* not ours */ }
     };
     this.close = () => {
       this.readyState = 3;
@@ -1590,6 +1627,48 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   pilot?.trigger("primary", false);
   ok("the guns fire out there instead of being refused",
      !/bad shot|REFUSED/i.test(ctl.hud().note), ctl.hud().note);
+
+  /* ---- AND THERE ARE ACTUALLY ROUNDS IN THE AIR ----
+     Checking the note was not enough, and the gap was exactly big enough for
+     the next bug to walk through. Geoff, on the web version: "the guns don't
+     fire in the spikeworld. I hear them, but I see no bullets. The torpedoes
+     also make a launch sound but I don't see them and they make no
+     explosions." Firing read `if (inRoomsWorld()) { room?.fire(...); return; }`
+     - with no live room that optional call did nothing at all and the function
+     returned anyway, so the trigger made its noise and no round was ever
+     created: not by the room, because there was none, and not locally, because
+     we had already returned past the code that would have. A note-only test
+     passes happily through all of that.
+
+     The cockpit's own diagnostic is what is read, because it counts what is in
+     the lists being DRAWN rather than what the room believes. It is written
+     every two seconds of game time. */
+  const diag = () => {
+    try {
+      const d = JSON.parse(localStorage.getItem("dd69.rebels.diag") ?? "{}") as
+        { drawing?: { bullets?: number; torps?: number }; room?: string };
+      return { bullets: d.drawing?.bullets ?? 0, torpedoes: d.drawing?.torps ?? 0, room: d.room ?? "" };
+    } catch { return { bullets: 0, torpedoes: 0, room: "" }; }
+  };
+  const waitForDiag = (want: (d: ReturnType<typeof diag>) => boolean) => {
+    const until = Date.now() + 8000;
+    while (!want(diag()) && Date.now() < until) { ctl.frame(1 / 60); restMs(1); }
+  };
+  pilot?.trigger("primary", true);
+  waitForDiag((d) => d.bullets > 0);
+  ok("and the rounds are really there, not just unrefused",
+     diag().bullets > 0,
+     `${diag().bullets} rounds in the air, room ${diag().room}`);
+  pilot?.trigger("primary", false);
+
+  /* The torpedo too, which was the other half of the same report: a press of
+     the SECONDARY trigger, which is what a torpedo is. */
+  pilot?.trigger("secondary", true);
+  for (let i = 0; i < 10; i++) ctl.frame(1 / 60);
+  pilot?.trigger("secondary", false);
+  waitForDiag((d) => d.torpedoes > 0);
+  ok("and a torpedo launched out there exists", diag().torpedoes > 0,
+     `${diag().torpedoes} torpedoes in the air`);
 
   /* ---- AND NO FURTHER, HERE ----
      The heart is at the middle of the planet, behind two hundred and fifty
