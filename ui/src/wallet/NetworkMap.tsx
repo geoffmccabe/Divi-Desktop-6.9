@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState , useLayoutEffect } from "react";
-import { networkPeers, probePeers, noteSetupLog, listNodes, nodeIdentity, networkCrawl, peerAdd, type Peer, type Geo } from "./api";
+import { networkPeers, probePeers, noteSetupLog, relayedNodes, listNodes, nodeIdentity, networkCrawl, peerAdd, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, addMyIps, loadLastPeers, saveLastPeers, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
@@ -300,7 +300,7 @@ function drawSpiral(
 
 /* "assumed": answered within the last day, drawn and counted as alive from
    the first frame, being confirmed by the first wave. See probeSchedule. */
-type ProbeState = "probing" | "online" | "offline" | "assumed";
+type ProbeState = "probing" | "online" | "offline" | "assumed" | "relayed";
 
 
 interface HoverPoint {
@@ -642,7 +642,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     const v = new Set<string>();
     for (const p of snapRef.current?.peers ?? []) v.add(p.ip);
     for (const [ip, st] of probeRef.current) {
-      if (st === "online" || st === "assumed") v.add(ip);
+      if (st === "online" || st === "assumed" || st === "relayed") v.add(ip);
       // A node that missed once or twice is still counted; only "down" is not.
       else if (st === "offline" && probeCounts(recordsRef.current.get(ip)) && recordsRef.current.get(ip)?.aliveAt) v.add(ip);
     }
@@ -743,6 +743,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
 
   /* The reconnect stopwatch: one line into the setup log per map open. */
   const clockRef = useRef<ReconnectClock | null>(null);
+  /* Nodes reachable only through a helper: ip -> helper address. */
+  const relayedRef = useRef<Map<string, string>>(new Map());
   const arcFx = useRef<Map<string, ArcFx>>(new Map()); // per-peer flex + colour state
   // Clicking our own node toggles "network only": hide the purple peer layer and
   // brighten the blue network so it isn't covered up.
@@ -918,7 +920,10 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       const c = clockRef.current;
       if (c && c.shouldReport(now)) void noteSetupLog(c.report(now).line);
     };
-    const runWave = async (list: string[], timeoutMs: number, animate: boolean): Promise<void> => {
+    const runWave = async (listIn: string[], timeoutMs: number, animate: boolean): Promise<void> => {
+      let list = listIn;
+      if (!list.length) return;
+      list = list.filter((ip) => probeRef.current.get(ip) !== "relayed");
       if (!list.length) return;
       for (const ip of list) if (probeRef.current.get(ip) === "offline") probeRef.current.set(ip, "probing");
       let resolveWave: ReturnType<typeof beginProbeWave> | null = null;
@@ -958,7 +963,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     };
     /* The whole known network, by how much doubt there is about each node. */
     const runMainWave = async (): Promise<void> => {
-      const all = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
+      const all = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip) && probeRef.current.get(ip) !== "relayed");
       const p = plan(recordsRef.current, all, Date.now());
       const kips = [...p.quick, ...p.patient];
       /* The slow lane runs alongside and is not waited for: a few written-off
@@ -986,6 +991,47 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         }
       }
     };
+    /* ---- NODES REACHED THROUGH A HELPER ----
+       A node behind a router cannot be knocked on, so the probe would call
+       it dead. Our own node's address book knows it as "relayed" with the
+       helper and, when the node said, its own IP; the network re-hears it
+       every six hours. Fresh within a day = alive: blue, counted, placed at
+       its own IP, and a spiral if it is new to this wallet. */
+    const pollRelayed = async () => {
+      let list: Awaited<ReturnType<typeof relayedNodes>> = [];
+      try { list = await relayedNodes(); } catch { return; }
+      if (!alive) return;
+      const now = Date.now();
+      const fresh = list.filter((r) => r.home && now / 1000 - r.time < 24 * 60 * 60);
+      const ips = fresh.map((r) => r.home).filter((ip) => !myNodeIpsRef.current.has(ip));
+      if (!ips.length) return;
+      const unknown = ips.filter((ip) => !knownRef.current[ip]);
+      if (unknown.length) {
+        await resolveGeos(unknown, () => {});
+        if (!alive) return;
+      }
+      const g = await resolveGeos(ips, () => {});
+      if (!alive) return;
+      const seen = ips
+        .filter((ip) => g[ip])
+        .map((ip) => ({ ip, lat: g[ip].lat, lon: g[ip].lon, city: g[ip].city, country: g[ip].country, cc: g[ip].countryCode }));
+      if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
+      const nowMs = Date.now();
+      for (const r of fresh) {
+        if (!knownRef.current[r.home]) continue;
+        relayedRef.current.set(r.home, r.helper);
+        probeRef.current.set(r.home, "relayed");
+        recordsRef.current.set(r.home, observe(recordsRef.current.get(r.home), true, nowMs));
+      }
+      noteSeen(fresh.map((r) => r.home).filter((ip) => !!knownRef.current[ip]));
+      newNodesRef.current = newNodes(knownRef.current);
+      saveRecords(recordsRef.current);
+      setMapNodeCount(verifiedNodes().size);
+      setProbeTick((t) => t + 1);
+    };
+    void pollRelayed();
+    const relayedId = setInterval(() => { void pollRelayed(); }, 60000);
+
     /* At once: last session's peers and the freshest memories, quick timeout.
        Then the whole network two seconds later, and every minute after. */
     void runWave(firstWave(recordsRef.current, loadLastPeers(nodeId), Date.now()), FIRST_WAVE_TIMEOUT_MS, false);
@@ -1206,6 +1252,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       clearInterval(staleId);
       clearTimeout(firstMain);
       clearInterval(mainId);
+      clearInterval(relayedId);
       document.removeEventListener("visibilitychange", onVisible);
       document.removeEventListener("visibilitychange", onShown);
       window.removeEventListener("focus", onVisible);
@@ -1447,8 +1494,23 @@ export function NetworkMap({ onReturn, autoplay = false }: {
          spirals were reset they vanished. Geoff, 2026-Sep-22: "we have lost
          on the map so many nodes... like Nigeria and Vietnam." A few hundred
          dots cost nothing to draw. */
+      /* ---- AND NOT THE DEAD ----
+         lastSeen here is the NETWORK's stamp: when some node last heard this
+         address announce itself. Measured 2026-Sep-27 on Geoff's book: the
+         median is 162 days, the oldest nearly seven years; 1,059 of the
+         2,002 grey dots with a stamp were older than a month. Those are
+         old wallets long gone, and drawing them as "a node" is wrong. A dot
+         that is not verified alive and has not been heard from in thirty
+         days is not drawn. Verified nodes are always drawn. */
+      const STALE_MS = 30 * 24 * 60 * 60 * 1000;
+      const nowDraw = Date.now();
       const blueNodes = Object.entries(knownRef.current)
-        .filter(([ip]) => !liveIps.has(ip))
+        .filter(([ip, kp]) => {
+          if (liveIps.has(ip)) return false;
+          const st = probeRef.current.get(ip);
+          if (st === "online" || st === "assumed" || st === "relayed") return true;
+          return nowDraw - kp.lastSeen < STALE_MS;
+        })
         .sort((a, b) => b[1].lastSeen - a[1].lastSeen)
         .slice(0, 2000);
 
@@ -1508,7 +1570,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           ip,
           kp,
           xy: P(kp.lon, kp.lat),
-          online: probeRef.current.get(ip) === "online" || probeRef.current.get(ip) === "assumed", // verified, or trusted from the last day
+          online: ["online", "assumed", "relayed"].includes(probeRef.current.get(ip) ?? ""), // verified, trusted from the last day, or reached through a helper
           // Missed once or twice, being rechecked: drawn dimmer, still a node.
           unsure: probeRef.current.get(ip) !== "online" && probeCounts(recordsRef.current.get(ip)) && !!recordsRef.current.get(ip)?.aliveAt,
         }));
@@ -1934,7 +1996,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       for (const [ip, kp] of Object.entries(knownRef.current)) {
         if (liveNow.has(ip) || !drawnBlue.has(ip)) continue;
         const st = probeRef.current.get(ip) ?? "probing";
-        const online = st === "online" || st === "assumed";
+        const online = st === "online" || st === "assumed" || st === "relayed";
         const rec = recordsRef.current.get(ip);
         const unsure = !online && st !== "probing" && probeCounts(rec) && !!rec?.aliveAt;
         const agoMin = rec?.aliveAt ? Math.max(1, Math.round((Date.now() - rec.aliveAt) / 60000)) : 0;
@@ -1952,7 +2014,9 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           name,
           lines: [
             loc ? ip : "",
-            st === "assumed"
+            st === "relayed"
+              ? `Reachable through ${relayedRef.current.get(ip) ?? "a helper node"}`
+              : st === "assumed"
               ? `Last confirmed ${ago} · checking now`
               : online
               ? "Active now · not connected"

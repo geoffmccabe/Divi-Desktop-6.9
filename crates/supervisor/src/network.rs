@@ -37,6 +37,34 @@ fn strip_port(addr: &str) -> String {
 }
 
 /// Connected peers plus our own public IP (as peers report seeing us).
+/// A node reachable only through a helper (docs/PEER-RELAY-SPEC.md), as our
+/// node's address book knows it: its key, the helper, its own IP if it said,
+/// and when the network last heard it announce itself.
+pub struct RelayedNode {
+    pub nodekey: String,
+    pub helper: String,
+    pub home: String,
+    pub time: i64,
+}
+
+/// Every relayed node in our node's address book. Empty on a node older
+/// than 69.0.5, which has no such addresses and no such call.
+pub fn relayed_nodes(cfg: &NodeConfig) -> Vec<RelayedNode> {
+    let rpc = RpcClient::new(cfg);
+    let Ok(arr) = rpc.call("getnodeaddresses", json!([0])) else { return vec![] };
+    let mut out = Vec::new();
+    for a in arr.as_array().map(|v| v.as_slice()).unwrap_or(&[]) {
+        if a["network"].as_str() != Some("relay") { continue; }
+        out.push(RelayedNode {
+            nodekey: a["nodekey"].as_str().unwrap_or("").to_string(),
+            helper: a["helper"].as_str().unwrap_or("").to_string(),
+            home: a["home"].as_str().unwrap_or("").to_string(),
+            time: a["time"].as_i64().unwrap_or(0),
+        });
+    }
+    out
+}
+
 pub fn peers(cfg: &NodeConfig) -> Option<PeerSnapshot> {
     let rpc = RpcClient::new(cfg);
     let arr = rpc.call("getpeerinfo", json!([])).ok()?;

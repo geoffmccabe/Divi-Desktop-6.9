@@ -315,6 +315,10 @@ export interface Geo {
   countryCode?: string; // ISO-2, e.g. "US"
   isp?: string;
 }
+/** A node reachable only through a helper (node 69.0.5+), with its own IP
+ *  when it chose to say, and when the network last heard it. */
+export interface RelayedNode { nodekey: string; helper: string; home: string; time: number }
+export const relayedNodes = () => invoke<RelayedNode[]>("relayed_nodes");
 export const networkPeers = () => invoke<PeerSnapshot | null>("network_peers");
 export const geolocateIps = (ips: string[]) =>
   traceExternal("geolocate", invoke<Geo[]>("geolocate_ips", { ips }));

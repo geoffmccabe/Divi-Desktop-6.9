@@ -687,6 +687,29 @@ struct PeerSnapshotDto {
     self_ip: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayedNodeDto {
+    nodekey: String,
+    helper: String,
+    home: String,
+    time: i64,
+}
+
+/// Nodes reachable only through a helper, from our node's address book.
+#[tauri::command]
+async fn relayed_nodes() -> Vec<RelayedNodeDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else { return vec![] };
+        network::relayed_nodes(&cfg)
+            .into_iter()
+            .map(|r| RelayedNodeDto { nodekey: r.nodekey, helper: r.helper, home: r.home, time: r.time })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
 /// Connected peers + our public IP, for the network map.
 #[tauri::command]
 async fn network_peers() -> Option<PeerSnapshotDto> {
@@ -3471,6 +3494,7 @@ fn main() {
             lottery_info,
             lottery_wins,
             network_peers,
+            relayed_nodes,
             geolocate_ips,
             self_geo,
             probe_peers,

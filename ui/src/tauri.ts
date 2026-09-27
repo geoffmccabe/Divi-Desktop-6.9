@@ -18,7 +18,7 @@ declare global {
 // same promise instead of opening another socket. Mutations are never listed
 // here, so anything that changes state always runs on its own.
 const SINGLE_FLIGHT = new Set<string>([
-  "node_status", "node_logs", "wallet_status", "wallet_balance", "wallet_addresses",
+  "node_status", "node_logs", "wallet_status", "wallet_balance", "wallet_addresses", "relayed_nodes",
   "address_balance", "coin_maturity", "list_transactions", "recent_activity",
   "recent_blocks", "tx_status", "mempool_snapshot", "mempool_conflicts",
   "chain_orphans", "network_peers", "self_geo", "staking_wallets", "list_nodes",
