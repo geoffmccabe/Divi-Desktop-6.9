@@ -33,14 +33,22 @@ Two independent checks, both done rather than assumed:
 
 1. **SLIP-44**, the registry BIP44 coin types come from, lists
    `301 | DIVI | Divi Project`. There is no Divi at 119.
-2. **The prefix is 119 on every network, so it cannot be a coin type.** In the
-   same file, testnet sets `nExtCoinType = 1` (line 329, the standard testnet
-   value) while *still* setting `base58Prefixes[EXT_COIN_TYPE]` to `0x80000077`
-   — the same 119 (line 348). A number that stays 119 while the coin type
-   changes from 301 to 1 was never the coin type. Regtest sets the prefix to
-   `0x80000001` (line 428) with the comment "Testnet divi BIP44 coin type is
-   '1'", which is the one place the file admits what the field is supposed to
-   mean.
+2. **On one network the two numbers flatly contradict each other**, which is
+   what settles it. Every network block in `chainparams.cpp`, read out:
+
+   | Network  | `nExtCoinType` | `base58Prefixes[EXT_COIN_TYPE]` | Agree? |
+   |----------|----------------|----------------------------------|--------|
+   | Main     | 301 (line 223) | `0x80000077` = 119 (line 240)    | no     |
+   | Beta     | 1 (line 329)   | `0x80000077` = 119 (line 348)    | no     |
+   | Testnet  | 1 (line 413)   | `0x80000001` = 1 (line 428)      | yes    |
+   | Regtest  | 1 (line 499)   | inherited from testnet           | yes    |
+
+   **Beta is the proof.** Its coin type is 1 and its prefix is still 119. A
+   number that stays at 119 while the coin type beside it moves to 1 was never
+   the coin type. Testnet is the other half: it is the one block where somebody
+   fixed the prefix to match, and they left the comment "Testnet divi BIP44 coin
+   type is '1'" saying what the field was meant to be. Mainnet and beta never
+   got that fix.
 
 So `base58Prefixes[EXT_COIN_TYPE]` on mainnet is a stale constant that nobody
 has ever derived anything from.
@@ -89,6 +97,12 @@ phrase into anything to check a derivation path.
 
 Found by the payouts session while building `webWallet.ts` (2026-Sep-27) and
 written down here rather than left in two chat transcripts, because a warning
-that lives in a conversation protects nobody. The line numbers and the testnet
-argument above were verified against the source and against SLIP-44 before this
-file was written.
+that lives in a conversation protects nobody.
+
+Every line number and every value in the table above was read out of
+`chainparams.cpp` by walking the network blocks in order, and the registry claim
+was checked against SLIP-44. The first draft of this section credited the
+contradiction to testnet; it is beta. Testnet is the block where the prefix was
+FIXED, so citing it would have pointed the next reader at the one place the file
+gets it right. Corrected by the other session checking the claim instead of
+copying it, which is the habit that found everything else in this round too.
