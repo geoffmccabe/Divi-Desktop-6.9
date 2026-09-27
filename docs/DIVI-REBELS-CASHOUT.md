@@ -150,4 +150,40 @@ before this address sends a coin, and none has:
    holding about 1,880 and a global cap of 2,000 a day. Nothing can be stolen at
    those numbers, but the first serious player empties the float.
 
-Until all three, this section is a record and not a configuration.
+### 4. The wallet question, which the address answers and then reopens
+
+Geoff, 2026-Sep-27: *"the addr i gave you is a child addr generated from the
+main divi scan node address, the one on fasthosts in london"*.
+
+That closes risks 1 and 2 above on his own word: the address is his, chosen
+deliberately, and derived from a wallet whose key the London box holds. It opens
+a bigger one in their place, raised by the gameplay session.
+
+**An address is not a pot you can spend from.** Checked in the node source
+rather than assumed from Bitcoin habit: `sendtoaddress` takes a destination and
+an amount and has NO source parameter (`rpcwallet.cpp:1310`), and selection runs
+over the whole wallet's UTXOs. So "pay Rebels winnings from the treasury
+address" means, at the RPC level, "pay from whatever that wallet holds". The
+payout key's reach is the entire scan node wallet, not a Rebels float.
+
+The three consequences, each checked in the source rather than reasoned about,
+because two of them turned out milder than they first looked and one did not:
+
+| | Status |
+|---|---|
+| **Blast radius is the whole wallet** | **REAL, and the one that matters.** The doc above says "keep it small; it is a hot wallet", and that instruction cannot hold if the wallet is also the scan node's. `REBELS_DAILY_CAP` still bounds a bug or a break-in to 2,000 DIVI/day and remains the real backstop, but what sits behind it is no longer a small float. |
+| **A payout could spend a staking UTXO** | Real but mild. There is no auto-lock for staking coins, so a payout can spend one. Nothing breaks: the node simply has less staking. Worth knowing, not worth alarm. |
+| **A payout could spend masternode collateral** | **Already handled by the node.** `LockUpMasternodeCollateral()` runs at startup (`init.cpp:1245`) and locks collateral outpoints, and locked coins are skipped by coin selection (`AvailableUtxoCalculator.cpp:91`). Locks are not written to walletdb, but they do not need to be: init re-applies them from the masternode configuration on every start. The gap is collateral sitting in the wallet that is NOT declared in that configuration, which nothing would lock. |
+
+**The question put to Geoff:** should the Rebels treasury share the scan node's
+wallet, or be its own wallet holding a small float, with this child address
+funded from the node rather than living inside it?
+
+**Both sessions recommend a separate wallet.** It is the hot/cold separation
+this document was already reaching for, and it makes the daily cap a second line
+of defence rather than the only one. No amount of coin locking fixes the first
+row of that table; only a different wallet does.
+
+---
+
+Until all four, this section is a record and not a configuration.
