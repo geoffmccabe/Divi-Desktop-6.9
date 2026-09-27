@@ -1688,6 +1688,74 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.detach();
 }
 
+// 25. DYING AND COMING BACK: the sky must not stay empty for ever.
+//
+// Geoff: "the enemies disappeared after a while and never came back. The game
+// is supposed to have a clear sequence of play, with new waves every 2 minutes."
+//
+// It was one missing line. Dying BENCHES the seat on purpose - the room clears
+// `flying` so the waves do not go on circling a ship parked on its pad while
+// its pilot reads the card - and only `fly` puts it back. LAUNCH sends that;
+// coming back from a death did not. So from the first death onward the player
+// flew a normal-looking ship the room had stopped counting: empty roster, the
+// tick returning before the fight was stepped, and an empty sky for ever.
+//
+// Measured against the room before the fix: wave 1 at t=0, wave 2 at t=120,
+// death at t=155, then five solid minutes of wave 1 with nothing in it.
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  ctl.launch();
+  for (let i = 0; i < 60 * 8; i++) ctl.frame(1 / 60);
+
+  const waitFor = (done: () => boolean, ms = 10_000) => {
+    const until = Date.now() + ms;
+    while (!done() && Date.now() < until) { ctl.frame(1 / 60); restMs(1); }
+  };
+  waitFor(() => ctl.hud().contacts > 0);
+  ok("(setup) the first sortie has fighters in it", ctl.hud().contacts > 0,
+     `${ctl.hud().contacts} contacts`);
+
+  /* ---- KILLED, BY THE ROOM ----
+     Reached into rather than flown into: what is being tested is what happens
+     AFTER a death, not how the room notices one, and waiting for fighters to
+     finish the job is a test that passes or fails on their aim. The room's own
+     `down` is called, which is the same function a real killing blow calls,
+     and it tells the cockpit itself. */
+  const seats = (server as unknown as { seats: Map<string, { flying: boolean; dead: boolean }> }).seats;
+  /* The one that is actually flying. Blocks before this one leave their own
+     seats behind in the shared server, so the first in the map is somebody
+     else's ghost. */
+  /* The LAST one to join, which is this block's: seats are added in order and
+     earlier blocks leave their own behind in the shared server. */
+  const mine = [...seats.values()].at(-1)!;
+  ok("(setup) the room has this pilot on its roster", !!mine && mine.flying,
+     `${seats.size} seats, flying ${mine?.flying}`);
+  (server as unknown as { down(s: unknown): void }).down(mine);
+  waitFor(() => ctl.hud().dead);
+  ok("(setup) and the pilot is down", ctl.hud().dead,
+     `cockpit dead ${ctl.hud().dead}, room dead ${mine.dead}`);
+
+  /* The wait, then back into it. */
+  waitFor(() => ctl.hud().respawnIn <= 0, 40_000);
+  ctl.respawn();
+  for (let i = 0; i < 60 * 2; i++) ctl.frame(1 / 60);
+  ok("coming back from a death puts the pilot in the fight again",
+     !ctl.hud().dead, `dead ${ctl.hud().dead}`);
+
+  /* ---- AND THE FIGHT IS RUNNING AGAIN ----
+     This is the claim. Not "the ship flies" - it always flew - but that the
+     ROOM is counting it, which is the only thing that makes fighters arrive. */
+  waitFor(() => ctl.hud().contacts > 0, 20_000);
+  ok("and the sky fills back up after a death", ctl.hud().contacts > 0,
+     `${ctl.hud().contacts} contacts, the room has `
+     + `${(server?.combat as { enemies: unknown[] } | undefined)?.enemies.length ?? "?"}`);
+  ok("with a wave running", ctl.hud().wave > 0, `wave ${ctl.hud().wave}`);
+  ctl.detach();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

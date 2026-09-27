@@ -173,7 +173,14 @@ function ok(name: string, cond: boolean, extra = "") {
      `${stuff.filter((f) => f.kind === "station").length}`);
   ok("there are several asteroid fields", stuff.filter((f) => f.kind === "belt").length >= 3,
      `${stuff.filter((f) => f.kind === "belt").length}`);
-  ok("and a warp gate", kinds.has("gate"));
+  /* ---- AND NO WARP GATE OUT HERE ANY MORE ----
+     The Threshold Gate used to be scenery at eight Earth diameters, labelled
+     "destination unset". It has a destination now and Geoff moved it into low
+     orbit over the Pacific, where flying through it reaches Spikeworld. It is
+     built by rebelsGate.ts; listing it here as well would hang a second one in
+     the sky, which is worse than either arrangement on its own. */
+  ok("and the warp gate has left the furniture, because it is a door now",
+     !kinds.has("gate"), [...kinds].join(", "));
   ok("every one of them is named", stuff.every((f) => f.name.length > 3 && f.detail.length > 10));
   ok("and no two share a name", new Set(stuff.map((f) => f.name)).size === stuff.length);
 

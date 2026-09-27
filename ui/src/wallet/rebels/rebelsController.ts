@@ -33,7 +33,7 @@ import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsS
 import { R, MAX_ALT } from "./orbitWorld";
 import { makeVoxelPlanet, arrivalOffset, type VoxelPlanet } from "./voxel/voxelPlanet";
 import { SPIKEWORLD_CENTRE } from "./rebelsRegions";
-import { makeGate, gatePosition, GATE_REACH, type Gate } from "./rebelsGate";
+import { makeGate, gatePosition, gateAxis, type Gate } from "./rebelsGate";
 import { HEART_GUARD, HEART_GUARD_COUNT } from "./rebelsFlock";
 import { hitRock, bounceVelocity, bounceDamage } from "./voxel/voxelCollide";
 import {
@@ -735,6 +735,14 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     combat.wave = null;
     respawnAt = performance.now() + respawnWait() * 1000;
     setHud({ wave: 0, respawnIn: respawnWait() });
+    /* ---- AND FORGET WHICH WAVE WE HAD BEEN SHOWING ----
+       The wave number is only republished when the room's differs from the
+       last one seen, which is what stops it being written twenty times a
+       second. Blanking the HUD here without blanking that memory meant the
+       number never came back: the room went on saying "wave 1", the cockpit
+       went on thinking it had already shown wave 1, and the player flew a
+       whole sortie with no wave on the dial. Geoff: "there's no Wave2". */
+    lastWaveSeen = -1;
     setHud({ dead: true, score: 0 });
     if (rearOn) setRear(false);
     if (typeof document !== "undefined" && document.pointerLockElement === dom) {
@@ -1277,7 +1285,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       /* The way home, standing exactly where the ship is about to arrive. Blue,
          because that is what is on the other side of it. */
       if (!spikeGate) {
-        spikeGate = makeGate(SPIKEWORLD_AT.clone().add(arrivalOffset()), 0x63b7ff);
+        /* Facing back the way the ship came in, so arriving leaves it dead
+           astern rather than edge-on. */
+        const where = SPIKEWORLD_AT.clone().add(arrivalOffset());
+        const facing = where.clone().sub(SPIKEWORLD_AT).normalize();
+        spikeGate = makeGate(where, facing, 0x63b7ff);
         scene.add(spikeGate.group);
       }
       /* Out of Earth's neighbourhood, which needs the ceiling lifted: the
@@ -1954,7 +1966,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     spikeGate?.step(dt, camera.position);
     if (!here) return;
     /* The prompt, while it is in reach of being seen but not yet reached. */
-    const near = here.distance(flight.pos) < GATE_REACH * 9;
+    const near = here.distance(flight.pos) < here.aperture() * 9;
     if (near !== gatePrompt) {
       gatePrompt = near;
       if (near) {
@@ -2978,7 +2990,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* The gate, with the sky, for the same reason: it is always there, it
            is part of the world rather than part of a run, and a player should
            be able to see where Spikeworld is reached from before they launch. */
-        earthGate = makeGate(gatePosition(R), 0xff8a4a);
+        const gateAt = gatePosition(R);
+        earthGate = makeGate(gateAt, gateAxis(gateAt), 0xff8a4a);
         scene.add(earthGate.group);
 
         /* And the stars behind all of it. The scene belongs to the Node Map,
@@ -3362,6 +3375,18 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       }
       score = 0;
       playGameplay();
+      /* ---- TELL THE ROOM YOU ARE FLYING AGAIN ----
+         This was missing, and it is the whole of "the enemies disappeared
+         after a while and never came back". Dying benches the seat: the room
+         clears `flying` so the waves do not go on circling a ship parked on
+         its pad while its pilot reads the card. Only `fly` puts it back, and
+         LAUNCH sent it while coming back from a death did not. So from the
+         first death onward the player flew a perfectly normal-looking ship
+         that the room had stopped counting: the roster was empty, the tick
+         returned before the fight was stepped, and the sky stayed empty for
+         ever. Measured: wave 1 at t=0, wave 2 at t=120, death at t=155, and
+         then five minutes of wave 1 with nothing in it. */
+      room.fly();
       startAt(homeIndex);
       flying = true;
       phase = "fly";

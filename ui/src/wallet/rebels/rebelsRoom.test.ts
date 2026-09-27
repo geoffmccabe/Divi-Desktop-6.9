@@ -553,14 +553,28 @@ async function main() {
     ok("in low orbit, not out with the planets",
        Math.abs(at.length() - (W.R + G.GATE_ALTITUDE)) < 0.001 && G.GATE_ALTITUDE < W.MAX_ALT / 20,
        `${at.length().toFixed(1)} from Earth's centre, ${G.GATE_ALTITUDE} up`);
+    /* ---- AND IT DOES NOT SIT IN THE SEA ----
+       The ring reaches 0.57 of its width from its centre, so a gate hung lower
+       than its own radius would have its bottom half inside the planet. */
+    const rim = G.GATE_WIDTH * G.RIM_SHARE;
+    ok("and the ring clears the surface", G.GATE_ALTITUDE > rim,
+       `${G.GATE_ALTITUDE} up against a rim reaching ${rim.toFixed(1)}`);
+    /* It faces along the way ships travel, not up off the planet: a ring facing
+       straight up is one almost everybody meets edge-on. */
+    const axis = G.gateAxis(at);
+    ok("and it faces along the orbit rather than up",
+       Math.abs(axis.dot(at.clone().normalize())) < 0.001, `${axis.dot(at.clone().normalize()).toFixed(4)}`);
     /* Reachable means reachable: a gate above the ceiling is a gate nobody
        can fly to. */
     ok("and well inside the room's own world", at.length() < W.R + W.MAX_ALT,
        `${at.length().toFixed(1)} against ${(W.R + W.MAX_ALT).toFixed(1)}`);
 
-    const gate = G.makeGate(at, 0xff8a4a);
-    const near = at.clone().add(new THREE.Vector3(0, G.GATE_REACH * 0.5, 0));
-    const away = at.clone().add(new THREE.Vector3(0, G.GATE_CLEAR * 1.5, 0));
+    const gate = G.makeGate(at, G.gateAxis(at), 0xff8a4a);
+    const reach = gate.aperture();
+    ok("the doorway is a barn door, not a keyhole", reach > 12 && reach < 25,
+       `${reach.toFixed(1)} units across the opening's radius`);
+    const near = at.clone().add(new THREE.Vector3(0, reach * 0.5, 0));
+    const away = at.clone().add(new THREE.Vector3(0, reach * G.GATE_CLEAR_MULT * 1.5, 0));
     ok("flying into it goes through", gate.entered(near) === true);
     /* ---- AND NOT STRAIGHT BACK AGAIN ----
        The return gate stands where a ship arrives, so without this a player
@@ -574,7 +588,7 @@ async function main() {
        every comparison against NaN is false, so the obvious `!(d > reach)`
        says yes to it. */
     const nowhere = new THREE.Vector3(NaN, NaN, NaN);
-    const fresh = G.makeGate(at, 0xff8a4a);
+    const fresh = G.makeGate(at, G.gateAxis(at), 0xff8a4a);
     ok("a ship with no position does not fall through it", fresh.entered(nowhere) === false);
     ok("and the gate is still armed for a real ship afterwards",
        fresh.entered(near) === true);

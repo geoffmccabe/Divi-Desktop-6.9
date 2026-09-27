@@ -160,8 +160,13 @@ const FURNITURE: Furniture[] = [
   { id: "space_SM_Env_Asteroid_07", name: "Cinder Bank", kind: "belt",
     detail: "Asteroid field · burnt rock · no claim filed", slot: 12, distance: 16.7, size: 340, rocks: 120 },
 
-  { id: "space_SM_Veh_WarpGate_Outer_01", name: "Threshold Gate", kind: "gate",
-    detail: "Warp gate · destination unset · do not approach under power", slot: 4, distance: 8.2, size: 90 },
+  /* ---- THE THRESHOLD GATE IS NOT FURNITURE ANY MORE ----
+     It used to hang out here at eight Earth diameters, labelled "destination
+     unset", as scenery. It has a destination now, and Geoff moved it: it is in
+     low orbit over the Pacific, it is open, and flying through it is how a
+     player reaches Spikeworld. It is built by rebelsGate.ts, which also fills
+     its opening and decides when a ship has gone through. Listing it here as
+     well would put a second one in the sky. */
 ];
 
 /** Every planet, described. Cheap, synchronous, and has nothing to do with
