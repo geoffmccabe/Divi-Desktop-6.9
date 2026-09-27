@@ -66,7 +66,13 @@ open(p, "w").write(s)
 PY
 grep -n "DIVID69_VERSION: &str\|sha256: \"" "$INSTALL" | head -4
 # The wallet's own node gate names the archives too.
-sed -i '' "s/divid69-[0-9.]*-\(windows-x86_64\|linux-x86_64\|macos-arm64\)\.tar\.gz/divid69-$V-\1.tar.gz/g" /Users/geoffreymccabe/dd69-mapanim/.github/workflows/build-apps.yml
+python3 - "$V" <<'PY2'
+import re, sys
+v = sys.argv[1]; p = "/Users/geoffreymccabe/dd69-mapanim/.github/workflows/build-apps.yml"; s = open(p).read()
+s2 = re.sub(r'divid69-[0-9.]+-(windows-x86_64|linux-x86_64|macos-arm64)\.tar\.gz', lambda m: f"divid69-{v}-{m.group(1)}.tar.gz", s)
+open(p, "w").write(s2)
+print("  gate archives ->", v, "(", s2.count(v), "names )")
+PY2
 
 cd "$SITE"
 git add public/downloads/divid69-$V-*.tar.gz && git commit -q -m "Publish divid69 $V" && git push origin HEAD:main 2>&1 | tail -1
