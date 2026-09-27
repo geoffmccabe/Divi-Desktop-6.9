@@ -18,6 +18,7 @@
 - **Node software:** a content-addressed storage daemon + gateway (`storage/divistore-node.mjs`: PUT/GET/HEAD by sha256, disk quota, pins only if paid), upload/retrieve tools (`divistore-put.sh` / `divistore-get.sh`), and an **autonomous earning agent** (`storage/divistore-agent.mjs`: auto-registers held content, auto-answers challenges, auto-claims pay).
 - **Native NFT service:** `DivaNFT` + `DivaNFTFactory` (create a collection and mint storage-backed NFTs with no custom storage code).
 - **Multi-node redundancy** with fallback (store to two nodes, kill one, still served, integrity verified). Real, but this is redundancy between DiviStore nodes, **not** Arweave.
+- **Quantum-resistant encryption module (BUILT 2026-Sep-27):** hybrid X25519 + ML-KEM-768 wrap over AES-256-GCM. Self-contained + tested. See section 5.
 
 ### 1b. Connection scorecard
 | System | Status |
@@ -147,7 +148,17 @@ Roles are enforced by the data layer, not just the UI.
 
 ---
 
-## 5. Cross-links
+## 5. Quantum-resistant encryption (BUILT)
+
+Built 2026-Sep-27, standalone and tested, at **`/Users/geoffreymccabe/diva/storage/crypto/`** (`divistore-crypto.mjs` + `test.mjs` + README). It is the canonical DiviStore encryption module and is app-agnostic, so NFD, GoBanq, or any ecosystem app can reuse the exact same thing.
+
+- **Design:** content is AES-256-GCM under a random content key (already quantum-safe); the content key is wrapped to the recipient with a **hybrid** of classical **X25519** + post-quantum **ML-KEM-768** (FIPS 203), combined through HKDF-SHA256. An attacker must break **both** to recover the data, which defeats "harvest now, decrypt later," and it is no weaker than today if ML-KEM were ever found flawed.
+- **Verified:** 6 tests pass, including two that prove **each half is individually load-bearing** (a correct classical key with the wrong PQC key fails, and the reverse), so the hybrid is real, not decorative.
+- **Dependency:** `@noble/post-quantum` (Paul Miller's audited noble library, MIT, zero runtime deps, ~484k weekly downloads; provenance verified, `ignore-scripts=true`). Node 20's bundled OpenSSL does not expose ML-KEM, so a native-stdlib version was not possible; the audited pure-JS library was the responsible choice.
+- **⚠ Integration constraint (measured):** the ML-KEM ciphertext is **1088 bytes**, so the wrapped key does **not** fit in a Divi OP_META record (~596-byte budget). The wrapped key must live in the **off-chain envelope** with the content, never on-chain. Recipients also need two keypairs (X25519 + ML-KEM), so wallet key management must derive/store both.
+- **Status:** the module exists and is tested standalone. It is **not yet wired into** NFD, the storage client, or GoBanq (deliberately, per the "do not integrate yet" scope). Adopting it is a later, small step for each consumer.
+
+## 6. Cross-links
 - Build phases + test log: `/Users/geoffreymccabe/diva/STORAGE_PLAN.md`
 - Contracts: `/Users/geoffreymccabe/diva/bridge/contracts/`
 - DIVA front door + canonical decisions (incl. the unified one-coin/Divi model): `/Users/geoffreymccabe/Divi-Desktop-6.9/docs/DIVA-INDEX.md`
