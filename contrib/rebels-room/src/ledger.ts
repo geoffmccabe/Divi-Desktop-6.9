@@ -46,6 +46,20 @@ export const MIN_CLAIM = 100;
  * so a script can mint a fresh account whenever it likes and would otherwise
  * get a fresh allowance with it. The address it connects from is the thing it
  * cannot choose.
+ *
+ * Two things a reader should know before changing any of this:
+ *
+ * - WITH NO ADDRESS, only the per-account half applies. That is deliberate: an
+ *   honest player whose address header went missing must not be refused. It
+ *   does mean the stronger half depends on CF-Connecting-IP being present, so
+ *   the weaker one is pinned by its own test - see "a credit with no address is
+ *   still capped".
+ * - EVERYONE BEHIND ONE ADDRESS SHARES IT. An office, a household or a mobile
+ *   carrier gateway is one address, so two people playing hard on the same
+ *   connection share the day's allowance and could reach it together in under
+ *   an hour. That is comfortably above any single realistic session and is fine
+ *   at today's player count, but it is the first thing to revisit if real
+ *   players start hitting a cap they did not earn.
  */
 export const EARN_PER_DAY = 10_000;
 

@@ -223,6 +223,25 @@ async function main() {
   await credit("two", 900, "2.2.2.2");
   ok("a different address is not punished for the first one", await owed("two") === 900,
      `${await owed("two")}`);
+
+  /* ---- AND WITH NO ADDRESS AT ALL, THE ACCOUNT CAP STILL BITES ----
+     `from` is empty when the room does not send one, and an empty one skips the
+     address half entirely. That is the right way round to fail - never refuse
+     an honest player because a header went missing - but it does mean the
+     stronger half quietly depends on CF-Connecting-IP being there. This pins
+     the weaker half, so that if somebody later tidies the empty-string path
+     they cannot accidentally turn "no address" into "no limit". */
+  const nameless = (node: string, divi: number) =>
+    led.fetch(new Request("https://ledger/credit", {
+      method: "POST", headers: { "CF-Binding": "1" },
+      body: JSON.stringify({ node, divi }),          /* no `from` at all */
+    }));
+  await nameless("anon", EARN_PER_DAY * 3);
+  ok("a credit with no address is still capped, by the account",
+     await owed("anon") === EARN_PER_DAY, `${await owed("anon")} of ${EARN_PER_DAY}`);
+  await nameless("anon", 5000);
+  ok("and stays capped on the next one", await owed("anon") === EARN_PER_DAY,
+     `${await owed("anon")}`);
 }
 
 /* ---- and it is a DAY, not for ever ---- */
