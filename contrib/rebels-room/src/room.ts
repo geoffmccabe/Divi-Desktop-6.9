@@ -105,10 +105,6 @@ const GUARD_REARM_SECONDS = 25;
 /** How much damage is taken before the heart's health is written to storage. */
 const HEART_SAVE_EVERY = 2000;
 
-/** A thousand kills is a hundred DIVI. */
-const KILLS_PER_PAYOUT = 1000;
-const DIVI_PER_PAYOUT = 100;
-
 /* ---- what the room believes about one player ---- */
 /**
  * One wingman on one seat.
@@ -1589,4 +1585,4 @@ function vec(v: unknown): THREE.Vector3 | null {
   return new THREE.Vector3(x, y, z);
 }
 
-export { KILLS_PER_PAYOUT, DIVI_PER_PAYOUT, COIN_PER_KILL, COIN_VALUE };
+export { COIN_PER_KILL, COIN_VALUE };

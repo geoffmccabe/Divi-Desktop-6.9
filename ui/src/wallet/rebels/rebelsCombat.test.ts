@@ -746,9 +746,16 @@ function run(c: CombatState, frames: number, w = world()) {
   c.enemies.push(e);
   hurtEnemy(c, e, 50, pos);
   ok("a dead fighter scatters coins", c.coins.length === COIN_PER_KILL, `${c.coins.length}`);
-  ok("five coins is a tenth of a DIVI, the payout rate",
-     Math.abs(c.coins.reduce((a, k) => a + k.value, 0) - 0.1) < 1e-9);
-  ok("each is worth two hundredths", c.coins.every((k) => k.value === COIN_VALUE));
+  /* ---- WHAT A KILL IS WORTH, WHICH IS NOW THE WHOLE PAYOUT ----
+     Geoff, 2026-Sep-26: "1 Divi for every Divi Sphere grabbed in the game."
+     So a fighter is COIN_PER_KILL spheres and COIN_PER_KILL whole DIVI, up
+     from a fifth of one. Written against the constants rather than against a
+     remembered 0.1, because this is the number that decides what the game
+     costs to run and it should never again be pinned to a literal. */
+  ok(`a fighter is worth ${COIN_PER_KILL * COIN_VALUE} DIVI`,
+     Math.abs(c.coins.reduce((a, k) => a + k.value, 0) - COIN_PER_KILL * COIN_VALUE) < 1e-9,
+     `${c.coins.reduce((a, k) => a + k.value, 0)} DIVI from ${c.coins.length} spheres`);
+  ok(`each sphere is worth ${COIN_VALUE} DIVI`, c.coins.every((k) => k.value === COIN_VALUE));
 }
 {
   /* The number that decides whether this is a game: can a player catch one?

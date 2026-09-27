@@ -10,6 +10,7 @@ import { desktopInput } from "../wallet/rebels/platform/desktopInput";
 import { isDiviAddress } from "./diviAddress";
 import { fetchWebPrices } from "./webPrice";
 import { guestName, guestId } from "./pilot";
+import { walletAtLeast, walletAddress } from "./webWallet";
 
 /** What a guest is told wherever a ship would be changed. */
 export const GUEST_SHIP_LIMIT = "Sign up to choose your ship, paint it, name it and fit upgrades to it. Everything you earn now is kept.";
@@ -53,5 +54,36 @@ export function createWebDoor(opts: {
     },
     detail: DESKTOP_DETAIL,
     input: opts.input ?? desktopInput,
+    /**
+     * A guest becomes a Divi holder, quietly, the first time they earn a whole
+     * DIVI. Geoff: "let's create the wallet the moment they get their first 1
+     * DIVI sphere in the game. It can happen in the background."
+     *
+     * One sphere IS one DIVI now, so in practice this fires on the first sphere
+     * anybody catches. Nothing is asked and nothing interrupts the game: making
+     * a wallet is twenty-four random words and some arithmetic, all of it local.
+     * It costs no network and no coins, so there is nothing here to abuse; the
+     * coins themselves are owed by the ledger and paid on a claim, exactly as
+     * before.
+     *
+     * The address goes out with the next join so the ledger knows where this
+     * player's money should go. The words never leave the browser.
+     */
+    earned(lifetimeDivi: number) {
+      try {
+        walletAtLeast(lifetimeDivi);
+      } catch {
+        /* A browser with no usable randomness, or storage that refuses every
+           write. The game carries on and they stay a guest with a balance;
+           silently failing to make a wallet is far better than an exception
+           thrown out of the middle of a frame. */
+      }
+    },
   };
+}
+
+/** This guest's Divi address, once they have earned one, for the join message.
+ *  Null until then, and null for ever in a browser that cannot store it. */
+export function guestWalletAddress(): string | null {
+  try { return walletAddress(); } catch { return null; }
 }
