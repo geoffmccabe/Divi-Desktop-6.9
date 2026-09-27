@@ -79,14 +79,31 @@ fn pid_alive(pid: i32) -> bool {
     }
     #[cfg(not(windows))]
     {
-        // Signal 0 = existence check only.
-        std::process::Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
+        /* ---- A ZOMBIE IS NOT ALIVE ----
+           The node is our child process. When it exits, its entry stays in
+           the process table until we collect it, and "kill -0" says it is
+           alive the whole time. 2026-Sep-27, Geoff: switching back to the
+           local node stopped it, the exit was never collected, the app
+           took the zombie for a running node "still starting up", the
+           watchdog never restarted it, and every panel sat on stale data
+           for hours. So: collect it if it is ours (waitpid with WNOHANG
+           reaps a finished child and is harmless otherwise), and then read
+           the process state: 'Z' is dead. */
+        unsafe {
+            let mut status: libc::c_int = 0;
+            let _ = libc::waitpid(pid as libc::pid_t, &mut status, libc::WNOHANG);
+        }
+        let out = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", &pid.to_string()])
             .stderr(std::process::Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+            .output();
+        match out {
+            Ok(o) => {
+                let stat = String::from_utf8_lossy(&o.stdout).trim().to_string();
+                !stat.is_empty() && !stat.starts_with('Z')
+            }
+            Err(_) => false,
+        }
     }
 }
 

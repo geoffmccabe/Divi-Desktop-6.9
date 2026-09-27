@@ -32,6 +32,13 @@ const BASE_URL: &str = "https://scan.divi.love/downloads";
 /// node's divi.conf so it connects on the first try. This is a bootstrap
 /// aid only; the node builds its own peer database after connecting once.
 const SEED_PEERS: &[&str] = &[
+    /* Our own reachable nodes first (Europe, UK): they run the newest node
+       and offer to relay for nodes that cannot be reached
+       (docs/PEER-RELAY-SPEC.md). A home node picks its helpers from the
+       peers it is connected to, so it has to be connected to at least one
+       that helps. */
+    "13.140.182.132",
+    "109.228.38.104",
     "104.168.43.240",
     "104.223.27.104",
     "107.161.83.106",
@@ -517,7 +524,16 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
             let weak_max = text.lines().any(|l| {
                 l.trim_start().strip_prefix("maxconnections=").and_then(|v| v.trim().parse::<u32>().ok()).map(|n| n < 64).unwrap_or(false)
             });
-            let fix_slots = addnode_count > 8 || weak_max;
+            //   7. The two helper servers must be on the addnode list, so a
+            //      node behind a router is connected to at least one node that
+            //      can relay for it (2026-Sep-27: JimF's fresh node had only
+            //      the old seed list and never found a helper).
+            let missing_helpers: Vec<&str> = SEED_PEERS[..2]
+                .iter()
+                .copied()
+                .filter(|h| !text.lines().any(|l| l.trim() == format!("addnode={h}")))
+                .collect();
+            let fix_slots = addnode_count > 8 || weak_max || !missing_helpers.is_empty();
             if ours && (has_allowip || !has_addressindex || fix_threads || fix_queue || fix_upnp || fix_slots) {
                 let mut kept_seeds = 0usize;
                 let mut fixed: String = text
@@ -528,12 +544,18 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                     .filter(|l| !(fix_slots && l.trim_start().starts_with("maxconnections=")))
                     .filter(|l| {
                         if !(fix_slots && l.trim_start().starts_with("addnode=")) { return true; }
+                        /* Helpers always stay; the rest fill up to eight. */
+                        let ip = l.trim_start().trim_start_matches("addnode=").trim();
+                        if SEED_PEERS[..2].contains(&ip) { return true; }
                         kept_seeds += 1;
-                        kept_seeds <= 8
+                        kept_seeds <= 6
                     })
                     .map(|l| format!("{l}\n"))
                     .collect();
                 if fix_slots {
+                    for h in &missing_helpers {
+                        fixed.push_str(&format!("addnode={h}\n"));
+                    }
                     fixed.push_str("maxconnections=64\n");
                 }
                 if !has_addressindex {
@@ -551,7 +573,7 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                 }
                 let _ = std::fs::write(&conf, fixed);
                 restrict_to_owner(&conf);
-                crate::setuplog::log("node settings: repaired existing divi.conf (updated one or more of: rpcallowip removed, addressindex, rpcthreads, rpcworkqueue, upnp, room for incoming connections)");
+                crate::setuplog::log("node settings: repaired existing divi.conf (updated one or more of: rpcallowip removed, addressindex, rpcthreads, rpcworkqueue, upnp, room for incoming connections, helper servers)");
             } else {
                 crate::setuplog::log("node settings: existing divi.conf is already correct");
             }
