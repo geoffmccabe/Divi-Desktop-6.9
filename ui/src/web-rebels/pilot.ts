@@ -11,6 +11,7 @@
 // found and carried into the account.
 
 import { idbAll, idbPut } from "./webStore";
+import { DEFAULT_ROOM_BASE } from "../wallet/rebels/platform/defaults";
 
 const NAME_KEY = "rebels.web.pilot";
 const ID_KEY = "rebels.web.guest";
@@ -22,24 +23,34 @@ function safeStorage(): Storage | null {
 }
 
 /**
- * Six digits, not four.
+ * Pilot numbers, given out IN ORDER: 000001, then 000002, and up.
  *
- * Geoff: "I don't know why we have so few pilot numbers, we need far more than
- * that." Four digits is nine thousand names, and by the birthday problem that
- * is a shared number among any hundred players about two times in five, and a
- * certainty by a thousand. Six is nine hundred thousand.
+ * Geoff: "can't you just start the pilot numbers at 000001 and go up from
+ * there?" Yes, and it is the only thing that makes them truly unique. Random
+ * numbers collide by the birthday problem long before the space is anywhere
+ * near used up - four digits shares a number among any hundred players two
+ * times in five, and even ten digits shares one among a hundred thousand - so
+ * no amount of extra digits would have fixed it.
  *
- * It does NOT fix sharing on its own and cannot: ten digits still collides
- * among a hundred thousand players. What fixes it is not using the name as the
- * account - see restoreGuest's note and myTotals in rebelsScores.ts, where a
- * guest's own figures come from their device rather than from a row the
- * network files under their pilot number.
+ * The number comes from the room's ledger object, which is the only thing that
+ * can see every number already given out and which handles one request at a
+ * time, so it cannot issue the same one twice. See RebelsLedger.pilot.
  *
- * Old four-digit names are still accepted, so nobody who already has one is
- * handed a new identity and a fresh start.
+ * Padded to six so the early ones read as names rather than as ones and twos,
+ * and free to grow past six when there are a million pilots, which would be a
+ * good day.
+ *
+ * WHEN THE NUMBER CANNOT BE FETCHED - first run with no network, or a browser
+ * that blocks it - a random six-digit one is used and KEPT. It is not retried
+ * on a later visit, deliberately: a player's saved run is filed under their
+ * name, so renaming them later would leave everything they had done behind
+ * under a name nobody answers to. A name, once given, is theirs.
+ *
+ * Old four-digit names are accepted for exactly the same reason.
  */
-const NAME_OK = /^Pilot \d{4,6}$/;
+const NAME_OK = /^Pilot \d{4,}$/;
 const NAME_DIGITS = 6;
+const pad = (n: number) => `Pilot ${String(n).padStart(NAME_DIGITS, "0")}`;
 const ID_OK = /^[A-Za-z0-9-]{16,64}$/;
 
 function newId(random = Math.random): string {
@@ -61,10 +72,44 @@ export function guestName(storage: Kv | null = safeStorage(), random = Math.rand
     const kept = storage?.getItem(NAME_KEY);
     if (kept && NAME_OK.test(kept)) return kept;
   } catch { /* storage blocked: a fresh name this visit */ }
+  /* The fallback, for a first run that could not reach the room. See the note
+     on NAME_OK: it is kept rather than retried. */
   const lowest = 10 ** (NAME_DIGITS - 1);
-  const name = `Pilot ${String(Math.floor(random() * lowest * 9) + lowest)}`;
+  const name = pad(Math.floor(random() * lowest * 9) + lowest);
   keep(storage, NAME_KEY, name);
   return name;
+}
+
+/** Where the room lives, as something fetch can use. */
+function pilotUrl(roomBase: string): string {
+  return `${roomBase.replace(/^ws/, "http")}/pilot`;
+}
+
+/**
+ * Ask the room for the next pilot number.
+ *
+ * Returns null on anything at all going wrong, because a name is not worth
+ * failing to start over: the caller falls back to a random one.
+ */
+export async function claimPilot(
+  guest: string,
+  roomBase: string = DEFAULT_ROOM_BASE,
+  fetchFn: typeof fetch = fetch,
+): Promise<string | null> {
+  try {
+    const res = await fetchFn(pilotUrl(roomBase), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guest }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { pilot?: unknown };
+    const n = Number(body?.pilot);
+    if (!Number.isFinite(n) || n < 1 || n > 1e15) return null;
+    return pad(Math.floor(n));
+  } catch {
+    return null;
+  }
 }
 
 export function guestId(storage: Kv | null = safeStorage(), random = Math.random): string {
@@ -85,6 +130,7 @@ export function guestId(storage: Kv | null = safeStorage(), random = Math.random
 export async function restoreGuest(
   storage: Kv | null = safeStorage(),
   all: () => Promise<Map<string, string>> = idbAll,
+  claim: (guest: string) => Promise<string | null> = (g) => claimPilot(g),
 ): Promise<{ id: string; name: string }> {
   const saved = await all().catch(() => new Map<string, string>());
   for (const key of [ID_KEY, NAME_KEY]) {
@@ -94,5 +140,20 @@ export async function restoreGuest(
     if (!quick && kept) { try { storage?.setItem(key, kept); } catch { /* blocked */ } }
     else if (quick && quick !== kept) void idbPut(key, quick);
   }
-  return { id: guestId(storage), name: guestName(storage) };
+  const id = guestId(storage);
+
+  /* ---- A NUMBER IN ORDER, ONCE, FOR A PILOT WHO HAS NONE ----
+     Only when neither copy held a name. Somebody already playing keeps theirs:
+     their saved runs are filed under it, and renaming them would leave
+     everything they had done behind under a name nobody answers to. */
+  let held: string | null = null;
+  try { held = storage?.getItem(NAME_KEY) ?? null; } catch { /* blocked */ }
+  if (!held || !NAME_OK.test(held)) {
+    const given = await claim(id).catch(() => null);
+    if (given) {
+      keep(storage, NAME_KEY, given);
+      return { id, name: given };
+    }
+  }
+  return { id, name: guestName(storage) };
 }

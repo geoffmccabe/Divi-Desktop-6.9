@@ -221,6 +221,61 @@ function ok(name: string, cond: boolean, extra = "") {
   ok("and the best single run is the best of them", again.best === 500, `${again.best}`);
 }
 
+/* ---- PILOT NUMBERS ARE GIVEN OUT IN ORDER ----
+   Geoff: "can't you just start the pilot numbers at 000001 and go up from
+   there?" The only arrangement that makes them genuinely unique: random ones
+   collide by the birthday problem long before the space is used up, and extra
+   digits only move the wall. */
+{
+  const store = () => {
+    const kept = new Map<string, string>();
+    return {
+      kept,
+      getItem: (k: string) => kept.get(k) ?? null,
+      setItem: (k: string, v: string) => { kept.set(k, v); },
+      removeItem: (k: string) => { kept.delete(k); },
+    };
+  };
+  const nothingKept = async () => new Map<string, string>();
+
+  /* The room counting up, as the ledger object does. */
+  let next = 0;
+  const counter = async () => `Pilot ${String(++next).padStart(6, "0")}`;
+
+  const a = store();
+  const first = await restoreGuest(a, nothingKept, counter);
+  ok("the first pilot is number one", first.name === "Pilot 000001", first.name);
+  const b = store();
+  const second = await restoreGuest(b, nothingKept, counter);
+  ok("and the next one is number two", second.name === "Pilot 000002", second.name);
+
+  /* ---- AND THEY KEEP IT ----
+     Asking again must not move anybody along the queue. */
+  const again = await restoreGuest(a, nothingKept, counter);
+  ok("coming back does not hand out a new number", again.name === "Pilot 000001", again.name);
+  ok("and nobody else was skipped over", next === 2, `${next} numbers given out`);
+
+  /* ---- SOMEBODY ALREADY PLAYING KEEPS THE NAME THEY HAVE ----
+     Their saved runs are filed under it. Renaming them would leave everything
+     they had done behind under a name nobody answers to. */
+  const old = store();
+  old.setItem("rebels.web.pilot", "Pilot 7595");
+  old.setItem("rebels.web.guest", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+  const returning = await restoreGuest(old, nothingKept, counter);
+  ok("an old four-digit pilot is not renamed", returning.name === "Pilot 7595", returning.name);
+  ok("and no number was spent on them", next === 2, `${next} numbers given out`);
+
+  /* ---- AND A FIRST RUN WITH NO NETWORK STILL FLIES ----
+     A name is not worth failing to start over. The fallback is random, and it
+     is KEPT rather than retried later, for the same reason as above. */
+  const offline = store();
+  const alone = await restoreGuest(offline, nothingKept, async () => null);
+  ok("with the room unreachable there is still a pilot", /^Pilot \d{6}$/.test(alone.name), alone.name);
+  const back = await restoreGuest(offline, nothingKept, counter);
+  ok("and that name is theirs, not swapped out on the next visit",
+     back.name === alone.name, `${alone.name} -> ${back.name}`);
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

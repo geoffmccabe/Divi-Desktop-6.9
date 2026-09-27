@@ -22,7 +22,15 @@ function newLedger() {
   const state = {
     storage: {
       async get(k: string) { return map.get(k); },
-      async put(k: string, v: unknown) { map.set(k, v); },
+      /* Durable Object storage takes EITHER one key and a value OR an object
+         of several, and writes the several together. The stand-in only knew
+         the first form, so a call that wrote two keys at once quietly stored
+         one entry called "[object Object]" and the code under test looked
+         broken when it was not. */
+      async put(k: string | Record<string, unknown>, v?: unknown) {
+        if (typeof k === "string") { map.set(k, v); return; }
+        for (const [key, val] of Object.entries(k)) map.set(key, val);
+      },
       async delete(k: string) { return map.delete(k); },
       async list({ prefix }: { prefix: string }) {
         const m = new Map<string, unknown>();
@@ -170,7 +178,8 @@ async function main() {
     ok("with the games counted", rows[0].games === 2, `${rows[0].games}`);
   }
 
-  /* ================= THE DAY'S EARNING ALLOWANCE =================
+  /* ================= THE DAY'S EARNING ALLOWANCE ==========
+
    A Divi Sphere is a whole DIVI now and nothing limited how fast they could be
    gathered. A person playing hard for an hour earns a few thousand; a script
    playing all night would earn a hundred and forty thousand, every night. */
@@ -226,7 +235,6 @@ async function main() {
      EARN_PER_DAY >= 5000 && EARN_PER_DAY <= 20000, `${EARN_PER_DAY} DIVI a day`);
 }
 
-console.log(out.join("\n"));
   /* ---------------------------------------------------- cashing out ----
      The player's half (over the binding) and London's half (with the secret),
      in the order they happen. */
@@ -350,6 +358,55 @@ console.log(out.join("\n"));
     ok("a new account holds nothing", JSON.stringify(q.items) === "{}", JSON.stringify(q.items));
   }
 
+  /* ---- PILOT NUMBERS, IN ORDER, AND ONLY EVER ONE PER GUEST ----
+     Geoff: "can't you just start the pilot numbers at 000001 and go up from
+     there?" This object is the only thing that can see every number already
+     given out, and it handles one request at a time, so a counter here cannot
+     issue the same number twice however many people ask at once. */
+  {
+    const { led } = newLedger();
+    const ask = (guest: unknown, headers: Record<string, string> = {}) =>
+      led.fetch(new Request("https://rebels.test/pilot", {
+        method: "POST", headers, body: JSON.stringify({ guest }),
+      }));
+    const A = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    const B = "11111111-2222-3333-4444-555555555555";
+
+    const one = await j(await ask(A));
+    ok("the first pilot is number one", one.pilot === 1, JSON.stringify(one));
+    const two = await j(await ask(B));
+    ok("the next guest is number two", two.pilot === 2, JSON.stringify(two));
+
+    /* ---- IDEMPOTENT ----
+       An honest client that asks twice, or a page reloaded mid-claim, must not
+       walk the whole queue along. */
+    const oneAgain = await j(await ask(A));
+    ok("asking again gives the same guest the same number", oneAgain.pilot === 1, JSON.stringify(oneAgain));
+    const three = await j(await ask("99999999-8888-7777-6666-555555555555"));
+    ok("and the queue carried on from where it was", three.pilot === 3, JSON.stringify(three));
+
+    /* ---- PUBLIC, BUT NOT A WAY IN ----
+       It needs no secret, because the page asks for its name before it has
+       joined anything and a pilot number is neither secret nor worth anything.
+       That is exactly why it must not accept junk. */
+    ok("a guest id that is not one is refused", (await ask("nope")).status === 400);
+    ok("and so is no guest at all", (await ask(undefined)).status === 400);
+    ok("and a GET is not a claim",
+       (await led.fetch(new Request("https://rebels.test/pilot"))).status === 405);
+    /* And it did not spend numbers refusing them. */
+    const four = await j(await ask("abcdefgh-1234-5678-9012-abcdefabcdef"));
+    ok("a refusal costs nobody a number", four.pilot === 4, JSON.stringify(four));
+
+    /* ---- AND IT IS NOT A WAY TO READ A BALANCE ----
+       The one public route on an object whose other routes guard a treasury. */
+    ok("the payout routes still need the secret",
+       (await led.fetch(get("pending", {}))).status === 401);
+  }
+
+  /* Printed HERE, at the end, and not in the middle. It used to be halfway
+     down, so every test written after that line was counted and never shown:
+     a failure among them was a bare number with no name on it. */
+  console.log(out.join("\n"));
   console.log(`\n${out.length - failures} passed, ${failures} failed`);
   if (failures > 0) process.exit(1);
 }

@@ -27,6 +27,15 @@ export default {
       return env.ROOM.get(id).fetch(req);
     }
 
+    /* /pilot — a guest asking for their pilot number, which the ledger object
+       hands out in order. Public on purpose: the page needs a name before it
+       has joined anything, and a pilot number is neither secret nor worth
+       anything. See RebelsLedger.pilot. */
+    if (url.pathname === "/pilot") {
+      const id = env.LEDGER.idFromName("v1");
+      return env.LEDGER.get(id).fetch(req);
+    }
+
     /* /ledger/* — the payout conversation, and the leaderboard. The object
        checks the secret itself; the router deliberately does not, so there is
        only ONE place that decides who may read a balance. */
