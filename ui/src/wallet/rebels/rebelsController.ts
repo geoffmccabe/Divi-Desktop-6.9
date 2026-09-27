@@ -2656,7 +2656,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
         /* Picked up. Kept for ever, not for this life: earnings survive
            being shot down. */
         divi += ev.value ?? 0;
-        addDivi(ev.value ?? 0);
+        const lifetime = addDivi(ev.value ?? 0);
+        /* A door that gives guests a real wallet wants to know. See `earned` in
+           platform.ts: the app leaves it out, because a node IS a wallet. */
+        platform().earned?.(lifetime);
         /* One point for each DIVI brought home, which is what buys guns. */
         setHud({ divi, points: earnPoints(ev.value ?? 0) });
       } else if (ev.kind === "enemyShot") {

@@ -19,9 +19,11 @@
 // balance comes back — so a failed send loses the player nothing, and a
 // duplicated one is refused because the amount was already taken out.
 
-/** A thousand kills is a hundred DIVI. Geoff's terms, in one place. */
-export const KILLS_PER_PAYOUT = 1000;
-export const DIVI_PER_PAYOUT = 100;
+/* The payout is per Divi Sphere now, and always really was: the room adds
+   each sphere's value to the seat and the ledger owes the sum. A pair of
+   constants here said "a thousand kills is a hundred DIVI" and were applied
+   to nothing at all; they are gone rather than left to mislead. See
+   COIN_VALUE in rebelsCombat.ts. */
 /** Nothing under a hundred can be claimed. It may build up indefinitely. */
 export const MIN_CLAIM = 100;
 /** How long London has to confirm a send before the reservation is released. */

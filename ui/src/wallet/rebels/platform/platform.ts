@@ -293,4 +293,17 @@ export interface RebelsPlatform {
    * the public page carries none. The room refuses cheats from web guests too.
    */
   cheats?: (host: CheatHost) => RebelsCheats;
+  /**
+   * Told how much DIVI this player has earned in total, whenever it changes.
+   *
+   * Absent on a door where the player already has a wallet, which is the app:
+   * their node IS their wallet and there is nothing to make. The web door uses
+   * it to give a guest a real Divi wallet the moment they have earned their
+   * first whole DIVI. Geoff: "let's create the wallet the moment they get their
+   * first 1 DIVI sphere in the game. It can happen in the background."
+   *
+   * The game calls this and knows nothing else about it. Whether a door makes a
+   * wallet, asks a question or ignores it entirely is the door's business.
+   */
+  earned?(lifetimeDivi: number): void;
 }

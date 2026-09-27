@@ -157,7 +157,24 @@ export const JUNK_R = 0.7;
    They also pull toward a player who gets close, because the spheres themselves
    are a tenth of a hull across and threading a needle that small at those speeds
    would not be a game. */
-export const COIN_VALUE = 0.02;
+/**
+ * What one Divi Sphere is worth, in real DIVI.
+ *
+ * Geoff, 2026-Sep-26: "It's not based on 1000 kills = 100 DIVI. It's based on
+ * getting 1 Divi for every Divi Sphere grabbed in the game."
+ *
+ * The spheres ARE the payout now, and the mechanism was already here: the room
+ * adds a sphere's value to the seat as it is caught, and the ledger owes
+ * whatever those values add up to. The old "a thousand kills is a hundred DIVI"
+ * pair of constants turned out never to have been applied to anything; they
+ * have been deleted rather than left to mislead the next reader.
+ *
+ * ⚠ THIS IS A FIFTY-FOLD RISE and it is worth saying out loud where the number
+ * lives. A fighter drops COIN_PER_KILL spheres, so a kill went from a fifth of
+ * a DIVI to five whole ones. See DIVI-REBELS-CASHOUT.md for what that does to
+ * the float and the daily cap, both of which were sized for the old rate.
+ */
+export const COIN_VALUE = 1;
 /** Five a kill, which is a tenth of a DIVI: exactly the rate the payout uses. */
 export const COIN_PER_KILL = 5;
 /**

@@ -6,7 +6,8 @@ import { isDiviAddress } from "./diviAddress";
 import { towersFrom, loadTowers, SCANNER } from "./webNodes";
 import { fetchWebPrices, forgetWebPrice } from "./webPrice";
 import { guestName, guestId, restoreGuest } from "./pilot";
-import { createWebDoor } from "./webDoor";
+import { createWebDoor, guestWalletAddress } from "./webDoor";
+import { ADDRESS_SHAPE } from "./webWallet";
 
 const out: string[] = [];
 let failures = 0;
@@ -113,6 +114,37 @@ function ok(name: string, cond: boolean, extra = "") {
   ok("no DIVI can be sent from the page, so points are bought in the app", door.money.PayWithDivi === null);
   ok("no staking wallet, so no stake bonus", door.wonStakeRecently() === false);
   ok("the address box checks addresses for real", await door.money.validateAddress("D8tjqHzBg3ZA7tUWryChUPqLjz4K41DxSt"));
+}
+
+/* ---- a guest becomes a Divi holder by earning, not by turning up ----
+   Geoff: "let's create the wallet the moment they get their first 1 DIVI sphere
+   in the game." One sphere is one DIVI, so the first sphere does it. The point
+   of testing it HERE, through the door rather than through webWallet directly,
+   is that the door is what the game actually talks to. */
+{
+  const door = createWebDoor();
+  ok("the web door listens for earnings", typeof door.earned === "function");
+
+  /* Nothing earned yet, so nothing made. A wallet handed out for arriving is a
+     faucet; one handed out for playing is a reward. */
+  door.earned!(0);
+  ok("no wallet before anything is earned", guestWalletAddress() === null,
+     `${guestWalletAddress() ?? "none"}`);
+
+  door.earned!(1);
+  const born = guestWalletAddress();
+  ok("the first whole DIVI makes a real wallet", !!born && ADDRESS_SHAPE.test(born),
+     `${born ?? "none"}`);
+
+  /* And never a second one, or the coins already promised to the first would be
+     stranded at an address the player no longer has. */
+  door.earned!(500);
+  ok("earning more keeps the same wallet", guestWalletAddress() === born);
+
+  /* It must never throw into the middle of a frame, whatever it is handed. */
+  let threw = false;
+  try { door.earned!(NaN); door.earned!(-1); } catch { threw = true; }
+  ok("nonsense earnings do not throw out of the game loop", !threw);
 }
 
 console.log(out.join("\n"));
