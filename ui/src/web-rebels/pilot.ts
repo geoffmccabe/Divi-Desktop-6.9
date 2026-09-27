@@ -21,7 +21,25 @@ function safeStorage(): Storage | null {
   try { return typeof localStorage === "undefined" ? null : localStorage; } catch { return null; }
 }
 
-const NAME_OK = /^Pilot \d{4}$/;
+/**
+ * Six digits, not four.
+ *
+ * Geoff: "I don't know why we have so few pilot numbers, we need far more than
+ * that." Four digits is nine thousand names, and by the birthday problem that
+ * is a shared number among any hundred players about two times in five, and a
+ * certainty by a thousand. Six is nine hundred thousand.
+ *
+ * It does NOT fix sharing on its own and cannot: ten digits still collides
+ * among a hundred thousand players. What fixes it is not using the name as the
+ * account - see restoreGuest's note and myTotals in rebelsScores.ts, where a
+ * guest's own figures come from their device rather than from a row the
+ * network files under their pilot number.
+ *
+ * Old four-digit names are still accepted, so nobody who already has one is
+ * handed a new identity and a fresh start.
+ */
+const NAME_OK = /^Pilot \d{4,6}$/;
+const NAME_DIGITS = 6;
 const ID_OK = /^[A-Za-z0-9-]{16,64}$/;
 
 function newId(random = Math.random): string {
@@ -43,7 +61,8 @@ export function guestName(storage: Kv | null = safeStorage(), random = Math.rand
     const kept = storage?.getItem(NAME_KEY);
     if (kept && NAME_OK.test(kept)) return kept;
   } catch { /* storage blocked: a fresh name this visit */ }
-  const name = `Pilot ${String(Math.floor(random() * 9000) + 1000)}`;
+  const lowest = 10 ** (NAME_DIGITS - 1);
+  const name = `Pilot ${String(Math.floor(random() * lowest * 9) + lowest)}`;
   keep(storage, NAME_KEY, name);
   return name;
 }

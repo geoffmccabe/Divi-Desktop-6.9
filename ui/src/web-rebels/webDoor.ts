@@ -30,6 +30,10 @@ export function createWebDoor(opts: {
       joinFields: () => ({ node: "web-guest", name: name(), door: "web", guest: guest() }),
       /* Their private id, never the pilot number, so no two guests share rows. */
       accountKey: () => `guest:${guest()}`,
+      /* And the same reasoning for their own score row: the browser holds it,
+         because the network files that one under the pilot number and pilot
+         numbers repeat. See onDevice in platform.ts. */
+      onDevice: () => true,
     },
     storage: opts.storage ?? LOCAL_STORAGE,
     /* A guest flies the first hull as it comes, until they sign up. */
