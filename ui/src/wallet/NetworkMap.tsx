@@ -416,6 +416,13 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   }, []);
   const dd69OnlyRef = useRef(false);
   dd69OnlyRef.current = dd69Only;
+  /* ---- HISTORICAL NETWORK ----
+     Every address this wallet has ever heard of, drawn grey, including the
+     ones the normal map no longer shows (not verified alive and not heard
+     from in thirty days). How big the network once was, at a glance. */
+  const [historical, setHistorical] = useState(false);
+  const historicalRef = useRef(false);
+  historicalRef.current = historical;
   // First-run install side-panel. Opens automatically when the node still needs
   // setting up; also openable from the menu to preview/re-run. installingRef is
   // read by the draw loop to flash the user's own node red while setting up.
@@ -1509,10 +1516,11 @@ export function NetworkMap({ onReturn, autoplay = false }: {
           if (liveIps.has(ip)) return false;
           const st = probeRef.current.get(ip);
           if (st === "online" || st === "assumed" || st === "relayed") return true;
+          if (historicalRef.current) return true;   // the whole history, on request
           return nowDraw - kp.lastSeen < STALE_MS;
         })
         .sort((a, b) => b[1].lastSeen - a[1].lastSeen)
-        .slice(0, 2000);
+        .slice(0, historicalRef.current ? 6000 : 2000);
 
       // ── View transform: auto-fit into the viewport with a 2% margin, or honour
       // the user's manual pan/zoom. project() = full-world pixels; the view then
@@ -2404,12 +2412,21 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             <button type="button" onClick={() => { setPanel("speed"); setMenuOpen(false); }}>Node Speed</button>
             <button type="button" onClick={() => { setPanel("country"); setMenuOpen(false); }}>Nodes by Country</button>
             <button type="button" onClick={() => { setDd69Only(true); setMenuOpen(false); }}>DD69 Nodes</button>
+            <button type="button" onClick={() => { setHistorical(true); setMenuOpen(false); }}>Historical Network</button>
             <button type="button" onClick={() => { setSetupOpen(true); setMenuOpen(false); }}>Set up wallet</button>
           </div>
         )}
         {dd69Only && (
           <div className="netmap-dd69bar" onMouseDown={(e) => e.stopPropagation()}>
             <button type="button" onClick={() => setDd69Only(false)}>RETURN TO NORMAL MAP</button>
+          </div>
+        )}
+        {historical && !dd69Only && (
+          <div className="netmap-dd69bar netmap-histbar" onMouseDown={(e) => e.stopPropagation()}>
+            <span className="netmap-hist-note">
+              Historical network: every address ever heard of ({Object.keys(knownRef.current).length}), the silent ones in grey
+            </span>
+            <button type="button" onClick={() => setHistorical(false)}>RETURN TO NORMAL MAP</button>
           </div>
         )}
         {/* The map is showing a remembered picture, not a live one. Said

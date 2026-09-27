@@ -1071,6 +1071,8 @@ code, .mono { font-family: var(--font-mono); }
 .bl-diag-hint { margin-top: 2px; opacity: 0.85; }
 /* Return control for the DD69-only map view. */
 .netmap-dd69bar { position: absolute; top: 12px; right: 12px; z-index: 6; }
+.netmap-histbar { display: flex; align-items: center; gap: 10px; }
+.netmap-hist-note { font-size: 0.7rem; color: hsl(var(--muted-foreground)); background: rgba(0,0,0,0.55); padding: 4px 8px; border-radius: 6px; }
 .netmap-dd69bar button {
   font-size: 0.72rem; letter-spacing: 0.06em; padding: 7px 12px; border-radius: 8px;
   background: hsl(var(--panel-bg) / 0.92); color: hsl(var(--foreground));
