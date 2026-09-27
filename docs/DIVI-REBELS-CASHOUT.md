@@ -93,14 +93,20 @@ node wallet, to be the source rewards are paid from.
 D6V6dP2L5CN386Wg1LZF7KszXxuuSDvmmd
 ```
 
-**Verified twice, independently, before being written down.** Both sessions
-checked it by different code: the gameplay session through the game's own
-`isDiviAddress`, this one through a base58check decoder written from the node
-source with nothing in common with it. Both agree: 34 characters, version byte
-30 (mainnet, which is what makes it start with D), a 20-byte hash160 payload,
-and a checksum that passes. Both also proved their checker was strict rather
-than permissive by bending one character in the middle and watching it fail, so
-the pass means something.
+**Decoded three times by implementations sharing no code**, before being written
+down. All three agree:
+
+| | |
+|---|---|
+| version byte | 30 |
+| hash160 | `0ec084cc0c1bb7d025db7476f2b6a98d0eb769d5` |
+| checksum | `cb266df4`, calculated and seen |
+
+Version 30 is `base58Prefixes[PUBKEY_ADDRESS]` in `CMainParams`
+(chainparams.cpp:234), so this is specifically a mainnet pay-to-pubkey-hash
+address: not a script address, which is 13, and not testnet. Each check was also
+shown to REJECT a deliberately bent character, because a validator that accepts
+everything proves nothing.
 
 ### Nothing points at it yet, and that is deliberate
 
@@ -108,12 +114,32 @@ The payout service still pays from the London hot wallet
 (`/usr/local/bin/divi-rebels-payout.py`, see above). Three things have to happen
 before this address sends a coin, and none has:
 
-1. **Geoff confirms the address directly**, to whoever is about to wire it in.
-   It reached this session through a relay between two agents. Relaying is how a
-   character goes missing, and a wrong payout address is the single mistake in
-   this whole system that cannot be undone: the coins land somewhere real that
-   nobody holds the key to. Two independent checksum checks prove the address is
-   WELL FORMED. They cannot prove it is the address he meant.
+1. **Geoff confirms the address directly**, and the question to put to him is a
+   specific one. Three separate things could be wrong with a payout address, and
+   they need separating, because the checks above only close one of them:
+
+   - **Transcription** — a character lost or changed between his message and
+     this file. **Closed.** A base58check address carries a four-byte checksum,
+     so a corrupted address fails validation; only about one in four billion
+     mangled strings would slip through. Three implementations sharing no code
+     decoded this one to the same hash160 and the same checksum, and each was
+     shown to reject a deliberately bent character. Relaying this particular
+     kind of string is self-checking, which is not true of relaying in general.
+   - **Substitution** — a whole, valid, *different* address put in place of the
+     right one anywhere along the way. **Not closed, and no checksum can close
+     it**, because the substitute is well formed by construction. This is the
+     entire reason "check the destination at the source" is the standing rule
+     for moving crypto rather than a formality: address-swapping is a known
+     attack class precisely because every automated check still passes.
+   - **Intent** — whether this well-formed mainnet address is the wallet he
+     actually wants Rebels paid into, and whether he still holds its key today.
+     **Not closed by anything technical.** If he pasted a different wallet of
+     his own, or one from another project, every check either session can run
+     still passes.
+
+   So the question is not "did it arrive intact" — that is provable and proven.
+   It is: **is this the wallet you want Rebels payouts to land in, and do you
+   hold its key today?**
 2. **The guest sign-in gate is decided.** Web guests cannot cash out at all
    today (`mayCashOut` refuses every guest), and that gate is currently the only
    thing standing between us and unlimited free accounts, because a guest's
