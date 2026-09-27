@@ -34,7 +34,7 @@
 // measurements simply come out different.
 
 import * as THREE from "three";
-import { llToVec } from "./orbitWorld";
+import { llToVec, SHRINK } from "./orbitWorld";
 import { loadModel, unitCopy } from "./spaceAssets";
 
 /** The two halves of the ring, as the pack names them. */
@@ -56,9 +56,15 @@ export const PACIFIC_LON = -160;
  * surface by twenty. Any lower and the gate would be buried in the sea it is
  * meant to hang over. The doorway through it is then about eighteen units
  * across, which is a comfortable barn door for a ship two units long.
+ *
+ * Both then take SHRINK, because Geoff asked for the gate to come down with
+ * everything else: "including the portals, which should shrink along with the
+ * players." Width and height together, so the ring keeps the same proportions
+ * and the same clearance over the sea, and the doorway stays the same size
+ * relative to the ship flying through it.
  */
-export const GATE_WIDTH = 70;
-export const GATE_ALTITUDE = 60;
+export const GATE_WIDTH = 70 * SHRINK;
+export const GATE_ALTITUDE = 60 * SHRINK;
 
 /** Fraction of the model's width that the clear opening's radius takes up, and
  *  the outer ring's. Measured from the mesh; see APERTURE below, which replaces

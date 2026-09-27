@@ -48,8 +48,21 @@ function ok(name: string, cond: boolean, extra = "") {
   ok("moving a tower is copied into the instances",
      (map.match(/syncTowers\(\)/g) ?? []).length >= 3,
      `${(map.match(/syncTowers\(\)/g) ?? []).length} calls`);
+  /* The window is generous because what is being checked is the ORDER - tips
+     written, then pushed through - and not how much explanation sits between
+     the two. A tight character count fails the next time anybody adds a
+     comment, which is exactly what happened when the links learned to follow
+     the masts down. */
   ok("the game's scaleTowers pushes the new size through",
-     /tipOf\.set\(ip, t\.position[\s\S]{0,120}?syncTowers\(\)/.test(map));
+     /tipOf\.set\(ip, t\.position[\s\S]{0,1200}?syncTowers\(\)/.test(map));
+  /* ---- AND THE LINKS COME DOWN WITH THE MASTS ----
+     Geoff: "the connections between the towers are still going to the old
+     height, so they are connecting in the air." The arcs are built once, at a
+     fixed radius, so the only thing that can move them is scaleTowers. */
+  ok("the links are held apart from the towers so they can be moved",
+     /const links = new THREE\.Group\(\)/.test(map) && /links\.add\(new THREE\.Mesh\(tube/.test(map));
+  ok("and scaling the towers brings the links down to the new mast tops",
+     /links\.scale\.setScalar\(\(R \+ PYR_H \* s\) \/ TIP_R\)/.test(map));
   ok("the winner coin's hidden tower is pushed through too",
      /winnerDeco\.visible = false;[\s\S]{0,240}?syncTowers\(\)/.test(map));
   ok("a hidden tower is written away rather than left standing",

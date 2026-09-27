@@ -30,7 +30,7 @@ import {
 import { platform } from "./platform/current";
 import type { Pilot } from "./platform/platform";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
-import { R, MAX_ALT } from "./orbitWorld";
+import { R, MAX_ALT, SHRINK } from "./orbitWorld";
 import { makeVoxelPlanet, arrivalOffset, type VoxelPlanet } from "./voxel/voxelPlanet";
 import { SPIKEWORLD_CENTRE } from "./rebelsRegions";
 import { makeGate, gatePosition, gateAxis, type Gate } from "./rebelsGate";
@@ -200,7 +200,7 @@ const BLANK: HudState = {
 };
 
 /** Fighters are drawn about a unit across, against three-unit towers. */
-const ENEMY_SCALE = 0.85;
+const ENEMY_SCALE = 0.85 * SHRINK;
 
 /** How long a detached game waits for the map to hand it a new scene before
  *  concluding the panel has closed. The rebuild re-attaches in the same tick;
@@ -248,7 +248,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
      (nine megabytes, then cached on this machine) when the game attaches,
      so its first appearance is not a download. Drawn at thirty percent,
      animated with its own clip. Geoff, 2026-Sep-11. */
-  const DRAGON_SIZE = 9;
+  const DRAGON_SIZE = 9 * SHRINK;
   const DRAGON_OPACITY = 0.3;
   let dragonRig: { group: THREE.Group; mixer: THREE.AnimationMixer } | null = null;
   let dragonProto: THREE.Group | null = null;
@@ -379,8 +379,11 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let nearAtHome: number | null = null;
   /** Where the ship was before it went, so it can be put back. */
   const homeAgain = new THREE.Vector3();
-  /** How much of its size a tower keeps once a game is running. */
-  const WORLD_SCALE = 0.5;
+  /** How much of its size a tower keeps once a game is running. Halved again
+   *  on Geoff's word: "it's doing that already but I want to do it more, so
+   *  that the earth feels much larger than it is now." The links between the
+   *  towers follow the masts down; see scaleTowers in GlobeMap.tsx. */
+  const WORLD_SCALE = 0.5 * SHRINK;
   let space: ReturnType<typeof createSpace> | null = null;
   let sky: SkyHandle | null = null;
   /** The map's own hook for shrinking its towers, held from attach. */
@@ -581,7 +584,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let shipLoading = false;
   /** How long the hull is in world units, which sets both how far the camera
    *  pulls back and how big a target the ship is. */
-  const SHIP_LENGTH = 2.6;
+  const SHIP_LENGTH = 2.6 * SHRINK;
   /* The smallest and largest notch of the third-person zoom, in units of view.
      See zoomStep. */
   const ZOOM_BASE = 0.04;
@@ -1806,7 +1809,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   /** The ship, as a ball, in world units. A heavy fighter is about three
    *  across, so a cube (nine) comfortably holds one and the ball is its half
    *  span with a little margin for the wings. */
-  const SHIP_HALF_SPAN = 1.8;
+  const SHIP_HALF_SPAN = 1.8 * SHRINK;
 
   /**
    * Flying into the rock.

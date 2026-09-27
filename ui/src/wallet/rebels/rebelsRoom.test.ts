@@ -571,8 +571,15 @@ async function main() {
 
     const gate = G.makeGate(at, G.gateAxis(at), 0xff8a4a);
     const reach = gate.aperture();
-    ok("the doorway is a barn door, not a keyhole", reach > 12 && reach < 25,
-       `${reach.toFixed(1)} units across the opening's radius`);
+    /* Measured against the SHIP rather than in units, because the gate shrank
+       with everything else when the world was made bigger ("the portals...
+       should shrink along with the players") and a doorway is only wide or
+       narrow relative to what flies through it. A fighter is about two and a
+       half ship-units long before the shrink. */
+    const hull = 2.6 * W.SHRINK;
+    ok("the doorway is a barn door, not a keyhole",
+       reach > hull * 4 && reach < hull * 20,
+       `${reach.toFixed(1)} units of opening for a ${hull.toFixed(1)}-unit ship`);
     const near = at.clone().add(new THREE.Vector3(0, reach * 0.5, 0));
     const away = at.clone().add(new THREE.Vector3(0, reach * G.GATE_CLEAR_MULT * 1.5, 0));
     ok("flying into it goes through", gate.entered(near) === true);

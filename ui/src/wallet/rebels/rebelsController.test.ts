@@ -22,7 +22,8 @@ const settle = () => new Promise((r) => setTimeout(r, SUSPEND_GRACE_MS + 600));
 import { musicState } from "./rebelsMusic";
 setLoadoutRemote(false);
 import { MAX_SHIELD, MAX_AMMO } from "./orbitFlight";
-import { R } from "./orbitWorld";
+import { R, SHRINK } from "./orbitWorld";
+import { CRUISE } from "./orbitFlight";
 import { grant } from "./rebelsArmoury";
 import { loadShip } from "./shipChoice";
 import { setPlatform, HEADLESS } from "./platform/current";
@@ -234,6 +235,11 @@ function press(type: string, e: Record<string, unknown>) {
   for (const fn of winHandlers[type] ?? []) fn({ preventDefault() {}, ...e });
 }
 
+/** What the game shrinks a tower to on launch. Mirrors WORLD_SCALE in the
+ *  controller, which is not exported; one place here so the tower tests move
+ *  together the next time the world is made bigger. */
+const WORLD_SCALE_FOR_TESTS = 0.5 * SHRINK;
+
 const out: string[] = [];
 let failures = 0;
 function ok(name: string, cond: boolean, extra = "") {
@@ -359,8 +365,12 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   // 4. the cockpit is actually travelling, frame to frame.
   const p1 = g.camera.position.clone();
   for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
-  ok("the cockpit travels over the globe", g.camera.position.distanceTo(p1) > 5,
-     `moved ${g.camera.position.distanceTo(p1).toFixed(1)} units in a second`);
+  /* A second of flight, measured against what a second of flight IS rather than
+     against a number: every speed in the game has been halved twice now to make
+     the world feel bigger, and each time this was a literal somebody had to
+     chase. */
+  ok("the cockpit travels over the globe", g.camera.position.distanceTo(p1) > CRUISE * 0.6,
+     `moved ${g.camera.position.distanceTo(p1).toFixed(1)} units in a second, cruise is ${CRUISE}`);
   ok("and stays above the surface", g.camera.position.length() > R,
      `radius ${g.camera.position.length().toFixed(1)}`);
   ok("window listeners were hooked", (winListeners.keydown ?? 0) === 1 && (winListeners.blur ?? 0) === 1);
@@ -912,8 +922,13 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
 
   ctl.launch();
   const after = g.tips.get("self-ip")!.length();
-  ok("launching halves the mast", Math.abs(after - (R + 3)) < 0.01,
-     `${before.toFixed(1)} -> ${after.toFixed(1)}`);
+  /* A self tower is two masts tall (PYR_H 3, doubled), so full size is R+6 and
+     the launch brings it down by WORLD_SCALE. Written against the constant
+     rather than against the number it happened to be, because the world has
+     now been made bigger twice by shrinking these and each time this was a
+     literal somebody had to find. */
+  ok("launching shrinks the mast", Math.abs(after - (R + 6 * WORLD_SCALE_FOR_TESTS)) < 0.01,
+     `${before.toFixed(1)} -> ${after.toFixed(1)}, scale ${WORLD_SCALE_FOR_TESTS}`);
 
   /* And the ship has to still be able to dock with the shorter one, which is
      the whole reason the tips are handed back. */
@@ -1108,7 +1123,9 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("nothing was banked as a finished run", after.dead === false);
   for (let i = 0; i < 60; i++) ctl.frame(1 / 60);
   ok("and it keeps running in the new scene", ctl.hud().ready && ctl.hud().launched && ctl.hud().wave >= 1);
-  ok("with the towers halved again", Math.abs(g2.tips.get("self-ip")!.length() - R - 3) < 1e-6, `${g2.tips.get("self-ip")!.length() - R}`);
+  ok("with the towers still shrunk in the new scene",
+     Math.abs(g2.tips.get("self-ip")!.length() - R - 6 * WORLD_SCALE_FOR_TESTS) < 1e-6,
+     `${(g2.tips.get("self-ip")!.length() - R).toFixed(2)} above the surface`);
   ctl.detach();
   await settle();
   ok("closed for good, the run ends: not launched any more", true);
@@ -1236,7 +1253,12 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
     return d.drawing ?? {};
   };
 
-  /* ---- the guns ---- */
+  /* ---- the guns ----
+     In an empty sky, so what is counted is THIS ship's rounds. With fighters
+     in the air their fire is drawn too, and a single enemy round loosed in the
+     last couple of seconds is enough to make "the sky clears" read as false
+     when it is perfectly true. */
+  calmSky();
   g.fire("pointerdown", { button: 0 });
   let sawRounds = 0;
   for (let i = 0; i < 60 * 2; i++) {

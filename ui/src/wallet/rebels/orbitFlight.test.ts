@@ -55,11 +55,14 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const start = f.pos.clone();
   run(f, 120, stick());
   const moved = start.distanceTo(f.pos);
-  /* Two seconds at cruise is about 32 units of arc; a straight-line chord is a
-     little less. Anything near zero means the ship is parked. */
-  /* Cruise is 8 a second since the world was doubled in size by halving the
-     speed and the towers, so two seconds is about sixteen units. */
-  ok("flies forward at cruise", moved > 13 && moved < 18, `moved ${moved.toFixed(1)} units in 2s`);
+  /* ---- MEASURED AGAINST THE CONSTANT, NOT AGAINST A REMEMBERED NUMBER ----
+     Two seconds at cruise, as a straight-line chord, which is a little less
+     than the arc. This has been rewritten twice now because the world has been
+     made bigger twice by halving every speed, and each time it was a literal
+     that had to be found and changed. Against CRUISE it simply follows. */
+  const expect = CRUISE * 2;
+  ok("flies forward at cruise", moved > expect * 0.82 && moved < expect * 1.12,
+     `moved ${moved.toFixed(1)} units in 2s, cruise is ${CRUISE} a second`);
 }
 
 // 2. The frame stays a frame. This is the one that silently rots.
@@ -136,11 +139,20 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
 
   /* Diving into the ground. It is allowed, it hurts, and holding it there
      kills you, which is the point of being allowed to do it. */
-  /* Two seconds rather than one: the ship launches eight units up and now
-     covers eight a second rather than sixteen, so a one-second dive no longer
-     reaches the surface. */
+  /* ---- NOSE DOWN, THEN STRAIGHT IN ----
+     Holding the stick back used to reach the ground on its own. It does not
+     any more, and that is correct rather than broken: a held turn has a radius
+     of speed divided by turn rate, so halving every speed to make the world
+     bigger halved the loop as well, and the ship now circles ABOVE the ground
+     instead of flying into it. Measured: it dips to about three and a half
+     units and climbs away again.
+
+     So the dive is flown the way a pilot would fly it - pitch over until the
+     nose is under the horizon, then let go and go straight in - which is what
+     the test always meant and is no longer sensitive to the turn radius. */
   const g = createFlight(pad);
-  run(g, 120, stick({ y: -1 }));
+  run(g, 60, stick({ y: -1 }));                    /* about a quarter turn */
+  for (let i = 0; i < 60 * 20 && g.shields >= MAX_SHIELD; i++) run(g, 1, stick());
   ok("the ground can be flown into", g.shields < MAX_SHIELD, `shields ${g.shields}`);
   ok("and it does not tunnel through", g.pos.length() >= R + MIN_ALT - 1e-6,
      `radius ${g.pos.length().toFixed(2)}`);
@@ -421,7 +433,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   f.shields = 2; f.ammo = 5; f.boost = 0.1;
   let docked = 0;
   for (let i = 0; i < Math.ceil(DOCK_SECONDS * 60) + 90; i++) {
-    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 1.2);
+    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), DOCK_RANGE * 0.5);
     const r = stepFlight(f, DT, stick(), [tip], 0);
     if (r.docked) docked++;
   }
@@ -443,7 +455,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
     /* Flat out, straight into it, for the first second only: after that the
        tower has it and forcing the speed again would just be the test fighting
        its own result. */
-    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 1.2);
+    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), DOCK_RANGE * 0.5);
     if (i < 60) f.speed = 38;
     stepFlight(f, DT, stick(), [tip], 0);
     if (f.dock > 0.3) slowest = Math.min(slowest, f.speed);
@@ -499,7 +511,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const f = createFlight(pad);
   f.mustLeave = false;
   for (let i = 0; i < 90; i++) {
-    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 1.2);
+    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), DOCK_RANGE * 0.5);
     stepFlight(f, DT, stick(), [tip], 0);
   }
   ok("a tower approach eases the ship off by itself", f.speed < 9, `speed ${f.speed.toFixed(1)}`);
@@ -514,11 +526,20 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      at the mast is how you clip it: the crash radius sits inside the dock zone,
      which is deliberate, so parking next to it is the actual manoeuvre. */
   const upAt = tip.clone().normalize();
-  const beside = new THREE.Vector3(0, 1, 0).cross(upAt).normalize().multiplyScalar(3.6).add(tip);
+  /* Beside the mast by half again the docking window: close enough to dock,
+     far enough not to clip it. Written against DOCK_RANGE rather than as a
+     fixed 3.6 units, because a hold point further out than docking reaches is
+     an autopilot flying a perfect approach to a spot it can never dock from -
+     which is exactly what happened while the window was briefly halved. */
+  const beside = new THREE.Vector3(0, 1, 0).cross(upAt).normalize()
+    .multiplyScalar(DOCK_RANGE * 1.5).add(tip);
   const f = createFlight(pad);
   f.mustLeave = false;
   let best = 0;
-  for (let i = 0; i < 60 * 14; i++) {
+  let closest = Infinity;
+  /* Twice the time, because the world was made twice as big by halving every
+     speed and this autopilot has the same distance to cover at half the pace. */
+  for (let i = 0; i < 60 * 28; i++) {
     /* Steer toward the tower each frame: a crude autopilot standing in for a
        player who is aiming at the thing they want to dock with. */
     const toTower = beside.clone().sub(f.pos);
@@ -545,10 +566,11 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
       stepFlight(f, DT, stick({ y: climb, throttle }), [tip], 0);
     }
     best = Math.max(best, f.dock);
+    closest = Math.min(closest, distanceToTower(f.pos, tip));
     if (best >= 1) break;
   }
   ok("flying to a tower and parking gets you docked", best >= 1,
-     `best dock progress ${best.toFixed(2)}, shields ${f.shields}`);
+     `best dock progress ${best.toFixed(2)}, closest ${closest.toFixed(2)} of a ${DOCK_RANGE} window, shields ${f.shields}`);
 }
 
 // 8b1. The tower is a mast, not a dot on top of one.
@@ -586,7 +608,7 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   let movingWhileDocked = 0;
   let framesDocked = 0;
   for (let i = 0; i < 60 * 8; i++) {
-    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), 1.2);
+    f.pos.copy(tip).addScaledVector(tip.clone().normalize(), DOCK_RANGE * 0.5);
     stepFlight(f, DT, stick(), [tip], 0);
     if (f.dock > 0) {
       docked = true;
@@ -627,8 +649,10 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
     return false;
   };
 
-  ok("touching the mast docks", tryFrom(across.clone().multiplyScalar(1.2)));
-  ok("and so does arriving just over the tip", tryFrom(out.clone().multiplyScalar(1.2)));
+  /* Half the window out, on each axis, so these say "inside the window"
+     whatever the window is rather than "at 1.2 units". */
+  ok("touching the mast docks", tryFrom(across.clone().multiplyScalar(DOCK_RANGE * 0.5)));
+  ok("and so does arriving just over the tip", tryFrom(out.clone().multiplyScalar(DOCK_RANGE * 0.5)));
 
   /* The distances Geoff was actually docking at. None of them may work. */
   for (const d of [6, 12, 20, 33]) {
@@ -764,7 +788,8 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      undocks still pointing at the planet and flies into it, which is correct
      behaviour and would make this a test of what happens next. */
   let docks = 0, shieldsOnDock = 0, ammoOnDock = 0;
-  for (let i = 0; i < 60 * 8 && docks === 0; i++) {
+  /* Twice the time: the same dive at half the speed. */
+  for (let i = 0; i < 60 * 16 && docks === 0; i++) {
     if (stepFlight(f, DT, stick({}), [tip], 0).docked) {
       docks++;
       shieldsOnDock = f.shields;
@@ -896,8 +921,8 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   run(f, 90, stick({ fullStop: true }));
   const still = f.pos.clone();
   run(f, 60, stick({ strafe: 1 }));
-  ok("strafe moves the ship", still.distanceTo(f.pos) > 3,
-     `${still.distanceTo(f.pos).toFixed(1)} units in a second`);
+  ok("strafe moves the ship", still.distanceTo(f.pos) > STRAFE_SPEED * 0.6,
+     `${still.distanceTo(f.pos).toFixed(1)} units in a second, slide is ${STRAFE_SPEED}`);
   ok("and leaves the nose where it was", nose.angleTo(f.fwd) < 1e-6);
   /* Sideways, not forwards. */
   const moved = f.pos.clone().sub(still).normalize();

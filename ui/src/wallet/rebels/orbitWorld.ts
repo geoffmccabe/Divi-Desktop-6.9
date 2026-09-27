@@ -15,9 +15,38 @@ import * as THREE from "three";
  *  planet is 628 units around: a mini-globe you can fly right around in about
  *  forty seconds at cruise. That scale is the point of the game. */
 export const R = 100;
+
+/* ================= HOW BIG EARTH FEELS =================
+   Geoff, 2026-Sep-27: "I want to double the effective diameter of the earth
+   planet by making everything else smaller... This will make it a longer time
+   to fly around the earth and effectively make the space around the earth
+   larger too, since everything else is smaller."
+
+   The globe cannot grow: its radius is shared with the Node Map, which is not
+   ours and is used outside the game. So the world is made bigger the only way
+   it can be - by making everything IN it smaller, and slowing everything down
+   to match. Halve every length and halve every speed and the game plays exactly
+   as it did measured in ship-lengths, while the globe, which did not change,
+   is twice as far around and takes twice as long to circle.
+
+   It has been done once before, for the same reason and in the same words:
+   "the speed of the player and enemies also reduces by half... this will make
+   the earth feel larger and the playing area just feel bigger." This is the
+   second turn of the same handle.
+
+   WHAT IS NOT SHRUNK, and deliberately: this globe, and the fourteen planet
+   models hanging in the sky. Geoff: "The 'planets' which are 3D models around
+   the earth, should NOT be shrunk down... but the space stations and other
+   objects should be made smaller. including the portals, which should shrink
+   along with the players." The planets keep their size and their distances, so
+   the space between them is unchanged in units and twice as long to cross.
+
+   Everything that shrinks multiplies by this. One number, so the next turn of
+   the handle is one edit rather than a hunt. */
+export const SHRINK = 0.5;
 /** Towers are 3 units tall (your own node's is 6), so the floor sits below
  *  them: you fly BETWEEN the towers, not over their tips. */
-export const MIN_ALT = 0.8;
+export const MIN_ALT = 0.8 * SHRINK;
 /* ---- the other worlds ----
    Geoff's layout, in his words: the first planet is 20% of Earth's diameter
    and five Earth diameters away, the next is 30% and six diameters, and each

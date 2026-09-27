@@ -1488,7 +1488,12 @@ function run(c: CombatState, frames: number, w = world()) {
   g2.vel.set(0, 0, 0);
   c2.bullets.push({ pos: g2.pos.clone().add(new THREE.Vector3(0, 0, -2)), vel: new THREE.Vector3(0, 0, 60), life: 3, hostile: false });
   stepCombat(c2, 1 / 30, w2);
-  ok("a round knocks a gem away and spins it", c2.bullets.length === 0 && g2.vel.z > 5 && Math.abs(g2.spinVel ?? 0) > 0, `${g2.vel.z.toFixed(1)}`);
+  /* Knocked up to the speed cap loose things drift at, which is what the knock
+     is clamped to. Against COIN_TOP rather than a remembered 5, so it follows
+     the next time every speed in the game is halved to make the world bigger. */
+  ok("a round knocks a gem away and spins it",
+     c2.bullets.length === 0 && g2.vel.z >= COIN_TOP * 0.95 && Math.abs(g2.spinVel ?? 0) > 0,
+     `${g2.vel.z.toFixed(1)} against a cap of ${COIN_TOP.toFixed(1)}`);
   ok("with its own event", c2.events.some((e) => e.kind === "gemHit"));
 
   /* Never lost: aimed straight down, it is bounced back out. */

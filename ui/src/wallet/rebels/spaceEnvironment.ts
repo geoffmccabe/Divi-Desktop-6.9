@@ -16,7 +16,7 @@
 // something has to draw one.
 
 import * as THREE from "three";
-import { PLANET_COUNT, EARTH_D, planetDiameter, planetDistance, latticeDirection, planetDirection } from "./orbitWorld";
+import { PLANET_COUNT, EARTH_D, planetDiameter, planetDistance, latticeDirection, planetDirection, SHRINK } from "./orbitWorld";
 import { loadModel, unitCopy } from "./spaceAssets";
 
 /** One thing hanging in the sky, and what to say about it. */
@@ -122,7 +122,7 @@ const PLANET_TINTS = [
  *  true size they would dwarf the planets they orbit near and stop reading as
  *  stations at all. A fifth keeps them unmistakably big without competing with
  *  a world. The Ship Market shows their real numbers. */
-const STATION_SCALE = 0.2;
+const STATION_SCALE = 0.2 * SHRINK;
 
 interface Furniture {
   id: string;
@@ -151,14 +151,18 @@ const FURNITURE: Furniture[] = [
   { id: "space_SM_Ship_Station_06", name: "Low Verge", kind: "station",
     detail: "Relay post · unmanned most of the year · crew 9,700", slot: 13, distance: 17.4, size: 101 * STATION_SCALE },
 
+  /* Belts shrink with the stations and for the same reason: Geoff wants
+     everything that is not a planet made smaller so the world feels bigger.
+     Their DISTANCES are untouched, so the gaps between them are unchanged in
+     units and twice as long to cross at the new speeds. */
   { id: "space_SM_Env_Asteroid_01", name: "The Shoals", kind: "belt",
-    detail: "Asteroid field · dense · navigation hazard", slot: 1, distance: 5.6, size: 220, rocks: 90 },
+    detail: "Asteroid field · dense · navigation hazard", slot: 1, distance: 5.6, size: 220 * SHRINK, rocks: 90 },
   { id: "space_SM_Env_Asteroid_03", name: "Bruin Drift", kind: "belt",
-    detail: "Asteroid field · iron-bearing · lightly worked", slot: 5, distance: 9.3, size: 300, rocks: 110 },
+    detail: "Asteroid field · iron-bearing · lightly worked", slot: 5, distance: 9.3, size: 300 * SHRINK, rocks: 110 },
   { id: "space_SM_Env_Asteroid_05", name: "The Long Scatter", kind: "belt",
-    detail: "Asteroid field · strung out · poorly charted", slot: 8, distance: 12.6, size: 420, rocks: 140 },
+    detail: "Asteroid field · strung out · poorly charted", slot: 8, distance: 12.6, size: 420 * SHRINK, rocks: 140 },
   { id: "space_SM_Env_Asteroid_07", name: "Cinder Bank", kind: "belt",
-    detail: "Asteroid field · burnt rock · no claim filed", slot: 12, distance: 16.7, size: 340, rocks: 120 },
+    detail: "Asteroid field · burnt rock · no claim filed", slot: 12, distance: 16.7, size: 340 * SHRINK, rocks: 120 },
 
   /* ---- THE THRESHOLD GATE IS NOT FURNITURE ANY MORE ----
      It used to hang out here at eight Earth diameters, labelled "destination

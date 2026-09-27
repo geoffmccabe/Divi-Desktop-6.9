@@ -3,7 +3,7 @@
 // same way the flight model is.
 
 import * as THREE from "three";
-import { R, cruiseScale, nearestPlanet, planetCentre, planetDiameter } from "./orbitWorld";
+import { R, cruiseScale, nearestPlanet, planetCentre, planetDiameter, SHRINK } from "./orbitWorld";
 import { BEAM_SECONDS, type WeaponSpec } from "./weaponCatalog";
 import { DEFAULT_DROP_CONFIG, DROP_PRIVATE_SECONDS, rollDrop, type DropConfig } from "./dropCharts";
 import { itemByKey } from "./itemCatalog";
@@ -17,7 +17,7 @@ import {
 /* Doubled from 120 (Geoff, 2026-Sep-12: "make the bullets all 2x the current
    velocity so they move faster and it's easier to hit things"). Every round
    scales from this: the mini gun, the fighters', the drones'. */
-export const BULLET_SPEED = 240;      /* globe units per second */
+export const BULLET_SPEED = 240 * SHRINK;      /* globe units per second */
 export const BULLET_LIFE = 2.2;
 export const BULLET_R = 0.16;         /* what it hits with */
 export const CONVERGE = 55;           /* where the two guns cross, in units ahead */
@@ -176,10 +176,16 @@ export const COIN_PER_KILL = 5;
  */
 /* Geoff, 2026-Sep-11: "They're supposed to be moving slower than average
    ship speed, I think I said 80%? So even at normal speed I can catch up."
-   Average ship speed is CRUISE (8, in orbitFlight, which imports this file
-   so the number is written here): eighty percent of it. It was eighty
-   percent of BOOST, which made a coin faster than a cruising ship. */
-export const COIN_TOP = 8 * 0.8;
+   Average ship speed is CRUISE (in orbitFlight, which imports this file, so
+   the number has to be written out here rather than imported): eighty percent
+   of it. It was eighty percent of BOOST, which made a coin faster than a
+   cruising ship.
+
+   SHRINK is applied for the same reason CRUISE takes it: the world is made
+   bigger by making everything in it slower, and a coin left at the old speed
+   would outrun a cruising ship again - which is precisely the bug this line
+   was written to fix. */
+export const COIN_TOP = 8 * SHRINK * 0.8;
 
 /**
  * How hard the planet pulls on a coin.
@@ -221,6 +227,10 @@ export function clampReach(r: number | undefined): number {
   return Math.min(REACH_MAX, Math.max(REACH_MIN, r as number));
 }
 /** How big a coin is drawn, which is also how big it is to a round. */
+/* NOT shrunk with everything else. It reads like a drawing size and it is not:
+   the magnet, the pickup and the knock a round gives a gem are all measured
+   against it, and halving it stopped coins being collectable at all. Picking
+   things up is an affordance, like the docking window, and stays as it was. */
 export const COIN_RADIUS = 0.33;
 
 /* ---- GEMS ----
@@ -376,7 +386,7 @@ export interface Coin {
 }
 /* Halved along with the player's, so a dogfight plays exactly as it did while
    the world around it feels twice the size. */
-export const ENEMY_SPEED = 9.5;
+export const ENEMY_SPEED = 9.5 * SHRINK;
 /* Radians a second of turn. THIS is the number that decides whether a fighter
    reads as a spaceship or as an insect: turn radius is speed divided by turn
    rate, so at 1.1 a fighter came round in eight units and could hold station on
@@ -403,7 +413,7 @@ export const TOWER_HIT_R = 2.2;
    Five times the damage of a bullet, over an area, which is what makes carrying
    only two a real decision. */
 export const TORPEDO_MAX = 2;
-export const TORPEDO_SPEED = 38;
+export const TORPEDO_SPEED = 38 * SHRINK;
 export const TORPEDO_FUSE = 4;
 export const TORPEDO_DAMAGE = 5;
 /** Everything inside this radius takes the hit, not just what it touched. */
@@ -964,7 +974,7 @@ export const DRAGON_CHANCE = 0.1;
 /* Geoff, 2026-Sep-12: "make the dragon last 1 minute so it lasts longer." */
 export const DRAGON_LIFE = 60;
 export const DRAGON_HP = 2000;
-export const DRAGON_SPEED = 2.5;
+export const DRAGON_SPEED = 2.5 * SHRINK;
 export const DRAGON_ALT = [14, 40];
 export const DRAGON_CLASS: ShipClass = { tier: 1, name: "Dragon", shieldMax: DRAGON_HP, colour: 0xffc44d, speed: 0.3, weight: 0 };
 

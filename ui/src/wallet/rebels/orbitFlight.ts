@@ -21,7 +21,7 @@
 // which keeps the free model from becoming the disorienting one.
 
 import * as THREE from "three";
-import { R, MIN_ALT, MAX_ALT, cruiseScale } from "./orbitWorld";
+import { R, MIN_ALT, MAX_ALT, cruiseScale, SHRINK } from "./orbitWorld";
 
 /* ---- HALVED, and the towers with them ----
    Geoff: "the speed of the player and enemies also reduces by half... this will
@@ -31,8 +31,8 @@ import { R, MIN_ALT, MAX_ALT, cruiseScale } from "./orbitWorld";
    of a world, and it is the right way here: the globe, the map's camera and
    every distance in the flight model stay exactly as they are, so nothing else
    has to be re-tuned. Actually scaling the world would move all of it. */
-export const CRUISE = 8;       /* globe units per second, about 512 km/s of Earth */
-export const BOOST = 19;
+export const CRUISE = 8 * SHRINK;       /* globe units per second, about 512 km/s of Earth */
+export const BOOST = 19 * SHRINK;
 /**
  * How long a full tank of boost lasts, in seconds.
  *
@@ -65,7 +65,7 @@ export const DRIFT_MAX_MULT = 4;
 /** How hard boosting pours into it, in units per second per second. At this
  *  rate a pilot holding boost reaches the cap in about eight seconds, so the
  *  build-up is something you feel happening rather than a switch. */
-export const DRIFT_ACCEL = 9.5;
+export const DRIFT_ACCEL = 9.5 * SHRINK;
 /** TAB's multiple of boost, before any item. Geoff: "a super-boost that
  *  doubled the speed and used two boosts at once." */
 export const SUPER_BOOST_MULT = 2;
@@ -101,7 +101,7 @@ export const YAW_RATE = 1.5;   /* radians per second at full stick */
 export const ROLL_RATE = 2.4;
 /** Sideways, in units a second at full deflection. A fraction of cruise: strafe
  *  is for lining up a shot, not for travelling. */
-export const STRAFE_SPEED = 4.5;
+export const STRAFE_SPEED = 4.5 * SHRINK;
 /* Turn radius is speed divided by yaw rate, and it is the number that decides
    whether a tower can be docked with at all. At cruise the ship turns in about
    11 units, wider than the dock zone, so a player who overshoots can circle a
@@ -122,7 +122,31 @@ export const PITCH_RATE = 1.8;
    The window around that line is generous on purpose, and the hard brake stops
    the ship the moment it catches, so arriving fast is not a reason to be
    refused either. */
+/**
+ * How close to your own mast counts as docking.
+ *
+ * NOT shrunk with the towers, and that is a deliberate exception to the rule
+ * that everything scales together. A ship under way cannot turn tighter than
+ * its speed divided by its turn rate, which is about two and a half units, so
+ * a window smaller than that can only be threaded by coming to a dead stop
+ * first. Halved, it made an autopilot flying straight at a mast circle it for
+ * ever at arm's length and never dock. Docking is an affordance rather than a
+ * piece of scenery: relative to a tower that is now a quarter of its old
+ * height this is generous, and generous is the right side to be wrong on.
+ */
 export const DOCK_RANGE = 2.4;
+/**
+ * How close to somebody else's mast is a clip, and how far the shove puts you.
+ *
+ * It MUST stay inside the docking window, and it very nearly did not: it was a
+ * hard-coded 1.6 while DOCK_RANGE halved with the towers to 1.2, which would
+ * have made the whole window a no-go zone and docking at a tower in a packed
+ * city quietly impossible - shoved away before you could ever arrive. Found by
+ * an autopilot test that could not get closer than 2.35 units to a mast it was
+ * flying straight at. Everything about tower geometry scales together or none
+ * of it does.
+ */
+export const TOWER_CLIP = 1.6 * SHRINK;
 
 /* ---- YOU HAVE TO ACTUALLY HIT IT ----
    This was 34, and 34 is absurd. The measurement makes it plain: a tower is a
@@ -774,13 +798,13 @@ export function stepFlight(
   /* Your own tower never hurts you: you are meant to fly straight into it. And
      nor does a neighbour of it while you are on your way in, or a packed city
      would be a minefield around your own pad. */
-  if (near >= 0 && near !== homeIndex && nearDist < 1.6 && !atHome && f.grace <= 0) {
+  if (near >= 0 && near !== homeIndex && nearDist < TOWER_CLIP && !atHome && f.grace <= 0) {
     f.shields -= CRASH_DAMAGE;
     f.grace = 1.2;
     f.sinceHit = 0;
     out.hit = true;
     /* Shoved away rather than stopped dead, so a clip is a scare not a wall. */
-    f.pos.addScaledVector(f.pos.clone().sub(towerTips[near]).normalize(), 2);
+    f.pos.addScaledVector(f.pos.clone().sub(towerTips[near]).normalize(), TOWER_CLIP * 1.25);
   }
 
   /* ONLY your own tower, and at ANY speed. Fly into it and it catches you.

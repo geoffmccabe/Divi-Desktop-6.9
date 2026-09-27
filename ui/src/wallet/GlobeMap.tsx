@@ -835,6 +835,21 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       }
     }
 
+    /* ---- THE LINKS GET A GROUP OF THEIR OWN ----
+       Every arc is built once, hugging a sphere of radius TIP_R, because
+       rebuilding the helix tubes is expensive enough that the whole component
+       is arranged never to do it twice. That was fine while towers were always
+       full height. It is not fine now the game shrinks them on launch: the
+       towers came down and the arcs did not, so they met in mid-air. Geoff:
+       "the connections between the towers are still going to the old height,
+       so they are connecting in the air."
+
+       Holding them apart from the towers means scaleTowers can bring the whole
+       web down to meet the new tips with one number, and no geometry is
+       rebuilt at all. See linkScale below. */
+    const links = new THREE.Group();
+    group.add(links);
+
     const streams: Stream[] = [];
     const glyphs: Glyph[] = [];
     const isMesh: boolean[] = [];
@@ -904,7 +919,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
           const tmat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, transparent: true, opacity: conn.mesh ? 0.1 : 0.2, depthWrite: false });
           tubeMats.push(tmat);
           tubeCols.push({ attr: cattr, K, base });
-          group.add(new THREE.Mesh(tube, tmat));
+          links.add(new THREE.Mesh(tube, tmat));
         }
         strands.push({ hp, K, dir: strand === 0 ? 1 : -1 });
       }
@@ -943,7 +958,7 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
       });
       const pp = new THREE.Points(geo, mat);
       pp.frustumCulled = false;
-      group.add(pp);
+      links.add(pp);
     }
 
     scene.add(group);
@@ -1029,6 +1044,18 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
             /* The tip is the top of the mast, so it comes down with it. */
             tipOf.set(ip, t.position.clone().normalize().multiplyScalar(R + PYR_H * built * s));
           }
+          /* ---- AND THE LINKS COME DOWN WITH THE MASTS ----
+             The arcs were built hugging a sphere of radius TIP_R and they bow
+             outward from it, so scaling the whole web about the planet's centre
+             by the ratio of the new tip radius to the old one lands every
+             endpoint exactly on a mast top again - the endpoints are the points
+             where the bow is zero, so they sit precisely at the radius. No
+             geometry is touched and there is nothing to rebuild.
+
+             The outward bow of each arc scales by the same ratio, which is a
+             couple of percent and not the point; if the bows want to come down
+             to match the smaller world that is a rebuild and a separate job. */
+          links.scale.setScalar((R + PYR_H * s) / TIP_R);
           syncTowers();
           return tipOf;
         },

@@ -64,11 +64,16 @@ const groupOf = (key: string) => GROUP_OF_KEY[key];
   const line = (id: string, ctx: typeof plain) => CONTROL_GROUPS.find((g) => g.id === id)!.what(ctx);
 
   const move = groupOf("a")!, lift = groupOf("r")!, boost = groupOf("tab")!;
+  /* The card rounds its figures to a tenth, so the test has to ask for them
+     the same way. It only stopped mattering-by-luck when the slide speed
+     became a number whose multiples are not already round: 4.5 times three is
+     13.5 and prints as itself, 2.25 times three is 6.75 and prints as 6.8. */
+  const shown = (n: number) => String(Math.round(n * 10) / 10);
   ok("a 2x strafe item changes the sideways figure",
-     line(move, kitted).includes(`${STRAFE_SPEED * 2}`) && !line(move, plain).includes(`${STRAFE_SPEED * 2}`),
+     line(move, kitted).includes(shown(STRAFE_SPEED * 2)) && !line(move, plain).includes(shown(STRAFE_SPEED * 2)),
      line(move, kitted));
   ok("a 3x vertical strafe changes the up and down figure, on its own",
-     line(lift, kitted).includes(`${STRAFE_SPEED * 3}`) && line(lift, kitted) !== line(move, kitted),
+     line(lift, kitted).includes(shown(STRAFE_SPEED * 3)) && line(lift, kitted) !== line(move, kitted),
      line(lift, kitted));
   ok("the vertical line does NOT quote the horizontal multiplier",
      !line(lift, kitted).includes(`${STRAFE_SPEED * 2} units`), line(lift, kitted));
