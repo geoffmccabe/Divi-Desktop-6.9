@@ -9,6 +9,8 @@ import { PayoutPanel } from "./panels/PayoutPanel";
 import { AiPanel } from "./panels/AiPanel";
 import { ChainHealthPanel } from "../wallet/ChainHealthPanel";
 import { RebelsDropsPanel } from "./panels/RebelsDropsPanel";
+import { RebelsEnemiesPanel } from "./panels/RebelsEnemiesPanel";
+import { RebelsGamesPanel } from "./panels/RebelsGamesPanel";
 
 export interface AdminPanel {
   id: string;
@@ -33,4 +35,10 @@ export const ADMIN_PANELS: AdminPanel[] = [
   { id: "arweave", title: "Arweave", render: () => <ArweavePanel /> },
   // Divi Rebels: what wrecks drop. Saved live with the admin secret.
   { id: "rebels-drops", title: "Rebels Drops", render: () => <RebelsDropsPanel /> },
+  // Divi Rebels: the enemies Geoff defines. Built-ins are read-only and
+  // copyable; saved live with the same admin secret the Drops panel uses.
+  { id: "rebels-enemies", title: "Rebels Enemies", render: () => <RebelsEnemiesPanel /> },
+  // Divi Rebels: the games themselves - a place, a sequence of rounds, and
+  // what they pay. The built-in is shown locked and is copied to start one.
+  { id: "rebels-games", title: "Rebels Games", render: () => <RebelsGamesPanel /> },
 ];
