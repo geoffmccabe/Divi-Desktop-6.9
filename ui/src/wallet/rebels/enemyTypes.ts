@@ -188,6 +188,19 @@ export function builtInEnemies(): EnemyType[] {
 /** Every name a game description may use for a built-in. */
 export const builtInIds = (): string[] => builtInEnemies().map((e) => e.id);
 
+/**
+ * Names that are not enemy TYPES but that the room's spawner handles itself,
+ * so no custom enemy may take one.
+ *
+ * "fighters" is the weighted mix of all seven tiers and "flock" is one
+ * formation of the default one. Neither is a row anybody can edit, but both are
+ * names the spawner tests BEFORE it looks anything up - so a custom enemy
+ * called "fighters" would have saved without complaint and then quietly spawned
+ * the built-in mix instead of itself, for ever, with its own numbers never once
+ * being used and nothing at all to say why.
+ */
+export const RESERVED_ENEMY_IDS = ["fighters", "flock"] as const;
+
 /* ================= CHECKING ONE =================
    Same contract as validateGame: every error collected and named, so the panel
    shows all of them at once. The bounds exist because these numbers are typed
@@ -283,7 +296,7 @@ export function validateEnemies(raw: unknown, hulls: string[] = []): { ok: Enemy
   if (!Array.isArray(raw)) return { errors: ["not a list of enemies"] };
   if (raw.length > 200) return { errors: [`at most 200 enemies (got ${raw.length})`] };
   const errors: string[] = [];
-  const taken = new Set(builtInIds());
+  const taken = new Set<string>([...builtInIds(), ...RESERVED_ENEMY_IDS]);
   const seen = new Set<string>();
   const out: EnemyType[] = [];
   raw.forEach((e, i) => {
@@ -313,4 +326,66 @@ export function duplicateEnemy(e: EnemyType, id: string): EnemyType {
   const copy: EnemyType = { ...JSON.parse(JSON.stringify(e)) as EnemyType, id, name: `${e.name} copy` };
   delete copy.builtIn;
   return copy;
+}
+
+/* ================= WHAT THE SIMULATION READS =================
+   The seam between a definition and a flying ship.
+   
+   An EnemyType describes a lot the simulation has nowhere to put. ShipClass
+   carries a name, health, colour, speed and a spawn weight, and that is all -
+   so resistance, cadence, reach, shot speed and worth had no home, and a custom
+   enemy could only ever have been a recoloured tier with the wrong numbers.
+   
+   This is the part that travels WITH THE SHIP. Everything in it is a number the
+   step loop reads every frame, and every one is optional at the point of use:
+   an enemy with no tune behaves exactly as it did before this existed, which is
+   what keeps the built-in tiers byte-for-byte unchanged.
+   
+   It lives here, in the file that imports nothing, because the room and the
+   simulation and the panel all need it and none of them should have to reach
+   through each other to get it. */
+
+export interface EnemyTune {
+  /** 0 to 0.9. Damage is multiplied by (1 - this) BEFORE anything else, so
+   *  knockback, tumble and the points scored all scale with it too - a tough
+   *  enemy is not also a heavier one. */
+  resistance: number;
+  /** Multiplier on what one of its shots takes off a player. Carried on the
+   *  ROUND rather than read from the ship, because the ship is often dead by
+   *  the time its last shot lands. */
+  damage: number;
+  /** Seconds between shots, as the MIDDLE of the spread it actually rolls. */
+  fireEvery: number;
+  /** How far it will shoot from, in world units. */
+  fireRange: number;
+  /** Multiplier on the speed of what it fires. */
+  shotSpeed: number;
+  /** What a kill is worth, as a multiple of one Divi Sphere: both the coins it
+   *  scatters and the kill it counts for. */
+  worth: number;
+}
+
+/** What today's fighter tiers do, for a test to stand a custom one against and
+ *  for the panel to show as "the same as a normal fighter". */
+export const DEFAULT_TUNE: EnemyTune = {
+  resistance: 0,
+  damage: 1,
+  fireEvery: FIGHTER_FIRE_EVERY,
+  fireRange: FIGHTER_FIRE_RANGE,
+  shotSpeed: 1,
+  worth: 1,
+};
+
+/** The flying half of a definition. The other half - name, health, colour,
+ *  speed - goes onto the ship's own class, because ShipClass already has
+ *  somewhere to put it. */
+export function tuneFor(e: EnemyType): EnemyTune {
+  return {
+    resistance: e.resistance,
+    damage: e.damage,
+    fireEvery: e.fireEvery,
+    fireRange: e.fireRange,
+    shotSpeed: e.shotSpeed,
+    worth: e.worth,
+  };
 }

@@ -77,6 +77,19 @@ const fakeEnv = {
 
 /* The room's privates are plain properties once compiled, which is what lets
    these tests drive it without a real websocket upgrade. */
+/** Which round the room is running, from one.
+ *
+ *  The wave number used to come from the simulation's own clock; the game
+ *  controller owns the rounds now (gameRunner.ts) and combat.wave stays null.
+ *  Read through one helper so a test says "which round" rather than reaching
+ *  into whichever machinery currently answers that - and, more to the point,
+ *  so a test cannot pass by comparing two undefineds, which is exactly what
+ *  "the fight goes on" started doing the moment the wave went away. */
+function roundOf(room: { run?: { round: number; done: boolean } | null }): number | null {
+  const run = room.run;
+  return run && !run.done ? run.round + 1 : null;
+}
+
 function newRoom() {
   const room = new RebelsRoom(fakeState, fakeEnv) as any;
   return room;
@@ -475,11 +488,13 @@ const home: [number, number, number] = [0, 0, R + 8];
   startWave(room.combat, 7);
   room.combat.enemies.push(...room.combat.enemies);   /* whatever is there */
   dropGem(room.combat, 3, a.body.pos.clone().add(new THREE.Vector3(0, 0, 20)), "keep-me");
-  const waveBefore = room.combat.wave?.n;
+  const roundBefore = roundOf(room as never);
+  ok("(setup) the room is running a round at all", roundBefore !== null, `${roundBefore}`);
   room.down(a);
-  ok("one player down: the fight goes on", room.combat.wave?.n === waveBefore && !b.dead, `${room.combat.wave?.n}`);
+  ok("one player down: the fight goes on",
+     roundOf(room as never) === roundBefore && !b.dead, `round ${roundOf(room as never)}`);
   room.down(b);
-  ok("everyone down: back to wave one", room.combat.wave?.n === 1, `${room.combat.wave?.n}`);
+  ok("everyone down: back to round one", roundOf(room as never) === 1, `round ${roundOf(room as never)}`);
   ok("with nothing left in the air", room.combat.enemies.length === 0 && room.combat.bullets.length === 0);
   ok("and the gems still there", room.combat.gems.length === 1 && room.combat.gems[0].id === "keep-me");
   room.stop();
@@ -939,13 +954,13 @@ const home: [number, number, number] = [0, 0, R + 8];
   ok("and no enemies come looking while the card is up", room.combat.enemies.length === 0,
      `${room.combat.enemies.length} enemies`);
   ok("nor is the wave clock running", (room.combat.wave?.n ?? 1) <= 1,
-     `wave ${room.combat.wave?.n}`);
+     `round ${roundOf(room as never)}`);
 
   ws.deliver(JSON.stringify({ t: "fly" }));
   ok("LAUNCH puts them in the fight", seat.flying);
   room.refreshRoster();
   ok("and the simulation now has a player", room.world.players.length === 1);
-  ok("launching starts at wave one", room.combat.wave?.n === 1, `wave ${room.combat.wave?.n}`);
+  ok("launching starts at round one", roundOf(room as never) === 1, `round ${roundOf(room as never)}`);
   ok("with full gauges", seat.shield === seat.shieldMax && seat.ammo === seat.ammoMax);
   room.stop();
 }
@@ -980,8 +995,8 @@ const home: [number, number, number] = [0, 0, R + 8];
      room.combat.enemies.length === 0, `${room.combat.enemies.length} enemies`);
 
   ws.deliver(JSON.stringify({ t: "fly" }));
-  ok("LAUNCH AGAIN is a NEW game: wave one", room.combat.wave?.n === 1,
-     `wave ${room.combat.wave?.n}`);
+  ok("LAUNCH AGAIN is a NEW game: round one", roundOf(room as never) === 1,
+     `round ${roundOf(room as never)}`);
   ok("nothing in the sky from the last one", room.combat.enemies.length === 0);
   ok("full gauges", seat.shield === seat.shieldMax && seat.ammo === seat.ammoMax
      && seat.torps === seat.torpsMax);

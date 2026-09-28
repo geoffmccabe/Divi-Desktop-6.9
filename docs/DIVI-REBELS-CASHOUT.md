@@ -83,7 +83,27 @@ payout should be watched in the journal.
 
 ---
 
-## The Divi Rebels payout address (received 2026-Sep-27, NOT yet in use)
+## ⛔ SUPERSEDED: the first payout address (2026-Sep-27)
+
+**Do not wire `D6V6dP2L5CN386Wg1LZF7KszXxuuSDvmmd` into anything.** It is kept
+here rather than deleted so that nobody re-finds it in a chat log and uses it.
+
+It is a child of the main scan node's wallet, and that is exactly what made it
+wrong: see blocker 4 below for why an address inside a wallet gives the payout
+key the run of the whole wallet. Geoff's answer was better than either option
+either session proposed — rather than accept the risk or move the float, he is
+fixing it at the source:
+
+> *"I will add a way within Dd69 to add extra parallel wallets, then get you an
+> address, and I'll put more DIVI in here when it doesn't run dry. So start
+> building what you can around this and the last plans and assume you'll have an
+> address to work from and a way to draw from it too."*
+
+So Rebels gets a **dedicated parallel wallet** holding only the game float, and
+the address below is replaced by one from it. Build against that assumption; the
+real address is still to come.
+
+## The address as received (2026-Sep-27, superseded, NOT in use)
 
 Geoff, relayed through the gameplay session: *"D6V6dP2L5CN386Wg1LZF7KszXxuuSDvmmd
 for the Divi Rebels address"*. He describes it as a child address of his Scanner
@@ -186,4 +206,47 @@ row of that table; only a different wallet does.
 
 ---
 
-Until all four, this section is a record and not a configuration.
+---
+
+## What Geoff decided (2026-Sep-27)
+
+All four blockers answered. Recorded as his decisions, with what each one does
+and does not settle.
+
+**The wallet — a dedicated parallel wallet.** Not a child address of the scan
+node. This closes blocker 4 by design rather than by accepting it: the payout
+key will reach a wallet holding only the game float, which is the hot/cold
+separation both sessions recommended. Waiting on the address.
+
+**The gate — LW-Auth, not a number we choose.** Authentication is coming to the
+web version and becomes the Sybil boundary, with KYC or self-custody-only
+withdrawal held in reserve if it proves insufficient. **So no guest payout path
+is to be built.** This is the right shape: the earlier proposal was a starter
+amount per connecting address, which would have made an IP the boundary, and an
+IP is cheap. An account someone had to authenticate is not.
+
+**The rate — stays at 1 DIVI per sphere**, explicitly and knowingly. Geoff:
+*"Nobody is so good that they can capture 5850 of those spheres, they couldn't
+possibly do that, not in an hour. Not even in a day."* He is right that the
+figure is a ceiling nobody reaches: it assumes clearing every enemy of every
+wave for an hour without dying. The arithmetic, from the constants in
+rebelsCombat.ts so it can be rechecked when they change:
+
+| | |
+|---|---|
+| waves in an hour | 3600 / `WAVE_SECONDS` 120 = **30** |
+| enemies per wave | `WAVE_FIRST` 10 + (n-1) x `WAVE_STEP` 2, so 10, 12, 14 ... 68 |
+| enemies in an hour | 30 waves, averaging 39 = **1,170** |
+| spheres | x `COIN_PER_KILL` 5 = **5,850** |
+| DIVI at 1 per sphere | **5,850/hour, clearing everything** |
+
+Fractions matter more than the ceiling, because nobody clears everything: a
+quarter of it is still about 1,460/hour, which is most of the current float in
+an hour and a half. **Nothing drains** at any of these numbers — guests cannot
+withdraw, and the 2,000/day cap holds — so what accrues is an unpayable balance
+rather than a loss. That makes it an expectation problem, not a security one,
+and it is the reason `EARN_PER_DAY` stays even with a dedicated wallet: it
+bounds the debt, and the debt now grows faster than the float.
+
+Until the dedicated wallet's address arrives, this section is a record and not a
+configuration.

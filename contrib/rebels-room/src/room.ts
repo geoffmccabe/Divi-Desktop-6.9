@@ -34,22 +34,31 @@ import {
   fireGuns, fireMini, fireTorpedo, detonateOldest, miniMuzzle,
   MINI_AMMO, MINI_INTERVAL, COIN_PER_KILL, COIN_VALUE, STAKE_BONUS, STAKE_BONUS_MS,
   BULLET_SPEED, BULLET_LIFE, CONVERGE,
-  spawnFleet, rollLaserDamage, MINI_DAMAGE, LASER_MAX, TORPEDO_DAMAGE,
+  spawnFleet, spawnFighter, spawnDragon, rollLaserDamage, MINI_DAMAGE, LASER_MAX, TORPEDO_DAMAGE,
+  WAVE_BIAS_MIN, WAVE_BIAS_MAX,
   type CombatState, type CombatWorld, type PlayerBody,
 } from "../../../ui/src/wallet/rebels/rebelsCombat";
 import { HEART_GUARD, HEART_GUARD_COUNT } from "../../../ui/src/wallet/rebels/rebelsFlock";
+import { startGame, stepGame, type Run, type Spawner } from "./gameRunner";
+import { placeById, type Place } from "../../../ui/src/wallet/rebels/rebelsPlaces";
+import { award, newPurse, type Purse } from "./gameRewards";
+import { gameForPlace, hasGameFor } from "./gameSource";
+import { fetchWorld } from "./enemySource";
+import { applyEnemyType, tierForType, typeById } from "./customEnemy";
+import { builtInEnemies, type EnemyType } from "../../../ui/src/wallet/rebels/enemyTypes";
+import { waveDefence, DEFAULT_GAMES, type GameType, type Reward } from "../../../ui/src/wallet/rebels/gameTypes";
 /* Spikeworld's dimensions. That folder deliberately imports nothing from the
    game, the DOM or three.js, precisely so the room can share its numbers: the
    heart the room defends and the heart the cockpit draws are the same sphere
    because they are the same constants. */
 import {
-  HEART_HP, R_HEART, R_INNER, R_OUTER, SKY_EDGE, ARRIVAL_OUT, toWorld,
+  HEART_HP, R_HEART, R_INNER, toWorld,
 } from "../../../ui/src/wallet/rebels/voxel/voxelWorld";
 import {
   MAX_SHIELD, MAX_AMMO, MAX_TORPEDOES, MAX_GUARDS, GUARD_SECONDS, GUARD_ABSORB, CRASH_DAMAGE,
   BOOST,
 } from "../../../ui/src/wallet/rebels/orbitFlight";
-import { R, MIN_ALT, MAX_ALT } from "../../../ui/src/wallet/rebels/orbitWorld";
+import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { VIEW, inRange } from "../../../ui/src/wallet/rebels/rebelsView";
 import {
   WING_MAX, wingPosition, wingSpin, wingShare, wingRounds, wingTiers,
@@ -94,11 +103,11 @@ const RESPAWN_SECONDS = RESPAWN_WAIT;
 const HEART_RADIUS = toWorld(R_HEART);
 /** Inside the shell's inner face, with margin, which is where the guards wake. */
 const HEART_CAVITY = toWorld(R_INNER - 10);
-/** Where an arriving or respawning ship is put: just outside the shell. */
-const SPIKE_ARRIVAL = toWorld(R_OUTER + ARRIVAL_OUT);
-/** How far out a ship may get in Spikeworld before it is somewhere else. Its
- *  own sky, with room to turn around in past the arrival point. */
-const SPIKE_CEILING = toWorld(R_OUTER + SKY_EDGE);
+/* Where a ship arrives in Spikeworld, and how far out it may get, used to be
+   two constants here beside Earth's floor and ceiling in the position check.
+   They are rows in rebelsPlaces.ts now, with the other fifteen places, so the
+   room asks a table where the world ends rather than carrying one place's
+   dimensions in its own file. */
 /** How long the heart waits before sending another flock, once the last one is
  *  gone. Long enough to get in and do some damage; short enough to be a fight. */
 const GUARD_REARM_SECONDS = 25;
@@ -276,6 +285,13 @@ export class RebelsRoom {
    *  never guessed at again: everything that differs between Earth orbit and
    *  Spikeworld asks this one field. */
   private region: RegionName = "earth";
+  /** WHERE this room is, as geometry: its centre, how far a ship may go, and
+   *  where an arriving one is put. One row from rebelsPlaces.ts, looked up once
+   *  when the room learns its own name, so the questions that used to be asked
+   *  as `region === "spike"` in half a dozen places are asked of the table
+   *  instead. A room whose name is not a place falls back to Earth, which is
+   *  what an unrecognised name has always meant here. */
+  private place: Place = placeById("earth")!;
   /* ---- SPIKEWORLD'S HEART ----
      The million, shared. On Earth the thing everyone is fighting is a wave and
      it belongs to the simulation; here it is one sphere with one number, and
@@ -292,6 +308,31 @@ export class RebelsRoom {
    *  going to sleep, so it is saved, but not on every hit. */
   private heartSaveAt = 0;
   private heartLoaded = false;
+  /* ---- THE GAME THIS ROOM IS RUNNING ----
+     A described sequence of rounds (gameTypes.ts) walked by the controller
+     (gameRunner.ts), in place of the simulation's own wave clock. Null where
+     the room's fight is not a game: Spikeworld's is a heart and its guards.
+
+     While a run exists, THE CONTROLLER OWNS EVERY ARRIVAL. combat.wave is left
+     null so the simulation's "wave cleared, send the next" never fires, and
+     both ambient clocks are held, or an admin's carefully built round collects
+     a wandering flock and the dragon's minute. */
+  private run: Run | null = null;
+  /** What this run of this game has paid in awards. Emptied with the run, so a
+   *  game that restarts gets a fresh purse and one that is being farmed does
+   *  not. See GAME_PURSE in gameRewards.ts for why a per-game ceiling is needed
+   *  on top of the per-award one the validator already applies. */
+  private purse: Purse = newPurse();
+  /** The games Geoff has built, refreshed on the same slow timer as the drop
+   *  charts. Starts as the built-in so a room can play before the first fetch
+   *  has come back, and falls back to it on any doubt: see gameSource.ts. */
+  /** Every enemy this room can fly: the built-ins, plus whatever Geoff has
+   *  designed. Refreshed on the same slow timer as the games and the drops,
+   *  and for the same reason - it is config, not per-tick state. */
+  private enemyTypes: readonly EnemyType[] = builtInEnemies();
+  private games: readonly GameType[] = DEFAULT_GAMES;
+  /** Whether those came from the table, for the state page. */
+  private gamesLive = false;
   private combat: CombatState = createCombat();
   private world: CombatWorld;
   private tips: THREE.Vector3[] = [];
@@ -320,12 +361,20 @@ export class RebelsRoom {
     if (named) {
       this.roomName = named[1];
       this.region = regionOf(named[1]) ?? "earth";
+      this.place = placeById(this.region) ?? placeById("earth")!;
     }
 
     if (url.pathname.endsWith("/state")) {
       return Response.json({
         players: this.seats.size,
-        wave: this.combat.wave?.n ?? 0,
+        wave: this.run && !this.run.done ? this.run.round + 1 : this.combat.wave?.n ?? 0,
+        /* What this run has paid in awards, and how many it had to refuse for
+           want of purse. The answer to "why did nobody get paid" lives here,
+           because a game silently paying nothing halfway through looks exactly
+           like a game that promised nothing. */
+        games: this.games.length, gamesLive: this.gamesLive,
+        ...(this.run ? { game: this.run.game.id, rounds: this.run.game.rounds.length,
+                         paid: Math.round(this.purse.spent), refused: this.purse.refused } : {}),
         enemies: this.combat.enemies.length,
         tick: this.tick,
       });
@@ -415,8 +464,9 @@ export class RebelsRoom {
        for them because they're in another game." Spikeworld has its own fight
        and it is not a wave: nothing is started here, so combat.wave stays null
        and the simulation's own "wave cleared, send the next" never fires. */
-    if (this.region === "earth") startWave(this.combat, 1);
-    else void this.loadHeart();
+    this.run = this.beginGame();
+    this.purse = newPurse();
+    if (this.region !== "earth") void this.loadHeart();
     this.timer = setInterval(() => {
       try { this.step(); } catch { /* one bad tick must not stop the room */ }
     }, 1000 / HZ);
@@ -458,6 +508,213 @@ export class RebelsRoom {
      room never touches it, and Spikeworld never starts a wave: they are one
      class because they are one simulation, and they differ in what is put in
      front of the players, not in how any of it is stepped. */
+
+  /* ================= THE GAME THIS ROOM RUNS ================= */
+
+  /**
+   * The game for this place, or null where the fight is not a game.
+   *
+   * Earth runs Wave Defence, which is now a DESCRIPTION rather than a special
+   * case: the same thirty rounds, the same ten-plus-two count, the same mixed
+   * fighters, expressed in gameTypes.ts and walked by the controller. When the
+   * live table of admin-defined games lands (phase 1), this is the one function
+   * that has to learn to read it.
+   */
+  private beginGame(): Run | null {
+    /* A place runs a game if somebody has written one for it. Earth also has
+       the built-in, which is why it never has none; Spikeworld has a heart and
+       its guards rather than a sequence of rounds, and gets a run only if
+       somebody deliberately writes a game for it. */
+    if (this.region !== "earth" && !hasGameFor(this.games, this.place.id)) return null;
+    return startGame(this.gameType());
+  }
+
+  /** Which game this room runs: the first published one written for this place,
+   *  or the built-in. See gameForPlace. */
+  private gameType(): GameType {
+    return gameForPlace(this.games, this.place.id);
+  }
+
+  /**
+   * One bias per round, not one per enemy.
+   *
+   * ⚠ THIS IS THE DETAIL THAT CARRIES THE FEEL OF A WAVE. startWave draws a
+   * single bias when a wave begins and every fighter in that wave is rolled
+   * against it, which is why one wave arrives as a screen of tier ones and the
+   * next has half a dozen tier twos in it. Rolling per enemy gives the same
+   * distribution averaged over an hour and loses the texture completely: every
+   * wave becomes the mean wave.
+   *
+   * Keyed by the range because one round may ask for two different mixes - an
+   * easy screen and a hard knot - and they are different draws.
+   */
+  private roundBias = new Map<string, number>();
+
+  private biasFor(range?: readonly [number, number]): number {
+    const lo = range ? range[0] : WAVE_BIAS_MIN;
+    const hi = range ? range[1] : WAVE_BIAS_MAX;
+    const key = `${lo}:${hi}`;
+    const held = this.roundBias.get(key);
+    if (held !== undefined) return held;
+    const rolled = lo + Math.random() * Math.max(0, hi - lo);
+    this.roundBias.set(key, rolled);
+    return rolled;
+  }
+
+  /**
+   * Turn "two tier3" into two tier-three fighters in the sky.
+   *
+   * The controller has no idea what any of these names mean; this is the only
+   * place that does. An unknown name is IGNORED rather than thrown on: a game
+   * naming an enemy this room has never heard of should be a quiet gap in one
+   * round, not a tick that dies and takes the fight with it.
+   */
+  private spawner(): Spawner {
+    return {
+      spawn: (enemy, n, bias) => {
+        const all = this.world.players ?? [];
+        if (all.length === 0) return;
+        for (let i = 0; i < n; i++) {
+          /* In front of SOMEBODY, picked fresh each time, so a room's arrivals
+             do not all pile onto whoever is first in the list. */
+          const mark = all[all.length > 1 ? Math.floor(Math.random() * all.length) : 0];
+          if (!mark) return;
+          if (enemy === "fighters") {
+            spawnFighter(this.combat, mark.pos, mark.fwd, { bias: this.biasFor(bias) });
+            continue;
+          }
+          const tier = /^tier([1-7])$/.exec(enemy);
+          if (tier) {
+            spawnFighter(this.combat, mark.pos, mark.fwd, { tier: Number(tier[1]) });
+            continue;
+          }
+          const drone = /^drone([1-7])$/.exec(enemy);
+          if (drone || enemy === "flock") {
+            /* A flock is one call for the whole formation, however many the
+               round asked for: spawnFleet sizes it by tier. Asking for three
+               flocks means three formations, which is what the count means. */
+            spawnFleet(this.combat, drone ? Number(drone[1]) : 1, mark.pos, mark.fwd, {});
+            continue;
+          }
+          if (enemy === "dragon") {
+            const ahead = mark.pos.clone().addScaledVector(mark.fwd, 35);
+            const up = mark.pos.clone().normalize();
+            const across = new THREE.Vector3().crossVectors(mark.fwd, up).normalize();
+            spawnDragon(this.combat, ahead, across);
+            continue;
+          }
+          /* ---- ONE OF GEOFF'S ----
+             Not a name this room has built in, so it is a custom definition or
+             it is nothing. Built in two moves, for the reason customEnemy.ts
+             gives: spawn the built-in whose BRAIN it wants, then overwrite what
+             the definition brought with it.
+
+             The brain is the behaviour and cannot be invented - there are three
+             written and a definition picks one of them. The tier it is spawned
+             as is chosen by health, because the tier is what every cockpit
+             draws from. */
+          const type = typeById(this.enemyTypes, enemy);
+          if (!type) {
+            /* A round naming an enemy nobody has written. A quiet gap in one
+               round, never a room that will not start: the game is still
+               playable and the next spawn in the same round still arrives. */
+            return;
+          }
+          const builtAs = tierForType(type);
+          if (type.behaviour === "drone") {
+            /* A flock is one call for the whole formation, as above. Its
+               members are tuned one by one, because spawnFleet builds them. */
+            const made = spawnFleet(this.combat, builtAs, mark.pos, mark.fwd, {});
+            for (const d of made) applyEnemyType(d, type);
+            continue;
+          }
+          if (type.behaviour === "dragon") {
+            const ahead = mark.pos.clone().addScaledVector(mark.fwd, 35);
+            const up = mark.pos.clone().normalize();
+            const across = new THREE.Vector3().crossVectors(mark.fwd, up).normalize();
+            applyEnemyType(spawnDragon(this.combat, ahead, across), type);
+            continue;
+          }
+          applyEnemyType(
+            spawnFighter(this.combat, mark.pos, mark.fwd, { tier: builtAs }),
+            type,
+          );
+          continue;
+        }
+      },
+    };
+  }
+
+  /**
+   * Walk the game by one tick.
+   *
+   * A round starting raises the SAME `waveStart` event startWave raised, with
+   * the round number in it, so every cockpit announces a round exactly as it
+   * announced a wave and no client needed changing.
+   */
+  private stepRun(): void {
+    const run = this.run;
+    if (!run) return;
+    const ev = stepGame(run, DT, this.spawner());
+    if (ev.roundStarted) {
+      /* A fresh draw for the new round: see roundBias. */
+      this.roundBias.clear();
+      this.combat.events.push({
+        kind: "waveStart", at: new THREE.Vector3(), power: 1, wave: ev.roundStarted,
+      });
+    }
+    /* ---- WHAT A ROUND WAS WORTH ----
+       Paid to whoever is FLYING as the clock runs out: not who was there when
+       it started, not who killed the most. A player who joined at round
+       twenty-nine collects twenty-nine and nothing before it; one who died in
+       round three collects nothing for it. The simplest rule that cannot be
+       gamed by arriving late, and the one a player would guess. */
+    if (ev.roundFinished) {
+      const round = run.game.rounds[ev.roundFinished - 1];
+      this.payAward(round?.award);
+    }
+    if (ev.gameFinished) {
+      this.payAward(run.game.award);
+      /* ⚠ A BEHAVIOUR CHANGE, and it needs a decision rather than a default.
+         The old waves never ended: startWave(n + 1) climbed for ever. A
+         description has a last round, so Wave Defence now stops after thirty.
+         Starting it again keeps the room alive, which is what an always-on
+         Earth needs, but it drops the difficulty off a cliff at the hour mark
+         instead of climbing past it. Recorded in the plan; Geoff decides. */
+      this.run = this.beginGame();
+      this.roundBias.clear();
+    }
+  }
+
+  /**
+   * Hand an award to everybody still flying, if the game can afford it.
+   *
+   * The purse is charged for the whole room at once, because the ceiling is on
+   * what a GAME pays rather than on what any one player receives - a full room
+   * of twenty-four collecting a single 500 DIVI round award is twelve thousand
+   * DIVI, and room size is the thing the person writing the game is least
+   * likely to have thought about.
+   *
+   * Refused whole rather than in part, and said out loud once when it happens:
+   * a game quietly paying nothing halfway through is worse than one that says
+   * it has run out.
+   */
+  private payAward(reward: Reward | undefined): void {
+    if (!reward) return;
+    const paid: Seat[] = [];
+    for (const s of this.seats.values()) if (s.flying && !s.dead) paid.push(s);
+    const each = award(this.purse, reward, paid.length);
+    /* A refusal is counted in the purse rather than announced. The room has no
+       logging of its own and this is not worth inventing one for: what somebody
+       investigating "why did nobody get paid" needs is the state page, which
+       carries the purse, and not a line in a log they would have to be watching
+       at the time. See the /state handler. */
+    if (!each) return;
+    for (const s of paid) {
+      s.divi += each.divi;
+      for (const key of each.items) s.items[key] = (s.items[key] ?? 0) + 1;
+    }
+  }
 
   /** Read the heart's remaining health back after the object has been asleep.
    *  Once only: after that the field in memory is the truth and storage is a
@@ -604,10 +861,13 @@ export class RebelsRoom {
        Held rather than deleted, and held every tick rather than once: a reset
        (everybody dying) builds a fresh CombatState with the clocks back at
        zero, and a one-off would be lost with it. */
-    if (this.region === "spike") {
+    if (this.region === "spike" || this.run) {
       this.combat.flockClock = -1e6;
       this.combat.dragonClock = -1e6;
     }
+    /* The game's own arrivals, before the fight is stepped, so something that
+       turns up this tick is flown this tick rather than next. */
+    if (this.run) this.stepRun();
     stepCombat(this.combat, DT, this.world);
     if (this.region === "spike") this.stepHeart();
     /* Gems move; their saved positions should not go stale. */
@@ -781,6 +1041,22 @@ export class RebelsRoom {
     const r = await fetchDropConfig();
     this.drops = r.config;
     this.combat.drops = r.config;
+    /* The games too, on the same slow timer and for the same reason: they are
+       config that changes when somebody saves a panel, not per tick.
+
+       ⚠ A REFRESH DOES NOT DISTURB A GAME IN PROGRESS. The new list is held
+       and the RUN keeps the description it started with, so saving an edit
+       cannot change the fight under the players already in it. They get the
+       new version when the current run ends. */
+    /* ⚠ ENEMIES BEFORE GAMES, in one call. A game naming a custom enemy is
+       INVALID unless the enemies were read first and their ids handed to the
+       validator - and one bad game condemns the whole set on purpose, so
+       getting this order wrong would drop every game in the room the moment
+       Geoff used his first custom enemy. See fetchWorld. */
+    const w2 = await fetchWorld();
+    this.enemyTypes = w2.enemies.enemies;
+    this.games = w2.games.games;
+    this.gamesLive = w2.games.live;
   }
   /** Tests: no network, and a pinned roll. */
   dropsOn = true;
@@ -859,8 +1135,9 @@ export class RebelsRoom {
     this.combat = createCombat();
     this.combat.gems = gems;
     for (const o of this.seats.values()) o.tally.clear();
-    if (this.region === "earth") startWave(this.combat, 1);
-    else {
+    this.run = this.beginGame();
+    this.purse = newPurse();
+    if (this.region !== "earth") {
       /* The heart is NOT reset by everybody dying. It is the thing being worn
          down and a million is meant to take a while; handing it back its full
          health every time the last pilot is killed would make it unkillable by
@@ -877,7 +1154,9 @@ export class RebelsRoom {
        there are no pads and no ground: everybody comes back where everybody
        arrives, just outside the shell, which is the one place in this world
        that is reliably empty. */
-    if (this.region === "spike") s.body.pos.copy(s.home);
+    /* A place with a fixed arrival puts everyone at the same door; Earth alone
+       has none, because a player belongs at their own tower. */
+    if (this.place.arrival) s.body.pos.copy(s.home);
     else s.body.pos.copy(s.home).normalize().multiplyScalar(R + 8);
     this.refreshRoster();
     /* ---- AND TELL THEM, OR THE COUNTDOWN NEVER ENDS ----
@@ -1005,8 +1284,8 @@ export class RebelsRoom {
        In Spikeworld there is no globe to pull it onto and no towers to dock at.
        Everybody arrives, and comes back, at the one place outside the shell,
        which is where the gate home stands. */
-    if (this.region === "spike") {
-      seat.home.set(0, 0, SPIKE_ARRIVAL);
+    if (this.place.arrival) {
+      seat.home.set(this.place.arrival.x, this.place.arrival.y, this.place.arrival.z);
       seat.homeTip.copy(seat.home);
       seat.body.pos.copy(seat.home);
     } else {
@@ -1143,8 +1422,8 @@ export class RebelsRoom {
        ship sitting inside the heart. One bound per region, and no exceptions
        anywhere else. */
     const alt = p.length();
-    const low = this.region === "spike" ? 0 : R + MIN_ALT - 2;
-    const high = this.region === "spike" ? SPIKE_CEILING : R + MAX_ALT + 2;
+    const low = this.place.floor;
+    const high = this.place.ceiling;
     if (alt < low || alt > high) {
       return this.snapBack(seat, "outside the world");
     }
@@ -1532,8 +1811,24 @@ export class RebelsRoom {
     /* The picture for each player is built in broadcast.ts; the room sends it. */
     /* Spikeworld's heart, on every state message: it is one number and it is
        the thing the whole region is about. */
-    const extra = this.region === "spike" ? { hp: Math.round(this.heartHp) } : undefined;
-    for (const [s, text] of stateMessages(this.combat, [...this.seats.values()], this.tick, extra)) {
+    /* ---- WHICH ROUND, WHERE THE WAVE NUMBER USED TO BE ----
+       The controller owns the rounds now, so combat.wave is null and the
+       `w` broadcast.ts derives from it would be a nought. It is overridden
+       here rather than given a field of its own: the cockpit reads `w` in
+       three places, and a second field for one idea is how two sources come
+       to disagree.
+
+       ⚠ NEVER SEND A NOUGHT WHILE A GAME IS RUNNING. The cockpit only
+       republishes the number when it CHANGES - that is what stops it being
+       written twenty times a second - so a nought in the middle of a game
+       blanks the dial and the next real number looks unchanged. That is
+       exactly the bug that left the wave number empty for a whole sortie
+       after a death. */
+    const extra: Record<string, unknown> = {};
+    if (this.region === "spike") extra.hp = Math.round(this.heartHp);
+    if (this.run && !this.run.done) extra.w = this.run.round + 1;
+    for (const [s, text] of stateMessages(this.combat, [...this.seats.values()], this.tick,
+                                         Object.keys(extra).length ? extra : undefined)) {
       try { s.ws.send(text); } catch { this.leave(s); }
     }
     /* Gauges every half second rather than every tick: they change slowly and
