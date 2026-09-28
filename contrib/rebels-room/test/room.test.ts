@@ -1213,6 +1213,96 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
+
+/* ================= A CUSTOM ENEMY, THROUGH THE ROOM =================
+   customEnemy.test.ts proves the PIECES: the class is cloned, the tune travels,
+   the shield is filled. This proves the WIRING, which is a different claim and
+   the one that breaks quietly - the spawner's custom branch sits after four
+   built-in branches and behind a lookup, and every way of getting it wrong ends
+   with "no enemy arrived" rather than with an error.
+
+   Nothing here reaches into customEnemy.ts. It asks the room for what a ROUND
+   asks the room for, by the name a game description would use. */
+{
+  storage.clear();
+  const room = newRoom();
+  const ws = new FakeSocket();
+  join(room, ws, "ce-a");
+  room.setDropsForTests(null, () => 0.99);
+
+  const { builtInEnemies, blankEnemy } = await import("../../../ui/src/wallet/rebels/enemyTypes");
+  const brute = {
+    ...blankEnemy("brute"), name: "Brute", shieldMax: 4000, resistance: 0.5,
+    speed: 2, fireEvery: 0.5, fireRange: 300, shotSpeed: 2, damage: 4, worth: 6,
+  };
+  const swarm = {
+    ...blankEnemy("gnats"), name: "Gnats", behaviour: "drone" as const,
+    shieldMax: 60, worth: 0.5,
+  };
+  room.enemyTypes = [...builtInEnemies(), brute, swarm];
+
+  /* ---- one of his fighters ---- */
+  room.combat.enemies.length = 0;
+  room.spawner().spawn("brute", 2);
+  const mine = room.combat.enemies;
+  ok("a round can ask for one of Geoff's enemies by name", mine.length === 2,
+     `${mine.length} arrived`);
+  ok("and it arrives with HIS numbers, not a tier's",
+     mine.every((e: any) => e.cls.shieldMax === 4000 && e.shield === 4000 && e.cls.speed === 2),
+     `${mine[0]?.cls.shieldMax} hp, ${mine[0]?.shield} in the bar`);
+  ok("carrying the five the class had nowhere to put",
+     mine[0]?.tune?.resistance === 0.5 && mine[0]?.tune?.damage === 4
+     && mine[0]?.tune?.fireRange === 300 && mine[0]?.tune?.worth === 6);
+  ok("built as the tier it most looks like, because the wire sends the tier",
+     mine[0]?.cls.tier === 7, `tier ${mine[0]?.cls.tier}`);
+
+  /* ---- and the built-ins are untouched by it ----
+     The aliasing trap, asserted here as well as in the unit tests, because
+     THROUGH THE ROOM is where it would actually have happened. */
+  room.combat.enemies.length = 0;
+  room.spawner().spawn("tier7", 1);
+  ok("an ordinary tier7 asked for afterwards is still an ordinary tier7",
+     room.combat.enemies[0]?.cls.shieldMax !== 4000
+     && room.combat.enemies[0]?.tune === undefined,
+     `${room.combat.enemies[0]?.cls.shieldMax} hp`);
+
+  /* ---- one of his flocks ---- */
+  room.combat.enemies.length = 0;
+  room.spawner().spawn("gnats", 1);
+  const drones = room.combat.enemies.filter((e: any) => e.drone);
+  ok("a custom drone arrives as a whole formation, not one ship",
+     drones.length > 1, `${drones.length} of them`);
+  ok("and every member of it got his numbers",
+     drones.length > 0 && drones.every((d: any) => d.cls.shieldMax === 60 && d.tune?.worth === 0.5),
+     `${drones[0]?.cls.shieldMax} hp each`);
+
+  /* ---- a name nobody has written ----
+     A quiet gap in one round and nothing else. Not a throw, which would stop
+     the tick, and not a fallback to some other enemy, which would put a ship
+     in the sky that the game description never asked for. */
+  room.combat.enemies.length = 0;
+  let threw = false;
+  try { room.spawner().spawn("nothing-by-that-name", 3); } catch { threw = true; }
+  ok("a round naming an enemy nobody has written does not throw", !threw);
+  ok("and puts nothing in the sky rather than something else",
+     room.combat.enemies.length === 0, `${room.combat.enemies.length} arrived`);
+
+  /* ---- and the round goes on ----
+     The gap must be confined to the ENTRY that named the missing enemy. A round
+     holds several spawn entries and the game controller calls the spawner once
+     per entry per tick, so "an easy screen of fighters plus one knot of
+     something custom" must still get its fighters when the custom one is
+     misspelt. That is what this asserts, and it is a separate claim from the two
+     above it: those say the bad entry is quiet, this says the GOOD ones are
+     unaffected. The `return` in the custom branch only abandons the remaining
+     copies of the same name, which would not have arrived anyway. */
+  room.spawner().spawn("brute", 1);
+  ok("the next spawn in the same round still arrives",
+     room.combat.enemies.length === 1);
+
+  room.stop();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);
