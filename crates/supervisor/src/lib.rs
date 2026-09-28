@@ -51,4 +51,5 @@ pub mod reachable;
 pub mod rpc;
 pub mod state;
 pub mod wallet;
+pub mod vault;
 pub mod watchdog;
