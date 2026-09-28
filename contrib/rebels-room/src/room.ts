@@ -615,9 +615,15 @@ export class RebelsRoom {
              draws from. */
           const type = typeById(this.enemyTypes, enemy);
           if (!type) {
-            /* A round naming an enemy nobody has written. A quiet gap in one
-               round, never a room that will not start: the game is still
-               playable and the next spawn in the same round still arrives. */
+            /* A round naming an enemy nobody has written: a misspelling, or an
+               enemy Geoff deleted while a game still points at it.
+
+               A quiet gap and nothing more. The game stays playable, the round
+               keeps its clock, and every OTHER entry in the round still arrives,
+               because the controller calls this once per entry. Returning rather
+               than continuing is deliberate but barely matters: the remaining
+               copies are the same missing name and would not have arrived
+               either, so this just stops looking it up n times. */
             return;
           }
           const builtAs = tierForType(type);
