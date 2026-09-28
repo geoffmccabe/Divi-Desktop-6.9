@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { listNodes, setActiveNode, nodeIdentity, setNodeName, setNodeLabel, restartNode, type NodeInfo } from "./api";
 import { setActiveNodeId } from "./activeNode";
+import { NodeWallets } from "./NodeWallets";
+import { setHraTarget } from "./hraTarget";
 
 // "My Nodes" settings tab: pick which node the wallet reads. Desktop (this
 // computer's Divi node) is always shown; personal nodes such as DIVI LOVE SCAN
@@ -192,6 +194,13 @@ export function MyNodes() {
               >
                 {isActive ? "In use" : busy === n.id ? "Switching…" : "Use this node"}
               </button>
+              {/* Extra wallets live beside the node's own; the app can only read
+                  the node it is using, so they show under the active node. */}
+              {isActive ? (
+                <NodeWallets nodeId={n.id} nodeLabel={n.label} onGetHra={setHraTarget} />
+              ) : (
+                <p className="set-note nw-inactive">Use this node to see and manage its wallets.</p>
+              )}
             </div>
           );
         })}

@@ -1,20 +1,25 @@
 import { useEffect, useRef, useState } from "react";
-import { walletBalance, walletAddresses, lotteryInfo, type Balance, type AddrInfo, type LotteryInfo } from "./api";
+import { walletBalance, walletAddresses, walletsList, lotteryInfo, type Balance, type AddrInfo, type LotteryInfo, type ExtraWallet } from "./api";
 import { nodeStatus } from "../bridge";
 import { fmtDiviParts } from "../status";
 import { AddressDropdown } from "./AddressDropdown";
 import { StakingDropdown, StartStaking } from "./StakingDropdown";
 import { LotteryDropdown } from "./LotteryDropdown";
 import { LotteryCountdown } from "./LotteryCountdown";
+import { WalletsDropdown } from "./WalletsDropdown";
 import { useDiviValue } from "./value";
 import { Icon } from "../Icon";
 
-type OpenPanel = null | "staking" | "addresses" | "lottery";
+type OpenPanel = null | "staking" | "addresses" | "lottery" | "wallets";
 
 export function HeaderBar() {
   const [bal, setBal] = useState<Balance | null>(null);
   const [addrs, setAddrs] = useState<AddrInfo[] | null>(null);
   const [lottery, setLottery] = useState<LotteryInfo | null>(null);
+  /* Extra wallets beside the node's own (Settings > My Nodes > +WALLET).
+     Their coins count in the Spendable figure; the chevron by DIVI lists
+     them one by one. */
+  const [wallets, setWallets] = useState<ExtraWallet[]>([]);
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
   /* A balance is only the whole truth once the node has read the whole
      chain. Until then the wallet has not seen the blocks that pay it, so a
@@ -51,6 +56,12 @@ export function HeaderBar() {
       try {
         const l = await lotteryInfo();
         if (alive && l) setLottery(l);
+      } catch {
+        /* keep last */
+      }
+      try {
+        const w = await walletsList();
+        if (alive) setWallets(w);
       } catch {
         /* keep last */
       }
@@ -109,8 +120,10 @@ export function HeaderBar() {
 
   const main = addrs?.find((a) => a.isMain) ?? addrs?.[0] ?? null;
   const syncing = caughtUp === false && !nodeDown;
-  const spend = bal ? fmtDiviParts(bal.spendable) : null;
-  const fiat = useDiviValue(bal && !syncing ? bal.spendable : null);
+  const extra = wallets.reduce((s, w) => s + w.divi, 0);
+  const spendAll = bal ? bal.spendable + extra : null;
+  const spend = spendAll != null ? fmtDiviParts(spendAll) : null;
+  const fiat = useDiviValue(spendAll != null && !syncing ? spendAll : null);
 
   const copyMain = async () => {
     if (!main) return;
@@ -165,6 +178,16 @@ export function HeaderBar() {
               "—"
             )}{" "}
             <em>DIVI</em>
+            {wallets.length > 0 && (
+              <button
+                type="button"
+                className="hdr-wallets-btn"
+                title="Each wallet's balance"
+                onClick={() => toggle("wallets")}
+              >
+                <span className={"addr-chevron" + (openPanel === "wallets" ? " up" : "")}>▾</span>
+              </button>
+            )}
           </span>
           {fiat.state === "unavailable" ? (
             <span
@@ -187,6 +210,9 @@ export function HeaderBar() {
             </span>
           )}
         </span>
+        )}
+        {wallets.length > 0 && bal && (
+          <WalletsDropdown open={openPanel === "wallets"} nodeSpendable={bal.spendable} wallets={wallets} />
         )}
       </div>
 

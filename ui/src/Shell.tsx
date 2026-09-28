@@ -124,8 +124,13 @@ export function Shell() {
   // stashed recipient on its own dd69:sendto listener).
   useEffect(() => {
     const onSendTo = () => setView("send");
+    const onGetHra = () => setView("hra");
     window.addEventListener("dd69:sendto", onSendTo);
-    return () => window.removeEventListener("dd69:sendto", onSendTo);
+    window.addEventListener("dd69:gethra", onGetHra);
+    return () => {
+      window.removeEventListener("dd69:sendto", onSendTo);
+      window.removeEventListener("dd69:gethra", onGetHra);
+    };
   }, []);
 
   const Active = VIEWS[view] ?? Overview;

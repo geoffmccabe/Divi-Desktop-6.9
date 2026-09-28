@@ -1298,6 +1298,116 @@ async fn restore_replace(phrase: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+// ── Parallel wallets (docs/PARALLEL-WALLETS-PLAN.md) ────────────────────────
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WalletAddressDto { index: u32, address: String, label: String, vault: bool, divi: f64 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WalletDto { id: String, label: String, created: i64, locked_with_password: bool, divi: f64, addresses: Vec<WalletAddressDto> }
+
+fn wallet_dto(cfg: &NodeConfig, w: &dd69_supervisor::wallets::WalletEntry) -> WalletDto {
+    let bal = dd69_supervisor::wallets::balance(cfg, w).ok();
+    let by: std::collections::HashMap<String, f64> = bal.as_ref().map(|b| b.by_address.iter().cloned().collect()).unwrap_or_default();
+    WalletDto {
+        id: w.id.clone(),
+        label: w.label.clone(),
+        created: w.created,
+        locked_with_password: w.lock == "password",
+        divi: bal.as_ref().map(|b| b.divi).unwrap_or(0.0),
+        addresses: w.addresses.iter().map(|a| WalletAddressDto {
+            index: a.index, address: a.address.clone(), label: a.label.clone(), vault: a.vault,
+            divi: *by.get(&a.address).unwrap_or(&0.0),
+        }).collect(),
+    }
+}
+
+/// The active node's id, which the wallet store is filed under.
+fn active_node_id() -> String {
+    let (active, _) = dd69_supervisor::config::list_profiles();
+    if active.is_empty() { "desktop".into() } else { active }
+}
+
+#[tauri::command]
+async fn wallets_list() -> Vec<WalletDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else { return vec![] };
+        let store = dd69_supervisor::wallets::load(&active_node_id());
+        store.wallets.iter().map(|w| wallet_dto(&cfg, w)).collect()
+    }).await.unwrap_or_default()
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WalletCreatedDto { words: Vec<String>, wallet: WalletDto }
+
+#[tauri::command]
+async fn wallet_create(label: String, password: Option<String>) -> Result<WalletCreatedDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load()?;
+        let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
+        let made = dd69_supervisor::wallets::create(&active_node_id(), &label, password.as_deref(), testnet)?;
+        Ok(WalletCreatedDto { words: made.words, wallet: wallet_dto(&cfg, &made.wallet) })
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn wallet_restore(label: String, phrase: String, password: Option<String>) -> Result<WalletDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load()?;
+        let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
+        let w = dd69_supervisor::wallets::restore(&active_node_id(), &label, &phrase, password.as_deref(), testnet)?;
+        Ok(wallet_dto(&cfg, &w))
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn wallet_new_address(wallet_id: String, label: String, password: Option<String>) -> Result<WalletAddressDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load()?;
+        let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
+        let a = dd69_supervisor::wallets::new_address(&active_node_id(), &wallet_id, &label, password.as_deref(), testnet)?;
+        Ok(WalletAddressDto { index: a.index, address: a.address, label: a.label, vault: a.vault, divi: 0.0 })
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn wallet_set_label(wallet_id: String, address: Option<String>, label: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || dd69_supervisor::wallets::set_label(&active_node_id(), &wallet_id, address.as_deref(), &label))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn wallet_set_vault(wallet_id: String, address: String, on: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || dd69_supervisor::wallets::set_vault(&active_node_id(), &wallet_id, &address, on))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn wallet_words(wallet_id: String, password: Option<String>) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || dd69_supervisor::wallets::words_of(&active_node_id(), &wallet_id, password.as_deref()))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn wallet_remove(wallet_id: String, force: bool) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load()?;
+        dd69_supervisor::wallets::remove(&active_node_id(), &wallet_id, &cfg, force)
+    }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn wallet_send(wallet_id: String, to: String, amount: f64, password: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load()?;
+        let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
+        dd69_supervisor::wallets::send(&cfg, &active_node_id(), &wallet_id, &to, amount, password.as_deref(), testnet)
+    }).await.map_err(|e| e.to_string())?
+}
+
 /// Create a SECOND local node from the phrase, copying the chain from the
 /// active local node so nothing is downloaded. Returns the new node's id.
 #[tauri::command]
@@ -3532,6 +3642,15 @@ fn main() {
             wallet_holdings,
             restore_replace,
             restore_second_node,
+            wallets_list,
+            wallet_create,
+            wallet_restore,
+            wallet_new_address,
+            wallet_set_label,
+            wallet_set_vault,
+            wallet_words,
+            wallet_remove,
+            wallet_send,
             remember_password,
             forget_password,
             resume_staking,

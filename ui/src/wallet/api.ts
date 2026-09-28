@@ -880,3 +880,16 @@ export const setActiveNode = (id: string) => invoke<void>("set_active_node", { i
 export const restartNode = () => invoke<void>("restart_node");
 /** Rename one of your remote nodes (its label). */
 export const setNodeLabel = (id: string, label: string) => invoke<void>("set_node_label", { id, label });
+
+// ── Parallel wallets (docs/PARALLEL-WALLETS-PLAN.md) ─────────────────────────
+export interface WalletAddress { index: number; address: string; label: string; vault: boolean; divi: number }
+export interface ExtraWallet { id: string; label: string; created: number; lockedWithPassword: boolean; divi: number; addresses: WalletAddress[] }
+export const walletsList = () => invoke<ExtraWallet[]>("wallets_list");
+export const walletCreate = (label: string, password?: string) => invoke<{ words: string[]; wallet: ExtraWallet }>("wallet_create", { label, password: password || null });
+export const walletRestore = (label: string, phrase: string, password?: string) => invoke<ExtraWallet>("wallet_restore", { label, phrase, password: password || null });
+export const walletNewAddress = (walletId: string, label: string, password?: string) => invoke<WalletAddress>("wallet_new_address", { walletId, label, password: password || null });
+export const walletSetLabel = (walletId: string, address: string | null, label: string) => invoke<void>("wallet_set_label", { walletId, address, label });
+export const walletSetVault = (walletId: string, address: string, on: boolean) => invoke<void>("wallet_set_vault", { walletId, address, on });
+export const walletWords = (walletId: string, password?: string) => invoke<string[]>("wallet_words", { walletId, password: password || null });
+export const walletRemove = (walletId: string, force: boolean) => invoke<void>("wallet_remove", { walletId, force });
+export const walletSend = (walletId: string, to: string, amount: number, password?: string) => invoke<string>("wallet_send", { walletId, to, amount, password: password || null });

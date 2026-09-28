@@ -5,9 +5,12 @@ import {
   validateAddress,
   sendCoins,
   fastSend,
+  walletsList,
+  walletSend,
   openUrl,
   explorerTxUrl,
   type Balance,
+  type ExtraWallet,
 } from "./api";
 import { takeSendTarget } from "./sendTarget";
 import { pulse } from "./activityPulse";
@@ -85,6 +88,14 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
      confirm screen is shown rather than discovered by pressing the button.
      "unsure" is a real answer here and is shown as one. */
   const [lock, setLock] = useState<"open" | "locked" | "unsure">("unsure");
+  /* Which wallet pays. "node" is the node's own (staking) wallet, the
+     default; anything else is the id of an extra wallet made under
+     Settings > My Nodes. The chooser only appears once such a wallet exists.
+     Only the standard form offers it: fast, pin and bearer sends are built
+     by the node from its own coins. */
+  const [wallets, setWallets] = useState<ExtraWallet[]>([]);
+  const [from, setFrom] = useState<string>("node");
+  const fromWallet = from === "node" ? null : wallets.find((w) => w.id === from) ?? null;
 
   useEffect(() => {
     let alive = true;
@@ -96,6 +107,14 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
         if (alive && b) setBal(b);
       } catch {
         /* keep last */
+      }
+      if (!fast) {
+        try {
+          const w = await walletsList();
+          if (alive) setWallets(w);
+        } catch {
+          /* keep last */
+        }
       }
     };
     load();
@@ -187,7 +206,8 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
   // Only treat it as "over balance" when we actually have a balance to compare
   // against. An unknown/failed read must never block the send; the node is the
   // real authority and will reject a genuine over-spend.
-  const overBalance = bal != null && amount != null && amount > bal.spendable;
+  const spendable = fromWallet ? fromWallet.divi : bal?.spendable ?? null;
+  const overBalance = spendable != null && amount != null && amount > spendable;
 
   const reset = () => {
     setStage("form");
@@ -225,6 +245,12 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
   useEffect(() => {
     if (stage !== "confirm") return;
     let live = true;
+    if (fromWallet) {
+      /* An extra wallet's key is the app's, not the node's: the only lock
+         that matters is its own optional password. */
+      setLock(fromWallet.lockedWithPassword ? "locked" : "open");
+      return;
+    }
     walletStatus()
       .then((st) => {
         if (!live) return;
@@ -253,6 +279,11 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
      password step, which is also the way to fix it. */
   const confirmSend = async () => {
     setErr(null);
+    if (fromWallet) {
+      if (fromWallet.lockedWithPassword) setStage("password");
+      else await doSend();
+      return;
+    }
     try {
       const st = await walletStatus();
       const unsure = st.known === false;
@@ -272,9 +303,11 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
     setStage("sending");
     setErr(null);
     try {
-      const id = fast
-        ? await fastSend(address.trim(), amount!, passphrase)
-        : await sendCoins(address.trim(), amount!, passphrase);
+      const id = fromWallet
+        ? await walletSend(fromWallet.id, address.trim(), amount!, passphrase)
+        : fast
+          ? await fastSend(address.trim(), amount!, passphrase)
+          : await sendCoins(address.trim(), amount!, passphrase);
       setTxid(id);
       setBroadcastAt(Date.now());
       markSent(address.trim()); // turns a matching contact known-good (both paths)
@@ -309,6 +342,17 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
 
   return (
     <div className="send-panel">
+      {!fast && wallets.length > 0 && (
+        <label className="send-field">
+          <span className="send-label">From wallet</span>
+          <select className="wl-input" value={from} onChange={(e) => setFrom(e.target.value)} disabled={stage !== "form"}>
+            <option value="node">Staking Wallet (this node) · {bal ? fmtDivi(bal.spendable) : "—"} DIVI</option>
+            {wallets.map((w) => (
+              <option key={w.id} value={w.id}>{w.label} · {fmtDivi(w.divi)} DIVI</option>
+            ))}
+          </select>
+        </label>
+      )}
       <label className="send-field">
         <span className="send-label send-to-label">
           To address
@@ -374,7 +418,7 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
           disabled={stage !== "form"}
         />
         <span className="send-avail">
-          Spendable: {bal ? fmtDivi(bal.spendable) : "—"} DIVI · leave a little for the network fee
+          Spendable: {spendable != null ? fmtDivi(spendable) : "—"} DIVI · leave a little for the network fee
         </span>
         {overBalance && <span className="wl-err">More than your spendable balance. The send may be rejected.</span>}
       </label>
@@ -405,7 +449,7 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
       {stage === "confirm" && (
         <div className="send-confirm">
           <p className="send-confirm-line">
-            {fast ? "Fast send" : "Send"} <strong>{fmtDivi(amount ?? 0)} DIVI</strong> to
+            {fast ? "Fast send" : "Send"} <strong>{fmtDivi(amount ?? 0)} DIVI</strong>{fromWallet ? <> from <strong>{fromWallet.label}</strong></> : null} to
           </p>
           <p className="send-confirm-addr">{address.trim()}</p>
           {/* If the destination publishes a name, show it UNDER the address,
@@ -456,7 +500,7 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
             doSend(pass || undefined);
           }}
         >
-          <p className="send-confirm-line">Enter your wallet password to send.</p>
+          <p className="send-confirm-line">{fromWallet ? `Enter the password for "${fromWallet.label}" to send.` : "Enter your wallet password to send."}</p>
           {lock === "unsure" && (
             <p className="wl-note">
               Your node did not say whether this wallet has a password. If it does not,

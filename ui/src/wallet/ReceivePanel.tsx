@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { addressQr, newReceiveAddress, walletAddresses, openUrl } from "./api";
+import { addressQr, newReceiveAddress, walletAddresses, walletsList, walletNewAddress, openUrl, type ExtraWallet } from "./api";
 import { playSound } from "../sound";
 import { PaymentRequests } from "./PaymentRequests";
 import { IncomingWatch } from "./IncomingWatch";
@@ -12,17 +12,32 @@ export function ReceivePanel() {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  /* Which wallet receives. "node" is the node's own (staking) wallet, the
+     default; otherwise the id of an extra wallet from Settings > My Nodes.
+     The chooser only shows once such a wallet exists. */
+  const [wallets, setWallets] = useState<ExtraWallet[]>([]);
+  const [into, setInto] = useState<string>("node");
+  const intoWallet = into === "node" ? null : wallets.find((w) => w.id === into) ?? null;
 
-  // Show the wallet's standard (main) address right away — no click needed.
+  useEffect(() => {
+    walletsList().then(setWallets).catch(() => {});
+  }, []);
+
+  // Show the chosen wallet's standard (main) address right away — no click needed.
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const list = await walletAddresses();
-        const main = list.find((a) => a.isMain) ?? list[0];
+        let main: string | undefined;
+        if (intoWallet) {
+          main = intoWallet.addresses[0]?.address;
+        } else {
+          const list = await walletAddresses();
+          main = (list.find((a) => a.isMain) ?? list[0])?.address;
+        }
         if (!alive || !main) return;
-        setAddr(main.address);
-        setQr(await addressQr(main.address));
+        setAddr(main);
+        setQr(await addressQr(main));
       } catch {
         /* leave empty; the fresh-address button still works */
       }
@@ -30,13 +45,21 @@ export function ReceivePanel() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [into]);
 
   async function freshAddress() {
     setBusy(true);
     setErr(null);
     try {
-      const a = await newReceiveAddress();
+      /* An extra wallet's new address is derived by the app from its own
+         words; the node's comes from the node's key pool. A wallet with
+         its own password cannot derive here without it, so that case is
+         sent to its panel under My Nodes, which asks. */
+      if (intoWallet?.lockedWithPassword) {
+        throw new Error(`"${intoWallet.label}" has its own password. Make new addresses for it under Settings > My Nodes.`);
+      }
+      const a = intoWallet ? (await walletNewAddress(intoWallet.id, "")).address : await newReceiveAddress();
+      if (intoWallet) walletsList().then(setWallets).catch(() => {});
       setAddr(a);
       setQr(await addressQr(a));
       playSound("receive");
@@ -100,6 +123,17 @@ export function ReceivePanel() {
   ) : (
     <div className="receive">
       {Explain}
+      {wallets.length > 0 && (
+        <label className="send-field rcv-into">
+          <span className="send-label">Receive into</span>
+          <select className="wl-input" value={into} onChange={(e) => setInto(e.target.value)}>
+            <option value="node">Staking Wallet (this node)</option>
+            {wallets.map((w) => (
+              <option key={w.id} value={w.id}>{w.label}</option>
+            ))}
+          </select>
+        </label>
+      )}
       {qr && <div className="qr" dangerouslySetInnerHTML={{ __html: qr }} />}
       <div className="addr-box">
         <code>{addr}</code>

@@ -220,3 +220,25 @@ export function useDiviValue(diviAmount: number | null): DiviValue {
     recovered,
   };
 }
+
+/**
+ * The price of one DIVI in the display currency, as a number, for screens that
+ * value several amounts at once (the per-wallet list in the header). Reads the
+ * shared cache; useDiviValue elsewhere keeps it fresh, so this only fetches
+ * when nothing has yet.
+ */
+export function useDiviRate(): { per: number; code: string } | null {
+  const [prices, setPrices] = useState<DiviPrices | null>(cache?.data ?? null);
+  const [display, setDisplay] = useState(() => getValueSettings().display);
+  useEffect(() => {
+    let alive = true;
+    const run = () => fetchPrices().then((d) => alive && setPrices(d)).catch(() => {});
+    const onChange = () => { setDisplay(getValueSettings().display); run(); };
+    run();
+    const id = window.setInterval(run, OK_INTERVAL);
+    window.addEventListener("dd69-value-changed", onChange);
+    return () => { alive = false; window.clearInterval(id); window.removeEventListener("dd69-value-changed", onChange); };
+  }, []);
+  const per = prices?.prices[display.toLowerCase()];
+  return per == null ? null : { per, code: display };
+}

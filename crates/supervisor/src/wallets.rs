@@ -29,6 +29,16 @@ use sha2::{Digest, Sha256, Sha512};
 use std::path::PathBuf;
 
 pub const MAX_WALLETS_PER_NODE: usize = 20;
+
+/// Is the node on a test network? Decides address and key prefixes, so it
+/// is asked of the node, never assumed.
+pub fn is_testnet(cfg: &NodeConfig) -> bool {
+    RpcClient::new(cfg)
+        .call("getblockchaininfo", json!([]))
+        .ok()
+        .and_then(|v| v["chain"].as_str().map(|s| s != "main"))
+        .unwrap_or(false)
+}
 /// BIP 44 coin type for DIVI mainnet; test networks use 1.
 const COIN_TYPE_MAIN: u32 = 301;
 const COIN_TYPE_TEST: u32 = 1;

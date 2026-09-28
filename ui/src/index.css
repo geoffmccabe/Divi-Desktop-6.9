@@ -2635,3 +2635,58 @@ code, .mono { font-family: var(--font-mono); }
 .gallery-buy-actions { display: flex; gap: 8px; }
 .gallery-buy-done { display: flex; flex-direction: column; gap: 4px; }
 .gallery-buy-txid { font-size: 0.72rem; word-break: break-all; opacity: 0.75; }
+
+/* ---- Wallets under a node (Settings > My Nodes; docs/PARALLEL-WALLETS-PLAN.md) ---- */
+.nw-block { margin-top: 14px; padding-top: 12px; border-top: 1px solid hsl(var(--border)); }
+.nw-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.nw-title { font-weight: 700; font-size: 0.92rem; color: hsl(var(--foreground)); }
+.nw-add { margin-left: auto; font-weight: 700; letter-spacing: 0.3px; }
+.nw-inactive { margin-top: 10px; }
+.nw-wallet {
+  border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 10px 12px; margin-top: 8px;
+  background: hsl(var(--card) / 0.5);
+}
+.nw-staking { border-color: hsl(var(--primary) / 0.5); }
+.nw-extra { max-width: calc(100% - 100px); }
+.nw-wallet-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.nw-wallet-head b { font-size: 0.95rem; color: hsl(var(--foreground)); }
+.nw-wallet-sub { font-size: 0.74rem; color: hsl(var(--muted-foreground)); }
+.nw-wallet-bal { font-size: 0.82rem; font-weight: 600; color: hsl(var(--primary)); }
+.nw-wallet-tools { margin-left: auto; display: flex; gap: 6px; }
+.nw-mini { padding: 3px 9px; font-size: 0.74rem; border-radius: 6px; }
+.nw-addr { padding: 6px 0; border-top: 1px dashed hsl(var(--border) / 0.7); }
+.nw-addr-main { border-top: 0; }
+.nw-addr-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.nw-addr-namebtn {
+  background: none; border: 0; padding: 0; cursor: text; font: inherit; font-weight: 600;
+  color: #fff; text-align: left;
+}
+.nw-addr-name { max-width: 220px; padding: 3px 8px; font-size: 0.85rem; }
+.nw-addr-code { font-size: 0.78rem; color: hsl(var(--muted-foreground)); user-select: text; }
+.nw-addr-bal { margin-left: auto; font-size: 0.8rem; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; }
+.nw-addr-bottom { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 4px; font-size: 0.76rem; }
+.nw-hra-on { color: #f2c94c; font-weight: 700; }
+.nw-hra-on b { color: #f2c94c; }
+.nw-hra-off { display: inline-flex; align-items: center; gap: 8px; color: hsl(var(--muted-foreground)); }
+.nw-vault { display: inline-flex; align-items: center; gap: 6px; color: hsl(var(--muted-foreground)); cursor: pointer; }
+.nw-vault small { opacity: 0.75; }
+.nw-words { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.nw-total { margin-top: 8px; margin-left: 100px; }
+.nw-wordlist {
+  columns: 2; column-gap: 24px; margin: 10px 0 4px 18px; padding: 0; font-size: 0.95rem;
+  font-family: ui-monospace, Menlo, monospace; user-select: text;
+}
+.nw-wordlist li { padding: 2px 0; break-inside: avoid; }
+@media (max-width: 720px) {
+  .nw-extra { max-width: none; margin-left: 24px !important; }
+  .nw-total { margin-left: 24px; }
+}
+
+/* ---- Header: per-wallet list under Spendable (chevron right of DIVI) ---- */
+.hdr-wallets-btn { background: none; border: 0; padding: 0 2px; margin-left: 4px; cursor: pointer; font-size: 0.8em; vertical-align: middle; }
+.wd-row { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; }
+.wd-name { font-size: 0.82rem; font-weight: 600; color: hsl(var(--foreground)); }
+.wd-name small { font-weight: 400; color: hsl(var(--muted-foreground)); margin-left: 6px; }
+.wd-divi { font-size: 0.82rem; font-variant-numeric: tabular-nums; color: hsl(var(--primary)); font-weight: 600; }
+.wd-fiat { font-size: 0.76rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
+.wd-total { padding: 8px 12px 2px; border-top: 1px solid hsl(var(--border)); }
