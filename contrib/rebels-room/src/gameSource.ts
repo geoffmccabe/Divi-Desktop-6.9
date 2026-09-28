@@ -88,8 +88,25 @@ export async function fetchGames(
  * it already says which place, and this becomes a lookup by id rather than a
  * choice. Until then a place runs one game and this decides which.
  */
-export function gameForPlace(games: readonly GameType[], place: PlaceId): GameType {
+export function gameForPlace(
+  games: readonly GameType[],
+  place: PlaceId,
+  wanted: string | null = null,
+): GameType {
   const here = games.filter((g) => g.place === place && g.published);
+  /* ---- THE ROOM'S NAME MAY SAY WHICH ONE ----
+     "earth_shakedown" is a room playing shakedown. That is what lets Geoff have
+     more than one Earth game: the choice is which ROOM to join, because a room
+     is one simulation with one sky and two players in it cannot be playing
+     different games.
+
+     A name that matches nothing falls through to the place's own game rather
+     than to an empty room. Somebody following a stale link to a game that has
+     since been deleted or unpublished should find a fight, not a void. */
+  if (wanted) {
+    const named = here.find((g) => g.id === wanted);
+    if (named) return named;
+  }
   if (here.length > 0) return here[0];
   /* Earth falls back to the game it has always run. Anywhere else falls back to
      nothing, which the caller reads as "this place has no game" - Spikeworld's
@@ -101,4 +118,12 @@ export function gameForPlace(games: readonly GameType[], place: PlaceId): GameTy
  *  before falling back, so "no game here" and "the built-in" stay distinct. */
 export function hasGameFor(games: readonly GameType[], place: PlaceId): boolean {
   return games.some((g) => g.place === place && g.published);
+}
+
+/** Whether a game of this id is published for this place: what the door asks
+ *  before it lets somebody into a room named after a game. */
+export function hasGameNamed(
+  games: readonly GameType[], place: PlaceId, id: string,
+): boolean {
+  return games.some((g) => g.id === id && g.place === place && g.published);
 }

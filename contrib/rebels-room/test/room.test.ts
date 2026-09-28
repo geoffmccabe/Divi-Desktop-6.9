@@ -1303,6 +1303,137 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.stop();
 }
 
+
+/* ================= THE ROOM ACTUALLY RUNS HIS GAME =================
+   ⚠ THE BUG THIS EXISTS FOR made the entire game builder invisible. start() is
+   synchronous and fires the config fetch as a `void` promise, so the run was
+   chosen a fraction of a second BEFORE the games arrived. Every room began on
+   the built-in fallback and nothing ever looked again. Geoff could write a
+   game, save it, watch the room load and VALIDATE it, and nobody would ever
+   play it - and the state endpoint said gamesLive:true the whole time, because
+   the games really had loaded. They just were not being run.
+
+   Nothing was broken and nothing was lost. It simply never took effect. Every
+   test in this file passed throughout. */
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const { waveDefence } = await import("../../../ui/src/wallet/rebels/gameTypes");
+
+  const his = {
+    id: "shakedown", name: "Shakedown", place: "earth", crew: "multiplayer",
+    published: true,
+    rounds: [{ seconds: 90, spawns: [{ enemy: "fighters", count: 6, arrive: "spread" as const }] }],
+  };
+
+  /* The room as it is a moment after starting: running the fallback, because
+     the fetch has not landed. This IS the state the bug left it in for ever. */
+  const ws = new FakeSocket();
+  join(room, ws, "adopt-a");
+  ok("(setup) the room starts on the built-in, before any games arrive",
+     room.run?.game.id === waveDefence().id, room.run?.game.id);
+
+  /* Now the fetch lands. */
+  room.games = [his];
+  room.adoptStartupGame();
+
+  ok("once his games arrive, the room runs HIS game",
+     room.run?.game.id === "shakedown", room.run?.game.id);
+  ok("and it starts at the beginning of it, not partway through",
+     room.run?.round === 0 && room.run?.left === 90, `round ${room.run?.round}, ${room.run?.left}s`);
+  ok("with a fresh purse, so the fallback's spending is not charged to it",
+     room.purse.spent === 0);
+
+  /* ---- ONCE, AND ONLY ONCE ----
+     A refresh every ten minutes must not swap the game under people who are
+     in the middle of one. */
+  room.games = [{ ...his, id: "something-else" }];
+  room.adoptStartupGame();
+  ok("a later refresh does NOT swap the game under the players",
+     room.run?.game.id === "shakedown", room.run?.game.id);
+  room.stop();
+}
+
+/* A room that was already fighting when the fetch landed is left alone: the
+   swap is for the first instants of a room, not for a live fight. */
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  join(room, ws, "adopt-b");
+  room.run.round = 3;                       /* three rounds in */
+  room.games = [{
+    id: "late", name: "Late", place: "earth", crew: "multiplayer", published: true,
+    rounds: [{ seconds: 60, spawns: [{ enemy: "fighters", count: 2, arrive: "once" as const }] }],
+  }];
+  room.adoptStartupGame();
+  ok("a room three rounds into a fight is not yanked into a different game",
+     room.run?.game.id !== "late", room.run?.game.id);
+  room.stop();
+}
+
+/* And Earth with nothing written for it keeps the built-in, which is the
+   normal case and must not become "no game at all". */
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const { waveDefence } = await import("../../../ui/src/wallet/rebels/gameTypes");
+  const ws = new FakeSocket();
+  join(room, ws, "adopt-c");
+  room.games = [];
+  room.adoptStartupGame();
+  ok("Earth with nothing written for it still runs the built-in",
+     room.run?.game.id === waveDefence().id, room.run?.game.id);
+  room.stop();
+}
+
+
+/* ---- AND THE WIRING, NOT JUST THE METHOD ----
+   Everything above calls adoptStartupGame() by hand, which proves what it does
+   and NOT that anything calls it. That distinction is the entire bug: the
+   pieces were all correct and the order they ran in was not. So this drives the
+   real path, refreshDrops, with the network stubbed, and asserts the room ends
+   up running his game without anybody calling the fix directly. */
+{
+  storage.clear();
+  const room = newRoom();
+  const { waveDefence } = await import("../../../ui/src/wallet/rebels/gameTypes");
+  const ws = new FakeSocket();
+  join(room, ws, "wire-a");
+  ok("(setup) still on the built-in", room.run?.game.id === waveDefence().id);
+
+  const his = {
+    id: "shakedown", name: "Shakedown", place: "earth", crew: "multiplayer",
+    published: true,
+    rounds: [{ seconds: 90, spawns: [{ enemy: "fighters", count: 6, arrive: "spread" }] }],
+  };
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string) => ({
+    ok: true,
+    status: 200,
+    json: async () => {
+      const u = String(url);
+      if (u.includes("rebels_games")) return [{ game: his }];
+      if (u.includes("rebels_enemies")) return [];
+      return [];                              /* the drop charts: fall back */
+    },
+  })) as never;
+  try {
+    await room.refreshDrops();
+  } finally {
+    globalThis.fetch = real;
+  }
+
+  ok("refreshDrops actually adopts the game, with nobody calling the fix",
+     room.run?.game.id === "shakedown", room.run?.game.id);
+  ok("and the games really did come through it", room.games.length === 1 && room.gamesLive === true,
+     `${room.games.length} games, live ${room.gamesLive}`);
+  room.stop();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

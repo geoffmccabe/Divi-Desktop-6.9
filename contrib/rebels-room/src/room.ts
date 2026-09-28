@@ -71,7 +71,7 @@ import { DEFAULT_DROP_CONFIG, type DropConfig } from "../../../ui/src/wallet/reb
 import { ammoFor, torpedoesFor, topSpeedFor, shieldMaxFor, recharge, supercharge, SUPER_BOOST_MULT, type Extras } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   r1, type ClientMessage, type ServerMessage, type Vec,
-  type PaintWire, type PaintPart, nextRoom, regionOf, type RegionName,
+  type PaintWire, type PaintPart, nextRoom, regionOf, gameOf, type RegionName,
 } from "./protocol";
 import { runRoomCheat } from "./cheats";
 import { stateMessages } from "./broadcast";
@@ -331,6 +331,11 @@ export class RebelsRoom {
    *  and for the same reason - it is config, not per-tick state. */
   private enemyTypes: readonly EnemyType[] = builtInEnemies();
   private games: readonly GameType[] = DEFAULT_GAMES;
+  /** The game this room's NAME asks for, or null for the place's own. */
+  private wantedGame: string | null = null;
+  /** Whether the startup swap described in adoptStartupGame has happened.
+   *  Once only, for the life of the object. */
+  private adoptedStartupGame = false;
   /** Whether those came from the table, for the state page. */
   private gamesLive = false;
   private combat: CombatState = createCombat();
@@ -362,6 +367,9 @@ export class RebelsRoom {
       this.roomName = named[1];
       this.region = regionOf(named[1]) ?? "earth";
       this.place = placeById(this.region) ?? placeById("earth")!;
+      /* Which game this room is for, from its own name. Null means the place's
+         own game, which is every room that existed before names carried one. */
+      this.wantedGame = gameOf(named[1]);
     }
 
     if (url.pathname.endsWith("/state")) {
@@ -520,6 +528,64 @@ export class RebelsRoom {
    * live table of admin-defined games lands (phase 1), this is the one function
    * that has to learn to read it.
    */
+  /**
+   * Run the game the room was SUPPOSED to be running, once the games arrive.
+   *
+   * ⚠ WITHOUT THIS THE WHOLE GAME BUILDER NEVER REACHES A PLAYER. start() is
+   * synchronous and fires the config fetch as a `void` promise, so the run is
+   * chosen a fraction of a second BEFORE this.games is assigned. Every room
+   * therefore began on the built-in fallback, and nothing ever looked again:
+   * Geoff could write a game, save it, watch the room load and validate it, and
+   * nobody would ever play it. Nothing was broken and nothing was lost. It
+   * simply never took effect, which is the worst way for a feature to fail.
+   *
+   * THE NARROW FIX ON PURPOSE. The tempting shapes are both worse:
+   *
+   *   awaiting the fetch in start()  puts a network call in the path of the
+   *                                  first player joining, and a slow or failed
+   *                                  fetch becomes a room that will not start
+   *   re-picking on every refresh    swaps the game under people who are in the
+   *                                  middle of one, every ten minutes
+   *
+   * So this fires ONCE, only while the room is still on the fallback, and only
+   * when a real game now exists for this place. Everything else is left to the
+   * two natural boundaries that already re-pick - a game finishing, and
+   * everybody dying - which is where a newly published game should take hold
+   * anyway. See the refresh note in refreshDrops: an edit must not change the
+   * fight under the players already in it.
+   */
+  private adoptStartupGame(): void {
+    if (this.adoptedStartupGame) return;
+    this.adoptedStartupGame = true;
+
+    /* Nothing running. Only Spikeworld and its like get here, and only when
+       nobody had written a game for them at start. If somebody has now, this is
+       the moment it begins. */
+    if (!this.run) {
+      if (!hasGameFor(this.games, this.place.id)) return;
+      this.run = this.beginGame();
+      this.purse = newPurse();
+      this.roundBias.clear();
+      return;
+    }
+    /* A round has already finished, so the fetch was slow enough that people
+       may be fighting. Leave them alone and let a boundary do it. */
+    if (this.run.round !== 0) return;
+    /* Already running one of his: nothing to adopt. */
+    if (this.run.game.id !== waveDefence().id) return;
+    const wanted = this.gameType();
+    if (wanted.id === this.run.game.id) return;
+
+    this.run = startGame(wanted);
+    this.purse = newPurse();
+    this.roundBias.clear();
+    /* Announced as a round start, exactly as beginning any round is, so no
+       cockpit needs to know this happened. */
+    this.combat.events.push({
+      kind: "waveStart", at: new THREE.Vector3(), power: 1, wave: 1,
+    });
+  }
+
   private beginGame(): Run | null {
     /* A place runs a game if somebody has written one for it. Earth also has
        the built-in, which is why it never has none; Spikeworld has a heart and
@@ -532,7 +598,7 @@ export class RebelsRoom {
   /** Which game this room runs: the first published one written for this place,
    *  or the built-in. See gameForPlace. */
   private gameType(): GameType {
-    return gameForPlace(this.games, this.place.id);
+    return gameForPlace(this.games, this.place.id, this.wantedGame);
   }
 
   /**
@@ -1063,6 +1129,8 @@ export class RebelsRoom {
     this.enemyTypes = w2.enemies.enemies;
     this.games = w2.games.games;
     this.gamesLive = w2.games.live;
+    /* ⚠ AND NOW ACTUALLY RUN ONE. The run was chosen before this landed. */
+    this.adoptStartupGame();
   }
   /** Tests: no network, and a pinned roll. */
   dropsOn = true;

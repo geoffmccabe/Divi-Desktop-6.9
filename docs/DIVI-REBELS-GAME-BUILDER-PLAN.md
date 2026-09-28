@@ -313,6 +313,45 @@ them. Worth designing on paper during phase 6 so nothing blocks it.
   calmed again first, deliberately leaving the rounds already in the air, since
   clearing them would make the test pass for the wrong reason.
 
+  **⚠ 2026-Sep-28: the feature did not reach a player at all, and every test
+  passed throughout.** `start()` is synchronous and fires the config fetch as a
+  `void` promise, so the run was chosen a fraction of a second BEFORE the games
+  arrived. Every room began on the built-in fallback and nothing ever looked
+  again. Geoff could write a game, save it, watch the room load and validate it,
+  and nobody would ever play it. `/room/earth/state` reported `gamesLive:true`
+  the whole time, because the games really had loaded; they simply were not the
+  ones being run.
+
+  Found by the panel session reading the state endpoint against the game it had
+  just published, rather than by any test. Worth sitting with: the pieces were
+  each correct and only the ORDER they ran in was wrong, which is invisible to a
+  test that calls the pieces.
+
+  The fix adopts the real game ONCE, only while the room is still on the
+  fallback, only when a real game now exists, and only when no round has
+  finished. A room three rounds into a fight is never yanked. The two shapes not
+  taken: awaiting the fetch in `start()` puts a network call in the path of the
+  first player joining, and re-picking on every refresh swaps the game under
+  people every ten minutes. The two existing boundaries that already re-pick, a
+  game finishing and everybody dying, handle everything else.
+
+  The test that matters is the last of the seven: the other six call
+  `adoptStartupGame()` by hand, which proves what it does and NOT that anything
+  calls it, and that distinction IS the bug. The seventh stubs the network and
+  drives the real `refreshDrops` path.
+
+  **⚠ Next, and it changes what the picker can be: ONE PLACE IS ONE GAME.**
+  `gameForPlace` returns `here[0]`, so a second Earth game is unreachable. The
+  fix is NOT a wire field saying which game a player picked: a room is one
+  simulation with one sky, so two players in it cannot be playing different
+  games, and such a field could only be ignored for everyone after the first or
+  honour one player by yanking the rest. THE ROOM IS THE GAME. Room names
+  already carry place and overflow (`earth`, `earth-2`, parsed by `regionOf`),
+  and `_` is free in the name charset, so `earth_shakedown` makes the picker a
+  choice of which room to join, which the cockpit already makes. No protocol
+  change, no version skew between separately deployed cockpit and room, and
+  players of different games stop sharing a sky.
+
   Still open: the look (above), the enemy panel itself, and whether Wave Defence
   ending after 30 rounds and restarting is right where the old waves climbed for
   ever. That one is Geoff's call and is waiting on him.

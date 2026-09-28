@@ -11,7 +11,9 @@
 // Run: sh scripts/run-rebels-regions-tests.sh
 export {};
 import { RebelsRoom } from "../src/room";
-import { regionOf, roomNameOk, nextRoom } from "../src/protocol";
+import {
+  regionOf, roomNameOk, nextRoom, parseRoom, roomNameOf, gameOf, ROOM_OVERFLOW_MAX,
+} from "../src/protocol";
 import { HEART_HP, R_OUTER, R_INNER, R_HEART, ARRIVAL_OUT, toWorld } from "../../../ui/src/wallet/rebels/voxel/voxelWorld";
 
 const out: string[] = [];
@@ -250,6 +252,77 @@ function flyTo(
   ok("damage done is still done after the room goes to sleep",
      again.heartHp < HEART_HP && Math.abs(again.heartHp - worn) < 2001,
      `${Math.round(worn)} before, ${Math.round(again.heartHp)} after`);
+}
+
+
+/* ================= A ROOM NAME CARRIES ITS GAME =================
+   ⚠ THERE WERE FOUR COPIES OF THIS RULE and they disagreed. The cockpit's
+   (regionOfRoom in rebelsRegions.ts) had no game suffix, so "spike_descent"
+   parsed as EARTH: the cockpit would subtract Earth's origin instead of
+   Spikeworld's, every position it reported would be two hundred thousand units
+   out, the room would refuse them all as outside the world, and the player
+   would be snapped back for ever with nothing logged anywhere.
+
+   parseRoom is now the one reader and everything else calls it. These tests are
+   what stop it drifting again. */
+{
+  const p = (n: string) => parseRoom(n);
+
+  ok("a plain place is itself, first room, its own game",
+     p("earth")?.region === "earth" && p("earth")?.overflow === 1 && p("earth")?.game === null);
+  ok("an overflow room keeps its number",
+     p("earth-2")?.overflow === 2 && p("earth-2")?.game === null);
+
+  /* ---- THE ONE THAT WAS WRONG ---- */
+  ok("a Spikeworld game room is SPIKEWORLD, not Earth",
+     p("spike_descent")?.region === "spike", `${p("spike_descent")?.region}`);
+  ok("and it knows which game it is", p("spike_descent")?.game === "descent");
+
+  ok("a game room in an overflow copy is all three at once",
+     p("spike-3_descent")?.region === "spike"
+     && p("spike-3_descent")?.overflow === 3
+     && p("spike-3_descent")?.game === "descent",
+     JSON.stringify(p("spike-3_descent")));
+
+  ok("and regionOf agrees with it, because it IS it",
+     regionOf("spike-3_descent") === "spike" && regionOf("earth_shakedown") === "earth");
+  ok("gameOf reads the game out", gameOf("earth_shakedown") === "shakedown" && gameOf("earth") === null);
+
+  /* ---- THE DOOR MUST LET THEM IN ----
+     roomNameOk is what the worker checks before routing. A name it refuses is
+     a 404, so a game room that does not pass here cannot be joined at all. */
+  ok("a game room is a room the door opens",
+     roomNameOk("earth_shakedown") && roomNameOk("spike-3_descent"));
+
+  /* ---- AND NONSENSE IS STILL NONSENSE ---- */
+  for (const bad of ["earth_", "_shakedown", "earth-99_x", "mars_thing", "earth-1_x",
+                     "earth_Shakedown", "earth__x", "earth-2-3"]) {
+    ok(`"${bad}" is not a room`, p(bad) === null, JSON.stringify(p(bad)));
+  }
+
+  /* ---- ROUND TRIP ----
+     parseRoom and roomNameOf are inverses, which is what stops one of them
+     drifting from the other the way the four copies did. */
+  for (const name of ["earth", "spike", "earth-2", "spike-14", "earth_shakedown",
+                      "spike-3_descent", "earth-2_night-run"]) {
+    const r = parseRoom(name);
+    ok(`"${name}" survives a round trip`, !!r && roomNameOf(r) === name,
+       r ? roomNameOf(r) : "unparsed");
+  }
+
+  /* ---- A FULL ROOM SENDS THEM ON WITH THEIR GAME ----
+     Being pushed out of a full earth_shakedown into plain earth-2 would be a
+     different game entirely, and would look like the room changing for no
+     reason. */
+  ok("the hop out of a full game room keeps the game",
+     nextRoom("earth_shakedown") === "earth-2_shakedown", nextRoom("earth_shakedown"));
+  ok("and out of an overflow game room too",
+     nextRoom("earth-2_shakedown") === "earth-3_shakedown", nextRoom("earth-2_shakedown"));
+  ok("a plain room still hops the way it always did",
+     nextRoom("earth") === "earth-2" && nextRoom("spike-2") === "spike-3");
+  ok("and the last room has nowhere to send anybody",
+     nextRoom(`earth-${ROOM_OVERFLOW_MAX}_shakedown`) === "",
+     nextRoom(`earth-${ROOM_OVERFLOW_MAX}_shakedown`));
 }
 
 console.log(out.join("\n"));

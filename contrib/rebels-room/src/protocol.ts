@@ -344,14 +344,72 @@ export const ROOM_OVERFLOW_MAX = 16;
 export const REGION_NAMES = ["earth", "spike"] as const;
 export type RegionName = (typeof REGION_NAMES)[number];
 
+/**
+ * A room name, taken apart.
+ *
+ * ⚠ THE ONE READER FOR A ROOM NAME. There were four, and they disagreed.
+ *
+ * A name carries three things: the region it is in, which overflow copy of it
+ * this is, and WHICH GAME is being played there. The last is what lets a player
+ * pick a game at all: a room is one simulation with one sky, so two people in
+ * it cannot be playing different games, and the choice therefore has to be
+ * which ROOM to join rather than a per-player setting. See the game builder
+ * plan. That also means Geoff can have as many Earth games as he likes instead
+ * of only the first.
+ *
+ *     earth              earth,  no overflow, the place's own game
+ *     earth-2            earth,  overflow 2,  the place's own game
+ *     earth_shakedown    earth,  no overflow, the game "shakedown"
+ *     spike-3_descent    spike,  overflow 3,  the game "descent"
+ *
+ * WHY IT IS HERE AND EXPORTED. The cockpit had its own copy of this rule
+ * (regionOfRoom in rebelsRegions.ts) and it did not have the game suffix, so
+ * "spike_descent" parsed as EARTH. The cockpit would then subtract Earth's
+ * origin instead of Spikeworld's, every position it reported would be two
+ * hundred thousand units out, the room would refuse them all as outside the
+ * world, and the player would be snapped back for ever with nothing logged
+ * anywhere. One rule, in one file, imported by everything that needs it, is the
+ * only shape that cannot drift - and the compiler catches the next person
+ * rather than a player discovering it.
+ */
+export interface RoomName {
+  region: RegionName;
+  /** 1 for the first room, 2 upward for overflow. */
+  overflow: number;
+  /** The game's id, or null for the place's own game. */
+  game: string | null;
+}
+
+/** Room names split on `_`: the place and its overflow to the left, the game to
+ *  the right. `-` was taken by overflow and `_` was free in the name charset. */
+const ROOM = /^(earth|spike)(?:-(\d{1,2}))?(?:_([a-z0-9][a-z0-9-]{1,38}[a-z0-9]))?$/;
+
+/** Take a room name apart, or null if it is not a room name at all. */
+export function parseRoom(name: string): RoomName | null {
+  const m = ROOM.exec(name);
+  if (!m) return null;
+  const overflow = m[2] === undefined ? 1 : Number(m[2]);
+  if (m[2] !== undefined && !(overflow >= 2 && overflow <= ROOM_OVERFLOW_MAX)) return null;
+  return { region: m[1] as RegionName, overflow, game: m[3] ?? null };
+}
+
+/** Build a room name from its parts. The inverse of parseRoom, so the two
+ *  cannot drift: the test puts every name through both. */
+export function roomNameOf(r: RoomName): string {
+  const over = r.overflow > 1 ? `-${r.overflow}` : "";
+  return `${r.region}${over}${r.game ? `_${r.game}` : ""}`;
+}
+
 /** Which region a room name belongs to, or null if it is not a region room.
  *  One reader for the name, so the door, the room and the cockpit cannot
  *  disagree about what "spike-3" is. */
 export function regionOf(name: string): RegionName | null {
-  const m = /^(earth|spike)(?:-(\d{1,2}))?$/.exec(name);
-  if (!m) return null;
-  if (m[2] !== undefined && !(Number(m[2]) >= 2 && Number(m[2]) <= ROOM_OVERFLOW_MAX)) return null;
-  return m[1] as RegionName;
+  return parseRoom(name)?.region ?? null;
+}
+
+/** Which game a room is playing, or null for the place's own. */
+export function gameOf(name: string): string | null {
+  return parseRoom(name)?.game ?? null;
 }
 
 export function roomNameOk(name: string): boolean {
@@ -361,10 +419,15 @@ export function roomNameOk(name: string): boolean {
 }
 /** Where to send someone when this room is full, or "" when there is nowhere. */
 export function nextRoom(name: string): string {
-  const m = /^(earth|spike)(?:-(\d{1,2}))?$/.exec(name);
-  if (!m) return "";
-  const n = m[2] === undefined ? 1 : Number(m[2]);
-  return n < ROOM_OVERFLOW_MAX ? `${m[1]}-${n + 1}` : "";
+  const r = parseRoom(name);
+  if (!r) return "";
+  /* ⚠ THE GAME COMES WITH THEM. A player pushed out of a full earth_shakedown
+     must land in earth-2_shakedown and not in plain earth-2, which is a
+     different game entirely and would look like the room changing under them
+     for no reason. */
+  return r.overflow < ROOM_OVERFLOW_MAX
+    ? roomNameOf({ ...r, overflow: r.overflow + 1 })
+    : "";
 }
 /** A guest id worth trusting as a key: long, random-looking, nothing odd in it. */
 export function guestIdOk(id: unknown): id is string {
