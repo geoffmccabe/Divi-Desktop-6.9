@@ -82,6 +82,7 @@ The token-model question that used to block core building is now **decided — s
 | **DIVA-PRIVATE-CONTRACTS-PLAN.md** | FHE/TEE + compliance + threshold-warrant. | ✅ Design complete; not yet in build. |
 | **DIVA-STABLECOINS-BTC-PLAN.md** | Base-anchored fungible peg (dUSDC/dUSDT/dBTC). | ⚠️ Written on the two-coin framing; revisit once §1 is decided. |
 | **DIVA-STORAGE-DIVISTORE.md** | DiviStore (Arweave-style paid storage) status audit + deeper-audit plan + a detailed modular **admin panel** spec (nodes, encryption-preserving content view, multi-currency/multi-crypto monetization). | ✅ Audit + plan complete; build is standalone in `~/diva` (see the doc). |
+| **DIVA-STORAGE-GOBANQ-PRODUCTIZATION.md** | Plan to make DiviStore a **GoBanq-hosted multi-tenant service**: internal data/control APIs, LW-SSO auth, admin **Customers + Pricing** modules, internal apps billed at **cost + ~20%**, external B2B access. | ✅ Plan complete; service/tenancy/billing layer not built (foundation only). |
 | **DIVA-FEE-MODEL.md** | The §2b fee model in full. | ❌ Not written yet. |
 
 **Build layer — `~/diva/` (the running code; treat as another agent's tree — read, don't modify):**
