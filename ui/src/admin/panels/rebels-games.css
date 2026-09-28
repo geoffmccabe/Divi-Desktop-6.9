@@ -1,0 +1,64 @@
+/* Admin: Rebels Games. The list on the left, the game being built on the
+   right, rounds as rows. Same tokens as the other Rebels panels. */
+.rg-panel { display: flex; flex-direction: column; gap: 14px; }
+.rg-split { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 720px) { .rg-split { grid-template-columns: minmax(0, 1fr); } }
+
+.rg-list { display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow-y: auto;
+  padding: 8px; border-radius: 10px; border: 1px solid hsl(var(--border)); background: hsl(var(--card) / 0.5); }
+.rg-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; cursor: pointer;
+  padding: 5px 8px; border-radius: 7px; font-size: 0.82rem;
+  border: 1px solid transparent; background: transparent; color: hsl(var(--foreground)); }
+.rg-item:hover { background: hsl(var(--secondary)); }
+.rg-item.on { border-color: #ff45d0; background: hsl(var(--secondary)); }
+.rg-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rg-tag { font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.05em;
+  color: hsl(var(--muted-foreground)); }
+.rg-tag.rg-off { color: #ff7a8a; }
+
+.rg-edit { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 10px;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--card) / 0.5); }
+.rg-edit-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rg-name { flex: 1; min-width: 140px; font-weight: 600; }
+.rg-id { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+
+.rg-top { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (max-width: 620px) { .rg-top { grid-template-columns: minmax(0, 1fr); } }
+/* The card, at the shape it will really be drawn at. */
+.rg-card { aspect-ratio: 3 / 2; width: 100%; border-radius: 9px; overflow: hidden;
+  border: 1px dashed hsl(var(--border)); background: #0b0b10 center/cover no-repeat;
+  display: flex; align-items: center; justify-content: center; }
+.rg-card span { font-size: 0.72rem; color: hsl(var(--muted-foreground)); text-align: center; padding: 8px; }
+.rg-card-btns { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+
+.rg-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px 10px; }
+.rg-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.rg-field > span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: hsl(var(--muted-foreground)); }
+.rg-field .wl-input { width: 100%; min-width: 0; padding: 4px 6px; font-size: 0.85rem; }
+.rg-hint { font-size: 0.7rem; color: hsl(var(--muted-foreground)); }
+
+.rg-rounds { display: flex; flex-direction: column; gap: 6px; }
+.rg-round { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 8px;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--background) / 0.4); }
+.rg-round-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rg-round-no { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: hsl(var(--muted-foreground)); min-width: 62px; }
+.rg-spawn { display: grid; grid-template-columns: minmax(0, 1fr) 80px 110px 120px 28px; gap: 6px; align-items: center; }
+@media (max-width: 720px) { .rg-spawn { grid-template-columns: minmax(0, 1fr) 70px 90px 28px; } }
+.rg-spawn .wl-input { width: 100%; min-width: 0; padding: 4px 6px; font-size: 0.82rem; }
+.rg-bias { display: flex; align-items: center; gap: 4px; }
+.rg-bias .wl-input { width: 52px; }
+
+.rg-errors { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid #ff7a8a; background: #ff7a8a14; }
+.rg-errors span { font-size: 0.78rem; color: #ff7a8a; }
+.rg-sum { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+
+.rg-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.rg-foot .wl-note { margin-right: auto; }
+.rg-btn { padding: 5px 10px; border-radius: 7px; font-size: 0.78rem; letter-spacing: 0.04em; cursor: pointer;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+.rg-btn:disabled { opacity: 0.45; cursor: default; }
+.rg-btn.rg-danger { color: #ff7a8a; }
+.rg-btn.rg-primary { background: #ff45d0; border-color: #ff45d0; color: #14040f; font-weight: 700; }

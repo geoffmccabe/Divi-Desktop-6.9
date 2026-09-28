@@ -196,6 +196,19 @@ export const DEFAULT_GAMES: GameType[] = [waveDefence()];
    panel can show all of them at once rather than one per save. */
 
 const SLUG = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
+
+/* ---- THE CARD PICTURE ----
+   Checked here as well as where it is made, because this file is what the
+   server-side saver runs and a cap enforced only by the thing doing the
+   uploading is not a cap. Kept as a copy of the rule rather than an import so
+   this file stays dependency-free; gameImage.test.ts asserts the two agree. */
+export const IMAGE_MAX_CHARS = 82_000;
+function imageOk(v: unknown): boolean {
+  if (typeof v !== "string" || v.length > IMAGE_MAX_CHARS) return false;
+  if (!v.startsWith("data:image/webp;base64,")) return false;
+  const body = v.slice("data:image/webp;base64,".length);
+  return body.length > 32 && /^[A-Za-z0-9+/]+={0,2}$/.test(body);
+}
 /** A round can be twenty seconds or twenty minutes. Outside that it is a
  *  mistake, and a round of zero seconds would spin the controller. */
 export const ROUND_MIN_SECONDS = 10;
@@ -228,8 +241,8 @@ export function validateGame(raw: unknown, knownEnemies: string[] = []): { ok: G
   if (g.crew !== "solo" && g.crew !== "multiplayer") {
     errors.push('crew must be "solo" or "multiplayer"');
   }
-  if (g.image !== undefined && (typeof g.image !== "string" || !g.image.startsWith("data:image/webp;base64,"))) {
-    errors.push("image must be a WebP data URL");
+  if (g.image !== undefined && !imageOk(g.image)) {
+    errors.push(`image must be an uploaded WebP card under ${IMAGE_MAX_CHARS} characters`);
   }
   if (typeof g.published !== "boolean") errors.push("published must be true or false");
   /* A game pointed at a place that has no room yet can be written and saved,
