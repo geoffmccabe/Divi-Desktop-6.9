@@ -2,7 +2,12 @@
 # Divi Rebels: the help card's control table and its groups.
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-OUT="${TMPDIR:-/tmp}/rebels-controls-tests.mjs"
+# ⚠ THE BUNDLE PATH IS PER-WORKTREE, and it has to be. Two worktrees share one
+# $TMPDIR, so a fixed name meant BOTH sessions wrote and ran the same file: one
+# session's esbuild could land between the other's esbuild and its node, and that
+# session then tested the OTHER worktree's code and reported it green. Proven, not
+# theorised. Do not remove the basename.
+OUT="${TMPDIR:-/tmp}/$(basename "$ROOT")-rebels-controls-tests.mjs"
 cd "$ROOT/ui"
 npx esbuild src/wallet/rebels/rebelsControls.test.ts \
   --bundle --platform=node --format=esm --loader:.json=json --loader:.mp3=dataurl --loader:.webp=dataurl --loader:.png=dataurl --loader:.jpg=dataurl \
