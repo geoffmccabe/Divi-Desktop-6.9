@@ -184,6 +184,41 @@ async fn vault_reclaim(destination: String, amount: f64) -> Result<String, Strin
     .map_err(|_| "internal error".to_string())?
 }
 
+#[derive(Serialize)]
+struct VaultDto {
+    /// "owner:manager" encoding identifying this vault.
+    vault: String,
+    /// DIVI currently held in this vault.
+    value: f64,
+}
+
+/// This wallet's individual vaults (encoding + amount), for enumeration by the
+/// panel and by the side-wallets / HRA features.
+#[tauri::command]
+async fn vault_list() -> Vec<VaultDto> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else { return vec![] };
+        vault::list_vaults(&cfg)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(vault, value)| VaultDto { vault, value })
+            .collect()
+    })
+    .await
+    .unwrap_or_default()
+}
+
+/// Withdraw from ONE specific vault (by "owner:manager" encoding) to `destination`.
+#[tauri::command]
+async fn vault_debit(vault: String, destination: String, amount: f64) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        vault::debit_vault_by_name(&cfg, &vault, &destination, amount)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// How much of this wallet's coins are currently in vaults, in DIVI.
 #[tauri::command]
 async fn vault_balance() -> Option<f64> {
@@ -3634,6 +3669,8 @@ fn main() {
             vault_reclaim,
             vault_balance,
             vault_manager_address,
+            vault_list,
+            vault_debit,
             wallet_owns,
             signing_address,
             wallet_sign,

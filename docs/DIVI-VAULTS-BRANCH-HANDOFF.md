@@ -74,6 +74,30 @@ an error, which the panel shows with a hint to unlock via the existing flow. If
 you want an inline unlock, reuse the existing unlock_wallet / PasswordPanel flow;
 do not add a new passphrase field.
 
+## Reusable API for side wallets and HRAs
+
+The vault primitive is a plain, public Rust module (crates/supervisor/src/vault.rs)
+plus matching Tauri commands / TS bindings. Other features call these directly;
+they do NOT need to touch the panel.
+
+Rust (crate dd69_supervisor::vault), each taking `&NodeConfig`:
+- fund_vault(owner_address, manager_address, amount) -> txid
+- reclaim_vault_funds(destination, amount) -> txid  (across all the wallet's vaults)
+- debit_vault_by_name(vault_encoding, destination, amount) -> txid  (one vault)
+- list_vaults() -> Vec<(encoding, amount)>
+- vaulted_balance() -> total DIVI in vaults
+- manager_address() -> the main node's staking address (the handshake)
+
+Tauri commands (for UI): vault_fund, vault_reclaim, vault_debit, vault_list,
+vault_balance, vault_manager_address.
+TS bindings (ui/src/wallet/api.ts): vaultFund, vaultReclaim, vaultDebit,
+vaultList, vaultBalance, vaultManagerAddress.
+
+Typical use by a SIDE WALLET: read manager via manager_address(), then
+fund_vault(sideWalletAddress, manager, amount). To reclaim that side wallet's
+specific vault, use debit_vault_by_name(its "owner:manager", destination, amount).
+HRAs can use the same calls (owner = the HRA-linked address).
+
 ## Known limitations / TODO on merge
 
 - Deposit uses a fresh owned address (newReceiveAddress) as the vault owner. In

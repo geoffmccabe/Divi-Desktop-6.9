@@ -666,6 +666,13 @@ export const vaultReclaim = (destination: string, amount: number) =>
   invoke<string>("vault_reclaim", { destination, amount });
 export const vaultBalance = () => invoke<number | null>("vault_balance");
 export const vaultManagerAddress = () => invoke<string | null>("vault_manager_address");
+export interface VaultEntry {
+  vault: string; // "owner:manager"
+  value: number;
+}
+export const vaultList = () => invoke<VaultEntry[]>("vault_list");
+export const vaultDebit = (vault: string, destination: string, amount: number) =>
+  invoke<string>("vault_debit", { vault, destination, amount });
 export const recentActivity = () => invoke<Tx[]>("recent_activity");
 // null = node unreachable; [] = genuinely no (more) transactions.
 export const listTransactions = (count: number, from: number) =>

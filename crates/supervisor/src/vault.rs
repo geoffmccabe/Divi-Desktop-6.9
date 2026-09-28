@@ -62,6 +62,44 @@ pub fn vaulted_balance(cfg: &NodeConfig) -> Result<f64, String> {
     Ok(res["Vaulted"].as_f64().unwrap_or(0.0))
 }
 
+/// This wallet's individual vaults, each as (encoding, amount) where encoding
+/// is "owner:manager" and amount is the DIVI held in that vault. Lets a feature
+/// (side wallets, HRAs) enumerate exactly which vaults exist and how much is in
+/// each, and target one for a withdrawal via debit_vault_by_name.
+///
+/// Maps to: getcoinavailability true -> Vaulted.AllVaults[] ({vault, value}).
+pub fn list_vaults(cfg: &NodeConfig) -> Result<Vec<(String, f64)>, String> {
+    let rpc = RpcClient::new(cfg);
+    let res = rpc.call("getcoinavailability", json!([true]))?;
+    let mut out = Vec::new();
+    if let Some(arr) = res["Vaulted"]["AllVaults"].as_array() {
+        for v in arr {
+            if let Some(enc) = v["vault"].as_str() {
+                out.push((enc.to_string(), v["value"].as_f64().unwrap_or(0.0)));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Withdraw `amount` DIVI from ONE specific vault (identified by its
+/// "owner:manager" encoding) to `destination`. Use this when a feature needs to
+/// reclaim from a particular vault rather than across all of the wallet's.
+///
+/// Maps to: debitvaultbyname "owner:manager" destination amount
+pub fn debit_vault_by_name(
+    cfg: &NodeConfig,
+    vault_encoding: &str,
+    destination: &str,
+    amount: f64,
+) -> Result<String, String> {
+    let rpc = RpcClient::new(cfg);
+    let res = rpc.call("debitvaultbyname", json!([vault_encoding, destination, amount]))?;
+    res.as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "the node did not return a withdrawal txid".into())
+}
+
 /// The default vault MANAGER address: the main node's stable, owned account
 /// address (the coins vaulted to it are staked by this node).
 ///
