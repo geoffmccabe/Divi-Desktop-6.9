@@ -215,7 +215,19 @@ export const HEALTH_MIN = 1, HEALTH_MAX = 100_000;
 export const SPEED_MIN = 0.1, SPEED_MAX = 5;
 export const FIRE_EVERY_MIN = 0.25, FIRE_EVERY_MAX = 120;
 export const FIRE_RANGE_MIN = 5, FIRE_RANGE_MAX = 400;
-export const SHOT_SPEED_MIN = 0.1, SHOT_SPEED_MAX = 5;
+/**
+ * ⚠ THE FLOOR IS NOT ARBITRARY and must not be lowered without reading this.
+ *
+ * A slow round is given a longer life so it still reaches the range it was
+ * told to shoot from, but that stretching stops at SHOT_SPEED_FLOOR in
+ * rebelsCombat.ts. Below that an enemy's rounds die before they arrive: at a
+ * tenth speed a fighter reaches 29% of its stated firing range, silently, and
+ * the panel would be offering a setting the fight does not honour.
+ *
+ * It was 0.1, which allowed exactly that. enemyTypes.test.ts asserts this is
+ * at or above the fight's floor, so lowering one without the other fails.
+ */
+export const SHOT_SPEED_MIN = 0.35, SHOT_SPEED_MAX = 5;
 export const DAMAGE_MIN = 0, DAMAGE_MAX = 10;
 /** 0.9 and not 1: at 1 nothing can hurt it, which is not a hard enemy, it is a
  *  broken game with no error message. */
