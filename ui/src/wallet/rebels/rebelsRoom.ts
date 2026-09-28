@@ -30,7 +30,7 @@ import {
 } from "./rebelsWire";
 import { platform } from "./platform/current";
 import { DEFAULT_ROOM_BASE } from "./platform/defaults";
-import { regionOrigin, regionOfRoom, type RegionName } from "./rebelsRegions";
+import { regionOrigin, parseRoom, type RegionName } from "./rebelsRegions";
 
 /** Everything the cockpit needs to know about somebody else in the room. */
 /** One round, as the room announced it. */
@@ -316,7 +316,10 @@ export function joinRoom(opts: Opts): Room {
      the Spikeworld room never sees a coordinate two hundred thousand units from
      its origin and the wire's own sanity check keeps working unchanged. Earth's
      origin is zero, so on Earth these two lines do nothing at all. */
-  let region: RegionName = regionOfRoom(ROOM_NAME);
+  /* ROOM_NAME is a constant in this file, so it parses or the build is
+     wrong; the fallback is there so a typo is a plain Earth room rather than
+     a crash on the first frame. */
+  let region: RegionName = parseRoom(ROOM_NAME)?.region ?? "earth";
   const origin = regionOrigin(region);
   /** Where this ship goes back to when it dies, in the CURRENT region. */
   let homeHere = opts.home.clone();
@@ -408,6 +411,8 @@ export function joinRoom(opts: Opts): Room {
       region = to;
       const o = regionOrigin(to);
       origin.copy(o);
+      /* The region's own game. A named game room is chosen by the picker,
+         which passes the whole name. */
       roomName = to;
       homeHere = home ? home.clone() : o.clone();
       /* Everything held about the old region is about to be wrong by two
@@ -575,11 +580,14 @@ export function joinRoom(opts: Opts): Room {
         retryAt = 0;
         return;
       }
-      /* Anything else starts over from the shared world OF THIS REGION. A
-         player inside Spikeworld whose connection blips belongs back in
+      /* ---- BACK TO THE SAME ROOM, NOT MERELY THE SAME REGION ----
+         A player inside Spikeworld whose connection blips belongs back in
          Spikeworld, not dropped into Earth orbit two hundred thousand units
-         from the ship they are flying. */
-      roomName = region;
+         from the ship they are flying. This used to collapse to the REGION,
+         which was the same thing while a name was only a region - and stops
+         being once a name carries a game: a blip in earth_shakedown would
+         have put them in plain Earth, playing something else, silently.
+         Keeping the name keeps both. */
       if (!resting) backoff();
     };
   }
@@ -603,7 +611,17 @@ export function joinRoom(opts: Opts): Room {
         /* This room is full. Try the one it names; if it names none, every
            overflow room is taken, so wait and try earth again. */
         const next = typeof m.next === "string" ? m.next : "";
-        hopTo = new RegExp(`^${region}(-\\d{1,2})?$`).test(next) ? next : null;
+        /* ---- THE ROOM SAYS WHERE TO GO; WE CHECK IT IS STILL OUR WORLD ----
+           Rebuilding a pattern from the region was fine while a name was only
+           a region and wrong the moment it carries a game: earth-2_shakedown
+           does not match, so a player pushed out of a full room would have
+           stayed in it. Parsed instead, and accepted when it names the same
+           region AND the same game - being shunted into a different game by
+           an overflow is the same silent wrong in a different place. */
+        const mine = parseRoom(roomName);
+        const there = parseRoom(next);
+        hopTo = there && mine && there.region === mine.region && there.game === mine.game
+          ? next : null;
         dflow.note(`room ${roomName} full${hopTo ? `, moving to ${hopTo}` : ", every room full"}`);
         return;
       }
