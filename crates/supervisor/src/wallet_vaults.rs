@@ -159,9 +159,6 @@ pub fn fund(cfg: &NodeConfig, node_id: &str, wallet_id: &str, address: &str, amo
 
     w.addresses[entry_index].vault_pending.push(txid.clone());
     wallets::save(node_id, &store)?;
-    // A same-block registration succeeds only once the funding is mined;
-    // try now anyway so an already-fast chain needs no second step.
-    let _ = settle(cfg, node_id, wallet_id);
     Ok(txid)
 }
 
@@ -193,6 +190,20 @@ pub fn auto_sweep(cfg: &NodeConfig, node_id: &str, testnet: bool) -> Vec<String>
         }
     }
     out
+}
+
+static HOUSEKEEPING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Everything the vault tick does on its own, in one place and never twice
+/// at once: register confirmed fundings, then sweep coins that want staking.
+/// Two overlapping runs could otherwise each build a funding from the same
+/// coins. Called from the app's slow poll only, never from a read.
+pub fn housekeeping(cfg: &NodeConfig, node_id: &str, testnet: bool) {
+    let Ok(_guard) = HOUSEKEEPING.try_lock() else { return };
+    for w in &wallets::load(node_id).wallets {
+        let _ = settle(cfg, node_id, &w.id);
+    }
+    let _ = auto_sweep(cfg, node_id, testnet);
 }
 
 /// Tell the node to stake every vault whose funding has confirmed. Safe to

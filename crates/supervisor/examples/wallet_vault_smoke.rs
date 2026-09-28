@@ -67,5 +67,26 @@ fn main() {
     let vb3 = wallet_vaults::balances(&cfg, &wallets::load(node_id).wallets[0]).expect("vault balances");
     println!("vaulted at the end: {} DIVI", vb3[0].1);
     assert!(vb3[0].1.abs() < 1e-8);
+
+    // Sending more than the plain coins: the wallet spends vault coins as
+    // owner and the remainder goes back into the vault.
+    let plain_before = wallets::balance(&cfg, &wallets::load(node_id).wallets[0]).expect("balance").divi;
+    wallet_vaults::fund(&cfg, node_id, &wid, &addr, Some(4.0), None, true).expect("fund vault again");
+    rpc.call("setgenerate", json!([1])).expect("mine");
+    thread::sleep(Duration::from_secs(2));
+    wallet_vaults::settle(&cfg, node_id, &wid).expect("settle");
+    let plain_now = wallets::balance(&cfg, &wallets::load(node_id).wallets[0]).expect("balance").divi;
+    println!("plain {plain_before} -> {plain_now}, vaulted 4");
+    let want = plain_now + 1.0;
+    let back = rpc.call("getnewaddress", json!([])).expect("addr").as_str().unwrap().to_string();
+    let tx = wallets::send(&cfg, node_id, &wid, &back, want, None, true).expect("send using vault coins");
+    println!("sent {want} DIVI (more than the plain coins) in {tx}");
+    rpc.call("setgenerate", json!([1])).expect("mine");
+    thread::sleep(Duration::from_secs(2));
+    let vb4 = wallet_vaults::balances(&cfg, &wallets::load(node_id).wallets[0]).expect("vault balances");
+    let plain4 = wallets::balance(&cfg, &wallets::load(node_id).wallets[0]).expect("balance").divi;
+    println!("after: plain {plain4}, vaulted {}", vb4[0].1);
+    assert!(plain4.abs() < 1e-8, "all plain coins should have been used first");
+    assert!(vb4[0].1 > 2.99 && vb4[0].1 < 3.0, "about 3 DIVI (4 - 1 - fee) should be back in the vault");
     println!("OK");
 }

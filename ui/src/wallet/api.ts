@@ -913,6 +913,8 @@ export const walletSetVault = (walletId: string, address: string, on: boolean) =
 export const walletWords = (walletId: string, password?: string) => invoke<string[]>("wallet_words", { walletId, password: password || null });
 export const walletRemove = (walletId: string, force: boolean) => invoke<void>("wallet_remove", { walletId, force });
 export const walletSend = (walletId: string, to: string, amount: number, password?: string) => invoke<string>("wallet_send", { walletId, to, amount, password: password || null });
+/** The vault tick's automatic work; the header calls it on a slow beat. */
+export const walletsHousekeeping = () => invoke<void>("wallets_housekeeping");
 /** Put plain coins of one wallet address into its vault (amount omitted = all). */
 export const walletVaultFund = (walletId: string, address: string, amount?: number, password?: string) =>
   invoke<string>("wallet_vault_fund", { walletId, address, amount: amount ?? null, password: password || null });

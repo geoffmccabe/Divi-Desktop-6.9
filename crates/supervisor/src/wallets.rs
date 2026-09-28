@@ -244,12 +244,16 @@ pub(crate) fn save(node_id: &str, store: &Store) -> Result<(), String> {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     }
     let text = serde_json::to_string_pretty(store).map_err(|e| e.to_string())?;
-    std::fs::write(&p, text).map_err(|e| format!("cannot write {}: {e}", p.display()))?;
+    // Write beside, then rename: the file holds every sealed seed, so a crash
+    // or full disk mid-write must leave the old copy, never a truncated one.
+    let tmp = p.with_extension("json.tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
     }
+    std::fs::rename(&tmp, &p).map_err(|e| format!("cannot replace {}: {e}", p.display()))?;
     Ok(())
 }
 
@@ -472,13 +476,58 @@ pub fn remove(node_id: &str, wallet_id: &str, cfg: &NodeConfig, force: bool) -> 
     let mut store = load(node_id);
     let idx = store.wallets.iter().position(|w| w.id == wallet_id).ok_or("no such wallet")?;
     if !force {
-        let bal = balance(cfg, &store.wallets[idx]).map(|b| b.divi).unwrap_or(0.0);
-        if bal > 0.0 {
-            return Err(format!("This wallet still holds {bal} DIVI. Move them out first, or remove anyway."));
+        let w = &store.wallets[idx];
+        let plain = balance(cfg, w).map(|b| b.divi).unwrap_or(0.0);
+        let vaulted: f64 = crate::wallet_vaults::balances(cfg, w).map(|v| v.iter().map(|x| x.1).sum()).unwrap_or(0.0);
+        if plain + vaulted > 0.0 {
+            return Err(format!("This wallet still holds {} DIVI{}. Move them out first, or remove anyway.", plain + vaulted, if vaulted > 0.0 { " (some of it staking in a vault)" } else { "" }));
         }
     }
     store.wallets.remove(idx);
     save(node_id, &store)
+}
+
+/// After a restore only address 0 is known. Look ahead along the chain for
+/// addresses this seed used before (gap of 20, as other wallets do) and add
+/// them, so coins at later addresses are not invisible.
+pub fn discover(cfg: &NodeConfig, node_id: &str, wallet_id: &str, password: Option<&str>, testnet: bool) -> Result<usize, String> {
+    let mut store = load(node_id);
+    let w = store.wallets.iter_mut().find(|w| w.id == wallet_id).ok_or("no such wallet")?;
+    let seed = unlock_seed(w, password)?;
+    let rpc = RpcClient::new(cfg);
+    let mut added = 0;
+    let mut gap = 0;
+    let mut i = w.next_index;
+    while gap < 20 && i < w.next_index + 200 {
+        let key = derive(&seed, i, testnet)?;
+        let addr = address_of(&key, testnet);
+        let used = rpc
+            .call("getaddresstxids", json!([{ "addresses": [addr.clone()] }]))
+            .ok()
+            .and_then(|v| v.as_array().map(|a| !a.is_empty()))
+            .unwrap_or(false)
+            || rpc
+                .call("getaddresstxids", json!([{ "addresses": [addr.clone()] }, true]))
+                .ok()
+                .and_then(|v| v.as_array().map(|a| !a.is_empty()))
+                .unwrap_or(false);
+        if used {
+            for j in w.next_index..=i {
+                let k = derive(&seed, j, testnet)?;
+                w.addresses.push(AddressEntry { index: j, address: address_of(&k, testnet), label: String::new(), vault: true, vault_pending: Vec::new() });
+                added += 1;
+            }
+            w.next_index = i + 1;
+            gap = 0;
+        } else {
+            gap += 1;
+        }
+        i += 1;
+    }
+    if added > 0 {
+        save(node_id, &store)?;
+    }
+    Ok(added)
 }
 
 // ── balances ───────────────────────────────────────────────────────────────
@@ -532,6 +581,17 @@ pub fn send(cfg: &NodeConfig, node_id: &str, wallet_id: &str, to: &str, amount: 
     let v = rpc.call("getaddressutxos", json!([{ "addresses": addrs }]))?;
     let mut utxos: Vec<Utxo> = serde_json::from_value(v).map_err(|_| "could not read the wallet's coins")?;
     utxos.sort_by(|a, b| b.satoshis.cmp(&a.satoshis));
+    // Coins staking in the wallet's vaults can be spent by the owner too, so
+    // nobody has to unstake before sending. Plain coins go first; vault coins
+    // only if needed, and what is left of them goes back into the vault.
+    let vaddrs: Vec<String> = w.addresses.iter().map(|a| a.address.clone()).collect();
+    let vv = rpc.call("getaddressutxos", json!([{ "addresses": vaddrs }, true])).unwrap_or(json!([]));
+    let mut vault_utxos: Vec<Utxo> = serde_json::from_value(vv).unwrap_or_default();
+    vault_utxos.retain(|u| u.script.len() == 100 && u.script.starts_with("6314"));
+    vault_utxos.sort_by(|a, b| b.satoshis.cmp(&a.satoshis));
+    let plain_total: i64 = utxos.iter().map(|u| u.satoshis).sum();
+    let vault_total: i64 = vault_utxos.iter().map(|u| u.satoshis).sum();
+    utxos.extend(vault_utxos);
 
     // Select, largest first, until amount + fee is covered.
     let mut inputs: Vec<&Utxo> = Vec::new();
@@ -547,16 +607,22 @@ pub fn send(cfg: &NodeConfig, node_id: &str, wallet_id: &str, to: &str, amount: 
         }
     }
     if have < want_sat + fee_sat {
-        return Err(format!("Not enough in this wallet: {} DIVI available.", have as f64 / 100_000_000.0));
+        return Err(format!("Not enough in this wallet: {} DIVI available ({} of it staking).", (plain_total + vault_total) as f64 / 100_000_000.0, vault_total as f64 / 100_000_000.0));
     }
     let change_sat = have - want_sat - fee_sat;
+    // Change goes back where the last-added coin came from: into the vault
+    // if a vault coin was needed (so the remainder keeps staking), else to
+    // the wallet's first address.
+    let vault_change = inputs.last().filter(|u| u.script.starts_with("6314")).map(|u| u.script.clone());
     let change_to = w.addresses[0].address.clone();
 
     let ins: Vec<serde_json::Value> = inputs.iter().map(|u| json!({ "txid": u.txid, "vout": u.output_index })).collect();
     let mut outs = serde_json::Map::new();
     outs.insert(to.to_string(), json!(want_sat as f64 / 100_000_000.0));
     if change_sat > 0 {
-        if change_to == to {
+        if let Some(script) = vault_change {
+            outs.insert(script, json!(change_sat as f64 / 100_000_000.0));
+        } else if change_to == to {
             // createrawtransaction refuses a duplicate output address: fold in.
             outs.insert(to.to_string(), json!((want_sat + change_sat) as f64 / 100_000_000.0));
         } else {

@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  walletAddresses, walletsList, walletCreate, walletNewAddress, walletSetLabel, walletSetVault, walletWords, walletRemove,
+  walletAddresses, walletsList, walletCreate, walletRestore, walletNewAddress, walletSetLabel, walletSetVault, walletWords, walletRemove,
   walletVaultFund, walletVaultReclaim,
   type ExtraWallet, type AddrInfo,
 } from "./api";
 import { fmtDivi } from "../status";
 import { hraMyNames } from "./hra/api";
+import { loadNames } from "./addressNames";
 
 // The wallets under one node in Settings > My Nodes
 // (docs/PARALLEL-WALLETS-PLAN.md, Phase 1).
@@ -53,7 +54,7 @@ function AddressRow({
               if (e.key === "Enter") { await onLabel(draft); setEditing(false); }
               if (e.key === "Escape") { setDraft(label); setEditing(false); }
             }}
-            onBlur={async () => { await onLabel(draft); setEditing(false); }}
+            onBlur={async () => { if (draft !== label) await onLabel(draft); setEditing(false); }}
           />
         ) : (
           <button type="button" className="nw-addr-namebtn" onClick={() => onLabel && setEditing(true)} title={onLabel ? "Click to name" : undefined}>
@@ -112,6 +113,9 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
   const [newLabel, setNewLabel] = useState("");
   const [newPass, setNewPass] = useState("");
   const [usePass, setUsePass] = useState(false);
+  /* "I already have twelve words": restore instead of create. */
+  const [restoring, setRestoring] = useState(false);
+  const [phrase, setPhrase] = useState("");
   const [words, setWords] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
@@ -147,9 +151,14 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
   const create = async () => {
     setBusy(true); setNote("");
     try {
-      const r = await walletCreate(newLabel, usePass ? newPass : undefined);
-      setWords(r.words);
-      setConfirm(false); setNewLabel(""); setNewPass(""); setUsePass(false);
+      if (restoring) {
+        await walletRestore(newLabel, phrase, usePass ? newPass : undefined);
+        setPhrase("");
+      } else {
+        const r = await walletCreate(newLabel, usePass ? newPass : undefined);
+        setWords(r.words);
+      }
+      setConfirm(false); setNewLabel(""); setNewPass(""); setUsePass(false); setRestoring(false);
       await refresh();
     } catch (e) {
       setNote(String(e));
@@ -203,6 +212,9 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
   });
 
   const total = wallets.reduce((s, w) => s + w.divi + w.vaulted, 0);
+  /* The node's own address names live in My Addresses (top right); shown
+     here read-only so the same address reads the same everywhere. */
+  const nodeNames = loadNames();
   const main = staking.find((a) => a.isMain) ?? staking[0];
 
   return (
@@ -221,21 +233,21 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
           <span className="nw-wallet-sub">the node's own wallet; everything in it stakes</span>
         </div>
         {main ? (
-          <AddressRow address={main.address} label="" main hra={names[main.address] ?? null} onGetHra={() => onGetHra(main.address, "Staking Wallet")} />
+          <AddressRow address={main.address} label={nodeNames[main.address] ?? ""} main hra={names[main.address] ?? null} onGetHra={() => onGetHra(main.address, "Staking Wallet")} />
         ) : (
           <p className="set-note">Reading the node's addresses…</p>
         )}
         {staking.filter((a) => a !== main).slice(0, 6).map((a) => (
-          <AddressRow key={a.address} address={a.address} label="" hra={names[a.address] ?? null} onGetHra={() => onGetHra(a.address, "Staking Wallet")} />
+          <AddressRow key={a.address} address={a.address} label={nodeNames[a.address] ?? ""} hra={names[a.address] ?? null} onGetHra={() => onGetHra(a.address, "Staking Wallet")} />
         ))}
-        {staking.length > 7 && <p className="set-note">…and {staking.length - 7} more, under My Addresses at the top right.</p>}
+        {staking.length > 7 && <p className="set-note">…and {staking.length - 7} more, under My Addresses at the top right (where these addresses are named).</p>}
       </div>
 
       {wallets.map((w) => (
         <div key={w.id} className="nw-wallet nw-extra" style={{ marginLeft: INDENT }}>
           <div className="nw-wallet-head">
             <b>{w.label}</b>
-            <span className="nw-wallet-bal">{w.balanceKnown ? `${fmtDivi(w.divi + w.vaulted)} DIVI${w.vaulted > 0 ? ` (${fmtDivi(w.vaulted)} staking)` : ""}` : "balance unknown (node not answering)"}</span>
+            <span className="nw-wallet-bal">{w.balanceKnown ? `${fmtDivi(w.divi + w.vaulted)} DIVI${w.vaulted > 0 ? ` (${fmtDivi(w.vaulted)} staking)` : ""}` : "balance unavailable right now"}</span>
             {w.lockedWithPassword && <span className="nw-wallet-sub">own password</span>}
             <span className="nw-wallet-tools">
               <button type="button" className="wl-btn nw-mini" disabled={busy} onClick={() => void addAddress(w)}>New address</button>
@@ -284,13 +296,22 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
       {confirm && createPortal(
         <div className="poe-modal-backdrop" onClick={() => !busy && setConfirm(false)} role="presentation">
           <div className="poe-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Create a new wallet">
-            <div className="poe-modal-head"><h3>Create a new Wallet?</h3></div>
+            <div className="poe-modal-head"><h3>{restoring ? "Bring back a wallet" : "Create a new Wallet?"}</h3></div>
             <div className="poe-modal-body">
-              <p className="wl-note">
-                A separate wallet with its own twelve words, beside the staking wallet. You will see the
-                words once; write them down.
-              </p>
+              {restoring ? (
+                <p className="wl-note">
+                  Type its twelve words. The wallet's addresses and coins are found again on the chain.
+                </p>
+              ) : (
+                <p className="wl-note">
+                  A separate wallet with its own twelve words, beside the staking wallet. You will see the
+                  words once; write them down.
+                </p>
+              )}
               <input className="wl-input" placeholder="Name (e.g. Kids, Savings, Game pool)" value={newLabel} maxLength={40} onChange={(e) => setNewLabel(e.target.value)} />
+              {restoring && (
+                <textarea className="wl-input nw-phrase" rows={3} placeholder="twelve words, in order" value={phrase} spellCheck={false} autoCapitalize="off" onChange={(e) => setPhrase(e.target.value)} />
+              )}
               <label className="pw-check">
                 <input type="checkbox" checked={usePass} onChange={(e) => setUsePass(e.target.checked)} />
                 Lock this wallet with its own password
@@ -299,10 +320,13 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
                 <input className="wl-input" type="password" placeholder="Wallet password" value={newPass} onChange={(e) => setNewPass(e.target.value)} />
               )}
               <div className="upd-actions">
-                <button type="button" className="upd-go" disabled={busy || (usePass && newPass.length < 4)} onClick={() => void create()}>
-                  {busy ? "Creating…" : "Confirm"}
+                <button type="button" className="upd-go" disabled={busy || (usePass && newPass.length < 4) || (restoring && phrase.trim().split(/\s+/).length !== 12)} onClick={() => void create()}>
+                  {busy ? (restoring ? "Finding it…" : "Creating…") : "Confirm"}
                 </button>
                 <button type="button" className="wl-btn" disabled={busy} onClick={() => setConfirm(false)}>Cancel</button>
+                <button type="button" className="wl-link nw-swap" disabled={busy} onClick={() => setRestoring((r) => !r)}>
+                  {restoring ? "Make a new one instead" : "I already have twelve words"}
+                </button>
               </div>
             </div>
           </div>

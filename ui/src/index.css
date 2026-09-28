@@ -2694,3 +2694,5 @@ code, .mono { font-family: var(--font-mono); }
 .nw-pending { color: hsl(var(--muted-foreground)); font-style: italic; }
 .nw-vault-wrap { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wd-staking { color: hsl(var(--success)); font-weight: 500; }
+.nw-phrase { font-family: var(--font-mono); font-size: 0.86rem; resize: vertical; }
+.nw-swap { margin-left: auto; font-size: 0.8rem; }

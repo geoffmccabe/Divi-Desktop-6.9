@@ -150,3 +150,25 @@ main staking address.
   asks for the password as Send does today.
 - Vault reclaim for an external owner needs node work; do not ship the
   checkbox before reclaim works.
+
+## Audit 2026-Sep-28 (69.13.39): data flow and UI/UX
+
+Found and fixed:
+- Store file written in place: a crash mid-write could truncate every
+  sealed seed. Now write-beside-and-rename.
+- Vault housekeeping (register + sweep) ran inside the wallets READ, from
+  three panels on 8-12 s clocks, unserialised: two overlapping sweeps could
+  build two fundings from the same coins. Now one `wallets_housekeeping`
+  command, mutex-guarded, on the header's 60 s beat; reads never write.
+- A send had to be preceded by Unstake. Now `send` spends vault coins as
+  owner when plain coins run short, and the remainder returns to the vault
+  (proven on regtest). Send's figure = plain + staking.
+- Remove ignored vaulted coins in its "still holds" check.
+- Header put extra wallets' staking coins under Spendable; now they join
+  Staking, the same split as the node's own. Dropdown shows node total.
+- Restore had no UI, and restore found only address 0: added "I already
+  have twelve words" to the modal and `discover` (gap 20) after restore.
+- Fund() tried `addvault` before the funding could confirm (a wasted call
+  and a node log line each time).
+- Staking Wallet rows now show the names given in My Addresses; label edit
+  no longer saves twice on Enter; "balance unknown" wording.

@@ -1436,14 +1436,6 @@ async fn wallets_list() -> Vec<WalletDto> {
     tauri::async_runtime::spawn_blocking(|| {
         let Ok(cfg) = NodeConfig::load() else { return vec![] };
         let node_id = active_node_id();
-        // The vault tick's housekeeping rides on this poll: register confirmed
-        // fundings with the node, then sweep plain coins that want staking.
-        // Both are no-ops when there is nothing to do, and never fail the list.
-        let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
-        for w in &dd69_supervisor::wallets::load(&node_id).wallets {
-            let _ = dd69_supervisor::wallet_vaults::settle(&cfg, &node_id, &w.id);
-        }
-        let _ = dd69_supervisor::wallet_vaults::auto_sweep(&cfg, &node_id, testnet);
         let store = dd69_supervisor::wallets::load(&node_id);
         store.wallets.iter().map(|w| wallet_dto(&cfg, w)).collect()
     }).await.unwrap_or_default()
@@ -1468,7 +1460,12 @@ async fn wallet_restore(label: String, phrase: String, password: Option<String>)
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load()?;
         let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
-        let w = dd69_supervisor::wallets::restore(&active_node_id(), &label, &phrase, password.as_deref(), testnet)?;
+        let node_id = active_node_id();
+        let w = dd69_supervisor::wallets::restore(&node_id, &label, &phrase, password.as_deref(), testnet)?;
+        // Find the addresses this seed used before, so their coins show.
+        let _ = dd69_supervisor::wallets::discover(&cfg, &node_id, &w.id, password.as_deref(), testnet);
+        let store = dd69_supervisor::wallets::load(&node_id);
+        let w = store.wallets.into_iter().find(|x| x.id == w.id).unwrap_or(w);
         Ok(wallet_dto(&cfg, &w))
     }).await.map_err(|e| e.to_string())?
 }
@@ -1516,6 +1513,18 @@ async fn wallet_send(wallet_id: String, to: String, amount: f64, password: Optio
         let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
         dd69_supervisor::wallets::send(&cfg, &active_node_id(), &wallet_id, &to, amount, password.as_deref(), testnet)
     }).await.map_err(|e| e.to_string())?
+}
+
+/// The vault tick's automatic work (register confirmed deposits, sweep
+/// coins that want staking). The header calls it on a slow beat; reads
+/// like wallets_list never write.
+#[tauri::command]
+async fn wallets_housekeeping() {
+    let _ = tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else { return };
+        let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
+        dd69_supervisor::wallet_vaults::housekeeping(&cfg, &active_node_id(), testnet);
+    }).await;
 }
 
 /// Put `amount` (None = all plain coins) of one wallet address into its
@@ -3792,6 +3801,7 @@ fn main() {
             wallet_words,
             wallet_remove,
             wallet_send,
+            wallets_housekeeping,
             wallet_vault_fund,
             wallet_vault_reclaim,
             remember_password,

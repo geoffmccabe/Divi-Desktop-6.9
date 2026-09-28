@@ -7,18 +7,22 @@ import { formatFiat, useDiviRate } from "./value";
 // first (the node's own), then each extra wallet, each with DIVI and its
 // value in the display currency, the way multi-account Solana wallets do.
 
-export function WalletsDropdown({ open, nodeSpendable, wallets }: { open: boolean; nodeSpendable: number; wallets: ExtraWallet[] }) {
+export function WalletsDropdown({ open, nodeSpendable, nodeStaking, wallets }: { open: boolean; nodeSpendable: number; nodeStaking: number; wallets: ExtraWallet[] }) {
   const rate = useDiviRate();
   const fiat = (d: number) => (rate ? formatFiat(d * rate.per, rate.code) : "");
-  const total = nodeSpendable + wallets.reduce((s, w) => s + w.divi + w.vaulted, 0);
+  const nodeAll = nodeSpendable + nodeStaking;
+  const total = nodeAll + wallets.reduce((s, w) => s + w.divi + w.vaulted, 0);
   return (
     <div className={"addr-dropdown" + (open ? " addr-dropdown-open" : "")} aria-hidden={!open}>
       <div className="addr-dropdown-inner">
         <ul className="addr-list">
           <li className="addr-row wd-row">
             <span className="wd-name">Staking Wallet <small>this node</small></span>
-            <span className="wd-divi">{fmtDivi(nodeSpendable)} DIVI</span>
-            <span className="wd-fiat">{fiat(nodeSpendable)}</span>
+            <span className="wd-divi">
+              {fmtDivi(nodeAll)} DIVI
+              {nodeStaking > 0 && <small className="wd-staking"> {fmtDivi(nodeStaking)} staking</small>}
+            </span>
+            <span className="wd-fiat">{fiat(nodeAll)}</span>
           </li>
           {wallets.map((w) => (
             <li key={w.id} className="addr-row wd-row">

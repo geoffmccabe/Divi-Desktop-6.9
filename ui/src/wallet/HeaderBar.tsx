@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { walletBalance, walletAddresses, walletsList, lotteryInfo, type Balance, type AddrInfo, type LotteryInfo, type ExtraWallet } from "./api";
+import { walletBalance, walletAddresses, walletsList, walletsHousekeeping, lotteryInfo, type Balance, type AddrInfo, type LotteryInfo, type ExtraWallet } from "./api";
 import { nodeStatus } from "../bridge";
 import { fmtDiviParts } from "../status";
 import { AddressDropdown } from "./AddressDropdown";
@@ -111,6 +111,12 @@ export function HeaderBar() {
     pollLight();
     pollAddrs();
     const idLight = setInterval(pollLight, 12000);
+    /* The vault tick's housekeeping (register confirmed deposits, sweep
+       coins that want staking) on its own slow beat, from the one panel
+       that is always mounted. Reads never do this. */
+    const house = () => walletsHousekeeping().catch(() => {});
+    house();
+    const idHouse = setInterval(house, 60000);
     /* Ten minutes, not ninety seconds: this walks the wallet's history on
        the node, and addresses change only when the owner makes one. */
     const idAddrs = setInterval(pollAddrs, 600000);
@@ -118,6 +124,7 @@ export function HeaderBar() {
       alive = false;
       clearInterval(idLight);
       clearInterval(idAddrs);
+      clearInterval(idHouse);
     };
   }, []);
 
@@ -132,8 +139,12 @@ export function HeaderBar() {
 
   const main = addrs?.find((a) => a.isMain) ?? addrs?.[0] ?? null;
   const syncing = caughtUp === false && !nodeDown;
-  const extra = wallets.reduce((s, w) => s + w.divi + w.vaulted, 0);
+  /* Extra wallets: their plain coins join Spendable, their vaulted coins
+     join Staking, the same split the node's own figures use. */
+  const extra = wallets.reduce((s, w) => s + w.divi, 0);
+  const extraStaking = wallets.reduce((s, w) => s + w.vaulted, 0);
   const spendAll = bal ? bal.spendable + extra : null;
+  const stakingAll = bal ? bal.staking + extraStaking : 0;
   const spend = spendAll != null ? fmtDiviParts(spendAll) : null;
   const fiat = useDiviValue(spendAll != null && !syncing ? spendAll : null);
 
@@ -224,7 +235,7 @@ export function HeaderBar() {
         </span>
         )}
         {wallets.length > 0 && bal && (
-          <WalletsDropdown open={openPanel === "wallets"} nodeSpendable={bal.spendable} wallets={wallets} />
+          <WalletsDropdown open={openPanel === "wallets"} nodeSpendable={bal.spendable} nodeStaking={bal.staking} wallets={wallets} />
         )}
       </div>
 
@@ -248,15 +259,15 @@ export function HeaderBar() {
                 </span>
                 <span className="bl-amt bl-amt-staking bl-sync-amt">STILL SYNCING…</span>
               </>
-            ) : bal && bal.staking > 0 ? (
-              // Staking: green dot + the amount.
+            ) : bal && stakingAll > 0 ? (
+              // Staking: green dot + the amount (node's own plus vaulted extras).
               <>
                 <span className="bl-label">
                   <span className="stake-dot on" title="Staking" />
                   Staking <span className={"addr-chevron" + (openPanel === "staking" ? " up" : "")}>▾</span>
                 </span>
                 <span className="bl-amt bl-amt-staking">
-                  {fmtDiviParts(bal.staking).whole} <em>DIVI</em>
+                  {fmtDiviParts(stakingAll).whole} <em>DIVI</em>
                 </span>
               </>
             ) : bal && bal.spendable > 0 ? (
