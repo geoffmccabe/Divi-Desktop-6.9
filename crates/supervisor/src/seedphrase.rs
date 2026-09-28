@@ -99,10 +99,19 @@ fn checksum_ok(words: &[String]) -> bool {
 /// The 64-byte seed the node derives from a phrase, as lower-case hex. This
 /// is the value `dumphdinfo` reports as `hdseed` and `-hdseed` restores from.
 pub fn to_seed_hex(words: &[String], passphrase: &str) -> String {
+    to_seed_bytes(words, passphrase).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The same 64 bytes, raw.
+pub fn to_seed_bytes(words: &[String], passphrase: &str) -> Vec<u8> {
     let mnemonic = words.join(" ");
     let salt = format!("mnemonic{passphrase}");
-    let seed = pbkdf2_hmac_sha512(mnemonic.as_bytes(), salt.as_bytes(), 2048, 64);
-    seed.iter().map(|b| format!("{b:02x}")).collect()
+    pbkdf2_hmac_sha512(mnemonic.as_bytes(), salt.as_bytes(), 2048, 64)
+}
+
+/// PBKDF2-HMAC-SHA512, for anything else that needs a key from a password.
+pub fn pbkdf2_sha512(password: &[u8], salt: &[u8], rounds: u32, len: usize) -> Vec<u8> {
+    pbkdf2_hmac_sha512(password, salt, rounds, len)
 }
 
 fn hmac_sha512(key: &[u8], msg: &[u8]) -> [u8; 64] {

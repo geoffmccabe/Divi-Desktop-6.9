@@ -31,6 +31,7 @@ pub mod multisig;
 pub mod security;
 pub mod bip39_words;
 pub mod seedphrase;
+pub mod wallets;
 pub mod restore;
 pub mod setup;
 pub mod setuplog;
