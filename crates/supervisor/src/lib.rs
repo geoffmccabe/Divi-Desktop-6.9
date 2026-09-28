@@ -25,3 +25,4 @@ pub mod report;
 pub mod rpc;
 pub mod state;
 pub mod wallet;
+pub mod vault;

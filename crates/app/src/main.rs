@@ -2,7 +2,7 @@
 // supervisor does the real work; this exposes its status to the React UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use dd69_supervisor::{bearer, c2pa_read, chaintips, chart, coins, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, skinbuy, wallet};
+use dd69_supervisor::{bearer, c2pa_read, chaintips, chart, coins, config, config::NodeConfig, escrow, fastsend, mempool, multisig, names, network, payreq, poe, price, report, security, skinbuy, vault, wallet};
 use serde::Serialize;
 
 // Serves community app bundles over their own url scheme. Kept in its own module
@@ -152,6 +152,58 @@ async fn validate_address(address: String) -> bool {
     })
     .await
     .unwrap_or(false)
+}
+
+// --- Vaults (on-chain, self-custody). Coins stay the owner's; the main node
+// only stakes them. fund/reclaim MOVE money, so the wallet must be unlocked
+// first via the normal unlock flow (unlock_wallet); we never take a passphrase
+// here. ---
+
+/// Fund a vault: move `amount` DIVI into a vault owned by `owner` and staked by
+/// `manager` (the main node's address). Returns the funding txid.
+#[tauri::command]
+async fn vault_fund(owner: String, manager: String, amount: f64) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        vault::fund_vault(&cfg, &owner, &manager, amount)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Reclaim `amount` DIVI from the wallet's vaults back to `destination`.
+#[tauri::command]
+async fn vault_reclaim(destination: String, amount: f64) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        vault::reclaim_vault_funds(&cfg, &destination, amount)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// How much of this wallet's coins are currently in vaults, in DIVI.
+#[tauri::command]
+async fn vault_balance() -> Option<f64> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().ok()?;
+        vault::vaulted_balance(&cfg).ok()
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+/// The main node's manager (staking) address that extra wallets vault to.
+#[tauri::command]
+async fn vault_manager_address() -> Option<String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().ok()?;
+        vault::manager_address(&cfg)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 /// Does the connected node own any of these addresses? Gates admin-only UI.
@@ -1968,6 +2020,10 @@ fn main() {
             recent_activity,
             list_transactions,
             validate_address,
+            vault_fund,
+            vault_reclaim,
+            vault_balance,
+            vault_manager_address,
             wallet_owns,
             signing_address,
             wallet_sign,

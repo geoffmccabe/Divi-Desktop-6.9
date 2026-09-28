@@ -1,0 +1,82 @@
+/* Vaults panel. Deliberately leans on the shared wallet classes (balance-card,
+   wl-note, wl-btn, activity, wl-empty) so it reads like Overview and
+   Transaction History. Only the bits those don't cover live here. */
+
+.vault {
+  padding: 4px 2px 24px;
+}
+
+.vault-intro {
+  margin-bottom: 14px;
+}
+
+/* Tabs. Styled to echo the History filter pills so the app feels of a piece. */
+.vault-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.vault-tab {
+  padding: 6px 16px;
+  border-radius: 999px;
+  border: 1px solid hsl(var(--border));
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.vault-tab-on {
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  border-color: hsl(var(--primary));
+}
+
+/* Preview / "not switched on yet" banner. */
+.vault-banner {
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--muted) / 0.35);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.vault-section-head {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  margin: 18px 0 8px;
+}
+
+.vault-fee-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 8px 0;
+  border-top: 1px solid hsl(var(--border));
+  font-size: 14px;
+}
+.vault-fee-row strong {
+  color: hsl(var(--success));
+}
+
+.vault-actions {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0 4px;
+}
+
+/* A short "how it works" list, used on both tabs. */
+.vault-how {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: hsl(var(--muted-foreground));
+}
+.vault-how li {
+  margin-bottom: 4px;
+}

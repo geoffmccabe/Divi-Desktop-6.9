@@ -11,6 +11,7 @@ import { Overview } from "./wallet/Overview";
 import { SendPanel } from "./wallet/SendPanel";
 import { ReceivePanel } from "./wallet/ReceivePanel";
 import { ActivityList } from "./wallet/ActivityList";
+import { VaultsPanel } from "./wallet/VaultsPanel";
 import { AddressBook } from "./wallet/AddressBook";
 import { CommunityApps } from "./apps/CommunityApps";
 import { BuilderPanel } from "./builder/BuilderPanel";
@@ -34,6 +35,7 @@ const VIEWS: Record<string, ComponentType> = {
   send: SendPanel,
   receive: ReceivePanel,
   history: ActivityList,
+  vaults: VaultsPanel,
   agent: AgentPanel,
   timestamp: TimestampPanel,
   collectibles: CollectiblesPanel,

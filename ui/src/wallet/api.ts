@@ -375,6 +375,16 @@ export interface StakeStart {
 export const startStaking = (passphrase?: string) => invoke<StakeStart>("start_staking", { passphrase: passphrase ?? null });
 export const walletAddresses = () => invoke<AddrInfo[]>("wallet_addresses");
 export const newReceiveAddress = () => invoke<string>("new_receive_address");
+
+// Vaults (on-chain, self-custody). fund/reclaim move money, so the wallet must
+// be unlocked first (same flow as Send). The node returns an error string if
+// it is locked, which surfaces to the caller.
+export const vaultFund = (owner: string, manager: string, amount: number) =>
+  invoke<string>("vault_fund", { owner, manager, amount });
+export const vaultReclaim = (destination: string, amount: number) =>
+  invoke<string>("vault_reclaim", { destination, amount });
+export const vaultBalance = () => invoke<number | null>("vault_balance");
+export const vaultManagerAddress = () => invoke<string | null>("vault_manager_address");
 export const recentActivity = () => invoke<Tx[]>("recent_activity");
 // null = node unreachable; [] = genuinely no (more) transactions.
 export const listTransactions = (count: number, from: number) =>
