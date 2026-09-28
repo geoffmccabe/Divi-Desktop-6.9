@@ -70,3 +70,21 @@ end;
 $$;
 
 grant execute on function public.rebels_enemies_save(text, jsonb) to anon, authenticated;
+
+-- ---- SAMPLES, so there is something to look at ----
+-- Geoff: "you can make 2 more sample ones and name them something that sounds
+-- like a space fighter game quest. Make a nice progression... so that helps us
+-- test the database and then I can change them or delete them or whatever."
+--
+-- ORDINARY ROWS, not built-ins, which is the point of seeding them here
+-- rather than putting them in the code: they can be edited, renamed or
+-- deleted from the panel like anything else. ON CONFLICT DO NOTHING, so
+-- re-running this migration will not resurrect something deliberately thrown
+-- away or overwrite an edit.
+--
+-- Generated from ui/src/wallet/rebels/sampleContent.ts, which is the readable
+-- version with the reasoning in it. sampleContent.test.ts checks they are a
+-- real progression rather than merely valid.
+
+insert into public.rebels_enemies (id, config) values ('live', $seed$[{"id":"shrike","name":"Shrike","behaviour":"fighter","colour":16751164,"fireColour":16765562,"shieldMax":55,"resistance":0,"speed":1.9,"fireEvery":1.1,"fireRange":60,"shotSpeed":1.35,"damage":0.6,"worth":1.5},{"id":"warden","name":"Warden","behaviour":"fighter","colour":8360872,"fireColour":10477823,"shieldMax":1400,"resistance":0.5,"speed":0.55,"fireEvery":3.4,"fireRange":95,"shotSpeed":0.85,"damage":3,"worth":8}]$seed$::jsonb)
+  on conflict (id) do nothing;

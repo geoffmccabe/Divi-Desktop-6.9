@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  waveDefence, validateGame, validateGames, gameSeconds, gameMaxAward,
+  waveDefence, validateGame, gameSeconds, gameMaxAward,
   PLACES, PLACES_LIVE, ARRIVALS, MAX_REWARD_DIVI, MAX_ROUNDS,
   ROUND_MIN_SECONDS, ROUND_MAX_SECONDS, ROUND_MAX_ENEMIES, BIAS_MIN, BIAS_MAX,
   type GameType, type Round, type Spawn, type PlaceId, type Arrival,
 } from "../../wallet/rebels/gameTypes";
-import { fetchGameTypes, saveGameTypes } from "../../wallet/rebels/gameTypesRemote";
+import { fetchGameTypes, saveGameType, deleteGameType } from "../../wallet/rebels/gameTypesRemote";
 import { fetchEnemyTypes } from "../../wallet/rebels/enemyTypesRemote";
 import { cardFromFile } from "../../wallet/rebels/gameImage";
 import type { EnemyType } from "../../wallet/rebels/enemyTypes";
@@ -53,8 +53,7 @@ export function RebelsGamesPanel() {
   const known = useMemo(() => ["fighters", ...enemies.map((e) => e.id)], [enemies]);
   const check = validateGame(chosen, known);
   const errors = "errors" in check ? check.errors : [];
-  const setCheck = validateGames(saved, known);
-  const canSave = !("errors" in setCheck) && secret.trim().length > 0;
+  const canSave = !locked && !("errors" in check) && secret.trim().length > 0;
 
   const edit = (f: (g: GameType) => GameType) =>
     setSaved((l) => l.map((g) => (g.id === pick ? f(g) : g)));
@@ -74,7 +73,19 @@ export function RebelsGamesPanel() {
     setSaved((l) => [...l, g]);
     setPick(g.id);
   };
-  const remove = () => { setSaved((l) => l.filter((g) => g.id !== pick)); setPick(builtIn.id); };
+  /* Deleted in the database too, not only here: a single-row design got that
+     for free and a row per game does not. Removed from the list either way, so
+     a delete that fails to reach the server still leaves the panel honest
+     about having tried, and says so. */
+  const remove = async () => {
+    const id = pick;
+    const name = chosen.name;
+    setSaved((l) => l.filter((g) => g.id !== id));
+    setPick(builtIn.id);
+    if (!secret.trim()) { setStatus(`removed "${name}" here; type the admin secret to remove it live`); return; }
+    const r = await deleteGameType(secret.trim(), id);
+    setStatus("ok" in r ? `deleted "${name}"` : `removed here, but the server refused: ${r.error}`);
+  };
 
   const pickCard = async (f: File | undefined) => {
     if (!f) return;
@@ -88,13 +99,18 @@ export function RebelsGamesPanel() {
     }
   };
 
+  /* ---- SAVING IS PER GAME, not the whole list ----
+     One row per game, so editing one writes one row. That matters when two
+     people are editing: rewriting the whole list would quietly undo whatever
+     the other had just saved. */
   const save = async () => {
-    if ("errors" in setCheck) { setStatus(`refused: ${setCheck.errors[0]}`); return; }
+    if (locked) return;
+    if ("errors" in check) { setStatus(`refused: ${check.errors[0]}`); return; }
     setStatus("saving");
     try { localStorage.setItem(SECRET_KEY, secret); } catch { /* fine */ }
-    const r = await saveGameTypes(secret.trim(), saved, known);
+    const r = await saveGameType(secret.trim(), chosen, known);
     setStatus("ok" in r
-      ? "saved: rooms pick it up within ten minutes, cockpits on their next flight"
+      ? `saved "${chosen.name}": rooms pick it up within ten minutes, cockpits on their next flight`
       : `refused: ${r.error}`);
     if ("ok" in r) setSource("live games");
   };
@@ -182,7 +198,7 @@ export function RebelsGamesPanel() {
               onChange={(e) => edit((g) => ({ ...g, name: e.target.value }))} />
             <span className="rg-id">{chosen.id}</span>
             <button type="button" className="rg-btn" onClick={copy}>copy this one</button>
-            <button type="button" className="rg-btn rg-danger" disabled={locked} onClick={remove}>delete</button>
+            <button type="button" className="rg-btn rg-danger" disabled={locked} onClick={() => void remove()}>delete</button>
           </div>
 
           {locked ? (
@@ -302,7 +318,7 @@ export function RebelsGamesPanel() {
         <input className="wl-input" type="password" placeholder="admin secret"
           value={secret} onChange={(e) => setSecret(e.target.value)} />
         <button type="button" className="rg-btn rg-primary" disabled={!canSave} onClick={() => void save()}>
-          SAVE LIVE
+          SAVE THIS GAME
         </button>
       </div>
     </div>
