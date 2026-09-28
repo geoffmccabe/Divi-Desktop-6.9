@@ -1,0 +1,47 @@
+/* Admin: Rebels Enemies. A list on the left, the one being edited on the
+   right, in the game's own colours. Same tokens as rebels-drops.css, so a skin
+   change moves both. */
+.re-panel { display: flex; flex-direction: column; gap: 14px; }
+.re-split { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 720px) { .re-split { grid-template-columns: minmax(0, 1fr); } }
+
+.re-list { display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow-y: auto;
+  padding: 8px; border-radius: 10px; border: 1px solid hsl(var(--border)); background: hsl(var(--card) / 0.5); }
+.re-group { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: hsl(var(--muted-foreground)); padding: 6px 4px 2px; }
+.re-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; cursor: pointer;
+  padding: 5px 8px; border-radius: 7px; font-size: 0.82rem;
+  border: 1px solid transparent; background: transparent; color: hsl(var(--foreground)); }
+.re-item:hover { background: hsl(var(--secondary)); }
+.re-item.on { border-color: #ff45d0; background: hsl(var(--secondary)); }
+.re-swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.re-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.re-locked { font-size: 0.68rem; color: hsl(var(--muted-foreground)); }
+
+.re-edit { display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 10px;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--card) / 0.5); }
+.re-edit-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.re-name { flex: 1; min-width: 140px; font-weight: 600; }
+.re-id { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+
+.re-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 10px; }
+.re-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.re-field > span { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+  color: hsl(var(--muted-foreground)); }
+.re-field .wl-input { width: 100%; min-width: 0; padding: 4px 6px; font-size: 0.85rem; }
+.re-hint { font-size: 0.7rem; color: hsl(var(--muted-foreground)); }
+.re-colour { display: flex; align-items: center; gap: 6px; }
+.re-colour input[type="color"] { width: 34px; height: 26px; padding: 0; border-radius: 6px;
+  border: 1px solid hsl(var(--border)); background: transparent; cursor: pointer; }
+
+.re-errors { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px;
+  border: 1px solid #ff7a8a; background: #ff7a8a14; }
+.re-errors span { font-size: 0.78rem; color: #ff7a8a; }
+
+.re-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.re-foot .wl-note { margin-right: auto; }
+.re-btn { padding: 5px 10px; border-radius: 7px; font-size: 0.78rem; letter-spacing: 0.04em; cursor: pointer;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--secondary)); color: hsl(var(--foreground)); }
+.re-btn:disabled { opacity: 0.45; cursor: default; }
+.re-btn.re-danger { color: #ff7a8a; }
+.re-btn.re-primary { background: #ff45d0; border-color: #ff45d0; color: #14040f; font-weight: 700; }

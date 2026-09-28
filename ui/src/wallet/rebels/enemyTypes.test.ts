@@ -70,6 +70,15 @@ function ok(name: string, cond: boolean, extra = ""): void {
      by("drone1").fireRange === DRONE_FIRE_RANGE, `${by("drone1").fireRange} against ${DRONE_FIRE_RANGE}`);
   ok("and its shots are slower", by("drone1").shotSpeed === DRONE_BULLET_SPEED,
      `${by("drone1").shotSpeed} against ${DRONE_BULLET_SPEED}`);
+  /* Every brain that exists has something flying it, and nothing flies a brain
+     that does not. An unused BEHAVIOURS import was the compiler telling me
+     this test was missing - the same signal that caught a one-sided bound
+     check in the game tests. */
+  ok("every behaviour the game knows has a built-in that uses it",
+     BEHAVIOURS.every((b) => all.some((e) => e.behaviour === b)), BEHAVIOURS.join(", "));
+  ok("and no built-in flies a brain nobody wrote",
+     all.every((e) => BEHAVIOURS.includes(e.behaviour)));
+
   ok("fighters fly with the fighter brain and drones with the drone one",
      by("tier1").behaviour === "fighter" && by("drone1").behaviour === "drone"
        && by("dragon").behaviour === "dragon");
