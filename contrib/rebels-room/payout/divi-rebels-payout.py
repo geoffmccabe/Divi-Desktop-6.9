@@ -52,6 +52,33 @@ KEEP_BACK = float(os.environ.get("REBELS_KEEP_BACK", "5"))
 # we know, and nothing is paid.
 MIN_CLAIM = 100
 
+# ---- WHICH WALLET THE COINS COME OUT OF ----
+#
+# ⚠ THIS SCRIPT CANNOT CHOOSE. Divi's RPC has no per-call wallet parameter:
+# every command acts on the daemon's ACTIVE wallet, resolved once in
+# init.cpp:220 as multiWalletModule->getActiveWallet(), and `setactivewallet`
+# is not exposed as an RPC at all. So `sendtoaddress` spends whatever wallet
+# that daemon currently has active, and NOTHING about the destination address
+# or the treasury address changes that.
+#
+# The consequence is the one worth writing down: putting the game's float into
+# a second wallet does NOT make payouts come out of it. If the active wallet is
+# still the scan node's main one, that is what gets spent, including its
+# staking coins, and the only sign would be the balance going down somewhere
+# nobody was looking.
+#
+# So this checks. Set REBELS_WALLET to the wallet filename the payouts are
+# meant to come from and a round REFUSES TO PAY ANYTHING if the daemon has a
+# different one active. getwalletinfo reports it as `active_wallet`
+# (rpcwallet.cpp:2894).
+#
+# Unset it is INERT and says so on every round. That is deliberate: making it
+# fail closed by default would stop live payouts the moment this shipped, which
+# is not a change to make on a script's own initiative. Setting it is part of
+# the cutover to the dedicated wallet, and until it is set this guard protects
+# nothing.
+WALLET = os.environ.get("REBELS_WALLET", "")
+
 STATE_DIR = "/var/lib/divi-rebels"
 STATE = os.path.join(STATE_DIR, "payout.json")
 
@@ -216,6 +243,30 @@ def pay_one(st, row, balance):
     return balance
 
 
+def wallet_is_right():
+    """Whether the daemon has the wallet we are meant to be paying from active.
+
+    True also when REBELS_WALLET is unset, because this must not stop payouts
+    that are working; the log says the guard is off, loudly, every round.
+    """
+    if not WALLET:
+        log("⚠ REBELS_WALLET is not set: paying from whatever wallet the daemon "
+            "has active, which may be the scan node's own. This guard is off.")
+        return True
+    try:
+        active = rpc("getwalletinfo").get("active_wallet")
+    except Exception as e:
+        # Cannot tell: refuse. An unreadable answer is not a matching one.
+        log(f"refusing to pay: could not read the active wallet ({e})")
+        return False
+    if active != WALLET:
+        log(f"REFUSING TO PAY: the daemon has {active!r} active, not {WALLET!r}. "
+            "Nothing has been sent. Every coin would have come out of the wrong "
+            "wallet, so this is a stop rather than a warning.")
+        return False
+    return True
+
+
 def main():
     st = load_state()
     if st.get("day") != today():
@@ -226,6 +277,11 @@ def main():
     rows = ledger("pending").get("rows", [])
     if not rows:
         log("nothing waiting")
+        return
+    # ⚠ BEFORE THE BALANCE, let alone a send: getbalance reads the active
+    # wallet too, so a figure read from the wrong wallet would look perfectly
+    # healthy and would be the wrong wallet's money.
+    if not wallet_is_right():
         return
     balance = float(rpc("getbalance"))
     log(f"{len(rows)} waiting; treasury holds {balance:.2f} DIVI")

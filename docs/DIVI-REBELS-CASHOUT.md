@@ -329,3 +329,59 @@ bug or a break-in, not an economy control. `EARN_PER_DAY` is what bounds the
 debt, and it stays. Raising the cap makes the game able to PAY what it promises;
 it does not make anything safe that was not safe before, and every DIVI the cap
 is raised by is a DIVI a break-in could take in a day.
+
+## The address arrived, and it does not close blocker 4 on its own
+
+Geoff, 2026-Sep-28: *"This will be the Divi Rebels pool/payout address:
+D5Pf9vNNcdCPFkTCKpQjkHMcSRrWE7zCLu which is 'Wallet #2' in the Divi Scanner
+node."*
+
+Checked: 34 characters, leading D, clean base58, and different from the
+superseded `D6V6dP2L5CN386Wg1LZF7KszXxuuSDvmmd`. Recorded, NOT wired.
+
+**⚠ THE PAYOUT SERVICE CANNOT CHOOSE A WALLET.** Read in the daemon source
+rather than assumed:
+
+| Fact | Where |
+|---|---|
+| RPC acts on the ACTIVE wallet, resolved once | `init.cpp:220`, `multiWalletModule->getActiveWallet()` |
+| `sendtoaddress` takes a `CWallet*` it is HANDED, not one it picks | `rpcwallet.cpp:1306` |
+| There is no per-call wallet parameter | `rpcserver.cpp:1043`, `CWallet* pwallet = GetWallet()` |
+| `setactivewallet` is not an RPC at all | absent from the RPC table |
+| `loadwallet` IS an RPC and also switches coin minting | `rpcwallet.cpp:524`, `SwitchCoinMintingModuleToWallet` |
+| The active wallet's name CAN be read | `getwalletinfo` → `active_wallet`, `rpcwallet.cpp:2894` |
+
+So `sendtoaddress` spends whatever wallet that daemon has active, and nothing
+about the destination or the treasury address changes it. **Funding Wallet #2
+does not make payouts come out of Wallet #2.** If the scan node's main wallet is
+still the active one, that is what gets spent, staking coins included, and the
+only symptom would be a balance falling somewhere nobody is watching. The
+separation would look done and would not be done.
+
+### The two ways to actually get it, and they are not equivalent
+
+1. **A separate daemon for the Rebels wallet** — its own datadir and rpcport,
+   holding only the float, with the payout service pointed at it. The scan node
+   keeps its own wallet active for staking and its masternode. This is the real
+   hot/cold separation and the only option where the payout key cannot reach the
+   node's coins at all, because it is not talking to that daemon.
+2. **Make Wallet #2 the scan node's ACTIVE wallet** — one setting, no new
+   process, but `loadwallet` moves the coin-minting module with it, so the node
+   would stake from the game's float wallet instead of its own. That trades a
+   money-safety problem for a node-operations one.
+
+**Recommended: option 1.** Option 2 is cheaper today and is the kind of saving
+that is repaid with interest by whoever is debugging staking in three months.
+
+### Shipped meanwhile: the guard, which is right under either option
+
+`REBELS_WALLET` in `/etc/divi-rebels-payout.env`. Set it to the wallet filename
+payouts must come from, and a round **refuses to pay anything at all** if the
+daemon has a different wallet active, checked before even reading the balance
+(`getbalance` reads the active wallet too, so a figure from the wrong wallet
+looks perfectly healthy).
+
+**Unset, it is inert and says so on every round.** Deliberate: failing closed by
+default would have stopped live payouts the moment it shipped, which is not a
+change to make on a script's own initiative. **Setting it is part of the
+cutover**, and until it is set the guard protects nothing.
