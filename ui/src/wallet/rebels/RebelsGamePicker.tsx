@@ -18,15 +18,17 @@ import { PLACE_NAMES } from "./gameTypes";
 // pictures, not twenty pictures AND twelve hundred rounds of spawn tables.
 
 export interface PickerProps {
-  /** Chosen: the game's id, and where it is played. */
-  onPick(id: string, place: string): void;
+  /** Chosen: the game's id, and where it is played. Null is the built-in. */
+  onPick(id: string | null, place: string): void;
+  /** The game already chosen for each place, so the current one is marked. */
+  chosen?: (place: string) => string | null;
   /** Backing out to the ordinary launch card. */
   onCancel?(): void;
   /** For tests, so this can be driven without a network. */
   load?: () => Promise<GameCard[]>;
 }
 
-export function RebelsGamePicker({ onPick, onCancel, load = fetchGameCards }: PickerProps) {
+export function RebelsGamePicker({ onPick, onCancel, chosen, load = fetchGameCards }: PickerProps) {
   const [cards, setCards] = useState<GameCard[] | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -45,6 +47,19 @@ export function RebelsGamePicker({ onPick, onCancel, load = fetchGameCards }: Pi
      nothing. */
   const list = cards ?? [];
 
+  /* ---- THE BUILT-IN IS ALWAYS ON THE LIST ----
+     Not as a fallback for when the fetch fails, which is how it was first
+     written, but as an ordinary choice that is always there. Without it a
+     player who picks a game has no way back to the fight everyone else is
+     in: every card leads somewhere, and none of them lead home. It carries
+     no id because it is not a row in the table - null IS the built-in
+     everywhere else in this system, and inventing an id for it here would
+     make a sixteenth name that has to agree with fifteen others. */
+  const builtIn: Omit<GameCard, "id"> & { id: string | null } = {
+    id: null, name: "WAVE DEFENCE", place: "earth", crew: "multiplayer",
+  };
+  const all: Array<Omit<GameCard, "id"> & { id: string | null }> = [builtIn, ...list];
+
   return (
     <div className="orbit-card orbit-picker">
       <h2>CHOOSE A GAME</h2>
@@ -54,8 +69,10 @@ export function RebelsGamePicker({ onPick, onCancel, load = fetchGameCards }: Pi
         <>
           {failed ? <p className="orbit-picker-note">Could not reach the game list. The one below always works.</p> : null}
           <div className="orbit-picker-grid">
-            {list.map((c) => (
-              <button type="button" key={c.id} className="orbit-picker-card"
+            {all.map((c) => (
+              <button type="button" key={c.id ?? "built-in"}
+                className={"orbit-picker-card"
+                  + (chosen && chosen(c.place) === c.id ? " orbit-picker-on" : "")}
                 onClick={() => onPick(c.id, c.place)}>
                 <span className="orbit-picker-art"
                   style={c.image ? { backgroundImage: `url(${c.image})` } : undefined}>
@@ -69,7 +86,7 @@ export function RebelsGamePicker({ onPick, onCancel, load = fetchGameCards }: Pi
               </button>
             ))}
           </div>
-          {list.length === 0 ? <p>No games are published yet.</p> : null}
+          {list.length === 0 ? <p className="orbit-picker-note">No games are published yet, so the built-in is the only one.</p> : null}
         </>
       )}
       {onCancel ? <button type="button" onClick={onCancel}>BACK</button> : null}

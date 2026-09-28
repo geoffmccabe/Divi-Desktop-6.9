@@ -603,6 +603,66 @@ async function main() {
     gate.dispose();
   }
 
+  /* ---- A GAME IS A ROOM ----
+     Choosing a game is not a mode the cockpit enters, it is a different room
+     with a different fight in it, so the picker's whole job comes down to a
+     room name. Both ways in are tested: opening straight at one, which is
+     what a game chosen before launch does, and travelling to one, which is
+     what choosing a game mid-flight does.
+
+     The names are checked against the SOCKET rather than against anything the
+     client reports about itself, because the address it dials is the only
+     thing that decides which fight the player is actually in. */
+  {
+    opened = 0;
+    const room = R.joinRoom({
+      node: "n", name: "me", home: new THREE.Vector3(0, 0, 100), ship: "x",
+      room: "earth_shakedown",
+    });
+    ok("a game chosen before launch opens straight at its own room",
+       sock!.url.endsWith("/room/earth_shakedown"), sock!.url);
+    ok("and the region comes from that name rather than being assumed",
+       room.region() === "earth", room.region());
+    room.close();
+  }
+  {
+    /* Game ids come from a table Geoff types into, so a name that cannot be a
+       room can reach this. Falling back to Earth puts the player in the
+       ordinary fight; guessing would put them in a room nobody meant, with
+       every coordinate on the wire measured from the wrong world origin. */
+    const room = R.joinRoom({
+      node: "n", name: "me", home: new THREE.Vector3(0, 0, 100), ship: "x",
+      room: "Not A Room Name",
+    });
+    ok("a name that is not a room opens Earth rather than opening nowhere",
+       sock!.url.endsWith("/room/earth"), sock!.url);
+    room.close();
+  }
+  {
+    const room = R.joinRoom({ node: "n", name: "me", home: new THREE.Vector3(0, 0, 100), ship: "x" });
+    ok("(setup) which starts in Earth's own room", sock!.url.endsWith("/room/earth"), sock!.url);
+    room.travel("spike_descent");
+    ok("travelling to a named game opens that game's room",
+       sock!.url.endsWith("/room/spike_descent"), sock!.url);
+    ok("and the region follows the name across",
+       room.region() === "spike", room.region());
+
+    const was = sock!.url;
+    room.travel("still not a room name");
+    ok("a travel to a name that is not a room is refused, not guessed at",
+       sock!.url === was, `${sock!.url} vs ${was}`);
+    ok("and the seat is still in the room it was in",
+       room.region() === "spike", room.region());
+
+    /* Back to the place's own game, which is what picking the built-in does.
+       It has to be reachable or a player who chooses a game can never rejoin
+       the fight everyone else is in. */
+    room.travel("earth");
+    ok("and the built-in is reachable again afterwards",
+       sock!.url.endsWith("/room/earth") && room.region() === "earth", sock!.url);
+    room.close();
+  }
+
   /* Printed HERE, at the end, and not in the middle. It used to be in the
      middle, so every test written after that line was counted and never shown:
      twenty-eight passes nobody could read, and a failure among them would have

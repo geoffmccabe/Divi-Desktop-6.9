@@ -5,6 +5,7 @@
 import type { ReactNode } from "react";
 import type { RebelsController, HudState } from "../rebelsController";
 import type { Cockpit } from "./useCockpit";
+import { RebelsGamePicker } from "../RebelsGamePicker";
 import { RebelsScoreboard } from "../RebelsScoreboard";
 import { RebelsControls, ControlsBoard } from "../RebelsControls";
 import { flightExtras } from "../rebelsArmoury";
@@ -49,6 +50,28 @@ export function LaunchCard({ ctl, c, howTo }: {
 }) {
   const { hud, slow } = c;
   if (!(!hud.broken && !hud.launched && !c.scores && !c.market)) return null;
+  /* ---- THE PICKER STANDS IN THE LAUNCH CARD'S PLACE ----
+     Not over it. Choosing a game and launching are the same act now, so two
+     cards stacked would offer LAUNCH behind a list of things to launch INTO,
+     and the button behind would launch the game the player was in the middle
+     of changing. */
+  if (c.picker) {
+    return (
+      <RebelsGamePicker
+        chosen={(place) => ctl.gameIn(place)}
+        onCancel={() => c.setPicker(false)}
+        onPick={(id, place) => {
+          ctl.chooseGame(id, place);
+          c.setPicker(false);
+          /* Straight in, if it is played here. A game somewhere else is now
+             chosen and waiting, and the way to it is the gate: launching
+             would put the player into Earth's fight instead, which is not
+             what they just asked for. `chooseGame` says so on the HUD. */
+          if (place !== "spike" && hud.ready && hud.room === "live") ctl.launch();
+        }}
+      />
+    );
+  }
   return (
     <div className="orbit-card orbit-card-clear">
       {/* Two columns: who this is on the left, how to fly it on the right.
@@ -76,6 +99,9 @@ export function LaunchCard({ ctl, c, howTo }: {
               : hud.room === "refused"
                 ? "CANNOT REACH THE FIGHT"
                 : "CONNECTING TO THE FIGHT…"}
+        </button>
+        <button type="button" className="orbit-secondary" onClick={() => c.setPicker(true)}>
+          CHOOSE A GAME
         </button>
         <button type="button" className="orbit-secondary" onClick={() => c.setScores(true)}>
           HIGH SCORES

@@ -32,7 +32,7 @@ import type { Pilot } from "./platform/platform";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
 import { R, MAX_ALT, SHRINK } from "./orbitWorld";
 import { makeVoxelPlanet, arrivalOffset, type VoxelPlanet } from "./voxel/voxelPlanet";
-import { SPIKEWORLD_CENTRE } from "./rebelsRegions";
+import { SPIKEWORLD_CENTRE, roomNameOf, parseRoom, type RegionName } from "./rebelsRegions";
 import { makeGate, gatePosition, gateAxis, type Gate } from "./rebelsGate";
 import { HEART_GUARD, HEART_GUARD_COUNT } from "./rebelsFlock";
 import { hitRock, bounceVelocity, bounceDamage } from "./voxel/voxelCollide";
@@ -219,6 +219,23 @@ export interface RebelsController extends GlobeFlight {
   subscribe(fn: (h: HudState) => void): () => void;
   launch(): void;
   respawn(): void;
+  /**
+   * Choose the game to play, from the picker.
+   *
+   * A game IS a room, so choosing one is travelling to it, and the choice is
+   * remembered PER REGION rather than as one current game. Both are needed at
+   * once: a player who picks an Earth game and later flies through the gate
+   * should arrive in the Spikeworld game they chose, not be dragged back to
+   * Earth's, and coming home should return them to the Earth game they left.
+   * One "current game" cannot express that, because the two regions are both
+   * live and the gate crosses between them whenever the player likes.
+   *
+   * `game` of null means the place's own game, which is what a region ran
+   * before any of this existed.
+   */
+  chooseGame(game: string | null, place: string): void;
+  /** The game chosen for a region, for the picker to show as current. */
+  gameIn(place: string): string | null;
   dispose(): void;
 }
 
@@ -373,6 +390,17 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
   let stopItemUser: (() => void) | null = null;
   const _voxLook = new THREE.Vector3();
   let atSpikeworld = false;
+  /* ---- WHICH GAME EACH REGION IS RUNNING, as this player chose ----
+     Per region rather than one current game, because both regions are live
+     at once and the gate crosses between them whenever the player likes. A
+     player who picks an Earth game and then flies out should arrive in the
+     Spikeworld game they picked, and coming home should put them back in the
+     Earth one they left. Null is the place's own game, which is what a region
+     ran before any game could be chosen. */
+  const gameFor: Record<RegionName, string | null> = { earth: null, spike: null };
+  /** The room name for a region, carrying whatever game is chosen there. */
+  const roomFor = (region: RegionName) =>
+    roomNameOf({ region, overflow: 1, game: gameFor[region] });
   /** The camera's near and far planes before Spikeworld moved them, so they
    *  can be put back. Null when we are not out there. */
   let farAtHome: number | null = null;
@@ -1304,7 +1332,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          from enemies two hundred thousand units away. Arriving is the new
          half: the Spikeworld room is where the other pilots out here are, and
          where the heart's million is kept. */
-      room?.travel("spike", SPIKEWORLD_AT.clone().add(arrivalOffset()));
+      room?.travel(roomFor("spike"), SPIKEWORLD_AT.clone().add(arrivalOffset()));
       room?.fly();
       /* ---- A CLEAN SKY OUT THERE ----
          Whatever the wire last put in the fight belongs to Earth: fighters, a
@@ -1379,7 +1407,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       guardsSent = false;
       /* Back in Earth's room, and back in its fight, which flying alone also
          starts over. */
-      room?.travel("earth", homeTip());
+      room?.travel(roomFor("earth"), homeTip());
       room?.fly();
       flight.alt = flight.pos.length() - R;
       flight.speed = 0;
@@ -1415,6 +1443,10 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
        in the app. */
     const who = platform().identity.joinFields(selfIp);
     room = joinRoom({
+      /* Open straight into the chosen game rather than opening on Earth and
+         travelling a moment later, which would take a seat in a fight the
+         player did not choose and give it up again. */
+      room: roomFor(atSpikeworld ? "spike" : "earth"),
       node: who.node,
       name: who.name,
       ...(who.door ? { door: who.door } : {}),
@@ -3434,6 +3466,49 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       phase = "fly";
       try { dom?.requestPointerLock?.(); } catch { /* not supported here */ }
       setHud({ launched: true });
+    },
+    chooseGame(game, place) {
+      const region: RegionName = place === "spike" ? "spike" : "earth";
+      /* ---- A NAME THAT WILL NOT PARSE IS NOT A GAME ----
+         Game ids come from a table Geoff types into, so one can arrive with a
+         space or a capital in it that the room-name grammar does not allow.
+         Built here and read back rather than trusted: an unparseable name
+         would be refused by `travel` anyway, but silently, leaving the player
+         looking at a card for a game they are not in. */
+      const want = roomNameOf({ region, overflow: 1, game });
+      if (game !== null && !parseRoom(want)) {
+        setHud({ note: "THAT GAME CANNOT BE OPENED", noteAt: performance.now() });
+        return;
+      }
+      gameFor[region] = game;
+      /* Only the region the player is actually in changes room now. The other
+         one is remembered and used on arrival, which is what makes a game
+         chosen on the launch card still be the game waiting on the far side
+         of the gate. */
+      const here: RegionName = atSpikeworld ? "spike" : "earth";
+      if (region !== here) {
+        /* Chosen, but somewhere else. Silence here would read as the button
+           having done nothing: the card closes, the game is not running, and
+           nothing on the screen says the choice was taken. */
+        setHud({
+          note: region === "spike"
+            ? "CHOSEN. FLY THROUGH THE GATE TO REACH IT"
+            : "CHOSEN. IT IS WAITING BACK IN EARTH ORBIT",
+          noteAt: performance.now(),
+        });
+        return;
+      }
+      room?.travel(want, region === "spike"
+        ? SPIKEWORLD_AT.clone().add(arrivalOffset())
+        : homeTip());
+      /* Mid-flight the new room has to be told this seat is flying, exactly
+         as the gate does. Before launch it must NOT be: a seat that flies
+         before the player has pressed anything is a ship in the fight with
+         nobody in it. */
+      if (flying) room?.fly();
+    },
+    gameIn(place) {
+      return gameFor[place === "spike" ? "spike" : "earth"];
     },
     dispose() {
       listeners.clear();
