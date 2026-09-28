@@ -883,7 +883,8 @@ export const setNodeLabel = (id: string, label: string) => invoke<void>("set_nod
 
 // ── Parallel wallets (docs/PARALLEL-WALLETS-PLAN.md) ─────────────────────────
 export interface WalletAddress { index: number; address: string; label: string; vault: boolean; divi: number }
-export interface ExtraWallet { id: string; label: string; created: number; lockedWithPassword: boolean; divi: number; addresses: WalletAddress[] }
+/** `balanceKnown` false = the node could not be asked; `divi` is then a placeholder 0, not a fact. */
+export interface ExtraWallet { id: string; label: string; created: number; lockedWithPassword: boolean; divi: number; balanceKnown: boolean; addresses: WalletAddress[] }
 export const walletsList = () => invoke<ExtraWallet[]>("wallets_list");
 export const walletCreate = (label: string, password?: string) => invoke<{ words: string[]; wallet: ExtraWallet }>("wallet_create", { label, password: password || null });
 export const walletRestore = (label: string, phrase: string, password?: string) => invoke<ExtraWallet>("wallet_restore", { label, phrase, password: password || null });

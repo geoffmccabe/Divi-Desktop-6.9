@@ -206,7 +206,7 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
   // Only treat it as "over balance" when we actually have a balance to compare
   // against. An unknown/failed read must never block the send; the node is the
   // real authority and will reject a genuine over-spend.
-  const spendable = fromWallet ? fromWallet.divi : bal?.spendable ?? null;
+  const spendable = fromWallet ? (fromWallet.balanceKnown ? fromWallet.divi : null) : bal?.spendable ?? null;
   const overBalance = spendable != null && amount != null && amount > spendable;
 
   const reset = () => {
@@ -348,7 +348,7 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
           <select className="wl-input" value={from} onChange={(e) => setFrom(e.target.value)} disabled={stage !== "form"}>
             <option value="node">Staking Wallet (this node) · {bal ? fmtDivi(bal.spendable) : "—"} DIVI</option>
             {wallets.map((w) => (
-              <option key={w.id} value={w.id}>{w.label} · {fmtDivi(w.divi)} DIVI</option>
+              <option key={w.id} value={w.id}>{w.label} · {w.balanceKnown ? `${fmtDivi(w.divi)} DIVI` : "balance unknown"}</option>
             ))}
           </select>
         </label>

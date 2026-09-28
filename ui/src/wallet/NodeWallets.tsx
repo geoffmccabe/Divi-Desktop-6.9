@@ -176,7 +176,7 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
         <div key={w.id} className="nw-wallet nw-extra" style={{ marginLeft: INDENT }}>
           <div className="nw-wallet-head">
             <b>{w.label}</b>
-            <span className="nw-wallet-bal">{fmtDivi(w.divi)} DIVI</span>
+            <span className="nw-wallet-bal">{w.balanceKnown ? `${fmtDivi(w.divi)} DIVI` : "balance unknown (node not answering)"}</span>
             {w.lockedWithPassword && <span className="nw-wallet-sub">own password</span>}
             <span className="nw-wallet-tools">
               <button type="button" className="wl-btn nw-mini" disabled={busy} onClick={() => void addAddress(w)}>New address</button>
@@ -189,7 +189,7 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
               key={a.address}
               address={a.address}
               label={a.label}
-              divi={a.divi}
+              divi={w.balanceKnown ? a.divi : undefined}
               vault={a.vault}
               hra={null}
               main={a.index === 0}

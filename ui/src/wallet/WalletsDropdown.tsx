@@ -23,8 +23,8 @@ export function WalletsDropdown({ open, nodeSpendable, wallets }: { open: boolea
           {wallets.map((w) => (
             <li key={w.id} className="addr-row wd-row">
               <span className="wd-name">{w.label} <small>{w.addresses.length} address{w.addresses.length === 1 ? "" : "es"}</small></span>
-              <span className="wd-divi">{fmtDivi(w.divi)} DIVI</span>
-              <span className="wd-fiat">{fiat(w.divi)}</span>
+              <span className="wd-divi">{w.balanceKnown ? `${fmtDivi(w.divi)} DIVI` : "unknown"}</span>
+              <span className="wd-fiat">{w.balanceKnown ? fiat(w.divi) : ""}</span>
             </li>
           ))}
           <li className="wd-row wd-total">

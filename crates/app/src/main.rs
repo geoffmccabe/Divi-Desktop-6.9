@@ -1306,7 +1306,10 @@ struct WalletAddressDto { index: u32, address: String, label: String, vault: boo
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct WalletDto { id: String, label: String, created: i64, locked_with_password: bool, divi: f64, addresses: Vec<WalletAddressDto> }
+/// `balance_known` is false when the node could not be asked (down, mid-sync,
+/// no address index): `divi` is then 0 as a placeholder, and the screens say
+/// "unknown" rather than showing a zero the node never stood behind.
+struct WalletDto { id: String, label: String, created: i64, locked_with_password: bool, divi: f64, balance_known: bool, addresses: Vec<WalletAddressDto> }
 
 fn wallet_dto(cfg: &NodeConfig, w: &dd69_supervisor::wallets::WalletEntry) -> WalletDto {
     let bal = dd69_supervisor::wallets::balance(cfg, w).ok();
@@ -1317,6 +1320,7 @@ fn wallet_dto(cfg: &NodeConfig, w: &dd69_supervisor::wallets::WalletEntry) -> Wa
         created: w.created,
         locked_with_password: w.lock == "password",
         divi: bal.as_ref().map(|b| b.divi).unwrap_or(0.0),
+        balance_known: bal.is_some(),
         addresses: w.addresses.iter().map(|a| WalletAddressDto {
             index: a.index, address: a.address.clone(), label: a.label.clone(), vault: a.vault,
             divi: *by.get(&a.address).unwrap_or(&0.0),
