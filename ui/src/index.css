@@ -2665,8 +2665,8 @@ code, .mono { font-family: var(--font-mono); }
 .nw-addr-code { font-size: 0.78rem; color: hsl(var(--muted-foreground)); user-select: text; }
 .nw-addr-bal { margin-left: auto; font-size: 0.8rem; color: hsl(var(--foreground)); font-variant-numeric: tabular-nums; }
 .nw-addr-bottom { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 4px; font-size: 0.76rem; }
-.nw-hra-on { color: #f2c94c; font-weight: 700; }
-.nw-hra-on b { color: #f2c94c; }
+.nw-hra-on { color: hsl(var(--warning)); font-weight: 700; } /* gold, as the node's owner-name and mempool rows use */
+.nw-hra-on b { color: hsl(var(--warning)); }
 .nw-hra-off { display: inline-flex; align-items: center; gap: 8px; color: hsl(var(--muted-foreground)); }
 .nw-vault { display: inline-flex; align-items: center; gap: 6px; color: hsl(var(--muted-foreground)); cursor: pointer; }
 .nw-vault small { opacity: 0.75; }
@@ -2674,7 +2674,7 @@ code, .mono { font-family: var(--font-mono); }
 .nw-total { margin-top: 8px; margin-left: 100px; }
 .nw-wordlist {
   columns: 2; column-gap: 24px; margin: 10px 0 4px 18px; padding: 0; font-size: 0.95rem;
-  font-family: ui-monospace, Menlo, monospace; user-select: text;
+  font-family: var(--font-mono); user-select: text;
 }
 .nw-wordlist li { padding: 2px 0; break-inside: avoid; }
 @media (max-width: 720px) {

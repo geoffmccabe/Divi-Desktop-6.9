@@ -7,6 +7,8 @@ import { StakingDropdown, StartStaking } from "./StakingDropdown";
 import { LotteryDropdown } from "./LotteryDropdown";
 import { LotteryCountdown } from "./LotteryCountdown";
 import { WalletsDropdown } from "./WalletsDropdown";
+import { loadPointings, settlePointings } from "./hraTarget";
+import { hraPending } from "./hra/api";
 import { useDiviValue } from "./value";
 import { Icon } from "../Icon";
 
@@ -64,6 +66,16 @@ export function HeaderBar() {
         if (alive) setWallets(w);
       } catch {
         /* keep last */
+      }
+      /* A name bought for a wallet gets pointed at it once registered; this
+         is the one poll that is always running, so it lives here. */
+      try {
+        if (Object.keys(loadPointings()).length > 0) {
+          const reserved = (await hraPending().catch(() => [])).map((p) => p.name);
+          await settlePointings(reserved);
+        }
+      } catch {
+        /* next time */
       }
       try {
         const st = await nodeStatus();

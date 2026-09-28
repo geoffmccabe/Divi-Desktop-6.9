@@ -6,6 +6,7 @@ import {
   type ExtraWallet, type AddrInfo,
 } from "./api";
 import { fmtDivi } from "../status";
+import { hraMyNames } from "./hra/api";
 
 // The wallets under one node in Settings > My Nodes
 // (docs/PARALLEL-WALLETS-PLAN.md, Phase 1).
@@ -104,7 +105,7 @@ function AddressRow({
   );
 }
 
-export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; nodeLabel: string; onGetHra: (address: string) => void }) {
+export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; nodeLabel: string; onGetHra: (address: string, label: string) => void }) {
   const [staking, setStaking] = useState<AddrInfo[]>([]);
   const [wallets, setWallets] = useState<ExtraWallet[]>([]);
   const [confirm, setConfirm] = useState(false);
@@ -117,12 +118,26 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
   const [askPass, setAskPass] = useState<{ walletId: string; what: "address" | "words" | "stake" | "unstake"; address?: string } | null>(null);
   const [passDraft, setPassDraft] = useState("");
   const [shownWords, setShownWords] = useState<{ id: string; words: string[] } | null>(null);
+  /* One in-app confirm box for the two things that move or drop something. */
+  const [ask, setAsk] = useState<{ title: string; text: string; yes: string; run: () => Promise<void> } | null>(null);
+  /* Names this node owns, by the address they pay to, for the HRA slot. */
+  const [names, setNames] = useState<Record<string, string>>({});
 
   const refresh = async () => {
     try {
       const [a, w] = await Promise.all([walletAddresses().catch(() => [] as AddrInfo[]), walletsList()]);
       setStaking(a);
       setWallets(w);
+      hraMyNames()
+        .then((list) => {
+          const m: Record<string, string> = {};
+          for (const n of list) {
+            if (n.diviAddress) m[n.diviAddress] = n.name;
+            else m[n.owner] = m[n.owner] ?? n.name;
+          }
+          setNames(m);
+        })
+        .catch(() => {});
     } catch (e) {
       setNote(String(e));
     }
@@ -152,9 +167,15 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
     try { await walletVaultFund(w.id, address, undefined, pass); await refresh(); } catch (e) { setNote(String(e)); } finally { setBusy(false); }
   };
   const unstake = (w: ExtraWallet, address: string, pass?: string) => async () => {
-    if (!window.confirm("Take everything out of this address's vault? It stops staking until you turn vault staking back on.")) return;
-    setBusy(true); setNote("");
-    try { await walletVaultReclaim(w.id, address, undefined, pass); await refresh(); } catch (e) { setNote(String(e)); } finally { setBusy(false); }
+    setAsk({
+      title: "Unstake this address?",
+      text: "Everything in its vault comes back as plain coins and stops earning. Vault staking is turned off for it; tick it again to restart.",
+      yes: "Unstake",
+      run: async () => {
+        setBusy(true); setNote("");
+        try { await walletVaultReclaim(w.id, address, undefined, pass); await refresh(); } catch (e) { setNote(String(e)); } finally { setBusy(false); }
+      },
+    });
   };
 
   const addAddress = (w: ExtraWallet) => withPass(w, "address", async (pass) => {
@@ -164,16 +185,22 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
   const showWords = (w: ExtraWallet) => withPass(w, "words", async (pass) => {
     try { setShownWords({ id: w.id, words: await walletWords(w.id, pass) }); } catch (e) { setNote(String(e)); }
   });
-  const remove = async (w: ExtraWallet) => {
-    if (!window.confirm(`Remove "${w.label}" from this app? Its coins stay on the chain and its twelve words bring it back.`)) return;
-    try { await walletRemove(w.id, false); await refresh(); }
-    catch (e) {
-      const m = String(e);
-      if (m.includes("still holds") && window.confirm(`${m}\n\nRemove anyway?`)) {
-        try { await walletRemove(w.id, true); await refresh(); } catch (e2) { setNote(String(e2)); }
-      } else setNote(m);
-    }
-  };
+  const remove = (w: ExtraWallet) => setAsk({
+    title: `Remove "${w.label}"?`,
+    text: "It disappears from this app only. Its coins stay on the chain, and its twelve words bring it back anywhere.",
+    yes: "Remove",
+    run: async () => {
+      try { await walletRemove(w.id, false); await refresh(); }
+      catch (e) {
+        const m = String(e);
+        if (m.includes("still holds")) {
+          setAsk({ title: "It still holds coins", text: `${m} Remove it anyway? Only the twelve words can bring the coins back.`, yes: "Remove anyway", run: async () => {
+            try { await walletRemove(w.id, true); await refresh(); } catch (e2) { setNote(String(e2)); }
+          } });
+        } else setNote(m);
+      }
+    },
+  });
 
   const total = wallets.reduce((s, w) => s + w.divi + w.vaulted, 0);
   const main = staking.find((a) => a.isMain) ?? staking[0];
@@ -194,12 +221,12 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
           <span className="nw-wallet-sub">the node's own wallet; everything in it stakes</span>
         </div>
         {main ? (
-          <AddressRow address={main.address} label="" main hra={null} onGetHra={() => onGetHra(main.address)} />
+          <AddressRow address={main.address} label="" main hra={names[main.address] ?? null} onGetHra={() => onGetHra(main.address, "Staking Wallet")} />
         ) : (
           <p className="set-note">Reading the node's addresses…</p>
         )}
         {staking.filter((a) => a !== main).slice(0, 6).map((a) => (
-          <AddressRow key={a.address} address={a.address} label="" hra={null} onGetHra={() => onGetHra(a.address)} />
+          <AddressRow key={a.address} address={a.address} label="" hra={names[a.address] ?? null} onGetHra={() => onGetHra(a.address, "Staking Wallet")} />
         ))}
         {staking.length > 7 && <p className="set-note">…and {staking.length - 7} more, under My Addresses at the top right.</p>}
       </div>
@@ -228,11 +255,11 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
               locked={w.lockedWithPassword}
               onStake={() => void withPass(w, "stake", (p) => stake(w, a.address, p)(), a.address)}
               onUnstake={() => void withPass(w, "unstake", (p) => unstake(w, a.address, p)(), a.address)}
-              hra={null}
+              hra={names[a.address] ?? null}
               main={a.index === 0}
               onLabel={async (v) => { await walletSetLabel(w.id, a.address, v); await refresh(); }}
               onVault={async (on) => { await walletSetVault(w.id, a.address, on); await refresh(); }}
-              onGetHra={() => onGetHra(a.address)}
+              onGetHra={() => onGetHra(a.address, w.label)}
             />
           ))}
           {shownWords?.id === w.id && (
@@ -296,6 +323,22 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
               <ol className="nw-wordlist">{words.map((w, i) => <li key={i}>{w}</li>)}</ol>
               <div className="upd-actions">
                 <button type="button" className="upd-go" onClick={() => setWords(null)}>I have written them down</button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {ask && createPortal(
+        <div className="poe-modal-backdrop" onClick={() => setAsk(null)} role="presentation">
+          <div className="poe-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={ask.title}>
+            <div className="poe-modal-head"><h3>{ask.title}</h3></div>
+            <div className="poe-modal-body">
+              <p className="wl-note">{ask.text}</p>
+              <div className="upd-actions">
+                <button type="button" className="upd-go" onClick={() => { const r = ask.run; setAsk(null); void r(); }}>{ask.yes}</button>
+                <button type="button" className="wl-btn" onClick={() => setAsk(null)}>Cancel</button>
               </div>
             </div>
           </div>

@@ -8,6 +8,7 @@ import {
   type NameQuote,
   type PendingCommit,
 } from "./api";
+import { loadPointings, savePointing, settlePointings, takeHraTarget, type HraTarget } from "../hraTarget";
 
 // Claiming a name is two steps with a wait in between, and the wait is the
 // feature, not an apology for a delay. Without it anyone watching the network
@@ -31,6 +32,19 @@ export function NameRegister({
   const [busy, setBusy] = useState("");
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
+  /* The wallet address the new name should pay to, when the user came here
+     from a wallet's Get HRA button. Kept beside the reservation so the wait
+     between reserve and register does not lose it. */
+  const [target, setTarget] = useState<HraTarget | null>(() => takeHraTarget());
+  const [pointings, setPointings] = useState<Record<string, HraTarget>>(() => loadPointings());
+  useEffect(() => {
+    const on = () => {
+      const t = takeHraTarget();
+      if (t) setTarget(t);
+    };
+    window.addEventListener("dd69:gethra", on);
+    return () => window.removeEventListener("dd69:gethra", on);
+  }, []);
 
   const loadPending = () =>
     hraPending()
@@ -39,7 +53,10 @@ export function NameRegister({
 
   useEffect(() => {
     loadPending();
-    const id = setInterval(loadPending, 20000);
+    const id = setInterval(() => {
+      loadPending();
+      settlePointings(pending.map((p) => p.name)).then(() => setPointings(loadPointings()));
+    }, 20000);
     return () => clearInterval(id);
   }, []);
 
@@ -96,6 +113,24 @@ export function NameRegister({
         A name is yours to keep, use, and sell. It works as an address people can send DIVI to, and
         it can carry your other details as well.
       </p>
+
+      {target && (
+        <div className="hra-target">
+          <div className="hra-field">
+            <span>Payments to this name will go to</span>
+            <span className="mono hra-target-addr">{target.address}</span>
+            {target.label && <span className="wl-note">{target.label}</span>}
+          </div>
+          <p className="wl-note">
+            Your node's staking wallet pays the fee and holds the name, so it can renew, manage and
+            sell it from here. The name is then pointed at the address above, so anyone paying the
+            name pays that wallet.
+          </p>
+          <button type="button" className="wl-btn" onClick={() => setTarget(null)}>
+            Point it at the staking wallet instead
+          </button>
+        </div>
+      )}
 
       <label className="hra-field">
         <span>Name you want</span>
@@ -180,7 +215,17 @@ export function NameRegister({
           alreadyPending ||
           busy !== ""
         }
-        onClick={() => quote && run("commit", () => hraCommit(quote.canonical))}
+        onClick={() =>
+          quote &&
+          run("commit", async () => {
+            const txid = await hraCommit(quote.canonical);
+            if (target) {
+              savePointing(quote.canonical, target);
+              setPointings(loadPointings());
+            }
+            return txid;
+          })
+        }
       >
         {busy === "commit" ? "Reserving…" : "Reserve this name"}
       </button>
@@ -195,6 +240,11 @@ export function NameRegister({
           {pending.map((p) => (
             <div className="hra-pending-row" key={p.name}>
               <span className="mono hra-pending-name">{p.name.toLowerCase()}</span>
+              {pointings[p.name] && (
+                <span className="wl-note hra-dim" title={pointings[p.name].address}>
+                  pays to {pointings[p.name].label || pointings[p.name].address.slice(0, 10) + "…"}
+                </span>
+              )}
               {p.ready ? (
                 <span className="hra-free">ready to register</span>
               ) : (
@@ -231,6 +281,16 @@ export function NameRegister({
       {result && (
         <p className="wl-note">
           Sent. Transaction <span className="mono">{result.slice(0, 16)}…</span>
+        </p>
+      )}
+      {Object.keys(pointings).filter((n) => !pending.some((p) => p.name === n)).length > 0 && (
+        <p className="wl-note hra-dim">
+          Once the chain confirms{" "}
+          {Object.keys(pointings)
+            .filter((n) => !pending.some((p) => p.name === n))
+            .map((n) => n.toLowerCase())
+            .join(", ")}
+          , the wallet will point it at the chosen address by itself.
         </p>
       )}
       {error && <p className="wl-err">{error}</p>}

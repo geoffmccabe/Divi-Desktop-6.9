@@ -123,10 +123,19 @@ main staking address.
   index shows 6, node lists it under Stakable, reclaim 2, reclaim rest).
   Not yet seen: an actual stake reward on a vault (needs PoS on the chain).
 
-### Phase 3. HRA in the wallet
-- HRA slot (gold / white), Get HRA opens the HRA tab pre-filled with the
-  address, purchase lands the name at that address; move an existing name
-  into a wallet.
+### Phase 3. HRA in the wallet (BUILT 69.13.38, 2026-Sep-28)
+- Get HRA opens Names > Get with the wallet address shown as "Payments to
+  this name will go to". The node's staking wallet pays and OWNS the name
+  (so it can renew, manage and sell it from the app); after registration
+  the name's Divi-address record is pointed at the wallet address
+  (`settlePointings` in `hraTarget.ts`, run from the header poll; the
+  target survives the twelve-minute wait in localStorage).
+- Why not buy FROM the extra wallet: commit/reveal, records, renewal and
+  sale are all signed by the node's wallet (`names.rs`); moving the owner
+  to an app-held key would strand the name outside every management
+  screen. Pointing gives "pay the name, the wallet gets it" without that.
+- HRA slot in NodeWallets shows the name in gold (the app's --warning gold)
+  for any address a node-owned name pays to.
 - Done when: a name bought from a wallet shows in gold in that wallet.
 
 ### Phase 4. Safety and polish

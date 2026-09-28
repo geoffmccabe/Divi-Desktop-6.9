@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { hraMyNames, hraSync, type HraSync, type OwnedName } from "./hra/api";
+import { peekHraTarget } from "./hraTarget";
 import { NameRegister } from "./hra/NameRegister";
 import { NameList } from "./hra/NameList";
 import { NameLookup } from "./hra/NameLookup";
@@ -19,7 +20,14 @@ import "./hra.css";
 type Tab = "mine" | "get" | "market" | "lookup";
 
 export function HraPanel() {
-  const [tab, setTab] = useState<Tab>("mine");
+  // Arriving from a wallet's Get HRA button lands on the Get tab, where the
+  // register form picks up the address the name should pay to.
+  const [tab, setTab] = useState<Tab>(() => (peekHraTarget() ? "get" : "mine"));
+  useEffect(() => {
+    const on = () => setTab("get");
+    window.addEventListener("dd69:gethra", on);
+    return () => window.removeEventListener("dd69:gethra", on);
+  }, []);
   const [sync, setSync] = useState<HraSync | null>(null);
   const [names, setNames] = useState<OwnedName[]>([]);
   const [loading, setLoading] = useState(true);

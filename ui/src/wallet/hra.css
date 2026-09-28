@@ -262,3 +262,11 @@
   color: hsl(var(--muted-foreground));
 }
 .hra-reserve-head:hover { color: hsl(var(--foreground)); }
+
+/* A name being bought for a specific wallet (Get HRA from Settings > My Nodes). */
+.hra-target {
+  display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
+  padding: 12px 14px; border-radius: 11px;
+  border: 1px solid hsl(var(--primary) / 0.55); background: hsl(var(--primary) / 0.06);
+}
+.hra-target-addr { font-size: 0.86rem; color: hsl(var(--foreground)); word-break: break-all; user-select: text; }
