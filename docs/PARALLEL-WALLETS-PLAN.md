@@ -86,10 +86,18 @@ main staking address.
 - Done when: a regtest node has a second wallet with coins received, seen,
   and sent, with the node's wallet file untouched.
 
-### Phase 1. UI: My Nodes panels
+### Phase 1. UI: My Nodes panels (SHIPPED 69.13.36, 2026-Sep-27)
 - +WALLET button, confirm modal, Staking Wallet panel + indented wallet
   panels, address list with names, "New address", 20 cap.
-- Receive and Send inside each wallet panel.
+  `ui/src/wallet/NodeWallets.tsx`, shown under the ACTIVE node only (the
+  app can only read the node it is using).
+- Send: "From wallet" chooser on the standard form (fast, pin and bearer
+  sends stay node-only). Receive: "Receive into" chooser. Header:
+  Spendable includes every wallet; chevron right of DIVI opens
+  `WalletsDropdown.tsx`.
+- Get HRA opens the Names tab and stashes the address (`hraTarget.ts`);
+  the register form does not read it until Phase 3.
+- The vault tick is stored only; its label says staking arrives later.
 - Done when: Geoff creates a wallet, receives to it, sends from it.
 
 ### Phase 2. Vault staking (only after tying into what exists)
