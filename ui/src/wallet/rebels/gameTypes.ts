@@ -55,6 +55,18 @@ export const PLACES_LIVE: PlaceId[] = ["earth", "spike"];
  * against the enemy table rather than against this list.
  */
 export const BUILT_IN_ENEMIES = [
+  /* ---- "fighters" IS A MIX, and it is what the game has always sent ----
+     A wave has never been one kind of ship. Every wave rolls a difficulty
+     bias, and the seven tiers are weighted by it, so a wave is about nine
+     tenths tier one at the easy end and closer to six tenths at the hard end.
+     That per-wave roll is what makes some waves noticeably harder than others.
+
+     The first draft of this file described the built-in game as pure tier1,
+     which is a flatter and much easier game than the one running. It got
+     through because the tests pinned how MANY and WHEN and said nothing about
+     WHAT. Naming the mix rather than adding a "mixed" flag beside the enemy
+     keeps `enemy` meaning exactly one thing: what arrives. */
+  "fighters",
   "tier1", "tier2", "tier3", "tier4", "tier5", "tier6", "tier7",
   "flock", "dragon",
 ] as const;
@@ -70,6 +82,19 @@ export interface Spawn {
   /** "once" is all of them at the start, "spread" is evenly across the round
    *  (which is what the waves do today), "clumps" is in bursts. */
   arrive: Arrival;
+  /**
+   * How hard the mix is, for `enemy: "fighters"` and meaningless otherwise.
+   *
+   * Two numbers, a range, rolled once per round the way the waves roll one per
+   * wave: the low end is mostly tier ones, the high end has a real share of
+   * everything else. A range rather than a single number because the variation
+   * between rounds IS the texture - every round at the same bias reads as
+   * mechanical in exactly the way the original waves deliberately do not.
+   *
+   * Absent means the historical range, WAVE_BIAS in rebelsCombat.ts, which is
+   * what the built-in uses. An admin building a "hard wave" sets the numbers up.
+   */
+  bias?: [number, number];
 }
 
 /** What something is worth. Applied in phase six, carried in the shape now so
@@ -119,12 +144,14 @@ export interface GameType {
    follow, and the surest way to keep one code path is for the old behaviour to
    be a product of the new description rather than a special case beside it. */
 
-/** Wave one's size, the step per wave, and how long a wave lasts. These MUST
- *  equal WAVE_FIRST, WAVE_STEP and WAVE_SECONDS in rebelsCombat.ts; the test
- *  stands on that rather than this file importing the simulation. */
+/** Wave one's size, the step per wave, how long a wave lasts, and how mixed it
+ *  is. These MUST equal WAVE_FIRST, WAVE_STEP, WAVE_SECONDS, WAVE_BIAS_MIN and
+ *  WAVE_BIAS_MAX in rebelsCombat.ts; the test stands on that rather than this
+ *  file importing the simulation. */
 export const WAVE_DEFENCE_FIRST = 10;
 export const WAVE_DEFENCE_STEP = 2;
 export const WAVE_DEFENCE_SECONDS = 120;
+export const WAVE_DEFENCE_BIAS: [number, number] = [0.5, 3.0];
 /** How many rounds are written out. The real thing runs for ever, escalating;
  *  a description has to stop somewhere, and thirty rounds is an hour. */
 export const WAVE_DEFENCE_ROUNDS = 30;
@@ -141,7 +168,13 @@ export function waveDefence(): GameType {
       seconds: WAVE_DEFENCE_SECONDS,
       /* Evenly across the round, which is exactly what startWave does: the
          first at once and then one every window divided by the count. */
-      spawns: [{ enemy: "tier1", count: waveDefenceSize(n), arrive: "spread" }],
+      spawns: [{
+        /* A MIX, as the waves have always sent, not a wall of tier ones. */
+        enemy: "fighters",
+        count: waveDefenceSize(n),
+        arrive: "spread",
+        bias: [...WAVE_DEFENCE_BIAS] as [number, number],
+      }],
     });
   }
   return {
@@ -171,6 +204,11 @@ export const ROUND_MAX_SECONDS = 1200;
  *  drones; this stops a round DESCRIBING a thousand of them. */
 export const ROUND_MAX_ENEMIES = 400;
 export const MAX_ROUNDS = 60;
+/** What a difficulty bias may be set to. Zero would be tier ones for ever;
+ *  above about ten the rarest tiers stop being rare, and tier seven is meant
+ *  to be one spawn in twenty thousand. */
+export const BIAS_MIN = 0;
+export const BIAS_MAX = 10;
 
 export function validateGame(raw: unknown, knownEnemies: string[] = []): { ok: GameType } | { errors: string[] } {
   const errors: string[] = [];
@@ -228,6 +266,16 @@ export function validateGame(raw: unknown, knownEnemies: string[] = []): { ok: G
         } else total += s.count;
         if (!ARRIVALS.includes(s.arrive)) {
           errors.push(`${sat}: arrive must be ${ARRIVALS.join(", ")} (got ${JSON.stringify(s.arrive)})`);
+        }
+        if (s.bias !== undefined) {
+          if (s.enemy !== "fighters") {
+            errors.push(`${sat}: bias only means something for "fighters"; ${JSON.stringify(s.enemy)} is one kind of ship`);
+          } else if (!Array.isArray(s.bias) || s.bias.length !== 2
+                     || !s.bias.every((n) => Number.isFinite(n) && n >= BIAS_MIN && n <= BIAS_MAX)) {
+            errors.push(`${sat}: bias must be two numbers between ${BIAS_MIN} and ${BIAS_MAX}`);
+          } else if (s.bias[0] > s.bias[1]) {
+            errors.push(`${sat}: bias runs low to high, and ${s.bias[0]} is above ${s.bias[1]}`);
+          }
         }
       });
       if (total > ROUND_MAX_ENEMIES) {

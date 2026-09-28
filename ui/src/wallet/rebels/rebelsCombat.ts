@@ -787,6 +787,16 @@ export interface CombatEvent {
    tiers more or less likely, so some are visibly nastier than others without
    the count changing. */
 export const WAVE_SECONDS = 120;
+/* ---- HOW MIXED A WAVE IS ----
+   Every wave rolls its own bias, and that roll is what makes some waves
+   noticeably harder than others: at the bottom of the range a wave is about
+   nine tenths tier one, at the top it is closer to four tenths anything else.
+   Named rather than written inline because the game builder has to be able to
+   DESCRIBE the historical wave, and a description that copies the number
+   instead of citing it goes stale the first time this is tuned. See
+   gameTypes.ts. */
+export const WAVE_BIAS_MIN = 0.5;
+export const WAVE_BIAS_MAX = 3.0;
 export const WAVE_FIRST = 10;
 export const WAVE_STEP = 2;
 
@@ -832,7 +842,7 @@ export function startWave(c: CombatState, n: number): void {
     every: WAVE_SECONDS / Math.max(1, count),
     timeLeft: WAVE_SECONDS,
     alive: 0,
-    bias: 0.5 + Math.random() * 2.5,
+    bias: WAVE_BIAS_MIN + Math.random() * (WAVE_BIAS_MAX - WAVE_BIAS_MIN),
   };
   c.events.push({ kind: "waveStart", at: new THREE.Vector3(), power: 1, wave: n });
 }
@@ -2343,7 +2353,28 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
   }
 }
 
-function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3, bias = 1): Enemy {
+/**
+ * One fighter, put in the sky and handed back.
+ *
+ * The game controller (contrib/rebels-room/gameRunner.ts) needs two things
+ * spawnFleet and spawnDragon do not cover: a fighter of a NAMED tier, for a
+ * round that asks for three tier-fives, and a fighter ROLLED at a bias, which
+ * is what the original waves have always sent. Both are this, and it is
+ * exported rather than the module-private spawnNear so a caller cannot reach
+ * past the part that puts the enemy in the fight.
+ */
+export function spawnFighter(
+  c: CombatState,
+  playerPos: THREE.Vector3,
+  playerFwd: THREE.Vector3,
+  opts: { tier?: number; bias?: number } = {},
+): Enemy {
+  const e = spawnNear(playerPos, playerFwd, opts.bias ?? 1, opts.tier);
+  c.enemies.push(e);
+  return e;
+}
+
+function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3, bias = 1, forceTier?: number): Enemy {
   const up = playerPos.clone().normalize();
   const right = new THREE.Vector3().crossVectors(playerFwd, up).normalize();
   /* ---- AS FAR AHEAD AS THE SPEED OUT HERE DESERVES ----
@@ -2370,7 +2401,12 @@ function spawnNear(playerPos: THREE.Vector3, playerFwd: THREE.Vector3, bias = 1)
     .addScaledVector(up, lift);
   if (pos.length() < R + 3) pos.normalize().multiplyScalar(R + 3);
   const fwd = playerPos.clone().sub(pos).normalize();
-  const cls = rollTier(bias);
+  /* A named tier when the caller asked for one, else the bias roll the waves
+     have always used. Clamped rather than trusted: the name comes from a game
+     description an admin typed. */
+  const cls = forceTier === undefined
+    ? rollTier(bias)
+    : TIERS[Math.max(0, Math.min(TIERS.length - 1, Math.round(forceTier) - 1))];
   return {
     id: newEnemyId(),
     pos, fwd, roll: 0,
