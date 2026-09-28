@@ -17,9 +17,14 @@
 export {};
 import { fetchEnemies, fetchWorld } from "../src/enemySource";
 import {
-  blankEnemy, builtInIds, RESERVED_ENEMY_IDS, type EnemyType,
+  blankEnemy, builtInEnemies, builtInIds, RESERVED_ENEMY_IDS, type EnemyType,
 } from "../../../ui/src/wallet/rebels/enemyTypes";
-import { BUILT_IN_ENEMIES, DEFAULT_GAMES, type GameType } from "../../../ui/src/wallet/rebels/gameTypes";
+import {
+  BUILT_IN_ENEMIES, DEFAULT_GAMES, GAME_MAX_PAYOUT, gamePayout, payoutRefusal, type GameType,
+} from "../../../ui/src/wallet/rebels/gameTypes";
+import { COIN_PER_KILL, COIN_VALUE } from "../../../ui/src/wallet/rebels/rebelsCombat";
+import { EARN_PER_DAY } from "../src/ledger";
+import { sampleGames, sampleEnemies } from "../../../ui/src/wallet/rebels/sampleContent";
 
 const out: string[] = [];
 let failures = 0;
@@ -161,6 +166,75 @@ const gameWith = (enemy: string): GameType => ({
        !r.live && (r.error ?? "").includes(id), r.error ?? "it was accepted");
     ok(`and "${id}" is still a name a game may use`, game.has(id));
   }
+}
+
+
+/* ================= AND WHAT A GAME PAYS =================
+   The last unbounded number in the game. Every other ceiling was in place and
+   each bounded a fraction: one award, a run's awards, a player's day, what
+   leaves the treasury. The DROPS had nothing, and they are three quarters of
+   what a game pays. Each number in the worst case is individually legal and
+   individually validated already. */
+{
+  const rich = (count: number, enemy = "brute"): GameType => ({
+    id: "goldmine", name: "Goldmine", place: "earth", crew: "multiplayer",
+    published: true,
+    rounds: [{ seconds: 60, spawns: [{ enemy, count, arrive: "spread" }] }],
+  });
+
+  /* (context) the size of the hole this closes. */
+  const worst = 60 * 400 * COIN_PER_KILL * 10 * COIN_VALUE;
+  ok("(context) the largest describable game pays a fortune in DROPS alone",
+     worst > 1_000_000, `${worst.toLocaleString()} DIVI from one clear`);
+  ok("and the ceiling is a small fraction of it",
+     GAME_MAX_PAYOUT < worst / 100, `${GAME_MAX_PAYOUT} against ${worst.toLocaleString()}`);
+
+  /* ---- THE TWO NUMBERS THAT MUST AGREE ----
+     The ceiling is EARN_PER_DAY because past that the ledger silently refuses
+     the remainder. Asserted rather than left to the comment. */
+  ok("the game ceiling is exactly what a player may be credited in a day",
+     GAME_MAX_PAYOUT === EARN_PER_DAY, `${GAME_MAX_PAYOUT} against ${EARN_PER_DAY}`);
+
+  /* ---- A GREEDY GAME IS REFUSED, AND SO ARE THE REST ---- */
+  const greedy = await fetchWorld(tables(
+    [{ enemy: brute({ worth: 10 }) }],
+    [{ game: rich(400) }],
+  ));
+  ok("a game paying more than a player can earn in a day is refused",
+     !greedy.games.live && greedy.games.games[0].id === DEFAULT_GAMES[0].id,
+     `error "${(greedy.games.error ?? "").slice(0, 90)}"`);
+  ok("and the reason says the DROPS, the number nobody expects",
+     (greedy.games.error ?? "").includes("drops"), greedy.games.error ?? "");
+  ok("and names the game, so it is findable",
+     (greedy.games.error ?? "").includes("Goldmine"));
+
+  /* ---- AN ORDINARY GAME IS NOT ---- */
+  const fine = await fetchWorld(tables(
+    [{ enemy: brute({ worth: 1 }) }],
+    [{ game: rich(20) }],
+  ));
+  ok("an ordinary game passes untouched",
+     fine.games.live && fine.games.games[0].id === "goldmine",
+     `error "${fine.games.error ?? "none"}"`);
+
+  /* ---- THE REAL SAMPLES MUST PASS ----
+     A ceiling that refuses the content we shipped is a ceiling set wrong. */
+  const worthOf = new Map<string, number>([
+    ...builtInEnemies().map((e) => [e.id, e.worth] as [string, number]),
+    ...sampleEnemies().map((e) => [e.id, e.worth] as [string, number]),
+    ["fighters", 1],
+  ]);
+  for (const g of sampleGames()) {
+    const p = gamePayout(g, worthOf, COIN_PER_KILL, COIN_VALUE);
+    ok(`the sample game "${g.name}" is inside the ceiling`,
+       payoutRefusal(g, worthOf, COIN_PER_KILL, COIN_VALUE) === null,
+       `${p.total.toLocaleString()} of ${GAME_MAX_PAYOUT.toLocaleString()}`);
+  }
+
+  /* ---- AND THE BUILT-IN, WHICH NOBODY CHOSE AND EVERYBODY PLAYS ---- */
+  ok("the built-in game is inside it too",
+     payoutRefusal(DEFAULT_GAMES[0], worthOf, COIN_PER_KILL, COIN_VALUE) === null,
+     `${gamePayout(DEFAULT_GAMES[0], worthOf, COIN_PER_KILL, COIN_VALUE).total.toLocaleString()}`);
 }
 
 console.log(out.join("\n"));

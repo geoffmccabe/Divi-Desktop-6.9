@@ -405,6 +405,56 @@ export const gameMaxAward = (g: GameType): number =>
  * the simulation - passed in rather than imported so this file stays
  * dependency-free, with a test standing on them agreeing.
  */
+/**
+ * The most one clear of one game may credit a single player.
+ *
+ * ⚠ THE LAST UNBOUNDED NUMBER IN THE GAME. Every other ceiling was in place and
+ * each bounded a fraction: MAX_REWARD_DIVI bounds one award, GAME_PURSE bounds
+ * a run's awards, EARN_PER_DAY bounds a player's day, REBELS_DAILY_CAP bounds
+ * what actually leaves the treasury. The DROPS had nothing, and they are three
+ * quarters of what a game pays. The largest describable game is
+ *
+ *     60 rounds x 400 enemies x 5 spheres x worth 10  =  1,200,000 DIVI
+ *
+ * from a single clear, every number in it individually legal and every one of
+ * them already validated. The real sample games are 318 and 1,259.
+ *
+ * TEN THOUSAND because that is EARN_PER_DAY, what one account may be credited
+ * in a whole day. Past that the ledger silently refuses the remainder, so a
+ * game promising more is a game whose extra nobody can ever receive: not
+ * dangerous, because nothing over-pays, but dishonest, which is worse in a way
+ * a player actually feels. A test stands on the two numbers agreeing rather
+ * than on this comment.
+ *
+ * The bound is on what ONE PLAYER gets, matching what gamePayout returns. The
+ * room's own purse handles the per-run total across everybody.
+ */
+export const GAME_MAX_PAYOUT = 10_000;
+
+/**
+ * Why this game may not be published, or null if it may.
+ *
+ * Separate from validateGame because it needs the enemy table and the
+ * simulation's constants, and validateGame is deliberately dependency-free.
+ * Called wherever a game is accepted: the panel before saving, and the room
+ * before running.
+ */
+export function payoutRefusal(
+  g: GameType,
+  worth: Map<string, number>,
+  coinsPerKill: number,
+  coinValue: number,
+): string | null {
+  const p = gamePayout(g, worth, coinsPerKill, coinValue);
+  if (p.total <= GAME_MAX_PAYOUT) return null;
+  /* Says the DROPS separately, because that is the number nobody expects and
+     the one somebody will otherwise go looking for in the awards. */
+  return `"${g.name}" credits ${p.total.toLocaleString()} DIVI a clear `
+    + `(${p.drops.toLocaleString()} in drops from ${p.enemies} enemies, `
+    + `${p.awards.toLocaleString()} in awards), over the ${GAME_MAX_PAYOUT.toLocaleString()} `
+    + `a player may be credited in a whole day`;
+}
+
 export function gamePayout(
   g: GameType,
   worth: Map<string, number>,

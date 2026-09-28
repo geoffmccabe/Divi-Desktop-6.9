@@ -1,3 +1,4 @@
+import { parseRoom as parseRoomName } from "../../../ui/src/wallet/rebels/rebelsRegions";
 // The wire between a cockpit and the room.
 //
 // JSON, and deliberately so for this first version. A binary format is maybe
@@ -338,7 +339,10 @@ export type ServerMessage =
  * the same time without either paying for the other, and a player who flies
  * through the gate leaves one roster and joins the other.
  */
-export const ROOM_OVERFLOW_MAX = 16;
+/** The most overflow rooms a region may have.
+ *  ⚠ NOT A SECOND COPY. It is OVERFLOW_MAX, re-exported under the name this
+ *  side has always called it, so the two cannot drift apart. */
+export { OVERFLOW_MAX as ROOM_OVERFLOW_MAX } from "../../../ui/src/wallet/rebels/rebelsRegions";
 /** The regions a player can be in. One name each; the overflow rooms of a
  *  region are the same region with a number after them. */
 export const REGION_NAMES = ["earth", "spike"] as const;
@@ -347,69 +351,31 @@ export type RegionName = (typeof REGION_NAMES)[number];
 /**
  * A room name, taken apart.
  *
- * ⚠ THE ONE READER FOR A ROOM NAME. There were four, and they disagreed.
+ * ⚠ THE READER LIVES IN ui/src/wallet/rebels/rebelsRegions.ts, NOT HERE, and
+ * the reason is worth keeping: this file re-exports r1 from rebelsWire, so it
+ * already depends on the ui side. A parser here that the COCKPIT imported would
+ * point the arrow both ways and drag the room's whole protocol into the web
+ * bundle, which does not otherwise contain a byte of it. Every other thing both
+ * halves share - rebelsWire, rebelsCombat, voxelWorld, gameTypes, enemyTypes,
+ * rebelsPlaces - lives in ui and the room imports it. This follows them.
  *
- * A name carries three things: the region it is in, which overflow copy of it
- * this is, and WHICH GAME is being played there. The last is what lets a player
- * pick a game at all: a room is one simulation with one sky, so two people in
- * it cannot be playing different games, and the choice therefore has to be
- * which ROOM to join rather than a per-player setting. See the game builder
- * plan. That also means Geoff can have as many Earth games as he likes instead
- * of only the first.
+ * It was written here first and moved, which is the right outcome reached the
+ * long way: the point of one reader is that there is ONE, and which side it
+ * sits on is a smaller question than whether it is duplicated. What matters is
+ * that the rule below is imported and never restated.
  *
- *     earth              earth,  no overflow, the place's own game
- *     earth-2            earth,  overflow 2,  the place's own game
- *     earth_shakedown    earth,  no overflow, the game "shakedown"
- *     spike-3_descent    spike,  overflow 3,  the game "descent"
- *
- * WHY IT IS HERE AND EXPORTED. The cockpit had its own copy of this rule
- * (regionOfRoom in rebelsRegions.ts) and it did not have the game suffix, so
- * "spike_descent" parsed as EARTH. The cockpit would then subtract Earth's
- * origin instead of Spikeworld's, every position it reported would be two
- * hundred thousand units out, the room would refuse them all as outside the
- * world, and the player would be snapped back for ever with nothing logged
- * anywhere. One rule, in one file, imported by everything that needs it, is the
- * only shape that cannot drift - and the compiler catches the next person
- * rather than a player discovering it.
+ *     earth              earth, room 1,  the place's own game
+ *     earth-2            earth, room 2,  the place's own game
+ *     earth_shakedown    earth, room 1,  the game "shakedown"
+ *     spike-3_descent    spike, room 3,  the game "descent"
  */
-export interface RoomName {
-  region: RegionName;
-  /** 1 for the first room, 2 upward for overflow. */
-  overflow: number;
-  /** The game's id, or null for the place's own game. */
-  game: string | null;
-}
+export {
+  parseRoom, roomNameOf, gameOfRoom as gameOf, type RoomName,
+} from "../../../ui/src/wallet/rebels/rebelsRegions";
 
-/** Room names split on `_`: the place and its overflow to the left, the game to
- *  the right. `-` was taken by overflow and `_` was free in the name charset. */
-const ROOM = /^(earth|spike)(?:-(\d{1,2}))?(?:_([a-z0-9][a-z0-9-]{1,38}[a-z0-9]))?$/;
-
-/** Take a room name apart, or null if it is not a room name at all. */
-export function parseRoom(name: string): RoomName | null {
-  const m = ROOM.exec(name);
-  if (!m) return null;
-  const overflow = m[2] === undefined ? 1 : Number(m[2]);
-  if (m[2] !== undefined && !(overflow >= 2 && overflow <= ROOM_OVERFLOW_MAX)) return null;
-  return { region: m[1] as RegionName, overflow, game: m[3] ?? null };
-}
-
-/** Build a room name from its parts. The inverse of parseRoom, so the two
- *  cannot drift: the test puts every name through both. */
-export function roomNameOf(r: RoomName): string {
-  const over = r.overflow > 1 ? `-${r.overflow}` : "";
-  return `${r.region}${over}${r.game ? `_${r.game}` : ""}`;
-}
-
-/** Which region a room name belongs to, or null if it is not a region room.
- *  One reader for the name, so the door, the room and the cockpit cannot
- *  disagree about what "spike-3" is. */
+/** Which region a room name belongs to, or null if it is not a region room. */
 export function regionOf(name: string): RegionName | null {
-  return parseRoom(name)?.region ?? null;
-}
-
-/** Which game a room is playing, or null for the place's own. */
-export function gameOf(name: string): string | null {
-  return parseRoom(name)?.game ?? null;
+  return parseRoomName(name)?.region ?? null;
 }
 
 export function roomNameOk(name: string): boolean {
@@ -417,18 +383,15 @@ export function roomNameOk(name: string): boolean {
   const p = /^p(\d{1,2})$/.exec(name);
   return !!p && Number(p[1]) >= 1 && Number(p[1]) <= 14;
 }
-/** Where to send someone when this room is full, or "" when there is nowhere. */
-export function nextRoom(name: string): string {
-  const r = parseRoom(name);
-  if (!r) return "";
-  /* ⚠ THE GAME COMES WITH THEM. A player pushed out of a full earth_shakedown
-     must land in earth-2_shakedown and not in plain earth-2, which is a
-     different game entirely and would look like the room changing under them
-     for no reason. */
-  return r.overflow < ROOM_OVERFLOW_MAX
-    ? roomNameOf({ ...r, overflow: r.overflow + 1 })
-    : "";
-}
+/** Where to send someone when this room is full, or "" when there is nowhere.
+ *
+ *  ⚠ THE GAME COMES WITH THEM. A player pushed out of a full earth_shakedown
+ *  lands in earth-2_shakedown and not in plain earth-2, which is a different
+ *  game entirely and would look like the room changing under them for no
+ *  reason. That behaviour lives in nextRoomName beside the parser it needs;
+ *  this is the name this side has always called it by, and NOT a second copy.
+ *  Both existed for about an hour, identical, which is how these start. */
+export { nextRoomName as nextRoom } from "../../../ui/src/wallet/rebels/rebelsRegions";
 /** A guest id worth trusting as a key: long, random-looking, nothing odd in it. */
 export function guestIdOk(id: unknown): id is string {
   return typeof id === "string" && /^[A-Za-z0-9-]{16,64}$/.test(id);

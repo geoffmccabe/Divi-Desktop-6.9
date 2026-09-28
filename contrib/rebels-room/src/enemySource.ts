@@ -27,6 +27,8 @@
 import {
   builtInEnemies, builtInIds, validateEnemies, type EnemyType,
 } from "../../../ui/src/wallet/rebels/enemyTypes";
+import { payoutRefusal, DEFAULT_GAMES } from "../../../ui/src/wallet/rebels/gameTypes";
+import { COIN_PER_KILL, COIN_VALUE } from "../../../ui/src/wallet/rebels/rebelsCombat";
 import { accountRead } from "../../../ui/src/wallet/rebels/rebelsAccount";
 import { fetchGames, type GamesResult } from "./gameSource";
 
@@ -106,5 +108,28 @@ export async function fetchWorld(
   const known = new Set(builtInIds());
   const custom = enemies.enemies.filter((e) => !known.has(e.id)).map((e) => e.id);
   const games = await fetchGames(fetchFn, custom);
+
+  /* ---- AND WHAT THEY PAY ----
+     The one bound that could not live in validateGame, because it needs the
+     enemy table and the simulation's constants and that file is deliberately
+     dependency-free. Checked HERE rather than in the panel alone, because the
+     panel is the one thing that cannot be trusted to have run: a row written by
+     hand, or saved before this ceiling existed, reaches the room all the same.
+
+     Refused the same way any other bad game is - the whole set falls back to
+     the built-in, loudly - because a game that promises more than a player can
+     ever be credited is worse than one nobody can play. See GAME_MAX_PAYOUT. */
+  if (games.live) {
+    const worth = new Map(enemies.enemies.map((e) => [e.id, e.worth]));
+    const refusals = games.games
+      .map((g) => payoutRefusal(g, worth, COIN_PER_KILL, COIN_VALUE))
+      .filter((x): x is string => x !== null);
+    if (refusals.length > 0) {
+      return {
+        enemies,
+        games: { games: DEFAULT_GAMES, live: false, error: refusals.slice(0, 2).join("; ") },
+      };
+    }
+  }
   return { enemies, games };
 }
