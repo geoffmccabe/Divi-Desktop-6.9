@@ -445,6 +445,25 @@ export function payoutRefusal(
   coinsPerKill: number,
   coinValue: number,
 ): string | null {
+  /* ---- THE BUILT-IN IS NEVER REFUSED ----
+     It is not somebody's content, it is the FALLBACK: the game a room plays
+     when it has none of Geoff's, and the one a place with nothing published
+     drops back to. Applying a ceiling written for authored content to the
+     thing that catches a failure is a category error with a very bad outcome.
+
+     Concretely, because it is not obvious from here: Wave Defence pays 5,850
+     a clear, which is 59% of the ceiling. Lower GAME_MAX_PAYOUT below that -
+     an entirely reasonable thing to do one day - and the built-in is refused;
+     a refused game condemns the whole set, deliberately; so EVERY game in the
+     room goes with it, including ones well inside the ceiling, and the
+     fallback they would have fallen back to is the thing that was refused.
+     One number, edited for a good reason, empties the game.
+
+     The exemption is safe in the direction that matters: the built-in is
+     code, so it cannot be edited into a money printer by anybody the ceiling
+     is there to stop. */
+  if (DEFAULT_GAMES.some((d) => d.id === g.id)) return null;
+
   const p = gamePayout(g, worth, coinsPerKill, coinValue);
   if (p.total <= GAME_MAX_PAYOUT) return null;
   /* Says the DROPS separately, because that is the number nobody expects and

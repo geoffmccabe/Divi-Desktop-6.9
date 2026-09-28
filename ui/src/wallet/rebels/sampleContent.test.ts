@@ -178,6 +178,19 @@ const enemyCount = (g: GameType) =>
   ok("and is still inside the ceiling", payoutRefusal(waveDefence(), worth, COIN_PER_KILL, COIN_VALUE) === null,
      `${builtIn.total} of ${GAME_MAX_PAYOUT}`);
 
+  /* ---- AND IT SURVIVES THE CEILING BEING LOWERED, which is the real risk ----
+     The built-in is the FALLBACK. If a ceiling written for authored content
+     refuses it, and a refused game condemns the whole set, then one edit to
+     one constant empties the room of every game AND of the thing they would
+     have fallen back to. Tested by pretending the ceiling is far below it
+     rather than by trusting today's value. */
+  const crushing = 1;
+  ok("the built-in is exempt, so lowering the ceiling cannot empty the game",
+     payoutRefusal(waveDefence(), worth, COIN_PER_KILL, crushing) === null,
+     "refused even at a ceiling of one DIVI a sphere");
+  ok("while authored content at the same ceiling IS refused, so the exemption is narrow",
+     payoutRefusal(descent, worth, COIN_PER_KILL, 100) !== null);
+
   const DAILY_PAYOUT_CAP = 2000;
   ok("no sample has quietly grown past the daily cap on a single clear",
      desc.total < DAILY_PAYOUT_CAP,
