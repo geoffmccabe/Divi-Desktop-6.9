@@ -29,8 +29,16 @@ import type { GameType, Round, Spawn } from "../../../ui/src/wallet/rebels/gameT
  * implementation does; a test's does not have to.
  */
 export interface Spawner {
-  /** Put `n` of this enemy into the world. Called with n >= 1. */
-  spawn(enemy: string, n: number): void;
+  /**
+   * Put `n` of this enemy into the world. Called with n >= 1.
+   *
+   * `bias` is the round's difficulty range, carried straight through from the
+   * description and meaningful only for the mixed "fighters". It has to travel
+   * with the spawn rather than be looked up later, because two spawns in the
+   * same round can ask for different mixes - an easy screen of fighters and one
+   * hard knot of them - and by the time the world is asked, the round is gone.
+   */
+  spawn(enemy: string, n: number, bias?: readonly [number, number]): void;
 }
 
 /** How many bursts a "clumps" arrival is broken into, at most. Four is enough
@@ -41,6 +49,8 @@ export const CLUMPS = 4;
 /** One spawn's progress through its round. */
 interface Pending {
   enemy: string;
+  /** The difficulty range this spawn asked for, if it asked. */
+  bias?: readonly [number, number];
   /** How many are still to come. */
   left: number;
   /** Seconds until the next arrival. Counts down. */
@@ -88,7 +98,7 @@ function planRound(round: Round): Pending[] {
     const count = Math.max(0, Math.floor(s.count));
     if (count <= 0) continue;
     if (s.arrive === "once") {
-      out.push({ enemy: s.enemy, left: count, nextIn: 0, every: 0, each: count });
+      out.push({ enemy: s.enemy, bias: s.bias, left: count, nextIn: 0, every: 0, each: count });
       continue;
     }
     if (s.arrive === "clumps") {
@@ -97,14 +107,14 @@ function planRound(round: Round): Pending[] {
       const bursts = Math.max(1, Math.min(CLUMPS, count));
       const each = Math.ceil(count / bursts);
       out.push({
-        enemy: s.enemy, left: count, nextIn: 0,
+        enemy: s.enemy, bias: s.bias, left: count, nextIn: 0,
         every: round.seconds / bursts, each,
       });
       continue;
     }
     /* "spread": one at a time, evenly, the window divided by the count. */
     out.push({
-      enemy: s.enemy, left: count, nextIn: 0,
+      enemy: s.enemy, bias: s.bias, left: count, nextIn: 0,
       every: round.seconds / Math.max(1, count), each: 1,
     });
   }
@@ -147,7 +157,7 @@ export function stepGame(run: Run, dt: number, spawner: Spawner): RunEvents {
     let guard = 0;
     while (p.left > 0 && p.nextIn <= 0 && guard++ < 1000) {
       const n = Math.min(p.each, p.left);
-      spawner.spawn(p.enemy, n);
+      spawner.spawn(p.enemy, n, p.bias);
       p.left -= n;
       if (p.every <= 0) break;          /* "once": everything, and no more */
       p.nextIn += p.every;
