@@ -250,3 +250,41 @@ bounds the debt, and the debt now grows faster than the float.
 
 Until the dedicated wallet's address arrives, this section is a record and not a
 configuration.
+
+## The debt grows faster than the float pays, and by how much
+
+Written 2026-Sep-27, when custom enemies landed and made it worth putting a
+number on. Not a bug and nothing here is broken: two different ceilings bound
+two different things, and they do not agree.
+
+| Ceiling | What it bounds | Value |
+|---|---|---|
+| `EARN_PER_DAY` (`ledger.ts`) | what ONE account may be CREDITED in a day | 10,000 DIVI |
+| `REBELS_DAILY_CAP` (payout service) | what the WHOLE GAME may actually PAY OUT in a day | 2,000 DIVI |
+
+So a single player may be credited five times what the treasury pays everybody
+in a day, and twenty active players may be credited a hundred times it. The cap
+does its job: no more than 2,000 DIVI a day leaves the wallet whatever happens.
+What it does not do is stop a balance being promised that cannot be drawn.
+
+**Custom enemies did not change either ceiling. They changed the SPEED.** A
+built-in fighter drops `COIN_PER_KILL` 5 spheres at a DIVI each, so 2,000 kills
+reached the daily allowance. A custom enemy at `WORTH_MAX` 10 drops 50, so 200
+kills reach it. The ceiling per player per day is the same 10,000 it was; it is
+simply reachable in a tenth of the time, and `WORTH_MAX` is what keeps that from
+being worse.
+
+**The decision this needs is Geoff's and it is not a code one.** Three honest
+options, and doing nothing is one of them:
+
+1. **Leave it.** Correct while the player count is small and nobody is near
+   either ceiling. It costs nothing today and the cap is a real backstop.
+2. **Bring `EARN_PER_DAY` down toward the payout cap**, so credit roughly tracks
+   what can actually be paid. Safest, and it makes a player's balance mean
+   something, but it caps a good session rather than an abusive one.
+3. **Raise `REBELS_DAILY_CAP`** and fund the float to match what the game
+   promises. The only one that lets the game pay what it says, and the only one
+   that costs real DIVI.
+
+Until it is decided, the thing NOT to do is quietly credit balances nobody can
+withdraw, because the first player to try is the one who finds out.
