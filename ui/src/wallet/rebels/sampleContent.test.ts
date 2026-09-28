@@ -10,9 +10,10 @@
 export {};
 
 import { sampleEnemies, sampleGames } from "./sampleContent";
-import { validateEnemies, builtInIds } from "./enemyTypes";
+import { validateEnemies, builtInIds, builtInEnemies } from "./enemyTypes";
+import { COIN_PER_KILL, COIN_VALUE } from "./rebelsCombat";
 import {
-  validateGames, validateGame, gameSeconds, gameMaxAward, waveDefence,
+  validateGames, validateGame, gameSeconds, gameMaxAward, gamePayout, waveDefence,
   PLACES_LIVE, MAX_REWARD_DIVI, type GameType,
 } from "./gameTypes";
 
@@ -133,10 +134,35 @@ const enemyCount = (g: GameType) =>
      games.every((g) => (g.award?.divi ?? 0) <= MAX_REWARD_DIVI
        && g.rounds.every((r) => (r.award?.divi ?? 0) <= MAX_REWARD_DIVI)));
 
-  /* And what a whole game could pay is worth knowing out loud, because it is
-     the number that matters to the treasury rather than any single award. */
-  const worst = Math.max(...games.map(gameMaxAward));
-  ok("the most any sample pays in awards is a sane number", worst <= 300, `${worst} DIVI`);
+  /* ---- WHAT A CLEAR ACTUALLY CREDITS, drops included ----
+     The awards are the small half. Checking them alone is how a sample set
+     ends up crediting 63% of the treasury's whole daily payout cap to one
+     player while every individual award sits inside its ceiling. Found by the
+     payouts session multiplying it out; these numbers are the record of it so
+     nobody has to rediscover them. */
+  const worth = new Map([...builtInEnemies(), ...enemies].map((e) => [e.id, e.worth]));
+  worth.set("fighters", 1);
+  const pay = (g: GameType) => gamePayout(g, worth, COIN_PER_KILL, COIN_VALUE);
+  const shake = pay(shakedown), desc = pay(descent);
+
+  ok("Shakedown credits what it credits", shake.total === 318,
+     `${shake.drops} dropped + ${shake.awards} awarded = ${shake.total}`);
+  ok("Descent credits what it credits", desc.total === 1259,
+     `${desc.drops} dropped + ${desc.awards} awarded = ${desc.total}`);
+  ok("and the DROPS are the big half, which is the part that surprised us",
+     desc.drops > desc.awards * 3, `${desc.drops} against ${desc.awards}`);
+  ok("so counting awards alone understates a game several times over",
+     desc.total > gameMaxAward(descent) * 3,
+     `${gameMaxAward(descent)} counted, ${desc.total} real`);
+
+  /* ---- AND THE NUMBER THAT MATTERS TO THE TREASURY ----
+     Not a pass/fail on the design - Geoff owns the rate - but a tripwire, so
+     a future edit that makes a sample richer cannot pass unnoticed. If this
+     fails, somebody has changed the economy and should say so out loud. */
+  const DAILY_PAYOUT_CAP = 2000;
+  ok("no sample has quietly grown past the daily cap on a single clear",
+     desc.total < DAILY_PAYOUT_CAP,
+     `${desc.total} of ${DAILY_PAYOUT_CAP}, which is ${Math.round(desc.total / DAILY_PAYOUT_CAP * 100)}%`);
 }
 
 /* ================= AND THEY ARE EDITABLE, NOT BUILT IN ================= */

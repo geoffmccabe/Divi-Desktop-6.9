@@ -40,6 +40,23 @@ export const PLACES: PlaceId[] = [
   "p8", "p9", "p10", "p11", "p12", "p13", "p14",
 ];
 
+/**
+ * What to CALL each place, for anything a player reads.
+ *
+ * The ids are for the wire and the database; "p7" is not a destination
+ * anybody wants to see on a card. The planet names are the sky's own, from
+ * PLANET_NAMES in spaceEnvironment.ts - written out here rather than imported
+ * because that file reaches for three.js, with a test standing on them
+ * matching.
+ */
+export const PLACE_NAMES: Record<string, string> = {
+  earth: "Earth orbit",
+  spike: "Spikeworld",
+  p1: "Ceralt", p2: "Bhoro", p3: "Ixion Minor", p4: "Kelvarr", p5: "Ondrus",
+  p6: "Tessimar", p7: "Halcyne", p8: "Vaskir Prime", p9: "Ormundi", p10: "Threx",
+  p11: "Calladon", p12: "Sepharis", p13: "Yggdral", p14: "Morrowain",
+};
+
 /** Which places a game can actually be played in TODAY. The rest are named so
  *  a game can be written for them before the room exists, but a game pointed at
  *  one cannot be published yet. */
@@ -364,7 +381,45 @@ export function validateGames(raw: unknown, knownEnemies: string[] = []): { ok: 
 export const gameSeconds = (g: GameType): number =>
   g.rounds.reduce((n, r) => n + r.seconds, 0);
 
-/** The most it could pay in awards, ignoring what enemies drop. What the panel
- *  shows beside a game so a payout is a decision rather than a surprise. */
+/** The most it could pay in AWARDS alone, ignoring what enemies drop. */
 export const gameMaxAward = (g: GameType): number =>
   (g.award?.divi ?? 0) + g.rounds.reduce((n, r) => n + (r.award?.divi ?? 0), 0);
+
+/**
+ * What clearing this game credits ONE player, drops and awards together.
+ *
+ * ⚠ THE AWARDS ARE THE SMALL HALF and showing them alone is misleading. On the
+ * sample game Descent the awards are 295 DIVI and the drops are 964, so a
+ * panel reporting "up to 295" is understating what a game costs by a factor of
+ * four. That is not a rounding difference, it is the difference between a game
+ * that fits the treasury's daily payout cap and one that is 63% of it on a
+ * single clear.
+ *
+ * It is worth being precise about why the mistake was easy: the awards ARE
+ * bounded, carefully, per round and per game, and a bound that is enforced
+ * properly reads as a bound that is complete. The drops had no ceiling at all
+ * and were three quarters of the total.
+ *
+ * `worth` is what each enemy drops, from the enemy table; anything unknown
+ * counts as one, which is a fighter. `coinsPerKill` and `coinValue` come from
+ * the simulation - passed in rather than imported so this file stays
+ * dependency-free, with a test standing on them agreeing.
+ */
+export function gamePayout(
+  g: GameType,
+  worth: Map<string, number>,
+  coinsPerKill: number,
+  coinValue: number,
+): { drops: number; awards: number; total: number; enemies: number } {
+  let drops = 0, enemies = 0;
+  for (const r of g.rounds) {
+    for (const s of r.spawns) {
+      enemies += s.count;
+      /* Exactly as the fight pays it, rounding included: a Shrike at worth
+         1.5 drops round(7.5) = 8 coins and not 7.5. */
+      drops += s.count * Math.max(0, Math.round(coinsPerKill * (worth.get(s.enemy) ?? 1))) * coinValue;
+    }
+  }
+  const awards = gameMaxAward(g);
+  return { drops, awards, total: drops + awards, enemies };
+}

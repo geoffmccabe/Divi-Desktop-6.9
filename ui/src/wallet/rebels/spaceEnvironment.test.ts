@@ -7,8 +7,9 @@
 // Run: sh scripts/run-rebels-space-tests.sh
 
 import * as THREE from "three";
+import { PLACE_NAMES } from "./gameTypes";
 import { R, MAX_ALT, EARTH_D, PLANET_COUNT, planetDiameter, planetDistance } from "./orbitWorld";
-import { planetLayout, furnitureLayout } from "./spaceEnvironment";
+import { planetLayout, furnitureLayout, PLANET_NAMES } from "./spaceEnvironment";
 
 const out: string[] = [];
 let failures = 0;
@@ -221,6 +222,24 @@ function ok(name: string, cond: boolean, extra = "") {
   const justOut = small.at.clone().add(new THREE.Vector3(ringSmall * 1.1, 0, 0));
   ok("inside the ring is 'near'", justIn.distanceTo(small.at) < ringSmall);
   ok("outside it is not", justOut.distanceTo(small.at) > ringSmall);
+}
+
+/* ---- AND THE GAME BUILDER CALLS THEM THE SAME THING ----
+   PLACE_NAMES in gameTypes.ts is a second hand-written list of these same
+   fourteen planets, so a player picking a game at p7 sees a name rather than
+   "p7". Two hand-maintained lists that must agree is the shape of bug that
+   caught us four times in a day, and it caught the author of that list
+   immediately: fourteen plausible names were invented and every one was
+   wrong. This is the check that found it. */
+{
+  const names = PLANET_NAMES;
+  const wrong = names
+    .map((n, i) => (PLACE_NAMES[`p${i + 1}`] === n ? null : `p${i + 1} is "${PLACE_NAMES[`p${i + 1}`]}" and the sky says "${n}"`))
+    .filter(Boolean);
+  ok("the game builder calls each planet what the sky calls it", wrong.length === 0,
+     wrong.join("; ") || `all ${names.length} match`);
+  ok("and there are as many planets as there are places for them",
+     names.length === PLANET_COUNT, `${names.length} names, ${PLANET_COUNT} planets`);
 }
 
 console.log(out.join("\n"));

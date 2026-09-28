@@ -1095,3 +1095,47 @@
 .orbit-board-notes { display: grid; gap: 3px; font-size: 10px; line-height: 1.35; opacity: 0.75; }
 .orbit-board-notes > div { display: grid; grid-template-columns: 128px 1fr; gap: 8px; }
 .orbit-board-notes b { color: hsl(var(--rebels-home)); font-weight: 600; letter-spacing: 0.06em; }
+
+/* ---- the game picker ----
+   The launch card's twin: same scrim, same blur, same heading, because it
+   appears in the same place for the same reason. Choosing a game IS launching
+   now, and the old single LAUNCH button is the case where there is one. */
+.orbit-picker { align-content: center; gap: 14px; padding: 24px; overflow-y: auto; }
+.orbit-picker-note { color: hsl(var(--rebels-alert, 0 70% 62%)); }
+.orbit-picker-grid {
+  display: grid;
+  /* auto-fill, so one game is one card and twenty is a wall of them without
+     either looking like a mistake. Full width of what it is given: no dead
+     band down the right. */
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 12px;
+  width: min(900px, 86vw);
+  margin: 0 auto;
+}
+.orbit-picker-card {
+  display: flex; flex-direction: column; gap: 0;
+  padding: 0; overflow: hidden; text-align: left; cursor: pointer;
+  background: hsl(var(--rebels-ocean) / 0.55);
+  border: 1px solid hsl(var(--primary) / 0.35);
+  border-radius: calc(var(--panel-radius) * 0.7);
+  /* The card button must not inherit .orbit-card button's pill shape. */
+  margin-top: 0; justify-self: stretch;
+}
+.orbit-picker-card:hover { border-color: hsl(var(--primary)); filter: brightness(1.08); }
+.orbit-picker-art {
+  display: block; aspect-ratio: 3 / 2; width: 100%;
+  background: #0b0b10 center/cover no-repeat;
+  display: flex; align-items: center; justify-content: center;
+}
+.orbit-picker-noart {
+  font-family: var(--font-heading); font-size: 15px; letter-spacing: 0.08em;
+  color: hsl(var(--primary) / 0.7); text-align: center; padding: 8px;
+}
+.orbit-picker-name {
+  font-family: var(--font-heading); font-size: 15px; letter-spacing: 0.06em;
+  color: hsl(var(--primary)); padding: 8px 10px 0;
+}
+.orbit-picker-where {
+  font-family: var(--font-mono); font-size: 11px; opacity: 0.7;
+  color: hsl(var(--rebels-hud)); padding: 2px 10px 10px;
+}
