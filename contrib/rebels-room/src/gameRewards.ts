@@ -24,10 +24,25 @@
 // So this counts what a game has actually paid and stops when the game's whole
 // purse is empty. Three layers now, and they bound different things:
 //
-//   the validator   one award cannot be absurd          (gameTypes.ts)
-//   this            one GAME cannot pay out a fortune   (GAME_PURSE)
-//   EARN_PER_DAY    one PLAYER cannot earn one a day    (ledger.ts)
-//   the daily cap   the treasury cannot be drained      (payout service)
+//   the validator     one award cannot be absurd        (MAX_REWARD_DIVI)
+//   this              one game's AWARDS are bounded      (GAME_PURSE)
+//   payoutRefusal     one game's WHOLE PAYOUT is bounded (GAME_MAX_PAYOUT)
+//   EARN_PER_DAY      one PLAYER cannot earn one a day   (ledger.ts)
+//   the daily cap     the treasury cannot be drained     (payout service)
+//
+// ⚠ THE SECOND LINE USED TO SAY "one GAME cannot pay out a fortune" AND THAT
+// WAS FALSE. This purse bounds the AWARDS and nothing else. The DROPS, which
+// are three quarters of what a game pays - 964 of Descent's 1,259 - had no
+// ceiling at all until GAME_MAX_PAYOUT, and the largest describable game paid
+// 1,200,000 DIVI a clear with every number in it individually validated.
+//
+// The comment was not sloppiness; it is the failure mode itself. A bound that
+// is enforced properly on the part it covers reads as a bound that is
+// complete, and reads MORE complete the better it is written, because the care
+// visible in it is taken as thoroughness about the whole. The question that
+// catches it is not "is this bound correct" but "what is the denominator, and
+// is this bound on all of it". Left here as a marker rather than quietly
+// corrected, because the next person to add a ceiling should see the shape.
 //
 // Only the last one bounds money actually leaving. The three above it bound the
 // DEBT, which at a DIVI a sphere now grows faster than the float does.
