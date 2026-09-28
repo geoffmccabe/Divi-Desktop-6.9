@@ -224,13 +224,15 @@ export function HeaderBar() {
               <span className="bl-price-dot bl-price-dot-trying" /> …
             </span>
           ) : (
-            <span className={"bl-fiat bl-fiat-line" + (fiat.recovered ? " bl-fiat-recovered" : "")}>
-              {fiat.recovered && <span className="bl-price-dot bl-price-dot-ok" />}
-              {fiat.value} <span className="bl-fiat-code">{fiat.code}</span>
-              {/* The rate that produced the figure to its left. Smaller, and
-                  on the same line -- see .bl-rate, which keeps it there. */}
+            <>
+              <span className={"bl-fiat bl-fiat-line" + (fiat.recovered ? " bl-fiat-recovered" : "")}>
+                {fiat.recovered && <span className="bl-price-dot bl-price-dot-ok" />}
+                {fiat.value} <span className="bl-fiat-code">{fiat.code}</span>
+              </span>
+              {/* The rate that produced the figure above it: its own small
+                  line under the value (Geoff, 2026-Sep-28), never beside it. */}
               <span className="bl-rate">(1 DIVI={fiat.unit})</span>
-            </span>
+            </>
           )}
         </span>
         )}

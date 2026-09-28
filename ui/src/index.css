@@ -1129,7 +1129,7 @@ code, .mono { font-family: var(--font-mono); }
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
-  gap: 4px;
+  gap: 2px; /* half the old 4px: the DIVI figure sits closer to its value */
   width: 100%;
   min-width: 0;
 }
@@ -1419,7 +1419,7 @@ code, .mono { font-family: var(--font-mono); }
    Three points smaller than the fiat text and held on ONE line -- the panel
    is narrow and a wrapped rate pushes the whole block out of the box. */
 .bl-fiat-line { display: flex; align-items: baseline; gap: 6px; flex-wrap: nowrap; min-width: 0; }
-.bl-rate { font-size: calc(1em - 3pt); opacity: 0.72; white-space: nowrap; }
+.bl-rate { display: block; font-size: 0.62rem; line-height: 1.2; opacity: 0.72; white-space: nowrap; color: hsl(var(--muted-foreground)); }
 
 .send-locked {
   margin: 2px 0 6px; font-size: 0.8rem; line-height: 1.35; color: #ffd899;
@@ -1545,7 +1545,7 @@ code, .mono { font-family: var(--font-mono); }
 /* ---- Spendable fiat value (header) ---- */
 /* Fiat value: same size as the DIVI amount, white, right-justified in the row;
    the currency code is small grey to match the DIVI decimals. */
-.bl-fiat { color: hsl(var(--foreground)); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bl-fiat { color: hsl(var(--foreground)); font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; line-height: 1.15; }
 .bl-fiat-code { font-size: 0.6em; color: hsl(var(--muted-foreground)); font-weight: 400; }
 
 /* ---- Admin: Value panel ---- */
