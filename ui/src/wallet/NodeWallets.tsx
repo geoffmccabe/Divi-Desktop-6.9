@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   walletAddresses, walletsList, walletCreate, walletNewAddress, walletSetLabel, walletSetVault, walletWords, walletRemove,
+  walletVaultFund, walletVaultReclaim,
   type ExtraWallet, type AddrInfo,
 } from "./api";
 import { fmtDivi } from "../status";
@@ -23,10 +24,11 @@ function short(a: string): string {
 }
 
 function AddressRow({
-  address, label, divi, vault, hra, onLabel, onVault, onGetHra, main,
+  address, label, divi, vaulted, vaultPending, vault, locked, hra, onLabel, onVault, onStake, onUnstake, onGetHra, main,
 }: {
-  address: string; label: string; divi?: number; vault?: boolean; hra?: string | null;
-  onLabel?: (v: string) => Promise<void>; onVault?: (on: boolean) => Promise<void>; onGetHra?: () => void; main?: boolean;
+  address: string; label: string; divi?: number; vaulted?: number; vaultPending?: number; vault?: boolean; locked?: boolean; hra?: string | null;
+  onLabel?: (v: string) => Promise<void>; onVault?: (on: boolean) => Promise<void>;
+  onStake?: () => void; onUnstake?: () => void; onGetHra?: () => void; main?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(label);
@@ -59,7 +61,13 @@ function AddressRow({
         )}
         <code className="nw-addr-code" title={address}>{short(address)}</code>
         <button type="button" className="wl-btn nw-mini" onClick={copy}>{copied ? "Copied" : "Copy"}</button>
-        {typeof divi === "number" && <span className="nw-addr-bal">{fmtDivi(divi)} DIVI</span>}
+        {typeof divi === "number" && (
+          <span className="nw-addr-bal">
+            {fmtDivi(divi)} DIVI
+            {typeof vaulted === "number" && vaulted > 0 && <> · <span className="nw-vaulted">{fmtDivi(vaulted)} staking</span></>}
+            {!!vaultPending && <> · <span className="nw-pending">{vaultPending} deposit{vaultPending === 1 ? "" : "s"} awaiting confirmation</span></>}
+          </span>
+        )}
       </div>
       <div className="nw-addr-bottom">
         {hra ? (
@@ -71,10 +79,25 @@ function AddressRow({
           </span>
         )}
         {onVault && (
-          <label className="nw-vault">
-            <input type="checkbox" checked={!!vault} onChange={(e) => void onVault(e.target.checked)} />
-            Vault staking <small>(staked by this node; arrives with the next release)</small>
-          </label>
+          <span className="nw-vault-wrap">
+            <label className="nw-vault" title="Coins at this address are placed in a vault: you keep custody, this node only stakes them. Rewards and lottery wins land in the vault too.">
+              <input type="checkbox" checked={!!vault} onChange={(e) => void onVault(e.target.checked)} />
+              Vault staking
+              <small>
+                {vault
+                  ? locked
+                    ? "(this wallet has its own password, so press Stake now to move coins)"
+                    : "(coins of 1 DIVI or more move into the vault by themselves)"
+                  : "(off: coins stay plain and do not stake)"}
+              </small>
+            </label>
+            {vault && locked && typeof divi === "number" && divi > 0 && onStake && (
+              <button type="button" className="wl-btn nw-mini" onClick={onStake}>Stake now</button>
+            )}
+            {typeof vaulted === "number" && vaulted > 0 && onUnstake && (
+              <button type="button" className="wl-btn nw-mini" onClick={onUnstake} title="Takes everything out of the vault back to this address and turns vault staking off">Unstake</button>
+            )}
+          </span>
         )}
       </div>
     </div>
@@ -91,7 +114,7 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
   const [words, setWords] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
-  const [askPass, setAskPass] = useState<{ walletId: string; what: "address" | "words" | "remove" } | null>(null);
+  const [askPass, setAskPass] = useState<{ walletId: string; what: "address" | "words" | "stake" | "unstake"; address?: string } | null>(null);
   const [passDraft, setPassDraft] = useState("");
   const [shownWords, setShownWords] = useState<{ id: string; words: string[] } | null>(null);
 
@@ -120,9 +143,18 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
     }
   };
 
-  const withPass = async (w: ExtraWallet, what: "address" | "words" | "remove", run: (pass?: string) => Promise<void>) => {
-    if (w.lockedWithPassword) { setAskPass({ walletId: w.id, what }); setPassDraft(""); return; }
+  const withPass = async (w: ExtraWallet, what: "address" | "words" | "stake" | "unstake", run: (pass?: string) => Promise<void>, address?: string) => {
+    if (w.lockedWithPassword) { setAskPass({ walletId: w.id, what, address }); setPassDraft(""); return; }
     await run(undefined);
+  };
+  const stake = (w: ExtraWallet, address: string, pass?: string) => async () => {
+    setBusy(true); setNote("");
+    try { await walletVaultFund(w.id, address, undefined, pass); await refresh(); } catch (e) { setNote(String(e)); } finally { setBusy(false); }
+  };
+  const unstake = (w: ExtraWallet, address: string, pass?: string) => async () => {
+    if (!window.confirm("Take everything out of this address's vault? It stops staking until you turn vault staking back on.")) return;
+    setBusy(true); setNote("");
+    try { await walletVaultReclaim(w.id, address, undefined, pass); await refresh(); } catch (e) { setNote(String(e)); } finally { setBusy(false); }
   };
 
   const addAddress = (w: ExtraWallet) => withPass(w, "address", async (pass) => {
@@ -143,7 +175,7 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
     }
   };
 
-  const total = wallets.reduce((s, w) => s + w.divi, 0);
+  const total = wallets.reduce((s, w) => s + w.divi + w.vaulted, 0);
   const main = staking.find((a) => a.isMain) ?? staking[0];
 
   return (
@@ -176,7 +208,7 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
         <div key={w.id} className="nw-wallet nw-extra" style={{ marginLeft: INDENT }}>
           <div className="nw-wallet-head">
             <b>{w.label}</b>
-            <span className="nw-wallet-bal">{w.balanceKnown ? `${fmtDivi(w.divi)} DIVI` : "balance unknown (node not answering)"}</span>
+            <span className="nw-wallet-bal">{w.balanceKnown ? `${fmtDivi(w.divi + w.vaulted)} DIVI${w.vaulted > 0 ? ` (${fmtDivi(w.vaulted)} staking)` : ""}` : "balance unknown (node not answering)"}</span>
             {w.lockedWithPassword && <span className="nw-wallet-sub">own password</span>}
             <span className="nw-wallet-tools">
               <button type="button" className="wl-btn nw-mini" disabled={busy} onClick={() => void addAddress(w)}>New address</button>
@@ -190,7 +222,12 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
               address={a.address}
               label={a.label}
               divi={w.balanceKnown ? a.divi : undefined}
+              vaulted={w.balanceKnown ? a.vaulted : undefined}
+              vaultPending={a.vaultPending}
               vault={a.vault}
+              locked={w.lockedWithPassword}
+              onStake={() => void withPass(w, "stake", (p) => stake(w, a.address, p)(), a.address)}
+              onUnstake={() => void withPass(w, "unstake", (p) => unstake(w, a.address, p)(), a.address)}
               hra={null}
               main={a.index === 0}
               onLabel={async (v) => { await walletSetLabel(w.id, a.address, v); await refresh(); }}
@@ -208,6 +245,13 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
         </div>
       ))}
       {wallets.length > 1 && <p className="set-note nw-total">All extra wallets: {fmtDivi(total)} DIVI</p>}
+      {wallets.some((w) => w.addresses.some((a) => a.vaultPending > 0)) && (
+        <p className="set-note nw-total">
+          A vault deposit is registered with the node after one confirmation (a few minutes). If one stays
+          "awaiting" for over an hour, restart the node from this page: vault staking was switched on in its
+          settings and takes effect when it next starts. The coins are safe in the vault meanwhile.
+        </p>
+      )}
       {note && <p className="pw-msg rs-bad">{note}</p>}
 
       {confirm && createPortal(
@@ -273,6 +317,8 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
                   if (!w) return;
                   if (what === "address") { setBusy(true); try { await walletNewAddress(w.id, "", p); await refresh(); } catch (e) { setNote(String(e)); } finally { setBusy(false); } }
                   if (what === "words") { try { setShownWords({ id: w.id, words: await walletWords(w.id, p) }); } catch (e) { setNote(String(e)); } }
+                  if (what === "stake" && askPass.address) await stake(w, askPass.address, p)();
+                  if (what === "unstake" && askPass.address) await unstake(w, askPass.address, p)();
                 }}>Unlock</button>
                 <button type="button" className="wl-btn" onClick={() => setAskPass(null)}>Cancel</button>
               </div>

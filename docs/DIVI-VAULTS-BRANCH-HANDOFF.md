@@ -108,3 +108,15 @@ HRAs can use the same calls (owner = the HRA-linked address).
 - The sidebar icon reuses the existing "multisig" icon (no new asset). Swap for a
   dedicated vault icon if desired.
 - Rust not compiled locally; verify on first cloud build.
+
+## Merged 2026-Sep-28 into feat/map-animation-v2 (wallets agent)
+
+Cherry-picked e5aa2f1 + 852c4f6; both compile. Extra wallets do NOT go
+through `fundvault`/`reclaimvaultfunds` (those act on the node's own keys);
+they use `crates/supervisor/src/wallet_vaults.rs`, which builds the same
+vault script, signs with the app-held key, and calls `addvault` after one
+confirmation. `manager_address()` is the shared handshake, as planned.
+`list_vaults()` reads "Vaulted" (vaults the node OWNS); vaults it stakes for
+outside owners appear under "Stakable" in `getcoinavailability true`.
+`vault=1` is now written to divi.conf by install.rs; without it the node
+answers `addvault` with "Unable to sync TX!".

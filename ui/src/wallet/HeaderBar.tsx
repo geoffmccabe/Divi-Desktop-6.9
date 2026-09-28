@@ -120,7 +120,7 @@ export function HeaderBar() {
 
   const main = addrs?.find((a) => a.isMain) ?? addrs?.[0] ?? null;
   const syncing = caughtUp === false && !nodeDown;
-  const extra = wallets.reduce((s, w) => s + w.divi, 0);
+  const extra = wallets.reduce((s, w) => s + w.divi + w.vaulted, 0);
   const spendAll = bal ? bal.spendable + extra : null;
   const spend = spendAll != null ? fmtDiviParts(spendAll) : null;
   const fiat = useDiviValue(spendAll != null && !syncing ? spendAll : null);

@@ -100,16 +100,28 @@ main staking address.
 - The vault tick is stored only; its label says staking arrives later.
 - Done when: Geoff creates a wallet, receives to it, sends from it.
 
-### Phase 2. Vault staking (only after tying into what exists)
-- Node: one RPC to build the reclaim spend for an external owner (the vault
-  script is P2SH; the owner's key is not in the node wallet). Everything
-  else exists (`fundvault`, `addvault`, `getaddressutxos` on the vault).
-- App: the checkbox per address; "Stake these" funding; showing vaulted vs
-  plain balance; reclaim.
-- Done when: coins in a wallet's vault earn a stake reward on the private
-  chain and are reclaimed by the owner.
-- **Guard:** before writing any vault code, re-read what the vault agent has
-  in flight and build on it, not beside it.
+### Phase 2. Vault staking (BUILT 2026-Sep-28, on the vault agent's branch)
+- Merged the vault agent's `divi-vaults` work (crates/supervisor/src/vault.rs,
+  the Vaults panel, docs/DIVI-VAULTS-BRANCH-HANDOFF.md). Its engine serves
+  the NODE's own coins; an extra wallet's key is in the app, so
+  `crates/supervisor/src/wallet_vaults.rs` builds the vault output itself
+  (the node's exact STAKING_VAULT script, a bare script, not P2SH), signs
+  with the wallet's key for one call, and registers the vault with the node
+  through `addvault` once the funding has one confirmation (`settle`).
+  Reclaim spends the vault as owner the same way. No node change needed.
+- Facts read from the node: `-vault=1` is required for the node to accept
+  vaults it manages (install.rs now ensures `vault=1`; takes effect at the
+  node's next restart). Consensus pays a vault stake's reward back into the
+  vault script, and the lottery ticket is that same script, so BOTH land in
+  the wallet's vault (answers Geoff's question 4). The address index files
+  vault coins under the owner (`getaddressbalance/utxos <addr> true`).
+- The tick: on = plain coins of 1 DIVI or more at that address move into the
+  vault automatically on the wallets poll (`auto_sweep`, keychain wallets
+  only; password wallets get a Stake now button). Unstake reclaims all and
+  turns the tick off. Sending needs plain coins; Send says so.
+- Proven on regtest: examples/wallet_vault_smoke.rs (fund 6, register,
+  index shows 6, node lists it under Stakable, reclaim 2, reclaim rest).
+  Not yet seen: an actual stake reward on a vault (needs PoS on the chain).
 
 ### Phase 3. HRA in the wallet
 - HRA slot (gold / white), Get HRA opens the HRA tab pre-filled with the

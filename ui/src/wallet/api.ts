@@ -899,9 +899,11 @@ export const restartNode = () => invoke<void>("restart_node");
 export const setNodeLabel = (id: string, label: string) => invoke<void>("set_node_label", { id, label });
 
 // ── Parallel wallets (docs/PARALLEL-WALLETS-PLAN.md) ─────────────────────────
-export interface WalletAddress { index: number; address: string; label: string; vault: boolean; divi: number }
+/** `divi` = plain coins; `vaulted` = coins in this address's vault, staked by the node; `vaultPending` = fundings awaiting one confirmation. */
+export interface WalletAddress { index: number; address: string; label: string; vault: boolean; divi: number; vaulted: number; vaultPending: number }
 /** `balanceKnown` false = the node could not be asked; `divi` is then a placeholder 0, not a fact. */
-export interface ExtraWallet { id: string; label: string; created: number; lockedWithPassword: boolean; divi: number; balanceKnown: boolean; addresses: WalletAddress[] }
+/** `divi` = plain, spendable coins; `vaulted` = coins staking in the wallet's vaults (still the wallet's, but must be unstaked before sending). */
+export interface ExtraWallet { id: string; label: string; created: number; lockedWithPassword: boolean; divi: number; vaulted: number; balanceKnown: boolean; addresses: WalletAddress[] }
 export const walletsList = () => invoke<ExtraWallet[]>("wallets_list");
 export const walletCreate = (label: string, password?: string) => invoke<{ words: string[]; wallet: ExtraWallet }>("wallet_create", { label, password: password || null });
 export const walletRestore = (label: string, phrase: string, password?: string) => invoke<ExtraWallet>("wallet_restore", { label, phrase, password: password || null });
@@ -911,3 +913,9 @@ export const walletSetVault = (walletId: string, address: string, on: boolean) =
 export const walletWords = (walletId: string, password?: string) => invoke<string[]>("wallet_words", { walletId, password: password || null });
 export const walletRemove = (walletId: string, force: boolean) => invoke<void>("wallet_remove", { walletId, force });
 export const walletSend = (walletId: string, to: string, amount: number, password?: string) => invoke<string>("wallet_send", { walletId, to, amount, password: password || null });
+/** Put plain coins of one wallet address into its vault (amount omitted = all). */
+export const walletVaultFund = (walletId: string, address: string, amount?: number, password?: string) =>
+  invoke<string>("wallet_vault_fund", { walletId, address, amount: amount ?? null, password: password || null });
+/** Take coins back out of the vault to the same address (amount omitted = all); turns the tick off. */
+export const walletVaultReclaim = (walletId: string, address: string, amount?: number, password?: string) =>
+  invoke<string>("wallet_vault_reclaim", { walletId, address, amount: amount ?? null, password: password || null });

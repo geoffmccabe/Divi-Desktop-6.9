@@ -472,6 +472,11 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
             let has_addressindex = text
                 .lines()
                 .any(|l| l.trim_start().starts_with("addressindex="));
+            //   2b. vault=1 lets the node act as a vault MANAGER: stake coins
+            //      that an extra wallet (or another owner) put in a vault
+            //      while never being able to spend them. Without it the node
+            //      refuses addvault/fundvault. Takes effect at the next restart.
+            let has_vault = text.lines().any(|l| l.trim_start().starts_with("vault="));
             //   3. rpcthreads below 16 (the stock 4, or a hand-edit) makes the
             //      node stop answering under a burst of concurrent calls — it
             //      looks dead while healthy (see the first-run template below).
@@ -534,7 +539,7 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                 .filter(|h| !text.lines().any(|l| l.trim() == format!("addnode={h}")))
                 .collect();
             let fix_slots = addnode_count > 8 || weak_max || !missing_helpers.is_empty();
-            if ours && (has_allowip || !has_addressindex || fix_threads || fix_queue || fix_upnp || fix_slots) {
+            if ours && (has_allowip || !has_addressindex || !has_vault || fix_threads || fix_queue || fix_upnp || fix_slots) {
                 let mut kept_seeds = 0usize;
                 let mut fixed: String = text
                     .lines()
@@ -560,6 +565,9 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
                 }
                 if !has_addressindex {
                     fixed.push_str("addressindex=1\n");
+                }
+                if !has_vault {
+                    fixed.push_str("vault=1\n");
                 }
                 if fix_threads {
                     fixed.push_str("rpcthreads=64\n");
@@ -620,7 +628,10 @@ pub fn ensure_local_node_conf() -> Result<PathBuf, String> {
          # addressindex lets the node report balances/UTXOs for ANY address, not\n\
          # just the wallet's own: the treasury + multisig displays and the\n\
          # governance stake snapshot all rely on it.\n\
-         addressindex=1\n"
+         addressindex=1\n\
+         # vault lets this node stake coins that other wallets place in a vault\n\
+         # (owner keeps custody; the node can only stake them).\n\
+         vault=1\n"
     );
     // A brand-new node has an empty peer database and would otherwise depend on
     // the DNS seeder to find its first peers. That seeder has proven unreliable,

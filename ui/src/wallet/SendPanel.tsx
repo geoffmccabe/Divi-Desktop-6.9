@@ -419,6 +419,7 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
         />
         <span className="send-avail">
           Spendable: {spendable != null ? fmtDivi(spendable) : "—"} DIVI · leave a little for the network fee
+          {fromWallet && fromWallet.vaulted > 0 && <> · {fmtDivi(fromWallet.vaulted)} DIVI is staking in a vault; unstake it under Settings &gt; My Nodes to send it</>}
         </span>
         {overBalance && <span className="wl-err">More than your spendable balance. The send may be rejected.</span>}
       </label>

@@ -1389,28 +1389,38 @@ async fn restore_replace(phrase: String) -> Result<String, String> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct WalletAddressDto { index: u32, address: String, label: String, vault: bool, divi: f64 }
+struct WalletAddressDto {
+    index: u32, address: String, label: String, vault: bool,
+    /// Plain (spendable) coins. `vaulted` is what sits in this address's
+    /// vault, staked by the node; `vault_pending` counts fundings the node
+    /// has not registered yet (they need one confirmation).
+    divi: f64, vaulted: f64, vault_pending: usize,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 /// `balance_known` is false when the node could not be asked (down, mid-sync,
 /// no address index): `divi` is then 0 as a placeholder, and the screens say
 /// "unknown" rather than showing a zero the node never stood behind.
-struct WalletDto { id: String, label: String, created: i64, locked_with_password: bool, divi: f64, balance_known: bool, addresses: Vec<WalletAddressDto> }
+struct WalletDto { id: String, label: String, created: i64, locked_with_password: bool, divi: f64, vaulted: f64, balance_known: bool, addresses: Vec<WalletAddressDto> }
 
 fn wallet_dto(cfg: &NodeConfig, w: &dd69_supervisor::wallets::WalletEntry) -> WalletDto {
     let bal = dd69_supervisor::wallets::balance(cfg, w).ok();
     let by: std::collections::HashMap<String, f64> = bal.as_ref().map(|b| b.by_address.iter().cloned().collect()).unwrap_or_default();
+    let vaulted: std::collections::HashMap<String, f64> = dd69_supervisor::wallet_vaults::balances(cfg, w).ok().map(|v| v.into_iter().collect()).unwrap_or_default();
     WalletDto {
         id: w.id.clone(),
         label: w.label.clone(),
         created: w.created,
         locked_with_password: w.lock == "password",
         divi: bal.as_ref().map(|b| b.divi).unwrap_or(0.0),
+        vaulted: vaulted.values().sum(),
         balance_known: bal.is_some(),
         addresses: w.addresses.iter().map(|a| WalletAddressDto {
             index: a.index, address: a.address.clone(), label: a.label.clone(), vault: a.vault,
             divi: *by.get(&a.address).unwrap_or(&0.0),
+            vaulted: *vaulted.get(&a.address).unwrap_or(&0.0),
+            vault_pending: a.vault_pending.len(),
         }).collect(),
     }
 }
@@ -1425,7 +1435,16 @@ fn active_node_id() -> String {
 async fn wallets_list() -> Vec<WalletDto> {
     tauri::async_runtime::spawn_blocking(|| {
         let Ok(cfg) = NodeConfig::load() else { return vec![] };
-        let store = dd69_supervisor::wallets::load(&active_node_id());
+        let node_id = active_node_id();
+        // The vault tick's housekeeping rides on this poll: register confirmed
+        // fundings with the node, then sweep plain coins that want staking.
+        // Both are no-ops when there is nothing to do, and never fail the list.
+        let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
+        for w in &dd69_supervisor::wallets::load(&node_id).wallets {
+            let _ = dd69_supervisor::wallet_vaults::settle(&cfg, &node_id, &w.id);
+        }
+        let _ = dd69_supervisor::wallet_vaults::auto_sweep(&cfg, &node_id, testnet);
+        let store = dd69_supervisor::wallets::load(&node_id);
         store.wallets.iter().map(|w| wallet_dto(&cfg, w)).collect()
     }).await.unwrap_or_default()
 }
@@ -1460,7 +1479,7 @@ async fn wallet_new_address(wallet_id: String, label: String, password: Option<S
         let cfg = NodeConfig::load()?;
         let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
         let a = dd69_supervisor::wallets::new_address(&active_node_id(), &wallet_id, &label, password.as_deref(), testnet)?;
-        Ok(WalletAddressDto { index: a.index, address: a.address, label: a.label, vault: a.vault, divi: 0.0 })
+        Ok(WalletAddressDto { index: a.index, address: a.address, label: a.label, vault: a.vault, divi: 0.0, vaulted: 0.0, vault_pending: 0 })
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -1496,6 +1515,31 @@ async fn wallet_send(wallet_id: String, to: String, amount: f64, password: Optio
         let cfg = NodeConfig::load()?;
         let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
         dd69_supervisor::wallets::send(&cfg, &active_node_id(), &wallet_id, &to, amount, password.as_deref(), testnet)
+    }).await.map_err(|e| e.to_string())?
+}
+
+/// Put `amount` (None = all plain coins) of one wallet address into its
+/// vault, staked by this node. Owner stays the wallet.
+#[tauri::command]
+async fn wallet_vault_fund(wallet_id: String, address: String, amount: Option<f64>, password: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load()?;
+        let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
+        dd69_supervisor::wallet_vaults::fund(&cfg, &active_node_id(), &wallet_id, &address, amount, password.as_deref(), testnet)
+    }).await.map_err(|e| e.to_string())?
+}
+
+/// Take coins out of a wallet address's vault back to that address (None =
+/// everything). Turns the address's vault tick off first, otherwise the
+/// automatic sweep would put them straight back.
+#[tauri::command]
+async fn wallet_vault_reclaim(wallet_id: String, address: String, amount: Option<f64>, password: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load()?;
+        let testnet = dd69_supervisor::wallets::is_testnet(&cfg);
+        let node_id = active_node_id();
+        dd69_supervisor::wallets::set_vault(&node_id, &wallet_id, &address, false)?;
+        dd69_supervisor::wallet_vaults::reclaim(&cfg, &node_id, &wallet_id, &address, None, amount, password.as_deref(), testnet)
     }).await.map_err(|e| e.to_string())?
 }
 
@@ -3748,6 +3792,8 @@ fn main() {
             wallet_words,
             wallet_remove,
             wallet_send,
+            wallet_vault_fund,
+            wallet_vault_reclaim,
             remember_password,
             forget_password,
             resume_staking,

@@ -2690,3 +2690,7 @@ code, .mono { font-family: var(--font-mono); }
 .wd-divi { font-size: 0.82rem; font-variant-numeric: tabular-nums; color: hsl(var(--primary)); font-weight: 600; }
 .wd-fiat { font-size: 0.76rem; color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; min-width: 64px; text-align: right; }
 .wd-total { padding: 8px 12px 2px; border-top: 1px solid hsl(var(--border)); }
+.nw-vaulted { color: hsl(var(--success)); font-weight: 600; }
+.nw-pending { color: hsl(var(--muted-foreground)); font-style: italic; }
+.nw-vault-wrap { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wd-staking { color: hsl(var(--success)); font-weight: 500; }

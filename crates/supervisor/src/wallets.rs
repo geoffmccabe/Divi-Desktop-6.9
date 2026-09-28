@@ -136,7 +136,7 @@ pub fn address_of(key: &SecretKey, testnet: bool) -> String {
 
 /// The key in the text form the node's `signrawtransaction` accepts (WIF,
 /// compressed). Handed to the node for one call; never stored.
-fn wif(key: &SecretKey, testnet: bool) -> String {
+pub(crate) fn wif(key: &SecretKey, testnet: bool) -> String {
     let mut payload = key.secret_bytes().to_vec();
     payload.push(1); // compressed
     base58::encode_check(if testnet { WIF_TEST } else { WIF_MAIN }, &payload)
@@ -200,6 +200,11 @@ pub struct AddressEntry {
     pub label: String,
     /// Vault staking wanted for this address (docs, Phase 2).
     pub vault: bool,
+    /// Funding transactions for this address's vault that the node has not
+    /// yet been told to stake: `addvault` needs the funding confirmed, so
+    /// they wait here until wallet_vaults::settle registers them.
+    #[serde(default)]
+    pub vault_pending: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -233,7 +238,7 @@ pub fn load(node_id: &str) -> Store {
         .unwrap_or_default()
 }
 
-fn save(node_id: &str, store: &Store) -> Result<(), String> {
+pub(crate) fn save(node_id: &str, store: &Store) -> Result<(), String> {
     let p = store_path(node_id);
     if let Some(d) = p.parent() {
         std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
@@ -355,7 +360,7 @@ pub fn create(node_id: &str, label: &str, password: Option<&str>, testnet: bool)
         lock,
         salt,
         next_index: 1,
-        addresses: vec![AddressEntry { index: 0, address: address_of(&first, testnet), label: String::new(), vault: true }],
+        addresses: vec![AddressEntry { index: 0, address: address_of(&first, testnet), label: String::new(), vault: true, vault_pending: Vec::new() }],
     };
     store.wallets.push(wallet.clone());
     save(node_id, &store)?;
@@ -393,7 +398,7 @@ pub fn restore(node_id: &str, label: &str, phrase: &str, password: Option<&str>,
         lock,
         salt,
         next_index: 1,
-        addresses: vec![AddressEntry { index: 0, address: first_addr, label: String::new(), vault: true }],
+        addresses: vec![AddressEntry { index: 0, address: first_addr, label: String::new(), vault: true, vault_pending: Vec::new() }],
     };
     store.wallets.push(wallet.clone());
     save(node_id, &store)?;
@@ -415,7 +420,7 @@ fn unlock_words(w: &WalletEntry, password: Option<&str>) -> Result<Vec<String>, 
 }
 
 /// The seed of a wallet (64 bytes), unlocked the same way.
-fn unlock_seed(w: &WalletEntry, password: Option<&str>) -> Result<Vec<u8>, String> {
+pub(crate) fn unlock_seed(w: &WalletEntry, password: Option<&str>) -> Result<Vec<u8>, String> {
     Ok(seedphrase::to_seed_bytes(&unlock_words(w, password)?, ""))
 }
 
@@ -425,7 +430,7 @@ pub fn new_address(node_id: &str, wallet_id: &str, label: &str, password: Option
     let w = store.wallets.iter_mut().find(|w| w.id == wallet_id).ok_or("no such wallet")?;
     let seed = unlock_seed(w, password)?;
     let key = derive(&seed, w.next_index, testnet)?;
-    let entry = AddressEntry { index: w.next_index, address: address_of(&key, testnet), label: label.trim().to_string(), vault: true };
+    let entry = AddressEntry { index: w.next_index, address: address_of(&key, testnet), label: label.trim().to_string(), vault: true, vault_pending: Vec::new() };
     w.next_index += 1;
     w.addresses.push(entry.clone());
     save(node_id, &store)?;
@@ -501,13 +506,13 @@ pub fn balance(cfg: &NodeConfig, w: &WalletEntry) -> Result<Balance, String> {
 // ── sending ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
-struct Utxo {
-    address: String,
-    txid: String,
+pub(crate) struct Utxo {
+    pub(crate) address: String,
+    pub(crate) txid: String,
     #[serde(rename = "outputIndex")]
-    output_index: u32,
-    satoshis: i64,
-    script: String,
+    pub(crate) output_index: u32,
+    pub(crate) satoshis: i64,
+    pub(crate) script: String,
 }
 
 /// Send `amount` DIVI from a wallet to `to`. Coins are gathered across the

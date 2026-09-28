@@ -52,4 +52,5 @@ pub mod rpc;
 pub mod state;
 pub mod wallet;
 pub mod vault;
+pub mod wallet_vaults;
 pub mod watchdog;
