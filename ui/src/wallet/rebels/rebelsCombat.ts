@@ -7,6 +7,7 @@ import { R, cruiseScale, nearestPlanet, planetCentre, planetDiameter, SHRINK } f
 import { BEAM_SECONDS, type WeaponSpec } from "./weaponCatalog";
 import { DEFAULT_DROP_CONFIG, DROP_PRIVATE_SECONDS, rollDrop, type DropConfig } from "./dropCharts";
 import { itemByKey } from "./itemCatalog";
+import type { EnemyTune } from "./enemyTypes";
 import {
   droneClass, newGroup, newFleetId, stepFlock, reslot, slotOffsets,
   fleetSize, rollFlockTier, SPAWN_CHECK_SECONDS, SPAWN_CHANCE, DRONE_KILL_WORTH,
@@ -503,6 +504,15 @@ export interface Tracer {
 
 export interface Bullet {
   /**
+   * Multiplier on what this round takes off whoever it hits.
+   *
+   * ON THE ROUND AND NOT ON THE SHIP, because by the time a round lands the
+   * ship that fired it is frequently dead and gone from the list - reading the
+   * shooter at the moment of impact would make a hard enemy harmless the
+   * instant it was killed. Absent means one.
+   */
+  dmg?: number;
+  /**
    * This round, on the wire.
    *
    * A round has no decisions in it: it leaves a muzzle at a speed and flies
@@ -639,6 +649,14 @@ export function dropBullet(c: CombatState, id: number): void {
 
 export interface Enemy {
   id?: number;
+  /**
+   * The numbers a CUSTOM enemy brought with it, or absent for a built-in.
+   *
+   * Absent is the normal case and means "behave exactly as this tier always
+   * has": every read of it below falls back to the constant it replaced, so
+   * adding this changed no fighter that already existed. See EnemyTune.
+   */
+  tune?: EnemyTune;
   pos: THREE.Vector3;
   fwd: THREE.Vector3;
   roll: number;
@@ -913,6 +931,10 @@ export function hurtEnemy(
   from: THREE.Vector3,
   by = "",
 ): number {
+  /* ---- RESISTANCE, FIRST OF ALL ----
+     Before the knockback, the tumble and the points, so a tough enemy is not
+     also a heavier one and the score still follows the damage that landed. */
+  if (e.tune && e.tune.resistance > 0) amount *= 1 - Math.min(0.9, e.tune.resistance);
   const push = e.pos.clone().sub(from);
   if (push.lengthSq() < 1e-9) push.copy(e.fwd);
   push.normalize();
@@ -947,7 +969,9 @@ export function hurtEnemy(
        exploit in the game. The guard is here, at the one place a kill is
        recorded, rather than at the call sites, so a new way to kill something
        cannot quietly reopen it. */
-    const worth = e.drone ? DRONE_KILL_WORTH : 1;
+    /* A custom enemy is worth what it says it is worth, bounded by WORTH_MAX
+       in the validator. A built-in is worth what it always was. */
+    const worth = e.tune ? e.tune.worth : (e.drone ? DRONE_KILL_WORTH : 1);
     if (!e.cheat) {
       c.kills += worth;
       /* Drone tiers are their own scale and would otherwise land in the
@@ -1120,7 +1144,11 @@ function scatterCoins(c: CombatState, e: Enemy): void {
   const up = e.pos.clone().normalize();
   /* A fifth of a fighter's coins for a drone: one. A cheat drone drops none. */
   if (e.cheat) return;
-  const coins = e.drone ? Math.max(1, Math.round(COIN_PER_KILL * DRONE_KILL_WORTH)) : COIN_PER_KILL;
+  const coins = e.tune
+    /* Nought is allowed and means a kill that drops nothing, which is a
+       legitimate enemy to write - a turret, something that only guards. */
+    ? Math.max(0, Math.round(COIN_PER_KILL * e.tune.worth))
+    : e.drone ? Math.max(1, Math.round(COIN_PER_KILL * DRONE_KILL_WORTH)) : COIN_PER_KILL;
   for (let i = 0; i < coins; i++) {
     /* Thrown outward in a spread around the fighter's own heading. */
     const dir = e.fwd.clone()
@@ -1392,9 +1420,16 @@ export function scatterAim(
 
 export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
   const aim = scatterAim(e.pos, at, aimErrorFor(e.cls.tier));
-  const vel = aim.sub(e.pos).normalize().multiplyScalar(BULLET_SPEED * 0.6);
+  const shot = e.tune ? e.tune.shotSpeed : 1;
+  const vel = aim.sub(e.pos).normalize().multiplyScalar(BULLET_SPEED * 0.6 * shot);
   pushBullet(c, {
-    pos: e.pos.clone().addScaledVector(vel, 0.02), vel, life: BULLET_LIFE * 1.4, hostile: true,
+    pos: e.pos.clone().addScaledVector(vel, 0.02), vel,
+    /* LIFE RISES AS SPEED FALLS, or a slow round would simply have a shorter
+       reach than the range it was told to shoot from - the same reason a drone's
+       round already lives longer than a fighter's. Bounded at three times,
+       because life is how many rounds are in the air at once and that is wire. */
+    life: BULLET_LIFE * 1.4 / Math.max(0.34, shot), hostile: true,
+    ...(e.tune && e.tune.damage !== 1 ? { dmg: e.tune.damage } : {}),
   });
   /* Reported so it can be HEARD where it happened. A shot from behind is the
      only warning a player gets that something is on their tail. */
@@ -1408,14 +1443,19 @@ export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
    all directions, but no single sphere can ever pin you. */
 export function droneFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
   const aim = scatterAim(e.pos, at, aimErrorFor(e.cls.tier));
+  /* A drone's 0.8 IS its built-in shot speed (DRONE_SHOT_SPEED in
+     enemyTypes.ts), so a custom one replaces it rather than multiplying it. */
+  const shot = e.tune ? e.tune.shotSpeed : DRONE_BULLET_SPEED;
   const vel = aim.sub(e.pos).normalize()
-    .multiplyScalar(BULLET_SPEED * DRONE_BULLET_SPEED);
+    .multiplyScalar(BULLET_SPEED * shot);
   pushBullet(c, {
     pos: e.pos.clone().addScaledVector(vel, 0.02), vel,
     /* Slower rounds need longer to cover the same ground, or they would wink
        out short of a player they were aimed squarely at. */
-    life: BULLET_LIFE * 1.9, hostile: true, orb: true,
+    life: BULLET_LIFE * 1.9 * DRONE_BULLET_SPEED / Math.max(0.27, shot),
+    hostile: true, orb: true,
     phase: Math.random() * Math.PI * 2,
+    ...(e.tune && e.tune.damage !== 1 ? { dmg: e.tune.damage } : {}),
   });
   c.events.push({ kind: "enemyShot", at: e.pos.clone(), power: 1 });
 }
@@ -1861,7 +1901,8 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
         if (!hitsPlayer(from, b.pos, pl)) continue;
         spent = true;
         c.events.push({
-          kind: "playerHit", at: b.pos.clone(), power: 1.4, damage: rollLaserDamage(),
+          kind: "playerHit", at: b.pos.clone(), power: 1.4,
+          damage: rollLaserDamage() * (b.dmg ?? 1),
           who: pl.id, guarded: !!pl.guard,
         });
         break;
@@ -2249,10 +2290,14 @@ export function stepCombat(c: CombatState, dt: number, w: CombatWorld): void {
     }
     e.fireAt -= dt;
     if (e.mode === "in" && e.fireAt <= 0 && e.ammo > 0
-        && range < ENEMY_FIRE_RANGE * open && dot > 0.9) {
+        && range < (e.tune ? e.tune.fireRange : ENEMY_FIRE_RANGE) * open && dot > 0.9) {
       /* Slower than it was. Four of them at the old rate put up a wall of fire
          that could not be flown through, whatever the player's shield. */
-      e.fireAt = 1.6 + Math.random() * 1.6;
+      /* The spread a fighter rolls, centred on its cadence: two thirds of it
+         to three and a third. At the built-in 2.4 that is 1.6 to 3.2 seconds,
+         which is exactly the range this was before it was configurable. */
+      const gap = e.tune ? e.tune.fireEvery * (2 / 3) : 1.6;
+      e.fireAt = gap + Math.random() * gap;
       e.ammo -= 1;
       if (e.ammo <= 0) e.reload = ENEMY_RELOAD;
       /* Aimed at the player and then scattered by the tier's error, inside

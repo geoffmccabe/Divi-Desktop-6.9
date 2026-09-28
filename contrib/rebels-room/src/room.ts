@@ -42,7 +42,10 @@ import { HEART_GUARD, HEART_GUARD_COUNT } from "../../../ui/src/wallet/rebels/re
 import { startGame, stepGame, type Run, type Spawner } from "./gameRunner";
 import { placeById, type Place } from "../../../ui/src/wallet/rebels/rebelsPlaces";
 import { award, newPurse, type Purse } from "./gameRewards";
-import { fetchGames, gameForPlace, hasGameFor } from "./gameSource";
+import { gameForPlace, hasGameFor } from "./gameSource";
+import { fetchWorld } from "./enemySource";
+import { applyEnemyType, tierForType, typeById } from "./customEnemy";
+import { builtInEnemies, type EnemyType } from "../../../ui/src/wallet/rebels/enemyTypes";
 import { waveDefence, DEFAULT_GAMES, type GameType, type Reward } from "../../../ui/src/wallet/rebels/gameTypes";
 /* Spikeworld's dimensions. That folder deliberately imports nothing from the
    game, the DOM or three.js, precisely so the room can share its numbers: the
@@ -323,6 +326,10 @@ export class RebelsRoom {
   /** The games Geoff has built, refreshed on the same slow timer as the drop
    *  charts. Starts as the built-in so a room can play before the first fetch
    *  has come back, and falls back to it on any doubt: see gameSource.ts. */
+  /** Every enemy this room can fly: the built-ins, plus whatever Geoff has
+   *  designed. Refreshed on the same slow timer as the games and the drops,
+   *  and for the same reason - it is config, not per-tick state. */
+  private enemyTypes: readonly EnemyType[] = builtInEnemies();
   private games: readonly GameType[] = DEFAULT_GAMES;
   /** Whether those came from the table, for the state page. */
   private gamesLive = false;
@@ -596,8 +603,43 @@ export class RebelsRoom {
             spawnDragon(this.combat, ahead, across);
             continue;
           }
-          /* Unknown: a custom enemy type this room cannot build yet. */
-          return;
+          /* ---- ONE OF GEOFF'S ----
+             Not a name this room has built in, so it is a custom definition or
+             it is nothing. Built in two moves, for the reason customEnemy.ts
+             gives: spawn the built-in whose BRAIN it wants, then overwrite what
+             the definition brought with it.
+
+             The brain is the behaviour and cannot be invented - there are three
+             written and a definition picks one of them. The tier it is spawned
+             as is chosen by health, because the tier is what every cockpit
+             draws from. */
+          const type = typeById(this.enemyTypes, enemy);
+          if (!type) {
+            /* A round naming an enemy nobody has written. A quiet gap in one
+               round, never a room that will not start: the game is still
+               playable and the next spawn in the same round still arrives. */
+            return;
+          }
+          const builtAs = tierForType(type);
+          if (type.behaviour === "drone") {
+            /* A flock is one call for the whole formation, as above. Its
+               members are tuned one by one, because spawnFleet builds them. */
+            const made = spawnFleet(this.combat, builtAs, mark.pos, mark.fwd, {});
+            for (const d of made) applyEnemyType(d, type);
+            continue;
+          }
+          if (type.behaviour === "dragon") {
+            const ahead = mark.pos.clone().addScaledVector(mark.fwd, 35);
+            const up = mark.pos.clone().normalize();
+            const across = new THREE.Vector3().crossVectors(mark.fwd, up).normalize();
+            applyEnemyType(spawnDragon(this.combat, ahead, across), type);
+            continue;
+          }
+          applyEnemyType(
+            spawnFighter(this.combat, mark.pos, mark.fwd, { tier: builtAs }),
+            type,
+          );
+          continue;
         }
       },
     };
@@ -1006,9 +1048,15 @@ export class RebelsRoom {
        and the RUN keeps the description it started with, so saving an edit
        cannot change the fight under the players already in it. They get the
        new version when the current run ends. */
-    const g = await fetchGames();
-    this.games = g.games;
-    this.gamesLive = g.live;
+    /* ⚠ ENEMIES BEFORE GAMES, in one call. A game naming a custom enemy is
+       INVALID unless the enemies were read first and their ids handed to the
+       validator - and one bad game condemns the whole set on purpose, so
+       getting this order wrong would drop every game in the room the moment
+       Geoff used his first custom enemy. See fetchWorld. */
+    const w2 = await fetchWorld();
+    this.enemyTypes = w2.enemies.enemies;
+    this.games = w2.games.games;
+    this.gamesLive = w2.games.live;
   }
   /** Tests: no network, and a pinned roll. */
   dropsOn = true;

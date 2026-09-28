@@ -68,6 +68,18 @@ export const BUILT_IN_ENEMIES = [
      keeps `enemy` meaning exactly one thing: what arrives. */
   "fighters",
   "tier1", "tier2", "tier3", "tier4", "tier5", "tier6", "tier7",
+  /* ---- THE SEVEN DRONE TIERS BELONG HERE TOO ----
+     They were missing, and it was not harmless. builtInEnemies() in
+     enemyTypes.ts offers all seven in the panel and the room's spawner can
+     build any of them, but a game naming one was REFUSED here as an enemy
+     nobody had heard of - and one bad game condemns the whole set on purpose,
+     so picking "Blue Drone" in the panel would have dropped every other game in
+     the room back to Wave Defence with no error anybody would see.
+
+     "flock" stays beside them and is not a duplicate: it means one formation of
+     the DEFAULT tier, which is what the game has always sent. "drone3" means a
+     formation of that tier. */
+  "drone1", "drone2", "drone3", "drone4", "drone5", "drone6", "drone7",
   "flock", "dragon",
 ] as const;
 

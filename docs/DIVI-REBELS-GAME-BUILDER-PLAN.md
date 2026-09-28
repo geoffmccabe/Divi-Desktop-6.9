@@ -151,6 +151,37 @@ painted like.
 *Risk:* this touches `rebelsCombat.ts`, the file both the room and every cockpit
 run. The wire golden test must stay byte-identical for the built-in types.
 
+**Built 2026-Sep-27, and NOT the way this section predicted.** The plan said an
+enemy would carry a type *id* and look its stats up in the table. It does not.
+The numbers travel **with the ship**, as an `EnemyTune` on the `Enemy` itself
+(`enemyTypes.ts`), because a lookup would mean the simulation needs the table,
+and the simulation is shared with every cockpit, so every cockpit would then need
+the enemy table too, over the wire or over the network, before it could draw a
+fight. Carrying six numbers on the ship keeps `rebelsCombat.ts` free of any table
+at all.
+
+The byte-identical requirement held: every read is `e.tune ? … : <the constant it
+replaced>`, an enemy with no tune is unchanged, and the 259 combat tests and the
+wire golden both pass untouched.
+
+**What is real, and what is not.** Health, resistance, speed, seconds between
+shots, firing range, shot speed, damage and worth are all real and tested. The
+**look is not**: `packEnemy` sends an enemy's *tier*, not its colour or hull, and
+every cockpit draws the ship from that tier. So colour, hull and paint are
+accepted, validated, stored, and then ignored by the renderer. `tierForType` picks
+the built-in tier whose health is nearest, so a four-thousand-health enemy at
+least arrives looking like a Fuchsia rather than a Grey, and every built-in maps
+back to its own tier so a duplicated built-in is the same ship. Making paint real
+needs a new wire field **and** the cockpit half; it is a two-session job and is
+listed in section 5.
+
+**The trap this cost.** `TIERS` is a module-level array and every fighter of a
+tier holds a *reference* to the same `ShipClass`, so `e.cls.shieldMax = …` gives
+every Blue Fighter in the room that health, for the life of the worker, including
+ones already flying, and `DRAGON_CLASS` is a bare singleton, which is worse. The
+class is always cloned. The test that matters is not "the table is unchanged", it
+is "the next ordinary fighter spawned afterwards is still ordinary".
+
 ### Phase 4 — Rounds, and the game controller
 
 The module Geoff asked for.
@@ -249,3 +280,39 @@ them. Worth designing on paper during phase 6 so nothing blocks it.
 
 - 2026-Sep-26 — written. Phases 0–7 not started. Regions (the foundation for
   places) shipped the same day; see `DIVI-REBELS-SPIKEWORLD-COMBAT-PLAN.md`.
+- 2026-Sep-27: phases 3, 4 and 6 built, plus the places table. Nothing
+  deployed. Two sessions working in parallel, split by directory: the panel and
+  the shared types in `ui/**`, the room and its readers in
+  `contrib/rebels-room/**`, with `gameTypes.ts` and `enemyTypes.ts` as the
+  contract between them and any change to either announced.
+
+  | Piece | Where | Tests |
+  |---|---|---|
+  | Game and round shapes, validator | `ui/src/wallet/rebels/gameTypes.ts` | 54 |
+  | Enemy shape, validator, built-ins | `ui/src/wallet/rebels/enemyTypes.ts` | 65 |
+  | Places table | `ui/src/wallet/rebels/rebelsPlaces.ts` | 40 |
+  | The game controller (phase 4) | `contrib/rebels-room/src/gameRunner.ts` | 22 |
+  | Reading his games | `contrib/rebels-room/src/gameSource.ts` | 19 |
+  | Reading his enemies | `contrib/rebels-room/src/enemySource.ts` | 19 |
+  | Building a custom enemy | `contrib/rebels-room/src/customEnemy.ts` | 26 |
+  | What a game pays (phase 6) | `contrib/rebels-room/src/gameRewards.ts` | 25 |
+
+  **⚠ An ordering rule, found the hard way.** `validateGame` only accepts an
+  enemy name it has heard of, so the enemies must be read **before** the games
+  and their ids handed to the game validator. They were not, and because one bad
+  game condemns the whole set on purpose, the first game Geoff wrote using a
+  custom enemy would have silently dropped *every* game in the room back to Wave
+  Defence, with no crash and no log. Both are now read in one call, `fetchWorld`, so
+  a later caller cannot get the order wrong.
+
+  **A flaky test fixed on the way.** `rebelsController.test.ts`'s "they clear
+  when their life runs out" counted *all* drawn rounds and the sky was calmed ten
+  seconds before the assertion, so a fighter that spawned since and fired once
+  made this ship's rounds look like they never expired. It failed about one run
+  in four, which makes "the full suite is green" worth nothing. The sky is now
+  calmed again first, deliberately leaving the rounds already in the air, since
+  clearing them would make the test pass for the wrong reason.
+
+  Still open: the look (above), the enemy panel itself, and whether Wave Defence
+  ending after 30 rounds and restarting is right where the old waves climbed for
+  ever. That one is Geoff's call and is waiting on him.

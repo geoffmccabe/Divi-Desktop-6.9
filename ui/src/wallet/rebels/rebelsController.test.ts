@@ -162,6 +162,23 @@ function roomNameIn(url: string): string {
  * The fight is asked for every time and never held: the room throws it away
  * and builds a new one whenever a lone pilot launches.
  */
+/**
+ * Send everything home but LEAVE THE ROUNDS ALREADY IN THE AIR.
+ *
+ * For tests that watch this ship's own fire expire. calmSky would clear the
+ * bullets too, which makes "they clear when their life runs out" pass for the
+ * wrong reason: they were taken away rather than running out.
+ */
+function noMoreEnemies(): void {
+  const c = server?.combat as import("./rebelsCombat").CombatState | undefined;
+  if (!c) return;
+  c.enemies.length = 0;
+  c.flocks.length = 0;
+  c.wave = null;
+  c.flockClock = -1e6;
+  c.dragonClock = -1e6;
+}
+
 function calmSky(keep?: { pos: THREE.Vector3 } | null): void {
   const c = server?.combat as import("./rebelsCombat").CombatState | undefined;
   if (!c) return;
@@ -1269,7 +1286,15 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ok("the cockpit has rounds to draw", sawRounds > 0, `${sawRounds} at most`);
   ok("and trails for them", (drawn().tracers ?? 0) >= 0);
 
-  /* They must also GO once their life is up, or the sky fills for ever. */
+  /* They must also GO once their life is up, or the sky fills for ever.
+
+     ⚠ THE SKY IS CALMED AGAIN FIRST, and that is not belt-and-braces. The sky
+     was calmed ten seconds ago; a fighter has had ample time to spawn since and
+     loose a round, and a SINGLE enemy round in the air reads here as "this
+     ship's rounds did not clear". That is what made this test fail about one run
+     in four. The rounds already in flight are deliberately left alone, because
+     taking them away would make this pass for the wrong reason. */
+  noMoreEnemies();
   for (let i = 0; i < 60 * 8; i++) ctl.frame(1 / 60);
   ok("and they clear when their life runs out", (drawn().bullets ?? 0) === 0, `${drawn().bullets} left`);
 
