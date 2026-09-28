@@ -109,6 +109,31 @@ function ok(name: string, cond: boolean, extra = ""): void {
   ok("and a name that is not a room overflows nowhere", nextRoomName("mars") === "");
 }
 
+/* ================= WHAT A RECONNECT KEEPS AND DROPS =================
+   The three-way answer, because the first attempt got one wrong in each
+   direction and only the existing suite noticed. Keep the region or a player
+   ends up two hundred thousand units from their ship; keep the game or a blip
+   puts them in a different one; DROP the overflow room, because a disconnect
+   is meant to put people back in the main room so the shared world refills
+   rather than everyone staying scattered. */
+{
+  const afterBlip = (name: string) => {
+    const p = parseRoom(name);
+    return p ? roomNameOf({ ...p, overflow: 1 }) : null;
+  };
+  const cases: Array<[string, string]> = [
+    ["earth", "earth"],
+    ["earth-2", "earth"],
+    ["spike-4", "spike"],
+    ["earth_shakedown", "earth_shakedown"],
+    ["earth-2_shakedown", "earth_shakedown"],
+    ["spike-3_descent", "spike_descent"],
+  ];
+  for (const [from, want] of cases) {
+    ok(`a blip in ${from} comes back to ${want}`, afterBlip(from) === want, `${afterBlip(from)}`);
+  }
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

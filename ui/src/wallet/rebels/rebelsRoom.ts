@@ -30,7 +30,7 @@ import {
 } from "./rebelsWire";
 import { platform } from "./platform/current";
 import { DEFAULT_ROOM_BASE } from "./platform/defaults";
-import { regionOrigin, parseRoom, type RegionName } from "./rebelsRegions";
+import { regionOrigin, parseRoom, roomNameOf, type RegionName } from "./rebelsRegions";
 
 /** Everything the cockpit needs to know about somebody else in the room. */
 /** One round, as the room announced it. */
@@ -580,14 +580,27 @@ export function joinRoom(opts: Opts): Room {
         retryAt = 0;
         return;
       }
-      /* ---- BACK TO THE SAME ROOM, NOT MERELY THE SAME REGION ----
-         A player inside Spikeworld whose connection blips belongs back in
-         Spikeworld, not dropped into Earth orbit two hundred thousand units
-         from the ship they are flying. This used to collapse to the REGION,
-         which was the same thing while a name was only a region - and stops
-         being once a name carries a game: a blip in earth_shakedown would
-         have put them in plain Earth, playing something else, silently.
-         Keeping the name keeps both. */
+      /* ---- SAME PLACE, SAME GAME, BACK TO THE MAIN ROOM ----
+         Three things want saying and the first draft of this got one of them
+         wrong in each direction.
+
+         The REGION must be kept: a player inside Spikeworld whose connection
+         blips belongs back in Spikeworld, not in Earth orbit two hundred
+         thousand units from the ship they are flying.
+
+         The GAME must be kept, once a name carries one: a blip in
+         earth_shakedown must not drop somebody into plain Earth playing
+         something else.
+
+         But the OVERFLOW ROOM must NOT be, and that is deliberate and easy to
+         lose. A full room hands out earth-2; after an ordinary disconnect the
+         player starts again from the main one, so the shared world fills back
+         up as people leave rather than everyone staying scattered across
+         half-empty overflow rooms for the rest of the session. Keeping the
+         whole name would have quietly ended that, and the test for it is what
+         caught me. */
+      const here = parseRoom(roomName);
+      roomName = here ? roomNameOf({ ...here, overflow: 1 }) : region;
       if (!resting) backoff();
     };
   }
