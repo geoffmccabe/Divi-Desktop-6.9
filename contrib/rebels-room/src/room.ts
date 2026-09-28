@@ -46,7 +46,10 @@ import { gameForPlace, hasGameFor } from "./gameSource";
 import { fetchWorld } from "./enemySource";
 import { applyEnemyType, tierForType, typeById } from "./customEnemy";
 import { builtInEnemies, type EnemyType } from "../../../ui/src/wallet/rebels/enemyTypes";
-import { waveDefence, DEFAULT_GAMES, type GameType, type Reward } from "../../../ui/src/wallet/rebels/gameTypes";
+import {
+  waveDefence, DEFAULT_GAMES, gamePayout, GAME_MAX_PAYOUT,
+  type GameType, type Reward,
+} from "../../../ui/src/wallet/rebels/gameTypes";
 /* Spikeworld's dimensions. That folder deliberately imports nothing from the
    game, the DOM or three.js, precisely so the room can share its numbers: the
    heart the room defends and the heart the cockpit draws are the same sphere
@@ -382,7 +385,12 @@ export class RebelsRoom {
            like a game that promised nothing. */
         games: this.games.length, gamesLive: this.gamesLive,
         ...(this.run ? { game: this.run.game.id, rounds: this.run.game.rounds.length,
-                         paid: Math.round(this.purse.spent), refused: this.purse.refused } : {}),
+                         paid: Math.round(this.purse.spent), refused: this.purse.refused,
+                         /* What a clear of the running game credits one player,
+                            and a note when that is over the ceiling. See
+                            overCeiling: an EXEMPT game is still a rich game. */
+                         credits: this.runCredits(),
+                         ...(this.overCeiling() ? { overCeiling: true } : {}) } : {}),
         enemies: this.combat.enemies.length,
         tick: this.tick,
       });
@@ -584,6 +592,36 @@ export class RebelsRoom {
     this.combat.events.push({
       kind: "waveStart", at: new THREE.Vector3(), power: 1, wave: 1,
     });
+  }
+
+  /**
+   * What one clear of the running game credits a single player.
+   *
+   * Reported rather than merely bounded, because the ceiling has an EXEMPTION
+   * and an exemption is a bound that covers less than it appears to. The
+   * built-in is never refused - rightly, since refusing the fallback condemns
+   * every game in the room and leaves nothing to fall back TO - but it is also
+   * the richest game there is, at 5,850 a clear against a ceiling of 10,000.
+   *
+   * So the day somebody lowers GAME_MAX_PAYOUT to 2,000 because the treasury
+   * cannot pay what is promised, authored games are refused and Wave Defence
+   * carries on paying 5,850 to everybody, silently, being exempt. That is the
+   * ceiling failing at exactly the moment it was tightened, on the one game
+   * nobody chose and everybody plays.
+   *
+   * It must not be refused. It must not be quiet either. This is the quiet
+   * half fixed: /state carries the number and says when it is over.
+   */
+  private runCredits(): number {
+    if (!this.run) return 0;
+    const worth = new Map(this.enemyTypes.map((e) => [e.id, e.worth]));
+    return gamePayout(this.run.game, worth, COIN_PER_KILL, COIN_VALUE).total;
+  }
+
+  /** Whether the running game credits more than the ceiling allows, exempt or
+   *  not. True is not an error; it is a thing somebody should know. */
+  private overCeiling(): boolean {
+    return this.runCredits() > GAME_MAX_PAYOUT;
   }
 
   private beginGame(): Run | null {

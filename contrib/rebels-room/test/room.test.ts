@@ -9,6 +9,7 @@
 
 import * as THREE from "three";
 import { RebelsRoom } from "../src/room";
+import { GAME_MAX_PAYOUT } from "../../../ui/src/wallet/rebels/gameTypes";
 import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES, MAX_GUARDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
@@ -1431,6 +1432,68 @@ const home: [number, number, number] = [0, 0, R + 8];
      room.run?.game.id === "shakedown", room.run?.game.id);
   ok("and the games really did come through it", room.games.length === 1 && room.gamesLive === true,
      `${room.games.length} games, live ${room.gamesLive}`);
+  room.stop();
+}
+
+
+/* ================= AN EXEMPT GAME IS STILL A RICH GAME =================
+   The ceiling has an exemption: the built-in is never refused, because
+   refusing the FALLBACK condemns every game in the room and leaves nothing to
+   fall back to. That is right. But an exemption is a bound that covers less
+   than it appears to, which is the shape of every fault found this week.
+
+   The case it leaves: somebody lowers GAME_MAX_PAYOUT because the treasury
+   cannot pay what is promised. Authored games are refused, correctly. Wave
+   Defence carries on paying 5,850 to everybody, silently, being exempt - the
+   ceiling failing at the moment it was tightened, on the one game nobody chose
+   and everybody plays.
+
+   It must not be refused. It must not be quiet either. */
+{
+  storage.clear();
+  const room = newRoom();
+  room.setDropsForTests(null, () => 0.99);
+  const ws = new FakeSocket();
+  join(room, ws, "ceil-a");
+
+  const state = async () => {
+    const r = await room.fetch(new Request("https://x/room/earth/state"));
+    return r.json() as Promise<Record<string, number | boolean | string>>;
+  };
+
+  const s1 = await state();
+  ok("the state says what a clear of the running game credits",
+     typeof s1.credits === "number" && (s1.credits as number) > 0, `${s1.credits}`);
+
+  /* The built-in, which is the richest game there is. */
+  ok("and for the built-in that is the 5,850 the cashout doc derived separately",
+     s1.credits === 5850, `${s1.credits}`);
+  ok("which is under today's ceiling, so nothing is flagged",
+     s1.overCeiling === undefined && 5850 < GAME_MAX_PAYOUT,
+     `${s1.credits} of ${GAME_MAX_PAYOUT}`);
+
+  /* ---- AND WHEN IT IS NOT UNDER ----
+     Staged with a game rich enough to pass the ceiling rather than by pretending
+     the constant is different, because the constant is what ships. */
+  room.games = [{
+    id: "goldmine", name: "Goldmine", place: "earth", crew: "multiplayer",
+    published: true,
+    /* Six rounds of a full sky. 6 x 400 x COIN_PER_KILL 5 = 12,000, which is
+       over the ceiling using nothing but built-in enemies and legal counts -
+       the point being that this takes no exotic content at all. */
+    rounds: Array.from({ length: 6 }, () => ({
+      seconds: 60, spawns: [{ enemy: "tier7", count: 400, arrive: "spread" as const }],
+    })),
+  }];
+  room.adoptedStartupGame = false;
+  room.adoptStartupGame();
+  const s2 = await state();
+  ok("(setup) the room is running the rich game", s2.game === "goldmine", `${s2.game}`);
+  ok("a game over the ceiling is FLAGGED rather than hidden",
+     s2.overCeiling === true, JSON.stringify(s2));
+  ok("and the number is there to act on, not just a flag",
+     (s2.credits as number) > GAME_MAX_PAYOUT,
+     `${s2.credits} over ${GAME_MAX_PAYOUT}`);
   room.stop();
 }
 
