@@ -814,6 +814,18 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
     g.fire("pointerdown", { button: 0 });
     for (let i = 0; i < hold; i++) ctl.frame(1 / 60);
     press("pointerup", { button: 0 });
+    /* ---- WAIT FOR THE SPEND, NOT FOR A STRETCH OF CLOCK ----
+       The gauges arrive on a hundred-millisecond tick and `settle` waits a
+       hundred and thirty, which catches one on an idle machine and misses it
+       on a busy one. Measured: this reported "0.00 rounds in half a second"
+       once in twenty runs while the suite was running alongside it, which
+       reads as a gun that did not fire and is really the value from before
+       the update. Waiting for the thing itself cannot miss it, and still
+       returns as soon as it lands rather than always taking the deadline. */
+    const until = performance.now() + 3_000;
+    while (ctl.hud().ammo >= before && performance.now() < until) ctl.frame(1 / 60);
+    /* Then let the rest of the burst's updates land, so the figure is the
+       settled one rather than the first instalment of it. */
     settle();
     return before - ctl.hud().ammo;
   };
@@ -1866,10 +1878,27 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
 
   /* The wait, then back into it. */
   waitFor(() => ctl.hud().respawnIn <= 0, 40_000);
+  /* ---- WHAT THE STATE WAS WHEN THE BUTTON WENT IN ----
+     This assertion failed once in twelve runs and the message said only
+     "dead true", which rules nothing out: the countdown may never have
+     reached zero so `respawn` refused, the room may have been between
+     statuses so it refused for the other reason, or it may have run and been
+     undone by the room's next word. Those want three different fixes, and a
+     flake this rare is unlikely to be caught in the act twice, so the one
+     time it does happen the message has to settle it by itself. */
+  const before = {
+     respawnIn: ctl.hud().respawnIn, note: ctl.hud().note,
+     roomDead: mine.dead, roomFlying: mine.flying,
+  };
   ctl.respawn();
   for (let i = 0; i < 60 * 2; i++) ctl.frame(1 / 60);
   ok("coming back from a death puts the pilot in the fight again",
-     !ctl.hud().dead, `dead ${ctl.hud().dead}`);
+     !ctl.hud().dead,
+     `dead ${ctl.hud().dead}; at the press: respawnIn ${before.respawnIn}, `
+     + `room dead ${before.roomDead}, room flying ${before.roomFlying}, `
+     + `note ${JSON.stringify(before.note)}; after: respawnIn `
+     + `${ctl.hud().respawnIn}, room dead ${mine.dead}, room flying `
+     + `${mine.flying}, note ${JSON.stringify(ctl.hud().note)}`);
 
   /* ---- AND THE FIGHT IS RUNNING AGAIN ----
      This is the claim. Not "the ship flies" - it always flew - but that the

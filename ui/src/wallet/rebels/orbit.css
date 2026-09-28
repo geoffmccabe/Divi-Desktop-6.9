@@ -1122,6 +1122,14 @@
   margin-top: 0; justify-self: stretch;
 }
 .orbit-picker-card:hover { border-color: hsl(var(--primary)); filter: brightness(1.08); }
+/* The one currently chosen. Marked by a lit border and a glow rather than by
+   removing it from the list: a player needs to see which game they are about
+   to drop back into, and a card that vanishes when chosen is a card they
+   cannot confirm. */
+.orbit-picker-card.orbit-picker-on {
+  border-color: hsl(var(--primary));
+  box-shadow: 0 0 0 1px hsl(var(--primary) / 0.5), 0 0 18px hsl(var(--primary) / 0.35);
+}
 .orbit-picker-art {
   display: block; aspect-ratio: 3 / 2; width: 100%;
   background: #0b0b10 center/cover no-repeat;

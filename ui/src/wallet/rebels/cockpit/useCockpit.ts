@@ -23,6 +23,8 @@ export interface Cockpit {
   scores: boolean; setScores: (v: boolean) => void;
   help: boolean; setHelp: (v: boolean) => void;
   market: boolean; setMarket: (v: boolean) => void;
+  /** The game picker, open over the launch card. */
+  picker: boolean; setPicker: (v: boolean) => void;
   dflowOpen: boolean; setDflow: (v: boolean) => void;
   inv: boolean; setInv: (v: boolean) => void;
 }
@@ -40,6 +42,7 @@ export function useCockpit(ctl: RebelsController, onExit: () => void): Cockpit {
   const [scores, setScores] = useState(false);
   const [help, setHelp] = useState(false);
   const [market, setMarket] = useState(false);
+  const [picker, setPicker] = useState(false);
   const [dflowOpen, setDflow] = useState(false);
   const [inv, setInv] = useState(false);
   /* The inventory needs the mouse: tell the controller so letting go of the
@@ -160,6 +163,7 @@ export function useCockpit(ctl: RebelsController, onExit: () => void): Cockpit {
 
   return {
     hud, wrapRef, crossRef, slow, flashing, waveShown, waveOpacity,
-    scores, setScores, help, setHelp, market, setMarket, dflowOpen, setDflow, inv, setInv,
+    scores, setScores, help, setHelp, market, setMarket, picker, setPicker,
+    dflowOpen, setDflow, inv, setInv,
   };
 }

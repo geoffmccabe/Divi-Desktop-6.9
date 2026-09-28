@@ -225,8 +225,16 @@ export interface Room {
    * in the ledger and the ledger is one object for the whole game.
    *
    * `home` is where a death puts the ship in the new region.
+   *
+   * Takes a WHOLE ROOM NAME, not just a region: "earth", "spike",
+   * "earth_shakedown", "spike_descent". Picking a game is travelling, because
+   * a game IS a room - the same leaving and joining, for the same reason -
+   * and a region on its own is simply the room name with no game on it. A
+   * name that does not parse is refused rather than guessed at, because
+   * guessing would drop the player into a room nobody meant and the wire's
+   * own coordinates would then be measured from the wrong world origin.
    */
-  travel(region: RegionName, home?: THREE.Vector3): void;
+  travel(room: string, home?: THREE.Vector3): void;
   /** Which region this room is. */
   region(): RegionName;
   /** The resupply finished at a tower: the room refills the seat, having
@@ -293,6 +301,9 @@ interface Opts {
   onStatus?: (s: RoomStatus) => void;
   /** Told whenever the ledger's view of this account arrives. */
   onPurse?: (p: Purse) => void;
+  /** Which room to open at, if not the plain Earth one: the picker's chosen
+   *  game, as a whole room name. Refused and ignored if it does not parse. */
+  room?: string;
 }
 
 /** How long a hidden tab keeps its seat. A page left open in a background tab
@@ -309,7 +320,10 @@ export function joinRoom(opts: Opts): Room {
      next (earth-2, earth-3...), and the socket goes straight there. After any
      ordinary disconnect it starts again from earth, so the shared world fills
      back up as people leave rather than everyone staying scattered. */
-  let roomName: string = ROOM_NAME;
+  /* A game chosen before launch opens straight into its room rather than
+     opening on Earth and travelling a moment later, which would take a seat
+     in a fight the player did not choose and give it up again. */
+  let roomName: string = (opts.room && parseRoom(opts.room)) ? opts.room : ROOM_NAME;
   let hopTo: string | null = null;
   /* ---- WHICH WORLD, AND WHERE ITS ZERO IS ----
      See rebelsRegions.ts. Every position on the wire is relative to this, so
@@ -319,7 +333,7 @@ export function joinRoom(opts: Opts): Room {
   /* ROOM_NAME is a constant in this file, so it parses or the build is
      wrong; the fallback is there so a typo is a plain Earth room rather than
      a crash on the first frame. */
-  let region: RegionName = parseRoom(ROOM_NAME)?.region ?? "earth";
+  let region: RegionName = parseRoom(roomName)?.region ?? "earth";
   const origin = regionOrigin(region);
   /** Where this ship goes back to when it dies, in the CURRENT region. */
   let homeHere = opts.home.clone();
@@ -407,9 +421,12 @@ export function joinRoom(opts: Opts): Room {
     away() { send({ t: "away" }); },
     region: () => region,
     travel(to, home) {
-      if (to === region) return;
-      region = to;
-      const o = regionOrigin(to);
+      /* A name that is not a room is not travelled to. Leaving the seat for
+         a room that cannot exist would strand the player nowhere. */
+      const parts = parseRoom(to);
+      if (!parts || to === roomName) return;
+      region = parts.region;
+      const o = regionOrigin(parts.region);
       origin.copy(o);
       /* The region's own game. A named game room is chosen by the picker,
          which passes the whole name. */
