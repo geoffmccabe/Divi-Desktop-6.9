@@ -5,8 +5,10 @@ import {
   vaultFund,
   vaultReclaim,
   vaultManagerAddress,
+  vaultList,
   newReceiveAddress,
   type Balance,
+  type VaultEntry,
 } from "./api";
 import { fmtDivi } from "../status";
 import { feeLabel } from "./vaultFee";
@@ -33,6 +35,7 @@ export function VaultsPanel() {
   const [tab, setTab] = useState<Tab>("self");
   const [bal, setBal] = useState<Balance | null>(null);
   const [vaulted, setVaulted] = useState<number | null>(null);
+  const [vaults, setVaults] = useState<VaultEntry[]>([]);
   const [manager, setManager] = useState<string | null>(null);
 
   const [depositAmt, setDepositAmt] = useState("");
@@ -49,6 +52,9 @@ export function VaultsPanel() {
       .catch(() => {});
     vaultBalance()
       .then((v) => setVaulted(v))
+      .catch(() => {});
+    vaultList()
+      .then((v) => setVaults(v))
       .catch(() => {});
   };
 
@@ -236,12 +242,23 @@ export function VaultsPanel() {
             </div>
           )}
 
-          <h4 className="vault-section-head">Vault payments</h4>
+          <h4 className="vault-section-head">Your vaults</h4>
           <ul className="activity">
-            <li className="wl-empty">
-              Vault staking rewards appear in your Transaction History as stakes.
-            </li>
+            {vaults.length === 0 ? (
+              <li className="wl-empty">No vaults yet. Deposit above to open one.</li>
+            ) : (
+              vaults.map((v) => (
+                <li key={v.vault} className="activity-row">
+                  <div className="act-top">
+                    <span className="act-kind">Vault</span>
+                    <span className="act-amt pos">{fmtDivi(v.value)} DIVI</span>
+                  </div>
+                  <div className="act-addr-full">{v.vault}</div>
+                </li>
+              ))
+            )}
           </ul>
+          <p className="wl-note">Vault staking rewards appear in your Transaction History as stakes.</p>
         </section>
       ) : (
         <section>
