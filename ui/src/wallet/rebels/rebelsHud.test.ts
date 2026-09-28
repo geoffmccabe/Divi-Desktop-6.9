@@ -104,9 +104,32 @@ async function main() {
       const same = !!g && g.html === r.html;
       let where = "";
       if (!same && g) {
+        /* ---- A CHARACTER DIFF ON MARKUP INVENTS CHANGES THAT ARE NOT THERE ----
+           Inserting one button mid-string shifts everything after it, so
+           comparing character by character from the first difference reported
+           that HIGH SCORES had become HIGH SCORE and SPACESHIP had become
+           SPACESHIPS. Neither label was touched; both were alignment
+           artifacts. The other session nearly raised two edits that never
+           happened, and the opposite mistake is the dangerous one: a golden
+           diff nobody can read at a glance is a golden that gets regenerated
+           to make the red go away, which is the standard way to accept a
+           regression without noticing.
+
+           So the labels are compared as SETS, which cannot be knocked out of
+           alignment, and the character window is kept only for the case where
+           no label moved and the change is somewhere else. */
+        const labels = (html: string) =>
+          [...html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)]
+            .map((m) => m[1].replace(/<[^>]*>/g, "").trim());
+        const now = labels(r.html);
+        const was = labels(g.html);
+        const added = now.filter((b) => !was.includes(b));
+        const gone = was.filter((b) => !now.includes(b));
         let i = 0;
         while (i < r.html.length && r.html[i] === g.html[i]) i++;
-        where = `at ${i}: now "${r.html.slice(i, i + 60)}" was "${g.html.slice(i, i + 60)}"`;
+        where = added.length || gone.length
+          ? `buttons added [${added.join(", ")}] removed [${gone.join(", ")}]`
+          : `no button changed; at ${i}: now "${r.html.slice(i, i + 60)}" was "${g.html.slice(i, i + 60)}"`;
       }
       ok(`${r.state}: drawn exactly as recorded`, same, g ? where : "not in the recording");
     }
