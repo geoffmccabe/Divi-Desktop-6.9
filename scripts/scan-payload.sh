@@ -25,6 +25,33 @@
 # would turn a false positive into a silent modification of real source, and
 # that remains Geoff's call and nobody else's.
 #
+# BASELINE ON A CLEAN TREE: 8 hits over 816 tracked files (2026-Sep-28).
+# A NINTH IS THE SIGNAL. Written here rather than left in a chat message,
+# because a baseline nobody can look up is a baseline nobody checks against,
+# and "is 8 normal?" is the question that decides whether a hit gets read.
+#
+#   4x hex-decode  atob on base64 of real binary data:
+#                  rebelsAudio.ts, starCatalog.ts, pinCrypto.ts (b64url),
+#                  CollectiblesPanel.tsx (collectible import)
+#   2x eval + hex-decode  contrib/app-builder/test/gate.test.mjs - the OPPOSITE
+#                  of a problem: fixtures asserting the app builder's own gate
+#                  REFUSES eval, new Function and atob
+#   2x windowsHide + spawn  THIS FILE, matching its own probe strings
+#
+# The self-match is deliberate and is NOT exempted. A scanner that skips itself
+# is a scanner nobody scans, and the file most worth protecting is the one
+# whose silence everybody trusts. Two permanent, explained hits are a cheaper
+# price than a blind spot in the tool.
+#
+# ⚠ EDITING THIS HEADER CAN CHANGE THE BASELINE. The comments are scanned like
+# any other line, so writing a probe pattern in prose adds a hit: documenting
+# the baseline took it from 8 to 9 until the brackets came off "atob".
+# Keep examples bracket-free. This is the self-match being honest, not a bug.
+#
+# There is deliberately NO allowlist. An allowlist goes stale silently and then
+# suppresses the thing it was added to surface, which is the failure this whole
+# file exists to avoid. Read the hits; a hit is evidence, not a verdict.
+#
 # Usage:
 #   sh scripts/scan-payload.sh                  # everything changed vs origin/HEAD
 #   sh scripts/scan-payload.sh <ref>            # everything changed since <ref>
