@@ -21,25 +21,24 @@
 // dead player comes back, and what lives there. Adding a third place that way
 // means finding all eight. As a table, a new place is a row.
 //
-// ⚠ THE CANONICAL LIST OF PLACE IDS LIVES IN gameTypes.ts, which the gameplay
-// session owns and which had not landed when this was written. The ids here
-// must agree with it exactly: a game pointed at a place this table does not
-// know is a game that cannot be played. There is a test pinning the two lists
-// together the moment that file is committed, and until then this comment is
-// the only thing holding them level. Do not add a place to one without the
-// other.
+// THE LIST OF PLACE IDS IS NOT HERE. It lives in gameTypes.ts, which the
+// gameplay session owns, and this file imports it. There was briefly a second
+// copy here, written before that file landed, and a second copy is exactly how
+// a game comes to name a place the room has never heard of. Importing it means
+// a drift is a compile error rather than something one of us notices later.
+//
+// This file owns the GEOMETRY of a place - where its centre is, how far a ship
+// may go - and gameTypes.ts owns WHICH places exist. One of us has to be able
+// to add a place without the other, and it is easier to add a row of numbers
+// here than a member to a union over there.
 
 import * as THREE from "three";
 import { R, MIN_ALT, MAX_ALT, PLANET_COUNT, planetCentre, planetDiameter } from "./orbitWorld";
 import { SPIKEWORLD_CENTRE } from "./rebelsRegions";
 import { R_OUTER, SKY_EDGE, ARRIVAL_OUT, toWorld } from "./voxel/voxelWorld";
+import { PLACES as PLACE_ID_LIST, type PlaceId } from "./gameTypes";
 
-/** Every place a game can name. Must match PLACES in gameTypes.ts. */
-export type PlaceId =
-  | "earth"
-  | "spike"
-  | "p1" | "p2" | "p3" | "p4" | "p5" | "p6" | "p7"
-  | "p8" | "p9" | "p10" | "p11" | "p12" | "p13" | "p14";
+export type { PlaceId };
 
 /** What the room puts in front of the players here, which is the one thing a
  *  place cannot express as a number. Earth runs waves around towers;
@@ -164,8 +163,12 @@ const TABLE: Place[] = [
 /** Every place, in order. */
 export const PLACES: readonly Place[] = TABLE;
 
-/** Every place id, in order. Must equal PLACES in gameTypes.ts. */
+/** Every place id this table has geometry for, in order. */
 export const PLACE_IDS: readonly PlaceId[] = TABLE.map((p) => p.id);
+
+/** Every place id gameTypes.ts allows a game to name. Re-exported so a caller
+ *  can ask "is this table complete?" without importing both files. */
+export const NAMED_PLACE_IDS: readonly PlaceId[] = PLACE_ID_LIST;
 
 /** The places a game can actually be played in today. */
 export const LIVE_PLACE_IDS: readonly PlaceId[] = TABLE.filter((p) => p.live).map((p) => p.id);
