@@ -288,3 +288,44 @@ options, and doing nothing is one of them:
 
 Until it is decided, the thing NOT to do is quietly credit balances nobody can
 withdraw, because the first player to try is the one who finds out.
+
+### Decided 2026-Sep-28: raise the cap and fund the float
+
+Geoff chose option 3. The earning rate stays as it is, and the treasury is
+raised and funded to match what the game actually promises. Recorded here
+rather than applied, for a reason he set himself.
+
+**BLOCKED, and on his own earlier decision rather than on anything new.**
+`REBELS_DAILY_CAP` lives in `/etc/divi-rebels-payout.env` on the London box, and
+the wallet it currently bounds is the SCAN NODE'S wallet. Raising the cap there
+would multiply the blast radius of the one risk this document calls "REAL, and
+the one that matters", on an unencrypted hot wallet, in the same week he decided
+to stop using that wallet. The cap is presently the ONLY line of defence around
+it; raising it before the wallet moves removes most of what is left.
+
+So the order is: dedicated wallet first, then the cap. Both need the address
+that is still outstanding, which means one delivery unblocks both.
+
+**When the address arrives, three changes and no code:**
+
+| Change | Where | From | To |
+|---|---|---|---|
+| Payout wallet | London node | scan node wallet | the dedicated one |
+| `REBELS_DAILY_CAP` | `/etc/divi-rebels-payout.env` | 2,000 | see below |
+| Float | the dedicated wallet | n/a | about two days of the cap |
+
+**Sizing the cap.** One principled anchor rather than a guess: `EARN_PER_DAY` is
+10,000, so **10,000 a day is the cap at which the treasury can honour one player
+having a maximal day**. That is the floor of any sensible answer. Multiply by the
+number of people expected to play hard on the same day for the rest: about
+25,000 for ten regulars, which is what the two sample games credit at roughly
+twenty clears between them.
+
+Two days of float rather than one, because a timer that fails overnight must not
+strand payouts, and the float is refilled by purchases rather than by hand.
+
+**What stays true whatever number is picked:** the cap is a backstop against a
+bug or a break-in, not an economy control. `EARN_PER_DAY` is what bounds the
+debt, and it stays. Raising the cap makes the game able to PAY what it promises;
+it does not make anything safe that was not safe before, and every DIVI the cap
+is raised by is a DIVI a break-in could take in a day.
