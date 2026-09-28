@@ -20,7 +20,7 @@ import {
   SHOT_SPEED_MIN, SHOT_SPEED_MAX, DAMAGE_MIN, DAMAGE_MAX,
   type EnemyType,
 } from "./enemyTypes";
-import { TIERS, DRAGON_HP } from "./rebelsCombat";
+import { TIERS, DRAGON_HP, SHOT_SPEED_FLOOR, BULLET_LIFE } from "./rebelsCombat";
 import { DRONE_TIERS, DRONE_KILL_WORTH, DRONE_FIRE_RANGE, DRONE_BULLET_SPEED } from "./rebelsFlock";
 import { PART_ORDER } from "./shipColours";
 import { ROUND_MAX_ENEMIES } from "./gameTypes";
@@ -141,6 +141,19 @@ function ok(name: string, cond: boolean, extra = ""): void {
   bad((e) => { (e as unknown as Record<string, number>).shieldMax = NaN; }, "health that is not a number is refused");
 
   /* ---- THE TWO THAT ARE NOT JUST TIDINESS ---- */
+  /* ---- THE PANEL MUST NOT OFFER WHAT THE FIGHT WILL NOT HONOUR ----
+     A slow round has its life stretched so it still reaches its stated range,
+     but only down to SHOT_SPEED_FLOOR. Below that it dies short, silently:
+     the old floor of 0.1 let an admin set a 300-unit range whose rounds
+     reached 90. Found by reading the fight's clamp against this validator's
+     floor and noticing they disagreed. */
+  ok("the slowest shot the panel allows still reaches its full stated range",
+     SHOT_SPEED_MIN >= SHOT_SPEED_FLOOR,
+     `panel floor ${SHOT_SPEED_MIN}, fight floor ${SHOT_SPEED_FLOOR}`);
+  ok("and the stretch it needs is a sane number of rounds in the air",
+     BULLET_LIFE / SHOT_SPEED_FLOOR < BULLET_LIFE * 4,
+     `up to ${(1 / SHOT_SPEED_FLOOR).toFixed(1)}x the normal life`);
+
   bad((e) => { e.resistance = 1; },
       "resistance of 1 is refused, because that is not a hard enemy, it is an unkillable one");
   fine((e) => { e.resistance = RESISTANCE_MAX; }, "and the most it may be is allowed");

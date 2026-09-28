@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  builtInEnemies, validateEnemy, validateEnemies, blankEnemy, duplicateEnemy,
+  builtInEnemies, validateEnemy, blankEnemy, duplicateEnemy,
   BEHAVIOURS, HEALTH_MIN, HEALTH_MAX, SPEED_MIN, SPEED_MAX,
   FIRE_EVERY_MIN, FIRE_EVERY_MAX, FIRE_RANGE_MIN, FIRE_RANGE_MAX,
   SHOT_SPEED_MIN, SHOT_SPEED_MAX, DAMAGE_MIN, DAMAGE_MAX, RESISTANCE_MAX, WORTH_MAX,
   type EnemyType, type Behaviour,
 } from "../../wallet/rebels/enemyTypes";
-import { fetchEnemyTypes, saveEnemyTypes } from "../../wallet/rebels/enemyTypesRemote";
+import { fetchEnemyTypes, saveEnemyType, deleteEnemyType } from "../../wallet/rebels/enemyTypesRemote";
 import { ROUND_MAX_ENEMIES } from "../../wallet/rebels/gameTypes";
 import "./rebels-enemies.css";
 
@@ -51,8 +51,7 @@ export function RebelsEnemiesPanel() {
   const editable = !chosen.builtIn;
   const check = validateEnemy(chosen);
   const errors = "errors" in check ? check.errors : [];
-  const setErrors = "errors" in validateEnemies(custom) ? validateEnemies(custom) : null;
-  const allErrors = setErrors && "errors" in setErrors ? setErrors.errors : [];
+
 
   const edit = (f: (e: EnemyType) => EnemyType) =>
     setCustom((list) => list.map((e) => (e.id === pick ? f(e) : e)));
@@ -76,19 +75,27 @@ export function RebelsEnemiesPanel() {
     setCustom((l) => [...l, e]);
     setPick(e.id);
   };
-  const remove = () => {
-    setCustom((l) => l.filter((e) => e.id !== pick));
+  /* Deleted in the database too, not only here: one row per enemy means a
+     removal has to be asked for rather than falling out of rewriting a list. */
+  const remove = async () => {
+    const id = pick, name = chosen.name;
+    setCustom((l) => l.filter((e) => e.id !== id));
     setPick(builtIn[0].id);
+    if (!secret.trim()) { setStatus(`removed "${name}" here; type the admin secret to remove it live`); return; }
+    const r = await deleteEnemyType(secret.trim(), id);
+    setStatus("ok" in r ? `deleted "${name}"` : `removed here, but the server refused: ${r.error}`);
   };
 
+  /* Saving is PER ENEMY, not the whole list: editing one writes one row, so
+     two people editing cannot silently undo each other. */
   const save = async () => {
-    const v = validateEnemies(custom);
-    if ("errors" in v) { setStatus(`refused: ${v.errors[0]}`); return; }
+    if (!editable) return;
+    if ("errors" in check) { setStatus(`refused: ${check.errors[0]}`); return; }
     setStatus("saving");
     try { localStorage.setItem(SECRET_KEY, secret); } catch { /* fine */ }
-    const r = await saveEnemyTypes(secret.trim(), custom);
+    const r = await saveEnemyType(secret.trim(), chosen);
     setStatus("ok" in r
-      ? "saved: rooms pick it up within ten minutes, cockpits on their next flight"
+      ? `saved "${chosen.name}": rooms pick it up within ten minutes, cockpits on their next flight`
       : `refused: ${r.error}`);
     if ("ok" in r) setSource("live definitions");
   };
@@ -116,6 +123,13 @@ export function RebelsEnemiesPanel() {
         Enemies the game can send. The fifteen built-ins are what it sends today and cannot be
         edited &mdash; copy one and change it. An enemy is one of our hulls, painted, plus numbers;
         nothing here models a new spaceship. Showing: {source}.
+      </p>
+      <p className="re-hint">
+        Health, resistance, speed, fire rate, range, shot speed, damage and what a kill drops are
+        all real in the fight now. <strong>Colour and hull are not yet</strong> &mdash; they are
+        saved, but the game still draws a custom enemy as whichever built-in tier is nearest its
+        health, so a 1,400-health enemy arrives looking like a Fuchsia rather than a Grey. Making
+        the colour real needs a change on both sides and is not done.
       </p>
 
       <div className="re-split">
@@ -147,7 +161,7 @@ export function RebelsEnemiesPanel() {
               onChange={(ev) => edit((e) => ({ ...e, name: ev.target.value }))} />
             <span className="re-id">{chosen.id}</span>
             <button type="button" className="re-btn" onClick={copy}>copy this one</button>
-            <button type="button" className="re-btn re-danger" disabled={!editable} onClick={remove}>delete</button>
+            <button type="button" className="re-btn re-danger" disabled={!editable} onClick={() => void remove()}>delete</button>
           </div>
 
           {chosen.builtIn ? (
@@ -227,8 +241,8 @@ export function RebelsEnemiesPanel() {
           value={secret} onChange={(ev) => setSecret(ev.target.value)} />
         <button type="button" className="re-btn" onClick={add}>new enemy</button>
         <button type="button" className="re-btn re-primary"
-          disabled={allErrors.length > 0 || !secret.trim()} onClick={() => void save()}>
-          SAVE LIVE
+          disabled={!editable || errors.length > 0 || !secret.trim()} onClick={() => void save()}>
+          SAVE THIS ENEMY
         </button>
       </div>
     </div>

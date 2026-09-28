@@ -20,6 +20,21 @@ import {
    scales from this: the mini gun, the fighters', the drones'. */
 export const BULLET_SPEED = 240 * SHRINK;      /* globe units per second */
 export const BULLET_LIFE = 2.2;
+/**
+ * How slow a round may be before its LIFE stops being stretched to compensate.
+ *
+ * A slower round is given a longer life so its reach stays the range it was
+ * told to shoot from. That cannot go on for ever - life is how many rounds are
+ * in the air at once, and that is wire - so it stops here, at about three
+ * times the normal life.
+ *
+ * ⚠ AN ENEMY SLOWER THAN THIS FALLS SHORT OF ITS OWN FIRING RANGE, silently.
+ * At a tenth speed a fighter's rounds reach 29% of what the range setting
+ * says. That is why SHOT_SPEED_MIN in enemyTypes.ts is set at or above this
+ * rather than at some lower round number, and why a test stands on the two
+ * agreeing: the panel must not offer a setting the fight will not honour.
+ */
+export const SHOT_SPEED_FLOOR = 0.34;
 export const BULLET_R = 0.16;         /* what it hits with */
 export const CONVERGE = 55;           /* where the two guns cross, in units ahead */
 
@@ -1428,7 +1443,7 @@ export function enemyFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
        reach than the range it was told to shoot from - the same reason a drone's
        round already lives longer than a fighter's. Bounded at three times,
        because life is how many rounds are in the air at once and that is wire. */
-    life: BULLET_LIFE * 1.4 / Math.max(0.34, shot), hostile: true,
+    life: BULLET_LIFE * 1.4 / Math.max(SHOT_SPEED_FLOOR, shot), hostile: true,
     ...(e.tune && e.tune.damage !== 1 ? { dmg: e.tune.damage } : {}),
   });
   /* Reported so it can be HEARD where it happened. A shot from behind is the
@@ -1452,7 +1467,7 @@ export function droneFire(c: CombatState, e: Enemy, at: THREE.Vector3): void {
     pos: e.pos.clone().addScaledVector(vel, 0.02), vel,
     /* Slower rounds need longer to cover the same ground, or they would wink
        out short of a player they were aimed squarely at. */
-    life: BULLET_LIFE * 1.9 * DRONE_BULLET_SPEED / Math.max(0.27, shot),
+    life: BULLET_LIFE * 1.9 * DRONE_BULLET_SPEED / Math.max(SHOT_SPEED_FLOOR * DRONE_BULLET_SPEED, shot),
     hostile: true, orb: true,
     phase: Math.random() * Math.PI * 2,
     ...(e.tune && e.tune.damage !== 1 ? { dmg: e.tune.damage } : {}),
