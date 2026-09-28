@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  waveDefence, validateGame, gameSeconds, gameMaxAward,
+  waveDefence, validateGame, gameSeconds, gamePayout,
   PLACES, PLACES_LIVE, ARRIVALS, MAX_REWARD_DIVI, MAX_ROUNDS,
   ROUND_MIN_SECONDS, ROUND_MAX_SECONDS, ROUND_MAX_ENEMIES, BIAS_MIN, BIAS_MAX,
   type GameType, type Round, type Spawn, type PlaceId, type Arrival,
@@ -8,6 +8,7 @@ import {
 import { fetchGameTypes, saveGameType, deleteGameType } from "../../wallet/rebels/gameTypesRemote";
 import { fetchEnemyTypes } from "../../wallet/rebels/enemyTypesRemote";
 import { cardFromFile } from "../../wallet/rebels/gameImage";
+import { COIN_PER_KILL, COIN_VALUE } from "../../wallet/rebels/rebelsCombat";
 import type { EnemyType } from "../../wallet/rebels/enemyTypes";
 import "./rebels-games.css";
 
@@ -51,9 +52,18 @@ export function RebelsGamesPanel() {
   const chosen = all.find((g) => g.id === pick) ?? builtIn;
   const locked = chosen.id === builtIn.id;
   const known = useMemo(() => ["fighters", ...enemies.map((e) => e.id)], [enemies]);
+  /* What each enemy drops, for the running total below. "fighters" is the
+     mixed wave, which is ordinary fighters, so it is worth one. */
+  const worths = useMemo(() => {
+    const m = new Map(enemies.map((e) => [e.id, e.worth]));
+    m.set("fighters", 1);
+    return m;
+  }, [enemies]);
   const check = validateGame(chosen, known);
   const errors = "errors" in check ? check.errors : [];
   const canSave = !locked && !("errors" in check) && secret.trim().length > 0;
+
+  const payout = gamePayout(chosen, worths, COIN_PER_KILL, COIN_VALUE);
 
   const edit = (f: (g: GameType) => GameType) =>
     setSaved((l) => l.map((g) => (g.id === pick ? f(g) : g)));
@@ -261,10 +271,21 @@ export function RebelsGamesPanel() {
             </div>
           </div>
 
+          {/* ---- WHAT IT COSTS, IN FULL ----
+              This used to say "up to N DIVI in awards", which on a real game
+              understated the bill by a factor of four: the awards are bounded
+              per round and per game, and the DROPS, which are three quarters
+              of it, were not counted at all. A panel that reports the bounded
+              half is worse than one that reports nothing, because it reads as
+              the answer. */}
           <span className="rg-sum">
             {chosen.rounds.length} rounds &middot; {Math.round(gameSeconds(chosen) / 60)} minutes &middot;{" "}
-            {chosen.rounds.reduce((n, r) => n + r.spawns.reduce((m, s) => m + s.count, 0), 0)} enemies &middot;{" "}
-            up to {gameMaxAward(chosen)} DIVI in awards
+            {payout.enemies} enemies &middot;{" "}
+            <strong>one clear credits {payout.total.toLocaleString()} DIVI</strong>{" "}
+            ({payout.drops.toLocaleString()} dropped, {payout.awards.toLocaleString()} awarded)
+            {payout.total > 500
+              ? <em> &mdash; large next to a treasury that pays 2,000 a day in total</em>
+              : null}
           </span>
 
           <div className="rg-rounds">
