@@ -9,6 +9,8 @@ export interface Balance {
   staking: number;
   pending: number;
   immature: number;
+  /** The My Nodes id the figures belong to. */
+  nodeId: string;
 }
 
 export interface Tx {

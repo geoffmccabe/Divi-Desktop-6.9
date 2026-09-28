@@ -21,6 +21,10 @@ struct BalanceDto {
     staking: f64,
     pending: f64,
     immature: f64,
+    /// The node this answer came from (My Nodes id). The header drops any
+    /// answer that is not for the node it is showing, so a figure from a
+    /// node just switched away from can never sit on screen.
+    node_id: String,
 }
 
 #[derive(Serialize)]
@@ -74,12 +78,24 @@ struct TxDto {
 #[tauri::command]
 async fn wallet_balance() -> Option<BalanceDto> {
     tauri::async_runtime::spawn_blocking(|| {
+        let node_id = active_node_id();
         let cfg = NodeConfig::load().ok()?;
+        // Evidence for "the balance is from the wrong node": one log line
+        // whenever the node a balance call resolves to changes.
+        {
+            static LAST: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+            let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+            if *last != node_id {
+                dd69_supervisor::setuplog::log(format!("balance: reading node '{}' ({}:{})", node_id, if cfg.remote { "remote" } else { "local" }, cfg.rpc_port));
+                *last = node_id.clone();
+            }
+        }
         wallet::balance(&cfg).map(|b| BalanceDto {
             spendable: b.spendable,
             staking: b.staking,
             pending: b.pending,
             immature: b.immature,
+            node_id,
         })
     })
     .await
@@ -1377,9 +1393,8 @@ async fn restore_replace(phrase: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let words = dd69_supervisor::seedphrase::normalize(&phrase);
         dd69_supervisor::seedphrase::check(&words)?;
-        let seed = dd69_supervisor::seedphrase::to_seed_hex(&words, "");
         let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
-        dd69_supervisor::restore::replace_wallet(&cfg, &seed)
+        dd69_supervisor::restore::replace_wallet(&cfg, &words.join(" "))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1560,11 +1575,11 @@ async fn restore_second_node(app: tauri::AppHandle, phrase: String, label: Strin
     tauri::async_runtime::spawn_blocking(move || {
         let words = dd69_supervisor::seedphrase::normalize(&phrase);
         dd69_supervisor::seedphrase::check(&words)?;
-        let seed = dd69_supervisor::seedphrase::to_seed_hex(&words, "");
         let cfg = NodeConfig::load().map_err(|e| e.to_string())?;
         if cfg.remote {
             return Err("Select a local node first; the chain is copied from it.".into());
         }
+        let seed = words.join(" ");
         let emit = |stage: &str| {
             let _ = app.emit("dd69://restore-progress", serde_json::json!({ "stage": stage }));
         };
@@ -2513,6 +2528,7 @@ async fn list_nodes() -> NodesDto {
 
 #[tauri::command]
 async fn set_active_node(id: String) -> Result<(), String> {
+    dd69_supervisor::setuplog::log(format!("my nodes: switching to '{id}'"));
     tauri::async_runtime::spawn_blocking(move || config::set_active(&id))
         .await
         .unwrap_or_else(|_| Err("failed to switch node".into()))

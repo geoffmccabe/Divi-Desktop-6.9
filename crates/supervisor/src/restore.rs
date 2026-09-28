@@ -2,11 +2,13 @@
 //! node the app is pointed at, or create a second local node that runs on the
 //! restored wallet alongside the first.
 //!
-//! HOW THE NODE RESTORES. Started with `hdseed=<hex>` in its settings while a
-//! wallet file already exists, the node moves that file aside (renamed with a
-//! timestamp, never deleted), builds a fresh wallet from the seed, and with
-//! `rescan=1` walks the whole chain to find every coin that belongs to it.
-//! The setting matters only at that one start.
+//! HOW THE NODE RESTORES. Started with `mnemonic=<words>` in its settings
+//! while a wallet file already exists, the node moves that file aside (renamed
+//! with a timestamp, never deleted), builds a fresh wallet from the words, and
+//! with `rescan=1` walks the whole chain to find every coin that belongs to it.
+//! The setting matters only at that one start. The WORDS are given, not the
+//! seed bytes: a node seeded from bytes keeps no words, so "Show seed phrase"
+//! had nothing to show after a restore (found 2026-Sep-28).
 //!
 //! WHERE THE SECRET GOES, AND DOES NOT. The seed is written into the node's
 //! own settings file (owner-only permissions, in the folder that already holds
@@ -63,10 +65,10 @@ pub fn scrub_conf(conf: &Path) {
     }
 }
 
-fn write_conf_with_seed(conf: &Path, seed_hex: &str) -> Result<(), String> {
+fn write_conf_with_seed(conf: &Path, mnemonic: &str) -> Result<(), String> {
     let text = std::fs::read_to_string(conf).map_err(|e| format!("cannot read the node settings: {e}"))?;
     let mut out = strip_seed_lines(&text);
-    out.push_str(&format!("hdseed={seed_hex}\nrescan=1\n"));
+    out.push_str(&format!("mnemonic={mnemonic}\nrescan=1\n"));
     std::fs::write(conf, out).map_err(|e| format!("cannot write the node settings: {e}"))?;
     #[cfg(unix)]
     {
@@ -76,11 +78,12 @@ fn write_conf_with_seed(conf: &Path, seed_hex: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// REPLACE the wallet of the node in `cfg` with one restored from `seed_hex`.
+/// REPLACE the wallet of the node in `cfg` with one restored from `mnemonic`
+/// (the words, space separated).
 /// Stops the node politely, restarts it once with the seed, waits for it to
 /// answer (the rescan runs first and can take a long while), then removes the
 /// seed from the settings. The previous wallet file is renamed, not deleted.
-pub fn replace_wallet(cfg: &NodeConfig, seed_hex: &str) -> Result<String, String> {
+pub fn replace_wallet(cfg: &NodeConfig, mnemonic: &str) -> Result<String, String> {
     if cfg.remote {
         return Err("This node is on another machine; restore its wallet there.".into());
     }
@@ -93,7 +96,7 @@ pub fn replace_wallet(cfg: &NodeConfig, seed_hex: &str) -> Result<String, String
         process::safe_stop(&rpc, &cfg.datadir, Duration::from_secs(1200))
             .map_err(|e| format!("could not stop the node first: {e}"))?;
     }
-    write_conf_with_seed(&conf, seed_hex)?;
+    write_conf_with_seed(&conf, mnemonic)?;
     // One start with the seed. Long timeout: the rescan of a 4M-block chain
     // happens before the node answers.
     let result = process::start_with_recovery(
@@ -114,12 +117,12 @@ pub fn replace_wallet(cfg: &NodeConfig, seed_hex: &str) -> Result<String, String
 }
 
 /// CREATE a second local node, with its own data folder and ports, whose
-/// wallet is restored from `seed_hex`. The chain is copied from `from_datadir`
+/// wallet is restored from `mnemonic` (the words). The chain is copied from `from_datadir`
 /// so it need not be downloaded again. Returns the new profile's id.
 pub fn create_second_node(
     from_datadir: &Path,
     label: &str,
-    seed_hex: &str,
+    mnemonic: &str,
     progress: &dyn Fn(&str),
 ) -> Result<String, String> {
     let id = format!("node{}", std::time::SystemTime::now()
@@ -153,7 +156,7 @@ pub fn create_second_node(
         "# Written by DD69 for a second local node. Edit freely; DD69 will not rewrite it.\n\
          rpcuser={user}\nrpcpassword={pass}\nrpcport={rpc_port}\nport={p2p}\n\
          server=1\nlisten=1\nupnp=0\ndiscover=1\nrpcthreads=64\nrpcworkqueue=64\nmaxconnections=32\naddressindex=1\n\
-         hdseed={seed_hex}\nrescan=1\n"
+         mnemonic={mnemonic}\nrescan=1\n"
     );
     std::fs::write(&conf, body).map_err(|e| format!("cannot write the new node's settings: {e}"))?;
     #[cfg(unix)]
@@ -221,8 +224,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let conf = dir.join("divi.conf");
         std::fs::write(&conf, "rpcuser=a\nserver=1\n").unwrap();
-        write_conf_with_seed(&conf, "00ff").unwrap();
-        assert!(std::fs::read_to_string(&conf).unwrap().contains("hdseed=00ff"));
+        write_conf_with_seed(&conf, "abandon abandon about").unwrap();
+        assert!(std::fs::read_to_string(&conf).unwrap().contains("mnemonic=abandon abandon about"));
         scrub_conf(&conf);
         assert_eq!(std::fs::read_to_string(&conf).unwrap(), "rpcuser=a\nserver=1\n");
         std::fs::remove_dir_all(&dir).ok();

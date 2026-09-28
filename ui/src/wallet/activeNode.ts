@@ -19,9 +19,18 @@ export function activeNodeId(): string {
   return current;
 }
 
+let switchedAt = 0;
+
 export function setActiveNodeId(id: string): void {
+  if (current && current !== (id || "desktop")) switchedAt = Date.now();
   current = id || "desktop";
   try { localStorage.setItem(KEY, current); } catch { /* storage blocked */ }
+}
+
+/** True for a few minutes after a switch: panels built in that window start
+    as "updating", since the new node may still be coming up. */
+export function justSwitched(): boolean {
+  return switchedAt > 0 && Date.now() - switchedAt < 5 * 60 * 1000;
 }
 
 /** Ask the backend once at start so the mirror matches nodes.json. */

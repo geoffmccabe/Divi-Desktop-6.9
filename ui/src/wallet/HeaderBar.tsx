@@ -10,6 +10,7 @@ import { WalletsDropdown } from "./WalletsDropdown";
 import { loadPointings, settlePointings } from "./hraTarget";
 import { hraPending } from "./hra/api";
 import { useDiviValue } from "./value";
+import { activeNodeId, justSwitched } from "./activeNode";
 import { Icon } from "../Icon";
 
 type OpenPanel = null | "staking" | "addresses" | "lottery" | "wallets";
@@ -32,14 +33,23 @@ export function HeaderBar() {
   /* Not running at all, which is a different problem from being behind. */
   const [nodeDown, setNodeDown] = useState(false);
   const [headline, setHeadline] = useState<string | null>(null);
+  /* Just switched node: nothing on screen belongs to it yet. Shown as
+     UPDATING until the first figures for the new node arrive (the local
+     node is restarted on a switch, so that can take a couple of minutes). */
+  const [switching, setSwitching] = useState(() => justSwitched());
   const [copied, setCopied] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
 
   // Pull a fresh balance immediately (e.g. right after staking starts) so the
   // header can flip to green without waiting for the next 12s poll.
+  /* Only an answer for the node being shown may land. Geoff, 2026-Sep-28:
+     switched Scanner -> Desktop and the old node's Spendable stayed up. The
+     shell already rebuilds this panel on a switch; this makes the figure
+     itself refuse anything else, whatever the timing. */
+  const forThisNode = (b: Balance | null) => !!b && b.nodeId === activeNodeId();
   const refreshBalance = () => {
     walletBalance()
-      .then((b) => b && setBal(b))
+      .then((b) => { if (forThisNode(b)) { setBal(b); setSwitching(false); } })
       .catch(() => {
         /* keep last */
       });
@@ -51,7 +61,7 @@ export function HeaderBar() {
     const pollLight = async () => {
       try {
         const b = await walletBalance();
-        if (alive && b) setBal(b);
+        if (alive && forThisNode(b)) { setBal(b); setSwitching(false); }
       } catch {
         /* keep last */
       }
@@ -128,6 +138,14 @@ export function HeaderBar() {
     };
   }, []);
 
+  /* Belt and braces: a switch empties every figure at once, even if the
+     shell's rebuild were ever skipped. */
+  useEffect(() => {
+    const clear = () => { setBal(null); setWallets([]); setAddrs(null); setLottery(null); setSwitching(true); };
+    window.addEventListener("dd69:nodeswitch", clear);
+    return () => window.removeEventListener("dd69:nodeswitch", clear);
+  }, []);
+
   useEffect(() => {
     if (!openPanel) return;
     const onDown = (e: MouseEvent) => {
@@ -170,7 +188,11 @@ export function HeaderBar() {
             stand behind is worse than none: a zero reads as "your coins are
             gone" when they are on chain and merely not counted yet. No fiat
             line either, since there is nothing honest to convert. */}
-        {nodeDown ? (
+        {switching ? (
+          <span className="bl-amt bl-amt-stack">
+            <span className="bl-divi bl-sync-amt">UPDATING…</span>
+          </span>
+        ) : nodeDown ? (
           <span className="bl-amt bl-amt-stack">
             <span className="bl-divi bl-down-amt">NODE NOT RUNNING</span>
             <span className="bl-fiat bl-sync-note">
@@ -247,7 +269,12 @@ export function HeaderBar() {
           {/* Status line. The chevron toggles the details dropdown; it no longer
               opens on its own. */}
           <button type="button" className="hdr-staking-btn" onClick={() => toggle("staking")}>
-            {nodeDown ? (
+            {switching ? (
+              <>
+                <span className="bl-label">Staking</span>
+                <span className="bl-amt bl-amt-staking bl-sync-amt">UPDATING…</span>
+              </>
+            ) : nodeDown ? (
               <>
                 <span className="bl-label">Staking</span>
                 <span className="bl-amt bl-amt-staking bl-down-amt">NODE NOT RUNNING</span>

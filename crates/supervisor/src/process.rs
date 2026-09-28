@@ -618,53 +618,79 @@ pub fn start_with_recovery(
     if datadir == crate::config::dd69_datadir().as_path() {
         let _ = crate::install::ensure_local_node_conf();
     }
-
-    // (flag, human label, timeout). None flag = ordinary start.
-    let ladder: [(Option<&str>, &str, Duration); 3] = [
-        (None, "", normal_timeout),
-        (Some("-reindex-chainstate"), "rebuilding the coin database", repair_timeout),
-        (Some("-reindex"), "rebuilding the full blockchain index", repair_timeout),
-    ];
-
-    let mut last_corruption = String::new();
-    for (i, (flag, label, timeout)) in ladder.iter().enumerate() {
-        let args: Vec<&str> = flag.iter().copied().collect();
-        match spawn_once(divid, datadir, rpc, *timeout, &args) {
-            Spawn::Running(pid) => {
-                return Ok(StartReport {
-                    pid,
-                    repaired_with: if i == 0 { None } else { Some((*label).to_string()) },
-                });
+    // A brand-new node (no wallet file yet) would make itself a 24-word
+    // wallet; Divi uses 12. Hand it twelve fresh words for this one start,
+    // the same way a restore does, and strip them the moment it is up.
+    let conf = datadir.join("divi.conf");
+    let seeded_here = !datadir.join("wallet.dat").exists()
+        && std::fs::read_to_string(&conf)
+            .map(|t| !t.lines().any(|l| l.trim_start().starts_with("mnemonic=") || l.trim_start().starts_with("hdseed=")))
+            .unwrap_or(false);
+    if seeded_here {
+        let words = crate::wallets::new_words().join(" ");
+        if let Ok(text) = std::fs::read_to_string(&conf) {
+            let mut out = text;
+            if !out.ends_with('\n') { out.push('\n'); }
+            out.push_str(&format!("mnemonic={words}\n"));
+            if std::fs::write(&conf, out).is_ok() {
+                crate::setuplog::log("first start: giving the node a twelve-word wallet");
             }
-            Spawn::Corruption(msg) => {
-                last_corruption = msg;
-                // fall through to the next, more aggressive repair rung
-                continue;
-            }
-            Spawn::ReindexRequired(_) => {
-                // An index option was just enabled (addressindex). Rebuild the
-                // index from the on-disk block files once; this is a longer
-                // first start, not a re-download, and only happens the one time.
-                return match spawn_once(divid, datadir, rpc, *timeout, &["-reindex"]) {
-                    Spawn::Running(pid) => Ok(StartReport {
-                        pid,
-                        repaired_with: Some("building the address index".to_string()),
-                    }),
-                    Spawn::Corruption(msg)
-                    | Spawn::Failed(msg)
-                    | Spawn::ReindexRequired(msg) => {
-                        Err(format!("could not build the address index: {msg}"))
-                    }
-                };
-            }
-            Spawn::Failed(msg) => return Err(msg),
         }
     }
-    Err(format!(
-        "the blockchain data is damaged and a local rebuild didn't fix it ({}). \
-         Next step: restore from the Divi snapshot. Your coins are safe — only downloaded data is affected.",
-        last_corruption
-    ))
+
+    let outcome = (|| -> Result<StartReport, String> {
+        // (flag, human label, timeout). None flag = ordinary start.
+        let ladder: [(Option<&str>, &str, Duration); 3] = [
+            (None, "", normal_timeout),
+            (Some("-reindex-chainstate"), "rebuilding the coin database", repair_timeout),
+            (Some("-reindex"), "rebuilding the full blockchain index", repair_timeout),
+        ];
+
+        let mut last_corruption = String::new();
+        for (i, (flag, label, timeout)) in ladder.iter().enumerate() {
+            let args: Vec<&str> = flag.iter().copied().collect();
+            match spawn_once(divid, datadir, rpc, *timeout, &args) {
+                Spawn::Running(pid) => {
+                    return Ok(StartReport {
+                        pid,
+                        repaired_with: if i == 0 { None } else { Some((*label).to_string()) },
+                    });
+                }
+                Spawn::Corruption(msg) => {
+                    last_corruption = msg;
+                    // fall through to the next, more aggressive repair rung
+                    continue;
+                }
+                Spawn::ReindexRequired(_) => {
+                    // An index option was just enabled (addressindex). Rebuild the
+                    // index from the on-disk block files once; this is a longer
+                    // first start, not a re-download, and only happens the one time.
+                    return match spawn_once(divid, datadir, rpc, *timeout, &["-reindex"]) {
+                        Spawn::Running(pid) => Ok(StartReport {
+                            pid,
+                            repaired_with: Some("building the address index".to_string()),
+                        }),
+                        Spawn::Corruption(msg)
+                        | Spawn::Failed(msg)
+                        | Spawn::ReindexRequired(msg) => {
+                            Err(format!("could not build the address index: {msg}"))
+                        }
+                    };
+                }
+                Spawn::Failed(msg) => return Err(msg),
+            }
+        }
+        Err(format!(
+            "the blockchain data is damaged and a local rebuild didn't fix it ({}). \
+             Next step: restore from the Divi snapshot. Your coins are safe — only downloaded data is affected.",
+            last_corruption
+        ))
+    })();
+    // The words leave the file the moment the start is over, success or not.
+    if seeded_here {
+        crate::restore::scrub_conf(&conf);
+    }
+    outcome
 }
 
 /// Ask the operating system to pass on a polite shutdown request.
