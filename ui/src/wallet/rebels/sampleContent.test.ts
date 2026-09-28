@@ -13,7 +13,8 @@ import { sampleEnemies, sampleGames } from "./sampleContent";
 import { validateEnemies, builtInIds, builtInEnemies } from "./enemyTypes";
 import { COIN_PER_KILL, COIN_VALUE } from "./rebelsCombat";
 import {
-  validateGames, validateGame, gameSeconds, gameMaxAward, gamePayout, waveDefence,
+  validateGames, validateGame, gameSeconds, gameMaxAward, gamePayout, payoutRefusal,
+  GAME_MAX_PAYOUT, waveDefence,
   PLACES_LIVE, MAX_REWARD_DIVI, type GameType,
 } from "./gameTypes";
 
@@ -159,6 +160,24 @@ const enemyCount = (g: GameType) =>
      Not a pass/fail on the design - Geoff owns the rate - but a tripwire, so
      a future edit that makes a sample richer cannot pass unnoticed. If this
      fails, somebody has changed the economy and should say so out loud. */
+  /* And the hard ceiling a game may not exceed at all, which the panel now
+     refuses at save and the room refuses at load. The samples must sit well
+     inside it, or the content we shipped would be the first thing the new
+     bound rejected. */
+  ok("neither sample is over the ceiling a game may pay",
+     payoutRefusal(shakedown, worth, COIN_PER_KILL, COIN_VALUE) === null
+       && payoutRefusal(descent, worth, COIN_PER_KILL, COIN_VALUE) === null,
+     `${desc.total} of ${GAME_MAX_PAYOUT}`);
+  /* ---- AND THE BUILT-IN IS THE RICHEST THING IN THE GAME ----
+     Which nobody chose and everybody plays. Worth pinning rather than
+     leaving as a surprise: it is 4.6 times Descent and more than half the
+     ceiling, so if the ceiling is ever lowered this is what it hits first. */
+  const builtIn = pay(waveDefence());
+  ok("the built-in pays more than either sample, by a distance",
+     builtIn.total > desc.total * 3, `${builtIn.total} against ${desc.total}`);
+  ok("and is still inside the ceiling", payoutRefusal(waveDefence(), worth, COIN_PER_KILL, COIN_VALUE) === null,
+     `${builtIn.total} of ${GAME_MAX_PAYOUT}`);
+
   const DAILY_PAYOUT_CAP = 2000;
   ok("no sample has quietly grown past the daily cap on a single clear",
      desc.total < DAILY_PAYOUT_CAP,

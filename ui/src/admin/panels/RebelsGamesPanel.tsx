@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  waveDefence, validateGame, gameSeconds, gamePayout,
+  waveDefence, validateGame, gameSeconds, gamePayout, payoutRefusal,
   PLACES, PLACES_LIVE, ARRIVALS, MAX_REWARD_DIVI, MAX_ROUNDS,
   ROUND_MIN_SECONDS, ROUND_MAX_SECONDS, ROUND_MAX_ENEMIES, BIAS_MIN, BIAS_MAX,
   type GameType, type Round, type Spawn, type PlaceId, type Arrival,
@@ -61,9 +61,19 @@ export function RebelsGamesPanel() {
   }, [enemies]);
   const check = validateGame(chosen, known);
   const errors = "errors" in check ? check.errors : [];
-  const canSave = !locked && !("errors" in check) && secret.trim().length > 0;
+  const canSaveBasics = !locked && !("errors" in check) && secret.trim().length > 0;
 
   const payout = gamePayout(chosen, worths, COIN_PER_KILL, COIN_VALUE);
+  /* ---- THE CEILING, REFUSED HERE AS WELL AS IN THE ROOM ----
+     The room refuses a game over the ceiling when it loads the world, which
+     is the check that cannot be skipped: a row written by hand, or saved
+     before the ceiling existed, reaches it regardless. But that refusal is
+     loud and LATE - it condemns the whole set, so one too-rich game drops
+     every other game in the room back to the built-in, and the author finds
+     out from players. Refusing at save is quiet and early, and the number is
+     already on the screen. */
+  const tooRich = payoutRefusal(chosen, worths, COIN_PER_KILL, COIN_VALUE);
+  const canSave = canSaveBasics && !tooRich;
 
   const edit = (f: (g: GameType) => GameType) =>
     setSaved((l) => l.map((g) => (g.id === pick ? f(g) : g)));
@@ -116,6 +126,7 @@ export function RebelsGamesPanel() {
   const save = async () => {
     if (locked) return;
     if ("errors" in check) { setStatus(`refused: ${check.errors[0]}`); return; }
+    if (tooRich) { setStatus(`refused: ${tooRich}`); return; }
     setStatus("saving");
     try { localStorage.setItem(SECRET_KEY, secret); } catch { /* fine */ }
     const r = await saveGameType(secret.trim(), chosen, known);
@@ -283,7 +294,7 @@ export function RebelsGamesPanel() {
             {payout.enemies} enemies &middot;{" "}
             <strong>one clear credits {payout.total.toLocaleString()} DIVI</strong>{" "}
             ({payout.drops.toLocaleString()} dropped, {payout.awards.toLocaleString()} awarded)
-            {payout.total > 500
+            {payout.total > 500 && !tooRich
               ? <em> &mdash; large next to a treasury that pays 2,000 a day in total</em>
               : null}
           </span>
@@ -328,8 +339,11 @@ export function RebelsGamesPanel() {
             add a round
           </button>
 
-          {errors.length ? (
-            <div className="rg-errors">{errors.map((e) => <span key={e}>{e}</span>)}</div>
+          {errors.length || tooRich ? (
+            <div className="rg-errors">
+              {errors.map((e) => <span key={e}>{e}</span>)}
+              {tooRich ? <span>{tooRich}</span> : null}
+            </div>
           ) : null}
         </section>
       </div>
