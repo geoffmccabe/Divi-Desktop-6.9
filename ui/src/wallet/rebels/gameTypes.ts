@@ -40,6 +40,23 @@ export const PLACES: PlaceId[] = [
   "p8", "p9", "p10", "p11", "p12", "p13", "p14",
 ];
 
+/**
+ * What to CALL each place, for anything a player reads.
+ *
+ * The ids are for the wire and the database; "p7" is not a destination
+ * anybody wants to see on a card. The planet names are the sky's own, from
+ * PLANET_NAMES in spaceEnvironment.ts - written out here rather than imported
+ * because that file reaches for three.js, with a test standing on them
+ * matching.
+ */
+export const PLACE_NAMES: Record<string, string> = {
+  earth: "Earth orbit",
+  spike: "Spikeworld",
+  p1: "Ceralt", p2: "Bhoro", p3: "Ixion Minor", p4: "Kelvarr", p5: "Ondrus",
+  p6: "Tessimar", p7: "Halcyne", p8: "Vaskir Prime", p9: "Ormundi", p10: "Threx",
+  p11: "Calladon", p12: "Sepharis", p13: "Yggdral", p14: "Morrowain",
+};
+
 /** Which places a game can actually be played in TODAY. The rest are named so
  *  a game can be written for them before the room exists, but a game pointed at
  *  one cannot be published yet. */

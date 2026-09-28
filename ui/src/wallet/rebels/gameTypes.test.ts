@@ -13,7 +13,7 @@ export {};
 
 import {
   waveDefence, waveDefenceSize, validateGame, validateGames, gameSeconds, gameMaxAward,
-  DEFAULT_GAMES, PLACES, PLACES_LIVE, MAX_REWARD_DIVI, ROUND_MAX_ENEMIES,
+  DEFAULT_GAMES, PLACES, PLACES_LIVE, PLACE_NAMES, MAX_REWARD_DIVI, ROUND_MAX_ENEMIES,
   ROUND_MIN_SECONDS, ROUND_MAX_SECONDS, MAX_ROUNDS, BIAS_MAX, WAVE_DEFENCE_BIAS,
   WAVE_DEFENCE_FIRST, WAVE_DEFENCE_STEP, WAVE_DEFENCE_SECONDS, WAVE_DEFENCE_ROUNDS,
   type GameType,
@@ -158,6 +158,21 @@ function ok(name: string, cond: boolean, extra = ""): void {
   ok("a game cannot be published into a place that does not exist yet", "errors" in validateGame(future));
   future.published = false;
   ok("but it can be written and saved for later", "ok" in validateGame(future));
+  /* ---- THE PLACE NAMES ARE THE SKY'S OWN ----
+     PLACE_NAMES is a second hand-maintained list of the same fourteen
+     planets, which is the shape of bug that has caught us repeatedly today,
+     and it caught me again writing it: I invented fourteen plausible names
+     and every one of them was wrong. Checked against the sky itself now. */
+  ok("every place has a name a player can read",
+     PLACES.every((p) => typeof PLACE_NAMES[p] === "string" && PLACE_NAMES[p].length > 0),
+     PLACES.filter((p) => !PLACE_NAMES[p]).join(", ") || "all named");
+  /* That the planet names MATCH the sky's own is checked in
+     spaceEnvironment.test.ts, which is where the sky is and which already
+     has the loaders its picture assets need. */
+  ok("with no name left over for a place that does not exist",
+     Object.keys(PLACE_NAMES).every((k) => (PLACES as string[]).includes(k)),
+     Object.keys(PLACE_NAMES).filter((k) => !(PLACES as string[]).includes(k)).join(", ") || "none spare");
+
   ok("the live places are the two that have rooms",
      PLACES_LIVE.length === 2 && PLACES_LIVE.includes("earth") && PLACES_LIVE.includes("spike"),
      PLACES_LIVE.join(", "));

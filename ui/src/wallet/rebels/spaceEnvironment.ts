@@ -42,7 +42,7 @@ export interface SpaceBody {
    Fourteen of them, ordered from the nearest out, so the small close ones get
    the workaday names and the giants further out get the grander ones. Nothing
    here is a real place. */
-const PLANET_NAMES = [
+export const PLANET_NAMES = [
   "Ceralt", "Bhoro", "Ixion Minor", "Kelvarr", "Ondrus", "Tessimar", "Halcyne",
   "Vaskir Prime", "Ormundi", "Threx", "Calladon", "Sepharis", "Yggdral", "Morrowain",
 ];

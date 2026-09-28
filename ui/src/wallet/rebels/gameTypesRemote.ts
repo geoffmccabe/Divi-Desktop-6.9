@@ -80,23 +80,33 @@ export async function fetchGameTypes(
  * see what it is called and what it looks like; they do not need sixty rounds
  * of spawn tables for every game on the list.
  */
+export interface GameCard {
+  id: string;
+  name: string;
+  place: string;
+  crew: "solo" | "multiplayer";
+  image?: string;
+}
+
 export async function fetchGameCards(
   fetchFn: typeof fetch = fetch,
-): Promise<Array<{ id: string; name: string; place: string; image?: string }>> {
+): Promise<GameCard[]> {
   try {
     const res = await accountRead("rebels_games?select=id,game,image&order=id", fetchFn);
     if (!res.ok) return [];
     const rows = (await res.json()) as Row[];
     return rows.map((r) => {
-      const g = (r.game ?? {}) as { name?: string; place?: string; published?: boolean };
+      const g = (r.game ?? {}) as { name?: string; place?: string; crew?: string; published?: boolean };
       return {
         id: r.id,
         name: String(g.name ?? r.id),
         place: String(g.place ?? "earth"),
+        crew: g.crew === "solo" ? "solo" as const : "multiplayer" as const,
         ...(r.image ? { image: r.image } : {}),
         published: g.published === true,
       };
-    }).filter((c) => (c as { published: boolean }).published);
+    }).filter((c) => c.published)
+      .map(({ published: _p, ...c }) => c);
   } catch {
     return [];
   }
