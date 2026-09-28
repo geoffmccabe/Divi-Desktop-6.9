@@ -14,11 +14,11 @@ export {};
 import {
   waveDefence, waveDefenceSize, validateGame, validateGames, gameSeconds, gameMaxAward,
   DEFAULT_GAMES, PLACES, PLACES_LIVE, MAX_REWARD_DIVI, ROUND_MAX_ENEMIES,
-  ROUND_MIN_SECONDS, ROUND_MAX_SECONDS, MAX_ROUNDS,
+  ROUND_MAX_SECONDS, MAX_ROUNDS, BIAS_MAX, WAVE_DEFENCE_BIAS,
   WAVE_DEFENCE_FIRST, WAVE_DEFENCE_STEP, WAVE_DEFENCE_SECONDS, WAVE_DEFENCE_ROUNDS,
   type GameType,
 } from "./gameTypes";
-import { WAVE_FIRST, WAVE_STEP, WAVE_SECONDS, waveSize } from "./rebelsCombat";
+import { WAVE_FIRST, WAVE_STEP, WAVE_SECONDS, waveSize, WAVE_BIAS_MIN, WAVE_BIAS_MAX, rollTier } from "./rebelsCombat";
 
 const out: string[] = [];
 let failures = 0;
@@ -62,6 +62,28 @@ function ok(name: string, cond: boolean, extra = ""): void {
      round, not all at once. */
   ok("they arrive spread across the round, as the waves do",
      g.rounds.every((r) => r.spawns.every((s) => s.arrive === "spread")));
+
+  /* ---- AND WHAT ARRIVES, WHICH THIS TEST USED TO BE SILENT ABOUT ----
+     The first draft described the built-in as pure tier1. The real waves are
+     a MIX: every wave rolls a bias and the seven tiers are weighted by it, so
+     roughly three in ten of an average wave are not tier one. Pinning count
+     and timing while saying nothing about WHAT is how a description can be
+     precisely right and still describe a different, flatter game. */
+  ok("the built-in sends a MIX of fighters, not a wall of tier ones",
+     g.rounds.every((r) => r.spawns.every((s) => s.enemy === "fighters")));
+  ok("across the same difficulty range the waves roll",
+     WAVE_DEFENCE_BIAS[0] === WAVE_BIAS_MIN && WAVE_DEFENCE_BIAS[1] === WAVE_BIAS_MAX,
+     `${WAVE_DEFENCE_BIAS.join("-")} against the simulation's ${WAVE_BIAS_MIN}-${WAVE_BIAS_MAX}`);
+  ok("and every round carries it", g.rounds.every((r) => r.spawns[0].bias?.[0] === WAVE_BIAS_MIN));
+
+  /* And that the mix is really a mix, measured through the roll the fight
+     uses rather than argued about. */
+  {
+    const seen = new Set<number>();
+    for (let i = 0; i < 4000; i++) seen.add(rollTier(WAVE_BIAS_MAX).tier);
+    ok("a biased roll really does send more than one tier", seen.size >= 3,
+       `${seen.size} different tiers in 4000 rolls at bias ${WAVE_BIAS_MAX}`);
+  }
   ok("it is played in Earth orbit", g.place === "earth");
   ok("and it is the shared game, not a solo one", g.crew === "multiplayer");
   ok("thirty rounds is an hour",
@@ -94,6 +116,15 @@ function ok(name: string, cond: boolean, extra = ""): void {
   bad((g) => { g.rounds[0].spawns[0].count = 2.5; }, "half an enemy is refused");
   bad((g) => { (g.rounds[0].spawns[0] as { arrive: unknown }).arrive = "eventually"; }, "an arrival nobody implements is refused");
   bad((g) => { g.rounds[0].spawns[0].count = ROUND_MAX_ENEMIES + 1; }, "a round holding more enemies than allowed is refused");
+  bad((g) => { g.rounds[0].spawns[0].bias = [3, 1]; }, "a bias range written backwards is refused");
+  bad((g) => { g.rounds[0].spawns[0].bias = [0, BIAS_MAX + 1]; }, "a bias past the top of the range is refused");
+  bad((g) => { g.rounds[0].spawns[0].enemy = "tier3"; }, "a bias on ONE kind of ship is refused, because it means nothing there");
+  {
+    const one = good();
+    one.rounds[0].spawns[0].enemy = "tier3";
+    delete one.rounds[0].spawns[0].bias;
+    ok("and asking for one named tier, with no bias, is fine", "ok" in validateGame(one));
+  }
   bad((g) => { g.rounds = new Array(MAX_ROUNDS + 1).fill(g.rounds[0]); }, "a game with too many rounds is refused");
   bad((g) => { (g as { image: unknown }).image = "https://example.com/a.png"; }, "a card image by link rather than by upload is refused");
   bad((g) => { (g as { published: unknown }).published = "yes"; }, "published must be a real true or false");
@@ -132,6 +163,8 @@ function ok(name: string, cond: boolean, extra = ""): void {
      has never heard of IF the enemy table has it, and refuse it otherwise. */
   const custom = good();
   custom.rounds[0].spawns[0].enemy = "geoffs-reaper";
+  /* One named kind of ship, so no mix bias: it would mean nothing here. */
+  delete custom.rounds[0].spawns[0].bias;
   ok("an unknown custom enemy is refused", "errors" in validateGame(custom));
   ok("and the same one is accepted once it has been defined",
      "ok" in validateGame(custom, ["geoffs-reaper"]));
