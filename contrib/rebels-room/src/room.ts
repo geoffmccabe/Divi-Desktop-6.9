@@ -42,7 +42,8 @@ import { HEART_GUARD, HEART_GUARD_COUNT } from "../../../ui/src/wallet/rebels/re
 import { startGame, stepGame, type Run, type Spawner } from "./gameRunner";
 import { placeById, type Place } from "../../../ui/src/wallet/rebels/rebelsPlaces";
 import { award, newPurse, type Purse } from "./gameRewards";
-import { waveDefence, type GameType, type Reward } from "../../../ui/src/wallet/rebels/gameTypes";
+import { fetchGames, gameForPlace, hasGameFor } from "./gameSource";
+import { waveDefence, DEFAULT_GAMES, type GameType, type Reward } from "../../../ui/src/wallet/rebels/gameTypes";
 /* Spikeworld's dimensions. That folder deliberately imports nothing from the
    game, the DOM or three.js, precisely so the room can share its numbers: the
    heart the room defends and the heart the cockpit draws are the same sphere
@@ -319,6 +320,12 @@ export class RebelsRoom {
    *  not. See GAME_PURSE in gameRewards.ts for why a per-game ceiling is needed
    *  on top of the per-award one the validator already applies. */
   private purse: Purse = newPurse();
+  /** The games Geoff has built, refreshed on the same slow timer as the drop
+   *  charts. Starts as the built-in so a room can play before the first fetch
+   *  has come back, and falls back to it on any doubt: see gameSource.ts. */
+  private games: readonly GameType[] = DEFAULT_GAMES;
+  /** Whether those came from the table, for the state page. */
+  private gamesLive = false;
   private combat: CombatState = createCombat();
   private world: CombatWorld;
   private tips: THREE.Vector3[] = [];
@@ -358,6 +365,7 @@ export class RebelsRoom {
            want of purse. The answer to "why did nobody get paid" lives here,
            because a game silently paying nothing halfway through looks exactly
            like a game that promised nothing. */
+        games: this.games.length, gamesLive: this.gamesLive,
         ...(this.run ? { game: this.run.game.id, rounds: this.run.game.rounds.length,
                          paid: Math.round(this.purse.spent), refused: this.purse.refused } : {}),
         enemies: this.combat.enemies.length,
@@ -506,13 +514,18 @@ export class RebelsRoom {
    * that has to learn to read it.
    */
   private beginGame(): Run | null {
-    if (this.region !== "earth") return null;
+    /* A place runs a game if somebody has written one for it. Earth also has
+       the built-in, which is why it never has none; Spikeworld has a heart and
+       its guards rather than a sequence of rounds, and gets a run only if
+       somebody deliberately writes a game for it. */
+    if (this.region !== "earth" && !hasGameFor(this.games, this.place.id)) return null;
     return startGame(this.gameType());
   }
 
-  /** Which game. Split out because it is the seam the live table plugs into. */
+  /** Which game this room runs: the first published one written for this place,
+   *  or the built-in. See gameForPlace. */
   private gameType(): GameType {
-    return waveDefence();
+    return gameForPlace(this.games, this.place.id);
   }
 
   /**
@@ -986,6 +999,16 @@ export class RebelsRoom {
     const r = await fetchDropConfig();
     this.drops = r.config;
     this.combat.drops = r.config;
+    /* The games too, on the same slow timer and for the same reason: they are
+       config that changes when somebody saves a panel, not per tick.
+
+       ⚠ A REFRESH DOES NOT DISTURB A GAME IN PROGRESS. The new list is held
+       and the RUN keeps the description it started with, so saving an edit
+       cannot change the fight under the players already in it. They get the
+       new version when the current run ends. */
+    const g = await fetchGames();
+    this.games = g.games;
+    this.gamesLive = g.live;
   }
   /** Tests: no network, and a pinned roll. */
   dropsOn = true;
