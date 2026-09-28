@@ -14,7 +14,7 @@ export {};
 import {
   waveDefence, waveDefenceSize, validateGame, validateGames, gameSeconds, gameMaxAward,
   DEFAULT_GAMES, PLACES, PLACES_LIVE, MAX_REWARD_DIVI, ROUND_MAX_ENEMIES,
-  ROUND_MAX_SECONDS, MAX_ROUNDS, BIAS_MAX, WAVE_DEFENCE_BIAS,
+  ROUND_MIN_SECONDS, ROUND_MAX_SECONDS, MAX_ROUNDS, BIAS_MAX, WAVE_DEFENCE_BIAS,
   WAVE_DEFENCE_FIRST, WAVE_DEFENCE_STEP, WAVE_DEFENCE_SECONDS, WAVE_DEFENCE_ROUNDS,
   type GameType,
 } from "./gameTypes";
@@ -110,6 +110,11 @@ function ok(name: string, cond: boolean, extra = ""): void {
   bad((g) => { g.rounds = []; }, "a game with no rounds is refused");
   bad((g) => { g.rounds[0].seconds = 0; }, "a round of no seconds is refused");
   bad((g) => { g.rounds[0].seconds = ROUND_MAX_SECONDS + 1; }, "an absurdly long round is refused");
+  /* The other end of the same range, which the first draft of this file
+     checked at the top and not the bottom. A bound tested on one side is a
+     bound half tested, and the unused import was the only thing saying so. */
+  bad((g) => { g.rounds[0].seconds = ROUND_MIN_SECONDS - 1; }, "a round shorter than the minimum is refused");
+  bad((g) => { g.rounds[0].seconds = -30; }, "a round of negative seconds is refused");
   bad((g) => { g.rounds[0].spawns = []; }, "an empty round is refused");
   bad((g) => { g.rounds[0].spawns[0].enemy = "nothing-like-this"; }, "an enemy nobody has defined is refused");
   bad((g) => { g.rounds[0].spawns[0].count = 0; }, "a spawn of nothing is refused");
