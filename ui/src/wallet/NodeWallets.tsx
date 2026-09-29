@@ -196,14 +196,14 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
   });
   const remove = (w: ExtraWallet) => setAsk({
     title: `Remove "${w.label}"?`,
-    text: "It disappears from this app only. Its coins stay on the chain, and its twelve words bring it back anywhere.",
+    text: "It disappears from this app only. Its coins stay on the chain, and its seed words bring it back anywhere.",
     yes: "Remove",
     run: async () => {
       try { await walletRemove(w.id, false); await refresh(); }
       catch (e) {
         const m = String(e);
         if (m.includes("still holds")) {
-          setAsk({ title: "It still holds coins", text: `${m} Remove it anyway? Only the twelve words can bring the coins back.`, yes: "Remove anyway", run: async () => {
+          setAsk({ title: "It still holds coins", text: `${m} Remove it anyway? Only its seed words can bring the coins back.`, yes: "Remove anyway", run: async () => {
             try { await walletRemove(w.id, true); await refresh(); } catch (e2) { setNote(String(e2)); }
           } });
         } else setNote(m);
@@ -276,7 +276,7 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
           ))}
           {shownWords?.id === w.id && (
             <div className="nw-words">
-              <p className="set-note">These twelve words ARE this wallet. Write them down; anyone with them has its coins.</p>
+              <p className="set-note">These words ARE this wallet. Write them down; anyone with them has its coins.</p>
               <code className="rs-key-hex">{shownWords.words.join(" ")}</code>
               <button type="button" className="wl-btn nw-mini" onClick={() => setShownWords(null)}>Hide</button>
             </div>
@@ -300,7 +300,7 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
             <div className="poe-modal-body">
               {restoring ? (
                 <p className="wl-note">
-                  Type its twelve words. The wallet's addresses and coins are found again on the chain.
+                  Type its 12 or 24 words. The wallet's addresses and coins are found again on the chain.
                 </p>
               ) : (
                 <p className="wl-note">
@@ -310,7 +310,7 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
               )}
               <input className="wl-input" placeholder="Name (e.g. Kids, Savings, Game pool)" value={newLabel} maxLength={40} onChange={(e) => setNewLabel(e.target.value)} />
               {restoring && (
-                <textarea className="wl-input nw-phrase" rows={3} placeholder="twelve words, in order" value={phrase} spellCheck={false} autoCapitalize="off" onChange={(e) => setPhrase(e.target.value)} />
+                <textarea className="wl-input nw-phrase" rows={3} placeholder="12 or 24 words, in order" value={phrase} spellCheck={false} autoCapitalize="off" onChange={(e) => setPhrase(e.target.value)} />
               )}
               <label className="pw-check">
                 <input type="checkbox" checked={usePass} onChange={(e) => setUsePass(e.target.checked)} />
@@ -320,12 +320,12 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
                 <input className="wl-input" type="password" placeholder="Wallet password" value={newPass} onChange={(e) => setNewPass(e.target.value)} />
               )}
               <div className="upd-actions">
-                <button type="button" className="upd-go" disabled={busy || (usePass && newPass.length < 4) || (restoring && phrase.trim().split(/\s+/).length !== 12)} onClick={() => void create()}>
+                <button type="button" className="upd-go" disabled={busy || (usePass && newPass.length < 4) || (restoring && ![12, 24].includes(phrase.trim().split(/\s+/).length))} onClick={() => void create()}>
                   {busy ? (restoring ? "Finding it…" : "Creating…") : "Confirm"}
                 </button>
                 <button type="button" className="wl-btn" disabled={busy} onClick={() => setConfirm(false)}>Cancel</button>
                 <button type="button" className="wl-link nw-swap" disabled={busy} onClick={() => setRestoring((r) => !r)}>
-                  {restoring ? "Make a new one instead" : "I already have twelve words"}
+                  {restoring ? "Make a new one instead" : "I already have a seed phrase"}
                 </button>
               </div>
             </div>
@@ -337,7 +337,7 @@ export function NodeWallets({ nodeId, nodeLabel, onGetHra }: { nodeId: string; n
       {words && createPortal(
         <div className="poe-modal-backdrop" role="presentation">
           <div className="poe-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Your new wallet's words">
-            <div className="poe-modal-head"><h3>Write these twelve words down</h3></div>
+            <div className="poe-modal-head"><h3>Write these words down</h3></div>
             <div className="poe-modal-body">
               <p className="wl-note">
                 They are the wallet. They are shown now and can be shown again from the wallet's

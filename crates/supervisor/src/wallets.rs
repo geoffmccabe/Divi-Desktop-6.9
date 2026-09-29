@@ -155,32 +155,36 @@ pub fn new_words() -> Vec<String> {
     words_from_entropy(&new_entropy())
 }
 
-/// The entropy behind twelve valid words (the checksum is verified by
-/// `seedphrase::check` before this is called).
-fn entropy_from_words(words: &[String]) -> Option<[u8; 16]> {
-    if words.len() != 12 { return None; }
-    let mut bits: Vec<u8> = Vec::with_capacity(132);
+/// The entropy behind a valid phrase of 12 words (16 bytes) or 24 words
+/// (32 bytes); the checksum is verified by `seedphrase::check` before this
+/// is called. New wallets are always 12; 24 is accepted so a phrase from an
+/// older wallet can be brought in.
+fn entropy_from_words(words: &[String]) -> Option<Vec<u8>> {
+    let bytes = match words.len() { 12 => 16, 24 => 32, _ => return None };
+    let mut bits: Vec<u8> = Vec::with_capacity(words.len() * 11);
     for w in words {
         let i = crate::bip39_words::WORDS.binary_search(&w.as_str()).ok()?;
         for b in (0..11).rev() { bits.push(((i >> b) & 1) as u8); }
     }
-    let mut e = [0u8; 16];
-    for (i, bit) in bits.iter().take(128).enumerate() { e[i / 8] |= bit << (7 - (i % 8)); }
+    let mut e = vec![0u8; bytes];
+    for (i, bit) in bits.iter().take(bytes * 8).enumerate() { e[i / 8] |= bit << (7 - (i % 8)); }
     Some(e)
 }
 
-fn words_from_entropy(entropy: &[u8; 16]) -> Vec<String> {
+/// 16 bytes of entropy make 12 words, 32 make 24 (BIP 39).
+fn words_from_entropy(entropy: &[u8]) -> Vec<String> {
     let hash = Sha256::digest(entropy);
-    let mut bits: Vec<u8> = Vec::with_capacity(132);
+    let checksum_bits = entropy.len() / 4;
+    let mut bits: Vec<u8> = Vec::with_capacity(entropy.len() * 8 + checksum_bits);
     for b in entropy {
         for i in (0..8).rev() {
             bits.push((b >> i) & 1);
         }
     }
-    for i in (4..8).rev() {
+    for i in (8 - checksum_bits..8).rev() {
         bits.push((hash[0] >> i) & 1);
     }
-    (0..12)
+    (0..bits.len() / 11)
         .map(|w| {
             let mut idx = 0usize;
             for b in &bits[w * 11..w * 11 + 11] {
@@ -379,7 +383,7 @@ pub fn restore(node_id: &str, label: &str, phrase: &str, password: Option<&str>,
     if store.wallets.len() >= MAX_WALLETS_PER_NODE {
         return Err(format!("A node can have at most {MAX_WALLETS_PER_NODE} wallets."));
     }
-    let entropy = entropy_from_words(&words).ok_or("only twelve-word phrases can be held here")?;
+    let entropy = entropy_from_words(&words).ok_or("a wallet here needs a 12- or 24-word phrase")?;
     let seed = seedphrase::to_seed_bytes(&words, "");
     let first = derive(&seed, 0, testnet)?;
     let first_addr = address_of(&first, testnet);
@@ -419,8 +423,10 @@ fn unlock_words(w: &WalletEntry, password: Option<&str>) -> Result<Vec<String>, 
         keychain_key()?
     };
     let entropy = open(&key, &w.seed_enc)?;
-    let e: [u8; 16] = entropy.as_slice().try_into().map_err(|_| "stored wallet is unreadable")?;
-    Ok(words_from_entropy(&e))
+    if entropy.len() != 16 && entropy.len() != 32 {
+        return Err("stored wallet is unreadable".into());
+    }
+    Ok(words_from_entropy(&entropy))
 }
 
 /// The seed of a wallet (64 bytes), unlocked the same way.
@@ -683,6 +689,12 @@ mod tests {
         assert!(seedphrase::check(&fresh).is_ok());
         let e = entropy_from_words(&fresh).unwrap();
         assert_eq!(words_from_entropy(&e), fresh);
+        // 24 words round-trip too (32 zero bytes is the reference "abandon" x23 "art").
+        let w24 = words_from_entropy(&[0u8; 32]);
+        assert_eq!(w24.len(), 24);
+        assert_eq!(w24.last().map(|s| s.as_str()), Some("art"));
+        assert!(seedphrase::check(&w24).is_ok());
+        assert_eq!(entropy_from_words(&w24).unwrap(), vec![0u8; 32]);
     }
 
     // A Divi address from a known key: the mainnet prefix 'D', the WIF prefix.

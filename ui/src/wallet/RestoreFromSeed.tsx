@@ -124,7 +124,7 @@ export function RestoreFromSeed({ nodeLabel, onDone }: { nodeLabel: string; onDo
       <textarea
         className="wl-input rs-phrase"
         rows={3}
-        placeholder="Paste or type the 12 words. Spaces, commas or one per line all work."
+        placeholder="Paste or type the 12 or 24 words. Spaces, commas or one per line all work."
         value={phrase}
         onChange={(e) => { setPhrase(e.target.value); setStage("type"); setPath(null); setTick(false); }}
         spellCheck={false}
