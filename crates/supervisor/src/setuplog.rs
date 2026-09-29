@@ -300,7 +300,17 @@ fn port_holder(port: u16) -> Option<String> {
             .creation_flags(CREATE_NO_WINDOW)
             .output()
             .ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().next().unwrap_or("").to_string())
+            .map(|o| {
+                // tasklist prints a blank line, then "name.exe  pid ..."; skip
+                // the blank so the name is not lost (it read "held by → (pid N)").
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .map(|l| l.trim())
+                    .find(|l| !l.is_empty() && !l.starts_with("INFO:"))
+                    .and_then(|l| l.split_whitespace().next())
+                    .unwrap_or("unknown program")
+                    .to_string()
+            })
             .unwrap_or_default();
         return Some(format!("{name} (pid {pid})"));
     }
@@ -362,6 +372,87 @@ const SHORT_LIMIT: usize = 6_000;
 /// the rest on the end (what just went wrong).
 const HEAD_KEEP: usize = 1_600;
 
+/// What the node and its wallet look like RIGHT NOW, for the report. Added
+/// after a user's "it syncs but my coins do not show" (2026-Sep-29) could not
+/// be answered from a log that said nothing about the wallet: which wallet
+/// file is loaded, how far the chain is, what the wallet holds, and the last
+/// few transactions it knows. Best effort; a node that does not answer gets
+/// one line saying so.
+fn wallet_snapshot() -> String {
+    use serde_json::json;
+    let mut out = String::new();
+    let Ok(cfg) = crate::config::NodeConfig::load() else {
+        return "wallet: node settings could not be read\n".into();
+    };
+    let wallet_file = cfg.datadir.join("wallet.dat");
+    match std::fs::metadata(&wallet_file) {
+        Ok(m) => {
+            let age = m.modified().ok().and_then(|t| t.elapsed().ok()).map(|d| d.as_secs() / 60).unwrap_or(0);
+            out.push_str(&format!("wallet file: {} ({} KB, last written {} min ago)\n", wallet_file.display(), m.len() / 1024, age));
+        }
+        Err(_) => out.push_str(&format!("wallet file: NOT FOUND at {}\n", wallet_file.display())),
+    }
+    let rpc = crate::rpc::RpcClient::new(&cfg);
+    // A wedged node must not stall the report: one quick pulse first.
+    if rpc.pulse(std::time::Duration::from_secs(5)) != crate::rpc::Pulse::Answered {
+        out.push_str("wallet: the node is not answering right now (nothing more can be read)\n");
+        return out;
+    }
+    let Ok(w) = rpc.call("getwalletinfo", json!([])) else {
+        out.push_str("wallet: the node answered but refused getwalletinfo\n");
+        return out;
+    };
+    let chain = rpc.call("getblockchaininfo", json!([])).unwrap_or(json!({}));
+    let peers = rpc.call("getpeerinfo", json!([])).unwrap_or(json!([]));
+    let best_peer = peers.as_array().map(|a| a.iter().filter_map(|p| p["startingheight"].as_i64()).max().unwrap_or(0)).unwrap_or(0);
+    let blocks = chain["blocks"].as_i64().unwrap_or(0);
+    let tip_age = tip_age_secs_pub(&rpc).map(|s| format!("{} min", s / 60)).unwrap_or_else(|| "?".into());
+    out.push_str(&format!(
+        "chain: block {} (peers report up to {}), last block {} old, {} peers\n",
+        blocks, best_peer, tip_age, peers.as_array().map(|a| a.len()).unwrap_or(0)
+    ));
+    out.push_str(&format!(
+        "wallet: balance {} DIVI, unconfirmed {}, immature {}, {} transactions, keypool {}, {}\n",
+        w["balance"].as_f64().unwrap_or(0.0),
+        w["unconfirmed_balance"].as_f64().unwrap_or(0.0),
+        w["immature_balance"].as_f64().unwrap_or(0.0),
+        w["txcount"].as_i64().unwrap_or(0),
+        w["keypoolsize"].as_i64().unwrap_or(0),
+        if w.get("unlocked_until").is_some() { "encrypted" } else { "not encrypted" },
+    ));
+    if let Some(id) = w["hdchainid"].as_str() {
+        out.push_str(&format!("wallet seed id: {}\n", &id[..id.len().min(12)]));
+    }
+    if let Ok(addrs) = rpc.call("getaddressesbyaccount", json!([""])) {
+        if let Some(a) = addrs.as_array() {
+            out.push_str(&format!("wallet addresses: {} (first: {})\n", a.len(), a.first().and_then(|x| x.as_str()).unwrap_or("none")));
+        }
+    }
+    if let Ok(txs) = rpc.call("listtransactions", json!(["*", 8])) {
+        if let Some(a) = txs.as_array() {
+            out.push_str("last transactions the wallet knows (newest last):\n");
+            if a.is_empty() {
+                out.push_str("  none\n");
+            }
+            for t in a {
+                out.push_str(&format!(
+                    "  {} {} DIVI to {} ({} confirmations, {})\n",
+                    t["category"].as_str().unwrap_or("?"),
+                    t["amount"].as_f64().unwrap_or(0.0),
+                    t["address"].as_str().unwrap_or("?"),
+                    t["confirmations"].as_i64().unwrap_or(0),
+                    t["txid"].as_str().map(|s| &s[..s.len().min(12)]).unwrap_or("?"),
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn tip_age_secs_pub(rpc: &crate::rpc::RpcClient) -> Option<i64> {
+    crate::report::tip_age_secs(rpc)
+}
+
 /// THE SHORT REPORT: everything a diagnosis normally needs, small enough to
 /// paste into a message.
 ///
@@ -377,6 +468,8 @@ pub fn report() -> String {
          os: {} ({})\n\
          node folder: {}\n\
          free disk: {}\n\
+         ──────────────────────────────────────────────\n\
+         {}\
          ──────────────────────────────────────────────\n",
         stamp(now_ms()),
         app_version(),
@@ -384,6 +477,7 @@ pub fn report() -> String {
         std::env::consts::ARCH,
         crate::config::dd69_datadir().display(),
         disk_line(),
+        wallet_snapshot(),
     );
 
     if let Some(p) = file_path() {

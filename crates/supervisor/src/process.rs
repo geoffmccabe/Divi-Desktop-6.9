@@ -223,7 +223,7 @@ fn spawn_once(
     let existing = daemon_pid(datadir);
     if let Some(pid) = existing {
         crate::setuplog::log(format!(
-            "node launch: a node is already running (pid {pid}) — checking it answers before              reusing it"
+            "node launch: a node is already running (pid {pid}) — checking it answers before reusing it"
         ));
     } else {
         crate::setuplog::log(format!("node launch: {attempt} — {}", divid.display()));
