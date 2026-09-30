@@ -8,6 +8,7 @@ import {
 } from "../../wallet/rebels/enemyTypes";
 import { fetchEnemyTypes, saveEnemyType, deleteEnemyType } from "../../wallet/rebels/enemyTypesRemote";
 import { ROUND_MAX_ENEMIES } from "../../wallet/rebels/gameTypes";
+import { SHIP_CLASSES } from "../../wallet/rebels/shipCatalog";
 import "./rebels-enemies.css";
 
 // Admin: Rebels Enemies. The screen Geoff makes enemies on.
@@ -25,6 +26,10 @@ import "./rebels-enemies.css";
 // as the Drops panel does. See saveEnemyTypes for why that is a secret and not
 // a role: a role cannot authorise anything until there is real authentication,
 // and one today would gate this tab and nothing else.
+
+/** Every model the ship catalogue actually ships, flattened once. */
+const HULLS = new Set(SHIP_CLASSES.flatMap((c) => c.models));
+const hullKnown = (h: string) => HULLS.has(h);
 
 const SECRET_KEY = "dd69.admin.rebelsDropsSecret";   /* the same secret, one place to type it */
 
@@ -216,16 +221,48 @@ export function RebelsEnemiesPanel() {
             {field("DIVI a kill drops", "worth", 0, WORTH_MAX, 0.1,
                    `up to ${WORTH_MAX}. A round can hold ${ROUND_MAX_ENEMIES}, so ${WORTH_MAX} is ${WORTH_MAX * ROUND_MAX_ENEMIES} DIVI a round.`)}
 
+            {/* ---- THE HULL IS CHOSEN, NOT TYPED ----
+                 Geoff: "all of our current spaceships can be there as options
+                 for me to choose". It was a free text box with a model id as
+                 its placeholder, which is the two-lists trap in its purest
+                 form: the real list lives in shipCatalog and the panel asked
+                 him to reproduce one entry of it from memory, exactly. A
+                 typo did not fail, it fell back to the default model, so the
+                 enemy simply looked wrong and nothing said why.
+
+                 Read straight off SHIP_CLASSES so it cannot drift: a class
+                 added to the catalogue appears here with no edit. */}
             <label className="re-field">
               <span>Hull</span>
-              <input className="wl-input" placeholder="space_SM_Ship_Fighter_04" disabled={!editable}
+              <select className="wl-input" disabled={!editable}
                 value={chosen.hull ?? ""}
                 onChange={(ev) => edit((e) => {
                   const c = { ...e };
-                  if (ev.target.value.trim()) c.hull = ev.target.value.trim(); else delete c.hull;
+                  if (ev.target.value) c.hull = ev.target.value; else delete c.hull;
                   return c;
-                })} />
-              <span className="re-hint">blank means the usual model for how it flies</span>
+                })}>
+                <option value="">The usual model for how it flies</option>
+                {/* An enemy saved earlier may name a hull that is not in the
+                    catalogue, by typo or because a model was retired. It is
+                    shown and kept rather than silently reset, because quietly
+                    discarding what somebody saved is worse than showing them
+                    something wrong. The warning below says so. */}
+                {chosen.hull && !hullKnown(chosen.hull) ? (
+                  <option value={chosen.hull}>{chosen.hull} (not in the catalogue)</option>
+                ) : null}
+                {SHIP_CLASSES.map((c) => (
+                  <optgroup key={c.name} label={c.name}>
+                    {c.models.map((m, i) => (
+                      <option key={m} value={m}>{`${c.name} ${i + 1}`}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <span className="re-hint">
+                {chosen.hull && !hullKnown(chosen.hull)
+                  ? "This model is not one of ours. It will fall back to the usual one."
+                  : "blank means the usual model for how it flies"}
+              </span>
             </label>
           </div>
 

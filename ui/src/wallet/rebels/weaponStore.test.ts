@@ -6,7 +6,8 @@
 export {};
 
 import * as THREE from "three";
-import { R } from "./orbitWorld";
+import { SPIKEWORLD_NEAR, SPIKEWORLD_FAR } from "./voxel/voxelWorld";
+import { R, MAX_ALT, EARTH_NEAR } from "./orbitWorld";
 import * as INV from "./rebelsInventory";
 import {
   WEAPONS, weaponByKey, weaponInSlot, upgradeLabel, priceInDivi,
@@ -336,7 +337,29 @@ async function main() {
     }
   }
 
-  console.log(out.join("\n"));
+  /* ---- YOU CAN SEE YOUR OWN GUNS FIRE, IN EITHER WORLD ----
+   The camera is copied onto the ship's position, so the near plane is
+   literally the radius of what a pilot cannot see. Everything that makes
+   firing LOOK like firing happens inside a couple of units of the ship: the
+   muzzle, the first stretch of the tracer, the torpedo leaving the tube, the
+   explosion where something died.
+
+   Spikeworld had near 3 against Earth's 0.05 and that was the whole of "I
+   hear them, but I see no bullets". Pinned as a RELATION rather than as a
+   number, because the bug was the two worlds disagreeing, not the value. */
+{
+  ok("Spikeworld does not blind the pilot to their own muzzle",
+     SPIKEWORLD_NEAR <= EARTH_NEAR,
+     `spike near ${SPIKEWORLD_NEAR}, earth near ${EARTH_NEAR}`);
+  /* And the depth budget it costs, against the one Earth already spends in
+     production without complaint. */
+  ok("and it asks less of the depth buffer than Earth already does",
+     SPIKEWORLD_FAR / SPIKEWORLD_NEAR <= ((R + MAX_ALT) * 2.6) / EARTH_NEAR,
+     `spike ${Math.round(SPIKEWORLD_FAR / SPIKEWORLD_NEAR)} vs earth `
+     + `${Math.round(((R + MAX_ALT) * 2.6) / EARTH_NEAR)}`);
+}
+
+console.log(out.join("\n"));
   /* ------------------------------------------ buying points with real DIVI */
   {
     /* Geoff: "buttons for 1000, 2000, 5000, 10,000 DIVI ... a little discount

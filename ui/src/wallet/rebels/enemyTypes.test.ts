@@ -12,6 +12,7 @@
 // will believe them, so every one is tested at BOTH ends.
 export {};
 
+import { SHIP_CLASSES } from "./shipCatalog";
 import {
   builtInEnemies, builtInIds, validateEnemy, validateEnemies, blankEnemy, duplicateEnemy,
   BEHAVIOURS, PAINT_PARTS, WORTH_MAX, RESISTANCE_MAX,
@@ -213,6 +214,37 @@ function ok(name: string, cond: boolean, extra = ""): void {
   painted.paint!.engine.hue = 300;
   ok("and copying is deep, so editing a copy does not change what it came from",
      tier5.paint === undefined, "the original is untouched");
+}
+
+/* ---- THE HULL LIST IS NOT A SECOND LIST ----
+   Geoff asked to CHOOSE a hull from our ships. The panel used to ask him to
+   TYPE one, with a model id as the placeholder, which meant the real list
+   lived in the ship catalogue and the panel asked him to reproduce an entry
+   of it exactly. A typo did not fail: the enemy fell back to the default
+   model and looked wrong with nothing saying why.
+
+   Two hand-maintained lists that must agree, with nothing making them, is the
+   bug. So this asserts the panel names NO model itself and reads them all
+   from the catalogue. Checked against the panel's source text, which is the
+   only thing that can catch somebody pasting a convenient literal back in. */
+{
+  const { readFileSync } = await import("node:fs");
+  /* cwd, not import.meta.url: the test runs as a BUNDLE from a temp
+     directory, so a path relative to the module resolves next to the bundle.
+     Every runner cd's to ui/ first, which the golden test relies on too. */
+  const panel = readFileSync(
+    `${process.cwd()}/src/admin/panels/RebelsEnemiesPanel.tsx`, "utf8");
+  const literals = panel.match(/space_SM_[A-Za-z0-9_]+/g) ?? [];
+  ok("the enemies panel hardcodes no ship model of its own",
+     literals.length === 0, literals.join(", ") || "none");
+  ok("and it reads the catalogue instead", panel.includes("SHIP_CLASSES"));
+
+  /* Every option gets a React key of its model id, so a duplicate across two
+     classes would silently drop a row from the list. */
+  const models = SHIP_CLASSES.flatMap((c) => c.models);
+  ok("every hull the chooser offers is unique",
+     new Set(models).size === models.length, `${models.length} models`);
+  ok("and there are hulls to offer at all", models.length > 0, `${models.length}`);
 }
 
 console.log(out.join("\n"));
