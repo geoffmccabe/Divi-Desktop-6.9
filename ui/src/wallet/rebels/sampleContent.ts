@@ -153,6 +153,13 @@ export function sampleGames(): GameType[] {
       place: "earth",
       crew: "multiplayer",
       published: true,
+      /* ---- EARTH'S FRONT DOOR, SAID OUT LOUD ----
+         What a player gets for pressing LAUNCH without opening the picker.
+         It used to be decided by whichever published Earth game sorted first
+         by id, which is how adding "scavengers-run" silently moved every new
+         pilot off the tutorial and onto the second rung. Marked rather than
+         inferred, so the next game added cannot move it by accident. */
+      main: true,
       /* Short rounds and few of them: a whole game inside seven minutes, so
          somebody can find out whether they like this at all without
          committing to an hour. */
@@ -176,6 +183,12 @@ export function sampleGames(): GameType[] {
       place: "spike",
       crew: "multiplayer",
       published: true,
+      /* Spikeworld's front door. Marked for the same reason as Shakedown's,
+         and BEFORE it is needed: today the alphabet happens to agree, since
+         "descent" precedes both "the-" games, so nothing changes. That is
+         exactly when to write it down. The Earth one was learned the other
+         way round. */
+      main: true,
       rounds: [
         { seconds: 120, spawns: [wave(14, [1.0, 2.0])] },
         { seconds: 120, spawns: [wave(16, [1.2, 2.4]), { enemy: "shrike", count: 6, arrive: "spread" }] },

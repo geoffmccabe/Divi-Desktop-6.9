@@ -228,6 +228,37 @@ const enemyCount = (g: GameType) =>
   ok("a sample can be edited and still be valid", "ok" in validateGame(edited, known));
 }
 
+/* ---- EVERY PLACE SAYS WHICH GAME IS ITS FRONT DOOR ----
+   The default used to be whichever published game for a place sorted first
+   by id, and adding "scavengers-run" moved every new Earth pilot off the
+   five-round tutorial onto the six-round second rung. Nobody decided that;
+   it fell out of a sort, and it was indistinguishable from a deliberate
+   choice, which is why it shipped and sat there.
+
+   So the samples mark it, and this asserts the marking is complete and
+   unambiguous for every place that has games at all: exactly one, published,
+   per place. "Exactly one" rather than "at least one" because two would put
+   the tie back on the alphabet, which is the thing being removed. */
+{
+  const games = sampleGames();
+  const places = [...new Set(games.map((g) => g.place))];
+  for (const place of places) {
+    const here = games.filter((g) => g.place === place && g.published);
+    const mains = here.filter((g) => g.main);
+    ok(`${place} names exactly one front door`, mains.length === 1,
+       mains.length ? mains.map((g) => g.id).join(", ") : `none of ${here.length}`);
+    ok(`and ${place}'s front door is published`, mains.every((g) => g.published));
+  }
+  /* And it is the EASIEST one, which is the whole point of marking it: the
+     front door is where somebody who has never played arrives. */
+  const earthMain = games.find((g) => g.place === "earth" && g.main);
+  const earthRounds = games.filter((g) => g.place === "earth" && g.published)
+    .map((g) => g.rounds.length);
+  ok("Earth's front door is its shortest game, not merely its first by name",
+     !!earthMain && earthMain.rounds.length === Math.min(...earthRounds),
+     `${earthMain?.id} at ${earthMain?.rounds.length} rounds, shortest is ${Math.min(...earthRounds)}`);
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);
