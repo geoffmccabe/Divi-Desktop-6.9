@@ -94,6 +94,14 @@ export function gameForPlace(
   wanted: string | null = null,
 ): GameType {
   const here = games.filter((g) => g.place === place && g.published);
+  /* ---- WHAT THE PLACE SAYS ITS MAIN FIGHT IS ----
+     Before anything else, and before the alphabet. See GameType.main: the
+     default Earth fight was being decided by id order, and adding a game whose
+     name happened to sort earlier replaced the tutorial every new player lands
+     in. Several marked is somebody's mistake rather than a crash, so the first
+     is taken and validateGames reports it. */
+  const main = here.filter((g) => g.main);
+  if (main.length > 0) return main[0];
   /* ---- THE ROOM'S NAME MAY SAY WHICH ONE ----
      "earth_shakedown" is a room playing shakedown. That is what lets Geoff have
      more than one Earth game: the choice is which ROOM to join, because a room
@@ -107,6 +115,9 @@ export function gameForPlace(
     const named = here.find((g) => g.id === wanted);
     if (named) return named;
   }
+  /* ⚠ THE ALPHABET, AND ONLY AS A LAST RESORT. Nothing here is wrong when
+     there is one game; with several and none marked it is arbitrary, which is
+     exactly how the tutorial was lost. `mainIsGuessed` lets the room say so. */
   if (here.length > 0) return here[0];
   /* Earth falls back to the game it has always run. Anywhere else falls back to
      nothing, which the caller reads as "this place has no game" - Spikeworld's
@@ -116,6 +127,19 @@ export function gameForPlace(
 
 /** Whether any published game exists for this place at all. The room asks this
  *  before falling back, so "no game here" and "the built-in" stay distinct. */
+/**
+ * Whether the game this place runs was CHOSEN or merely sorted first.
+ *
+ * True when two or more games are published here and none says it is the main
+ * one. The room puts it on /state, because "the default changed and nobody
+ * noticed" is the failure this exists to stop, and a silent arbitrary pick
+ * looks identical to a deliberate one.
+ */
+export function mainIsGuessed(games: readonly GameType[], place: PlaceId): boolean {
+  const here = games.filter((g) => g.place === place && g.published);
+  return here.length > 1 && !here.some((g) => g.main);
+}
+
 export function hasGameFor(games: readonly GameType[], place: PlaceId): boolean {
   return games.some((g) => g.place === place && g.published);
 }
