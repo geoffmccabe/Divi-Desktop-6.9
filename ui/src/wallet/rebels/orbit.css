@@ -1126,6 +1126,10 @@
    removing it from the list: a player needs to see which game they are about
    to drop back into, and a card that vanishes when chosen is a card they
    cannot confirm. */
+.orbit-picker-sub {
+  display: block; padding: 0 10px 8px; font-size: 11px; line-height: 1.35;
+  opacity: 0.72;
+}
 .orbit-picker-card.orbit-picker-on {
   border-color: hsl(var(--primary));
   box-shadow: 0 0 0 1px hsl(var(--primary) / 0.5), 0 0 18px hsl(var(--primary) / 0.35);

@@ -55,8 +55,27 @@ export function RebelsGamePicker({ onPick, onCancel, chosen, load = fetchGameCar
      no id because it is not a row in the table - null IS the built-in
      everywhere else in this system, and inventing an id for it here would
      make a sixteenth name that has to agree with fifteen others. */
+  /* ---- AND IT IS NOT NAMED AFTER A GAME, BECAUSE IT IS NOT ONE ----
+     This card said WAVE DEFENCE and that was wrong, including on the day I
+     wrote it. It leads to the plain "earth" room, and a room with no game in
+     its name runs THE PLACE'S OWN GAME, which is whichever published Earth
+     game the room happens to receive first. Only a place with no published
+     game at all falls back to Wave Defence. So on the live table this card
+     has never delivered what it promised: it gave Shakedown, and the moment
+     a game whose id sorts earlier was added it silently began giving that
+     one instead.
+
+     The honest label is what the card actually DOES: it puts you in the
+     shared room, the one you land in if you never open this screen, which is
+     where everyone who has not chosen is already fighting. That is a real
+     and useful thing to offer and it is the only card here that offers it.
+
+     It deliberately does NOT try to name the game that room is running.
+     Working that out client-side would mean reproducing the room's selection
+     rule here, and two copies of a rule that must agree, with nothing making
+     them, is the fault this file has already been bitten by twice. */
   const builtIn: Omit<GameCard, "id"> & { id: string | null } = {
-    id: null, name: "WAVE DEFENCE", place: "earth", crew: "multiplayer",
+    id: null, name: "THE MAIN FIGHT", place: "earth", crew: "multiplayer",
   };
   const all: Array<Omit<GameCard, "id"> & { id: string | null }> = [builtIn, ...list];
 
@@ -83,6 +102,11 @@ export function RebelsGamePicker({ onPick, onCancel, chosen, load = fetchGameCar
                   {PLACE_NAMES[c.place] ?? c.place}
                   {c.crew === "solo" ? " · on your own" : " · everyone together"}
                 </span>
+                {c.id === null ? (
+                  <span className="orbit-picker-note orbit-picker-sub">
+                    whatever Earth is running, with everyone who has not chosen
+                  </span>
+                ) : null}
               </button>
             ))}
           </div>
