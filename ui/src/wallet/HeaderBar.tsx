@@ -46,7 +46,9 @@ export function HeaderBar() {
      switched Scanner -> Desktop and the old node's Spendable stayed up. The
      shell already rebuilds this panel on a switch; this makes the figure
      itself refuse anything else, whatever the timing. */
-  const forThisNode = (b: Balance | null) => !!b && b.nodeId === activeNodeId();
+  /* An answer with NO node on it is accepted: refusing it blanked Spendable
+     for everyone when the back end once sent the field under another name. */
+  const forThisNode = (b: Balance | null) => !!b && (!b.nodeId || b.nodeId === activeNodeId());
   const refreshBalance = () => {
     walletBalance()
       .then((b) => { if (forThisNode(b)) { setBal(b); setSwitching(false); } })

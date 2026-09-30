@@ -15,7 +15,11 @@ mod community;
 // terminal to use a feature in a desktop wallet.
 mod builder_service;
 
+// camelCase on the wire: the header reads `nodeId`. Without this the field
+// went out as `node_id`, the header saw no node on any answer, refused them
+// all, and Spendable stayed blank for every user of 69.13.41-43.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct BalanceDto {
     spendable: f64,
     staking: f64,
@@ -3943,4 +3947,18 @@ fn main() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod wire_name_tests {
+    use super::*;
+
+    // The header reads `nodeId`. When this went out as `node_id` every balance
+    // answer was refused and Spendable stayed blank (69.13.41-43).
+    #[test]
+    fn balance_answer_names_its_node_in_camel_case() {
+        let v = serde_json::to_value(BalanceDto { spendable: 1.0, staking: 0.0, pending: 0.0, immature: 0.0, node_id: "desktop".into() }).unwrap();
+        assert_eq!(v["nodeId"], "desktop");
+        assert!(v.get("node_id").is_none());
+    }
 }

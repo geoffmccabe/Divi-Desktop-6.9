@@ -1,10 +1,17 @@
 use serde_json::Value;
 
-/// A synced Divi node's tip should be very fresh — the network targets ~60s
+/// A synced Divi node's tip should be fresh — the network targets ~60s
 /// blocks. If the newest block is older than this, we're still catching up.
 /// This heuristic needs no version-specific RPC fields, just the tip's
 /// timestamp and the wall clock.
-pub const SYNC_FRESH_SECS: i64 = 180;
+///
+/// Fifteen minutes, not three. Block times are random: about one block in
+/// twenty takes more than three minutes, so at 180 s a fully synced wallet
+/// flipped to "Syncing, 3 minutes behind" dozens of times a day and hid its
+/// balance each time (a user's report, 2026-Sep-30). A gap of fifteen
+/// minutes essentially never happens on a healthy chain, and a node that is
+/// really catching up is hours or days behind, so nothing is lost.
+pub const SYNC_FRESH_SECS: i64 = 900;
 
 /// The machine-readable phase the wallet is in. The transient phases
 /// (Starting/Repairing/Stopping) are emitted by the action that causes them;
