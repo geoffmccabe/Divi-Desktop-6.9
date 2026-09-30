@@ -367,7 +367,11 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      within a few seconds of releasing the button. */
   const fastAt = f.speed;
   run(f, 60 * 10, stick({}));
-  ok("letting go of boost does not bleed it off", Math.abs(f.drift - gathered) < 1e-6,
+  /* `>=` rather than `==`: releasing boost now ABSORBS the speed the ship
+     actually reached into the carried figure, so it may rise here. The claim
+     this test makes is that nothing bleeds it AWAY, and that is what is
+     asserted. See "space has no drag". */
+  ok("letting go of boost does not bleed it off", f.drift >= gathered - 1e-6,
      `${gathered.toFixed(1)} -> ${f.drift.toFixed(1)}`);
   ok("and the ship is still moving at speed ten seconds later",
      f.speed > CRUISE * 2 && f.speed > fastAt * 0.5,
@@ -936,13 +940,25 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const f = createFlight(pad);
   ok("it starts at full, so the game flies as it did", f.throttle === 1);
 
+  const held0 = f.speed;
   run(f, 60, stick({ throttle: -1 }));
   const eased = f.throttle;
   ok("S brings it down", eased < 0.4, eased.toFixed(2));
   run(f, 120, stick({}));
   ok("and it STAYS down with nothing held", Math.abs(f.throttle - eased) < 1e-9,
      `${f.throttle.toFixed(2)}`);
-  ok("and the ship slowed to match", f.speed < CRUISE * 0.5, f.speed.toFixed(1));
+  /* ⚠ DELIBERATELY CHANGED. The old model had the lever set a speed the ship
+     eased DOWN to, so pulling it back and letting go slowed the ship by
+     itself. That is drag, and it is the thing Geoff asked to be rid of: "any
+     new speed continues unless the user holds the S key to go backwards, which
+     slows him down". So S slows the ship WHILE HELD, and releasing it holds
+     whatever speed is left rather than continuing to fall.
+
+     The lever still governs what a fresh push accelerates TO; it no longer
+     brakes on its own. Flagged to Geoff as a feel change to confirm in the
+     game, because a test cannot tell whether this is the flying he wants. */
+  ok("S slowed the ship while it was held, and it holds after", f.speed < held0 * 0.95,
+     `${held0.toFixed(1)} -> ${f.speed.toFixed(1)}`);
 
   /* Down through zero into reverse, which is how you back off a tower. */
   run(f, 120, stick({ throttle: -1 }));
@@ -970,6 +986,64 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      `radius ${f.pos.length().toFixed(1)}`);
   ok("two minutes of flight stays on the sphere", Math.abs(f.pos.length() - (R + f.alt)) < 1e-3);
   ok("shields survive a long clean flight", f.shields > 0, `${f.shields} left`);
+}
+
+/* ================= SPACE HAS NO DRAG =================
+   ⚠ THE BUG: carried speed only ever grew by a trickle while boost was held,
+   so a boost took the ship to BOOST and letting go eased it back down to
+   CRUISE * throttle. Releasing boost felt exactly like air resistance, which
+   is the one thing space does not have. Reported by Geoff more than once:
+   "Boosting speed should keep the new speed, not slow down as if there's air
+   friction... any new speed continues unless the user holds the S key to go
+   backwards, which slows him down." */
+{
+  const f = createFlight(pad);
+  run(f, 60 * 3, stick({ throttle: 1 }));          /* up to cruise */
+  const cruise = f.speed;
+  run(f, 60 * 3, stick({ boosting: true }));        /* and boost */
+  const boosted = f.speed;
+  ok("(setup) boosting is faster than cruising", boosted > cruise * 1.3,
+     `${cruise.toFixed(1)} -> ${boosted.toFixed(1)}`);
+
+  /* ---- THE ONE THAT MATTERS ---- */
+  run(f, 60 * 5, stick({}));                        /* hands off everything */
+  ok("letting go of boost KEEPS the speed", f.speed > boosted * 0.95,
+     `${boosted.toFixed(1)} -> ${f.speed.toFixed(1)} after five seconds of nothing`);
+
+  /* ---- AND S IS WHAT GIVES IT BACK ---- */
+  const held = f.speed;
+  run(f, 60 * 3, stick({ throttle: -1 }));
+  ok("holding S slows the ship", f.speed < held * 0.7,
+     `${held.toFixed(1)} -> ${f.speed.toFixed(1)}`);
+
+  /* ---- AND SO DOES THE BRAKE ----
+     It parks the lever at zero, which is now indistinguishable from coasting,
+     so it has to say so. This is the assertion that caught the first attempt. */
+  const g = createFlight(pad);
+  run(g, 60 * 3, stick({ boosting: true }));
+  const fast = g.speed;
+  run(g, 60 * 3, stick({ braking: true }));
+  ok("holding the brake slows the ship", g.speed < fast * 0.7,
+     `${fast.toFixed(1)} -> ${g.speed.toFixed(1)}`);
+
+  /* ---- AND X STILL STOPS IT DEAD ---- */
+  const h = createFlight(pad);
+  run(h, 60 * 3, stick({ boosting: true }));
+  run(h, 60 * 2, stick({ fullStop: true }));
+  ok("X still stops the ship outright", h.speed < 0.6, `${h.speed.toFixed(2)}`);
+
+  /* Carried speed is bounded, or the anti-teleport budget in the room would
+     start refusing honest pilots. topSpeedFor allows driftCap plus a boost. */
+  const k = createFlight(pad);
+  run(k, 60 * 120, stick({ boosting: true, throttle: 1 }));
+  ok("carried speed still cannot grow past its cap",
+     k.drift <= driftCap() + 0.01, `${k.drift.toFixed(1)} against ${driftCap().toFixed(1)}`);
+  /* NOT asserted here: total speed against topSpeedFor. Cruise is multiplied
+     by cruiseScale with altitude, so out in open space the ship legitimately
+     exceeds that figure and did so before carried speed was kept. That is a
+     pre-existing question about the room's anti-teleport budget, not something
+     this change introduced, and pinning it here would have quietly made it
+     mine. Raised separately instead. */
 }
 
 console.log(out.join("\n"));

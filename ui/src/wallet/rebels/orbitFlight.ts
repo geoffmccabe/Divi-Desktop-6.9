@@ -342,6 +342,16 @@ export interface Stick {
   throttle: number;
   /** X. Everything to a stop. */
   fullStop: boolean;
+  /**
+   * The BRAKE is held: shed carried speed.
+   *
+   * ⚠ IT CANNOT BE INFERRED FROM THE THROTTLE. The brake works by putting the
+   * lever to zero and remembering where it was, so "throttle at zero" means
+   * either "parked here deliberately" or "braking", and those now want opposite
+   * things: coasting keeps its speed, braking gives it up. Before carried speed
+   * was kept, both meant the same and no flag was needed.
+   */
+  braking?: boolean;
   boosting: boolean;
   /** TAB: boost at a multiple of boost speed, burning the tank that many
    *  times faster. No other penalty: the fuel is the price. */
@@ -589,6 +599,44 @@ export function stepFlight(
     f.drift = f.throttle < 0
       ? Math.max(0, f.drift - push)
       : Math.min(cap, f.drift + push);
+  } else if (stick.throttle < 0 || f.throttle < 0 || stick.braking) {
+    /* ⚠ THE KEY, NOT THE LEVER. `stick.throttle` is S being held right now;
+       `f.throttle` is where the lever has got to. Testing only the lever meant
+       that during the first second of holding S - while the lever was still
+       above zero on its way down - the coast branch below ran and absorbed
+       back exactly the speed S was shedding, so the ship did not slow at all.
+       Caught by "and the ship slowed to match", which went 4.0 -> 4.0. Both
+       are tested: the key for "the player is asking to slow", the lever for
+       "the ship is set to reverse". */
+    /* ---- S, AND THE BRAKE, ARE THE ONLY THINGS THAT SLOW THE SHIP ----
+       Holding the lever back sheds carried speed whether or not boost is held.
+       It used to shed only WHILE BOOSTING, so a pilot who wanted to slow down
+       had to hold two keys and nobody would guess that. Geoff: "any new speed
+       continues unless the user holds the S key to go backwards, which slows
+       him down."
+
+       The BRAKE sheds it too, and it has to be told rather than deduced: it
+       parks the lever at zero, which is now indistinguishable from coasting.
+       An existing test caught this the moment carried speed started being
+       kept - "holding BRAKE slows the ship" went 4.0 -> 4.0 - which is the
+       question "what does this change STOP doing" being asked by the suite
+       rather than by either of us. */
+    f.drift = Math.max(0, f.drift - DRIFT_ACCEL * dt);
+  } else {
+    /* ---- AND NOTHING ELSE SLOWS THE SHIP ----
+       ⚠ THIS IS THE LINE THAT MAKES IT SPACE RATHER THAN AIR, and its absence
+       was the bug. Carried speed only ever grew by DRIFT_ACCEL while boost was
+       held, so a boost took the ship to BOOST (19) and releasing it eased the
+       ship back down to CRUISE * throttle (8 and under) plus whatever trickle
+       had accumulated. Letting go of boost therefore felt exactly like drag,
+       which is the one thing space does not have. Reported repeatedly.
+
+       So whatever speed the ship actually reached is absorbed into the carried
+       speed the moment it is no longer being pushed, which makes the target at
+       least the current speed and leaves nothing for the easing to pull down.
+       Clamped to the same cap as before, so the room's anti-teleport budget
+       (topSpeedFor, which already allows driftCap plus a boost) is unchanged. */
+    f.drift = Math.min(cap, Math.max(f.drift, f.speed - CRUISE * openSpace * f.throttle));
   }
   /* The full-stop key means STOPPED, and it has to mean it here too, or a
      pilot who has built up seventy units a second has no way back down except

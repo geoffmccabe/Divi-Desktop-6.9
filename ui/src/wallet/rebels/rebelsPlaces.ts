@@ -57,6 +57,21 @@ export interface Place {
   /** How close to the centre a ship may come, and how far out it may go, both
    *  measured from the centre. The room refuses a position outside them. */
   floor: number;
+  /**
+   * How much further than Earth a pilot can see here.
+   *
+   * ⚠ THE VIEW RANGES IN rebelsView.ts ARE EARTH'S, and Earth's fight happens
+   * close to the ground: VIEW.enemies is 340 units. Spikeworld is a hollow
+   * sphere a player crosses from 5,760 units out to a heart at zero, so 340 is
+   * a couple of percent of the world. The heart's sixty guards were being
+   * spawned, flown and hit by the server and simply never SENT: one enemy row
+   * on the wire while the room held sixty-one. Geoff: "There are no longer any
+   * enemies appearing to defend the heart inside the spikeworld."
+   *
+   * Earth is exactly 1 and must stay exactly 1: the wire golden is a byte
+   * recording of an Earth room, and any other value there would change it.
+   */
+  sight: number;
   ceiling: number;
   /**
    * Where a ship arrives, and where a dead one comes back, relative to the
@@ -84,6 +99,8 @@ function earth(): Place {
        always checked a position against. */
     floor: R + MIN_ALT - 2,
     ceiling: R + MAX_ALT + 2,
+    /* EXACTLY ONE. The wire golden is a byte recording of an Earth room. */
+    sight: 1,
     arrival: null,
     live: true,
   };
@@ -101,6 +118,11 @@ function spike(): Place {
        ship sitting inside the heart. */
     floor: 0,
     ceiling: toWorld(R_OUTER + SKY_EDGE),
+    /* Enough that the whole inner cavity is visible from anywhere in it:
+       VIEW.enemies * 7 is 2,380 against a cavity radius of 2,160. The test
+       stands on that relationship rather than on the number 7, so changing
+       either end fails loudly instead of making the guards invisible again. */
+    sight: 7,
     arrival: new THREE.Vector3(0, 0, toWorld(R_OUTER + ARRIVAL_OUT)),
     live: true,
   };
@@ -138,6 +160,10 @@ function planet(n: number, name: string): Place {
     floor: radius * PLANET_FLOOR,
     ceiling: radius * PLANET_BUBBLE,
     arrival: new THREE.Vector3(0, 0, radius * PLANET_ARRIVAL),
+    /* Earth's, because a planet is Earth's kind of place: a surface flown over
+       at Earth's scale, not a hollow sphere crossed end to end. Revisit only
+       if one of these is ever made live and turns out to play differently. */
+    sight: 1,
     /* Named, not reachable. A game can be written for one now; publishing it
        waits for somebody to decide what a planet actually has in it. */
     live: false,

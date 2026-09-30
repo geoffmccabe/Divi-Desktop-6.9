@@ -1940,7 +1940,11 @@ export class RebelsRoom {
     if (this.region === "spike") extra.hp = Math.round(this.heartHp);
     if (this.run && !this.run.done) extra.w = this.run.round + 1;
     for (const [s, text] of stateMessages(this.combat, [...this.seats.values()], this.tick,
-                                         Object.keys(extra).length ? extra : undefined)) {
+                                         Object.keys(extra).length ? extra : undefined,
+                                         /* ⚠ Spikeworld's guards were being flown and
+                                            never SENT: Earth's 340-unit view against a
+                                            5,760-unit world. See Place.sight. */
+                                         this.place.sight)) {
       try { s.ws.send(text); } catch { this.leave(s); }
     }
     /* Gauges every half second rather than every tick: they change slowly and
