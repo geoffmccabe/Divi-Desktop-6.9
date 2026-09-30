@@ -14,8 +14,8 @@
 // built-in - and `error` always says which and why.
 
 export {};
-import { fetchGames, gameForPlace, hasGameFor } from "../src/gameSource";
-import { waveDefence, DEFAULT_GAMES, type GameType } from "../../../ui/src/wallet/rebels/gameTypes";
+import { fetchGames, gameForPlace, hasGameFor, mainIsGuessed } from "../src/gameSource";
+import { waveDefence, DEFAULT_GAMES, validateGames, type GameType } from "../../../ui/src/wallet/rebels/gameTypes";
 
 const out: string[] = [];
 let failures = 0;
@@ -121,6 +121,64 @@ const good = (over: Partial<GameType> = {}): GameType => ({
   ok("a place nobody has written for has no game of its own",
      !hasGameFor([], "spike") && !hasGameFor(games, "p7"));
   ok("but one that has been written for does", hasGameFor(games, "spike"));
+}
+
+
+/* ================= WHICH GAME A PLACE RUNS BY DEFAULT =================
+   ⚠ THIS SHIPPED AND BROKE THE TUTORIAL. gameForPlace ended `return here[0]`
+   over a list fetched `order=id`, so the default Earth fight was whichever
+   published game's id sorted first. Adding "scavengers-run" silently replaced
+   "shakedown" as the fight every new player lands in, because "sc" precedes
+   "sh". Measured on the live room before the fix: /room/earth ran
+   scavengers-run, six rounds, which assumes you have already met a Shrike.
+
+   Nobody wrote that policy; it fell out of a sort, and it would have returned
+   the first time somebody named a game "adventure-one". */
+{
+  const g = (id: string, over: Partial<GameType> = {}): GameType =>
+    good({ id, name: id, place: "earth", ...over });
+
+  /* The exact shape of the live failure, in the order the query returns. */
+  const asFetched = [g("scavengers-run"), g("shakedown"), g("wardens-gate")];
+
+  ok("(the bug) without a marked main, the alphabet decides",
+     gameForPlace(asFetched, "earth").id === "scavengers-run",
+     gameForPlace(asFetched, "earth").id);
+
+  /* ---- AND THE FIX ---- */
+  const marked = [g("scavengers-run"), g("shakedown", { main: true }), g("wardens-gate")];
+  ok("a place runs the game that says it is the main fight",
+     gameForPlace(marked, "earth").id === "shakedown",
+     gameForPlace(marked, "earth").id);
+
+  ok("even when its name sorts last",
+     gameForPlace([g("aaa"), g("zzz", { main: true })], "earth").id === "zzz");
+
+  /* An unpublished game cannot be the main fight, however it is marked: it is
+     invisible to players, and a place whose default nobody can reach is a
+     place with no default. */
+  ok("an unpublished game cannot be the main fight",
+     gameForPlace([g("aaa"), g("zzz", { main: true, published: false })], "earth").id === "aaa");
+
+  /* The marker is per PLACE: Earth's main must not be chosen for Spikeworld. */
+  ok("one place's main fight is not another's",
+     gameForPlace([g("e", { main: true }), g("s", { place: "spike" })], "spike").id === "s");
+
+  /* ---- AND WHEN IT IS STILL THE ALPHABET, THE ROOM SAYS SO ----
+     A silent arbitrary pick looks exactly like a deliberate one, which is the
+     whole reason this went unnoticed. */
+  ok("the room knows when it had to guess", mainIsGuessed(asFetched, "earth"));
+  ok("and knows when it did not", !mainIsGuessed(marked, "earth"));
+  ok("one game alone is not a guess", !mainIsGuessed([g("only")], "earth"));
+  ok("and no games at all is not a guess either", !mainIsGuessed([], "earth"));
+
+  /* ---- TWO MAINS IS SOMEBODY'S MISTAKE, AND IT IS NAMED ---- */
+  const twice = validateGames([g("alpha-one", { main: true }), g("beta-two", { main: true })]);
+  ok("two main fights in one place is refused",
+     "errors" in twice && twice.errors.some((e) => e.includes("more than one main")),
+     "errors" in twice ? twice.errors.join("; ") : "accepted");
+  ok("and one main is perfectly fine",
+     "ok" in validateGames([g("alpha-one", { main: true }), g("beta-two")]));
 }
 
 console.log(out.join("\n"));

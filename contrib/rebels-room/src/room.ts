@@ -42,7 +42,7 @@ import { HEART_GUARD, HEART_GUARD_COUNT } from "../../../ui/src/wallet/rebels/re
 import { startGame, stepGame, type Run, type Spawner } from "./gameRunner";
 import { placeById, type Place } from "../../../ui/src/wallet/rebels/rebelsPlaces";
 import { award, newPurse, type Purse } from "./gameRewards";
-import { gameForPlace, hasGameFor } from "./gameSource";
+import { gameForPlace, hasGameFor, mainIsGuessed } from "./gameSource";
 import { fetchWorld } from "./enemySource";
 import { applyEnemyType, tierForType, typeById } from "./customEnemy";
 import { builtInEnemies, type EnemyType } from "../../../ui/src/wallet/rebels/enemyTypes";
@@ -384,6 +384,12 @@ export class RebelsRoom {
            because a game silently paying nothing halfway through looks exactly
            like a game that promised nothing. */
         games: this.games.length, gamesLive: this.gamesLive,
+        /* ⚠ True when this place has several published games and none says
+           which is the main fight, so the one being run was chosen by id
+           order. That is how the five-round tutorial was silently replaced as
+           the default Earth fight. An arbitrary pick and a deliberate one look
+           identical from outside; this is the difference. */
+        ...(mainIsGuessed(this.games, this.place.id) ? { mainGuessed: true } : {}),
         ...(this.run ? { game: this.run.game.id, rounds: this.run.game.rounds.length,
                          paid: Math.round(this.purse.spent), refused: this.purse.refused,
                          /* What a clear of the running game credits one player,

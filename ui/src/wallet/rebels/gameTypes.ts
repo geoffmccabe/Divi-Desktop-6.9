@@ -104,6 +104,9 @@ export const BUILT_IN_ENEMIES = [
 export type Arrival = "once" | "spread" | "clumps";
 export const ARRIVALS: Arrival[] = ["once", "spread", "clumps"];
 
+/* ---- WHICH GAME A PLACE RUNS WHEN NOBODY PICKED ONE ----
+   See `main` on GameType below. */
+
 export interface Spawn {
   /** A built-in name, or a custom enemy type's id. */
   enemy: string;
@@ -162,6 +165,25 @@ export interface GameType {
   award?: Reward;
   /** Unpublished games are visible to admins and to nobody else. */
   published: boolean;
+  /**
+   * THE GAME THIS PLACE RUNS WHEN NOBODY PICKED ONE.
+   *
+   * ⚠ WITHOUT THIS IT WAS DECIDED BY THE ALPHABET, and that shipped. The
+   * chooser ended `return here[0]` over a list fetched `order=id`, so the
+   * default Earth fight was whichever published game's id sorted first.
+   * Adding a game called "scavengers-run" silently replaced the five-round
+   * tutorial "shakedown" as the fight every new player lands in, because "sc"
+   * precedes "sh". Measured live before this was written: /room/earth ran
+   * scavengers-run, six rounds, which assumes you have already met a Shrike.
+   *
+   * Nobody wrote that policy. It fell out of a sort, and it would have come
+   * back the first time a game was named "adventure-one".
+   *
+   * So the default is now SAID rather than inferred. One game per place marks
+   * itself; the alphabet is only ever the last resort, and when it is used the
+   * room says so on /state rather than leaving it to be discovered.
+   */
+  main?: true;
 }
 
 /* ================= TODAY'S GAME, IN THE NEW SHAPE =================
@@ -374,6 +396,25 @@ export function validateGames(raw: unknown, knownEnemies: string[] = []): { ok: 
     seen.add(v.ok.id);
     out.push(v.ok);
   });
+  /* ---- ONE MAIN FIGHT PER PLACE ----
+     Two games both claiming to be what a place runs by default is somebody
+     saving the flag twice and forgetting the first, and the chooser would then
+     fall back to the alphabet to break the tie - which is the very thing the
+     flag exists to stop. Named here, where it can be shown in the panel before
+     it is saved, rather than discovered by a player landing in the wrong game.
+     Only PUBLISHED games count: an unpublished draft is invisible anyway. */
+  const mains = new Map<string, string[]>();
+  for (const g of out) {
+    if (!g.main || !g.published) continue;
+    const list = mains.get(g.place) ?? [];
+    list.push(g.id);
+    mains.set(g.place, list);
+  }
+  for (const [place, ids] of mains) {
+    if (ids.length > 1) {
+      errors.push(`${place} has more than one main fight: ${ids.join(", ")}`);
+    }
+  }
   return errors.length ? { errors } : { ok: out };
 }
 
