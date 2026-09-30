@@ -17,7 +17,7 @@
 import type { EnemyType } from "./enemyTypes";
 import type { GameType } from "./gameTypes";
 
-/* ================= TWO ENEMIES =================
+/* ================= FIVE ENEMIES =================
    Between them they cover the two ends the built-in tiers do not: something
    FASTER and flimsier than a tier one, and something SLOWER and far harder
    than a tier seven. That is what makes them useful as samples rather than as
@@ -64,6 +64,69 @@ export function sampleEnemies(): EnemyType[] {
       shotSpeed: 0.85,
       damage: 3,
       worth: 8,
+    },
+
+    /* ---- THE THREE BEHAVIOURS, NOT JUST ONE ----
+       Shrike and Warden are both fighters: two speeds of the same problem.
+       These three exist so every behaviour the engine has is represented by
+       something Geoff can look at and change, and so a game can escalate by
+       changing WHAT is coming rather than only how much of it. */
+    {
+      id: "lamprey",
+      name: "Lamprey",
+      behaviour: "drone",
+      /* Sickly green, and there are always too many of them. */
+      colour: 0x86d16a,
+      fireColour: 0xc8ff9a,
+      /* Individually pathetic. The threat is the count and the crowding: a
+         swarm that is trivial to kill and expensive to ignore, because it
+         fills the space you wanted to fly through. */
+      shieldMax: 26,
+      resistance: 0,
+      speed: 1.35,
+      fireEvery: 2.4,
+      fireRange: 34,
+      shotSpeed: 0.9,
+      damage: 0.35,
+      worth: 0.4,
+    },
+    {
+      id: "kestrel",
+      name: "Kestrel",
+      behaviour: "fighter",
+      /* Pale violet: the one you see late. */
+      colour: 0xa98cff,
+      fireColour: 0xe0d0ff,
+      /* The opposite problem to the Shrike. It will not come to you, it hits
+         hard from a long way off, and it dies quickly once reached. It is
+         there to punish sitting still, which nothing else in the set does. */
+      shieldMax: 140,
+      resistance: 0.1,
+      speed: 0.85,
+      fireEvery: 3.2,
+      fireRange: 165,
+      shotSpeed: 2.2,
+      damage: 2.4,
+      worth: 2.5,
+    },
+    {
+      id: "hollow-sovereign",
+      name: "Hollow Sovereign",
+      behaviour: "dragon",
+      /* Dull gold going to rust. It should look like something old. */
+      colour: 0xc9a227,
+      fireColour: 0xffca45,
+      /* An ending. More health than two Wardens, heavily resistant, and slow
+         enough that the fight is about position rather than reflex. Worth
+         the cap, because killing it is the whole of a long game. */
+      shieldMax: 4200,
+      resistance: 0.62,
+      speed: 0.5,
+      fireEvery: 1.6,
+      fireRange: 120,
+      shotSpeed: 1.2,
+      damage: 3.2,
+      worth: 10,
     },
   ];
 }
@@ -129,6 +192,110 @@ export function sampleGames(): GameType[] {
         { seconds: 180, spawns: [{ enemy: "warden", count: 2, arrive: "once" }, wave(22, [2.5, 4.0])], award: { divi: 60 } },
       ],
       award: { divi: 150 },
+    },
+
+    /* ---- THE LADDER ----
+       Six games now, and the order is the point. Each one introduces exactly
+       one new idea and then the next assumes you met it:
+
+         Shakedown      earth  5   learn to fly and shoot        (the Shrike)
+         Scavenger's Run earth 6   crowding                      (the Lamprey)
+         The Long Dark  spike  7   range, and not sitting still  (the Kestrel)
+         Descent        spike  8   a hard single target          (the Warden)
+         Warden's Gate  earth  8   several hard targets at once
+         The Hollow Crown spike 10 all of it, then the Sovereign
+
+       Difficulty climbs by changing WHAT arrives, not only how much, which is
+       the thing a pure count cannot do: twenty more tier ones is the same
+       fight for longer, while one Kestrel is a different fight. */
+    {
+      id: "scavengers-run",
+      name: "Scavenger's Run",
+      place: "earth",
+      crew: "multiplayer",
+      published: true,
+      rounds: [
+        { seconds: 90, spawns: [wave(10, [0.8, 1.4])] },
+        /* The swarm, alone the first time, so it is understood as crowding
+           rather than as a harder wave. */
+        { seconds: 90, spawns: [{ enemy: "lamprey", count: 20, arrive: "clumps" }] },
+        { seconds: 105, spawns: [wave(10, [0.8, 1.6]), { enemy: "lamprey", count: 24, arrive: "clumps" }], award: { divi: 8 } },
+        { seconds: 105, spawns: [wave(12, [1.0, 2.0]), { enemy: "shrike", count: 5, arrive: "spread" }] },
+        /* Swarm and sparks together: the first round where the crowd hides
+           something that actually hurts. */
+        { seconds: 120, spawns: [{ enemy: "lamprey", count: 30, arrive: "clumps" }, { enemy: "shrike", count: 7, arrive: "spread" }], award: { divi: 12 } },
+        { seconds: 120, spawns: [wave(14, [1.2, 2.2]), { enemy: "lamprey", count: 26, arrive: "clumps" }], award: { divi: 18 } },
+      ],
+      award: { divi: 45 },
+    },
+    {
+      id: "the-long-dark",
+      name: "The Long Dark",
+      place: "spike",
+      crew: "multiplayer",
+      published: true,
+      rounds: [
+        { seconds: 105, spawns: [wave(12, [1.0, 1.8])] },
+        /* One Kestrel, at range, with nothing else to do. Either you go to it
+           or it keeps hitting you, and that lesson is the whole game. */
+        { seconds: 105, spawns: [{ enemy: "kestrel", count: 1, arrive: "once" }, wave(8, [0.8, 1.4])] },
+        { seconds: 120, spawns: [{ enemy: "kestrel", count: 2, arrive: "once" }, wave(10, [1.0, 1.8])], award: { divi: 10 } },
+        { seconds: 120, spawns: [{ enemy: "kestrel", count: 2, arrive: "spread" }, { enemy: "lamprey", count: 22, arrive: "clumps" }] },
+        /* Snipers behind a swarm: the crowd is now cover for the thing
+           shooting you, which is the first genuinely awkward round in the
+           ladder. */
+        { seconds: 135, spawns: [{ enemy: "kestrel", count: 3, arrive: "spread" }, { enemy: "lamprey", count: 26, arrive: "clumps" }], award: { divi: 20 } },
+        { seconds: 135, spawns: [wave(16, [1.5, 2.6]), { enemy: "kestrel", count: 3, arrive: "spread" }] },
+        { seconds: 150, spawns: [{ enemy: "kestrel", count: 4, arrive: "spread" }, { enemy: "shrike", count: 8, arrive: "spread" }], award: { divi: 35 } },
+      ],
+      award: { divi: 90 },
+    },
+    {
+      id: "wardens-gate",
+      name: "Warden's Gate",
+      place: "earth",
+      crew: "multiplayer",
+      published: true,
+      rounds: [
+        { seconds: 120, spawns: [wave(16, [1.5, 2.5])] },
+        { seconds: 120, spawns: [{ enemy: "warden", count: 1, arrive: "once" }, wave(10, [1.0, 2.0])] },
+        { seconds: 135, spawns: [{ enemy: "warden", count: 1, arrive: "once" }, { enemy: "kestrel", count: 2, arrive: "spread" }], award: { divi: 20 } },
+        { seconds: 135, spawns: [wave(18, [2.0, 3.0]), { enemy: "lamprey", count: 24, arrive: "clumps" }] },
+        /* Two, and they do not arrive together: the second lands while the
+           first is still alive, which is a different fight from meeting two. */
+        { seconds: 150, spawns: [{ enemy: "warden", count: 2, arrive: "spread" }, wave(12, [1.5, 2.5])], award: { divi: 35 } },
+        { seconds: 150, spawns: [{ enemy: "warden", count: 2, arrive: "spread" }, { enemy: "kestrel", count: 3, arrive: "spread" }] },
+        { seconds: 165, spawns: [{ enemy: "warden", count: 3, arrive: "spread" }, { enemy: "shrike", count: 10, arrive: "spread" }], award: { divi: 55 } },
+        { seconds: 180, spawns: [{ enemy: "warden", count: 3, arrive: "once" }, wave(20, [2.5, 4.0])], award: { divi: 80 } },
+      ],
+      award: { divi: 200 },
+    },
+    {
+      id: "the-hollow-crown",
+      name: "The Hollow Crown",
+      place: "spike",
+      crew: "multiplayer",
+      published: true,
+      rounds: [
+        { seconds: 120, spawns: [wave(18, [2.0, 3.0])] },
+        { seconds: 120, spawns: [{ enemy: "lamprey", count: 30, arrive: "clumps" }, { enemy: "shrike", count: 8, arrive: "spread" }] },
+        { seconds: 135, spawns: [{ enemy: "kestrel", count: 3, arrive: "spread" }, wave(14, [1.5, 2.5])], award: { divi: 20 } },
+        { seconds: 135, spawns: [{ enemy: "warden", count: 1, arrive: "once" }, { enemy: "lamprey", count: 26, arrive: "clumps" }] },
+        { seconds: 150, spawns: [{ enemy: "warden", count: 2, arrive: "spread" }, { enemy: "kestrel", count: 3, arrive: "spread" }], award: { divi: 40 } },
+        { seconds: 150, spawns: [wave(22, [2.5, 4.0]), { enemy: "shrike", count: 10, arrive: "spread" }] },
+        { seconds: 165, spawns: [{ enemy: "warden", count: 2, arrive: "once" }, { enemy: "kestrel", count: 4, arrive: "spread" }], award: { divi: 60 } },
+        /* A quiet round before the end, deliberately. Everything else in the
+           ladder escalates monotonically, and an ending reads as an ending
+           only if something lets up just before it. */
+        { seconds: 90, spawns: [wave(8, [1.0, 1.8])] },
+        /* The Sovereign, alone. Nothing else, because anything else would be
+           a distraction from the only thing happening. */
+        { seconds: 240, spawns: [{ enemy: "hollow-sovereign", count: 1, arrive: "once" }], award: { divi: 120 } },
+        /* And what is left of its escort, so the game ends on a fight you
+           can win rather than on a health bar hitting zero. */
+        { seconds: 120, spawns: [{ enemy: "kestrel", count: 4, arrive: "spread" }, { enemy: "shrike", count: 12, arrive: "spread" }], award: { divi: 80 } },
+      ],
+      award: { divi: 400 },
     },
   ];
 }

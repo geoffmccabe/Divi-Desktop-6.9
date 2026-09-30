@@ -164,17 +164,36 @@ const enemyCount = (g: GameType) =>
      refuses at save and the room refuses at load. The samples must sit well
      inside it, or the content we shipped would be the first thing the new
      bound rejected. */
-  ok("neither sample is over the ceiling a game may pay",
-     payoutRefusal(shakedown, worth, COIN_PER_KILL, COIN_VALUE) === null
-       && payoutRefusal(descent, worth, COIN_PER_KILL, COIN_VALUE) === null,
-     `${desc.total} of ${GAME_MAX_PAYOUT}`);
+  /* ---- EVERY GAME, NOT TWO NAMED ONES ----
+     This used to name shakedown and descent. Four more games were added and
+     the assertion went on passing while checking neither of them, and the
+     reported figure went on saying 1259 because that was Descent's. A bound
+     that covers only part of its denominator looks complete, and looks MORE
+     complete the better it is written: the sentence said "neither sample",
+     the code said two variables. Reading every game from sampleGames means
+     the next one added is covered by existing.  */
+  const overCeiling = sampleGames()
+    .filter((g) => payoutRefusal(g, worth, COIN_PER_KILL, COIN_VALUE) !== null)
+    .map((g) => g.id);
+  ok("no sample is over the ceiling a game may pay",
+     overCeiling.length === 0, overCeiling.join(", ") || `all ${sampleGames().length} inside`);
+
+  /* Printed rather than only asserted, because the number is the thing
+     somebody will want when they change the economy. */
+  const table = sampleGames()
+    .map((g) => ({ id: g.id, total: pay(g).total }))
+    .sort((a, b) => b.total - a.total);
+  ok("and here is what each one actually pays a single player for one clear",
+     true, table.map((r) => `${r.id} ${r.total}`).join(", "));
+  const richest = table[0];
   /* ---- AND THE BUILT-IN IS THE RICHEST THING IN THE GAME ----
      Which nobody chose and everybody plays. Worth pinning rather than
      leaving as a surprise: it is 4.6 times Descent and more than half the
      ceiling, so if the ceiling is ever lowered this is what it hits first. */
   const builtIn = pay(waveDefence());
-  ok("the built-in pays more than either sample, by a distance",
-     builtIn.total > desc.total * 3, `${builtIn.total} against ${desc.total}`);
+  ok("the built-in pays more than the richest sample, by a distance",
+     builtIn.total > richest.total * 1.5,
+     `${builtIn.total} against ${richest.id} at ${richest.total}`);
   ok("and is still inside the ceiling", payoutRefusal(waveDefence(), worth, COIN_PER_KILL, COIN_VALUE) === null,
      `${builtIn.total} of ${GAME_MAX_PAYOUT}`);
 
@@ -193,8 +212,9 @@ const enemyCount = (g: GameType) =>
 
   const DAILY_PAYOUT_CAP = 2000;
   ok("no sample has quietly grown past the daily cap on a single clear",
-     desc.total < DAILY_PAYOUT_CAP,
-     `${desc.total} of ${DAILY_PAYOUT_CAP}, which is ${Math.round(desc.total / DAILY_PAYOUT_CAP * 100)}%`);
+     richest.total < DAILY_PAYOUT_CAP,
+     `richest is ${richest.id} at ${richest.total} of ${DAILY_PAYOUT_CAP}, `
+     + `which is ${Math.round(richest.total / DAILY_PAYOUT_CAP * 100)}%`);
 }
 
 /* ================= AND THEY ARE EDITABLE, NOT BUILT IN ================= */
