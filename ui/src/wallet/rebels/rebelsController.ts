@@ -1192,6 +1192,8 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (c.brake !== undefined && flight) {
         if (c.brake && brakeFrom === null) { brakeFrom = flight.throttle; flight.throttle = 0; }
         else if (!c.brake && brakeFrom !== null) { flight.throttle = brakeFrom; brakeFrom = null; }
+        /* Carried speed only gives way to S or to this. See Stick.braking. */
+        stick.braking = !!c.brake;
       }
       stick.mini = weapons.primary === 1;
     },
@@ -1222,7 +1224,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
       if (brakeFrom !== null && flight) flight.throttle = brakeFrom;
       brakeFrom = null;
       stick.firing = false; stick.boosting = false; stick.secondary = false;
-      stick.guard = false; stick.fullStop = false;
+      stick.guard = false; stick.fullStop = false; stick.braking = false;
       stick.x = 0; stick.y = 0; stick.roll = 0; stick.strafe = 0; stick.lift = 0; stick.superBoost = false; stick.throttle = 0;
       stick.aimX = 0; stick.aimY = 0;
       blurredAt = performance.now();

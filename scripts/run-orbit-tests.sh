@@ -6,7 +6,9 @@
 # involved: this tests the maths, which is the part a screenshot cannot check.
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-OUT="${TMPDIR:-/tmp}/orbit-tests.mjs"
+# Per-worktree: two worktrees share one $TMPDIR, so a fixed name let each
+# session run the other's code and report it green. Do not remove the basename.
+OUT="${TMPDIR:-/tmp}/$(basename "$ROOT")-orbit-tests.mjs"
 cd "$ROOT/ui"
 npx esbuild src/wallet/rebels/orbitFlight.test.ts \
   --bundle --platform=node --format=esm --loader:.json=json --loader:.mp3=dataurl --loader:.webp=dataurl --loader:.png=dataurl --loader:.jpg=dataurl \

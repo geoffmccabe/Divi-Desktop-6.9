@@ -40,6 +40,9 @@ export function stateMessages<S extends BroadcastSeat>(
    *  remaining health here, so every cockpit in the room draws ONE bar with the
    *  same number on it. Spread into each state message as it is. */
   extra?: Record<string, unknown>,
+  /** How much further than Earth a pilot sees here; see Place.sight. One on
+   *  Earth, which leaves every range and therefore every byte unchanged. */
+  sight = 1,
 ): Array<[S, string]> {
   const messages: Array<[S, string]> = [];
 
@@ -171,8 +174,8 @@ export function stateMessages<S extends BroadcastSeat>(
      planet they could not see. */
   for (const s of seats) {
     const eye = s.body.pos;
-    const pickedP = sticky(players, eye, VIEW.ships, s.sawShips);
-    const pickedE = sticky(enemies, eye, VIEW.enemies, s.sawEnemies);
+    const pickedP = sticky(players, eye, VIEW.ships * sight, s.sawShips);
+    const pickedE = sticky(enemies, eye, VIEW.enemies * sight, s.sawEnemies);
     s.sawShips = pickedP.seen;
     s.sawEnemies = pickedE.seen;
     const state = {
@@ -185,17 +188,17 @@ export function stateMessages<S extends BroadcastSeat>(
       ...(() => {
         const f = shots.filter((r) => {
           const own = (r as Row<unknown> & { owner?: string }).owner === s.id;
-          return own || inRange(eye, r.at, VIEW.shots);
+          return own || inRange(eye, r.at, VIEW.shots * sight);
         }).map((r) => r.row);
         return f.length ? { F: f } : {};
       })(),
       ...(stopped.length ? { X: stopped } : {}),
-      C: pick(coins, eye, VIEW.loot, s.id),
-      ...(() => { const t = pick(torps, eye, VIEW.torpedoes, s.id); return t.length ? { T: t } : {}; })(),
-      ...(() => { const j = pick(junk, eye, VIEW.junk, s.id); return j.length ? { J: j } : {}; })(),
-      ...(() => { const w = pick(wingRows, eye, VIEW.ships, s.id); return w.length ? { W: w } : {}; })(),
-      ...(() => { const g = pick(gemRows, eye, VIEW.gems, s.id); return g.length ? { G: g } : {}; })(),
-      ...(() => { const m = pick(beams, eye, VIEW.beams, s.id); return m.length ? { M: m } : {}; })(),
+      C: pick(coins, eye, VIEW.loot * sight, s.id),
+      ...(() => { const t = pick(torps, eye, VIEW.torpedoes * sight, s.id); return t.length ? { T: t } : {}; })(),
+      ...(() => { const j = pick(junk, eye, VIEW.junk * sight, s.id); return j.length ? { J: j } : {}; })(),
+      ...(() => { const w = pick(wingRows, eye, VIEW.ships * sight, s.id); return w.length ? { W: w } : {}; })(),
+      ...(() => { const g = pick(gemRows, eye, VIEW.gems * sight, s.id); return g.length ? { G: g } : {}; })(),
+      ...(() => { const m = pick(beams, eye, VIEW.beams * sight, s.id); return m.length ? { M: m } : {}; })(),
     };
     messages.push([s, JSON.stringify(state)]);
   }

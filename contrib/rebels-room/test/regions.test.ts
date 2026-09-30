@@ -15,6 +15,8 @@ import {
   regionOf, roomNameOk, nextRoom, parseRoom, roomNameOf, gameOf, ROOM_OVERFLOW_MAX,
 } from "../src/protocol";
 import { HEART_HP, R_OUTER, R_INNER, R_HEART, ARRIVAL_OUT, toWorld } from "../../../ui/src/wallet/rebels/voxel/voxelWorld";
+import { PLACES, placeById } from "../../../ui/src/wallet/rebels/rebelsPlaces";
+import { VIEW } from "../../../ui/src/wallet/rebels/rebelsView";
 
 const out: string[] = [];
 let failures = 0;
@@ -323,6 +325,47 @@ function flyTo(
   ok("and the last room has nowhere to send anybody",
      nextRoom(`earth-${ROOM_OVERFLOW_MAX}_shakedown`) === "",
      nextRoom(`earth-${ROOM_OVERFLOW_MAX}_shakedown`));
+}
+
+
+/* ================= YOU CAN SEE THE FIGHT YOU ARE IN =================
+   ⚠ THE BUG: the view ranges in rebelsView.ts are EARTH's, and Earth fights
+   close to the ground - VIEW.enemies is 340 units. Spikeworld is a hollow
+   sphere crossed from 5,760 units out to a heart at zero, so 340 is a couple
+   of percent of the world. Measured against the live room: it held 61 enemies
+   and put ONE of them on the wire. The heart's guards were spawned, flown, and
+   never sent. Geoff: "There are no longer any enemies appearing to defend the
+   heart inside the spikeworld."
+
+   These assert the RELATIONSHIP rather than the number 7, so changing either
+   the range or the scale fails here instead of making the guards invisible. */
+{
+  const spike = placeById("spike")!;
+  const earth = placeById("earth")!;
+  const cavity = toWorld(R_INNER - 10);
+
+  ok("a pilot in the cavity can see across it",
+     VIEW.enemies * spike.sight >= cavity,
+     `sees ${(VIEW.enemies * spike.sight).toFixed(0)}, cavity radius ${cavity.toFixed(0)}`);
+
+  /* Rounds must be visible at least as far as the ships firing them, or you
+     are shot by something you can see and by fire you cannot. */
+  ok("and rounds reach at least as far as the ships that fire them",
+     VIEW.shots * spike.sight >= VIEW.ships * spike.sight * 0.9,
+     `${(VIEW.shots * spike.sight).toFixed(0)} against ${(VIEW.ships * spike.sight).toFixed(0)}`);
+
+  /* ---- EARTH IS EXACTLY ONE ----
+     The wire golden is a byte recording of an Earth room. Any other value
+     changes the bytes, and the golden would fail with no hint as to why. */
+  ok("Earth's sight is exactly 1, which is what keeps the wire golden valid",
+     earth.sight === 1, `${earth.sight}`);
+
+  /* And every place has one, so a new place cannot be added without deciding.
+     Absent would read as zero and send nothing at all. */
+  for (const p of PLACES) {
+    ok(`${p.id} says how far it can be seen across`,
+       typeof p.sight === "number" && p.sight >= 1, `${p.sight}`);
+  }
 }
 
 console.log(out.join("\n"));
