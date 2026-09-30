@@ -204,7 +204,34 @@ export const DISTANCE_IN_EARTHS = 1000;
  *  three.js) can place an arriving ship at exactly the spot the cockpit does. */
 export const ARRIVAL_OUT = SKY_EDGE * 0.35;
 
-export const SPIKEWORLD_NEAR = 3;
+/* ---- THE CAMERA SITS ON THE SHIP, SO `near` IS WHAT YOU CANNOT SEE ----
+   This was 3, against Earth's 0.05, and that is the whole of Geoff's report:
+   "the guns don't fire in the spikeworld. I hear them, but I see no bullets.
+   The torpedoes also make a launch sound but I don't see them and they make
+   no explosions."
+
+   Nothing was wrong with the guns. The room creates the rounds, spends the
+   ammo and broadcasts them out there exactly as it does on Earth, measured
+   side by side: 24 shot rows against 26 for the same twelve trigger pulls.
+   The cockpit unpacks them and they reach the draw list. They were then
+   CLIPPED, because the camera is copied onto the ship's own position and a
+   near plane of 3 throws away everything within three units of it. A bullet
+   is born at the muzzle, a torpedo leaves the tube, and an explosion happens
+   where the thing died: all of that is inside three units, which is where
+   the visible part of firing actually is. What is left past three units is a
+   0.055-wide core receding fast, which reads as nothing at all.
+
+   Two candidates were measured and ruled out before this one, rather than
+   argued about. Frustum culling is already disabled on every effect mesh.
+   Float32 precision at two hundred thousand units costs 0.0156 of a unit, so
+   the bullet renders 0.0625 wide instead of 0.055: chunky, not invisible.
+
+   Earth's ratio is the argument for the value. Earth runs near 0.05 against
+   far 12,090, a ratio of 241,800, in production, with nobody reporting depth
+   fighting. Spikeworld's far is 10,000, so the same near gives 200,000: less
+   demanding than what already ships. The old 3 was not chosen against a
+   measurement, and the depth headroom it bought was never needed. */
+export const SPIKEWORLD_NEAR = 0.05;
 export const SPIKEWORLD_FAR = 10000;
 
 /** The planet's width in world units, and its radius. For the sky body, the

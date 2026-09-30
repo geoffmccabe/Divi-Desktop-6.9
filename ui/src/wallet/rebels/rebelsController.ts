@@ -30,7 +30,7 @@ import {
 import { platform } from "./platform/current";
 import type { Pilot } from "./platform/platform";
 import { recordScore, myTotals, addDivi, totalDivi, TIER_COUNT } from "./rebelsScores";
-import { R, MAX_ALT, SHRINK } from "./orbitWorld";
+import { R, MAX_ALT, SHRINK, EARTH_NEAR} from "./orbitWorld";
 import { makeVoxelPlanet, arrivalOffset, type VoxelPlanet } from "./voxel/voxelPlanet";
 import { SPIKEWORLD_CENTRE, roomNameOf, parseRoom, type RegionName } from "./rebelsRegions";
 import { makeGate, gatePosition, gateAxis, type Gate } from "./rebelsGate";
@@ -3040,7 +3040,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
 
         savedNear = camera.near;
         savedFar = camera.far;
-        camera.near = 0.05;
+        camera.near = EARTH_NEAR;
         /* Far enough to SEE the outer planets, which is a good deal further
            than the old four thousand: the fourteenth sits 3,600 units out and
            is 300 across, so anything short of this simply does not draw it. */

@@ -86,6 +86,11 @@ export function planetDistance(n: number): number {
  *  ship is not allowed to be. The test found that; the first guess was wrong.
  *  There is still an edge, so pointing at the stars and walking away cannot
  *  strand anybody. */
+/** How close to the camera something can be and still be drawn, in Earth
+ *  orbit. The camera is copied onto the ship, so this is the radius of what
+ *  a pilot cannot see: muzzles, launches and explosions all happen inside it.
+ *  Spikeworld has its own (SPIKEWORLD_NEAR) and must not be coarser. */
+export const EARTH_NEAR = 0.05;
 export const MAX_ALT = planetDistance(PLANET_COUNT) + planetDiameter(PLANET_COUNT) * 3.5 - R;
 
 /* ---- getting anywhere ----
