@@ -181,6 +181,74 @@ const good = (over: Partial<GameType> = {}): GameType => ({
      "ok" in validateGames([g("alpha-one", { main: true }), g("beta-two")]));
 }
 
+
+/* ================= PRECEDENCE: THE TWO RULES TOGETHER =================
+   ⚠ THIS IS THE TEST NEITHER OF US WROTE, AND IT WENT LIVE BECAUSE OF THAT.
+   One session tested the alphabet bug and the new `main` field; the other
+   tested the data. Nobody tested what happens when a room ASKS for one game
+   and the place has MARKED another, which is precisely where a precedence bug
+   lives. The main check sat above the name check and returned unconditionally,
+   so the moment any game in a place was marked main, no room name in that place
+   could ever be honoured: every card in the picker led to the same game.
+
+   Measured live: earth_wardens-gate ran shakedown at 5 rounds instead of
+   wardens-gate at 8. Worse than the bug it was fixing, which only moved the
+   default. And inert until the data arrived, so neither half was wrong alone.
+
+   Order, most specific first: the room's name, then the place's main, then the
+   alphabet, then the built-in. */
+{
+  const g = (id: string, over: Partial<GameType> = {}): GameType =>
+    good({ id, name: id, place: "earth", ...over });
+
+  /* The live shape: shakedown is Earth's main, and three other games exist. */
+  const live = [
+    g("scavengers-run"), g("shakedown", { main: true }), g("wardens-gate"),
+    g("the-long-dark", { place: "spike" }), g("descent", { place: "spike", main: true }),
+  ];
+
+  /* ---- THE ONE THAT WAS BROKEN ---- */
+  ok("a room named after a game runs THAT game, even when another is main",
+     gameForPlace(live, "earth", "wardens-gate").id === "wardens-gate",
+     gameForPlace(live, "earth", "wardens-gate").id);
+  ok("and so does every other named room in that place",
+     gameForPlace(live, "earth", "scavengers-run").id === "scavengers-run"
+     && gameForPlace(live, "spike", "the-long-dark").id === "the-long-dark",
+     `${gameForPlace(live, "earth", "scavengers-run").id}, ${gameForPlace(live, "spike", "the-long-dark").id}`);
+
+  /* ---- AND THE MAIN STILL WINS WHEN NOBODY ASKED ---- */
+  ok("a room with no game in its name runs the place's main fight",
+     gameForPlace(live, "earth", null).id === "shakedown",
+     gameForPlace(live, "earth", null).id);
+  ok("and asking for the main by name is the same answer",
+     gameForPlace(live, "earth", "shakedown").id === "shakedown");
+
+  /* ---- A NAME NOBODY HAS PUBLISHED FALLS THROUGH TO THE MAIN, NOT TO NOTHING ----
+     A stale link to a deleted game should find a fight. It must NOT fall to the
+     alphabet either, now that the place has said what it wants. */
+  ok("a stale name falls through to the main fight",
+     gameForPlace(live, "earth", "deleted-game").id === "shakedown",
+     gameForPlace(live, "earth", "deleted-game").id);
+
+  /* ---- AND AN UNPUBLISHED GAME CANNOT BE REACHED BY NAME EITHER ----
+     The picker never offers it, but a hand-typed room name must not be a way in. */
+  const draft = [g("shakedown", { main: true }), g("secret", { published: false })];
+  ok("a room named after an unpublished game does not run it",
+     gameForPlace(draft, "earth", "secret").id === "shakedown",
+     gameForPlace(draft, "earth", "secret").id);
+
+  /* ---- ONE PLACE'S NAME CANNOT REACH ANOTHER PLACE'S GAME ---- */
+  ok("asking Spikeworld for an Earth game does not get it",
+     gameForPlace(live, "spike", "wardens-gate").id === "descent",
+     gameForPlace(live, "spike", "wardens-gate").id);
+
+  /* ---- AND WITH NO MAIN AT ALL, A NAME STILL WINS OVER THE ALPHABET ---- */
+  const unmarked = [g("aaa"), g("zzz")];
+  ok("a name beats the alphabet when nothing is marked main",
+     gameForPlace(unmarked, "earth", "zzz").id === "zzz",
+     gameForPlace(unmarked, "earth", "zzz").id);
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);
