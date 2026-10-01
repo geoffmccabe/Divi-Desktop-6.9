@@ -1,0 +1,139 @@
+# Publish a finished build to scan.divi.love/downloads FROM GITHUB, not from
+# a laptop. The same checks scripts/publish-release.sh makes (every artifact
+# present, the version inside the build is the version claimed, both update
+# signatures non-empty), then the site repo gets the four files, updater.json,
+# latest.json and walletVersion.ts in one commit, pushed with a deploy key
+# that can write to that one repository and nothing else.
+#
+# Why: on 2026-Sep-30 a 53 MB release could not leave Geoff's Mac (86 KB/s
+# upload; GitHub drops a push after ~50 s). The build was already here.
+#
+# Run: gh workflow run publish-site.yml --repo geoffmccabe/Divi-Desktop-6.9 \
+#        --ref <branch> -f run_id=<build run> -f version=69.13.45 -f notes="..."
+name: Publish to site
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "build-apps.yml run id whose artifacts to publish"
+        required: true
+      version:
+        description: "version being published, e.g. 69.13.45"
+        required: true
+      notes:
+        description: "one-line release note shown in the updater"
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download the build's artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p work && cd work
+          gh run download "${{ inputs.run_id }}" --repo "${{ github.repository }}"
+          ls -R . | head -40
+
+      - name: Verify what was built is what is claimed
+        run: |
+          set -e
+          V="${{ inputs.version }}"
+          cd work
+          MAC="divi-desktop-macos-latest"; WIN="divi-desktop-windows-latest"; LIN="divi-desktop-ubuntu-22.04"
+          DMG="$MAC/Divi Desktop 69_${V}_universal.dmg"
+          TGZ="$MAC/Divi Desktop 69.app.tar.gz"
+          EXE="$WIN/Divi Desktop 69_${V}_x64-setup.exe"
+          DEB="$LIN/Divi Desktop 69_${V}_amd64.deb"
+          for f in "$DMG" "$TGZ" "$TGZ.sig" "$EXE" "$EXE.sig" "$DEB"; do
+            [ -s "$f" ] || { echo "missing artifact: $f"; exit 1; }
+          done
+          mkdir -p v && tar -xzf "$TGZ" -C v
+          PKG=$(python3 -c "import plistlib,sys; print(plistlib.load(open(sys.argv[1],'rb'))['CFBundleShortVersionString'])" "v/Divi Desktop 69.app/Contents/Info.plist")
+          [ "$PKG" = "$V" ] || { echo "the update package says $PKG, not $V"; exit 1; }
+          M=$(cat "$TGZ.sig"); W=$(cat "$EXE.sig")
+          [ ${#M} -gt 100 ] && [ ${#W} -gt 100 ] || { echo "a signature is empty"; exit 1; }
+          echo "verified: package $PKG, signatures present"
+
+      - name: Check out the site with the deploy key
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SITE_DEPLOY_KEY }}" > ~/.ssh/site_key
+          chmod 600 ~/.ssh/site_key
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o IdentitiesOnly=yes"
+          git clone --depth 1 git@github.com:geoffmccabe/Divilovescan.git site
+
+      - name: Place the files and the version pointers
+        env:
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -e
+          V="${{ inputs.version }}"
+          cd work
+          MAC="divi-desktop-macos-latest"; WIN="divi-desktop-windows-latest"; LIN="divi-desktop-ubuntu-22.04"
+          OUT="../site/public/downloads"
+          cp "$MAC/Divi Desktop 69_${V}_universal.dmg" "$OUT/Divi-Desktop-${V}-Universal.dmg"
+          cp "$MAC/Divi Desktop 69.app.tar.gz" "$OUT/Divi-Desktop-${V}-macos-update.app.tar.gz"
+          cp "$WIN/Divi Desktop 69_${V}_x64-setup.exe" "$OUT/Divi-Desktop-${V}-Windows-x64-setup.exe"
+          cp "$LIN/Divi Desktop 69_${V}_amd64.deb" "$OUT/Divi-Desktop-${V}-Linux-x86_64.deb"
+          M=$(cat "$MAC/Divi Desktop 69.app.tar.gz.sig"); W=$(cat "$WIN/Divi Desktop 69_${V}_x64-setup.exe.sig")
+          python3 - "$V" "$M" "$W" "$NOTES" "$OUT" <<'PY'
+          import json, sys, datetime
+          v, m, w, notes, out = sys.argv[1:6]
+          b = f"https://scan.divi.love/downloads/Divi-Desktop-{v}"
+          doc = {"version": v, "notes": notes,
+                 "pub_date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                 "platforms": {"darwin-aarch64": {"signature": m, "url": f"{b}-macos-update.app.tar.gz"},
+                               "darwin-x86_64": {"signature": m, "url": f"{b}-macos-update.app.tar.gz"},
+                               "windows-x86_64": {"signature": w, "url": f"{b}-Windows-x64-setup.exe"}}}
+          open(f"{out}/updater.json", "w").write(json.dumps(doc, indent=2) + "\n")
+          json.dump({"mac": v, "linux": v, "windows": v}, open(f"{out}/latest.json", "w"))
+          PY
+          cd ../site
+          python3 - "$V" <<'PY'
+          import re, sys
+          v = sys.argv[1]; p = "src/walletVersion.ts"; s = open(p).read()
+          for k in ("WALLET_VERSION", "LINUX_VERSION", "WIN_VERSION"):
+              s = re.sub(rf'({k} = ")[^"]+(")', rf'\g<1>{v}\g<2>', s)
+          open(p, "w").write(s)
+          PY
+          git status --short
+
+      - name: Commit and push to the site
+        run: |
+          cd site
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o IdentitiesOnly=yes"
+          git config user.name "DD69 publisher"
+          git config user.email "publish@divi.love"
+          git add -A
+          git commit -q -m "Publish DD69 ${{ inputs.version }}"
+          git push origin HEAD:main
+          rm -f ~/.ssh/site_key
+
+      - name: Wait for the site to serve it
+        run: |
+          V="${{ inputs.version }}"
+          for i in $(seq 1 30); do
+            L=$(curl -s -H "User-Agent: Mozilla/5.0" "https://scan.divi.love/downloads/latest.json?x=$i" | python3 -c "import json,sys;print(json.load(sys.stdin).get('mac',''))" 2>/dev/null || true)
+            [ "$L" = "$V" ] && break
+            sleep 30
+          done
+          [ "$L" = "$V" ] || { echo "latest.json still says '$L' after 15 minutes"; exit 1; }
+          for f in "Divi-Desktop-${V}-Universal.dmg" "Divi-Desktop-${V}-Windows-x64-setup.exe" "Divi-Desktop-${V}-Linux-x86_64.deb" "Divi-Desktop-${V}-macos-update.app.tar.gz"; do
+            LOCAL=$(stat -c %s "site/public/downloads/$f")
+            for i in $(seq 1 10); do
+              S=$(curl -s "https://scan.divi.love/downloads/$f?x=$i" | wc -c)
+              [ "$S" = "$LOCAL" ] && break
+              sleep 30
+            done
+            [ "$S" = "$LOCAL" ] || { echo "$f served $S bytes, built $LOCAL"; exit 1; }
+            echo "  served: $f ($S bytes)"
+          done
+          echo "$V LIVE"
