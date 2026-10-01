@@ -353,7 +353,7 @@ mod tests {
         let mut p = Vec::new();
         write_varint(&mut p, 2);
         // one IPv4-in-IPv6 entry
-        p.extend_from_slice(&0u32.to_le_bytes()); // time
+        p.extend_from_slice(&1_700_000_000u32.to_le_bytes()); // time: the network's stamp
         p.extend_from_slice(&0u64.to_le_bytes()); // services
         p.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 203, 0, 113, 7]);
         p.extend_from_slice(&P2P_PORT.to_be_bytes());
@@ -362,7 +362,8 @@ mod tests {
         p.extend_from_slice(&0u64.to_le_bytes());
         p.extend_from_slice(&[0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
         p.extend_from_slice(&P2P_PORT.to_be_bytes());
-        assert_eq!(parse_addr(&p), vec!["203.0.113.7".to_string()]);
+        // The stamp rides along: it is what dates a node the map cannot reach.
+        assert_eq!(parse_addr(&p), vec![("203.0.113.7".to_string(), 1_700_000_000u32)]);
     }
 
     #[test]
