@@ -65,6 +65,21 @@ pub fn relayed_nodes(cfg: &NodeConfig) -> Vec<RelayedNode> {
     out
 }
 
+/// ip -> newest network stamp for every IPv4 address in our node's book.
+pub fn address_book_stamps(cfg: &NodeConfig) -> std::collections::BTreeMap<String, i64> {
+    let rpc = RpcClient::new(cfg);
+    let mut out = std::collections::BTreeMap::new();
+    let Ok(arr) = rpc.call("getnodeaddresses", json!([0])) else { return out };
+    for a in arr.as_array().map(|v| v.as_slice()).unwrap_or(&[]) {
+        if a["network"].as_str() != Some("ipv4") { continue; }
+        let Some(ip) = a["address"].as_str() else { continue };
+        let t = a["time"].as_i64().unwrap_or(0);
+        let e = out.entry(ip.to_string()).or_insert(0);
+        if t > *e { *e = t; }
+    }
+    out
+}
+
 pub fn peers(cfg: &NodeConfig) -> Option<PeerSnapshot> {
     let rpc = RpcClient::new(cfg);
     let arr = rpc.call("getpeerinfo", json!([])).ok()?;

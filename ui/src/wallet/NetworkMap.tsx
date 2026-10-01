@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState , useLayoutEffect } from "react";
-import { networkPeers, probePeers, noteSetupLog, relayedNodes, listNodes, nodeIdentity, networkCrawl, peerAdd, type Peer, type Geo } from "./api";
+import { networkPeers, probePeers, noteSetupLog, relayedNodes, listNodes, nodeIdentity, networkCrawl, peerAdd, addressBookStamps, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
-import { loadKnown, recordKnown, addMyIps, loadLastPeers, saveLastPeers, type Known } from "./knownPeers";
+import { loadKnown, recordKnown, redateFromBook, addMyIps, loadLastPeers, saveLastPeers, type Known } from "./knownPeers";
 import { emitPeerCount } from "./peerEvents";
 /* The map's animation system: every act of communication the app performs is
    drawn here, and nothing is drawn that isn't really happening. The trigger
@@ -423,6 +423,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   const [historical, setHistorical] = useState(false);
   const historicalRef = useRef(false);
   historicalRef.current = historical;
+
   // First-run install side-panel. Opens automatically when the node still needs
   // setting up; also openable from the menu to preview/re-run. installingRef is
   // read by the draw loop to flash the user's own node red while setting up.
@@ -638,6 +639,33 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   const recordsRef = useRef<Map<string, ProbeRecord>>(loadRecords());
   // Bumped whenever a probe wave settles, so the count and the country list recompute.
   const [probeTick, setProbeTick] = useState(0);
+
+  /* ---- ONE-TIME RE-DATING ----
+     Until 69.13.45 every address a crawl merely heard of was stamped "seen
+     now", so the 30-day rule retired nothing and the live map drew every
+     node ever found. The stored dates are therefore wrong. Once, after the
+     first probe wave has had its say, replace them with the network's own
+     stamps from our node's address book; nodes alive right now keep "now". */
+  useEffect(() => {
+    const FLAG = "dd69.knownStampsRedated";
+    let done = false;
+    try { done = localStorage.getItem(FLAG) === "1"; } catch { /* storage blocked */ }
+    if (done) return;
+    const t = setTimeout(async () => {
+      let stamps: Record<string, number> = {};
+      try { stamps = await addressBookStamps(); } catch { return; }
+      if (!Object.keys(stamps).length) return; // node not answering; next open
+      const keep = new Set<string>(myNodeIpsRef.current);
+      for (const p of snapRef.current?.peers ?? []) keep.add(p.ip);
+      for (const [ip, st] of probeRef.current) if (st === "online" || st === "assumed" || st === "relayed") keep.add(ip);
+      knownRef.current = redateFromBook(knownRef.current, stamps, keep);
+      newNodesRef.current = newNodes(knownRef.current);
+      try { localStorage.setItem(FLAG, "1"); } catch { /* storage blocked */ }
+      noteSetupLog(`map: re-dated remembered nodes from the node's address book (${Object.keys(stamps).length} stamps)`).catch(() => {});
+      setProbeTick((n) => n + 1);
+    }, 45_000);
+    return () => clearTimeout(t);
+  }, []);
   /* THE NUMBER THE WALLET CALLS "NODES". Not every address we have ever
      heard of: after the crawl that is 600-plus, most of them nodes that
      answered someone weeks ago and may be long gone. Geoff, 2026-Sep-22:
@@ -717,8 +745,26 @@ export function NetworkMap({ onReturn, autoplay = false }: {
 
       // Learned second-hand from other nodes' address books: the ones our own
       // node has never connected to and so could never show.
+      /* Known addresses: take the network's stamp (newer only). Alive ones
+         are seen NOW. Neither is a reason to touch the geo. */
+      {
+        const now = Date.now();
+        let next = knownRef.current;
+        let touched = false;
+        for (const [ip, t] of Object.entries(reply.stamps ?? {})) {
+          const kp = next[ip];
+          if (kp && t * 1000 > kp.lastSeen) { next = { ...next, [ip]: { ...kp, lastSeen: t * 1000 } }; touched = true; }
+        }
+        for (const r of reply.results) {
+          const kp = next[r.ip];
+          if (r.alive && kp) { next = { ...next, [r.ip]: { ...kp, lastSeen: now } }; touched = true; }
+        }
+        if (touched) knownRef.current = recordKnown(next, []);
+      }
       if (reply.discovered.length) {
-        const fresh = reply.discovered.slice(0, 200);
+        const freshEntries = reply.discovered.slice(0, 200);
+        const stampOf = new Map(freshEntries.map((d) => [d.ip, d.time]));
+        const fresh = freshEntries.map((d) => d.ip);
         await resolveGeos(fresh, (m) => {
           const seen = fresh
             .filter((ip) => m[ip])
@@ -729,6 +775,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
               city: m[ip].city,
               country: m[ip].country,
               cc: m[ip].countryCode,
+              /* Dated by the network, not by when we heard of it. */
+              seenAt: (stampOf.get(ip) ?? 0) * 1000 || undefined,
             }));
           if (!seen.length) return;
           knownRef.current = recordKnown(knownRef.current, seen);
@@ -1019,9 +1067,10 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       }
       const g = await resolveGeos(ips, () => {});
       if (!alive) return;
+      const stampOf = new Map(fresh.map((r) => [r.home, r.time]));
       const seen = ips
         .filter((ip) => g[ip])
-        .map((ip) => ({ ip, lat: g[ip].lat, lon: g[ip].lon, city: g[ip].city, country: g[ip].country, cc: g[ip].countryCode }));
+        .map((ip) => ({ ip, lat: g[ip].lat, lon: g[ip].lon, city: g[ip].city, country: g[ip].country, cc: g[ip].countryCode, seenAt: (stampOf.get(ip) ?? 0) * 1000 || undefined }));
       if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
       const nowMs = Date.now();
       for (const r of fresh) {

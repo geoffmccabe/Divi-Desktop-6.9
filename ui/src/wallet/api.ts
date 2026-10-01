@@ -400,9 +400,14 @@ export interface CrawlReply {
   checked: number;
   alive: number;
   results: CrawlResult[];
-  /** Addresses learned from other nodes that we did not already know. */
-  discovered: string[];
+  /** Addresses learned from other nodes that we did not already know, each
+      with the network's stamp (unix seconds: when it last announced itself). */
+  discovered: { ip: string; time: number }[];
+  /** Network stamps for addresses we already knew (ip -> unix seconds). */
+  stamps: Record<string, number>;
 }
+/** Our own node's whole address book: ip -> network stamp (unix seconds). */
+export const addressBookStamps = () => invoke<Record<string, number>>("address_book_stamps");
 /** Health-check nodes and ask a few of them who else they know. */
 /** Where a service we talk to actually is, so it is not drawn at a made-up point. */
 export interface ServicePlace { ip: string; lat: number; lon: number; city?: string; country?: string }

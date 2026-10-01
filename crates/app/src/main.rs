@@ -2356,11 +2356,13 @@ async fn network_crawl(ips: Vec<String>, ask: Option<usize>) -> serde_json::Valu
     let ask = ask.unwrap_or(6);
     tauri::async_runtime::spawn_blocking(move || {
         let results = dd69_supervisor::crawl::crawl(&ips, ask);
-        let mut discovered: std::collections::BTreeSet<String> = Default::default();
+        // Newest network stamp per address, across every book we were handed.
+        let mut discovered: std::collections::BTreeMap<String, u32> = Default::default();
         let mut out = Vec::with_capacity(results.len());
         for r in &results {
-            for a in &r.addrs {
-                discovered.insert(a.clone());
+            for (a, t) in &r.addrs {
+                let e = discovered.entry(a.clone()).or_insert(0);
+                if *t > *e { *e = *t; }
             }
             out.push(serde_json::json!({
                 "ip": r.ip,
@@ -2369,18 +2371,34 @@ async fn network_crawl(ips: Vec<String>, ask: Option<usize>) -> serde_json::Valu
                 "height": r.height,
             }));
         }
-        // Only addresses we did not already have are interesting to the map.
+        // New addresses go to the map with their stamp; for ones it already
+        // has, the stamp alone, so an old entry can be dated correctly.
         let known: std::collections::BTreeSet<&String> = ips.iter().collect();
-        let fresh: Vec<&String> = discovered.iter().filter(|a| !known.contains(a)).collect();
+        let fresh: Vec<serde_json::Value> = discovered.iter().filter(|(a, _)| !known.contains(a)).map(|(a, t)| serde_json::json!({ "ip": a, "time": t })).collect();
+        let stamps: serde_json::Map<String, serde_json::Value> = discovered.iter().filter(|(a, _)| known.contains(a)).map(|(a, t)| (a.clone(), serde_json::json!(t))).collect();
         serde_json::json!({
             "checked": results.len(),
             "alive": results.iter().filter(|r| r.alive).count(),
             "results": out,
             "discovered": fresh,
+            "stamps": stamps,
         })
     })
     .await
-    .unwrap_or(serde_json::json!({ "checked": 0, "alive": 0, "results": [], "discovered": [] }))
+    .unwrap_or(serde_json::json!({ "checked": 0, "alive": 0, "results": [], "discovered": [], "stamps": {} }))
+}
+
+/// Our own node's whole address book as ip -> network stamp (unix seconds).
+/// The stamp is when the network last heard that address announce itself;
+/// it is the one honest date the map has for a node it cannot reach.
+#[tauri::command]
+async fn address_book_stamps() -> std::collections::BTreeMap<String, i64> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let Ok(cfg) = NodeConfig::load() else { return Default::default() };
+        dd69_supervisor::network::address_book_stamps(&cfg)
+    })
+    .await
+    .unwrap_or_default()
 }
 
 /// What the fast-sync download will cost, before the user commits to it.
@@ -3775,6 +3793,7 @@ fn main() {
             lottery_wins,
             network_peers,
             relayed_nodes,
+            address_book_stamps,
             geolocate_ips,
             self_geo,
             probe_peers,

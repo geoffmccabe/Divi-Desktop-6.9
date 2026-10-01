@@ -7,7 +7,10 @@
 // it's the same network whichever node you view from. (Your own node and its
 // direct peers are what change on switch; those are handled in NetworkMap.)
 const KEY = "dd69.knownPeers";
-const TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days → considered dead, removed
+/* Kept for years, not 90 days: the live map hides anything the network has
+   not heard from in 30 days, and the Historical Network view is where the
+   old ones are meant to live. Dropping them here emptied that view. */
+const TTL_MS = 5 * 365 * 24 * 60 * 60 * 1000;
 
 // Every IP THIS wallet's own node has ever reported as its own. Your public IP
 // changes with VPNs / ISPs / travel, and each old IP would otherwise linger in
@@ -116,7 +119,7 @@ function save(k: Known) {
 /// Record the currently-seen located peers, refreshing their lastSeen.
 export function recordKnown(
   prev: Known,
-  seen: { ip: string; lat: number; lon: number; city?: string; country?: string; cc?: string; subver?: string }[]
+  seen: { ip: string; lat: number; lon: number; city?: string; country?: string; cc?: string; subver?: string; seenAt?: number }[]
 ): Known {
   const now = Date.now();
   // Merge onto what is ON DISK, not just the caller's in-memory copy.
@@ -136,11 +139,38 @@ export function recordKnown(
       city: s.city,
       country: s.country,
       cc: s.cc,
-      lastSeen: now,
+      /* lastSeen is WHEN THE NETWORK LAST HEARD THIS NODE. A sighting that
+         carries the network's own stamp (an address book entry) uses it; a
+         live sighting (a peer, a probe answer) is now. Never backwards.
+         Addresses merely mentioned in some node's book used to be stamped
+         "now", so a wallet gone for years looked fresh every crawl and the
+         30-day rule never retired anything (Geoff, 2026-Sep-30). */
+      lastSeen: Math.max(k[s.ip]?.lastSeen ?? 0, s.seenAt ?? now),
       // Keep the last-known subver if this sighting didn't carry one.
       subver: s.subver || k[s.ip]?.subver,
     };
   save(k);
+  return k;
+}
+
+/// One-time correction: entries dated by the old "mentioned = seen now"
+/// rule take the network's real stamp from our node's address book. Nodes
+/// verified alive right now are left alone. Entries the book does not
+/// mention keep their date.
+export function redateFromBook(prev: Known, stamps: Record<string, number>, keep: Set<string>): Known {
+  const k = { ...loadKnown(), ...prev };
+  let changed = 0;
+  for (const ip of Object.keys(k)) {
+    if (keep.has(ip)) continue;
+    const t = stamps[ip];
+    if (typeof t !== "number" || t <= 0) continue;
+    const ms = t * 1000;
+    if (k[ip].lastSeen !== ms) {
+      k[ip] = { ...k[ip], lastSeen: ms };
+      changed++;
+    }
+  }
+  if (changed) save(k);
   return k;
 }
 

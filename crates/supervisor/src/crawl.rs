@@ -42,8 +42,11 @@ pub struct CrawlResult {
     pub subver: String,
     /// Its best block height, as it claims.
     pub height: i64,
-    /// Addresses it knows about. These are the nodes we could not otherwise see.
-    pub addrs: Vec<String>,
+    /// Addresses it knows about, each with the network's stamp (unix seconds:
+    /// when that address was last heard announcing itself). These are the
+    /// nodes we could not otherwise see; the stamp is what tells a live node
+    /// from a wallet that went offline years ago.
+    pub addrs: Vec<(String, u32)>,
 }
 
 fn sha256d(data: &[u8]) -> [u8; 32] {
@@ -160,7 +163,7 @@ fn next_message(buf: &[u8], at: &mut usize) -> Option<(String, Vec<u8>)> {
 /// Decode an `addr` message into plain IP strings. Entries are
 /// timestamp + services + 16-byte address + port; IPv4 sits inside the IPv6
 /// form with the standard prefix.
-fn parse_addr(payload: &[u8]) -> Vec<String> {
+fn parse_addr(payload: &[u8]) -> Vec<(String, u32)> {
     let mut out = Vec::new();
     let mut at = 0usize;
     let Some(count) = read_varint(payload, &mut at) else {
@@ -170,13 +173,14 @@ fn parse_addr(payload: &[u8]) -> Vec<String> {
         if payload.len() < at + 30 {
             break;
         }
+        let time = u32::from_le_bytes([payload[at], payload[at + 1], payload[at + 2], payload[at + 3]]);
         let ip = &payload[at + 12..at + 28];
         at += 30;
         // ::ffff:a.b.c.d — an IPv4 address in IPv6 clothing.
         if ip[..12] == [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff] {
             let v4 = format!("{}.{}.{}.{}", ip[12], ip[13], ip[14], ip[15]);
             if !v4.starts_with('0') {
-                out.push(v4);
+                out.push((v4, time));
             }
         }
         // IPv6 nodes are skipped: the rest of the wallet, the geo cache and the
