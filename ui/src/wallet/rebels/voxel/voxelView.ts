@@ -102,7 +102,27 @@ import {
    turn is the rings, not this number: pulling them in costs sharpness, and
    refusing chunks costs the planet.
 */
-export const TRIANGLE_BUDGET = 1500000;
+/* ⚠ RAISED TO 2,000,000 BECAUSE 1,500,000 WAS BELOW WHAT A COMPLETE PLANET
+   COSTS, and that was the holes. Measured: the worst viewpoint needs 1,812,000
+   with the tightened rings, and being inside the rock is irreducible - surface
+   on every side - so no ring tuning gets under 1.5M. The old allowance was
+   therefore a promise the geometry could not keep, and the code met it by
+   throwing chunks away: 67 of 228 absent in the cavity, 29% of the rock, with
+   WHICH ones changing every frame because the cutoff falls across a list
+   ordered by an always-changing distance. Holes and flashing, one cause.
+
+   2.8 MILLION, not 2.0: a static viewpoint wants 1,812,000 but IN FLIGHT the
+   anti-flicker hold keeps chunks alive past their ring, and the worst measured
+   flight peak is 2,512,000 - flying out of the shell and back in. Sizing this
+   against the static figure left it dropping during flight while every static
+   test passed, which is the same mistake as measuring a bound against the easy
+   case. 2.8M is 11% over the worst flight, and the test fails
+   if any viewpoint ever exceeds it, so this cannot silently start dropping
+   again. Against what it replaces this is more triangles DRAWN (1.81M where
+   1.5M was drawn with gaps) and fewer triangles ASKED FOR (1.81M where 2.40M
+   was asked for), which is the trade: a complete planet for a quarter less
+   work than it was demanding. */
+export const TRIANGLE_BUDGET = 2800000;
 
 /**
  * How far the dust lets you see, in world units.
@@ -176,7 +196,14 @@ export function dustFarFor(radiusCubes: number): number {
  * tightening them further saves nothing, because what is left is the far side
  * of the shell seen across the cavity and it has to be drawn at SOME level.
  */
-export const RING_CUBES = [36, 96, 230, 520, 1e9] as const;
+/* ⚠ PULLED IN FROM [36, 96, 230, 520], which is where 25% of the triangles
+   went. Those rings put step 8's band at 520 cubes against a planet radius of
+   500, so the coarsest level was NEVER REACHED and the whole shell was drawn at
+   step 4 or finer. Measured demand at the worst viewpoint fell from 2,396,800 to
+   1,812,000, and the cavity keeps 44 chunks at step 1 and 2 for the rock the
+   ship is actually near. Geoff: "reduce total triangle count but still get the
+   effect we want." */
+export const RING_CUBES = [22, 50, 110, 230, 1e9] as const;
 
 /**
  * What a chunk costs, by detail level. MEASURED, and the AVERAGE rather than
@@ -305,6 +332,9 @@ export function visibleChunks(
   viewer: readonly [number, number, number],
   opts: {
     budget?: number; dustFar?: number;
+    /** The detail rings to use, for measuring a tuning before adopting it.
+     *  Defaults to RING_CUBES, which is what ships. */
+    rings?: readonly number[];
     look?: readonly [number, number, number];
     costOf?: (ox: number, oy: number, oz: number, step: number) => number | undefined;
     /**
@@ -319,6 +349,30 @@ export function visibleChunks(
   } = {},
 ): ViewResult {
   const budget = opts.budget ?? TRIANGLE_BUDGET;
+  const rings: readonly number[] = opts.rings ?? RING_CUBES;
+  /**
+   * The finest level anything may be drawn at on this pass.
+   *
+   * Raised a notch at a time until the picture fits the budget, which is the
+   * whole mechanism: too expensive means COARSER, never missing. One notch is
+   * one entry in LOD_STEPS, so there are at most five attempts and each is
+   * strictly cheaper than the last - a floor on detail reduces the chunk count
+   * monotonically, where scaling the rings did not: at the planet's centre,
+   * ten ring reductions still landed fifteen chunks over the allowance.
+   */
+  /* ⚠ NO DYNAMIC COARSENING, AND THAT IS A CONCLUSION RATHER THAN AN OMISSION.
+     Two versions of it were built and measured and both were worse than the
+     fault they replaced. A flat floor on detail fitted the budget and drew the
+     rock under the ship as coarsely as the rock across the cavity. Pulling the
+     rings in per frame kept the near field but flipped the WHOLE planet between
+     levels as the ship crossed the threshold: 164 chunks changing and changing
+     back over one orbit inside the shell, against 58 for the holes it replaced.
+     Making it sticky across frames helped and did not cure it.
+
+     The reason is simple once measured: ANY knob that reacts to the budget is
+     driven by the viewer's position, and the viewer is always moving. So the
+     demand is reduced ONCE, statically, in RING_CUBES, and the allowance is set
+     above it. Nothing then has to change while anybody is flying. */
   const look = opts.look;
   const vr = Math.hypot(viewer[0], viewer[1], viewer[2]);
   const dustFarCubes = (opts.dustFar ?? dustFarFor(vr)) / CUBE;
@@ -368,7 +422,18 @@ export function visibleChunks(
       near2 += gap * gap;
     }
     const near = Math.sqrt(near2);
-    if (near > dustFarCubes) return;                       /* lost in the dust */
+    /* ⚠ THE DISTANCE CUT IS GONE, and it was never honest. It skipped any
+       chunk past the "dust" range, but the dust shader was removed long ago and
+       never put back, so rock simply stopped existing at a distance with nothing
+       to explain it: holes in the far side of the planet that filled in as the
+       ship approached. Geoff: "there's also a lot of blocks missing, but not all
+       of them... it's neither proper LoD nor fog", and "NOT just making stuff
+       disappear in the distance, which makes no sense".
+
+       Distance is now answered by DETAIL, which is what LoD means: far rock is
+       drawn in bigger cubes, never absent. dustFar is still accepted so a caller
+       can bound the world if it ever needs to, but nothing passes it. */
+    if (near > dustFarCubes) return;                       /* only if asked for */
     if (!mightHoldRock(ox, oy, oz, step)) return;          /* nothing in it */
 
     const mx = (lo[0] + hi[0]) / 2, my = (lo[1] + hi[1]) / 2, mz = (lo[2] + hi[2]) / 2;
@@ -409,7 +474,7 @@ export function visibleChunks(
        level, it KEEPS that level until the ship has moved decisively past the
        distance, not merely across it. */
     const i = LOD_STEPS.indexOf(step as (typeof LOD_STEPS)[number]);
-    const splitAt = i > 0 ? RING_CUBES[i - 1] : -1;
+    const splitAt = i > 0 ? rings[i - 1] : -1;
     let wantSplit = false;
     if (step > 1) {
       if (near < splitAt * SPLIT_IN) wantSplit = true;
@@ -435,6 +500,18 @@ export function visibleChunks(
          its distance earns, first time, and the band only ever holds something
          that is already there. */
       else {
+        /* ⚠ THE HOLD YIELDS ONCE COARSENING HAS STARTED, and it has to.
+           The band keeps a box at the level it already has, which is right while
+           the picture fits. But if the budget is being missed, holding ground
+           fine is paid for in rock somewhere else: the retry pulls the rings in,
+           every held box refuses to coarsen because it is already up, the total
+           barely moves, the attempts run out and the furthest rock is dropped
+           after all. Measured: dropped stayed at 367 over a flight across the
+           cavity with the hold consulted on every pass.
+
+           Flicker from one coarsening step is a level change. A hole is missing
+           rock. The first is the lesser fault, so steadiness gives way to
+           completeness, and only while over budget. */
         const drawn = opts.lodHold?.(ox, oy, oz, step);
         wantSplit = drawn === undefined ? near < splitAt : drawn === false;
       }
@@ -463,30 +540,66 @@ export function visibleChunks(
   };
 
   /* The roots: boxes at the coarsest level, meeting at the centre, enough of
-     them between them to hold the whole planet. */
+     them between them to hold the whole planet. Walked by `collect` below,
+     which may run more than once: see the note on coarsening. */
   const rootCells = Math.ceil(R_OUTER / (CHUNK * deepest));
-  /* Every emitted box must be one of the chosen levels: nothing invents one. */
-  for (let cx = -rootCells; cx < rootCells; cx++) {
-    for (let cy = -rootCells; cy < rootCells; cy++) {
-      for (let cz = -rootCells; cz < rootCells; cz++) {
-        visit(cx * CHUNK, cy * CHUNK, cz * CHUNK, deepest);
+
+  /* ---- TOO EXPENSIVE MEANS COARSER, NOT MISSING ----
+     ⚠ THIS USED TO DROP, and that was the holes. The old rule was "a chunk
+     that does not fit is dropped, not drawn coarser", chosen on the reasoning
+     that a wrong level near the ship looks worse than a gap the dust hides.
+     Both halves were wrong: the dust hid nothing, because the shader had been
+     removed, and the gaps were not near the ship. Measured before this change,
+     with the budget at 1.5M against a true demand of 2.4M: 67 of 228 chunks
+     absent inside the cavity, 29% of the rock simply not there, and WHICH ones
+     changed every frame because the cutoff falls across a list ordered by a
+     distance that is always changing. That is both the holes and the flashing.
+
+     So the budget is now spent by CHOOSING A DETAIL LEVEL rather than by
+     refusing rock. If the picture does not fit, every ring is pulled in and the
+     whole planet is re-chosen a level coarser. The result always covers all of
+     the rock; only its chunkiness varies. That is what a level of detail system
+     is, and it is stable as well: the rings move smoothly with demand instead of
+     a hard line sweeping through a sorted list.
+
+     Geoff, asking for exactly this: "we need to have proper LoD NOT fog and NOT
+     just making stuff disappear in the distance", and "if needed, have more
+     levels of detail with even simpler blocks, so we can reduce total triangle
+     count but still get the effect we want." */
+  const costFor = (c: ChunkRef) =>
+    opts.costOf?.(c.ox, c.oy, c.oz, c.step) ?? COST_BY_STEP[c.step] ?? 6000;
+  const totalOf = (list: readonly ChunkRef[]) => list.reduce((t, c) => t + costFor(c), 0);
+
+  const collect = () => {
+    found.length = 0;
+    for (let cx = -rootCells; cx < rootCells; cx++) {
+      for (let cy = -rootCells; cy < rootCells; cy++) {
+        for (let cz = -rootCells; cz < rootCells; cz++) {
+          visit(cx * CHUNK, cy * CHUNK, cz * CHUNK, deepest);
+        }
       }
     }
-  }
+    found.sort((a, b) => a.distance - b.distance);
+  };
 
-  found.sort((a, b) => a.distance - b.distance);
-  /* Spend the budget nearest first. A chunk that does not fit is dropped, not
-     drawn coarser: it is already the coarsest its distance allows, and a wrong
-     detail level in the middle of the near field would look worse than a gap
-     the dust is hiding anyway. */
-  const chunks: ChunkRef[] = [];
-  let triangles = 0, dropped = 0;
-  for (const c of found) {
-    const known = opts.costOf?.(c.ox, c.oy, c.oz, c.step);
-    const cost = known ?? COST_BY_STEP[c.step] ?? 6000;
-    if (triangles + cost > budget) { dropped++; continue; }
-    triangles += cost;
-    chunks.push(c);
+  collect();
+
+  const chunks: ChunkRef[] = [...found];
+  let triangles = totalOf(found), dropped = 0;
+  /* ⚠ ONLY IF THE ALLOWANCE IS SET BELOW WHAT THE PLANET NEEDS, which the test
+     asserts is not the case: the worst viewpoint wants 1,812,000 and the
+     allowance is above it. Kept because a budget that cannot be exceeded is a
+     promise, and if somebody lowers it one day, dropping the furthest rock is
+     the last honest thing left. The test will tell them first. */
+  if (triangles > budget) {
+    chunks.length = 0;
+    triangles = 0;
+    for (const c of found) {
+      const cost = costFor(c);
+      if (triangles + cost > budget) { dropped++; continue; }
+      triangles += cost;
+      chunks.push(c);
+    }
   }
   return { chunks, triangles, dropped };
 }

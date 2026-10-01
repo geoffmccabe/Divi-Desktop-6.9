@@ -246,9 +246,33 @@ for (const [name, at] of [places[0], places[3]]) {
      a boundary made the whole planet cheaper (the coarse answer wins wherever
      nothing has been drawn yet), so the margin narrowed. The claim that matters
      is only that the dust and the allowance are still doing work. */
-  ok("and with no dust and no budget at all the planet is unaffordable",
-     naked.triangles > TRIANGLE_BUDGET,
-     `${naked.triangles} triangles wanted against an allowance of ${TRIANGLE_BUDGET}`);
+  /* ---- REVERSED, DELIBERATELY, AND THIS IS NOW THE POINT ----
+     This used to assert the planet was UNAFFORDABLE without the dust and the
+     allowance, because both were load-bearing: the allowance was 1,500,000
+     against a demand of 2,400,000, and the shortfall was met by throwing chunks
+     away. That was the holes. Measured before the change: 67 of 228 chunks
+     absent inside the cavity, 29% of the rock, and which ones changed every
+     frame, which was also the flashing. Geoff: "the far side of the spikeworld
+     planet just looks like it has a lot of holes in it, but when getting closer,
+     those holes fill in with blocks."
+
+     So the promise is now the opposite one: THE WHOLE PLANET FITS. Distance is
+     answered by detail, never by absence, and the allowance stands above what
+     the worst viewpoint asks for. If somebody lowers the allowance below the
+     demand again, this fails rather than the planet quietly developing holes. */
+  ok("the whole planet fits inside the allowance, so nothing is ever dropped",
+     naked.triangles < TRIANGLE_BUDGET,
+     `${naked.triangles} wanted against an allowance of ${TRIANGLE_BUDGET}`);
+  ok("and asking for it really does drop nothing", naked.dropped === 0, `${naked.dropped}`);
+
+  /* ---- AND IN FLIGHT, WHICH IS WHERE THE FIRST ATTEMPT WENT WRONG ----
+     The anti-flicker hold keeps chunks alive past their ring, so flying costs
+     MORE than standing still: 1,812,000 at the worst static viewpoint against
+     2,512,000 flying out of the shell and back. Sizing the allowance against the
+     static figure left it dropping in flight while every static test passed. */
+  ok("and the allowance covers flight, not just standing still",
+     TRIANGLE_BUDGET > 2_512_000,
+     `${TRIANGLE_BUDGET} against the worst measured flight demand of 2,512,000`);
   /* ---- WHERE THE SAVING REALLY COMES FROM ----
      Not from filling the planet in, which made it look solid from outside and
      vanish from inside, and no longer from growing the clumps with the level
