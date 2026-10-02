@@ -112,14 +112,31 @@ function run(c: CombatState, frames: number, w = world()) {
   fireGuns(c, pos, fwd, up, FOV, ASPECT);
   ok("firing makes two bullets", c.bullets.length === 2);
   ok("bullets travel at speed", Math.abs(c.bullets[0].vel.length() - BULLET_SPEED) < 1e-6);
-  /* Both should pass within a whisker of the convergence point. */
+  /* ---- PARALLEL, AND STILL ON TARGET ----
+     ⚠ THIS USED TO ASSERT THE OPPOSITE. The two streams aimed at a point
+     CONVERGE units ahead and crossed on it, which in first person happens in
+     the middle of the view and reads as the rounds going sideways. Geoff: "They
+     are crossing in front of me... The bullets need to all be shot perfectly
+     parallel with each other, including Drone bullets."
+
+     Parallel has a cost the convergence was hiding, and it is asserted here
+     too: the flash is at the frame's edge, 2.46 units off the axis, so rounds
+     launched from there would straddle a fighter's 1.05 radius and BOTH miss
+     what the crosshair is on. So they launch from within that radius while the
+     flash stays where it was. Both halves matter, so both are tested. */
+  const dir0 = c.bullets[0].vel.clone().normalize();
+  const dir1 = c.bullets[1].vel.clone().normalize();
+  ok("the two streams are parallel", dir0.distanceTo(dir1) < 1e-6,
+     `${dir0.angleTo(dir1).toFixed(6)} radians apart`);
+  ok("and both run along the ship's nose", dir0.angleTo(fwd) < 1e-6);
+  /* And they still pass close enough to the crosshair to hit what is under it. */
   const target = pos.clone().addScaledVector(fwd, CONVERGE);
   const miss = c.bullets.map((b) => {
     const t = target.clone().sub(b.pos).dot(b.vel) / b.vel.lengthSq();
     return b.pos.clone().addScaledVector(b.vel, t).distanceTo(target);
   });
-  ok("the two streams cross on the crosshair", Math.max(...miss) < 0.01,
-     `worst miss ${Math.max(...miss).toFixed(4)}`);
+  ok("and both still pass within a fighter's radius of the crosshair",
+     Math.max(...miss) < ENEMY_R, `worst ${Math.max(...miss).toFixed(2)} against ${ENEMY_R}`);
 }
 
 // 2. A bullet that reaches a fighter kills it, and one that does not, does not.
@@ -1682,6 +1699,74 @@ function run(c: CombatState, frames: number, w = world()) {
   ok("no wreckage", c.junk.length === 0);
   ok("only ever one at a time", (rolls.push(0, 0), c.dragonClock = DRAGON_CHECK_SECONDS, spawnDragon(c), stepDragon(c, 0.01), c.enemies.filter((e) => e.dragon).length) === 1);
   setDragonRandomForTests(() => 0.99);
+}
+
+/* ================= A GUN FIRES FROM A MOVING SHIP =================
+   ⚠ MUZZLE VELOCITY IS RELATIVE TO THE SHIP, and it was not. Every round left
+   at BULLET_SPEED in WORLD coordinates with nothing added for how fast the ship
+   was already going. Standing still that is right. Moving it is wrong in a way
+   the pilot sees directly, because the camera rides the ship: what they watch
+   is the round's speed MINUS their own.
+
+   At a cruise of 4 against a bullet at 120 that is invisible. Carrying speed
+   changed it - a ship now holds 20 to 50 - and the same round crawls away at a
+   third of its old speed, which reads as the gun not firing. Geoff: "we see the
+   flashes on the sides of the screen but there are no bullets or trails", and
+   "Bullet speed should be added to the ship speed in the same normalized
+   proportions, so it's always appearing to be the same velocity from the ship's
+   point of view."
+
+   So these assert the RELATIVE speed, which is the thing a pilot actually sees,
+   rather than the world speed, which is the thing that was already correct. */
+{
+  const fwd = new THREE.Vector3(0, 0, -1);
+  const up = new THREE.Vector3(0, 1, 0);
+  const at = new THREE.Vector3(0, R + 40, 0);
+
+  /** How fast a round leaves, AS THE COCKPIT SEES IT. */
+  const relative = (shipSpeed: number): number => {
+    const c = createCombat();
+    const shipVel = fwd.clone().multiplyScalar(shipSpeed);
+    fireGuns(c, at, fwd, up, 70, 1.6, "p", undefined, shipVel);
+    const b = c.bullets[0];
+    return b.vel.clone().sub(shipVel).length();
+  };
+
+  const still = relative(0);
+  ok("(baseline) a round from a stationary ship leaves at the gun's own speed",
+     Math.abs(still - BULLET_SPEED) < 0.01, `${still.toFixed(1)} against ${BULLET_SPEED.toFixed(1)}`);
+
+  /* ---- THE CLAIM ---- */
+  for (const speed of [4, 20, 40, 60]) {
+    const seen = relative(speed);
+    ok(`a ship doing ${speed} still sees its rounds leave at the same speed`,
+       Math.abs(seen - still) < 0.01, `${seen.toFixed(1)} against ${still.toFixed(1)}`);
+  }
+
+  /* ---- AND THE WORLD SPEED REALLY DID CHANGE ----
+     Or the test above would pass on a version that ignores the ship entirely. */
+  const c = createCombat();
+  fireGuns(c, at, fwd, up, 70, 1.6, "p");
+  const worldStill = c.bullets[0].vel.length();
+  const c2 = createCombat();
+  fireGuns(c2, at, fwd, up, 70, 1.6, "p", undefined, fwd.clone().multiplyScalar(40));
+  const worldMoving = c2.bullets[0].vel.length();
+  ok("and in the world the round really is faster for the ship's speed",
+     worldMoving > worldStill + 39, `${worldMoving.toFixed(1)} against ${worldStill.toFixed(1)}`);
+
+  /* ---- THE TORPEDO IS THE ONE THAT WAS WORST ----
+     38 against a bullet's 240: a ship at 40 could outrun its own torpedo. */
+  const t0 = createCombat();
+  fireTorpedo(t0, at, fwd, "p");
+  const tStill = t0.torpedoes[0].vel.length();
+  const t1 = createCombat();
+  const fast = fwd.clone().multiplyScalar(40);
+  fireTorpedo(t1, at, fwd, "p", fast);
+  const tSeen = t1.torpedoes[0].vel.clone().sub(fast).length();
+  ok("a ship cannot outrun its own torpedo any more",
+     Math.abs(tSeen - tStill) < 0.01, `leaves at ${tSeen.toFixed(1)}, was ${tStill.toFixed(1)} relative`);
+  ok("(context) and it could before: the torpedo is slower than the ship",
+     tStill < 40, `torpedo ${tStill.toFixed(1)} against a ship at 40`);
 }
 
 console.log(out.join("\n"));

@@ -28,7 +28,9 @@ function ok(name: string, cond: boolean, extra = "") {
   /* Symmetrical: every slot has its opposite in the set. */
   ok("the pattern is symmetrical", WING_SLOTS.every((v) =>
     WING_SLOTS.some((o) => o.distanceTo(v.clone().negate()) < 1e-9)));
-  ok("drawn at half size", WING_SCALE === 0.5);
+  /* A QUARTER of the ship, asked for by name: "It should be 25% my width".
+   Half read as a second fighter flying alongside rather than as a drone. */
+  ok("drawn at a quarter size", WING_SCALE === 0.25);
 }
 
 /* ---- the ring ---- */

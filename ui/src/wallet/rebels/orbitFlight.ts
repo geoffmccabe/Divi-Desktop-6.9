@@ -72,13 +72,19 @@ export const SUPER_BOOST_MULT = 2;
 
 /** The fastest a ship with these extras can move, for anything that has to
  *  bound a position change: super boost plus a diagonal slide. */
-export function topSpeedFor(extras: Extras = NO_EXTRAS): number {
+export function topSpeedFor(extras: Extras = NO_EXTRAS, openSpace = 1): number {
   const slide = Math.max(1, extras.strafeMult, extras.vstrafeMult ?? 1);
   /* Carried speed AND a boost on top of it AND a diagonal slide: the three
      stack, and this number is a bound rather than a speed anybody holds. The
      room sizes its anti-teleport budget from it, so it must not be optimistic
      - a bound that is too low snaps honest pilots backwards. */
-  return driftCap(extras) + BOOST * Math.max(1, extras.superMult) + STRAFE_SPEED * slide * 1.42;
+  /* ⚠ ALL THREE SCALE WITH OPEN SPACE. The room sizes its anti-teleport budget
+     from this, so if the ceiling grows out in the open and this does not, the
+     room starts snapping honest pilots backwards at exactly the altitude where
+     they are fastest. The two have to move together or neither should move. */
+  return (driftCap(extras, openSpace)
+    + BOOST * Math.max(1, extras.superMult) * openSpace
+    + STRAFE_SPEED * slide * 1.42 * openSpace);
 }
 
 /**
@@ -92,8 +98,19 @@ export function topSpeedFor(extras: Extras = NO_EXTRAS): number {
  * one thing standing between a modified client and appearing on somebody's
  * tail. Fast, bounded, and the bound is still meaningful.
  */
-export function driftCap(_extras: Extras = NO_EXTRAS): number {
-  return BOOST * DRIFT_MAX_MULT;
+export function driftCap(_extras: Extras = NO_EXTRAS, openSpace = 1): number {
+  /* ⚠ IT SCALES WITH OPEN SPACE, AND NOT SCALING IT WAS THE BUG. Cruise and
+     boost are both multiplied by cruiseScale as a ship climbs - that is what
+     makes deep space fast - but this ceiling was a flat number. So out in the
+     open the ceiling sat far below the speed a boost actually reaches, the
+     carried speed clamped to it, and the ship eased DOWN to cruise-plus-ceiling
+     the moment boost was released. Measured in the live game: cruise 1,975,
+     boost 3,046, and one second after letting go 2,697. Geoff: "using shift to
+     accelerate then slows down as soon as I stop accelerating."
+
+     A ceiling meant to be four boosts' worth has to be four boosts' worth of
+     THE BOOST THIS SHIP IS ACTUALLY GETTING. */
+  return BOOST * DRIFT_MAX_MULT * openSpace;
 }
 export const YAW_RATE = 1.5;   /* radians per second at full stick */
 /** Roll, in radians a second. Quicker than yaw: rolling is how you point a
@@ -593,7 +610,7 @@ export function stepFlight(
      the lever already means "the way I want to be going": hold boost with the
      throttle forward and you gather speed, hold it with the throttle in reverse
      and you shed it. Nothing new to learn and nothing new to bind. */
-  const cap = driftCap(f.extras);
+  const cap = driftCap(f.extras, openSpace);
   if (wantBoost) {
     const push = DRIFT_ACCEL * dt * (wantSuper ? f.extras.superMult : 1);
     f.drift = f.throttle < 0

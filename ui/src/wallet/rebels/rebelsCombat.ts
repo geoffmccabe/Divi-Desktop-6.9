@@ -19,6 +19,30 @@ import {
    velocity so they move faster and it's easier to hit things"). Every round
    scales from this: the mini gun, the fighters', the drones'. */
 export const BULLET_SPEED = 240 * SHRINK;      /* globe units per second */
+/**
+ * ⚠ MUZZLE VELOCITY IS RELATIVE TO THE SHIP, and it was not.
+ *
+ * Every round left the muzzle at BULLET_SPEED in WORLD coordinates, with
+ * nothing added for how fast the ship was already going. Standing still that is
+ * right and nobody noticed for months. Moving, it is wrong in a way the pilot
+ * sees directly: the camera rides the ship, so what a pilot watches is the
+ * round's speed MINUS their own. At a cruise of 4 against a bullet at 120 the
+ * difference is invisible. Carrying speed changed that - a ship now holds 20,
+ * 40, nearly 50 with the drift cap - and the same round crawls away at a third
+ * of the speed it used to, which reads as the gun not firing at all.
+ *
+ * Geoff: "we see the flashes on the sides of the screen but there are no
+ * bullets or trails", and the fix in his words: "Bullet speed should be added
+ * to the ship speed in the same normalized proportions, so it's always
+ * appearing to be the same velocity from the ship's point of view."
+ *
+ * So the ship's own velocity is ADDED to every round, torpedo and mini-gun
+ * burst it fires. From the cockpit a shot now leaves at BULLET_SPEED whatever
+ * the ship is doing, which is both what a gun does and what it should look
+ * like. It also means a round fired while flying backwards does not hang in
+ * front of the ship waiting to be flown into.
+ */
+export const INHERIT_SHIP_VELOCITY = true;
 export const BULLET_LIFE = 2.2;
 /**
  * How slow a round may be before its LIFE stops being stretched to compensate.
@@ -1197,10 +1221,18 @@ function scatterCoins(c: CombatState, e: Enemy): void {
 }
 
 /** Launched straight down the middle, from between the guns. */
-export function fireTorpedo(c: CombatState, pos: THREE.Vector3, fwd: THREE.Vector3, owner = ""): void {
+export function fireTorpedo(
+  c: CombatState, pos: THREE.Vector3, fwd: THREE.Vector3, owner = "",
+  /** The ship's own velocity. See INHERIT_SHIP_VELOCITY: a torpedo is slower
+   *  than a round (38 against 240), so it is the one that looked worst - a ship
+   *  at 40 could outrun its own torpedo entirely. */
+  shipVel?: THREE.Vector3,
+): void {
+  const vel = fwd.clone().multiplyScalar(TORPEDO_SPEED);
+  if (shipVel) vel.add(shipVel);
   c.torpedoes.push({
     pos: pos.clone().addScaledVector(fwd, 1.5),
-    vel: fwd.clone().multiplyScalar(TORPEDO_SPEED),
+    vel,
     life: TORPEDO_FUSE,
     owner,
   });
@@ -1287,14 +1319,51 @@ export function fireGuns(
    * and lifetimes cannot drift apart between the two.
    */
   at?: [THREE.Vector3, THREE.Vector3],
+  /** The ship's own velocity, added to every round. See INHERIT_SHIP_VELOCITY.
+   *  Absent means a stationary mount, which is what a test usually wants. */
+  shipVel?: THREE.Vector3,
 ): [THREE.Vector3, THREE.Vector3] {
   const m: [THREE.Vector3, THREE.Vector3] = at ?? [new THREE.Vector3(), new THREE.Vector3()];
   if (!at) gunMuzzles(pos, fwd, up, fovDeg, aspect, m);
   /* Both barrels are aimed at the same point down the middle, so the two
      streams cross where the crosshair is and anything under it is on the line. */
-  const target = new THREE.Vector3().copy(pos).addScaledVector(fwd, CONVERGE);
-  for (const muzzle of m) {
-    const vel = target.clone().sub(muzzle).normalize().multiplyScalar(BULLET_SPEED);
+  /* ---- PARALLEL, NOT CONVERGING ----
+     ⚠ THE GUNS USED TO CROSS. Each muzzle aimed at a point CONVERGE units
+     ahead, so the two streams met in front of the ship and crossed over. Geoff:
+     "They are crossing in front of me... The bullets need to all be shot
+     perfectly parallel with each other, including Drone bullets."
+ 
+     Converging guns are a real thing on real aircraft and they are wrong here:
+     the ship is the camera, so the crossing happens right in the middle of the
+     view and reads as the rounds going sideways. Parallel also means the pair
+     stay the width of the ship apart at any range, which is what makes them
+     read as coming from two guns rather than one point. */
+  const along = fwd.clone().normalize();
+  /* ---- AND THEY LAUNCH NEARER THE AXIS THAN THEY FLASH ----
+     ⚠ THE MUZZLES ARE AT THE EDGES OF THE SCREEN, not on a gun: gunMuzzles puts
+     them at the frame's corners so that in first person, where there is no hull
+     to see, the fire arriving from the edges IS the ship. That is 2.46 units
+     either side of the axis.
+ 
+     Converging hid what that costs. Parallel from there would send both streams
+     straight down the left and right edges of the view for ever, straddling
+     anything in the middle: a fighter has a hit radius of 1.05, so BOTH rounds
+     would miss what the crosshair is on. Measured as a failing test the moment
+     the convergence came out, which is the test doing its job.
+ 
+     So the FLASH stays at the frame edge, drawn by the cockpit from its own
+     muzzle positions, and the ROUND leaves from within an enemy's radius of the
+     axis. The pair still reads as two parallel streams and still hits what it is
+     pointed at. */
+  const right = new THREE.Vector3().crossVectors(along, up).normalize();
+  const spread = Math.min(ENEMY_R * 0.9, 1);
+  const side = [-spread, spread];
+  for (let i = 0; i < m.length; i++) {
+    const muzzle = m[i].clone()
+      .sub(right.clone().multiplyScalar(m[i].clone().sub(pos).dot(right)))
+      .addScaledVector(right, side[i] ?? 0);
+    const vel = along.clone().multiplyScalar(BULLET_SPEED);
+    if (shipVel) vel.add(shipVel);
     pushBullet(c, { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, owner });
   }
   return m;
@@ -1355,9 +1424,12 @@ export function fireMini(
   aimFrom: THREE.Vector3,
   aimDir: THREE.Vector3,
   owner = "",
+  /** The ship's own velocity. See INHERIT_SHIP_VELOCITY. */
+  shipVel?: THREE.Vector3,
 ): void {
   const target = aimFrom.clone().addScaledVector(aimDir, CONVERGE);
   const vel = target.sub(muzzle).normalize().multiplyScalar(BULLET_SPEED * MINI_SPEED_MULT);
+  if (shipVel) vel.add(shipVel);
   pushBullet(c, { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true, owner });
 }
 

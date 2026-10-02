@@ -390,7 +390,13 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
      back by the room or force that check to be given up. */
   const g = createFlight(pad);
   run(g, 60 * 120, stick({ boosting: true }));
-  ok("carried speed has a ceiling", g.drift <= driftCap(g.extras) + 1e-6,
+  /* ⚠ THE CEILING SCALES WITH OPEN SPACE, and asserting the unscaled one was
+     what hid the bug this fixes. Cruise and boost are both multiplied by
+     cruiseScale as a ship climbs, and the ceiling was not, so out in the open it
+     sat far below the speed a boost reaches and the ship eased back DOWN to it
+     the moment boost was released. Measured live: boost 3,046, one second after
+     letting go 2,697. The bound the room reads scales the same way. */
+  ok("carried speed has a ceiling", g.drift <= driftCap(g.extras, cruiseScale(g.alt)) + 1e-6,
      `${g.drift.toFixed(1)} against a cap of ${driftCap(g.extras).toFixed(1)}`);
   ok("and the room's bound covers everything at once",
      topSpeedFor(g.extras) >= driftCap(g.extras) + BOOST,
@@ -1037,7 +1043,21 @@ const pad = new THREE.Vector3(0, 0, R + 4.2);
   const k = createFlight(pad);
   run(k, 60 * 120, stick({ boosting: true, throttle: 1 }));
   ok("carried speed still cannot grow past its cap",
-     k.drift <= driftCap() + 0.01, `${k.drift.toFixed(1)} against ${driftCap().toFixed(1)}`);
+     k.drift <= driftCap(k.extras, cruiseScale(k.alt)) + 0.01,
+     `${k.drift.toFixed(1)} against ${driftCap(k.extras, cruiseScale(k.alt)).toFixed(1)} at open space ${cruiseScale(k.alt).toFixed(1)}`);
+
+  /* ---- AND THE BUG ITSELF: A BOOST OUT IN THE OPEN IS KEPT ----
+     This is the case the flat ceiling broke and the one Geoff reported. The
+     earlier "letting go of boost KEEPS the speed" test flies near the pad, where
+     open space is 1 and the flat ceiling was generous enough to hide it. */
+  const high = createFlight(new THREE.Vector3(0, 0, R + MAX_ALT * 0.5));
+  run(high, 60 * 3, stick({ throttle: 1 }));
+  run(high, 60 * 6, stick({ boosting: true, throttle: 1 }));
+  const fastOut = high.speed;
+  run(high, 60 * 5, stick({ throttle: 1 }));
+  ok("a boost OUT IN THE OPEN is kept when it is released",
+     high.speed > fastOut * 0.97,
+     `${fastOut.toFixed(1)} -> ${high.speed.toFixed(1)} at open space ${cruiseScale(high.alt).toFixed(1)}`);
   /* NOT asserted here: total speed against topSpeedFor. Cruise is multiplied
      by cruiseScale with altitude, so out in open space the ship legitimately
      exceeds that figure and did so before carried speed was kept. That is a

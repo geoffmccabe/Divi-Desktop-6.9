@@ -94,27 +94,48 @@ export function gameForPlace(
   wanted: string | null = null,
 ): GameType {
   const here = games.filter((g) => g.place === place && g.published);
-  /* ---- WHAT THE PLACE SAYS ITS MAIN FIGHT IS ----
-     Before anything else, and before the alphabet. See GameType.main: the
-     default Earth fight was being decided by id order, and adding a game whose
-     name happened to sort earlier replaced the tutorial every new player lands
-     in. Several marked is somebody's mistake rather than a crash, so the first
-     is taken and validateGames reports it. */
-  const main = here.filter((g) => g.main);
-  if (main.length > 0) return main[0];
-  /* ---- THE ROOM'S NAME MAY SAY WHICH ONE ----
+  /* ================= PRECEDENCE, MOST SPECIFIC FIRST =================
+   *
+   *   1. the ROOM'S NAME          somebody chose this game
+   *   2. the place's MAIN fight    nobody chose, so the place says
+   *   3. the alphabet              nobody said at all: last resort
+   *   4. the built-in              nothing published here
+   *
+   * ⚠ THE ORDER IS THE WHOLE THING, AND I SHIPPED IT WRONG. The main check sat
+   * above this one and returned unconditionally, so the moment ANY game in a
+   * place was marked main, no room name in that place could ever be honoured.
+   * Every card in the picker led to the same game. Measured live after the
+   * deploy: earth_wardens-gate ran shakedown at 5 rounds instead of wardens-gate
+   * at 8, and spike_the-hollow-crown ran descent at 8 instead of 10.
+   *
+   * Worse than the alphabet bug it was fixing: that one moved the DEFAULT, this
+   * deleted the point of choosing. And it was inert until the data arrived - the
+   * other session marking shakedown is what armed it - so neither half was wrong
+   * alone. The comment below already said "a name that matches nothing falls
+   * through to the place's own game", so the code and the comment disagreed and
+   * the comment was right.
+   */
+
+  /* ---- 1. THE ROOM'S NAME ----
      "earth_shakedown" is a room playing shakedown. That is what lets Geoff have
      more than one Earth game: the choice is which ROOM to join, because a room
      is one simulation with one sky and two players in it cannot be playing
      different games.
 
-     A name that matches nothing falls through to the place's own game rather
-     than to an empty room. Somebody following a stale link to a game that has
-     since been deleted or unpublished should find a fight, not a void. */
+     A name that matches nothing falls through rather than to an empty room.
+     Somebody following a stale link to a game that has since been deleted or
+     unpublished should find a fight, not a void. */
   if (wanted) {
     const named = here.find((g) => g.id === wanted);
     if (named) return named;
   }
+  /* ---- 2. WHAT THE PLACE SAYS ITS MAIN FIGHT IS ----
+     For when nobody chose. See GameType.main: the default Earth fight used to be
+     decided by id order, and adding a game whose name sorted earlier replaced
+     the tutorial every new player lands in. Several marked is somebody's mistake
+     rather than a crash, so the first is taken and validateGames reports it. */
+  const main = here.filter((g) => g.main);
+  if (main.length > 0) return main[0];
   /* ⚠ THE ALPHABET, AND ONLY AS A LAST RESORT. Nothing here is wrong when
      there is one game; with several and none marked it is arbitrary, which is
      exactly how the tutorial was lost. `mainIsGuessed` lets the room say so. */
