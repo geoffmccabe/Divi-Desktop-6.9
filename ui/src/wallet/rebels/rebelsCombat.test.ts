@@ -1684,6 +1684,74 @@ function run(c: CombatState, frames: number, w = world()) {
   setDragonRandomForTests(() => 0.99);
 }
 
+/* ================= A GUN FIRES FROM A MOVING SHIP =================
+   ⚠ MUZZLE VELOCITY IS RELATIVE TO THE SHIP, and it was not. Every round left
+   at BULLET_SPEED in WORLD coordinates with nothing added for how fast the ship
+   was already going. Standing still that is right. Moving it is wrong in a way
+   the pilot sees directly, because the camera rides the ship: what they watch
+   is the round's speed MINUS their own.
+
+   At a cruise of 4 against a bullet at 120 that is invisible. Carrying speed
+   changed it - a ship now holds 20 to 50 - and the same round crawls away at a
+   third of its old speed, which reads as the gun not firing. Geoff: "we see the
+   flashes on the sides of the screen but there are no bullets or trails", and
+   "Bullet speed should be added to the ship speed in the same normalized
+   proportions, so it's always appearing to be the same velocity from the ship's
+   point of view."
+
+   So these assert the RELATIVE speed, which is the thing a pilot actually sees,
+   rather than the world speed, which is the thing that was already correct. */
+{
+  const fwd = new THREE.Vector3(0, 0, -1);
+  const up = new THREE.Vector3(0, 1, 0);
+  const at = new THREE.Vector3(0, R + 40, 0);
+
+  /** How fast a round leaves, AS THE COCKPIT SEES IT. */
+  const relative = (shipSpeed: number): number => {
+    const c = createCombat();
+    const shipVel = fwd.clone().multiplyScalar(shipSpeed);
+    fireGuns(c, at, fwd, up, 70, 1.6, "p", undefined, shipVel);
+    const b = c.bullets[0];
+    return b.vel.clone().sub(shipVel).length();
+  };
+
+  const still = relative(0);
+  ok("(baseline) a round from a stationary ship leaves at the gun's own speed",
+     Math.abs(still - BULLET_SPEED) < 0.01, `${still.toFixed(1)} against ${BULLET_SPEED.toFixed(1)}`);
+
+  /* ---- THE CLAIM ---- */
+  for (const speed of [4, 20, 40, 60]) {
+    const seen = relative(speed);
+    ok(`a ship doing ${speed} still sees its rounds leave at the same speed`,
+       Math.abs(seen - still) < 0.01, `${seen.toFixed(1)} against ${still.toFixed(1)}`);
+  }
+
+  /* ---- AND THE WORLD SPEED REALLY DID CHANGE ----
+     Or the test above would pass on a version that ignores the ship entirely. */
+  const c = createCombat();
+  fireGuns(c, at, fwd, up, 70, 1.6, "p");
+  const worldStill = c.bullets[0].vel.length();
+  const c2 = createCombat();
+  fireGuns(c2, at, fwd, up, 70, 1.6, "p", undefined, fwd.clone().multiplyScalar(40));
+  const worldMoving = c2.bullets[0].vel.length();
+  ok("and in the world the round really is faster for the ship's speed",
+     worldMoving > worldStill + 39, `${worldMoving.toFixed(1)} against ${worldStill.toFixed(1)}`);
+
+  /* ---- THE TORPEDO IS THE ONE THAT WAS WORST ----
+     38 against a bullet's 240: a ship at 40 could outrun its own torpedo. */
+  const t0 = createCombat();
+  fireTorpedo(t0, at, fwd, "p");
+  const tStill = t0.torpedoes[0].vel.length();
+  const t1 = createCombat();
+  const fast = fwd.clone().multiplyScalar(40);
+  fireTorpedo(t1, at, fwd, "p", fast);
+  const tSeen = t1.torpedoes[0].vel.clone().sub(fast).length();
+  ok("a ship cannot outrun its own torpedo any more",
+     Math.abs(tSeen - tStill) < 0.01, `leaves at ${tSeen.toFixed(1)}, was ${tStill.toFixed(1)} relative`);
+  ok("(context) and it could before: the torpedo is slower than the ship",
+     tStill < 40, `torpedo ${tStill.toFixed(1)} against a ship at 40`);
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);

@@ -116,7 +116,11 @@ export const MAX_ALT = planetDistance(PLANET_COUNT) + planetDiameter(PLANET_COUN
    did. The point of halving the speed was to make the space AROUND EARTH feel
    bigger; making the trip to Morrowain take two minutes instead of one was not
    part of it. */
-const OPEN_SPACE = 10;
+/** How much faster everything flies in open space, at the top of the scale.
+ *  Exported because the ROOM has to size its anti-teleport budget by the same
+ *  number: cruise, boost and carried speed all scale by cruiseScale, so a budget
+ *  that does not would refuse honest pilots exactly where they are fastest. */
+export const OPEN_SPACE = 10;
 export function cruiseScale(alt: number): number {
   const t = Math.min(1, Math.max(0, (alt - 60) / 700));
   return 1 + (OPEN_SPACE - 1) * t * t;

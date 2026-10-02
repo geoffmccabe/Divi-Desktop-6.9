@@ -61,7 +61,7 @@ import {
   MAX_SHIELD, MAX_AMMO, MAX_TORPEDOES, MAX_GUARDS, GUARD_SECONDS, GUARD_ABSORB, CRASH_DAMAGE,
   BOOST,
 } from "../../../ui/src/wallet/rebels/orbitFlight";
-import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
+import { R, OPEN_SPACE, cruiseScale } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { VIEW, inRange } from "../../../ui/src/wallet/rebels/rebelsView";
 import {
   WING_MAX, wingPosition, wingSpin, wingShare, wingRounds, wingTiers,
@@ -208,6 +208,10 @@ interface Seat {
   lastBonus: number;
   /** The most this ship can move in a second, from its gear. */
   topSpeed: number;
+  /** How fast this ship is actually travelling, worked out HERE from the
+   *  positions it reports rather than taken from it. Every round it fires
+   *  inherits this; see INHERIT_SHIP_VELOCITY in rebelsCombat.ts. */
+  vel: THREE.Vector3;
   lastBeam: number;
   /* ---- the flock tally ----
      Members of each fleet this seat has downed, by fleet id. Internal: the
@@ -272,6 +276,7 @@ interface Env {
 }
 
 /* Scratch for the wingmen's aim, which is worked out once per round fired. */
+const _vel = new THREE.Vector3();
 const _wingAim = new THREE.Vector3();
 /* And for weighing up how far away something happened. */
 const _evAt = new THREE.Vector3();
@@ -433,7 +438,7 @@ export class RebelsRoom {
     const seat: Seat = {
       id, ws, node: "", name: "", ship: "", paint: undefined,
       account: from, from, guest: false, lastClaim: -99,
-      gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, shieldMax: MAX_SHIELD, topSpeed: topSpeedFor(), lastBeam: -99,
+      gear: new Set(), ammoMax: MAX_AMMO, torpsMax: MAX_TORPEDOES, shieldMax: MAX_SHIELD, topSpeed: topSpeedFor(), vel: new THREE.Vector3(), lastBeam: -99,
       extras: { torpedoes: 0, magazine: 0, superMult: SUPER_BOOST_MULT, strafeMult: 1 }, lastUse: -99, lastDock: -99, lastGear: -99, hurtWindow: -99, hurtSpent: 0, bonusUntil: -99,
       sawShips: new Set(), sawEnemies: new Set(),
       /* Far enough back that the first claim in a fresh room is not inside
@@ -1552,11 +1557,31 @@ export class RebelsRoom {
        player teleporting backwards through no fault of their own, which is a
        far worse bug than someone gaining a few units. */
     const since = Math.max(DT, this.now - (seat as { lastTf?: number }).lastTf!) || DT;
+    /* ---- AND HOW FAST THE WORLD LETS IT GO HERE ----
+       ⚠ cruise, boost and carried speed are ALL multiplied by cruiseScale as a
+       ship climbs, so a budget built from the unscaled figures refuses honest
+       pilots at exactly the altitude where they are fastest. Spikeworld's
+       coordinates are measured from its own zero, so an altitude taken from them
+       means nothing: out there the ship is in open space by definition and gets
+       the full scale. */
+    const open = this.place.kind === "spike"
+      ? OPEN_SPACE
+      : cruiseScale(seat.body.pos.length() - R);
     /* Against what THIS ship can do: super boost and the slides count. */
-    const budget = seat.topSpeed * (since + 0.5) * 1.25;
+    const budget = seat.topSpeed * open * (since + 0.5) * 1.25;
     if (seat.body.pos.distanceTo(p) > budget) {
       return this.snapBack(seat, "moved too far");
     }
+
+    /* ---- HOW FAST THIS SHIP IS GOING ----
+       Worked out from two reported positions rather than taken from the client,
+       so a ship cannot claim a speed to make its rounds faster. Bounded by
+       topSpeed for the same reason, and smoothed a little because one late
+       packet would otherwise read as a lurch and throw a round sideways.
+       Every projectile this seat fires inherits it: see INHERIT_SHIP_VELOCITY. */
+    const moved = _vel.copy(p).sub(seat.body.pos).divideScalar(since);
+    if (moved.length() > seat.topSpeed * open) moved.setLength(seat.topSpeed * open);
+    seat.vel.lerp(moved, 0.5);
 
     seat.body.pos.copy(p);
     seat.body.fwd.copy(f).normalize();
@@ -1619,7 +1644,7 @@ export class RebelsRoom {
       if (seat.ammo < 1) return;
       seat.lastMain = this.now;
       seat.ammo -= 1;
-      fireGuns(this.combat, from, f, up, 70, 1.6, seat.id);
+      fireGuns(this.combat, from, f, up, 70, 1.6, seat.id, undefined, seat.vel);
       /* ---- IN UNISON ----
          Every wingman with a round left fires from where it is, at what its
          owner is aiming at, for its tier's share of a round's damage. The
@@ -1656,13 +1681,13 @@ export class RebelsRoom {
          which put a number where a vector goes and threw on every mini-gun
          message the room received. */
       miniMuzzle(from, f, right, up, 70, 1.6, muzzle);
-      fireMini(this.combat, muzzle, from, aim.normalize(), seat.id);
+      fireMini(this.combat, muzzle, from, aim.normalize(), seat.id, seat.vel);
     } else if (m.k === "torp") {
       if (this.now - seat.lastTorp < 0.5) return;
       if (seat.torps < 1) return;
       seat.lastTorp = this.now;
       seat.torps -= 1;
-      fireTorpedo(this.combat, from, f, seat.id);
+      fireTorpedo(this.combat, from, f, seat.id, seat.vel);
     } else if (m.k === "beam") {
       /* The beam the client named, if it declared it. Same burst length and
          cost as the solo game, so a beam in company is the beam alone. */

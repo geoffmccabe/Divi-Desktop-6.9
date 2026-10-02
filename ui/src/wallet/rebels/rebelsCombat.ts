@@ -19,6 +19,30 @@ import {
    velocity so they move faster and it's easier to hit things"). Every round
    scales from this: the mini gun, the fighters', the drones'. */
 export const BULLET_SPEED = 240 * SHRINK;      /* globe units per second */
+/**
+ * ⚠ MUZZLE VELOCITY IS RELATIVE TO THE SHIP, and it was not.
+ *
+ * Every round left the muzzle at BULLET_SPEED in WORLD coordinates, with
+ * nothing added for how fast the ship was already going. Standing still that is
+ * right and nobody noticed for months. Moving, it is wrong in a way the pilot
+ * sees directly: the camera rides the ship, so what a pilot watches is the
+ * round's speed MINUS their own. At a cruise of 4 against a bullet at 120 the
+ * difference is invisible. Carrying speed changed that - a ship now holds 20,
+ * 40, nearly 50 with the drift cap - and the same round crawls away at a third
+ * of the speed it used to, which reads as the gun not firing at all.
+ *
+ * Geoff: "we see the flashes on the sides of the screen but there are no
+ * bullets or trails", and the fix in his words: "Bullet speed should be added
+ * to the ship speed in the same normalized proportions, so it's always
+ * appearing to be the same velocity from the ship's point of view."
+ *
+ * So the ship's own velocity is ADDED to every round, torpedo and mini-gun
+ * burst it fires. From the cockpit a shot now leaves at BULLET_SPEED whatever
+ * the ship is doing, which is both what a gun does and what it should look
+ * like. It also means a round fired while flying backwards does not hang in
+ * front of the ship waiting to be flown into.
+ */
+export const INHERIT_SHIP_VELOCITY = true;
 export const BULLET_LIFE = 2.2;
 /**
  * How slow a round may be before its LIFE stops being stretched to compensate.
@@ -1197,10 +1221,18 @@ function scatterCoins(c: CombatState, e: Enemy): void {
 }
 
 /** Launched straight down the middle, from between the guns. */
-export function fireTorpedo(c: CombatState, pos: THREE.Vector3, fwd: THREE.Vector3, owner = ""): void {
+export function fireTorpedo(
+  c: CombatState, pos: THREE.Vector3, fwd: THREE.Vector3, owner = "",
+  /** The ship's own velocity. See INHERIT_SHIP_VELOCITY: a torpedo is slower
+   *  than a round (38 against 240), so it is the one that looked worst - a ship
+   *  at 40 could outrun its own torpedo entirely. */
+  shipVel?: THREE.Vector3,
+): void {
+  const vel = fwd.clone().multiplyScalar(TORPEDO_SPEED);
+  if (shipVel) vel.add(shipVel);
   c.torpedoes.push({
     pos: pos.clone().addScaledVector(fwd, 1.5),
-    vel: fwd.clone().multiplyScalar(TORPEDO_SPEED),
+    vel,
     life: TORPEDO_FUSE,
     owner,
   });
@@ -1287,6 +1319,9 @@ export function fireGuns(
    * and lifetimes cannot drift apart between the two.
    */
   at?: [THREE.Vector3, THREE.Vector3],
+  /** The ship's own velocity, added to every round. See INHERIT_SHIP_VELOCITY.
+   *  Absent means a stationary mount, which is what a test usually wants. */
+  shipVel?: THREE.Vector3,
 ): [THREE.Vector3, THREE.Vector3] {
   const m: [THREE.Vector3, THREE.Vector3] = at ?? [new THREE.Vector3(), new THREE.Vector3()];
   if (!at) gunMuzzles(pos, fwd, up, fovDeg, aspect, m);
@@ -1295,6 +1330,7 @@ export function fireGuns(
   const target = new THREE.Vector3().copy(pos).addScaledVector(fwd, CONVERGE);
   for (const muzzle of m) {
     const vel = target.clone().sub(muzzle).normalize().multiplyScalar(BULLET_SPEED);
+    if (shipVel) vel.add(shipVel);
     pushBullet(c, { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, owner });
   }
   return m;
@@ -1355,9 +1391,12 @@ export function fireMini(
   aimFrom: THREE.Vector3,
   aimDir: THREE.Vector3,
   owner = "",
+  /** The ship's own velocity. See INHERIT_SHIP_VELOCITY. */
+  shipVel?: THREE.Vector3,
 ): void {
   const target = aimFrom.clone().addScaledVector(aimDir, CONVERGE);
   const vel = target.sub(muzzle).normalize().multiplyScalar(BULLET_SPEED * MINI_SPEED_MULT);
+  if (shipVel) vel.add(shipVel);
   pushBullet(c, { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, mini: true, owner });
 }
 
