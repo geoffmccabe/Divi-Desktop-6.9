@@ -271,8 +271,8 @@ for (const [name, at] of [places[0], places[3]]) {
      2,512,000 flying out of the shell and back. Sizing the allowance against the
      static figure left it dropping in flight while every static test passed. */
   ok("and the allowance covers flight, not just standing still",
-     TRIANGLE_BUDGET > 2_512_000,
-     `${TRIANGLE_BUDGET} against the worst measured flight demand of 2,512,000`);
+     TRIANGLE_BUDGET > 4_038_000,
+     `${TRIANGLE_BUDGET} against the worst measured flight demand of 4,038,000`);
   /* ---- WHERE THE SAVING REALLY COMES FROM ----
      Not from filling the planet in, which made it look solid from outside and
      vanish from inside, and no longer from growing the clumps with the level

@@ -111,18 +111,15 @@ import {
    WHICH ones changing every frame because the cutoff falls across a list
    ordered by an always-changing distance. Holes and flashing, one cause.
 
-   2.8 MILLION, not 2.0: a static viewpoint wants 1,812,000 but IN FLIGHT the
-   anti-flicker hold keeps chunks alive past their ring, and the worst measured
-   flight peak is 2,512,000 - flying out of the shell and back in. Sizing this
-   against the static figure left it dropping during flight while every static
-   test passed, which is the same mistake as measuring a bound against the easy
-   case. 2.8M is 11% over the worst flight, and the test fails
+   4.5 MILLION, sized to the rings that actually ship. A static viewpoint wants
+   2,396,800; IN FLIGHT the anti-flicker hold keeps chunks alive past their ring,
+   and the worst measured flight peak is 4,038,000 orbiting inside the shell.
+   Sizing this against the static figure left it dropping during flight while
+   every static test passed, which is the same mistake as measuring a bound
+   against the easy case. 4.5M is 11% over the worst flight, and the test fails
    if any viewpoint ever exceeds it, so this cannot silently start dropping
-   again. Against what it replaces this is more triangles DRAWN (1.81M where
-   1.5M was drawn with gaps) and fewer triangles ASKED FOR (1.81M where 2.40M
-   was asked for), which is the trade: a complete planet for a quarter less
-   work than it was demanding. */
-export const TRIANGLE_BUDGET = 2800000;
+   again. */
+export const TRIANGLE_BUDGET = 4500000;
 
 /**
  * How far the dust lets you see, in world units.
@@ -203,7 +200,20 @@ export function dustFarFor(radiusCubes: number): number {
    1,812,000, and the cavity keeps 44 chunks at step 1 and 2 for the rock the
    ship is actually near. Geoff: "reduce total triangle count but still get the
    effect we want." */
-export const RING_CUBES = [22, 50, 110, 230, 1e9] as const;
+/* ⚠ PUT BACK TO [36, 96, 230, 520]. Pulling them in cut the triangle demand by
+   a quarter, which is why I did it, and it also changed HOW THE PLACE LOOKS:
+   rock went coarse much nearer the ship. Geoff, on the result: "the rendering of
+   blocks on the spikeworld planet is worse than ever."
+
+   And it bought nothing for the fault that matters. Measured over four flights,
+   counting LEVEL CHANGES rather than chunks vanishing - which is what a player
+   sees as the world rearranging - the tightened rings were no better: 100
+   against 116 flying in, 148 against 104 across the cavity. The shifting is
+   frequent either way and the rings are not what causes it.
+
+   So the look goes back to what it was and the budget above is sized to it. The
+   holes fix stays, because that one was measured and is real. */
+export const RING_CUBES = [36, 96, 230, 520, 1e9] as const;
 
 /**
  * What a chunk costs, by detail level. MEASURED, and the AVERAGE rather than
