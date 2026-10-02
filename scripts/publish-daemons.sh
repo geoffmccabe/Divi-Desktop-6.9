@@ -75,7 +75,14 @@ print("  gate archives ->", v, "(", s2.count(v), "names )")
 PY2
 
 cd "$SITE"
-git add public/downloads/divid69-$V-*.tar.gz && git commit -q -m "Publish divid69 $V" && git push origin HEAD:main 2>&1 | tail -1
+# One archive per push: a slow uplink and GitHub's ~50 s cut-off (2026-Sep-30)
+# refuse one large push but take three small ones.
+for f in macos-arm64 linux-x86_64 windows-x86_64; do
+  git add public/downloads/divid69-$V-$f.tar.gz && git commit -q -m "Publish divid69 $V ($f)"
+  ok=0; for try in 1 2 3; do git -c http.version=HTTP/1.1 push origin HEAD:main >/dev/null 2>&1 && { ok=1; break; }; sleep 10; done
+  [ $ok = 1 ] || fail "could not push divid69-$V-$f.tar.gz"
+  echo "  pushed: $f"
+done
 
 for f in macos-arm64 linux-x86_64 windows-x86_64; do
   local_size=$(stat -f %z "$OUT/divid69-$V-$f.tar.gz"); remote_size=0

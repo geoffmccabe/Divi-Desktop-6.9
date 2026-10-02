@@ -172,6 +172,7 @@ pub fn run() {
     // When the node last gave us an answer of any kind. Log activity may
     // excuse a silence, but not an unlimited one -- see MAX_SILENCE.
     let mut answered_at = Instant::now();
+    let mut forks = crate::forkheal::Healer::new();
 
     loop {
         std::thread::sleep(CHECK_EVERY);
@@ -180,6 +181,10 @@ pub fn run() {
         // A node we do not manage is not ours to restart.
         if cfg.remote {
             continue;
+        }
+        // Stuck on a stale fork with no peers: leave the fork (see forkheal.rs).
+        if let Some(done) = forks.check(&cfg) {
+            crate::applog::log(format!("watchdog: {done}"));
         }
         // NOT RUNNING AT ALL. This used to be skipped, on the assumption that
         // start-up handles it. Start-up only runs once. If the node stops while

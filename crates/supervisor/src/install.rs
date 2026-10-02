@@ -24,14 +24,14 @@ use std::path::{Path, PathBuf};
 /// download" and keeps whatever it has — including a node that crashes on
 /// startup. 69.0.2 carries the fix for that crash, so every install must fetch
 /// it rather than keep the copy it already trusts.
-pub const DIVID69_VERSION: &str = "69.0.6";
+pub const DIVID69_VERSION: &str = "69.0.7";
 
 const BASE_URL: &str = "https://scan.divi.love/downloads";
 
 /// Known-live Divi peers harvested from the network, written into a fresh
 /// node's divi.conf so it connects on the first try. This is a bootstrap
 /// aid only; the node builds its own peer database after connecting once.
-const SEED_PEERS: &[&str] = &[
+pub const SEED_PEERS: &[&str] = &[
     /* Our own reachable nodes first (Europe, UK): they run the newest node
        and offer to relay for nodes that cannot be reached
        (docs/PEER-RELAY-SPEC.md). A home node picks its helpers from the
@@ -86,14 +86,14 @@ struct Artifact {
 fn artifact() -> Option<Artifact> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     return Some(Artifact {
-        file: "divid69-69.0.6-macos-arm64.tar.gz",
-        sha256: "96c7f51c47b67b9485dffe650302b77b3c87569b8c91fb8871f45d63c5c6658b",
+        file: "divid69-69.0.7-macos-arm64.tar.gz",
+        sha256: "f76c9a82b5aa5c187abcf71bdcc283a911e1b2fe66825520e730117922b64378",
     });
 
     #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
     return Some(Artifact {
-        file: "divid69-69.0.6-linux-x86_64.tar.gz",
-        sha256: "48058e7d36e1ef106819bd2dc8056b579db95d6f48a840e7a349203df37a4e04",
+        file: "divid69-69.0.7-linux-x86_64.tar.gz",
+        sha256: "88596d579f7a83092274e840b1078e0413853990050cf0b45337f6672446257f",
     });
 
     // Windows x86_64: packaged the same way (.tar.gz, which Windows 10+ extracts
@@ -101,8 +101,8 @@ fn artifact() -> Option<Artifact> {
     // the in-tree depends system) and published to scan.divi.love/downloads.
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     return Some(Artifact {
-        file: "divid69-69.0.6-windows-x86_64.tar.gz",
-        sha256: "f1ec6f30cbe2166964c7bc5bb127e699c304665527b92b1e873dc7702114f1b3",
+        file: "divid69-69.0.7-windows-x86_64.tar.gz",
+        sha256: "cd24d5156d539dc201238b417b6bb913b78424238fc7cb9c07299dba3d059895",
     });
 
     #[cfg(not(any(
