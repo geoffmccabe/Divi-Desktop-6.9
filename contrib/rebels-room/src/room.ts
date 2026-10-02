@@ -1653,7 +1653,12 @@ export class RebelsRoom {
       for (const wing of seat.wings) {
         if (wing.hull <= 0 || wing.ammo < 1) continue;
         wing.ammo -= 1;
-        const aim = _wingAim.copy(from).addScaledVector(f, CONVERGE).sub(wing.pos).normalize();
+        /* ⚠ PARALLEL WITH THE SHIP'S OWN GUNS. A wingman used to aim at the
+           same convergence point its owner did, so its rounds came in at an
+           angle and crossed everything else. Geoff asked for every round from
+           the formation to fly parallel, which also means a drone's fire stays
+           beside yours instead of through it. */
+        const aim = _wingAim.copy(f).normalize();
         pushBullet(this.combat, {
           pos: wing.pos.clone(),
           vel: aim.clone().multiplyScalar(BULLET_SPEED),

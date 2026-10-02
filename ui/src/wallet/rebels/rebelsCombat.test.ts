@@ -112,14 +112,31 @@ function run(c: CombatState, frames: number, w = world()) {
   fireGuns(c, pos, fwd, up, FOV, ASPECT);
   ok("firing makes two bullets", c.bullets.length === 2);
   ok("bullets travel at speed", Math.abs(c.bullets[0].vel.length() - BULLET_SPEED) < 1e-6);
-  /* Both should pass within a whisker of the convergence point. */
+  /* ---- PARALLEL, AND STILL ON TARGET ----
+     ⚠ THIS USED TO ASSERT THE OPPOSITE. The two streams aimed at a point
+     CONVERGE units ahead and crossed on it, which in first person happens in
+     the middle of the view and reads as the rounds going sideways. Geoff: "They
+     are crossing in front of me... The bullets need to all be shot perfectly
+     parallel with each other, including Drone bullets."
+
+     Parallel has a cost the convergence was hiding, and it is asserted here
+     too: the flash is at the frame's edge, 2.46 units off the axis, so rounds
+     launched from there would straddle a fighter's 1.05 radius and BOTH miss
+     what the crosshair is on. So they launch from within that radius while the
+     flash stays where it was. Both halves matter, so both are tested. */
+  const dir0 = c.bullets[0].vel.clone().normalize();
+  const dir1 = c.bullets[1].vel.clone().normalize();
+  ok("the two streams are parallel", dir0.distanceTo(dir1) < 1e-6,
+     `${dir0.angleTo(dir1).toFixed(6)} radians apart`);
+  ok("and both run along the ship's nose", dir0.angleTo(fwd) < 1e-6);
+  /* And they still pass close enough to the crosshair to hit what is under it. */
   const target = pos.clone().addScaledVector(fwd, CONVERGE);
   const miss = c.bullets.map((b) => {
     const t = target.clone().sub(b.pos).dot(b.vel) / b.vel.lengthSq();
     return b.pos.clone().addScaledVector(b.vel, t).distanceTo(target);
   });
-  ok("the two streams cross on the crosshair", Math.max(...miss) < 0.01,
-     `worst miss ${Math.max(...miss).toFixed(4)}`);
+  ok("and both still pass within a fighter's radius of the crosshair",
+     Math.max(...miss) < ENEMY_R, `worst ${Math.max(...miss).toFixed(2)} against ${ENEMY_R}`);
 }
 
 // 2. A bullet that reaches a fighter kills it, and one that does not, does not.

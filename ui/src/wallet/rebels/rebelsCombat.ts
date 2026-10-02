@@ -1327,9 +1327,42 @@ export function fireGuns(
   if (!at) gunMuzzles(pos, fwd, up, fovDeg, aspect, m);
   /* Both barrels are aimed at the same point down the middle, so the two
      streams cross where the crosshair is and anything under it is on the line. */
-  const target = new THREE.Vector3().copy(pos).addScaledVector(fwd, CONVERGE);
-  for (const muzzle of m) {
-    const vel = target.clone().sub(muzzle).normalize().multiplyScalar(BULLET_SPEED);
+  /* ---- PARALLEL, NOT CONVERGING ----
+     ⚠ THE GUNS USED TO CROSS. Each muzzle aimed at a point CONVERGE units
+     ahead, so the two streams met in front of the ship and crossed over. Geoff:
+     "They are crossing in front of me... The bullets need to all be shot
+     perfectly parallel with each other, including Drone bullets."
+ 
+     Converging guns are a real thing on real aircraft and they are wrong here:
+     the ship is the camera, so the crossing happens right in the middle of the
+     view and reads as the rounds going sideways. Parallel also means the pair
+     stay the width of the ship apart at any range, which is what makes them
+     read as coming from two guns rather than one point. */
+  const along = fwd.clone().normalize();
+  /* ---- AND THEY LAUNCH NEARER THE AXIS THAN THEY FLASH ----
+     ⚠ THE MUZZLES ARE AT THE EDGES OF THE SCREEN, not on a gun: gunMuzzles puts
+     them at the frame's corners so that in first person, where there is no hull
+     to see, the fire arriving from the edges IS the ship. That is 2.46 units
+     either side of the axis.
+ 
+     Converging hid what that costs. Parallel from there would send both streams
+     straight down the left and right edges of the view for ever, straddling
+     anything in the middle: a fighter has a hit radius of 1.05, so BOTH rounds
+     would miss what the crosshair is on. Measured as a failing test the moment
+     the convergence came out, which is the test doing its job.
+ 
+     So the FLASH stays at the frame edge, drawn by the cockpit from its own
+     muzzle positions, and the ROUND leaves from within an enemy's radius of the
+     axis. The pair still reads as two parallel streams and still hits what it is
+     pointed at. */
+  const right = new THREE.Vector3().crossVectors(along, up).normalize();
+  const spread = Math.min(ENEMY_R * 0.9, 1);
+  const side = [-spread, spread];
+  for (let i = 0; i < m.length; i++) {
+    const muzzle = m[i].clone()
+      .sub(right.clone().multiplyScalar(m[i].clone().sub(pos).dot(right)))
+      .addScaledVector(right, side[i] ?? 0);
+    const vel = along.clone().multiplyScalar(BULLET_SPEED);
     if (shipVel) vel.add(shipVel);
     pushBullet(c, { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, owner });
   }

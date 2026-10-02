@@ -44,7 +44,10 @@ export const WING_WIDTHS = 1.5;
 export const WING_RADIUS_MIN = 5;
 export const WING_RADIUS_MAX = 26;
 /** Drawn at half the owner's size. */
-export const WING_SCALE = 0.5;
+/* ⚠ A QUARTER, NOT A HALF. Geoff: "It should be 25% my width". At 0.5 a
+   wingman was half the ship and read as a second fighter flying alongside
+   rather than as a drone escorting one. */
+export const WING_SCALE = 0.25;
 
 /** The ring's radius for a ship whose half-span is `reach`. */
 export function wingRadius(reach: number): number {
