@@ -126,9 +126,15 @@ function run(c: CombatState, frames: number, w = world()) {
      flash stays where it was. Both halves matter, so both are tested. */
   const dir0 = c.bullets[0].vel.clone().normalize();
   const dir1 = c.bullets[1].vel.clone().normalize();
-  ok("the two streams are parallel", dir0.distanceTo(dir1) < 1e-6,
-     `${dir0.angleTo(dir1).toFixed(6)} radians apart`);
-  ok("and both run along the ship's nose", dir0.angleTo(fwd) < 1e-6);
+  /* ⚠ NEARLY parallel, not exactly, and the difference is forced. See CONVERGE:
+     the guns are at the frame edges, so perfectly parallel streams straddle a
+     fighter's radius and both rounds miss what the crosshair is on, for ever.
+     This asserts they are within a few degrees - no visible V leaving the ship -
+     while the hit tests below assert they still land. Both are the contract. */
+  ok("the two streams run very nearly parallel", dir0.angleTo(dir1) < 0.1,
+     `${(dir0.angleTo(dir1) * 180 / Math.PI).toFixed(1)} degrees apart`);
+  ok("and both run within a few degrees of the ship's nose",
+     dir0.angleTo(fwd) < 0.05, `${(dir0.angleTo(fwd) * 180 / Math.PI).toFixed(1)} degrees`);
   /* And they still pass close enough to the crosshair to hit what is under it. */
   const target = pos.clone().addScaledVector(fwd, CONVERGE);
   const miss = c.bullets.map((b) => {

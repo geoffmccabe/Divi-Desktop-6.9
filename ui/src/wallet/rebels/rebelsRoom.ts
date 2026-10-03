@@ -186,7 +186,9 @@ export interface Room {
   /** Anything that happened this tick, for sound and sparks. Drained. */
   takeEvents(): RoomEvent[];
   /** Say where this ship is. Rate-limited inside. */
-  report(pos: THREE.Vector3, fwd: THREE.Vector3, guard: boolean): void;
+  /** `up` is the ship's roll. Without it the room cannot roll the wingmen with
+   *  the ship, and uses away-from-the-planet instead. See TransformIn.u. */
+  report(pos: THREE.Vector3, fwd: THREE.Vector3, guard: boolean, up?: THREE.Vector3): void;
   fire(kind: "main" | "mini" | "torp" | "beam", pos: THREE.Vector3, fwd: THREE.Vector3, aim?: THREE.Vector3, weapon?: string, up?: THREE.Vector3): void;
   /** Beams in the air, as the room sees them. Overwritten every tick. */
   beams: Array<{ pos: THREE.Vector3; fwd: THREE.Vector3; life: number; half: number; reach: number; colour: number; key: string }>;
@@ -403,11 +405,13 @@ export function joinRoom(opts: Opts): Room {
     heartHp: null,
     gauges: null,
     takeEvents() { const out = events.slice(); events.length = 0; return out; },
-    report(pos, fwd, guard) {
+    report(pos, fwd, guard, up) {
       if (!ws || status !== "live") return;
       if (sinceReport < 1 / REPORT_HZ) return;
       sinceReport = 0;
-      send({ t: "tf", p: out(pos), f: dir(fwd), ...(guard ? { g: 1 as const } : {}) });
+      send({ t: "tf", p: out(pos), f: dir(fwd),
+             ...(up ? { u: dir(up) } : {}),
+             ...(guard ? { g: 1 as const } : {}) });
     },
     fire(kind, pos, fwd, aim, weapon, up) {
       send({

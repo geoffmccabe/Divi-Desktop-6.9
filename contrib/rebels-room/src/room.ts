@@ -518,9 +518,14 @@ export class RebelsRoom {
       if (!s.flying || s.dead || s.wings.length === 0) continue;
       const alive = s.wings.filter((x) => x.hull > 0);
       const spin = wingSpin(this.now, alive.length);
-      /* The ship's up, from its own frame: the room has no roll on the wire,
-         so away from the planet stands in, which is what level flight is. */
-      const up = s.body.pos.clone().normalize();
+      /* ---- THE SHIP'S OWN UP, WHEN IT SENDS ONE ----
+         The formation is a ring in the ship's frame, so this decides whether it
+         rolls with the ship. Away from the planet is the fallback for a cockpit
+         that does not send roll; it is what level flight looks like and it is
+         what every wingman used before, which is why they did not roll and why
+         they moved as a pilot flew round the globe. */
+      const up = (s.body as { up?: THREE.Vector3 }).up
+        ?? s.body.pos.clone().normalize();
       const frame = { pos: s.body.pos, fwd: s.body.fwd, up };
       for (const wing of alive) {
         wingPosition(frame, wing.slot, spin, s.body.reach ?? 2.2, wing.pos);
@@ -1585,6 +1590,16 @@ export class RebelsRoom {
 
     seat.body.pos.copy(p);
     seat.body.fwd.copy(f).normalize();
+    /* The ship's roll, when the cockpit sends it. Squared up against the nose
+       so a slightly stale pair cannot make a skewed frame. */
+    const u = vec(m.u);
+    if (u && u.lengthSq() > 1e-6) {
+      u.addScaledVector(seat.body.fwd, -u.dot(seat.body.fwd));
+      if (u.lengthSq() > 1e-6) {
+        (seat.body as { up?: THREE.Vector3 }).up =
+          ((seat.body as { up?: THREE.Vector3 }).up ?? new THREE.Vector3()).copy(u).normalize();
+      }
+    }
     seat.wantGuard = m.g === 1;
     (seat as { lastTf?: number }).lastTf = this.now;
   }

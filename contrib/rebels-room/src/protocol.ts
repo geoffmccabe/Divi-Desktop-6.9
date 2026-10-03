@@ -76,6 +76,21 @@ export interface TransformIn {
   t: "tf";
   p: Vec;
   f: Vec;
+  /**
+   * The ship's own UP, so the room knows which way it is rolled.
+   *
+   * ⚠ WITHOUT IT THE WINGMEN DO NOT ROLL WITH THE SHIP. The formation is a
+   * ring in the ship's own frame, and with no roll on the wire the room used
+   * "away from the planet" instead. So rolling left your drones stayed where
+   * they were, and flying to another part of the orbit moved them, because
+   * the stand-in up had turned under them. Geoff: "When I rotate my view, my
+   * drone doesn't rotate with me but instead it shifts to a new position."
+   *
+   * Optional, so an older cockpit still works and simply keeps the old
+   * stand-in. The fire message has carried this for months; the transform
+   * never did.
+   */
+  u?: Vec;
   /** Guard up. The room decides whether they HAVE a guard to raise. */
   g?: 1;
 }

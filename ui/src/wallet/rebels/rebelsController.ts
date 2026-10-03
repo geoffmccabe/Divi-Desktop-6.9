@@ -2304,7 +2304,7 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          cleared by a path nobody thought of; the room's own bound cannot be
          got wrong. */
       if (inRoomsWorld()) {
-        room.report(flight.pos, flight.fwd, flight.guardFor > 0);
+        room.report(flight.pos, flight.fwd, flight.guardFor > 0, flight.up);
       }
 
       /* The room's fight, put where the drawing already looks for it. */
