@@ -174,12 +174,22 @@ enum Spawn {
     Failed(String),
 }
 
-const CORRUPTION_MARKERS: [&str; 4] = [
-    "corruption",
-    "Error loading block database",
-    "Failed to find best block",
-    "Error opening block database",
+/// Matched case-insensitively (see `is_corruption_line`): LevelDB says
+/// "Corruption: error in middle of record" and the node "Database corrupted",
+/// and a lowercase "corruption" matched neither (JimF, 2026-Oct-04, after a
+/// forced reboot: the repair ladder never ran).
+const CORRUPTION_MARKERS: [&str; 5] = [
+    "corrupt",
+    "leveldb_error",
+    "error loading block database",
+    "failed to find best block",
+    "error opening block database",
 ];
+
+fn is_corruption_line(line: &str) -> bool {
+    let l = line.to_ascii_lowercase();
+    CORRUPTION_MARKERS.iter().any(|m| l.contains(m))
+}
 
 /// divid prints one of these when an index option (addressindex/txindex) was
 /// turned on after the chain was already synced without it. The fix is a full
@@ -360,7 +370,18 @@ fn spawn_once(
                 if REINDEX_REQUIRED_MARKERS.iter().any(|m| msg.contains(m)) {
                     return Spawn::ReindexRequired(msg);
                 }
-                if CORRUPTION_MARKERS.iter().any(|m| msg.contains(m)) {
+                /* A corrupt database kills the node in two steps: LevelDB
+                   reports the corruption, then an assertion fires because the
+                   chain state never came up. The LAST line is the assertion,
+                   which used to be filed as "a fault in the node program,
+                   send it to the Divi team", and the repair that fixes it in
+                   minutes never ran (JimF, 2026-Oct-04, forced reboot). A
+                   corruption line anywhere in the node's last words is the
+                   diagnosis; whatever it said afterwards is the consequence. */
+                if let Some(c) = said.lines().filter(|l| is_corruption_line(l) && !is_noise(l)).next_back() {
+                    return Spawn::Corruption(c.trim().to_string());
+                }
+                if is_corruption_line(&msg) {
                     return Spawn::Corruption(msg);
                 }
                 // Two failures a user CAN fix, if only they are told what they
@@ -598,7 +619,7 @@ fn looks_fatal(line: &str) -> bool {
     // that did not happen to say "Error:" was never classified, and the
     // repair ladder it exists to trigger never ran.
     FATAL_SIGNS.iter().any(|sign| line.contains(sign))
-        || CORRUPTION_MARKERS.iter().any(|m| line.contains(m))
+        || is_corruption_line(line)
         || REINDEX_REQUIRED_MARKERS.iter().any(|m| line.contains(m))
 }
 
@@ -781,13 +802,13 @@ mod tests {
     #[test]
     fn corruption_markers_match_real_divi_error() {
         let real = "Error: Error loading block database : Block database corruption detected! Failed to find best block in block index";
-        assert!(CORRUPTION_MARKERS.iter().any(|m| real.contains(m)));
+        assert!(is_corruption_line(real));
     }
 
     #[test]
     fn benign_error_is_not_corruption() {
         let benign = "Error: Unable to bind to 0.0.0.0:51472";
-        assert!(!CORRUPTION_MARKERS.iter().any(|m| benign.contains(m)));
+        assert!(!is_corruption_line(benign));
     }
 }
 
@@ -827,7 +848,16 @@ mod our_pid_file_tests {
 
 #[cfg(test)]
 mod fatal_line_tests {
-    use super::{looks_fatal, CORRUPTION_MARKERS};
+    use super::{is_corruption_line, looks_fatal};
+
+    #[test]
+    fn leveldb_corruption_is_recognised_whatever_its_case() {
+        // JimF's Windows node after a forced reboot, 2026-Oct-04, verbatim.
+        assert!(is_corruption_line("2026-10-04 06:40:13 Corruption: error in middle of record"));
+        assert!(is_corruption_line("Database corrupted       "));
+        assert!(is_corruption_line("EXCEPTION: 13leveldb_error       "));
+        assert!(!is_corruption_line("2026-10-04 06:40:13 Opened LevelDB successfully"));
+    }
 
     #[test]
     fn a_c_assertion_is_fatal_even_without_the_word_error() {
@@ -847,7 +877,7 @@ mod fatal_line_tests {
         let line = "loading block database : Block database corruption detected! \
                     Failed to find best block in block index";
         assert!(looks_fatal(line));
-        assert!(CORRUPTION_MARKERS.iter().any(|m| line.contains(m)));
+        assert!(is_corruption_line(line));
     }
 
     #[test]
