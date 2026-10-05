@@ -16,6 +16,43 @@ pub struct StatusReport {
     pub blocks: Option<i64>,
     pub peers: Option<i64>,
     pub last_shutdown: LastShutdown,
+    /// The chain needs, or is getting, a repair; the install panel's repair
+    /// mode reads this and offers the snapshot or the rebuild.
+    pub repair: Option<RepairState>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RepairState {
+    /// The node is stopped because its chain data is damaged (user to choose).
+    pub damaged: bool,
+    /// The node's own words about the damage.
+    pub reason: String,
+    /// A rebuild from disk is running and still far behind.
+    pub rebuilding: bool,
+    pub days_behind: i64,
+}
+
+/// What the markers say, for every status answer.
+fn repair_state(datadir: &std::path::Path, tip_age: Option<i64>) -> Option<RepairState> {
+    let damaged = crate::process::damaged_marker(datadir);
+    if damaged.exists() {
+        return Some(RepairState {
+            damaged: true,
+            reason: std::fs::read_to_string(&damaged).unwrap_or_default().trim().to_string(),
+            rebuilding: false,
+            days_behind: 0,
+        });
+    }
+    let marker = crate::process::repair_marker(datadir);
+    if marker.exists() {
+        let age = tip_age.unwrap_or(0);
+        if age < 86_400 {
+            let _ = std::fs::remove_file(&marker);
+            return None;
+        }
+        return Some(RepairState { damaged: false, reason: String::new(), rebuilding: true, days_behind: age / 86_400 });
+    }
+    None
 }
 
 /// Seconds between the newest block's timestamp and now. Basis of the sync
@@ -39,7 +76,12 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
     };
 
     if !cfg.remote && process::daemon_pid(&cfg.datadir).is_none() {
-        let (phase, headline) = if health::stale_pid_file(&cfg.datadir, false) {
+        let (phase, headline) = if process::damaged_marker(&cfg.datadir).exists() {
+            (
+                Phase::Stopped,
+                "The blockchain data on this computer is damaged. Choose a repair: the chain snapshot (about an hour) or a rebuild from the blocks on disk (hours to days). Your coins are safe either way.".to_string(),
+            )
+        } else if health::stale_pid_file(&cfg.datadir, false) {
             (
                 Phase::CrashedNeedsRepair,
                 "The node didn't shut down cleanly last time. It will repair itself on the next start — your coins are safe.".to_string(),
@@ -78,7 +120,9 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
                     .to_string(),
             )
         };
-        return StatusReport { running: false, phase, headline, blocks: None, peers: None, last_shutdown };
+        return StatusReport { running: false, phase, headline, blocks: None, peers: None, last_shutdown,
+            repair: repair_state(&cfg.datadir, None),
+        };
     }
 
     let rpc = RpcClient::new(cfg);
@@ -115,7 +159,8 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
                     blocks: Some(h),
                     peers: None,
                     last_shutdown,
-                },
+            repair: repair_state(&cfg.datadir, None),
+        },
                 None => StatusReport {
                     running: true,
                     phase: Phase::Starting,
@@ -123,7 +168,8 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
                     blocks: None,
                     peers: None,
                     last_shutdown,
-                },
+            repair: repair_state(&cfg.datadir, None),
+        },
             }
         }
     };
@@ -148,6 +194,23 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
         && staking["haveconnections"].as_bool().unwrap_or(false);
     staking["staking status"] = serde_json::json!(actually_staking);
     let tip_age = tip_age_secs(&rpc);
+    /* A rebuild from disk (see process::repair_marker) looks like a node
+       years behind. Say what it is; the install panel offers the snapshot. */
+    let repair = repair_state(&cfg.datadir, tip_age);
+    if let Some(r) = repair.as_ref().filter(|r| r.rebuilding) {
+        return StatusReport {
+            running: true,
+            phase: Phase::Syncing,
+            headline: format!(
+                "Rebuilding the blockchain from the blocks on disk — at block {}, {} days still to verify. Slow on an ordinary computer; the snapshot repair is faster.",
+                blocks.unwrap_or(0), r.days_behind
+            ),
+            blocks,
+            peers: Some(peers),
+            last_shutdown,
+            repair,
+        };
+    }
     let h = state::assess(peers, tip_age, &staking);
     StatusReport {
         running: true,
@@ -156,5 +219,6 @@ pub fn status_report(cfg: &NodeConfig) -> StatusReport {
         blocks,
         peers: Some(peers),
         last_shutdown,
-    }
+            repair: repair_state(&cfg.datadir, None),
+        }
 }

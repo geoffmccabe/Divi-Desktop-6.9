@@ -333,7 +333,14 @@ struct NodeStatusDto {
     headline: String,
     blocks: Option<i64>,
     peers: Option<i64>,
+    /// Present when the chain needs or is getting a repair (install panel's
+    /// repair mode). camelCase on the wire, see reference_dd69_dto_camelcase.
+    repair: Option<RepairDto>,
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RepairDto { damaged: bool, reason: String, rebuilding: bool, days_behind: i64 }
 
 /// Read-only status poll — the only call the status line makes. Off the UI
 /// thread so a hung node can never freeze the window.
@@ -348,6 +355,7 @@ async fn node_status() -> NodeStatusDto {
                 headline: r.headline,
                 blocks: r.blocks,
                 peers: r.peers,
+                repair: r.repair.map(|p| RepairDto { damaged: p.damaged, reason: p.reason, rebuilding: p.rebuilding, days_behind: p.days_behind }),
             }
         }
         Err(_) => NodeStatusDto {
@@ -356,6 +364,7 @@ async fn node_status() -> NodeStatusDto {
             headline: "No Divi node is set up on this computer yet.".into(),
             blocks: None,
             peers: None,
+            repair: None,
         },
     })
     .await
@@ -365,6 +374,7 @@ async fn node_status() -> NodeStatusDto {
         headline: "Checking the node…".into(),
         blocks: None,
         peers: None,
+        repair: None,
     })
 }
 
@@ -2430,10 +2440,30 @@ async fn snapshot_info() -> serde_json::Value {
 /// Emits `dd69://snapshot-progress` ({done,total,stage}) throughout, because a
 /// five-gigabyte download with no visible progress is indistinguishable from a
 /// hang, and that is precisely what makes people force-quit a wallet mid-write.
+/// The slow repair, chosen by the user on the install panel's repair mode:
+/// rebuild the chain from the block files on disk. Returns once the node is
+/// up and rebuilding; the status screen then reports its progress.
+#[tauri::command]
+async fn chain_rebuild() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load()?;
+        if cfg.remote { return Err("This node is on another machine.".into()); }
+        let bin = dd69_supervisor::install::managed_divid().ok_or("the node program is not installed")?;
+        let rpc = dd69_supervisor::rpc::RpcClient::new(&cfg);
+        let rep = dd69_supervisor::process::rebuild_from_disk(&bin, &cfg.datadir, &rpc)?;
+        Ok(format!("Rebuilding ({}). The node runs while it works; the status line shows progress.", rep.repaired_with.unwrap_or_default()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn snapshot_fetch(app: tauri::AppHandle) -> Result<String, String> {
     use tauri::Emitter;
     tauri::async_runtime::spawn_blocking(move || {
+        /* Chosen over the rebuild (or instead of one running): the markers
+           that make the status screen ask are cleared once the snapshot is
+           in place, below. */
         let emit = |p: dd69_supervisor::snapshot::Progress| {
             let _ = app.emit(
                 "dd69://snapshot-progress",
@@ -2461,13 +2491,21 @@ async fn snapshot_fetch(app: tauri::AppHandle) -> Result<String, String> {
         }
 
         let outcome = dd69_supervisor::snapshot::install(&archive, &emit);
+        if outcome.is_ok() {
+            let _ = std::fs::remove_file(dd69_supervisor::process::damaged_marker(&cfg.datadir));
+            let _ = std::fs::remove_file(dd69_supervisor::process::repair_marker(&cfg.datadir));
+        }
 
-        if was_running {
+        /* Start it again if it was running, and start it for the first time
+           if it was stopped waiting for this repair (damaged chain): either
+           way the user pressed GO to get a working node, not a folder. */
+        let stopped_for_repair = !was_running && outcome.is_ok() && !dd69_supervisor::snapshot::node_is_running();
+        if was_running || stopped_for_repair {
             if let Some(bin) = dd69_supervisor::install::managed_divid() {
                 emit(dd69_supervisor::snapshot::Progress {
                     done: 0,
                     total: None,
-                    stage: "Starting the node again…".into(),
+                    stage: if was_running { "Starting the node again…".into() } else { "Starting the node on the repaired chain…".into() },
                 });
                 let _ = dd69_supervisor::process::start_with_recovery(
                     &bin,
@@ -3886,6 +3924,7 @@ fn main() {
             service_location,
             snapshot_info,
             snapshot_fetch,
+            chain_rebuild,
             set_node_upnp,
             list_nodes,
             set_active_node,

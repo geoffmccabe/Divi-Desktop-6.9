@@ -39,7 +39,7 @@ import { pulseActivity, pulseTrigger, pulseHsl, pulseIcon, pulseActiveUntil, mak
 import { userWonRecently } from "./stakeWin";
 import { playSound } from "../sound";
 import { Icon } from "../Icon";
-import { InstallPanel, type InstallState } from "./setup/InstallPanel";
+import { InstallPanel, type InstallState, type RepairMode } from "./setup/InstallPanel";
 import { setupInfo } from "../bridge";
 import worldmap from "../assets/worldmap.json";
 
@@ -601,13 +601,32 @@ export function NetworkMap({ onReturn, autoplay = false }: {
   /* The node's phase as the wallet reports it, so the map can tell "starting"
      from "was talking and stopped". */
   const nodePhaseRef = useRef<string>("");
+  /* ---- A DAMAGED CHAIN GETS THE SAME QUESTION AS A NEW ONE ----
+     When the status says the chain data is damaged (node stopped, waiting)
+     or a rebuild from disk is crawling along, the install panel opens in
+     repair mode: snapshot or rebuild, the user's call. Closed without
+     choosing, it comes back after ten minutes while the need remains. */
+  const [repair, setRepair] = useState<RepairMode | null>(null);
+  const repairDismissedAt = useRef(0);
   useEffect(() => {
     let alive = true;
-    const ask = () => nodeStatus().then((s) => { if (alive) nodePhaseRef.current = s.phase; }).catch(() => {});
+    const ask = () => nodeStatus().then((s) => {
+      if (!alive) return;
+      nodePhaseRef.current = s.phase;
+      const r = s.repair ?? null;
+      if (r && (r.damaged || r.rebuilding)) {
+        if (!setupOpen && Date.now() - repairDismissedAt.current > 10 * 60 * 1000) {
+          setRepair(r);
+          setSetupOpen(true);
+        }
+      } else if (repair) {
+        setRepair(null);
+      }
+    }).catch(() => {});
     ask();
     const id = setInterval(ask, 5000);
     return () => { alive = false; clearInterval(id); };
-  }, []);
+  }, [setupOpen, repair]);
   const [copiedDiag, setCopiedDiag] = useState<string | null>(null);
 
   const geosRef = useRef(geos);
@@ -2426,7 +2445,8 @@ export function NetworkMap({ onReturn, autoplay = false }: {
         {setupOpen && (
           <InstallPanel
             simulate={simulateNew}
-            onClose={() => { setSetupOpen(false); setSimulateNew(false); installingRef.current = false; flowModeRef.current = null; }}
+            repair={repair}
+            onClose={() => { if (repair) repairDismissedAt.current = Date.now(); setSetupOpen(false); setSimulateNew(false); installingRef.current = false; flowModeRef.current = null; }}
             onStateChange={(s: InstallState) => {
               installingRef.current = s.installing;
               flowModeRef.current = s.installing && (s.method === "snapshot" || s.method === "nodes") ? s.method : null;

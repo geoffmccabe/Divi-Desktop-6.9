@@ -623,6 +623,47 @@ fn looks_fatal(line: &str) -> bool {
         || REINDEX_REQUIRED_MARKERS.iter().any(|m| line.contains(m))
 }
 
+/// Present while the node is running a `-reindex`/`-reindex-chainstate`
+/// rung: that start "succeeds" within minutes (the node answers) but the
+/// rebuild then runs for hours or days. The status screen reads it to say
+/// so, and bring-up reads it to offer the snapshot instead.
+pub fn repair_marker(datadir: &Path) -> PathBuf {
+    datadir.join("dd69-repair-in-progress")
+}
+
+/// Present when a normal start found the chain data damaged and the app is
+/// waiting for the user to choose a repair (snapshot or rebuild from disk).
+/// Holds the node's own words about the damage.
+pub fn damaged_marker(datadir: &Path) -> PathBuf {
+    datadir.join("dd69-chain-damaged")
+}
+
+/// The slow repair, run only when the user picks it: rebuild from the block
+/// files on disk (no download), coin database first, full index if that is
+/// not enough. Every block since 2018 is re-verified; hours on a fast
+/// machine, days on a slow one.
+pub fn rebuild_from_disk(divid: &Path, datadir: &Path, rpc: &RpcClient) -> Result<StartReport, String> {
+    let _ = std::fs::remove_file(damaged_marker(datadir));
+    if daemon_pid(datadir).is_some() {
+        let _ = safe_stop(rpc, datadir, Duration::from_secs(600));
+    }
+    crate::setuplog::log("repair: rebuilding the chain from the blocks on disk, as chosen");
+    let rungs: [(&str, &str); 2] = [
+        ("-reindex-chainstate", "rebuilding the coin database"),
+        ("-reindex", "rebuilding the full blockchain index"),
+    ];
+    let mut last = String::new();
+    for (flag, label) in rungs {
+        let _ = std::fs::write(repair_marker(datadir), flag);
+        match spawn_once(divid, datadir, rpc, Duration::from_secs(1800), &[flag]) {
+            Spawn::Running(pid) => return Ok(StartReport { pid, repaired_with: Some(label.to_string()) }),
+            Spawn::Corruption(m) | Spawn::Failed(m) | Spawn::ReindexRequired(m) => last = m,
+        }
+    }
+    let _ = std::fs::remove_file(repair_marker(datadir));
+    Err(format!("the rebuild did not work ({last}); the snapshot is the remaining option"))
+}
+
 pub fn start_with_recovery(
     divid: &Path,
     datadir: &Path,
@@ -670,15 +711,36 @@ pub fn start_with_recovery(
         let mut last_corruption = String::new();
         for (i, (flag, label, timeout)) in ladder.iter().enumerate() {
             let args: Vec<&str> = flag.iter().copied().collect();
+            if flag.is_some() {
+                /* The rung's start returns in minutes; the rebuild it begins
+                   does not. Leave a note so the status screen and the next
+                   bring-up know a rebuild is under way. */
+                let _ = std::fs::write(repair_marker(datadir), flag.unwrap_or(""));
+            }
             match spawn_once(divid, datadir, rpc, *timeout, &args) {
                 Spawn::Running(pid) => {
+                    let _ = std::fs::remove_file(damaged_marker(datadir));
                     return Ok(StartReport {
                         pid,
                         repaired_with: if i == 0 { None } else { Some((*label).to_string()) },
                     });
                 }
                 Spawn::Corruption(msg) => {
-                    last_corruption = msg;
+                    last_corruption = msg.clone();
+                    /* ---- ASK, DO NOT DECIDE ----
+                       The rebuild rungs below re-verify every block since
+                       2018: days on an ordinary PC, and the fan at full
+                       speed the whole time (JimF, 2026-Oct-05). The 5 GB
+                       snapshot takes an hour. Which is right depends on the
+                       user's disk, connection and patience, so the same
+                       choice the first-run screen offers is offered here:
+                       the node stays stopped, the status screen says the
+                       data is damaged, and the user picks. */
+                    if i == 0 && datadir == crate::config::dd69_datadir().as_path() {
+                        let _ = std::fs::write(damaged_marker(datadir), &msg);
+                        crate::setuplog::log("repair: the chain data is damaged; waiting for the user to choose snapshot or rebuild");
+                        return Err(format!("The blockchain data is damaged ({msg}). Choose a repair in the wallet: the chain snapshot (about an hour) or a rebuild from the blocks on disk (hours to days)."));
+                    }
                     // fall through to the next, more aggressive repair rung
                     continue;
                 }

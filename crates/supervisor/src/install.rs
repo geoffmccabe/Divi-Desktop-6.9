@@ -895,6 +895,9 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
         }
     }
 
+    /* A rebuild from disk still running from an earlier start is left to
+       run; the status screen says what it is and offers the snapshot
+       instead (see report.rs and the install panel's repair mode). */
     // Predictable failure, reported before it happens rather than after.
     setuplog::check_port(crate::reachable::P2P_PORT);
     setuplog::log(format!("bringup: launching node program at {}", bin.display()));
@@ -912,7 +915,9 @@ pub fn first_run_bringup(progress: impl Fn(&str)) -> Result<i32, String> {
         // themselves are bad. Replace them automatically rather than telling
         // the user to open their Library and delete folders by hand, which is
         // both unreasonable and one slip away from deleting their wallet.
-        if e.contains("damaged") || e.contains("corrupt") {
+        // Not when the start stopped on purpose to ASK (damaged marker): the
+        // user chooses between snapshot and rebuild on the status screen.
+        if (e.contains("damaged") || e.contains("corrupt")) && !process::damaged_marker(&cfg.datadir).exists() {
             setuplog::log(format!(
                 "bringup: rebuilding from the on-disk blocks failed ({e}) — replacing the chain data"
             ));

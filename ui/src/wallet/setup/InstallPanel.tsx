@@ -15,7 +15,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import { setupInfo, nodeStatus, type SetupInfo, type NodeStatus } from "../../bridge";
-import { snapshotInfo, snapshotFetch, type SnapshotInfo } from "../api";
+import { snapshotInfo, snapshotFetch, chainRebuild, type SnapshotInfo } from "../api";
+
+/* Repair mode: the same two choices, for a chain that is damaged (node
+   stopped, waiting) or stuck in a slow rebuild (node running, years behind).
+   Geoff, 2026-Oct-05: the first-run screen already asks snapshot-or-nodes;
+   a damaged chain deserves the same question, not a silent decision. */
+export type RepairMode = { damaged: boolean; reason: string; rebuilding: boolean; daysBehind: number };
 import { copySetupLog } from "../SetupLogHotkey";
 import "./install-panel.css";
 
@@ -43,10 +49,12 @@ export function InstallPanel({
   simulate = false,
   onClose,
   onStateChange,
+  repair = null,
 }: {
   simulate?: boolean;
   onClose: () => void;
   onStateChange?: (s: InstallState) => void;
+  repair?: RepairMode | null;
 }) {
   const [realInfo, setRealInfo] = useState<SetupInfo | null>(null);
   const [method, setMethod] = useState<Exclude<SetupMethod, "reuse" | null>>("snapshot"); // SNAPSHOT default
@@ -129,6 +137,15 @@ export function InstallPanel({
           setInstalling(false);
           onStateRef.current?.({ installing: false, method: null });
         });
+    } else if (m === "nodes" && repair) {
+      /* In repair mode "nodes" means the rebuild from the blocks on disk. */
+      chainRebuild()
+        .then((msg) => setDl({ done: 1, total: 1, stage: msg }))
+        .catch((e) => {
+          setDlErr(String(e));
+          setInstalling(false);
+          onStateRef.current?.({ installing: false, method: null });
+        });
     }
   };
 
@@ -146,7 +163,7 @@ export function InstallPanel({
   return (
     <aside className="ip-panel glass-panel">
       <header className="ip-head">
-        <h2 className="ip-title">Set up your Divi wallet</h2>
+        <h2 className="ip-title">{repair ? (repair.rebuilding ? "A slow repair is running" : "Repair the blockchain data") : "Set up your Divi wallet"}</h2>
         <button type="button" className="ip-close" title="Close" onClick={onClose}>×</button>
       </header>
       {simulate && <div className="ip-sim-badge">SIMULATION · ⌘N to exit</div>}
@@ -222,7 +239,15 @@ export function InstallPanel({
           </div>
         ) : (
           <div className="ip-flow">
-            <p className="ip-lead">Let's get your node running.</p>
+            {repair ? (
+              <p className="ip-lead">
+                {repair.rebuilding
+                  ? `The node is rebuilding the chain from the blocks on disk and is still ${repair.daysBehind} days behind. On an ordinary computer that takes days and keeps the processor busy. The snapshot is far faster.`
+                  : "The blockchain data on this computer is damaged (usually after a forced restart). Your wallet and coins are not affected. Choose how to repair it."}
+              </p>
+            ) : (
+              <p className="ip-lead">Let's get your node running.</p>
+            )}
             {/* What it costs, BEFORE committing to it. This said nothing before, so
                 people began a multi-day download with no idea of size or wait. */}
             {snap && (
@@ -233,10 +258,17 @@ export function InstallPanel({
                     roughly {snap.needGb} GB free needed while it unpacks. Usually under an hour.
                   </>
                 ) : (
+                  repair ? (
+                    <>
+                      Re-verifies every block already on this disk, nothing to download. Typically
+                      <b> hours on a fast computer, days on a slow one</b>, with the processor busy throughout.
+                    </>
+                  ) : (
                   <>
                     Collects the chain block by block from other nodes. Needs about {snap.needGb} GB
                     free and typically takes <b>a day or more</b>. The snapshot is far faster.
                   </>
+                  )
                 )}{" "}You have {snap.freeGb} GB free.
               </p>
             )}
@@ -247,7 +279,7 @@ export function InstallPanel({
               </p>
             )}
             {dlErr && <p className="ip-warn">{dlErr}</p>}
-            <label className="ip-field-label">Download node data:</label>
+            <label className="ip-field-label">{repair ? "Repair method:" : "Download node data:"}</label>
             <div className="ip-split" role="group" aria-label="Download method">
               <button
                 type="button"
@@ -264,14 +296,16 @@ export function InstallPanel({
                 className={"ip-split-btn" + (method === "nodes" ? " on" : "")}
                 onClick={() => setMethod("nodes")}
               >
-                NODES
-                <small>slower · trustless</small>
+                {repair ? "REBUILD" : "NODES"}
+                <small>{repair ? "slow · from this disk" : "slower · trustless"}</small>
               </button>
             </div>
             <p className="ip-note">
               {method === "snapshot"
                 ? "Grabs a daily snapshot of the chain from the Divi server, then catches up the last few blocks. Much faster."
-                : "Builds the chain block-by-block directly from other nodes. Slower, but trusts no single source."}
+                : repair
+                  ? "Re-verifies the blocks already on this disk. Slower, and the computer works hard the whole time, but downloads nothing."
+                  : "Builds the chain block-by-block directly from other nodes. Slower, but trusts no single source."}
             </p>
             <button
               type="button"

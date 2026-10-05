@@ -421,6 +421,8 @@ export const snapshotInfo = () => invoke<SnapshotInfo>("snapshot_info");
 /** Download and unpack the chain snapshot. Progress arrives as
  *  dd69://snapshot-progress events; resolves with the archive's SHA-256. */
 export const snapshotFetch = () => invoke<string>("snapshot_fetch");
+/** The slow repair: rebuild the chain from the block files on disk (no download). */
+export const chainRebuild = () => invoke<string>("chain_rebuild");
 /** Ask the router to open the peer port (or stop asking). Applies on node restart. */
 export const setNodeUpnp = (enabled: boolean) => invoke<void>("set_node_upnp", { enabled });
 // Latest DIVI/USD from the shared CMC feed (no per-user key) — used to price PoE.

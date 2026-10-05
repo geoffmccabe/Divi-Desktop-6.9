@@ -6,6 +6,8 @@ export type NodeStatus = {
   headline: string;
   blocks: number | null;
   peers: number | null;
+  /** The chain needs, or is getting, a repair; the install panel's repair mode offers the choice. */
+  repair?: { damaged: boolean; reason: string; rebuilding: boolean; daysBehind: number } | null;
 };
 
 export async function nodeStatus(): Promise<NodeStatus> {

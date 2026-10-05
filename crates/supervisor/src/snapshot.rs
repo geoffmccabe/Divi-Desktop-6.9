@@ -41,13 +41,38 @@ pub const SNAPSHOT_URL: &str = "https://nodes.divi.love/snapshot/DIVI-snapshot.t
 /// verified end to end.
 pub const SNAPSHOT_SHA_URL: &str = "https://nodes.divi.love/snapshot/DIVI-snapshot.tar.gz.sha256";
 
+/// DD69's own snapshot, built weekly from the UK node WITH the address,
+/// spent and tx indexes a DD69 node needs. The official snapshot above has
+/// none, so a node that installed it then rebuilt them with a full -reindex:
+/// every block since 2018 re-verified, days on an ordinary PC (JimF,
+/// 2026-Oct-05). Preferred whenever the server has it; the plain one is
+/// the fallback.
+pub const INDEXED_SNAPSHOT_URL: &str = "https://nodes.divi.love/snapshot/DIVI-snapshot-indexed.tar.gz";
+
+/// Which archive to fetch: the indexed one when it is there.
+fn chosen() -> (&'static str, String) {
+    static CHOICE: std::sync::OnceLock<(&'static str, String)> = std::sync::OnceLock::new();
+    CHOICE
+        .get_or_init(|| {
+            let indexed = ureq::head(INDEXED_SNAPSHOT_URL).call().map(|r| r.status() == 200).unwrap_or(false);
+            if indexed {
+                crate::setuplog::log("snapshot: using the indexed snapshot (no index rebuild afterwards)");
+                (INDEXED_SNAPSHOT_URL, format!("{INDEXED_SNAPSHOT_URL}.sha256"))
+            } else {
+                crate::setuplog::log("snapshot: indexed snapshot not available; using the plain one (the node will build its indexes afterwards)");
+                (SNAPSHOT_URL, SNAPSHOT_SHA_URL.to_string())
+            }
+        })
+        .clone()
+}
+
 /// The checksum the server says the archive should have, if it publishes one.
 ///
 /// Accepts either a bare hash or the usual `<hash>  <filename>` form that
 /// `shasum` and `sha256sum` write, since whoever adds this to the server will
 /// almost certainly generate it with one of those.
 pub fn published_hash() -> Option<String> {
-    let body = ureq::get(SNAPSHOT_SHA_URL).call().ok()?.into_string().ok()?;
+    let body = ureq::get(&chosen().1).call().ok()?.into_string().ok()?;
     let first = body.split_whitespace().next()?.trim().to_lowercase();
     // A 404 page is not a checksum. Only 64 hex characters is.
     if first.len() == 64 && first.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -103,7 +128,10 @@ pub struct Progress {
 }
 
 fn cache_path() -> Option<PathBuf> {
-    Some(crate::config::dd69_datadir().join("snapshot-download.tar.gz"))
+    // One cache per archive: a partial download of the plain snapshot must
+    // never be "resumed" with bytes of the indexed one.
+    let name = if chosen().0 == INDEXED_SNAPSHOT_URL { "snapshot-indexed-download.tar.gz" } else { "snapshot-download.tar.gz" };
+    Some(crate::config::dd69_datadir().join(name))
 }
 
 /// Ask the server how big it is, without downloading it.
@@ -111,7 +139,7 @@ fn cache_path() -> Option<PathBuf> {
 /// Used to tell the user the real size and to check the disk BEFORE committing
 /// them to a multi-gigabyte download.
 pub fn remote_size() -> Option<u64> {
-    let resp = ureq::head(SNAPSHOT_URL).call().ok()?;
+    let resp = ureq::head(chosen().0).call().ok()?;
     resp.header("content-length")?.parse().ok()
 }
 
@@ -168,7 +196,7 @@ pub fn download(progress: &dyn Fn(Progress)) -> Result<(PathBuf, String), String
     }
 
     let have = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-    let mut req = ureq::get(SNAPSHOT_URL);
+    let mut req = ureq::get(chosen().0);
     if have > 0 {
         req = req.set("Range", &format!("bytes={have}-"));
     }
