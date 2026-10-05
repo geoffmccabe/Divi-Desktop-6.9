@@ -1973,6 +1973,54 @@ const labelFor = (ip: string) => labels[ip] ?? ip;
   ctl.detach();
 }
 
+// 30. THE WINGMAN YOU PAID FOR IS ACTUALLY ON THE SCREEN.
+//
+// Geoff: "Using option-scrollwheel to zoom out so I can see my ship, and the
+// drone isn't there."
+//
+// Two different things have to be true and only one of them was ever
+// checked. The ROOM has to send the wingman, which a live probe already
+// proved it does: 180 rows in nine seconds, owner matching the seat id. And
+// the COCKPIT has to put something in the scene for it. The cockpit's own
+// diagnostic counts `room.wings.length`, which is the first of those and
+// reads as success while the second is failing, so the instrument we had
+// could not tell the two apart.
+//
+// This asserts the second: an object appears in the SCENE.
+{
+  const g = stubGlobe([["self-ip", home]]);
+  const ctl = createRebels(labelFor);
+  ctl.attach({ ...g, selfIp: "self-ip" });
+  flushRoom();
+  ctl.launch();
+  for (let i = 0; i < 60 * 4; i++) ctl.frame(1 / 60);
+
+  const waitFor = (done: () => boolean, ms = 15_000) => {
+    const until = Date.now() + ms;
+    while (!done() && Date.now() < until) { ctl.frame(1 / 60); restMs(1); }
+  };
+  const sent = () => {
+    try {
+      const d = JSON.parse(localStorage.getItem("dd69.rebels.diag") ?? "{}") as
+        { drawing?: { wings?: number } };
+      return d.drawing?.wings ?? 0;
+    } catch { return 0; }
+  };
+  const before = new Set(g.scene.children);
+  const added = () => g.scene.children.filter((c) => !before.has(c)).length;
+
+  const INV = await import("./rebelsInventory");
+  INV.addHeld("drone1", 1);
+  waitFor(() => sent() > 0);
+  ok("(setup) the room sends the wingman once a drone is held", sent() > 0,
+     `${sent()} wing rows`);
+
+  waitFor(() => added() > 0);
+  ok("and the cockpit puts it in the scene, which is the half nobody measured",
+     added() > 0, `${added()} objects added to the scene, ${sent()} sent`);
+  ctl.detach();
+}
+
 console.log(out.join("\n"));
 console.log(`\n${out.length - failures} passed, ${failures} failed`);
 if (failures > 0) process.exit(1);
