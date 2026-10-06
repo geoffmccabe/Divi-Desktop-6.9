@@ -47,9 +47,9 @@ Everything needed to launch, across all systems. Owners: **[DD69]** this wallet 
 - ☑ [DD69+Chain] Creator commission, **DOWN-ONLY** — DONE end-to-end (no fork): creator editor in collection details (Original/Current/New); on-chain COMMISSION-SET record (0x09, creator-only, down-only) + transfer-validity rule (a transfer is ignored unless it pays ≥ the current commission) in the normative `nfd-indexer` (re-vendored, so DD69's scanner enforces on reads); `RecordContext` gained an additive `payments` map (DMT unaffected); the wallet broadcasts the COMMISSION-SET tx and pays the toll in the same transaction as a transfer. Tested (chain crates + 120 supervisor tests).
 - ☐ [DD69+Chain] Buy/sell via atomic HTLC trade (non-custodial); show price, commission, and the forged **guaranteed-minimum-tier glow + text** on sealed packs (the glow needs the forge/reveal min_tier data from Phase 4).
 
-### Phase 6 — Ownership display (chain-agnostic)
-- ☐ [DD69] Enumerate ownership across the user's multiple Divi addresses/wallets (today: one address).
-- ☐ [DD69] Keep the display behind a chain-agnostic abstraction so DIVA/Solana/Base can be added later without a rewrite — **Divi only now, no other-chain code yet.**
+### Phase 6 — Ownership display (chain-agnostic)  ✅ DONE (2026-Oct-06)
+- ☑ [DD69] Enumerate ownership across all the wallet's Divi addresses (`nfd_scan::owned_wallet` aggregates + dedups; the panel reads wallet-wide).
+- ☑ [DD69] Chain-agnostic shape (top-level `chain` + per-item `chain = "divi"`) so DIVA/Solana/Base can be added later without a rewrite — Divi only now, no other-chain code. (A per-chain UI grouping/labels can be added when a second chain exists.)
 
 ### Phase 7 — Go-live
 - ☐ [DD69] Merge `feat/nfd-collectibles` → `main`; main builds clean; cut a release.
