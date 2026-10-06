@@ -230,6 +230,21 @@ export interface RelayStatus {
   balanceWinc: string | null;
 }
 export const nfdRelayStatus = () => invoke<RelayStatus>("nfd_relay_status");
+
+// ---- Storage backends (local / Arweave relay / GoBanq / DiviStore module) ----
+export interface StorageBackend {
+  id: string;        // local | relay | gobanq | divistore
+  label: string;
+  available: boolean; // false = present but not yet usable (e.g. DiviStore)
+  detail: string;
+}
+export interface StorageBackends {
+  active: string;
+  backends: StorageBackend[];
+}
+export const nfdStorageBackends = () => invoke<StorageBackends>("nfd_storage_backends");
+export const nfdSetStorageBackend = (backend: string) =>
+  invoke<StorageBackends>("nfd_set_storage_backend", { backend });
 export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string, encrypted: boolean) =>
   invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash, encrypted });
 // ---- Payment requests (DVXP type 0x05) ----

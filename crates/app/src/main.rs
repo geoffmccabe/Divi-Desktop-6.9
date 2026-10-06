@@ -2208,6 +2208,29 @@ async fn nfd_relay_status() -> RelayStatusDto {
     .unwrap_or(RelayStatusDto { relay_url: String::new(), reachable: false, balance_winc: None })
 }
 
+/// The storage backends and which is active, for the panel's Storage section.
+#[tauri::command]
+async fn nfd_storage_backends() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        Ok(dd69_supervisor::nfd_storage::backends_status(&cfg.datadir))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Switch the active storage backend (persisted). Rejects ones not yet available.
+#[tauri::command]
+async fn nfd_set_storage_backend(backend: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        dd69_supervisor::nfd_storage::set_backend(&cfg.datadir, &backend)?;
+        Ok(dd69_supervisor::nfd_storage::backends_status(&cfg.datadir))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// Collectibles this address owns, read from the chain (not from local storage).
 /// Returns `{ open, syncing, scannedHeight, tip, items: [...] }`.
 #[tauri::command]
@@ -2369,6 +2392,8 @@ fn main() {
             nfd_fee_config,
             nfd_set_fee_config,
             nfd_relay_status,
+            nfd_storage_backends,
+            nfd_set_storage_backend,
             nfd_create_collection,
             nfd_import_open,
             nfd_import_read_item,

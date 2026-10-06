@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
   nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateCollection, newReceiveAddress,
   nfdOwned, nfdCollectionMembers,
-  type NfdOwned, type NfdChainItem, type NfdCollectionRead,
+  nfdStorageBackends, nfdSetStorageBackend,
+  type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends,
 } from "./api";
 import { CollectionImport } from "./CollectionImport";
 import { RevealStage, type RevealSealed } from "./reveal/RevealStage";
@@ -214,6 +215,23 @@ export function CollectiblesPanel() {
   const [previewLevel, setPreviewLevel] = useState("5");
   const [sampleForged, setSampleForged] = useState(false);
   const [sampleInput, setSampleInput] = useState("3");
+
+  // Storage backend (local / Arweave relay / GoBanq / DiviStore module).
+  const [storage, setStorage] = useState<StorageBackends | null>(null);
+  const [storageErr, setStorageErr] = useState("");
+  useEffect(() => {
+    let live = true;
+    nfdStorageBackends().then((s) => live && setStorage(s)).catch((e) => live && setStorageErr(String(e)));
+    return () => { live = false; };
+  }, []);
+  async function chooseBackend(id: string) {
+    setStorageErr("");
+    try {
+      setStorage(await nfdSetStorageBackend(id));
+    } catch (e) {
+      setStorageErr(String(e));
+    }
+  }
   const revealDelay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   function openPreviewLevel() {
     const level = previewLevel === "ur" ? "ur" : parseInt(previewLevel, 10);
@@ -614,6 +632,47 @@ export function CollectiblesPanel() {
             </span>
           )}
           <button className="wl-btn" onClick={openSamplePack}>Open a sample pack</button>
+        </div>
+      </section>
+
+      <section className="ts-section">
+        <h3 className="ts-head">Storage</h3>
+        <p className="wl-note">
+          Where a collection's art and metadata are stored when you launch. Reading always comes from a public gateway,
+          so viewing a collectible never depends on the uploader being online.
+        </p>
+        {storageErr && <p className="wl-err">{storageErr}</p>}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {!storage && !storageErr && <p className="wl-note">Loading…</p>}
+          {storage?.backends.map((b) => {
+            const active = storage.active === b.id;
+            const usable = b.available || active;
+            return (
+              <button
+                key={b.id}
+                onClick={() => usable && chooseBackend(b.id)}
+                disabled={!usable}
+                aria-pressed={active}
+                style={{
+                  textAlign: "left", display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", borderRadius: 10,
+                  border: "1px solid " + (active ? "var(--primary, #6d7bff)" : "var(--border, #2a2a35)"),
+                  background: active ? "color-mix(in srgb, var(--primary, #6d7bff) 12%, transparent)" : "transparent",
+                  color: "inherit", cursor: usable ? "pointer" : "default", opacity: usable ? 1 : 0.6,
+                }}
+              >
+                <span style={{
+                  marginTop: 4, width: 10, height: 10, borderRadius: "50%", flex: "0 0 auto",
+                  background: active ? "var(--primary, #6d7bff)" : b.available ? "var(--success, #3fd17a)" : "var(--muted-foreground, #888)",
+                }} />
+                <span style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                  <span style={{ fontWeight: 500 }}>
+                    {b.label}{active ? " · active" : ""}{!b.available ? " · coming soon" : ""}
+                  </span>
+                  <span className="wl-note" style={{ margin: 0 }}>{b.detail}</span>
+                </span>
+              </button>
+            );
+          })}
         </div>
       </section>
 

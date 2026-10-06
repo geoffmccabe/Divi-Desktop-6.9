@@ -216,15 +216,224 @@ impl Storage for CachedRelay {
     }
 }
 
-/// Pick the storage backend. Default is the local stub (works offline, for
-/// testing); set `NFD_STORAGE=relay` to use the Divi-funded Arweave relay
-/// (`NFD_RELAY_URL` overrides the default host), which also caches locally.
+/// GoBanq Assets: stores the (already-encrypted) bundle on Arweave and returns
+/// the same 32-byte pointer the relay did. The desktop wallet holds no secret:
+/// a Divi-side issuer mints a single-use upload ticket, and the wallet uploads
+/// with it. Downloads come straight from a public gateway, so viewing never
+/// depends on GoBanq. Config via GOBANQ_API_URL + GOBANQ_TICKET_URL (our
+/// issuer); until both are set the backend reports as not configured.
+pub struct GoBanq {
+    api_base: String,
+    ticket_url: String,
+    gateway: String,
+    cache: LocalDir,
+}
+
+pub fn gobanq_api_url() -> String {
+    std::env::var("GOBANQ_API_URL").unwrap_or_default()
+}
+pub fn gobanq_ticket_url() -> String {
+    std::env::var("GOBANQ_TICKET_URL").unwrap_or_default()
+}
+
+impl GoBanq {
+    pub fn new(api_base: &str, ticket_url: &str, cache: LocalDir) -> Self {
+        Self {
+            api_base: api_base.trim_end_matches('/').to_string(),
+            ticket_url: ticket_url.to_string(),
+            gateway: "https://arweave.net".to_string(),
+            cache,
+        }
+    }
+    fn configured(&self) -> bool {
+        !self.api_base.is_empty() && !self.ticket_url.is_empty()
+    }
+    fn ticket(&self) -> Result<String, String> {
+        let resp = ureq::post(&self.ticket_url)
+            .timeout(std::time::Duration::from_secs(15))
+            .call()
+            .map_err(|e| format!("ticket issuer unreachable: {e}"))?;
+        let v: serde_json::Value = serde_json::from_str(&resp.into_string().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        v["ticket"].as_str().map(|s| s.to_string()).ok_or_else(|| "issuer returned no ticket".to_string())
+    }
+    fn upload(&self, bytes: &[u8], content_type: &str, encrypted: bool) -> Result<String, String> {
+        if !self.configured() {
+            return Err("GoBanq storage is not configured yet (needs GOBANQ_API_URL and a ticket issuer).".to_string());
+        }
+        let ticket = self.ticket()?;
+        let mut req = ureq::post(&format!("{}/v1/storage/uploads", self.api_base))
+            .set("Content-Type", content_type)
+            .set("x-gobanq-ticket", &ticket);
+        if encrypted {
+            req = req.set("x-gobanq-encrypted", "true");
+        }
+        let body = req.send_bytes(bytes).map_err(|e| format!("upload failed: {e}"))?.into_string().map_err(|e| e.to_string())?;
+        let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+        let upload_id = v["upload"]["uploadId"].as_str().ok_or("GoBanq returned no uploadId")?.to_string();
+        // The upload runs as a job; poll for the Arweave id (seconds).
+        for _ in 0..40 {
+            let st_body = ureq::get(&format!("{}/v1/storage/uploads/{}", self.api_base, upload_id))
+                .set("x-gobanq-ticket", &ticket)
+                .call()
+                .map_err(|e| e.to_string())?
+                .into_string()
+                .map_err(|e| e.to_string())?;
+            let s: serde_json::Value = serde_json::from_str(&st_body).map_err(|e| e.to_string())?;
+            if let Some(id) = s["upload"]["arweaveId"].as_str() {
+                return arweave_id_to_ptr(id);
+            }
+            if s["upload"]["status"].as_str() == Some("failed") {
+                return Err("GoBanq reported the upload failed.".to_string());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        Err("upload did not finish in time; it may still complete.".to_string())
+    }
+}
+
+impl Storage for GoBanq {
+    fn put(&self, bundle: &[u8]) -> Result<String, String> {
+        let ptr = self.upload(bundle, "application/octet-stream", true)?;
+        let _ = self.cache.put_at(&ptr, bundle);
+        Ok(ptr)
+    }
+    fn put_public(&self, bytes: &[u8], content_type: &str) -> Result<String, String> {
+        let ptr = self.upload(bytes, content_type, false)?;
+        let _ = self.cache.put_at(&ptr, bytes);
+        Ok(ptr)
+    }
+    fn get(&self, pointer_hex: &str) -> Result<Vec<u8>, String> {
+        if let Ok(b) = self.cache.get(pointer_hex) {
+            return Ok(b);
+        }
+        let id = ptr_to_arweave_id(pointer_hex)?;
+        let resp = ureq::get(&format!("{}/{}", self.gateway, id)).call().map_err(|e| format!("fetch failed: {e}"))?;
+        let mut buf = Vec::new();
+        resp.into_reader().take(64 * 1024 * 1024).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+        Ok(buf)
+    }
+}
+
+/// DiviStore — Divi's own permanent storage. MODULE ONLY for now: it is wired
+/// into the backend selector and the mint/view flow, but not yet available. To
+/// turn it on when it ships, set `DIVISTORE_READY = true` and implement `put` /
+/// `put_public` / `get` here. Until then it reports as unavailable and refuses
+/// uploads, while reads fall back to the local cache.
+pub const DIVISTORE_READY: bool = false;
+
+pub struct DiviStore {
+    cache: LocalDir,
+}
+impl DiviStore {
+    pub fn new(cache: LocalDir) -> Self {
+        Self { cache }
+    }
+}
+impl Storage for DiviStore {
+    fn put(&self, _bundle: &[u8]) -> Result<String, String> {
+        Err("DiviStore is not available yet.".to_string())
+    }
+    fn put_public(&self, _bytes: &[u8], _content_type: &str) -> Result<String, String> {
+        Err("DiviStore is not available yet.".to_string())
+    }
+    fn get(&self, pointer_hex: &str) -> Result<Vec<u8>, String> {
+        self.cache.get(pointer_hex)
+    }
+}
+
+/// The selectable storage backends.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Backend {
+    Local,
+    Relay,
+    GoBanq,
+    DiviStore,
+}
+impl Backend {
+    pub fn id(self) -> &'static str {
+        match self {
+            Backend::Local => "local",
+            Backend::Relay => "relay",
+            Backend::GoBanq => "gobanq",
+            Backend::DiviStore => "divistore",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Backend::Local => "On this device (testing)",
+            Backend::Relay => "Arweave relay (Divi-funded)",
+            Backend::GoBanq => "GoBanq (Arweave)",
+            Backend::DiviStore => "DiviStore",
+        }
+    }
+    pub fn from_id(s: &str) -> Option<Backend> {
+        match s {
+            "local" => Some(Backend::Local),
+            "relay" => Some(Backend::Relay),
+            "gobanq" => Some(Backend::GoBanq),
+            "divistore" => Some(Backend::DiviStore),
+            _ => None,
+        }
+    }
+}
+
+fn storage_config_path(datadir: &Path) -> PathBuf {
+    datadir.join("nfd_storage_config.json")
+}
+fn read_backend_choice(datadir: &Path) -> Option<Backend> {
+    let text = std::fs::read_to_string(storage_config_path(datadir)).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    Backend::from_id(v["backend"].as_str()?)
+}
+
+/// The active backend: env `NFD_STORAGE` wins (back-compat with regtest tests),
+/// else the saved choice, else the local stub.
+pub fn active_backend(datadir: &Path) -> Backend {
+    if let Ok(e) = std::env::var("NFD_STORAGE") {
+        if let Some(b) = Backend::from_id(&e) {
+            return b;
+        }
+    }
+    read_backend_choice(datadir).unwrap_or(Backend::Local)
+}
+
+/// Persist the active backend. Refuses DiviStore until it is ready.
+pub fn set_backend(datadir: &Path, id: &str) -> Result<(), String> {
+    let b = Backend::from_id(id).ok_or_else(|| "unknown storage backend".to_string())?;
+    if b == Backend::DiviStore && !DIVISTORE_READY {
+        return Err("DiviStore is not available yet.".to_string());
+    }
+    std::fs::create_dir_all(datadir).map_err(|e| e.to_string())?;
+    std::fs::write(storage_config_path(datadir), serde_json::json!({ "backend": b.id() }).to_string()).map_err(|e| e.to_string())
+}
+
+/// The backend list + which is active, for the panel's Storage section.
+pub fn backends_status(datadir: &Path) -> serde_json::Value {
+    let active = active_backend(datadir);
+    let gb_conf = !gobanq_api_url().is_empty() && !gobanq_ticket_url().is_empty();
+    serde_json::json!({
+        "active": active.id(),
+        "backends": [
+            { "id": "local", "label": Backend::Local.label(), "available": true, "detail": "Stored on this device only — for testing." },
+            { "id": "relay", "label": Backend::Relay.label(), "available": true, "detail": format!("Uploads to {}", relay_url()) },
+            { "id": "gobanq", "label": Backend::GoBanq.label(), "available": gb_conf,
+              "detail": if gb_conf { format!("Uploads via GoBanq ({}).", gobanq_api_url()) } else { "Not configured yet — awaiting the GoBanq app key.".to_string() } },
+            { "id": "divistore", "label": Backend::DiviStore.label(), "available": DIVISTORE_READY,
+              "detail": if DIVISTORE_READY { "Divi's own permanent storage.".to_string() } else { "Coming soon — Divi's own permanent storage.".to_string() } }
+        ]
+    })
+}
+
+/// Pick the storage backend for a node, honoring the active selection. The local
+/// stub works offline; Relay and GoBanq both cache locally so a just-uploaded
+/// item is viewable before a gateway serves it; DiviStore is a wired-but-off
+/// module. Default is the local stub.
 pub fn for_node(datadir: &Path) -> Box<dyn Storage> {
-    if std::env::var("NFD_STORAGE").as_deref() == Ok("relay") {
-        let url = std::env::var("NFD_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string());
-        Box::new(CachedRelay::new(Relay::new(&url), LocalDir::under_datadir(datadir)))
-    } else {
-        Box::new(LocalDir::under_datadir(datadir))
+    match active_backend(datadir) {
+        Backend::Relay => Box::new(CachedRelay::new(Relay::new(&relay_url()), LocalDir::under_datadir(datadir))),
+        Backend::GoBanq => Box::new(GoBanq::new(&gobanq_api_url(), &gobanq_ticket_url(), LocalDir::under_datadir(datadir))),
+        Backend::DiviStore => Box::new(DiviStore::new(LocalDir::under_datadir(datadir))),
+        Backend::Local => Box::new(LocalDir::under_datadir(datadir)),
     }
 }
 
