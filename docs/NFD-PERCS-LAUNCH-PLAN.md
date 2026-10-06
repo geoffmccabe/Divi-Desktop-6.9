@@ -23,7 +23,7 @@ A full audit of Kinetink, GoBanq and DD69, plus Geoff's decisions, fixed the div
 2. **Editable review screen** (the heart of the new flow — unbuilt): populate the set into an editable grid; fix name/tier/traits/supply/art/rarity before launch; no immediate mint.
 3. **GoBanq storage backend** (`NFD_STORAGE=gobanq`, single-use ticket): small, already designed; retire the self-funded relay. Needs the devnet app key (ask Geoff).
 4. **Launch = local Divi mint**, reveal-aware (sealed-pack mint). Keep the `nfdMint`/create-collection choke point; the UTXO/funding/confirmation machinery stays (DD69 still mints).
-5. **Sealed-pack reveal UI** + wire `reveal.rs` + reveal on-chain record + chain-repo indexer decode.
+5. **Sealed-pack reveal UI** — ☑ built into DD69 (2026-Oct-06) as a reusable, swappable module (`ui/src/wallet/reveal/`), preview-wired in the Collectibles NFD Builder tab: layered FX (spinning starburst + warp starfield + glitter from jump 6 + fireworks for UR), jump-scaled size/sound 20→100%, color ladder, forged minimum-tier shown sealed and revealed. ☐ Still backend: wire `reveal.rs` + an on-chain reveal record + chain-repo indexer decode, then swap the preview `run()` for the real on-chain reveal (one call site).
 6. **Forging UI** + chain-repo indexer forge(0x05) decode.
 7. **Marketplace** (listings/buy/sell — browse-only today).
 8. **Ownership across multiple wallets** + DIVA display (single Divi address today).
