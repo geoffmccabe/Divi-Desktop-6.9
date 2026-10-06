@@ -28,6 +28,17 @@ A full audit of Kinetink, GoBanq and DD69, plus Geoff's decisions, fixed the div
 7. **Marketplace** (listings/buy/sell — browse-only today).
 8. **Ownership across multiple wallets** + DIVA display (single Divi address today).
 
+### Product decisions — round 2 (Geoff, 2026-Oct-06)
+- **#0 JSON spec: Geoff develops it first.** Geoff extends the Kinetink export (sealed-pack + tier-art + odds + reveal config) and hands DD69 the finished JSON. DD69 import (#1) is built to match that, so #1 waits on Geoff's spec.
+- **#2 Editable review = specs only (numbers + text), NOT art.** Name, description, tier, traits, rarity, supply, fees etc. are editable in DD69; to change art the user edits in Kinetink and re-imports. No art upload/crop in DD69.
+- **#3 Storage is modular** (pluggable backend trait). Arweave today; a distinct DiviStore is a future backend that drops into the same layer; keep it pluggable, don't hardcode one store.
+- **#4 DD69 launches on Divi.** Confirmed.
+- **#5 Reveal:** revealing is an **on-chain transaction**. Reveal UI lives in DD69 and should be a **modular, swappable** component reusable in DiviGo/elsewhere. Build an exciting reveal animation (Claude Design, HTML/CSS/JS) as a swappable module; prototype first for approval.
+  - **Forged sealed PERCs carry a guaranteed MINIMUM TIER.** Forging two T3s → the resulting sealed pack is guaranteed T4+ (forge distribution: +1@50%, +2@25%, …, floored at min_tier). The data model for a sealed PERC must carry `min_tier` (0/none for an original pack; N for a forged one). The reveal honors the floor and uses the forge distribution. **The minimum tier must be visible while still sealed** — in the user's collection AND on the marketplace — so a sealed forged pack can be sold as "guaranteed ≥ T4". Art stays the sealed art; add the **tier-based glow effect (from Kinetink)** for the minimum tier, plus clear text (e.g. "Guaranteed T4+").
+- **#6 Forging UI in DD69.** Confirmed.
+- **#7 Marketplace basics:** listing, price, listing time, and a **guaranteed creator commission** on sales, plus other listing details. The creator commission is set by the collection creator and can be **changed DOWN ONLY** (a ratchet / spork-like signed record — never up): if DIVI's price rises the fixed-DIVI fee can get too high and block sales, so the creator can lower it, but can never raise it. (Builds on the existing `NFD-CREATOR-COMMISSION.md` enforce-at-transfer design.)
+- **#8 Ownership display must be chain-agnostic/modular** — no hardcoded Divi-only assumptions. Only Divi is implemented now (DIVA does not exist yet). Leave the abstraction so future chains (DIVA, Solana, Base, …) that Divi may be bridged to can be added to the wallet without a rewrite. **Do not build any other-chain code now** — just keep it flexible.
+
 ---
 
 ## Where we are (one paragraph)
