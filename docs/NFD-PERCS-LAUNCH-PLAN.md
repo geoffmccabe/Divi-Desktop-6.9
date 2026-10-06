@@ -43,9 +43,9 @@ Everything needed to launch, across all systems. Owners: **[DD69]** this wallet 
 - ☐ [DD69] Tier-art registry so a revealed/forged PERC shows the right art + tier glow, sealed and revealed.
 
 ### Phase 5 — Marketplace
-- ☐ [DD69+Chain] Listing record: price + listing time.
-- ☐ [DD69+Chain] Guaranteed creator commission, enforced as a condition of a valid transfer; the creator can lower it via a signed record but **never raise it** (ratchet down only).
-- ☐ [DD69] Marketplace UI: browse → buy/sell via atomic HTLC trade (non-custodial); show price, commission, and the forged **guaranteed-minimum-tier glow + text** on sealed packs.
+- ◐ [DD69] Listing: ☑ UI built — "List for sale" (price + the commission breakdown + your net) in the item viewer, and a "Your listings" group in Marketplace. ☐ Listings are local drafts; the on-chain listing record (price + listing time) + settlement is the chain step below.
+- ◐ [DD69] Creator commission, **DOWN-ONLY** (Geoff): ☑ the rule + model + persisted value + creator editor (set/lower + payout) are built and tested (`commission.rs`, `NFD-CREATOR-COMMISSION.md` corrected). ☐ [Chain] the signed COMMISSION-SET record + the transfer-validity enforcement (a transfer is valid only if it pays ≥ the current commission) stay the chain-coordinated step.
+- ☐ [DD69+Chain] Buy/sell via atomic HTLC trade (non-custodial); show price, commission, and the forged **guaranteed-minimum-tier glow + text** on sealed packs (the glow needs the forge/reveal min_tier data from Phase 4).
 
 ### Phase 6 — Ownership display (chain-agnostic)
 - ☐ [DD69] Enumerate ownership across the user's multiple Divi addresses/wallets (today: one address).
