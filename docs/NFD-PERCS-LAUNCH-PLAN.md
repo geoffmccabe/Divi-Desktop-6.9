@@ -18,7 +18,7 @@ Everything needed to launch, across all systems. Owners: **[DD69]** this wallet 
 - ☑ [DD69] Reveal experience built in as a reusable module, preview-wired (layered FX, jump-scaled size+sound, forged guarantee, Ultra Rare).
 
 ### Phase 1 — The set contract + import & edit
-- ☐ [Kinetink/Geoff] Extend the Kinetink export JSON to carry the sealed-pack model: sealed-pack art, the tier-art library (T1..T40), ultra-rare arts + odds/factors, and the reveal/rarity config — on top of today's flat item fields. Deliver the spec + one real sample file.
+- ◐ [Kinetink/Geoff] Extend the Kinetink export JSON to carry the sealed-pack model: sealed-pack art, the tier-art library (T1..T40), ultra-rare arts + odds/factors, and the reveal/rarity config — on top of today's flat item fields. Spec doc: `/Users/geoffreymccabe/kinetink/docs/KINETINK_LAUNCH_PACKAGE_SPEC.md` (now includes `collection.ultraRare` = `{ basicChance, progressiveFactor, count }`, the UR gate — section 2.2). Geoff is extending it; DD69 import reads this spec.
 - ☐ [DD69] Import that JSON (replace the old zip importer): fetch art from the allowlisted Kinetink storage host, validate on magic bytes, build an in-memory editable set.
 - ☐ [DD69] Editable review screen — edit specs only (names, description, supply, tiers, traits, rarity config, fees); **art is not editable here** (change it in Kinetink and re-import). Validate, then hand off to launch.
 
@@ -44,7 +44,7 @@ Everything needed to launch, across all systems. Owners: **[DD69]** this wallet 
 
 ### Phase 5 — Marketplace
 - ◐ [DD69] Listing: ☑ UI built — "List for sale" (price + the commission breakdown + your net) in the item viewer, and a "Your listings" group in Marketplace. ☐ Listings are local drafts; the on-chain listing record (price + listing time) + settlement is the chain step below.
-- ◐ [DD69] Creator commission, **DOWN-ONLY** (Geoff): ☑ the rule + model + persisted value + creator editor (set/lower + payout) are built and tested (`commission.rs`, `NFD-CREATOR-COMMISSION.md` corrected). ☐ [Chain] the signed COMMISSION-SET record + the transfer-validity enforcement (a transfer is valid only if it pays ≥ the current commission) stay the chain-coordinated step.
+- ◐ [DD69] Creator commission, **DOWN-ONLY** (Geoff): ☑ the rule + model + persisted value + creator editor in collection details (Original/Current/New, "can only be lowered") are built and tested. ☑ [Chain] **on-chain enforcement built + tested + pushed (no fork):** COMMISSION-SET record (0x09, creator-only, down-only) and the transfer-validity rule (a transfer is ignored unless it pays ≥ the current commission to the payout address) are in the normative `nfd-indexer`; `RecordContext` gained an additive `payments` map (DMT unaffected); re-vendored into DD69 so its scanner enforces on reads. ☐ [DD69] Remaining wallet-emit: broadcast a COMMISSION-SET tx when the creator sets/lowers it, and add the commission payment output to transfer transactions, and point the UI's set at the on-chain path.
 - ☐ [DD69+Chain] Buy/sell via atomic HTLC trade (non-custodial); show price, commission, and the forged **guaranteed-minimum-tier glow + text** on sealed packs (the glow needs the forge/reveal min_tier data from Phase 4).
 
 ### Phase 6 — Ownership display (chain-agnostic)

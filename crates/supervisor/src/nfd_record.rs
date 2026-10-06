@@ -13,6 +13,7 @@ const SUB_COLLECTION: u8 = 0x04;
 const SUB_FORGE: u8 = 0x05;
 const SUB_BRIDGE_OUT: u8 = 0x07;
 const SUB_BRIDGE_IN: u8 = 0x08;
+const SUB_COMMISSION: u8 = 0x09;
 
 /// Mint flag bits.
 pub const FLAG_ENCRYPTED: u8 = 0x01;
@@ -168,6 +169,27 @@ pub fn encode_collection_create(max_supply: u32, meta_ptr: &str) -> Result<Strin
         return Err("meta_ptr must be 32 bytes hex".into());
     }
     Ok(format!("{}{:08x}{}", prefix(SUB_COLLECTION), max_supply, meta_ptr.to_lowercase()))
+}
+
+/// Encode a COMMISSION-SET (creator commission on a collection):
+/// collection_id(32) | amount_duffs(u64, big-endian, 8) | payout(21 packed addr).
+/// The collection id is a txid reference, so it goes on the wire in internal
+/// byte order (same as MINT's collection_id). The indexer enforces creator-only
+/// and down-only; this only builds the bytes.
+pub fn encode_commission_set(collection_id: &str, amount_duffs: u64, payout_packed: &str) -> Result<String, String> {
+    if !is_hex_len(collection_id, 32) {
+        return Err("collection_id must be 32 bytes hex".into());
+    }
+    if !is_hex_len(payout_packed, 21) {
+        return Err("payout must be a 21-byte packed address hex (kind + hash160)".into());
+    }
+    Ok(format!(
+        "{}{}{:016x}{}",
+        prefix(SUB_COMMISSION),
+        swap_txid_order(&collection_id.to_lowercase()), // txid ref -> internal order
+        amount_duffs,
+        payout_packed.to_lowercase()
+    ))
 }
 
 /// Encode a FORGE: the two same-tier input NFDs (by mint txid) + the collection.
@@ -504,6 +526,18 @@ mod tests {
         let (a, b, c) = ("11".repeat(32), "22".repeat(32), "33".repeat(32));
         let script = op_meta_script(&encode_forge(&a, &b, &c).unwrap());
         assert_eq!(parse(&script), Some(NfdRecord::Forge { input_a: a, input_b: b, collection_id: c }));
+    }
+
+    #[test]
+    fn commission_set_encodes() {
+        let cid = "ab".repeat(32);
+        let payout = format!("00{}", "cd".repeat(20)); // 21-byte packed address hex
+        let hex = encode_commission_set(&cid, 1000, &payout).unwrap();
+        // payout trails the amount, which trails the (byte-swapped) collection id
+        assert!(hex.ends_with(&payout));
+        assert!(hex.contains(&format!("{:016x}", 1000u64)));
+        assert!(encode_commission_set("notlongenough", 1, &payout).is_err());
+        assert!(encode_commission_set(&cid, 1, "short").is_err());
     }
 
     #[test]
