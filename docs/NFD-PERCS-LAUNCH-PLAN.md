@@ -8,6 +8,60 @@
 
 ---
 
+## MASTER LAUNCH CHECKLIST — first Perc collection on Divi (authoritative, 2026-Oct-06)
+
+Everything needed to launch, across all systems. Owners: **[DD69]** this wallet (me), **[GoBanq]** the GoBanq Assets agent (via Geoff), **[Kinetink]** the Kinetink app (Geoff), **[Chain]** the Divi-Blockchain_6.9 repo (coordinate with the chain agent), **[Geoff]** a decision or credential only Geoff can give. Storage is modular: Arweave-via-GoBanq is the live backend; **DiviStore ships as a wired-but-off module** that turns on when it's ready.
+
+### Phase 0 — Foundation ✅ DONE
+- ☑ [DD69] Branch current with the shipping app, builds clean, tests green.
+- ☑ [DD69] Wallet reads collectibles/collections/ownership from the chain (verified on regtest).
+- ☑ [DD69] Reveal experience built in as a reusable module, preview-wired (layered FX, jump-scaled size+sound, forged guarantee, Ultra Rare).
+
+### Phase 1 — The set contract + import & edit
+- ☐ [Kinetink/Geoff] Extend the Kinetink export JSON to carry the sealed-pack model: sealed-pack art, the tier-art library (T1..T40), ultra-rare arts + odds/factors, and the reveal/rarity config — on top of today's flat item fields. Deliver the spec + one real sample file.
+- ☐ [DD69] Import that JSON (replace the old zip importer): fetch art from the allowlisted Kinetink storage host, validate on magic bytes, build an in-memory editable set.
+- ☐ [DD69] Editable review screen — edit specs only (names, description, supply, tiers, traits, rarity config, fees); **art is not editable here** (change it in Kinetink and re-import). Validate, then hand off to launch.
+
+### Phase 2 — Storage (Arweave now; DiviStore module wired, off)
+- ☐ [DD69] GoBanq Arweave backend (`NFD_STORAGE=gobanq`): upload via single-use ticket; shrink our `nfds.divi.love` relay to a ticket issuer (keeps our moderation gate, drops the funded key). Handle GoBanq error/retry codes.
+- ☐ [DD69] **DiviStore backend module**: a pluggable storage backend behind a storage-choice selector, present in the flow but returning "not available yet" until switched on. Flow defaults to GoBanq/Arweave; flipping to DiviStore is one setting when it's ready.
+- ☐ [DD69] Launch upload pipeline: for each art, fetch from Kinetink → store via the selected backend → get the Arweave pointer DD69 writes on-chain; with progress + retry UI.
+- ☐ [Geoff/GoBanq] Issue the NFD devnet app key + caps; decide GoBanq mainnet availability (its server move) vs. keeping the funded relay for the first mainnet launch.
+
+### Phase 3 — The launch mint (sealed packs) on Divi  *(DD69 does the mint)*
+- ☐ [DD69] Sealed-pack create-collection + batch-mint on Divi: mint sealed packs (reveal-aware records referencing the tier-art library + odds), not finished items.
+- ☐ [DD69+Chain] Reveal on-chain record + transaction, roll seeded by a future Divi block (fair, can't be ground); wire the existing `reveal.rs` engine.
+- ☐ [Chain] Teach the normative indexer to decode + apply the reveal record with a reorg-undo entry; re-vendor into DD69.
+- ☐ [DD69] Swap the reveal UI's preview `run()` for the real on-chain reveal (one call site).
+- ☐ [DD69/Geoff] Set the treasury address (have it) + the mint fee numbers (Geoff), mainnet-gated.
+- ☐ [DD69] Add a mainnet **mint safety fence** so nothing can mint on mainnet before the launch block (lesson from the Sep-19 stray mint).
+
+### Phase 4 — Forging (in the launch)
+- ☐ [Chain] Teach the indexer to decode + apply the forge record (0x05) with reorg-undo; fix the embedded-txid byte order for forge records; re-vendor.
+- ☐ [DD69] Forge command + UI; a forge produces a **sealed pack with a guaranteed minimum tier**; reveal honors the floor and uses the forge odds.
+- ☐ [DD69] Tier-art registry so a revealed/forged PERC shows the right art + tier glow, sealed and revealed.
+
+### Phase 5 — Marketplace
+- ☐ [DD69+Chain] Listing record: price + listing time.
+- ☐ [DD69+Chain] Guaranteed creator commission, enforced as a condition of a valid transfer; the creator can lower it via a signed record but **never raise it** (ratchet down only).
+- ☐ [DD69] Marketplace UI: browse → buy/sell via atomic HTLC trade (non-custodial); show price, commission, and the forged **guaranteed-minimum-tier glow + text** on sealed packs.
+
+### Phase 6 — Ownership display (chain-agnostic)
+- ☐ [DD69] Enumerate ownership across the user's multiple Divi addresses/wallets (today: one address).
+- ☐ [DD69] Keep the display behind a chain-agnostic abstraction so DIVA/Solana/Base can be added later without a rewrite — **Divi only now, no other-chain code yet.**
+
+### Phase 7 — Go-live
+- ☐ [DD69] Merge `feat/nfd-collectibles` → `main`; main builds clean; cut a release.
+- ☐ [Geoff] Set the mainnet launch block (NFD activation height), treasury, and sign off on the fee table.
+- ☐ [GoBanq] Mainnet storage available (server move) or the relay fallback confirmed.
+- ☐ [All] Full dress rehearsal end-to-end on regtest/devnet: Kinetink JSON → import → edit → store → sealed-pack mint → reveal → forge → list/sell → ownership.
+- ☐ [Geoff] Launch the first Perc collection on Divi mainnet.
+
+### Still needed from Geoff (inputs, not code)
+Mint + marketplace fee numbers · the extended Kinetink JSON spec (you're building it) and who edits Kinetink · the GoBanq NFD devnet key · the GoBanq mainnet timing (server move) vs. relay fallback · the mainnet launch block.
+
+---
+
 ## Architecture clarified — three-repo audit (2026-Oct-06)
 
 A full audit of Kinetink, GoBanq and DD69, plus Geoff's decisions, fixed the division of labor. This section is authoritative; where older phases below assume "GoBanq launches," they are corrected here.
