@@ -245,6 +245,17 @@ export interface StorageBackends {
 export const nfdStorageBackends = () => invoke<StorageBackends>("nfd_storage_backends");
 export const nfdSetStorageBackend = (backend: string) =>
   invoke<StorageBackends>("nfd_set_storage_backend", { backend });
+
+// ---- Creator commission (flat DIVI toll on resale; down-only) ----
+export interface Commission {
+  amountDuffs: number;
+  amountDivi: string;   // human DIVI string
+  payoutAddress: string;
+}
+export const nfdCommissionGet = (collectionId: string) =>
+  invoke<Commission | null>("nfd_commission_get", { collectionId });
+export const nfdCommissionSet = (collectionId: string, amountDivi: number, payoutAddress: string) =>
+  invoke<Commission>("nfd_commission_set", { collectionId, amountDivi, payoutAddress });
 export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string, encrypted: boolean) =>
   invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash, encrypted });
 // ---- Payment requests (DVXP type 0x05) ----

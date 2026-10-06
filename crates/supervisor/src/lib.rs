@@ -7,6 +7,7 @@ pub mod bridge;
 pub mod chart;
 pub mod collectibles;
 pub mod collectibles_import;
+pub mod commission;
 pub mod config;
 pub mod crypto_nfd;
 pub mod dvxp;

@@ -3,7 +3,8 @@ import {
   nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateCollection, newReceiveAddress,
   nfdOwned, nfdCollectionMembers,
   nfdStorageBackends, nfdSetStorageBackend,
-  type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends,
+  nfdCommissionGet, nfdCommissionSet,
+  type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends, type Commission,
 } from "./api";
 import { CollectionImport } from "./CollectionImport";
 import { RevealStage, type RevealSealed } from "./reveal/RevealStage";
@@ -31,6 +32,7 @@ export interface Item {
   tier?: string; // explicit creator-assigned rarity tier (locked schema)
   edition?: number; // 1-based index within its collection
   encrypted?: boolean; // false = Public content (viewed without a key)
+  listPrice?: number; // local listing price in DIVI (draft until the on-chain listing lands)
 }
 
 // A collection I created (creator-only minting, optional supply cap).
@@ -231,6 +233,57 @@ export function CollectiblesPanel() {
     } catch (e) {
       setStorageErr(String(e));
     }
+  }
+
+  // Creator commission (flat DIVI toll on resale; can only be lowered).
+  const [commCol, setCommCol] = useState("");
+  const [commCur, setCommCur] = useState<Commission | null>(null);
+  const [commAmt, setCommAmt] = useState("");
+  const [commPayout, setCommPayout] = useState("");
+  const [commMsg, setCommMsg] = useState("");
+  const [commBusy, setCommBusy] = useState(false);
+  useEffect(() => {
+    if (!commCol) { setCommCur(null); return; }
+    let live = true;
+    nfdCommissionGet(commCol).then((c) => {
+      if (!live) return;
+      setCommCur(c);
+      setCommAmt(c ? c.amountDivi : "");
+      setCommPayout(c?.payoutAddress || "");
+      setCommMsg("");
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [commCol]);
+  async function saveCommission() {
+    if (!commCol) return;
+    setCommBusy(true); setCommMsg("");
+    try {
+      const c = await nfdCommissionSet(commCol, Number(commAmt) || 0, commPayout.trim());
+      setCommCur(c); setCommAmt(c.amountDivi); setCommMsg("Saved.");
+    } catch (e) {
+      setCommMsg(String(e));
+    } finally {
+      setCommBusy(false);
+    }
+  }
+
+  // Listing (local draft until the on-chain atomic trade lands).
+  const [listFor, setListFor] = useState<string | null>(null); // item txid being priced
+  const [listPrice, setListPrice] = useState("");
+  const [listComm, setListComm] = useState<Commission | null>(null);
+  function beginList(it: Item) {
+    setListFor(it.txid);
+    setListPrice(it.listPrice ? String(it.listPrice) : "");
+    setListComm(null);
+    if (it.collectionId) nfdCommissionGet(it.collectionId).then(setListComm).catch(() => setListComm(null));
+  }
+  function saveListing(it: Item) {
+    const price = Number(listPrice);
+    setItems((prev) => prev.map((x) => (x.txid === it.txid ? { ...x, listPrice: price > 0 ? price : undefined } : x)));
+    setListFor(null);
+  }
+  function unlist(it: Item) {
+    setItems((prev) => prev.map((x) => (x.txid === it.txid ? { ...x, listPrice: undefined } : x)));
   }
   const revealDelay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   function openPreviewLevel() {
@@ -676,6 +729,36 @@ export function CollectiblesPanel() {
         </div>
       </section>
 
+      {collections.length > 0 && (
+      <section className="ts-section">
+        <h3 className="ts-head">Creator commission</h3>
+        <p className="wl-note">
+          A flat DIVI fee paid to you on every resale of a collection's items, enforced on-chain as part of a valid
+          transfer (so a marketplace can't skip it). You can lower it later but never raise it — if DIVI's price climbs
+          and the fee gets too high, you can ease it. On-chain enforcement ships with the marketplace.
+        </p>
+        <select className="wl-input" value={commCol} onChange={(e) => setCommCol(e.target.value)} style={{ maxWidth: 320 }}>
+          <option value="">Select one of your collections…</option>
+          {collections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        {commCol && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+            <p className="wl-note" style={{ margin: 0 }}>
+              {commCur ? `Current: ${commCur.amountDivi} DIVI (can only go down)` : "No commission set yet — your first amount sets it."}
+            </p>
+            <input className="wl-input" type="number" min={0} placeholder="Commission in DIVI" value={commAmt} onChange={(e) => setCommAmt(e.target.value)} style={{ maxWidth: 220 }} />
+            <input className="wl-input mono" placeholder="Payout address (D...)" value={commPayout} onChange={(e) => setCommPayout(e.target.value)} style={{ maxWidth: 420 }} />
+            <div>
+              <button className="wl-btn wl-btn-primary" disabled={commBusy} onClick={saveCommission}>
+                {commBusy ? "Saving…" : commCur ? "Lower commission" : "Set commission"}
+              </button>
+            </div>
+            {commMsg && <p className="wl-note" style={{ margin: 0 }}>{commMsg}</p>}
+          </div>
+        )}
+      </section>
+      )}
+
       <section className="ts-section">
         <h3 className="ts-head">Create a collection</h3>
         <p className="wl-note">
@@ -801,9 +884,25 @@ export function CollectiblesPanel() {
         <h3 className="ts-head">Marketplace</h3>
         <p className="wl-note">
           Browse collections and their traits. This is the public gallery — you see everyone’s public previews
-          and rarity, while each original stays encrypted for its owner. <strong>Browse-only for now</strong>:
-          listings and buying/selling come next.
+          and rarity, while each original stays encrypted for its owner. Buying and selling settle on-chain with an
+          atomic, non-custodial trade — coming next.
         </p>
+        {items.some((i) => i.listPrice) && (
+          <div style={{ marginBottom: 16 }}>
+            <div className="wl-note" style={{ marginBottom: 8 }}>
+              <strong>Your listings (draft)</strong> — these settle on-chain when the marketplace trade ships.
+            </div>
+            <div className="coll-grid">
+              {items.filter((i) => i.listPrice).map((it) => (
+                <button key={it.txid} className="coll-card" onClick={() => openItem(it)}>
+                  {it.thumb ? <img className="coll-card-thumb" src={it.thumb} alt={it.name} /> : <span className="coll-card-noimg" aria-hidden="true">🔒</span>}
+                  <span className="coll-card-name">{it.name}</span>
+                  <span className="coll-card-meta">{it.listPrice!.toLocaleString()} DIVI</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         {collections.length === 0 ? (
           <p className="wl-note">No collections yet. Create one in the NFD Builder tab.</p>
         ) : (
@@ -936,6 +1035,34 @@ export function CollectiblesPanel() {
                 {xferErr && <p className="wl-err">{xferErr}</p>}
               </div>
             )}
+
+            <div className="coll-xfer" style={{ marginTop: 10 }}>
+              {listFor === active.txid ? (
+                <>
+                  <input className="wl-input" type="number" min={0} placeholder="Price in DIVI" value={listPrice} onChange={(e) => setListPrice(e.target.value)} />
+                  {listComm && Number(listComm.amountDivi) > 0 && (
+                    <p className="wl-note" style={{ margin: 0 }}>
+                      Creator commission on sale: {listComm.amountDivi} DIVI (guaranteed). You net ~
+                      {Math.max(0, (Number(listPrice) || 0) - Number(listComm.amountDivi)).toLocaleString()} DIVI.
+                    </p>
+                  )}
+                  <button className="wl-btn wl-btn-primary" onClick={() => saveListing(active)}>
+                    {Number(listPrice) > 0 ? `List for ${Number(listPrice).toLocaleString()} DIVI` : "List for sale"}
+                  </button>
+                  <p className="wl-note hra-dim" style={{ margin: 0 }}>
+                    Draft listing. Buying and selling settles on-chain with an atomic, non-custodial trade — coming with the marketplace.
+                  </p>
+                </>
+              ) : active.listPrice ? (
+                <>
+                  <p className="wl-note" style={{ margin: 0 }}>Listed for {active.listPrice.toLocaleString()} DIVI (draft).</p>
+                  <button className="wl-btn" onClick={() => beginList(active)}>Change price</button>
+                  <button className="wl-btn" onClick={() => unlist(active)}>Remove listing</button>
+                </>
+              ) : (
+                <button className="wl-btn" onClick={() => beginList(active)}>List for sale</button>
+              )}
+            </div>
           </div>
         </div>
       )}

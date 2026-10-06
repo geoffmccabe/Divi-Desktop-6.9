@@ -2208,6 +2208,33 @@ async fn nfd_relay_status() -> RelayStatusDto {
     .unwrap_or(RelayStatusDto { relay_url: String::new(), reachable: false, balance_winc: None })
 }
 
+/// The creator commission for a collection (null if none set). `{ amountDuffs, amountDivi, payoutAddress }`.
+#[tauri::command]
+async fn nfd_commission_get(collection_id: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        Ok(match dd69_supervisor::commission::get(&cfg.datadir, &collection_id) {
+            Some(c) => serde_json::json!({ "amountDuffs": c.amount_duffs, "amountDivi": dd69_supervisor::commission::fmt_divi(c.amount_duffs), "payoutAddress": c.payout_address }),
+            None => Value::Null,
+        })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Set (or lower) a collection's creator commission. Enforces the down-only rule.
+#[tauri::command]
+async fn nfd_commission_set(collection_id: String, amount_divi: f64, payout_address: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let duffs = dd69_supervisor::commission::divi_to_duffs(amount_divi)?;
+        let c = dd69_supervisor::commission::set(&cfg.datadir, &collection_id, duffs, &payout_address)?;
+        Ok(serde_json::json!({ "amountDuffs": c.amount_duffs, "amountDivi": dd69_supervisor::commission::fmt_divi(c.amount_duffs), "payoutAddress": c.payout_address }))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// The storage backends and which is active, for the panel's Storage section.
 #[tauri::command]
 async fn nfd_storage_backends() -> Result<Value, String> {
@@ -2394,6 +2421,8 @@ fn main() {
             nfd_relay_status,
             nfd_storage_backends,
             nfd_set_storage_backend,
+            nfd_commission_get,
+            nfd_commission_set,
             nfd_create_collection,
             nfd_import_open,
             nfd_import_read_item,

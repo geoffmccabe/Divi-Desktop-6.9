@@ -45,7 +45,14 @@ the transfer is invalid. The trade-off is that DIVI's value moves, so:
   (authorized the same way collection-create is: funded from / spending the
   creator address). It sets the current `{ amount_duffs, payout_address }` for the
   collection. Latest one wins; a transfer must satisfy the amount current as of its
-  block. The creator can raise or lower it anytime.
+  block.
+  - **DOWN ONLY (Geoff, 2026-Oct-06).** The amount can only be LOWERED, never
+    raised. A conformant indexer rejects a COMMISSION-SET whose amount exceeds the
+    current one. Rationale: the toll is a fixed DIVI figure, so if DIVI's price
+    rises the fee can become too high and choke sales; the creator can ratchet it
+    down (a spork-like relief valve) but can never raise it on holders. The initial
+    amount is set once (at or near collection-create); every later change must be
+    `<=` the current value. The payout address may be updated alongside.
 - **TRANSFER** — unchanged in shape, but the indexer now additionally checks the
   commission output before accepting it.
 
