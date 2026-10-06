@@ -259,10 +259,13 @@ export function CollectiblesPanel() {
   }, [browsing]);
   async function saveCommission() {
     if (!browsing) return;
+    const creatorAddr = collections.find((c) => c.id === browsing)?.creatorAddr || "";
+    if (!creatorAddr) { setCommMsg("Can't find the creator address for this collection."); return; }
     setCommBusy(true); setCommMsg("");
     try {
-      const c = await nfdCommissionSet(browsing, Number(commAmt) || 0, commPayout.trim());
-      setCommCur(c); setCommAmt(""); setCommMsg(`Saved — the commission is now ${c.amountDivi} DIVI.`);
+      const c = await nfdCommissionSet(browsing, Number(commAmt) || 0, commPayout.trim(), creatorAddr);
+      setCommCur(c); setCommAmt("");
+      setCommMsg(`Broadcast — the commission is now ${c.amountDivi} DIVI (settles on-chain shortly).`);
     } catch (e) {
       setCommMsg(String(e));
     } finally {

@@ -2228,14 +2228,24 @@ async fn nfd_commission_get(collection_id: String) -> Result<Value, String> {
     .map_err(|_| "internal error".to_string())?
 }
 
-/// Set (or lower) a collection's creator commission. Enforces the down-only rule.
+/// Set (or lower) a collection's creator commission: broadcasts the on-chain
+/// COMMISSION-SET (funded from the creator address) so the whole protocol
+/// enforces it, then caches it locally for display. Down-only, checked against
+/// the chain's current value before broadcasting to avoid a useless transaction.
 #[tauri::command]
-async fn nfd_commission_set(collection_id: String, amount_divi: f64, payout_address: String) -> Result<Value, String> {
+async fn nfd_commission_set(collection_id: String, amount_divi: f64, payout_address: String, creator_addr: String) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
         let duffs = dd69_supervisor::commission::divi_to_duffs(amount_divi)?;
+        // Down-only against the chain's current value (not just the local cache).
+        let current = dd69_supervisor::nfd_scan::commission_of(&cfg, &collection_id)?.map(|(d, _)| d);
+        dd69_supervisor::commission::validate(current, duffs)?;
+        // Broadcast the authoritative on-chain record.
+        let txid = dd69_supervisor::collectibles::set_commission(&cfg, &collection_id, &creator_addr, duffs, &payout_address)?;
+        // Cache locally for immediate display (the chain scan reconciles shortly).
         let c = dd69_supervisor::commission::set(&cfg.datadir, &collection_id, duffs, &payout_address)?;
         Ok(serde_json::json!({
+            "txid": txid,
             "originalDuffs": c.original_duffs,
             "originalDivi": dd69_supervisor::commission::fmt_divi(c.original_duffs),
             "amountDuffs": c.amount_duffs,

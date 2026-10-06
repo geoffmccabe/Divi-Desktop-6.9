@@ -248,6 +248,7 @@ export const nfdSetStorageBackend = (backend: string) =>
 
 // ---- Creator commission (flat DIVI toll on resale; down-only) ----
 export interface Commission {
+  txid?: string;        // present on set: the on-chain COMMISSION-SET tx
   originalDuffs: number;
   originalDivi: string; // the first amount ever set (immutable)
   amountDuffs: number;
@@ -256,8 +257,9 @@ export interface Commission {
 }
 export const nfdCommissionGet = (collectionId: string) =>
   invoke<Commission | null>("nfd_commission_get", { collectionId });
-export const nfdCommissionSet = (collectionId: string, amountDivi: number, payoutAddress: string) =>
-  invoke<Commission>("nfd_commission_set", { collectionId, amountDivi, payoutAddress });
+// Broadcasts the on-chain COMMISSION-SET (funded from creatorAddr), then caches it.
+export const nfdCommissionSet = (collectionId: string, amountDivi: number, payoutAddress: string, creatorAddr: string) =>
+  invoke<Commission>("nfd_commission_set", { collectionId, amountDivi, payoutAddress, creatorAddr });
 export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string, encrypted: boolean) =>
   invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash, encrypted });
 // ---- Payment requests (DVXP type 0x05) ----

@@ -191,6 +191,24 @@ pub fn create_collection(
     Ok(CollectionOutcome { txid, meta_ptr })
 }
 
+/// Broadcast a COMMISSION-SET: the creator sets or lowers a collection's flat
+/// DIVI resale toll. Funded from (and so signed by) the creator address, which
+/// is how the indexer's creator-only rule accepts it; the indexer also enforces
+/// that the amount only goes down. Returns the anchoring txid.
+pub fn set_commission(
+    cfg: &NodeConfig,
+    collection_id: &str,
+    creator_addr: &str,
+    amount_duffs: u64,
+    payout_addr: &str,
+) -> Result<String, String> {
+    let rpc = RpcClient::new(cfg);
+    let payout_packed = address_to_packed(&rpc, payout_addr)?;
+    let record = nfd_record::encode_commission_set(collection_id, amount_duffs, &payout_packed)?;
+    let utxo = pick_owner_utxo(&rpc, creator_addr)?;
+    anchor_record(&rpc, &utxo, &record, None)
+}
+
 /// Mint a collectible from `plaintext`. Owner = the funding UTXO's address.
 /// `content_mime` is the art's real type (used only for Public mode's upload).
 /// `encrypted` = the creator's choice: true encrypts to the owner (owner-only),
@@ -401,9 +419,9 @@ pub fn transfer(
     let recipient_pub = pubkey_from_hex(recipient_enc_pubkey)?;
     let recipient_packed = address_to_packed(&rpc, recipient_addr)?;
 
-    // The bundle pointer comes from the on-chain mint record (authoritative).
-    let arweave_ptr = match read_record(cfg, mint_txid)? {
-        Some(nfd_record::NfdRecord::Mint { arweave_ptr, .. }) => arweave_ptr,
+    // The bundle pointer + collection come from the on-chain mint record.
+    let (arweave_ptr, collection_id) = match read_record(cfg, mint_txid)? {
+        Some(nfd_record::NfdRecord::Mint { arweave_ptr, collection_id, .. }) => (arweave_ptr, collection_id),
         _ => return Err("no NFD mint record was found for that transaction".into()),
     };
     // Re-wrap the content key from the bundle's current wrapping to the recipient.
@@ -416,7 +434,17 @@ pub fn transfer(
 
     let record = nfd_record::encode_transfer(mint_txid, &recipient_packed, &wrapkey_ptr)?;
     let utxo = pick_owner_utxo(&rpc, owner_addr)?;
-    let txid = anchor_record(&rpc, &utxo, &record, None)?; // transfers charge no treasury fee
+    // Creator commission: if this item's collection carries one, pay the toll in
+    // the SAME transaction, or the indexer ignores the transfer (ownership would
+    // not move). The amount + payout come from the chain, so the toll is right
+    // even for a collection this wallet did not create.
+    let commission = match &collection_id {
+        Some(cid) => crate::nfd_scan::commission_of(cfg, cid)?,
+        None => None,
+    };
+    let fee_owned = commission.and_then(|(duffs, payout)| if duffs > 0 { Some((payout, duffs as f64 / 1e8)) } else { None });
+    let fee_ref = fee_owned.as_ref().map(|(a, f)| (a.as_str(), *f));
+    let txid = anchor_record(&rpc, &utxo, &record, fee_ref)?;
     Ok(TransferOutcome { txid, wrapkey_ptr })
 }
 
