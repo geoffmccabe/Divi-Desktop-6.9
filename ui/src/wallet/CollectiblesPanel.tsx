@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import {
   nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateCollection, newReceiveAddress,
-  nfdOwned, nfdCollectionMembers,
+  nfdOwnedWallet, nfdCollectionMembers,
   nfdStorageBackends, nfdSetStorageBackend,
   nfdCommissionGet, nfdCommissionSet,
   type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends, type Commission,
@@ -369,11 +369,10 @@ export function CollectiblesPanel() {
   const [chain, setChain] = useState<NfdOwned | null>(null);
   useEffect(() => {
     let live = true;
-    let addr = "";
     async function tick() {
       try {
-        if (!addr) addr = await myNfdAddress();
-        const res = await nfdOwned(addr);
+        // Read across ALL the wallet's Divi addresses, not just the receive one.
+        const res = await nfdOwnedWallet();
         if (live) setChain(res);
       } catch {
         /* node not ready, or feature not open on this chain: keep local view */

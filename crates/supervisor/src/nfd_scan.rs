@@ -266,6 +266,56 @@ pub fn owned(cfg: &NodeConfig, address: &str) -> Result<Value, String> {
     }))
 }
 
+/// Everything the wallet owns across ALL its Divi addresses, read from the
+/// chain. The shape is chain-agnostic on purpose (a top-level `chain` and a
+/// per-item `chain`) so DIVA / other chains can be added later without a
+/// rewrite; only Divi is read today. An NFD can sit on any of the wallet's
+/// addresses, not just its receive address, so this aggregates across them.
+pub fn owned_wallet(cfg: &NodeConfig) -> Result<Value, String> {
+    let progress = advance(cfg)?;
+    if progress["open"].as_bool() != Some(true) {
+        return Ok(json!({ "open": false, "syncing": false, "chain": "divi", "items": [] }));
+    }
+    let rpc = RpcClient::new(cfg);
+    let mut addrs: Vec<String> = rpc
+        .call("getaddressesbyaccount", json!([""]))
+        .ok()
+        .and_then(|v| v.as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect()))
+        .unwrap_or_default();
+    addrs.sort();
+    addrs.dedup();
+
+    let guard = scan_cell().lock().map_err(|_| "scan state poisoned".to_string())?;
+    let st = guard.as_ref().ok_or_else(|| "index not ready".to_string())?;
+    let testnet = is_testnet_like(&st.chain);
+
+    let mut seen = std::collections::HashSet::new();
+    let mut items: Vec<Value> = Vec::new();
+    for a in &addrs {
+        let Some(ad) = parse::addr_from_str(a) else { continue };
+        for v in query::nfds_owned_by(&st.overlay, (ad.kind, ad.hash160), QUERY_LIMIT) {
+            let id = hex_le(&v.id);
+            if seen.insert(id) {
+                let mut j = nfd_view_json(&v, testnet);
+                if let Some(obj) = j.as_object_mut() {
+                    obj.insert("chain".into(), json!("divi"));
+                }
+                items.push(j);
+            }
+        }
+    }
+
+    Ok(json!({
+        "open": true,
+        "syncing": progress["syncing"].as_bool().unwrap_or(false),
+        "scannedHeight": progress["scannedHeight"],
+        "tip": progress["tip"],
+        "chain": "divi",
+        "addressCount": addrs.len(),
+        "items": items,
+    }))
+}
+
 /// The current on-chain creator commission for a collection, as
 /// `(amount_duffs, payout_base58)` — `None` if none is set. Read from the chain
 /// (the authoritative value a transfer must satisfy), so the wallet pays the

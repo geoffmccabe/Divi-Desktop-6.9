@@ -211,6 +211,8 @@ export interface NfdGetRead {
   nfd: NfdChainItem | null;
 }
 export const nfdOwned = (address: string) => invoke<NfdOwned>("nfd_owned", { address });
+// What the wallet owns across ALL its Divi addresses (chain-agnostic shape).
+export const nfdOwnedWallet = () => invoke<NfdOwned>("nfd_owned_wallet");
 export const nfdGet = (id: string) => invoke<NfdGetRead>("nfd_get", { id });
 export const nfdCollectionMembers = (id: string) => invoke<NfdCollectionRead>("nfd_collection_members", { id });
 export const nfdSyncState = () => invoke<NfdSyncState>("nfd_sync_state");

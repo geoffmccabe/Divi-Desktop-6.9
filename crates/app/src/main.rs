@@ -2292,6 +2292,18 @@ async fn nfd_owned(address: String) -> Result<Value, String> {
     .map_err(|_| "internal error".to_string())?
 }
 
+/// Collectibles the WALLET owns across all its Divi addresses, read from the
+/// chain. Chain-agnostic shape (`chain` + per-item `chain`); Divi only today.
+#[tauri::command]
+async fn nfd_owned_wallet() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        nfd_scan::owned_wallet(&cfg)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// One collectible by its mint id (display-order hex). `{ open, syncing, nfd }`.
 #[tauri::command]
 async fn nfd_get(id: String) -> Result<Value, String> {
@@ -2451,6 +2463,7 @@ fn main() {
             nfd_prepare_funding,
             nfd_tx_confirmations,
             nfd_owned,
+            nfd_owned_wallet,
             nfd_get,
             nfd_collection_members,
             nfd_sync_state,
