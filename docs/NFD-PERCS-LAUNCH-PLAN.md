@@ -23,9 +23,10 @@ Everything needed to launch, across all systems. Owners: **[DD69]** this wallet 
 - ☐ [DD69] Editable review screen — edit specs only (names, description, supply, tiers, traits, rarity config, fees); **art is not editable here** (change it in Kinetink and re-import). Validate, then hand off to launch.
 
 ### Phase 2 — Storage (Arweave now; DiviStore module wired, off)
-- ☐ [DD69] GoBanq Arweave backend (`NFD_STORAGE=gobanq`): upload via single-use ticket; shrink our `nfds.divi.love` relay to a ticket issuer (keeps our moderation gate, drops the funded key). Handle GoBanq error/retry codes.
-- ☐ [DD69] **DiviStore backend module**: a pluggable storage backend behind a storage-choice selector, present in the flow but returning "not available yet" until switched on. Flow defaults to GoBanq/Arweave; flipping to DiviStore is one setting when it's ready.
-- ☐ [DD69] Launch upload pipeline: for each art, fetch from Kinetink → store via the selected backend → get the Arweave pointer DD69 writes on-chain; with progress + retry UI.
+- ◐ [DD69] GoBanq Arweave backend (`gobanq`): ☑ built — ticket-based upload to `/v1/storage/uploads` with poll-for-id, local cache, gateway reads, selectable in the panel; reports "not configured" until the app key/issuer are set. ☐ Remaining: point the relay at being a ticket issuer and plug in the live devnet key.
+- ☑ [DD69] **DiviStore backend module**: built as a wired-but-off backend (`DIVISTORE_READY=false`) — in the selector and `for_node` flow, shown "coming soon", refuses uploads until turned on. One flag + its put/get turns it on.
+- ☑ [DD69] Selectable, persisted storage backend + a **Storage section** in the Collectibles panel (local / Arweave relay / GoBanq / DiviStore).
+- ☐ [DD69] Launch upload pipeline: for each art, fetch from Kinetink → store via the selected backend → get the Arweave pointer DD69 writes on-chain; with progress + retry UI. *(Depends on Phase 1 import.)*
 - ☐ [Geoff/GoBanq] Issue the NFD devnet app key + caps; decide GoBanq mainnet availability (its server move) vs. keeping the funded relay for the first mainnet launch.
 
 ### Phase 3 — The launch mint (sealed packs) on Divi  *(DD69 does the mint)*
