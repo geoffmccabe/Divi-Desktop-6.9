@@ -8,6 +8,28 @@
 
 ---
 
+## Architecture clarified — three-repo audit (2026-Oct-06)
+
+A full audit of Kinetink, GoBanq and DD69, plus Geoff's decisions, fixed the division of labor. This section is authoritative; where older phases below assume "GoBanq launches," they are corrected here.
+
+- **Kinetink makes the set JSON.** A user builds a PERC set and exports `kinetink-collection-launch` v1 (`/Users/geoffreymccabe/kinetink/src/components/perc-maker/launchPackage.ts`): a flat list of finished items, art as **public Supabase URLs** (not bytes). It carries no sealed-pack/tier-art/odds data yet.
+- **DD69 is the LAUNCHER on Divi** (Geoff, 2026-Oct-06). Keep local minting in `collectibles.rs`; do NOT move the Divi mint to GoBanq. DD69 imports the JSON, gives an editable review, then mints on Divi itself (and on DIVA later).
+- **GoBanq is STORAGE ONLY for NFD.** It is a Solana + Arweave service and does **not** launch on Divi/DIVA (no code, no plan). It stores the art on Arweave and returns a pointer DD69 writes on-chain. There is no separate "Divi Storage" — that is GoBanq's Arweave. ⚠ GoBanq **mainnet is frozen** until it moves to its own server, so a mainnet NFD launch either waits for that or keeps the Divi-funded relay for storage initially.
+- **Percs launch as sealed packs** (Geoff, 2026-Oct-06): Kinetink's export must be **extended** to carry sealed-pack art + tier-art library + ultra-rare odds + reveal config before DD69 can build the reveal.
+
+### DD69 work list (what's missing, ordered)
+0. **Shared contract:** define the EXTENDED Kinetink→DD69 launch JSON (flat items + sealed-pack/tier-art/odds/reveal config). One spec both apps build to. Gates 1, 2, 5.
+1. **Import the Kinetink JSON** (replace the `.zip` importer): fetch art from allowlisted Supabase URLs, validate on magic bytes.
+2. **Editable review screen** (the heart of the new flow — unbuilt): populate the set into an editable grid; fix name/tier/traits/supply/art/rarity before launch; no immediate mint.
+3. **GoBanq storage backend** (`NFD_STORAGE=gobanq`, single-use ticket): small, already designed; retire the self-funded relay. Needs the devnet app key (ask Geoff).
+4. **Launch = local Divi mint**, reveal-aware (sealed-pack mint). Keep the `nfdMint`/create-collection choke point; the UTXO/funding/confirmation machinery stays (DD69 still mints).
+5. **Sealed-pack reveal UI** + wire `reveal.rs` + reveal on-chain record + chain-repo indexer decode.
+6. **Forging UI** + chain-repo indexer forge(0x05) decode.
+7. **Marketplace** (listings/buy/sell — browse-only today).
+8. **Ownership across multiple wallets** + DIVA display (single Divi address today).
+
+---
+
 ## Where we are (one paragraph)
 
 The forkless NFD protocol is genuinely built and proven on regtest: the chain node reads mint/transfer/collection records, enforces creator-only + max-supply, and survives reorgs; the wallet can build and fund those transactions; there is a real UI panel; encryption is done client-side. The feature is **not in the shipping app** (it lives on branch `feat/nfd-collectibles`, worktree `/Users/geoffreymccabe/dd69-nfd`, which is 47 commits ahead of `main` and 127 behind). The launch-blocking gaps are: (1) not merged/current, (2) the wallet cannot re-read your collectibles from the chain, (3) Arweave storage is off and undeployed, (4) fees/treasury are compiled off, and (5) the Percs-specific rarity/reveal pipeline is only partly built.
