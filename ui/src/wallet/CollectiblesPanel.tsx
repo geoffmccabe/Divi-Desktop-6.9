@@ -5,6 +5,8 @@ import {
   type NfdOwned, type NfdChainItem, type NfdCollectionRead,
 } from "./api";
 import { CollectionImport } from "./CollectionImport";
+import { RevealStage, type RevealSealed } from "./reveal/RevealStage";
+import { previewResult, simulate, type RevealResult } from "./reveal/revealModel";
 
 // Divi Collectibles (NFDs). Mint, view, transfer, and receive collectibles. The
 // file is encrypted locally before it leaves the machine; only the encrypted
@@ -201,6 +203,30 @@ function parseClaimCode(raw: string): ClaimCode | null {
 
 export function CollectiblesPanel() {
   const [tab, setTab] = useState<"collection" | "marketplace" | "builder">("collection");
+
+  // Reveal preview. The live flow will pass a `run` that performs the on-chain
+  // reveal transaction and returns its result; here `run` resolves to a forced
+  // or simulated result so the opening experience can be previewed in-app.
+  const [revealOpen, setRevealOpen] = useState(false);
+  const [revealSealed, setRevealSealed] = useState<RevealSealed | undefined>(undefined);
+  const [revealRun, setRevealRun] = useState<(() => Promise<RevealResult>) | null>(null);
+  const [revealMuted, setRevealMuted] = useState(false);
+  const [previewLevel, setPreviewLevel] = useState("5");
+  const [sampleForged, setSampleForged] = useState(false);
+  const [sampleInput, setSampleInput] = useState("3");
+  const revealDelay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  function openPreviewLevel() {
+    const level = previewLevel === "ur" ? "ur" : parseInt(previewLevel, 10);
+    setRevealSealed({ forged: false, floor: 0 });
+    setRevealRun(() => async () => { await revealDelay(1500); return previewResult(level as number | "ur"); });
+    setRevealOpen(true);
+  }
+  function openSamplePack() {
+    const inputTier = Math.max(1, Math.min(39, parseInt(sampleInput || "3", 10)));
+    setRevealSealed(sampleForged ? { forged: true, floor: Math.min(40, inputTier + 1) } : { forged: false, floor: 0 });
+    setRevealRun(() => async () => { await revealDelay(1600); return simulate(sampleForged ? { type: "forged", inputTier } : { type: "original" }); });
+    setRevealOpen(true);
+  }
   const [items, setItems] = useState<Item[]>(loadItems);
   const [collections, setCollections] = useState<Collection[]>(loadCollections);
   const [withThumb, setWithThumb] = useState(true);
@@ -556,6 +582,42 @@ export function CollectiblesPanel() {
       {tab === "builder" && (
       <>
       <section className="ts-section">
+        <h3 className="ts-head">Reveal preview</h3>
+        <p className="wl-note">
+          See the sealed-pack opening. Pick an effect level to check each tier-jump look, or open a sample pack —
+          forged packs show their guaranteed minimum tier. In the live flow, opening a pack is an on-chain transaction.
+        </p>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <select className="wl-input mono" value={previewLevel} onChange={(e) => setPreviewLevel(e.target.value)} style={{ maxWidth: 280 }}>
+            <option value="1">Level 1 — grey-tan · ×20%</option>
+            <option value="2">Level 2 — green · ×30%</option>
+            <option value="3">Level 3 — blue · ×40%</option>
+            <option value="4">Level 4 — purple · ×50%</option>
+            <option value="5">Level 5 — red · ×60%</option>
+            <option value="6">Level 6 — white + glitter · ×70%</option>
+            <option value="7">Level 7 — pink + glitter · ×80%</option>
+            <option value="8">Level 8 — rainbow + glitter · ×90%</option>
+            <option value="9">Level 9 — fire + glitter · ×100%</option>
+            <option value="10">Level 10 — gold + glitter · ×100%</option>
+            <option value="ur">★ Ultra Rare — fireworks</option>
+          </select>
+          <button className="wl-btn wl-btn-primary" onClick={openPreviewLevel}>Preview effect</button>
+        </div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
+          <label className="wl-note" style={{ display: "flex", gap: 6, alignItems: "center", margin: 0 }}>
+            <input type="checkbox" checked={sampleForged} onChange={(e) => setSampleForged(e.target.checked)} /> forged pack
+          </label>
+          {sampleForged && (
+            <span className="wl-note" style={{ display: "flex", gap: 6, alignItems: "center", margin: 0 }}>
+              from two T
+              <input className="wl-input" style={{ width: 64 }} type="number" min={1} max={39} value={sampleInput} onChange={(e) => setSampleInput(e.target.value)} />
+            </span>
+          )}
+          <button className="wl-btn" onClick={openSamplePack}>Open a sample pack</button>
+        </div>
+      </section>
+
+      <section className="ts-section">
         <h3 className="ts-head">Create a collection</h3>
         <p className="wl-note">
           A collection is a themed set with a fixed supply and shared branding — like an ERC-721 series. Only
@@ -867,6 +929,17 @@ export function CollectiblesPanel() {
             )}
           </div>
         </div>
+      )}
+
+      {revealOpen && revealRun && (
+        <RevealStage
+          open={revealOpen}
+          sealed={revealSealed}
+          run={revealRun}
+          muted={revealMuted}
+          onToggleMute={() => setRevealMuted((m) => !m)}
+          onClose={() => setRevealOpen(false)}
+        />
       )}
     </div>
   );
