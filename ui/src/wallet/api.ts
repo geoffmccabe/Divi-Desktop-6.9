@@ -248,8 +248,10 @@ export const nfdSetStorageBackend = (backend: string) =>
 
 // ---- Creator commission (flat DIVI toll on resale; down-only) ----
 export interface Commission {
+  originalDuffs: number;
+  originalDivi: string; // the first amount ever set (immutable)
   amountDuffs: number;
-  amountDivi: string;   // human DIVI string
+  amountDivi: string;   // current (human DIVI string); <= original
   payoutAddress: string;
 }
 export const nfdCommissionGet = (collectionId: string) =>

@@ -235,31 +235,34 @@ export function CollectiblesPanel() {
     }
   }
 
-  // Creator commission (flat DIVI toll on resale; can only be lowered).
-  const [commCol, setCommCol] = useState("");
+  // Browse/collection-details selection (used by the detail modal + commission).
+  const [browsing, setBrowsing] = useState<string | null>(null);
+
+  // Creator commission (flat DIVI toll on resale; can only be lowered). Keyed to
+  // the collection whose details are open (the browse modal).
   const [commCur, setCommCur] = useState<Commission | null>(null);
-  const [commAmt, setCommAmt] = useState("");
+  const [commAmt, setCommAmt] = useState(""); // the NEW amount the creator is entering
   const [commPayout, setCommPayout] = useState("");
   const [commMsg, setCommMsg] = useState("");
   const [commBusy, setCommBusy] = useState(false);
   useEffect(() => {
-    if (!commCol) { setCommCur(null); return; }
+    if (!browsing) { setCommCur(null); setCommAmt(""); setCommMsg(""); return; }
     let live = true;
-    nfdCommissionGet(commCol).then((c) => {
+    nfdCommissionGet(browsing).then((c) => {
       if (!live) return;
       setCommCur(c);
-      setCommAmt(c ? c.amountDivi : "");
+      setCommAmt("");
       setCommPayout(c?.payoutAddress || "");
       setCommMsg("");
     }).catch(() => {});
     return () => { live = false; };
-  }, [commCol]);
+  }, [browsing]);
   async function saveCommission() {
-    if (!commCol) return;
+    if (!browsing) return;
     setCommBusy(true); setCommMsg("");
     try {
-      const c = await nfdCommissionSet(commCol, Number(commAmt) || 0, commPayout.trim());
-      setCommCur(c); setCommAmt(c.amountDivi); setCommMsg("Saved.");
+      const c = await nfdCommissionSet(browsing, Number(commAmt) || 0, commPayout.trim());
+      setCommCur(c); setCommAmt(""); setCommMsg(`Saved — the commission is now ${c.amountDivi} DIVI.`);
     } catch (e) {
       setCommMsg(String(e));
     } finally {
@@ -309,8 +312,6 @@ export function CollectiblesPanel() {
   const [traits, setTraits] = useState<Trait[]>([{ type: "", value: "" }]);
   const [mintTier, setMintTier] = useState(""); // explicit rarity tier (locked schema)
 
-  // Browse a collection (view its items + trait rarity).
-  const [browsing, setBrowsing] = useState<string | null>(null);
 
   // Create-a-collection form.
   const [colName, setColName] = useState("");
@@ -729,36 +730,6 @@ export function CollectiblesPanel() {
         </div>
       </section>
 
-      {collections.length > 0 && (
-      <section className="ts-section">
-        <h3 className="ts-head">Creator commission</h3>
-        <p className="wl-note">
-          A flat DIVI fee paid to you on every resale of a collection's items, enforced on-chain as part of a valid
-          transfer (so a marketplace can't skip it). You can lower it later but never raise it — if DIVI's price climbs
-          and the fee gets too high, you can ease it. On-chain enforcement ships with the marketplace.
-        </p>
-        <select className="wl-input" value={commCol} onChange={(e) => setCommCol(e.target.value)} style={{ maxWidth: 320 }}>
-          <option value="">Select one of your collections…</option>
-          {collections.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-        {commCol && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
-            <p className="wl-note" style={{ margin: 0 }}>
-              {commCur ? `Current: ${commCur.amountDivi} DIVI (can only go down)` : "No commission set yet — your first amount sets it."}
-            </p>
-            <input className="wl-input" type="number" min={0} placeholder="Commission in DIVI" value={commAmt} onChange={(e) => setCommAmt(e.target.value)} style={{ maxWidth: 220 }} />
-            <input className="wl-input mono" placeholder="Payout address (D...)" value={commPayout} onChange={(e) => setCommPayout(e.target.value)} style={{ maxWidth: 420 }} />
-            <div>
-              <button className="wl-btn wl-btn-primary" disabled={commBusy} onClick={saveCommission}>
-                {commBusy ? "Saving…" : commCur ? "Lower commission" : "Set commission"}
-              </button>
-            </div>
-            {commMsg && <p className="wl-note" style={{ margin: 0 }}>{commMsg}</p>}
-          </div>
-        )}
-      </section>
-      )}
-
       <section className="ts-section">
         <h3 className="ts-head">Create a collection</h3>
         <p className="wl-note">
@@ -957,6 +928,26 @@ export function CollectiblesPanel() {
         )}
       </section>
 
+      {collections.length > 0 && (
+      <section className="ts-section">
+        <h3 className="ts-head">Your collections</h3>
+        <p className="wl-note">Open a collection to see its details, items, and to set or lower its creator commission.</p>
+        <div className="coll-grid">
+          {collections.map((c) => (
+            <button key={c.id} className="coll-card" title={c.id} onClick={() => setBrowsing(c.id)}>
+              {c.cover ? (
+                <img className="coll-card-thumb" src={c.cover} alt={c.name} />
+              ) : (
+                <span className="coll-card-noimg" aria-hidden="true">📦</span>
+              )}
+              <span className="coll-card-name">{c.name}</span>
+              <span className="coll-card-meta">{c.minted}{c.maxSupply > 0 ? ` / ${c.maxSupply}` : ""} minted · details</span>
+            </button>
+          ))}
+        </div>
+      </section>
+      )}
+
       <section className="ts-section">
         <h3 className="ts-head">Receive a collectible</h3>
         <p className="wl-note">
@@ -1084,6 +1075,44 @@ export function CollectiblesPanel() {
                 : " Rarity is the share of items sharing each trait, across the items in this wallet."}
               {browseChain?.syncing ? " (still reading the chain…)" : ""}
             </p>
+
+            <div style={{ border: "1px solid var(--border, #2a2a35)", borderRadius: 10, padding: "12px 14px", margin: "4px 0 16px" }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Creator commission</div>
+              <p className="wl-note" style={{ marginTop: 0 }}>
+                A flat DIVI fee paid to you on every resale of this collection's items — enforced on-chain as part of a
+                valid transfer, so a marketplace can't skip it. It can only be lowered, never raised.
+              </p>
+              <div className="wl-note" style={{ display: "flex", flexDirection: "column", gap: 2, margin: "0 0 10px" }}>
+                <span>Original commission: <strong>{commCur ? `${commCur.originalDivi} DIVI` : "—"}</strong></span>
+                <span>Current commission: <strong>{commCur ? `${commCur.amountDivi} DIVI` : "not set yet"}</strong></span>
+              </div>
+              <label style={{ display: "block", marginBottom: 4, fontSize: 13 }}>
+                New Commission Amount: <span className="wl-note" style={{ margin: 0 }}>(Commissions can only be lowered.)</span>
+              </label>
+              <input
+                className="wl-input"
+                type="number"
+                min={0}
+                placeholder={commCur ? `enter here — ${commCur.amountDivi} DIVI or lower` : "enter here (DIVI)"}
+                value={commAmt}
+                onChange={(e) => setCommAmt(e.target.value)}
+                style={{ maxWidth: 260 }}
+              />
+              <input
+                className="wl-input mono"
+                placeholder="Payout address (D...)"
+                value={commPayout}
+                onChange={(e) => setCommPayout(e.target.value)}
+                style={{ maxWidth: 420, marginTop: 8 }}
+              />
+              <div style={{ marginTop: 8 }}>
+                <button className="wl-btn wl-btn-primary" disabled={commBusy || !commAmt.trim()} onClick={saveCommission}>
+                  {commBusy ? "Saving…" : commCur ? "Lower commission" : "Set commission"}
+                </button>
+              </div>
+              {commMsg && <p className="wl-note" style={{ marginTop: 6 }}>{commMsg}</p>}
+            </div>
+
             {browseItems.length === 0 ? (
               <p className="wl-note">No items minted into this collection yet.</p>
             ) : (

@@ -2214,7 +2214,13 @@ async fn nfd_commission_get(collection_id: String) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
         Ok(match dd69_supervisor::commission::get(&cfg.datadir, &collection_id) {
-            Some(c) => serde_json::json!({ "amountDuffs": c.amount_duffs, "amountDivi": dd69_supervisor::commission::fmt_divi(c.amount_duffs), "payoutAddress": c.payout_address }),
+            Some(c) => serde_json::json!({
+                "originalDuffs": c.original_duffs,
+                "originalDivi": dd69_supervisor::commission::fmt_divi(c.original_duffs),
+                "amountDuffs": c.amount_duffs,
+                "amountDivi": dd69_supervisor::commission::fmt_divi(c.amount_duffs),
+                "payoutAddress": c.payout_address,
+            }),
             None => Value::Null,
         })
     })
@@ -2229,7 +2235,13 @@ async fn nfd_commission_set(collection_id: String, amount_divi: f64, payout_addr
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
         let duffs = dd69_supervisor::commission::divi_to_duffs(amount_divi)?;
         let c = dd69_supervisor::commission::set(&cfg.datadir, &collection_id, duffs, &payout_address)?;
-        Ok(serde_json::json!({ "amountDuffs": c.amount_duffs, "amountDivi": dd69_supervisor::commission::fmt_divi(c.amount_duffs), "payoutAddress": c.payout_address }))
+        Ok(serde_json::json!({
+            "originalDuffs": c.original_duffs,
+            "originalDivi": dd69_supervisor::commission::fmt_divi(c.original_duffs),
+            "amountDuffs": c.amount_duffs,
+            "amountDivi": dd69_supervisor::commission::fmt_divi(c.amount_duffs),
+            "payoutAddress": c.payout_address,
+        }))
     })
     .await
     .map_err(|_| "internal error".to_string())?

@@ -17,6 +17,10 @@ pub const MAX_COMMISSION_DUFFS: u64 = 1_000_000 * DUFFS_PER_DIVI;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Commission {
+    /// The first amount ever set for this collection (immutable). Shown next to
+    /// the current amount so a holder/creator can see how far it has been lowered.
+    pub original_duffs: u64,
+    /// The current amount (<= original). This is what a transfer must pay.
     pub amount_duffs: u64,
     pub payout_address: String,
 }
@@ -37,8 +41,10 @@ fn is_collection_id(s: &str) -> bool {
 pub fn get(datadir: &Path, collection_id: &str) -> Option<Commission> {
     let all = read_all(datadir);
     let v = all.get(collection_id)?;
+    let amount = v["amountDuffs"].as_u64()?;
     Some(Commission {
-        amount_duffs: v["amountDuffs"].as_u64()?,
+        original_duffs: v["originalDuffs"].as_u64().unwrap_or(amount), // back-compat: pre-original entries
+        amount_duffs: amount,
         payout_address: v["payoutAddress"].as_str().unwrap_or("").to_string(),
     })
 }
@@ -69,6 +75,8 @@ pub fn set(datadir: &Path, collection_id: &str, next_duffs: u64, payout_address:
     }
     let existing = get(datadir, collection_id);
     validate(existing.as_ref().map(|c| c.amount_duffs), next_duffs)?;
+    // The original is set once, on the first ever set, and never changes.
+    let original = existing.as_ref().map(|c| c.original_duffs).unwrap_or(next_duffs);
     let payout = if payout_address.trim().is_empty() {
         existing.map(|c| c.payout_address).unwrap_or_default()
     } else {
@@ -76,10 +84,10 @@ pub fn set(datadir: &Path, collection_id: &str, next_duffs: u64, payout_address:
     };
     let mut all = read_all(datadir);
     let obj = all.as_object_mut().ok_or("commission store corrupt")?;
-    obj.insert(collection_id.to_string(), json!({ "amountDuffs": next_duffs, "payoutAddress": payout }));
+    obj.insert(collection_id.to_string(), json!({ "originalDuffs": original, "amountDuffs": next_duffs, "payoutAddress": payout }));
     std::fs::create_dir_all(datadir).map_err(|e| e.to_string())?;
     std::fs::write(store_path(datadir), serde_json::to_string(&all).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-    Ok(Commission { amount_duffs: next_duffs, payout_address: payout })
+    Ok(Commission { original_duffs: original, amount_duffs: next_duffs, payout_address: payout })
 }
 
 /// Whole-DIVI string for a duff amount (trims trailing zeros).
@@ -139,9 +147,11 @@ mod tests {
         let cid = "ab".repeat(32);
         let c = set(&dir, &cid, 1000 * DUFFS_PER_DIVI, "DTestPayoutAddr").unwrap();
         assert_eq!(c.amount_duffs, 1000 * DUFFS_PER_DIVI);
-        // lower it, keep payout (blank)
+        assert_eq!(c.original_duffs, 1000 * DUFFS_PER_DIVI);
+        // lower it, keep payout (blank); original must not change
         let c2 = set(&dir, &cid, 400 * DUFFS_PER_DIVI, "").unwrap();
         assert_eq!(c2.amount_duffs, 400 * DUFFS_PER_DIVI);
+        assert_eq!(c2.original_duffs, 1000 * DUFFS_PER_DIVI);
         assert_eq!(c2.payout_address, "DTestPayoutAddr");
         // cannot raise
         assert!(set(&dir, &cid, 900 * DUFFS_PER_DIVI, "").is_err());

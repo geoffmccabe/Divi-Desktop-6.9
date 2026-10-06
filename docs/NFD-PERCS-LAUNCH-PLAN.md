@@ -58,6 +58,14 @@ Everything needed to launch, across all systems. Owners: **[DD69]** this wallet 
 - ☐ [All] Full dress rehearsal end-to-end on regtest/devnet: Kinetink JSON → import → edit → store → sealed-pack mint → reveal → forge → list/sell → ownership.
 - ☐ [Geoff] Launch the first Perc collection on Divi mainnet.
 
+### Phase 9 — NFD transactions shown everywhere (Geoff, 2026-Oct-06; likely multiple sub-phases)
+NFD activity should read as NFD activity — not bare DIVI transactions — everywhere people look, in both DD69 and the explorer, with a small image where there's one.
+- ☐ [DD69] Activity filters: add an **"NFDs" tab** to the right of Lottery (All · Stakes · Sent · Received · Lottery · **NFDs**).
+- ☐ [DD69] Detect NFD transactions in history (mint / transfer / collection-create / reveal / forge / commission) and render them as **NFD rows**: the NFD type, what it was, and a **small thumbnail** of the item when it has a public image (from the preview pointer via a gateway).
+- ☐ [DD69] Surface NFD activity in **Overview, Send, Receive, and Transaction History** so an NFD move shows as an NFD, not an unexplained DIVI transfer; consistent styling/CSS for the NFD row + thumbnail.
+- ☐ [scan.divi.love] Show NFD transactions in the explorer with the same NFD details + thumbnail (the overlay read-API already exposes `/tx`, `/block`, `/nfd/{id}`; the web frontend needs the NFD rendering).
+- **Done when:** a mint / transfer / reveal / forge / sale reads clearly as an NFD action — with its image — in DD69's Overview/Send/Receive/History (under the NFDs tab and inline) and on scan.divi.love.
+
 ### Still needed from Geoff (inputs, not code)
 Mint + marketplace fee numbers · the extended Kinetink JSON spec (you're building it) and who edits Kinetink · the GoBanq NFD devnet key · the GoBanq mainnet timing (server move) vs. relay fallback · the mainnet launch block.
 
