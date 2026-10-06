@@ -48,20 +48,25 @@ pub const SNAPSHOT_SHA_URL: &str = "https://nodes.divi.love/snapshot/DIVI-snapsh
 /// 2026-Oct-05). Preferred whenever the server has it; the plain one is
 /// the fallback.
 pub const INDEXED_SNAPSHOT_URL: &str = "https://nodes.divi.love/snapshot/DIVI-snapshot-indexed.tar.gz";
+/// The same file built independently on the Europe box, so one server
+/// down does not mean no snapshot. Tried second.
+pub const INDEXED_SNAPSHOT_URL_2: &str = "https://snapshot2.divi.love/snapshot/DIVI-snapshot-indexed.tar.gz";
 
-/// Which archive to fetch: the indexed one when it is there.
+/// Which archive to fetch: an indexed one from whichever server answers,
+/// the plain official mirror as the last resort.
 fn chosen() -> (&'static str, String) {
     static CHOICE: std::sync::OnceLock<(&'static str, String)> = std::sync::OnceLock::new();
     CHOICE
         .get_or_init(|| {
-            let indexed = ureq::head(INDEXED_SNAPSHOT_URL).call().map(|r| r.status() == 200).unwrap_or(false);
-            if indexed {
-                crate::setuplog::log("snapshot: using the indexed snapshot (no index rebuild afterwards)");
-                (INDEXED_SNAPSHOT_URL, format!("{INDEXED_SNAPSHOT_URL}.sha256"))
-            } else {
-                crate::setuplog::log("snapshot: indexed snapshot not available; using the plain one (the node will build its indexes afterwards)");
-                (SNAPSHOT_URL, SNAPSHOT_SHA_URL.to_string())
+            for url in [INDEXED_SNAPSHOT_URL, INDEXED_SNAPSHOT_URL_2] {
+                let ok = ureq::head(url).timeout(std::time::Duration::from_secs(15)).call().map(|r| r.status() == 200).unwrap_or(false);
+                if ok {
+                    crate::setuplog::log(format!("snapshot: using the indexed snapshot from {url} (no index rebuild afterwards)"));
+                    return (url, format!("{url}.sha256"));
+                }
             }
+            crate::setuplog::log("snapshot: no indexed snapshot available; using the plain one (the node will build its indexes afterwards)");
+            (SNAPSHOT_URL, SNAPSHOT_SHA_URL.to_string())
         })
         .clone()
 }
@@ -130,7 +135,7 @@ pub struct Progress {
 fn cache_path() -> Option<PathBuf> {
     // One cache per archive: a partial download of the plain snapshot must
     // never be "resumed" with bytes of the indexed one.
-    let name = if chosen().0 == INDEXED_SNAPSHOT_URL { "snapshot-indexed-download.tar.gz" } else { "snapshot-download.tar.gz" };
+    let name = if chosen().0 != SNAPSHOT_URL { "snapshot-indexed-download.tar.gz" } else { "snapshot-download.tar.gz" };
     Some(crate::config::dd69_datadir().join(name))
 }
 
