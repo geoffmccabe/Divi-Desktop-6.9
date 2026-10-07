@@ -34,6 +34,7 @@ export interface Item {
   encrypted?: boolean; // false = Public content (viewed without a key)
   listPrice?: number; // local listing price in DIVI (draft until the on-chain listing lands)
   sealed?: boolean; // a Perc blind pack not yet opened (chain-reported)
+  pending?: boolean; // a reveal is committed and resolving (chain-reported)
   revealed?: { tier: number; ur: number | null } | null; // the rolled tier once opened
 }
 
@@ -106,6 +107,7 @@ function chainItemToItem(c: NfdChainItem): Item {
     collectionId: c.collectionId ?? undefined,
     encrypted: c.thumbPtr ? undefined : true,
     sealed: c.sealed,
+    pending: c.pending,
     revealed: c.revealed,
   };
 }
@@ -218,6 +220,11 @@ export function CollectiblesPanel() {
   const [revealSealed, setRevealSealed] = useState<RevealSealed | undefined>(undefined);
   const [revealRun, setRevealRun] = useState<(() => Promise<RevealResult>) | null>(null);
   const [revealMuted, setRevealMuted] = useState(false);
+  // Packs whose on-chain REVEAL is in flight this session. A reveal stays pending
+  // for a few blocks, during which the pack still reads as "sealed" — without
+  // this guard a second tap would broadcast (and pay for) a REVEAL the indexer
+  // then rejects as "already pending". Keyed by mint txid.
+  const [revealing, setRevealing] = useState<Set<string>>(() => new Set());
   const [previewLevel, setPreviewLevel] = useState("5");
   const [sampleForged, setSampleForged] = useState(false);
   const [sampleInput, setSampleInput] = useState("3");
@@ -312,10 +319,17 @@ export function CollectiblesPanel() {
   // wait for the roll to resolve (a few Divi blocks) and read back the tier. The
   // outcome is the chain's, not a local simulation.
   function openRealPack(it: Item) {
+    if (revealing.has(it.txid) || it.pending) return; // a reveal is already in flight / pending on-chain
     const colName = collections.find((c) => c.id === it.collectionId)?.name;
     setRevealSealed({ forged: false, floor: 0, label: colName || "Sealed PERC" });
     setRevealRun(() => async () => {
+      // Broadcast first; only mark in-flight once it actually went out (opening
+      // the overlay alone sends nothing, and if the broadcast throws we never set
+      // the flag, so the owner can simply try again). Once set we keep it: the
+      // chain's own `pending` then `revealed` state takes over as the pack stops
+      // being tappable, so there is no window to re-broadcast.
       await nfdReveal(it.ownerAddr, it.txid); // broadcasts REVEAL (funded from owner)
+      setRevealing((s) => new Set(s).add(it.txid));
       // Poll the chain until the pending roll resolves (indexer resolves it a few
       // blocks after the commit). Cap the wait so a stuck chain surfaces an error.
       const deadline = Date.now() + 20 * 60 * 1000; // 20 minutes
@@ -324,10 +338,14 @@ export function CollectiblesPanel() {
         try {
           const r = await nfdGet(it.txid);
           const rev = r.nfd?.revealed;
-          if (rev) return resultFromChain(rev.tier, rev.ur);
+          if (rev) return resultFromChain(rev.tier, rev.ur); // in-flight stays set: pack now reads "revealed"
         } catch { /* node busy; keep polling */ }
       }
-      throw new Error("The reveal is taking longer than expected. It will resolve on-chain — reopen the pack shortly.");
+      // Timed out waiting on the animation. The reveal is still committed and
+      // will resolve on-chain; the background poller flips the card to its tier
+      // when it does, so we KEEP the in-flight flag (the pack stays "opening…"
+      // rather than re-arming a tap that would re-broadcast).
+      throw new Error("The reveal is taking longer than expected. It will resolve on-chain — the pack will show its tier shortly.");
     });
     setRevealOpen(true);
   }
@@ -420,7 +438,7 @@ export function CollectiblesPanel() {
     for (const c of chain.items) byId.set(c.id, chainItemToItem(c));
     for (const l of items) {
       const onChain = byId.get(l.txid);
-      if (onChain) byId.set(l.txid, { ...onChain, ...l, ownerAddr: onChain.ownerAddr, sealed: onChain.sealed, revealed: onChain.revealed });
+      if (onChain) byId.set(l.txid, { ...onChain, ...l, ownerAddr: onChain.ownerAddr, sealed: onChain.sealed, pending: onChain.pending, revealed: onChain.revealed });
       else if (chain.syncing) byId.set(l.txid, l); // pending mint, not scanned yet
       // else: fully synced and no longer owned on chain (transferred) -> hide
     }
@@ -956,7 +974,7 @@ export function CollectiblesPanel() {
                 <span className="coll-card-name">{it.sealed ? "Sealed PERC" : it.name}</span>
                 <span className="coll-card-meta">
                   {it.sealed
-                    ? "sealed pack · tap to open"
+                    ? (it.pending || revealing.has(it.txid) ? "opening… resolves in a few blocks" : "sealed pack · tap to open")
                     : it.revealed
                     ? (it.revealed.ur != null ? "Ultra Rare" : `Tier ${it.revealed.tier}`)
                     : it.collectionId

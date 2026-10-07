@@ -402,6 +402,7 @@ fn nfd_view_json(v: &query::NfdView, testnet: bool) -> Value {
         // revealed the UI shows the rolled tier (and its glow). `ur` marks an
         // ultra-rare and carries the UR sub-tier.
         "sealed": v.sealed,
+        "pending": v.reveal_pending,
         "revealed": v.revealed.map(|(base, ur)| json!({
             "tier": base,
             "ur": ur,

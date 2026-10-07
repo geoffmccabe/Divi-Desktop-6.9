@@ -177,9 +177,11 @@ export interface NfdChainItem {
   thumbPtr: string | null;
   collectionId: string | null;
   mintHeight: number;
-  // Perc state. `sealed` = a blind pack not yet opened; once opened `revealed`
-  // carries the rolled tier (and UR sub-tier). Both absent/false for plain NFDs.
+  // Perc state. `sealed` = a blind pack not yet opened; `pending` = a reveal is
+  // committed and resolving (a few blocks); once opened `revealed` carries the
+  // rolled tier (and UR sub-tier). All absent/false for plain NFDs.
   sealed?: boolean;
+  pending?: boolean;
   revealed?: { tier: number; ur: number | null } | null;
 }
 export interface NfdOwned {
