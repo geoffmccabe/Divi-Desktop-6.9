@@ -826,6 +826,10 @@ code, .mono { font-family: var(--font-mono); }
   background: hsl(var(--background) / 0.5); color: hsl(var(--foreground));
 }
 .coll-card:hover { border-color: hsl(var(--primary)); background: hsl(var(--primary) / 0.08); }
+/* A sealed PERC pack: a soft glow + accent so it reads as "open me". */
+.coll-card-sealed { border-color: hsl(268 90% 66% / 0.55); box-shadow: 0 0 0 1px hsl(268 90% 66% / 0.25), 0 6px 22px hsl(268 90% 50% / 0.18); }
+.coll-card-sealed .coll-card-noimg { color: hsl(268 90% 76%); background: radial-gradient(circle at 50% 42%, hsl(268 90% 60% / 0.25), hsl(var(--background) / 0.5) 70%); }
+.coll-card-sealed:hover { border-color: hsl(268 95% 72%); background: hsl(268 90% 60% / 0.1); }
 .coll-card-name { font-weight: 600; font-size: 0.9rem; word-break: break-word; }
 .coll-card-meta { font-size: 0.76rem; color: hsl(var(--muted-foreground)); }
 .coll-card-thumb { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; display: block; background: hsl(var(--background) / 0.5); }

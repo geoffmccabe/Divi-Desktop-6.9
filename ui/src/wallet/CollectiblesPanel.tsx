@@ -3,12 +3,12 @@ import {
   nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateCollection, newReceiveAddress,
   nfdOwnedWallet, nfdCollectionMembers,
   nfdStorageBackends, nfdSetStorageBackend,
-  nfdCommissionGet, nfdCommissionSet,
+  nfdCommissionGet, nfdCommissionSet, nfdReveal, nfdGet,
   type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends, type Commission,
 } from "./api";
 import { CollectionImport } from "./CollectionImport";
 import { RevealStage, type RevealSealed } from "./reveal/RevealStage";
-import { previewResult, simulate, type RevealResult } from "./reveal/revealModel";
+import { previewResult, simulate, resultFromChain, type RevealResult } from "./reveal/revealModel";
 
 // Divi Collectibles (NFDs). Mint, view, transfer, and receive collectibles. The
 // file is encrypted locally before it leaves the machine; only the encrypted
@@ -33,6 +33,8 @@ export interface Item {
   edition?: number; // 1-based index within its collection
   encrypted?: boolean; // false = Public content (viewed without a key)
   listPrice?: number; // local listing price in DIVI (draft until the on-chain listing lands)
+  sealed?: boolean; // a Perc blind pack not yet opened (chain-reported)
+  revealed?: { tier: number; ur: number | null } | null; // the rolled tier once opened
 }
 
 // A collection I created (creator-only minting, optional supply cap).
@@ -103,6 +105,8 @@ function chainItemToItem(c: NfdChainItem): Item {
     thumbPtr: c.thumbPtr,
     collectionId: c.collectionId ?? undefined,
     encrypted: c.thumbPtr ? undefined : true,
+    sealed: c.sealed,
+    revealed: c.revealed,
   };
 }
 
@@ -304,6 +308,29 @@ export function CollectiblesPanel() {
     setRevealRun(() => async () => { await revealDelay(1600); return simulate(sampleForged ? { type: "forged", inputTier } : { type: "original" }); });
     setRevealOpen(true);
   }
+  // Open a REAL sealed pack this wallet owns: broadcast the on-chain REVEAL, then
+  // wait for the roll to resolve (a few Divi blocks) and read back the tier. The
+  // outcome is the chain's, not a local simulation.
+  function openRealPack(it: Item) {
+    const colName = collections.find((c) => c.id === it.collectionId)?.name;
+    setRevealSealed({ forged: false, floor: 0, label: colName || "Sealed PERC" });
+    setRevealRun(() => async () => {
+      await nfdReveal(it.ownerAddr, it.txid); // broadcasts REVEAL (funded from owner)
+      // Poll the chain until the pending roll resolves (indexer resolves it a few
+      // blocks after the commit). Cap the wait so a stuck chain surfaces an error.
+      const deadline = Date.now() + 20 * 60 * 1000; // 20 minutes
+      while (Date.now() < deadline) {
+        await revealDelay(5000);
+        try {
+          const r = await nfdGet(it.txid);
+          const rev = r.nfd?.revealed;
+          if (rev) return resultFromChain(rev.tier, rev.ur);
+        } catch { /* node busy; keep polling */ }
+      }
+      throw new Error("The reveal is taking longer than expected. It will resolve on-chain — reopen the pack shortly.");
+    });
+    setRevealOpen(true);
+  }
   const [items, setItems] = useState<Item[]>(loadItems);
   const [collections, setCollections] = useState<Collection[]>(loadCollections);
   const [withThumb, setWithThumb] = useState(true);
@@ -393,7 +420,7 @@ export function CollectiblesPanel() {
     for (const c of chain.items) byId.set(c.id, chainItemToItem(c));
     for (const l of items) {
       const onChain = byId.get(l.txid);
-      if (onChain) byId.set(l.txid, { ...onChain, ...l, ownerAddr: onChain.ownerAddr });
+      if (onChain) byId.set(l.txid, { ...onChain, ...l, ownerAddr: onChain.ownerAddr, sealed: onChain.sealed, revealed: onChain.revealed });
       else if (chain.syncing) byId.set(l.txid, l); // pending mint, not scanned yet
       // else: fully synced and no longer owned on chain (transferred) -> hide
     }
@@ -912,17 +939,29 @@ export function CollectiblesPanel() {
         ) : (
           <div className="coll-grid">
             {displayItems.map((it) => (
-              <button key={it.txid} className="coll-card" onClick={() => openItem(it)}>
-                {it.thumb ? (
+              <button
+                key={it.txid}
+                className={"coll-card" + (it.sealed ? " coll-card-sealed" : "")}
+                onClick={() => (it.sealed ? openRealPack(it) : openItem(it))}
+              >
+                {it.sealed ? (
+                  <span className="coll-card-noimg" aria-hidden="true">◈</span>
+                ) : it.thumb ? (
                   <img className="coll-card-thumb" src={it.thumb} alt={it.name} />
                 ) : (
                   <span className="coll-card-noimg" aria-hidden="true">
                     🔒
                   </span>
                 )}
-                <span className="coll-card-name">{it.name}</span>
+                <span className="coll-card-name">{it.sealed ? "Sealed PERC" : it.name}</span>
                 <span className="coll-card-meta">
-                  {it.collectionId ? (collections.find((c) => c.id === it.collectionId)?.name ?? "in a collection") : "owned · tap to open"}
+                  {it.sealed
+                    ? "sealed pack · tap to open"
+                    : it.revealed
+                    ? (it.revealed.ur != null ? "Ultra Rare" : `Tier ${it.revealed.tier}`)
+                    : it.collectionId
+                    ? (collections.find((c) => c.id === it.collectionId)?.name ?? "in a collection")
+                    : "owned · tap to open"}
                 </span>
               </button>
             ))}

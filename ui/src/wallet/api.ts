@@ -177,6 +177,10 @@ export interface NfdChainItem {
   thumbPtr: string | null;
   collectionId: string | null;
   mintHeight: number;
+  // Perc state. `sealed` = a blind pack not yet opened; once opened `revealed`
+  // carries the rolled tier (and UR sub-tier). Both absent/false for plain NFDs.
+  sealed?: boolean;
+  revealed?: { tier: number; ur: number | null } | null;
 }
 export interface NfdOwned {
   open: boolean; // false = feature not active on this chain yet (mainnet pre-launch)
@@ -264,6 +268,16 @@ export const nfdCommissionSet = (collectionId: string, amountDivi: number, payou
   invoke<Commission>("nfd_commission_set", { collectionId, amountDivi, payoutAddress, creatorAddr });
 export const nfdView = (ownerAddr: string, arweavePtr: string, contentHash: string, encrypted: boolean) =>
   invoke<string>("nfd_view", { ownerAddr, arweavePtr, contentHash, encrypted });
+
+// ---- Reveal (open a sealed Perc) ----
+// Broadcasts the on-chain REVEAL (funded from the owner). The rolled tier
+// resolves a few blocks later; poll nfdGet and watch for `revealed`.
+export interface RevealCommit {
+  revealTxid: string;
+  resolveHeight: number;
+}
+export const nfdReveal = (ownerAddr: string, mintTxid: string) =>
+  invoke<RevealCommit>("nfd_reveal", { ownerAddr, mintTxid });
 // ---- Payment requests (DVXP type 0x05) ----
 // A request only ASKS. Receiving one moves no money; paying is a separate,
 // explicitly signed act by the payer.

@@ -491,6 +491,38 @@ pub fn read_record(cfg: &NodeConfig, txid: &str) -> Result<Option<nfd_record::Nf
         .and_then(|vouts| vouts.iter().find_map(|v| v["scriptPubKey"]["hex"].as_str().and_then(nfd_record::parse))))
 }
 
+// ── Reveal (open a sealed Perc) ─────────────────────────────────────────────
+/// Blocks after a REVEAL before its roll resolves. MUST match the indexer's
+/// `REVEAL_DELAY` so the UI waits the right number of blocks before reading the
+/// rolled tier. Long enough that the owner can't have known the seed block's
+/// hash when they committed, so the outcome can't be gamed.
+pub const REVEAL_DELAY: i64 = 6;
+
+pub struct RevealCommit {
+    pub reveal_txid: String,
+    pub resolve_height: i64,
+}
+
+/// Commit a REVEAL: open a sealed Perc (by its mint txid), funded from — and so
+/// signed by — the owner address. The indexer accepts it only from the current
+/// owner, only for a Perc, and only once; it then resolves the tier from a FUTURE
+/// block's hash (`resolve_height`), so the outcome can't be predicted or ground.
+/// The rolled tier is read back later via `nfd_scan::get` once that block exists.
+pub fn reveal(cfg: &NodeConfig, owner_addr: &str, mint_txid: &str) -> Result<RevealCommit, String> {
+    // The item must be an NFD mint that belongs to a collection (a pack). Full
+    // Perc/owner/once validation is the indexer's job; this is a friendly guard.
+    match read_record(cfg, mint_txid)? {
+        Some(nfd_record::NfdRecord::Mint { collection_id: Some(_), .. }) => {}
+        _ => return Err("that NFD is not a pack in a collection".into()),
+    }
+    let rpc = RpcClient::new(cfg);
+    let height = rpc.call("getblockcount", json!([]))?.as_i64().ok_or("no block height")?;
+    let record = nfd_record::encode_reveal(mint_txid)?;
+    let utxo = pick_owner_utxo(&rpc, owner_addr)?;
+    let reveal_txid = anchor_record(&rpc, &utxo, &record, None)?;
+    Ok(RevealCommit { reveal_txid, resolve_height: height + REVEAL_DELAY })
+}
+
 // ── Forging (PERC upgrade) ──────────────────────────────────────────────────
 /// The forge fee, paid to the creator's payout address. Flat DIVI, like commissions.
 pub const FORGE_FEE: f64 = 1000.0;

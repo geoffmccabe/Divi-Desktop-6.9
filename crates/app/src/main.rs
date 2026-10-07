@@ -2154,6 +2154,27 @@ async fn nfd_claim(my_addr: String, mint_txid: String, wrapkey_ptr: String) -> R
     .map_err(|_| "internal error".to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RevealDto {
+    reveal_txid: String,
+    resolve_height: i64,
+}
+
+/// Open a sealed Perc you own: broadcasts the REVEAL (funded from the owner).
+/// The rolled tier resolves a few blocks later; read it with `nfd_get` and watch
+/// for `revealed` to appear (and `sealed` to clear).
+#[tauri::command]
+async fn nfd_reveal(owner_addr: String, mint_txid: String) -> Result<RevealDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        let r = collectibles::reveal(&cfg, &owner_addr, &mint_txid)?;
+        Ok(RevealDto { reveal_txid: r.reveal_txid, resolve_height: r.resolve_height })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 // ── Admin: fees / treasury (public config only — no keys) ──────────────────
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2457,6 +2478,7 @@ fn main() {
             nfd_set_storage_backend,
             nfd_commission_get,
             nfd_commission_set,
+            nfd_reveal,
             nfd_create_collection,
             nfd_import_open,
             nfd_import_read_item,

@@ -83,6 +83,18 @@ export function simulate(inp: RollInput): RevealResult {
   return { tier, floor, ur, jump: Math.max(1, jump) };
 }
 
+// Map the ON-CHAIN reveal outcome into a RevealResult for the stage. `base` is
+// the rolled tier (1..tier_count); `ur` is the ultra-rare sub-tier when pulled.
+// An ultra-rare drives the biggest spectacle (jump 10, fireworks); otherwise the
+// color ladder / intensity key off the rolled tier itself. `floor` is the forged
+// guaranteed minimum (0 for a plain pack), used only for the on-card note.
+export function resultFromChain(base: number, ur: number | null, floor = 0): RevealResult {
+  const isUr = ur != null;
+  const tier = Math.max(1, Math.min(40, base || 0));
+  const jump = isUr ? 10 : Math.max(1, tier - floor);
+  return { tier, floor, ur: isUr, jump };
+}
+
 // A fixed result for previewing one effect level (or UR) directly.
 export function previewResult(level: number | "ur"): RevealResult {
   if (level === "ur") return { tier: 0, jump: 10, ur: true, floor: 0 };

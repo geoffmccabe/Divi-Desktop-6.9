@@ -398,6 +398,14 @@ fn nfd_view_json(v: &query::NfdView, testnet: bool) -> Value {
         "thumbPtr": v.thumb_ptr.map(|t| hex_raw(&t)),
         "collectionId": v.collection_id.map(|c| hex_le(&c)),
         "mintHeight": v.mint_height,
+        // Perc state: a sealed pack shows a wrapper until it is revealed; once
+        // revealed the UI shows the rolled tier (and its glow). `ur` marks an
+        // ultra-rare and carries the UR sub-tier.
+        "sealed": v.sealed,
+        "revealed": v.revealed.map(|(base, ur)| json!({
+            "tier": base,
+            "ur": ur,
+        })),
     })
 }
 
