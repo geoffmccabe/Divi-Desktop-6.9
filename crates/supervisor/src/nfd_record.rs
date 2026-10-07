@@ -163,12 +163,19 @@ pub fn encode_mint(
 }
 
 /// Encode a COLLECTION-CREATE. `max_supply` 0 = uncapped; `meta_ptr` -> public
-/// collection metadata JSON.
-pub fn encode_collection_create(max_supply: u32, meta_ptr: &str) -> Result<String, String> {
+/// collection metadata JSON. `rarity` (for a blind-pack / Perc set) appends the
+/// on-chain rarity config so the protocol can resolve reveals: it is
+/// `(tier_count, ur_basic_ppm, ur_progressive_ppm, ur_count)`, all appended
+/// big-endian (2+4+4+2 bytes). `None` for a plain collection.
+pub fn encode_collection_create(max_supply: u32, meta_ptr: &str, rarity: Option<(u16, u32, u32, u16)>) -> Result<String, String> {
     if !is_hex_len(meta_ptr, 32) {
         return Err("meta_ptr must be 32 bytes hex".into());
     }
-    Ok(format!("{}{:08x}{}", prefix(SUB_COLLECTION), max_supply, meta_ptr.to_lowercase()))
+    let mut out = format!("{}{:08x}{}", prefix(SUB_COLLECTION), max_supply, meta_ptr.to_lowercase());
+    if let Some((tier_count, ur_basic_ppm, ur_progressive_ppm, ur_count)) = rarity {
+        out.push_str(&format!("{tier_count:04x}{ur_basic_ppm:08x}{ur_progressive_ppm:08x}{ur_count:04x}"));
+    }
+    Ok(out)
 }
 
 /// Encode a COMMISSION-SET (creator commission on a collection):
@@ -399,7 +406,10 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
         SUB_KEYANNOUNCE if body.len() == 64 => Some(NfdRecord::KeyAnnounce {
             enc_pubkey: body[0..64].to_string(),
         }),
-        SUB_COLLECTION if body.len() == 72 => Some(NfdRecord::CollectionCreate {
+        // 72 = plain collection; 96 = with the appended 12-byte rarity config
+        // (blind-pack). The wallet keeps only max_supply + meta_ptr here; the
+        // indexer is what reads and acts on the rarity config.
+        SUB_COLLECTION if body.len() == 72 || body.len() == 96 => Some(NfdRecord::CollectionCreate {
             max_supply: u32::from_str_radix(&body[0..8], 16).ok()?,
             meta_ptr: body[8..72].to_string(),
         }),
@@ -517,8 +527,11 @@ mod tests {
     #[test]
     fn collection_create_roundtrips() {
         let m = "ff".repeat(32);
-        let script = op_meta_script(&encode_collection_create(10_000, &m).unwrap());
-        assert_eq!(parse(&script), Some(NfdRecord::CollectionCreate { max_supply: 10_000, meta_ptr: m }));
+        let script = op_meta_script(&encode_collection_create(10_000, &m, None).unwrap());
+        assert_eq!(parse(&script), Some(NfdRecord::CollectionCreate { max_supply: 10_000, meta_ptr: m.clone() }));
+        // with the appended rarity config it still parses to the same base fields
+        let script2 = op_meta_script(&encode_collection_create(100, &m, Some((40, 10_000, 100_000, 3))).unwrap());
+        assert_eq!(parse(&script2), Some(NfdRecord::CollectionCreate { max_supply: 100, meta_ptr: m }));
     }
 
     #[test]

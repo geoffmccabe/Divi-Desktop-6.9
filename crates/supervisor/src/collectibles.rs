@@ -186,7 +186,9 @@ pub fn create_collection(
     };
     let meta = json!({ "name": name, "description": description, "image": image });
     let meta_ptr = storage.put_public(meta.to_string().as_bytes(), "application/json")?;
-    let record = nfd_record::encode_collection_create(max_supply, &meta_ptr)?;
+    // No rarity config here yet (plain create). The Perc importer will pass the
+    // on-chain rarity config (tier_count + ultra-rare gate) when it lands.
+    let record = nfd_record::encode_collection_create(max_supply, &meta_ptr, None)?;
     let txid = anchor_record(&rpc, &utxo, &record, None)?;
     Ok(CollectionOutcome { txid, meta_ptr })
 }
