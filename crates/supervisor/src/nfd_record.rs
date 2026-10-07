@@ -11,6 +11,7 @@ const SUB_TRANSFER: u8 = 0x02;
 const SUB_KEYANNOUNCE: u8 = 0x03;
 const SUB_COLLECTION: u8 = 0x04;
 const SUB_FORGE: u8 = 0x05;
+const SUB_REVEAL: u8 = 0x06;
 const SUB_BRIDGE_OUT: u8 = 0x07;
 const SUB_BRIDGE_IN: u8 = 0x08;
 const SUB_COMMISSION: u8 = 0x09;
@@ -197,6 +198,17 @@ pub fn encode_commission_set(collection_id: &str, amount_duffs: u64, payout_pack
         amount_duffs,
         payout_packed.to_lowercase()
     ))
+}
+
+/// Encode a REVEAL: the sealed Perc (by mint txid) the owner is opening. The
+/// outcome is resolved on-chain from a future-block seed; this record only names
+/// the pack. The mint txid is a txid reference, so it goes on the wire in
+/// internal byte order.
+pub fn encode_reveal(mint_txid: &str) -> Result<String, String> {
+    if !is_hex_len(mint_txid, 32) {
+        return Err("mint_txid must be 32 bytes hex".into());
+    }
+    Ok(format!("{}{}", prefix(SUB_REVEAL), swap_txid_order(&mint_txid.to_lowercase())))
 }
 
 /// Encode a FORGE: the two same-tier input NFDs (by mint txid) + the collection.
@@ -551,6 +563,14 @@ mod tests {
         assert!(hex.contains(&format!("{:016x}", 1000u64)));
         assert!(encode_commission_set("notlongenough", 1, &payout).is_err());
         assert!(encode_commission_set(&cid, 1, "short").is_err());
+    }
+
+    #[test]
+    fn reveal_encodes() {
+        let id = "ab".repeat(32);
+        let hex = encode_reveal(&id).unwrap();
+        assert!(hex.len() > 64); // envelope prefix + 64-hex (byte-swapped) txid
+        assert!(encode_reveal("short").is_err());
     }
 
     #[test]

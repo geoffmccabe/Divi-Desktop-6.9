@@ -3000,6 +3000,7 @@ name = "nfd-indexer"
 version = "0.1.0"
 dependencies = [
  "dvxp-core",
+ "sha2 0.10.9",
 ]
 
 [[package]]
