@@ -213,11 +213,11 @@ pub fn encode_reveal(mint_txid: &str) -> Result<String, String> {
 
 /// Encode a FORGE: the two same-tier input NFDs (by mint txid) + the collection.
 ///
-/// NOTE (2026-Sep-20): the txid refs here (input_a, input_b, collection_id) are
-/// still written in display order. When FORGE (0x05) is wired into the indexer
-/// (Phase 6), they must be run through `swap_txid_order` on encode + decode, the
-/// same as MINT/TRANSFER, or the indexer will not match them. Not done now
-/// because there is no forge indexer path to test against yet.
+/// All three fields are txid references (two mint txids + the collection id,
+/// which is itself a mint/create txid), so each goes on the wire in INTERNAL
+/// byte order via `swap_txid_order` — the same rule as MINT/TRANSFER/REVEAL.
+/// (Fixed 2026-Oct-08 as Phase 4 wires FORGE 0x05 into the indexer; before, these
+/// were written in display order, which would not have matched the indexer.)
 pub fn encode_forge(input_a: &str, input_b: &str, collection_id: &str) -> Result<String, String> {
     for (n, v) in [("input_a", input_a), ("input_b", input_b), ("collection_id", collection_id)] {
         if !is_hex_len(v, 32) {
@@ -227,9 +227,9 @@ pub fn encode_forge(input_a: &str, input_b: &str, collection_id: &str) -> Result
     Ok(format!(
         "{}{}{}{}",
         prefix(SUB_FORGE),
-        input_a.to_lowercase(),
-        input_b.to_lowercase(),
-        collection_id.to_lowercase()
+        swap_txid_order(&input_a.to_lowercase()),
+        swap_txid_order(&input_b.to_lowercase()),
+        swap_txid_order(&collection_id.to_lowercase())
     ))
 }
 
@@ -426,9 +426,10 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
             meta_ptr: body[8..72].to_string(),
         }),
         SUB_FORGE if body.len() == 192 => Some(NfdRecord::Forge {
-            input_a: body[0..64].to_string(),
-            input_b: body[64..128].to_string(),
-            collection_id: body[128..192].to_string(),
+            // All three are txid refs on the wire in internal order -> back to display.
+            input_a: swap_txid_order(&body[0..64]),
+            input_b: swap_txid_order(&body[64..128]),
+            collection_id: swap_txid_order(&body[128..192]),
         }),
         // BRIDGE-OUT: nfd_id(64) diva_dest(40) nonce(16) maturity(8) flags(2)
         // [wrapkey(64)]. base 130 hex; +64 when ENCRYPTED. EXACT length.
@@ -548,9 +549,23 @@ mod tests {
 
     #[test]
     fn forge_roundtrips() {
-        let (a, b, c) = ("11".repeat(32), "22".repeat(32), "33".repeat(32));
+        // ASYMMETRIC txids (non-palindromic bytes) so the test fails if encode and
+        // decode disagree on byte order; a repeated-byte value would hide that.
+        let a = "0123456789abcdef".repeat(4); // 64 hex chars = 32 bytes
+        let b = "fedcba9876543210".repeat(4);
+        let c = "00112233445566778899aabbccddeeff".repeat(2);
         let script = op_meta_script(&encode_forge(&a, &b, &c).unwrap());
-        assert_eq!(parse(&script), Some(NfdRecord::Forge { input_a: a, input_b: b, collection_id: c }));
+        assert_eq!(
+            parse(&script),
+            Some(NfdRecord::Forge { input_a: a.clone(), input_b: b.clone(), collection_id: c.clone() })
+        );
+        // The on-wire record must carry the refs in INTERNAL order (byte-reversed),
+        // not display order, so the indexer (which keys by internal order) matches.
+        let wire = encode_forge(&a, &b, &c).unwrap();
+        assert!(wire.contains(&swap_txid_order(&a)));
+        assert!(wire.contains(&swap_txid_order(&b)));
+        assert!(wire.contains(&swap_txid_order(&c)));
+        assert!(!wire.contains(&a)); // the display-order form must NOT appear
     }
 
     #[test]
