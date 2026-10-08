@@ -3,12 +3,13 @@ import {
   nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateCollection, newReceiveAddress,
   nfdOwnedWallet, nfdCollectionMembers,
   nfdStorageBackends, nfdSetStorageBackend,
-  nfdCommissionGet, nfdCommissionSet, nfdReveal, nfdGet,
+  nfdCommissionGet, nfdCommissionSet, nfdReveal, nfdForge, nfdGet,
   type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends, type Commission,
 } from "./api";
 import { CollectionImport } from "./CollectionImport";
 import { RevealStage, type RevealSealed } from "./reveal/RevealStage";
 import { previewResult, simulate, resultFromChain, type RevealResult } from "./reveal/revealModel";
+import { tierGlow, tierGlowShadow, tierArtUrl } from "./reveal/tierArt";
 
 // Divi Collectibles (NFDs). Mint, view, transfer, and receive collectibles. The
 // file is encrypted locally before it leaves the machine; only the encrypted
@@ -226,8 +227,10 @@ export function CollectiblesPanel() {
   // then rejects as "already pending". Keyed by mint txid.
   const [revealing, setRevealing] = useState<Set<string>>(() => new Set());
   const [previewLevel, setPreviewLevel] = useState("5");
-  const [sampleForged, setSampleForged] = useState(false);
-  const [sampleInput, setSampleInput] = useState("3");
+  // Forge: the two owned, revealed, same-tier Percs chosen as inputs (by txid).
+  const [forgeA, setForgeA] = useState("");
+  const [forgeB, setForgeB] = useState("");
+  const [forgeMsg, setForgeMsg] = useState("");
 
   // Storage backend (local / Arweave relay / GoBanq / DiviStore module).
   const [storage, setStorage] = useState<StorageBackends | null>(null);
@@ -310,9 +313,8 @@ export function CollectiblesPanel() {
     setRevealOpen(true);
   }
   function openSamplePack() {
-    const inputTier = Math.max(1, Math.min(39, parseInt(sampleInput || "3", 10)));
-    setRevealSealed(sampleForged ? { forged: true, floor: Math.min(40, inputTier + 1) } : { forged: false, floor: 0 });
-    setRevealRun(() => async () => { await revealDelay(1600); return simulate(sampleForged ? { type: "forged", inputTier } : { type: "original" }); });
+    setRevealSealed({ forged: false, floor: 0 });
+    setRevealRun(() => async () => { await revealDelay(1600); return simulate({ type: "original" }); });
     setRevealOpen(true);
   }
   // Open a REAL sealed pack this wallet owns: broadcast the on-chain REVEAL, then
@@ -346,6 +348,41 @@ export function CollectiblesPanel() {
       // when it does, so we KEEP the in-flight flag (the pack stays "opening…"
       // rather than re-arming a tap that would re-broadcast).
       throw new Error("The reveal is taking longer than expected. It will resolve on-chain — the pack will show its tier shortly.");
+    });
+    setRevealOpen(true);
+  }
+  // Forge two owned, revealed, SAME-TIER Percs from one collection into a single
+  // guaranteed-upgrade result. Burns both inputs, pays the creator's forge fee,
+  // and broadcasts the FORGE; the result is a NEW sealed pack keyed by the forge
+  // txid. The tier is the CHAIN's roll (Model X) — we broadcast, then poll the
+  // result pack for its `revealed` tier, exactly like a reveal. We never compute
+  // the tier locally for truth; the floor (input tier + 1) only drives the
+  // animation's guaranteed-minimum framing.
+  function forgePack(a: Item, b: Item) {
+    if (!a.collectionId || a.collectionId !== b.collectionId) { setForgeMsg("Pick two Percs from the same collection."); return; }
+    const ta = a.revealed?.tier, tb = b.revealed?.tier;
+    if (ta == null || tb == null || ta !== tb) { setForgeMsg("Both Percs must be revealed and the same tier."); return; }
+    if (a.txid === b.txid) { setForgeMsg("Pick two different Percs."); return; }
+    const inputTier = ta;
+    const colId = a.collectionId;
+    const colName = collections.find((c) => c.id === colId)?.name;
+    setForgeMsg("");
+    setRevealSealed({ forged: true, floor: Math.min(40, inputTier + 1), label: colName ? `Forging · ${colName}` : "Forging" });
+    setRevealRun(() => async () => {
+      const commit = await nfdForge(a.ownerAddr, colId, a.txid, b.txid); // burns both inputs, broadcasts FORGE
+      setForgeA(""); setForgeB("");
+      // The result pack is keyed by the forge txid; poll the chain until the
+      // indexer resolves its roll (a few blocks after the commit).
+      const deadline = Date.now() + 20 * 60 * 1000; // 20 minutes
+      while (Date.now() < deadline) {
+        await revealDelay(5000);
+        try {
+          const r = await nfdGet(commit.forgeTxid);
+          const rev = r.nfd?.revealed;
+          if (rev) return resultFromChain(rev.tier, rev.ur, Math.min(40, inputTier + 1));
+        } catch { /* node busy; keep polling */ }
+      }
+      throw new Error("The forge is taking longer than expected. It will resolve on-chain — the new pack will show its tier shortly.");
     });
     setRevealOpen(true);
   }
@@ -444,6 +481,26 @@ export function CollectiblesPanel() {
     }
     return [...byId.values()];
   }, [chain, items]);
+
+  // Forgeable Percs: owned, revealed to a numeric tier (not sealed/pending/UR),
+  // in a collection. Forging needs two of the SAME tier in the SAME collection,
+  // so input B is filtered to match input A once A is chosen.
+  const forgeable = useMemo<Item[]>(
+    () => displayItems.filter(
+      (it) => !it.sealed && !it.pending && !revealing.has(it.txid)
+        && !!it.collectionId && !!it.revealed && it.revealed.ur == null,
+    ),
+    [displayItems, revealing],
+  );
+  const forgeAItem = forgeable.find((i) => i.txid === forgeA) || null;
+  const forgeBOptions = forgeAItem
+    ? forgeable.filter((i) => i.txid !== forgeAItem.txid && i.collectionId === forgeAItem.collectionId && i.revealed!.tier === forgeAItem.revealed!.tier)
+    : [];
+  const forgeBItem = forgeBOptions.find((i) => i.txid === forgeB) || null;
+  const forgeLabel = (it: Item) => {
+    const col = collections.find((c) => c.id === it.collectionId)?.name ?? "collection";
+    return `${col} · T${it.revealed!.tier} · ${it.name || it.txid.slice(0, 8)}`;
+  };
 
   // When browsing a collection, read its FULL membership from the chain (every
   // item, not only this wallet's), overlaying local metadata where we have it.
@@ -553,6 +610,9 @@ export function CollectiblesPanel() {
     setBusy(false);
   }
 
+  // A pointer that is missing or all-zero means "no unique original art" — a
+  // forge result is like this on purpose; it draws its tier's shared art.
+  const zeroPtr = (p?: string | null) => !p || /^0+$/.test(p);
   async function openItem(it: Item) {
     setViewing(it.txid);
     setViewSrc(null);
@@ -560,6 +620,13 @@ export function CollectiblesPanel() {
     setXferCode("");
     setXferErr(null);
     setClaimCodeOut(null);
+    // Forge/tier-art item: no original to unlock. Show the tier's shared art if a
+    // manifest is registered, else the viewer falls back to a tier badge. No fetch.
+    if (it.revealed && !it.thumb && !it.wrapkeyPtr && zeroPtr(it.arweavePtr)) {
+      const url = tierArtUrl(it.collectionId, it.revealed.tier);
+      if (url) setViewSrc(url);
+      return;
+    }
     try {
       const b64 = it.wrapkeyPtr
         ? await nfdClaim(it.ownerAddr, it.txid, it.wrapkeyPtr)
@@ -656,6 +723,8 @@ export function CollectiblesPanel() {
   }
 
   const active = displayItems.find((i) => i.txid === viewing) ?? null;
+  // A revealed Perc with no unique original (a forge result) is shown by its tier.
+  const activeTierArt = !!active?.revealed && !active.thumb && !active.wrapkeyPtr && zeroPtr(active.arweavePtr);
   const selectedCol = collections.find((c) => c.id === mintInto) ?? null;
   const mintedOut = !!selectedCol && selectedCol.maxSupply > 0 && selectedCol.minted >= selectedCol.maxSupply;
 
@@ -703,8 +772,8 @@ export function CollectiblesPanel() {
       <section className="ts-section">
         <h3 className="ts-head">Reveal preview</h3>
         <p className="wl-note">
-          See the sealed-pack opening. Pick an effect level to check each tier-jump look, or open a sample pack —
-          forged packs show their guaranteed minimum tier. In the live flow, opening a pack is an on-chain transaction.
+          See the sealed-pack opening. Pick an effect level to check each tier-jump look, or open a sample pack.
+          In the live flow, opening a pack (and forging) is an on-chain transaction — see your collection.
         </p>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <select className="wl-input mono" value={previewLevel} onChange={(e) => setPreviewLevel(e.target.value)} style={{ maxWidth: 280 }}>
@@ -723,15 +792,6 @@ export function CollectiblesPanel() {
           <button className="wl-btn wl-btn-primary" onClick={openPreviewLevel}>Preview effect</button>
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginTop: 10 }}>
-          <label className="wl-note" style={{ display: "flex", gap: 6, alignItems: "center", margin: 0 }}>
-            <input type="checkbox" checked={sampleForged} onChange={(e) => setSampleForged(e.target.checked)} /> forged pack
-          </label>
-          {sampleForged && (
-            <span className="wl-note" style={{ display: "flex", gap: 6, alignItems: "center", margin: 0 }}>
-              from two T
-              <input className="wl-input" style={{ width: 64 }} type="number" min={1} max={39} value={sampleInput} onChange={(e) => setSampleInput(e.target.value)} />
-            </span>
-          )}
           <button className="wl-btn" onClick={openSamplePack}>Open a sample pack</button>
         </div>
       </section>
@@ -956,16 +1016,32 @@ export function CollectiblesPanel() {
           </p>
         ) : (
           <div className="coll-grid">
-            {displayItems.map((it) => (
+            {displayItems.map((it) => {
+              // A revealed Perc shows its tier's rarity glow; the artwork is the
+              // local original if we have it, else the tier's shared art from the
+              // collection manifest, else a tier-coloured badge (forge results
+              // have no local thumb and zeroed pointers — they draw by tier).
+              const rev = it.revealed;
+              const tierImg = rev && !it.thumb ? tierArtUrl(it.collectionId, rev.tier) : null;
+              const glow = rev ? tierGlowShadow(rev.tier, rev.ur) : undefined;
+              return (
               <button
                 key={it.txid}
                 className={"coll-card" + (it.sealed ? " coll-card-sealed" : "")}
+                style={glow ? { boxShadow: glow } : undefined}
                 onClick={() => (it.sealed ? openRealPack(it) : openItem(it))}
               >
                 {it.sealed ? (
                   <span className="coll-card-noimg" aria-hidden="true">◈</span>
                 ) : it.thumb ? (
                   <img className="coll-card-thumb" src={it.thumb} alt={it.name} />
+                ) : tierImg ? (
+                  <img className="coll-card-thumb" src={tierImg} alt={it.name} />
+                ) : rev ? (
+                  <span className="coll-card-noimg" aria-hidden="true"
+                    style={{ color: tierGlow(rev.tier, rev.ur), fontWeight: 700, fontSize: 15 }}>
+                    {rev.ur != null ? "★UR" : `T${rev.tier}`}
+                  </span>
                 ) : (
                   <span className="coll-card-noimg" aria-hidden="true">
                     🔒
@@ -982,10 +1058,44 @@ export function CollectiblesPanel() {
                     : "owned · tap to open"}
                 </span>
               </button>
-            ))}
+              );
+            })}
           </div>
         )}
       </section>
+
+      {forgeable.length >= 2 && (
+      <section className="ts-section">
+        <h3 className="ts-head">Forge</h3>
+        <p className="wl-note">
+          Combine two revealed Percs of the <em>same tier</em> from one collection into a single new pack with a
+          <em> guaranteed upgrade</em> — at least one tier higher, often more. Both inputs are burned and the forge fee
+          is paid to the collection's creator. The new tier is rolled by the chain from a future block, so it can't be
+          gamed; you'll see it resolve a few blocks after you forge.
+        </p>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <select className="wl-input mono" value={forgeA} style={{ maxWidth: 320 }}
+            onChange={(e) => { setForgeA(e.target.value); setForgeB(""); setForgeMsg(""); }}>
+            <option value="">Choose the first Perc…</option>
+            {forgeable.map((it) => <option key={it.txid} value={it.txid}>{forgeLabel(it)}</option>)}
+          </select>
+          <select className="wl-input mono" value={forgeB} disabled={!forgeAItem} style={{ maxWidth: 320 }}
+            onChange={(e) => { setForgeB(e.target.value); setForgeMsg(""); }}>
+            <option value="">
+              {forgeAItem
+                ? (forgeBOptions.length ? "Choose a matching Perc…" : "No other same-tier Perc in this collection")
+                : "Pick the first Perc first"}
+            </option>
+            {forgeBOptions.map((it) => <option key={it.txid} value={it.txid}>{forgeLabel(it)}</option>)}
+          </select>
+          <button className="wl-btn wl-btn-primary" disabled={!forgeAItem || !forgeBItem}
+            onClick={() => { if (forgeAItem && forgeBItem) forgePack(forgeAItem, forgeBItem); }}>
+            Forge {forgeAItem ? `two T${forgeAItem.revealed!.tier}` : ""}
+          </button>
+        </div>
+        {forgeMsg && <p className="wl-note" style={{ marginTop: 8 }}>{forgeMsg}</p>}
+      </section>
+      )}
 
       {collections.length > 0 && (
       <section className="ts-section">
@@ -1048,12 +1158,35 @@ export function CollectiblesPanel() {
               </button>
             </div>
             {viewErr && <p className="wl-err">{viewErr}</p>}
-            {!viewSrc && !viewErr && <p className="wl-note">Unlocking…</p>}
-            {viewSrc && active.mime.startsWith("image/") && (
-              <img className="coll-viewer-img" src={viewSrc} alt={active.name} />
-            )}
-            {viewSrc && !active.mime.startsWith("image/") && (
-              <p className="wl-note">Unlocked {active.name} ({active.mime}).</p>
+            {activeTierArt ? (
+              <>
+                {viewSrc ? (
+                  <img className="coll-viewer-img" src={viewSrc} alt={active.name} />
+                ) : (
+                  <div className="coll-viewer-img" style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    minHeight: 180, fontSize: 48, fontWeight: 800,
+                    color: tierGlow(active.revealed!.tier, active.revealed!.ur),
+                    boxShadow: tierGlowShadow(active.revealed!.tier, active.revealed!.ur), borderRadius: 12,
+                  }}>
+                    {active.revealed!.ur != null ? "★ UR" : `T${active.revealed!.tier}`}
+                  </div>
+                )}
+                <p className="wl-note">
+                  {active.revealed!.ur != null ? "Ultra Rare" : `Tier ${active.revealed!.tier}`} — this Perc shows its
+                  tier's shared collection artwork{viewSrc ? "." : " (art loads once the collection's tier set is published)."}
+                </p>
+              </>
+            ) : (
+              <>
+                {!viewSrc && !viewErr && <p className="wl-note">Unlocking…</p>}
+                {viewSrc && active.mime.startsWith("image/") && (
+                  <img className="coll-viewer-img" src={viewSrc} alt={active.name} />
+                )}
+                {viewSrc && !active.mime.startsWith("image/") && (
+                  <p className="wl-note">Unlocked {active.name} ({active.mime}).</p>
+                )}
+              </>
             )}
             <p className="wl-note coll-owner">
               {active.thumbPtr ? "has a public preview" : "private (no public preview)"}

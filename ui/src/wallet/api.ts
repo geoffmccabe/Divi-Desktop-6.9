@@ -280,6 +280,18 @@ export interface RevealCommit {
 }
 export const nfdReveal = (ownerAddr: string, mintTxid: string) =>
   invoke<RevealCommit>("nfd_reveal", { ownerAddr, mintTxid });
+
+// ---- Forge (combine two Percs into one guaranteed upgrade) ----
+// Burns two same-tier, same-collection Percs you own and broadcasts the FORGE.
+// The result is a NEW sealed pack keyed by `forgeTxid`; its tier resolves a few
+// blocks later — poll nfdGet(forgeTxid) and watch for `revealed`. The chain (not
+// the wallet) decides the tier.
+export interface ForgeCommit {
+  forgeTxid: string;
+  resolveHeight: number;
+}
+export const nfdForge = (ownerAddr: string, collectionId: string, inputA: string, inputB: string) =>
+  invoke<ForgeCommit>("nfd_forge", { ownerAddr, collectionId, inputA, inputB });
 // ---- Payment requests (DVXP type 0x05) ----
 // A request only ASKS. Receiving one moves no money; paying is a separate,
 // explicitly signed act by the payer.

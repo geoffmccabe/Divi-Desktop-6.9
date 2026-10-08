@@ -2175,6 +2175,38 @@ async fn nfd_reveal(owner_addr: String, mint_txid: String) -> Result<RevealDto, 
     .map_err(|_| "internal error".to_string())?
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgeDto {
+    forge_txid: String,
+    resolve_height: i64,
+}
+
+/// Forge two sealed-pack Percs you own into one guaranteed-upgrade result: burns
+/// both inputs (same tier, same collection), pays the forge fee to the creator,
+/// and broadcasts the FORGE. The result is a NEW sealed pack keyed by the forge
+/// txid; its tier resolves a few blocks later. Read it with `nfd_get(forgeTxid)`
+/// and watch for `revealed` to appear — the chain, not the wallet, decides the
+/// tier (Model X). The fee goes to the collection's on-chain commission payout
+/// (the creator); if none is set we fall back to the forger's own address so
+/// testnet forging is not blocked (no real funds move: the mainnet write fence
+/// in collectibles.rs refuses every NFD write on `main` until launch).
+#[tauri::command]
+async fn nfd_forge(owner_addr: String, collection_id: String, input_a: String, input_b: String) -> Result<ForgeDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        // Forge fee destination: the creator's on-chain commission payout address.
+        let fee_address = match nfd_scan::commission_of(&cfg, &collection_id)? {
+            Some((_amount, payout)) if !payout.is_empty() => payout,
+            _ => owner_addr.clone(), // testnet placeholder; mainnet write fence blocks real use
+        };
+        let c = collectibles::forge(&cfg, &owner_addr, &collection_id, &input_a, &input_b, &fee_address)?;
+        Ok(ForgeDto { forge_txid: c.forge_txid, resolve_height: c.resolve_height })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 // ── Admin: fees / treasury (public config only — no keys) ──────────────────
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2503,6 +2535,7 @@ fn main() {
             nfd_commission_get,
             nfd_commission_set,
             nfd_reveal,
+            nfd_forge,
             nfd_create_collection,
             nfd_import_open,
             nfd_import_read_item,
