@@ -36,12 +36,13 @@ Everything needed to launch, across all systems. Owners: **[DD69]** this wallet 
 - ☐ [Chain] Teach the normative indexer to decode + apply the reveal record with a reorg-undo entry; re-vendor into DD69.
 - ☑ [DD69] Swap the reveal UI's preview `run()` for the real on-chain reveal (done 2026-Oct-07): opening a sealed pack you own broadcasts the REVEAL and reads the chain-rolled tier back. The preview `run()` remains only on the "Reveal preview" test controls.
 - ☐ [DD69/Geoff] Set the treasury address (have it) + the mint fee numbers (Geoff), mainnet-gated.
-- ☐ [DD69] Add a mainnet **mint safety fence** so nothing can mint on mainnet before the launch block (lesson from the Sep-19 stray mint).
+- ☑ [DD69] Mainnet **write safety fence** DONE (2026-Oct-08): `collectibles::anchor_record` — the single chokepoint for every NFD write (mint/collection/transfer/reveal/forge/commission/bridge) — refuses to broadcast on the `main` chain while `MAINNET_WRITE_ENABLED=false` (no env override on purpose). Nothing can go out on mainnet before launch; Phase 7 flips it on with the launch height. Regtest/testnet unaffected.
 
 ### Phase 4 — Forging (in the launch)
-- ☐ [Chain] Teach the indexer to decode + apply the forge record (0x05) with reorg-undo; fix the embedded-txid byte order for forge records; re-vendor.
-- ☐ [DD69] Forge command + UI; a forge produces a **sealed pack with a guaranteed minimum tier**; reveal honors the floor and uses the forge odds.
-- ☐ [DD69] Tier-art registry so a revealed/forged PERC shows the right art + tier glow, sealed and revealed.
+- ☑ [Chain] **DONE (2026-Oct-08):** the normative `nfd-indexer` decodes + applies the FORGE record (0x05) with reorg-undo, and the embedded-txid byte order is fixed (`encode_forge`/`parse` now `swap_txid_order` all three refs). Re-vendored into DD69 (byte-identical). Tested: nfd-indexer 28 (4 new forge tests: burn+seal+future-block resolve, commit-rollback restores inputs, bad-input rejections, bump distribution); dvxp-scan 66; supervisor 121.
+  - **Model decision (Geoff to confirm):** implemented as **Model X** — the FORGE record itself yields the result pack (keyed by the forge txid): it burns the two same-tier inputs and creates ONE sealed result pack whose tier resolves from a future block (`input_tier + K`, halving bump, guaranteed ≥ `input_tier + 1`), just like a reveal. This diverges from `NFD-FORGING.md` §3 (a *separate* result mint) but is atomic, reorg-safe, needs no cross-record linkage, and naturally gives the "sealed forged pack with a guaranteed minimum tier" the marketplace wants. Easy to revert pre-launch (write fence blocks mainnet); `NFD-FORGING.md` §3 should be updated to match once confirmed.
+- ☐ [DD69] Forge command + UI: pick two owned, revealed, same-tier Percs → broadcast the FORGE → "resolving in N blocks" → read the rolled result tier **back from the chain** (like reveal; the wallet no longer computes it for truth). Replace the `sampleForged` demo toggle. *(The on-chain odds now live in the indexer's `forge_tier_bump`; reconcile the wallet's preview `forge.rs` seed derivation to the indexer's byte-based seed so the preview matches.)*
+- ☐ [DD69] Tier-art registry so a revealed/forged PERC shows the right art + tier glow, sealed and revealed (a forged result pack carries zeroed per-item pointers and draws the result tier's shared art).
 
 ### Phase 5 — Marketplace
 - ◐ [DD69] Listing: ☑ UI built — "List for sale" (price + the commission breakdown + your net) in the item viewer, and a "Your listings" group in Marketplace. ☐ Listings are local drafts; the on-chain listing record (price + listing time) + settlement is the chain step below.
@@ -210,7 +211,7 @@ The forkless NFD protocol is genuinely built and proven on regtest: the chain no
 
 ## Launch-safety note (found 2026-Sep-19)
 
-The chain **reader** is fenced off mainnet until launch (`MAINNET_ACTIVATION = None`), but the **mint/transfer/collection** path is NOT — it will act on whichever node it is connected to. On 2026-Sep-19 a regtest test that mistakenly resolved to the live mainnet node broadcast one stray (harmless, ~0.0001 DIVI) NFD mint on mainnet. Two things to do before launch: (a) add a mainnet fence on the write path too, so nothing can mint on main until the launch block; (b) headless tests must build the regtest `NodeConfig` by hand (port 51799), never `NodeConfig::load()` (its active profile can be the live mainnet daemon). Memory: `feedback_nfd_tests_never_use_nodeconfig_load`.
+The chain **reader** is fenced off mainnet until launch (`MAINNET_ACTIVATION = None`), but the **mint/transfer/collection** path is NOT — it will act on whichever node it is connected to. On 2026-Sep-19 a regtest test that mistakenly resolved to the live mainnet node broadcast one stray (harmless, ~0.0001 DIVI) NFD mint on mainnet. Two things to do before launch: (a) ☑ **DONE (2026-Oct-08)** — a mainnet fence is now on the write path (`anchor_record` refuses any NFD broadcast on `main` while `MAINNET_WRITE_ENABLED=false`); (b) headless tests must build the regtest `NodeConfig` by hand (port 51799), never `NodeConfig::load()` (its active profile can be the live mainnet daemon). Memory: `feedback_nfd_tests_never_use_nodeconfig_load`.
 
 ## Known correctness note (carry through the phases)
 
