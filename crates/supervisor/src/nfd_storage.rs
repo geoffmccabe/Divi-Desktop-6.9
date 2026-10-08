@@ -19,18 +19,26 @@ pub fn relay_url() -> String {
     std::env::var("NFD_RELAY_URL").unwrap_or_else(|_| DEFAULT_RELAY_URL.to_string())
 }
 
-/// GET the relay's /health, returning the Turbo credit balance (winc) or an
-/// error if the relay isn't reachable/configured.
-pub fn relay_balance(base_url: &str) -> Result<String, String> {
+/// GET the relay's /health. `Ok(Some(winc))` = reachable and the balance is
+/// known; `Ok(None)` = reachable but the balance is withheld (the relay only
+/// returns the balance to an authenticated caller, so without NFD_UPLOAD_TOKEN
+/// set — or with a token the relay doesn't accept — it answers `{ok:true}` with
+/// no balance); `Err` = not reachable. Sends the same bearer token the upload
+/// path uses, so a configured operator sees the real balance.
+pub fn relay_balance(base_url: &str) -> Result<Option<String>, String> {
     let url = format!("{}/health", base_url.trim_end_matches('/'));
-    let resp = ureq::get(&url).timeout(std::time::Duration::from_secs(12)).call().map_err(|e| format!("relay unreachable: {e}"))?;
+    let mut req = ureq::get(&url).timeout(std::time::Duration::from_secs(12));
+    if let Ok(token) = std::env::var("NFD_UPLOAD_TOKEN") {
+        req = req.set("Authorization", &format!("Bearer {token}"));
+    }
+    let resp = req.call().map_err(|e| format!("relay unreachable: {e}"))?;
     let body = resp.into_string().map_err(|e| e.to_string())?;
     let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
-    v["balanceWinc"]
+    // Reachable: a well-formed health response. Balance may be absent by design.
+    Ok(v["balanceWinc"]
         .as_str()
         .map(|s| s.to_string())
-        .or_else(|| v["balanceWinc"].as_i64().map(|n| n.to_string()))
-        .ok_or_else(|| "relay returned no balance".to_string())
+        .or_else(|| v["balanceWinc"].as_i64().map(|n| n.to_string())))
 }
 
 pub trait Storage {

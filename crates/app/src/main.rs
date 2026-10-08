@@ -2221,7 +2221,9 @@ async fn nfd_relay_status() -> RelayStatusDto {
     tauri::async_runtime::spawn_blocking(|| {
         let url = dd69_supervisor::nfd_storage::relay_url();
         match dd69_supervisor::nfd_storage::relay_balance(&url) {
-            Ok(b) => RelayStatusDto { relay_url: url, reachable: true, balance_winc: Some(b) },
+            // Reachable whether or not the balance is disclosed (the balance is
+            // only returned to an authenticated caller; its absence is not an outage).
+            Ok(balance_winc) => RelayStatusDto { relay_url: url, reachable: true, balance_winc },
             Err(_) => RelayStatusDto { relay_url: url, reachable: false, balance_winc: None },
         }
     })
@@ -2230,19 +2232,41 @@ async fn nfd_relay_status() -> RelayStatusDto {
 }
 
 /// The creator commission for a collection (null if none set). `{ amountDuffs, amountDivi, payoutAddress }`.
+/// Reads the CHAIN as the source of truth (so it is correct on a fresh install
+/// or a second device, where the local cache is empty), and uses the local
+/// cache only for the display-only `original` amount and as a fallback for a
+/// just-set commission the scan has not caught up to yet.
 #[tauri::command]
 async fn nfd_commission_get(collection_id: String) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
-        Ok(match dd69_supervisor::commission::get(&cfg.datadir, &collection_id) {
-            Some(c) => serde_json::json!({
-                "originalDuffs": c.original_duffs,
-                "originalDivi": dd69_supervisor::commission::fmt_divi(c.original_duffs),
-                "amountDuffs": c.amount_duffs,
-                "amountDivi": dd69_supervisor::commission::fmt_divi(c.amount_duffs),
-                "payoutAddress": c.payout_address,
-            }),
-            None => Value::Null,
+        let cached = dd69_supervisor::commission::get(&cfg.datadir, &collection_id);
+        // Authoritative on-chain value (best-effort: a node/scan hiccup falls back to cache).
+        let chain = dd69_supervisor::nfd_scan::commission_of(&cfg, &collection_id).ok().flatten();
+        let fmt = dd69_supervisor::commission::fmt_divi;
+        Ok(match chain {
+            Some((amount_duffs, payout_address)) => {
+                // `original` is display-only; keep the cached first-ever value if we have it.
+                let original_duffs = cached.as_ref().map(|c| c.original_duffs).unwrap_or(amount_duffs);
+                serde_json::json!({
+                    "originalDuffs": original_duffs,
+                    "originalDivi": fmt(original_duffs),
+                    "amountDuffs": amount_duffs,
+                    "amountDivi": fmt(amount_duffs),
+                    "payoutAddress": payout_address,
+                })
+            }
+            // Not on-chain yet: show a just-set local value if one exists, else null.
+            None => match cached {
+                Some(c) => serde_json::json!({
+                    "originalDuffs": c.original_duffs,
+                    "originalDivi": fmt(c.original_duffs),
+                    "amountDuffs": c.amount_duffs,
+                    "amountDivi": fmt(c.amount_duffs),
+                    "payoutAddress": c.payout_address,
+                }),
+                None => Value::Null,
+            },
         })
     })
     .await

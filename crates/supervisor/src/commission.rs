@@ -1,12 +1,15 @@
 // Creator commission on secondary sales of a collection's items.
 // See docs/NFD-CREATOR-COMMISSION.md. A flat DIVI toll per transfer, set by the
-// collection creator and paid to a payout address; it is enforced on-chain as a
-// condition of a valid transfer (the indexer/consensus part — chain-coordinated,
-// not here). This module owns the one rule that is settled: the amount is
-// DOWN-ONLY (Geoff, 2026-Oct-06) — it can be lowered but never raised, so a
-// fixed DIVI fee can be relieved if DIVI's price climbs. It also persists the
-// known current value per collection so the UI and a future COMMISSION-SET
-// record agree on what "current" is.
+// collection creator and paid to a payout address. It IS built end-to-end: the
+// on-chain COMMISSION-SET record (0x09) is encoded in `nfd_record.rs` and
+// broadcast by `collectibles::set_commission`, and the vendored `nfd-indexer`
+// enforces it — a transfer that does not pay the current toll is not a valid
+// transfer, and a raise or a non-creator setter is rejected. This module is the
+// WALLET-SIDE helper: it owns the DOWN-ONLY validation (Geoff, 2026-Oct-06 — the
+// toll can be lowered but never raised, so a fixed DIVI fee can be relieved if
+// DIVI's price climbs) and a local display cache (current + the first-ever
+// `original` amount). The chain, not this cache, is the source of truth; see
+// `nfd_scan::commission_of`.
 
 use serde_json::json;
 use std::path::{Path, PathBuf};

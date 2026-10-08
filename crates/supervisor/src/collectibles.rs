@@ -19,6 +19,35 @@ use x25519_dalek::{PublicKey, StaticSecret};
 const FEE: f64 = 0.0001;
 const SALT_LEN: usize = 16;
 
+/// Pre-launch mainnet WRITE fence. The chain READER is already fenced off
+/// mainnet (`nfd_scan::MAINNET_ACTIVATION = None`), but the write path acts on
+/// whichever node it is connected to — on 2026-Sep-19 a regtest test that
+/// resolved to the live mainnet daemon broadcast one stray mint on mainnet.
+/// While this is `false`, `anchor_record` refuses to broadcast ANY NFD record
+/// (mint / collection / transfer / reveal / forge / commission / bridge) on the
+/// `main` chain, so nothing can go out before launch. Phase 7 flips this to
+/// `true` together with setting the real launch activation height. Testnet and
+/// regtest are never fenced. (No env override on purpose: an escape hatch is
+/// exactly what caused the stray mint.)
+const MAINNET_WRITE_ENABLED: bool = false;
+
+/// Guard the write path against an accidental mainnet broadcast before launch.
+/// Called inside `anchor_record`, so every NFD write is covered in one place.
+fn mainnet_write_guard(rpc: &RpcClient) -> Result<(), String> {
+    if MAINNET_WRITE_ENABLED {
+        return Ok(());
+    }
+    let chain = rpc
+        .call("getblockchaininfo", json!([]))
+        .ok()
+        .and_then(|v| v["chain"].as_str().map(|s| s.to_string()))
+        .unwrap_or_default();
+    if chain == "main" {
+        return Err("NFD actions are not enabled on Divi mainnet yet (pre-launch safety fence). This node is on mainnet; use regtest/testnet until launch.".into());
+    }
+    Ok(())
+}
+
 /// Result of a mint. The encrypted bundle lives in storage under `arweave_ptr`;
 /// the caller keeps this handle to list/view later.
 pub struct MintDraft {
@@ -102,6 +131,8 @@ pub(crate) fn anchor_record(
     record_hex: &str,
     fee_output: Option<(&str, f64)>,
 ) -> Result<String, String> {
+    // Pre-launch safety: never broadcast an NFD record on mainnet (see the fence above).
+    mainnet_write_guard(rpc)?;
     let amount = utxo["amount"].as_f64().unwrap_or(0.0);
     let treasury_fee = fee_output.map(|(_, f)| f).unwrap_or(0.0);
     let change = ((amount - FEE - treasury_fee) * 1e8).round() / 1e8;
