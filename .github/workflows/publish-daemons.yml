@@ -1,0 +1,83 @@
+# Publish a finished node build (build-daemons.yml artifacts) to
+# scan.divi.love/downloads FROM GITHUB, like publish-site.yml: the archives
+# are renamed divid69-<version>-<platform>.tar.gz and pushed to the site repo
+# with the deploy key, one commit. The SHA-256 pins in the wallet's
+# install.rs are written locally by scripts/publish-daemons.sh from the same
+# bytes (artifacts are deterministic per run).
+#
+# Run: gh workflow run publish-daemons.yml --repo geoffmccabe/Divi-Desktop-6.9 \
+#        --ref <branch> -f run_id=<build-daemons run> -f version=69.0.8
+name: Publish node to site
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "build-daemons.yml run id in geoffmccabe/Divi-Blockchain_6.9"
+        required: true
+      version:
+        description: "node version being published, e.g. 69.0.8"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Download the node build's artifacts
+        env:
+          GH_TOKEN: ${{ secrets.NODE_REPO_READ_TOKEN || github.token }}
+        run: |
+          mkdir -p work && cd work
+          gh run download "${{ inputs.run_id }}" --repo geoffmccabe/Divi-Blockchain_6.9
+          find . -type f | head -20
+
+      - name: Verify and name the archives
+        run: |
+          set -e
+          V="${{ inputs.version }}"
+          cd work
+          MAC=$(find . -type f -name "divid69-macos-arm64.tar.gz" | head -1)
+          LIN=$(find . -type f -name "divid69-linux-x86_64.tar.gz" | head -1)
+          WIN=$(find . -type f -name "divid69-windows-x86_64.tar.gz" | head -1)
+          for f in "$MAC" "$LIN" "$WIN"; do [ -n "$f" ] && [ -s "$f" ] || { echo "a daemon tarball is missing"; exit 1; }; done
+          mkdir -p ../out
+          cp "$MAC" "../out/divid69-$V-macos-arm64.tar.gz"
+          cp "$LIN" "../out/divid69-$V-linux-x86_64.tar.gz"
+          cp "$WIN" "../out/divid69-$V-windows-x86_64.tar.gz"
+          mkdir -p l && tar -xzf "$LIN" -C l && l/divid69 -version | head -1
+          sha256sum ../out/*
+
+      - name: Push to the site with the deploy key
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SITE_DEPLOY_KEY }}" > ~/.ssh/site_key
+          chmod 600 ~/.ssh/site_key
+          ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/site_key -o IdentitiesOnly=yes"
+          git clone --depth 1 git@github.com:geoffmccabe/Divilovescan.git site
+          cp out/* site/public/downloads/
+          cd site
+          git config user.name "DD69 publisher"
+          git config user.email "publish@divi.love"
+          git add public/downloads/divid69-${{ inputs.version }}-*.tar.gz
+          git commit -q -m "Publish divid69 ${{ inputs.version }}"
+          git push origin HEAD:main
+          rm -f ~/.ssh/site_key
+
+      - name: Wait for the site to serve them
+        run: |
+          V="${{ inputs.version }}"
+          for f in macos-arm64 linux-x86_64 windows-x86_64; do
+            LOCAL=$(stat -c %s "out/divid69-$V-$f.tar.gz")
+            for i in $(seq 1 30); do
+              S=$(curl -s -L -H "User-Agent: Mozilla/5.0" "https://scan.divi.love/downloads/divid69-$V-$f.tar.gz?x=$i" | wc -c)
+              [ "$S" = "$LOCAL" ] && break
+              sleep 30
+            done
+            [ "$S" = "$LOCAL" ] || { echo "divid69-$V-$f.tar.gz served $S bytes, built $LOCAL"; exit 1; }
+            echo "  served: divid69-$V-$f.tar.gz ($S bytes)"
+          done
+          echo "divid69 $V LIVE"
