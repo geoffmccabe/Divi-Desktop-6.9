@@ -166,6 +166,28 @@ export interface GameType {
   /** Unpublished games are visible to admins and to nobody else. */
   published: boolean;
   /**
+   * NEVER ENDS: when the written rounds run out, keep going, climbing.
+   *
+   * Geoff, asked whether Wave Defence should stop after thirty rounds or go on
+   * for ever: "Wave Defence can keep going after 30 rounds, I think it can just
+   * keep getting harder in a linear way?"
+   *
+   * The rounds listed are still the DESCRIPTION, and everything that reads a
+   * game reads them: how long it is, what it pays, what the editor shows. Past
+   * the last one `roundAt` continues the same straight line rather than
+   * stopping or starting over. See roundAt for how the line is measured.
+   *
+   * ⚠ ONLY THE BUILT-IN MAY SET THIS, and the validator refuses it on anything
+   * else. The reason is money, not taste: payoutRefusal bounds a game by what
+   * ONE CLEAR credits a player, and an endless game has no clear, so the
+   * ceiling would be computed over the thirty described rounds and pass while
+   * the real game paid for ever. That is exactly the shape of mistake this file
+   * already carries a warning about: a bound that covers a fraction reads as a
+   * bound that is complete. The built-in is code, so it cannot be edited into a
+   * money printer by anybody the ceiling exists to stop.
+   */
+  endless?: boolean;
+  /**
    * THE GAME THIS PLACE RUNS WHEN NOBODY PICKED ONE.
    *
    * ⚠ WITHOUT THIS IT WAS DECIDED BY THE ALPHABET, and that shipped. The
@@ -203,8 +225,22 @@ export const WAVE_DEFENCE_FIRST = 10;
 export const WAVE_DEFENCE_STEP = 2;
 export const WAVE_DEFENCE_SECONDS = 120;
 export const WAVE_DEFENCE_BIAS: [number, number] = [0.5, 3.0];
-/** How many rounds are written out. The real thing runs for ever, escalating;
- *  a description has to stop somewhere, and thirty rounds is an hour. */
+/**
+ * How many rounds are WRITTEN OUT. The game itself does not stop there: it is
+ * `endless`, and roundAt carries the same straight line on past the last
+ * written round for as long as anybody keeps flying.
+ *
+ * ⚠ THE COMMENT HERE USED TO SAY "the real thing runs for ever, escalating"
+ * AND THAT WAS NOT TRUE. It described the old hand-rolled waves, which did
+ * climb for ever. Once the waves became a described game the runner read
+ * `rounds[n]`, found nothing after thirty, and ended; the room then started the
+ * game again from ten enemies, so an hour of climbing fell off a cliff back to
+ * wave one. The comment survived the change that falsified it, which is the
+ * only reason it took a direct question from Geoff to notice.
+ *
+ * Thirty is kept because a description has to stop somewhere and thirty rounds
+ * is an hour, which is enough for the editor to show the shape of the climb.
+ */
 export const WAVE_DEFENCE_ROUNDS = 30;
 
 /** How many enemies wave `n` sends, counting from one. */
@@ -235,6 +271,7 @@ export function waveDefence(): GameType {
     crew: "multiplayer",
     rounds,
     published: true,
+    endless: true,
   };
 }
 
@@ -296,6 +333,20 @@ export function validateGame(raw: unknown, knownEnemies: string[] = []): { ok: G
     errors.push(`image must be an uploaded WebP card under ${IMAGE_MAX_CHARS} characters`);
   }
   if (typeof g.published !== "boolean") errors.push("published must be true or false");
+  /* ---- ENDLESS IS THE BUILT-IN'S ALONE ----
+     Not a style rule: payoutRefusal bounds a game by what one CLEAR credits a
+     player, and an endless game is never cleared. The ceiling would be worked
+     out over the written rounds, pass, and bound a fraction of a game that goes
+     on paying for ever. Refused here, where a game is accepted, rather than
+     left to be noticed. Revisit by giving payoutRefusal a per-hour bound for
+     endless games; until something needs it, this is the honest answer. */
+  if (g.endless !== undefined && typeof g.endless !== "boolean") {
+    errors.push("endless must be true or false");
+  }
+  if (g.endless && !DEFAULT_GAMES.some((d) => d.id === g.id)) {
+    errors.push("only the built-in game may be endless, because the payout "
+      + "ceiling is worked out per clear and an endless game is never cleared");
+  }
   /* A game pointed at a place that has no room yet can be written and saved,
      but not turned on. Better than hiding the place: somebody can build the
      game for a planet before the planet is reachable. */
@@ -418,7 +469,81 @@ export function validateGames(raw: unknown, knownEnemies: string[] = []): { ok: 
   return errors.length ? { errors } : { ok: out };
 }
 
-/** How long a game lasts, in seconds. */
+/**
+ * The round numbered `n`, counting from one, or undefined when the game is over.
+ *
+ * For every game this is just `rounds[n - 1]`. For an `endless` one, past the
+ * last written round it CONTINUES THE SAME STRAIGHT LINE instead of returning
+ * nothing, which is what Geoff asked for: "it can just keep getting harder in a
+ * linear way".
+ *
+ * ---- HOW THE LINE IS MEASURED ----
+ * From the written rounds themselves, not from the wave constants. The step per
+ * round for each spawn is (its count in the LAST written round minus its count
+ * in the FIRST) divided by the number of gaps between them, so a game that was
+ * described as climbing keeps climbing at the rate it was described as
+ * climbing. On Wave Defence that is (68 - 10) / 29 = 2 enemies a round, and
+ * roundAt(31) gives 70, exactly what waveDefenceSize(31) gives. A test stands
+ * on those agreeing rather than on this comment.
+ *
+ * Reading the step from the description rather than from WAVE_DEFENCE_STEP is
+ * deliberate: it is the same "one code path" reason the built-in is generated
+ * rather than typed out. Change the written climb and the endless tail follows
+ * it, with nothing to keep in step by hand.
+ *
+ * Everything other than the counts is carried from the last written round: how
+ * long it lasts, the enemy mix, the arrival pattern, the difficulty bias, and
+ * its award if it has one.
+ *
+ * ---- IT PLATEAUS, IT DOES NOT END ----
+ * ⚠ A round may not hold more than ROUND_MAX_ENEMIES, and a straight line
+ * reaches that: Wave Defence hits 400 at round 196, about six and a half hours.
+ * From there the rounds stop growing and stay at the cap rather than the game
+ * ending, because "keep going" was the decision and a game that quietly stops
+ * after six hours would be the same cliff that prompted this, just further out.
+ * When the cap bites, the counts are scaled down to fit together rather than
+ * one spawn being allowed to eat the whole allowance.
+ */
+export function roundAt(g: GameType, n: number): Round | undefined {
+  if (!Number.isFinite(n) || n < 1) return undefined;
+  const written = g.rounds[n - 1];
+  if (written) return written;
+  if (!g.endless || g.rounds.length === 0) return undefined;
+
+  const len = g.rounds.length;
+  const last = g.rounds[len - 1];
+  const first = g.rounds[0];
+  /* How many rounds past the written description this one is: 1 for the first. */
+  const beyond = n - len;
+
+  const counts = last.spawns.map((sp, i) => {
+    const was = first.spawns[i];
+    /* No gap to measure (a one-round game), or a spawn the first round did not
+       have: that spawn simply does not grow. Guessing a step from a single
+       round would be inventing the climb rather than continuing it. */
+    const step = len > 1 && was ? (sp.count - was.count) / (len - 1) : 0;
+    return Math.max(1, Math.round(sp.count + step * beyond));
+  });
+
+  /* The cap, shared out. Scaled rather than truncated so a round of fighters
+     and bombers keeps its proportions at the plateau. */
+  const total = counts.reduce((a, c) => a + c, 0);
+  const fit = total > ROUND_MAX_ENEMIES ? ROUND_MAX_ENEMIES / total : 1;
+
+  return {
+    seconds: last.seconds,
+    ...(last.award ? { award: last.award } : {}),
+    spawns: last.spawns.map((sp, i) => ({
+      ...sp,
+      count: Math.max(1, Math.floor(counts[i] * fit)),
+      ...(sp.bias ? { bias: [...sp.bias] as [number, number] } : {}),
+    })),
+  };
+}
+
+/** How long a game lasts, in seconds. For an `endless` one this is the length
+ *  of the DESCRIBED rounds, which is what the editor and the cards should show;
+ *  the game itself does not stop there. */
 export const gameSeconds = (g: GameType): number =>
   g.rounds.reduce((n, r) => n + r.seconds, 0);
 
