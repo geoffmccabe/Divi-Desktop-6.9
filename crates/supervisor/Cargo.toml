@@ -19,6 +19,9 @@ name-registry = { path = "../name-registry" }
 # default-features = false drops its optional `rpc` (ureq) feature: the wallet
 # brings its own node connection and feeds blocks to Overlay::apply_block.
 dvxp-scan = { path = "../dvxp-scan", default-features = false }
+# NFD overlay ledger types (Listing, Addr21, …), read when surfacing marketplace
+# state. In-repo path crate (same tree as dvxp-scan's copy); no registry fetch.
+nfd-indexer = { path = "../nfd-indexer" }
 ureq = "2"
 # Verifies the pinned checksum of the downloaded divid69 before it is installed.
 sha2 = "0.10"

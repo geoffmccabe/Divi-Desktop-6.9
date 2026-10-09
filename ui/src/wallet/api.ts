@@ -303,6 +303,31 @@ export const nfdForgeFeeGet = (collectionId: string) =>
   invoke<ForgeFee | null>("nfd_forge_fee_get", { collectionId });
 export const nfdForgeFeeSet = (collectionId: string, amountDivi: number, payoutAddress: string, creatorAddr: string) =>
   invoke<ForgeFee>("nfd_forge_fee_set", { collectionId, amountDivi, payoutAddress, creatorAddr });
+
+// ---- Marketplace (list / cancel / buy; on-chain, non-custodial) ----
+// Listing LOCKS an item (no transfer/forge/reveal until bought or cancelled). A
+// buy pays the seller's net + the creator commission and moves ownership in one
+// transaction. `price` is what the buyer pays; the seller nets price - commission.
+export interface Listing {
+  priceDivi: number;
+  payoutAddress: string;
+  expiry: number;        // block height, 0 = never
+  sellerAddress: string;
+}
+export interface MarketListing extends Listing {
+  id: string;            // item id (display-order hex)
+  item: NfdChainItem | null;
+}
+export interface Marketplace { open: boolean; syncing: boolean; listings: MarketListing[] }
+export const nfdList = (ownerAddr: string, itemId: string, priceDivi: number, payoutAddress: string, expiryHeight: number) =>
+  invoke<string>("nfd_list", { ownerAddr, itemId, priceDivi, payoutAddress, expiryHeight });
+export const nfdCancelListing = (ownerAddr: string, itemId: string) =>
+  invoke<string>("nfd_cancel_listing", { ownerAddr, itemId });
+export const nfdBuy = (buyerAddr: string, itemId: string) =>
+  invoke<string>("nfd_buy", { buyerAddr, itemId });
+export const nfdListingGet = (itemId: string) =>
+  invoke<Listing | null>("nfd_listing_get", { itemId });
+export const nfdMarketplace = () => invoke<Marketplace>("nfd_marketplace");
 // ---- Payment requests (DVXP type 0x05) ----
 // A request only ASKS. Receiving one moves no money; paying is a separate,
 // explicitly signed act by the payer.

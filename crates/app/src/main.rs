@@ -2242,6 +2242,79 @@ async fn nfd_forge_fee_set(collection_id: String, amount_divi: f64, payout_addre
     .map_err(|_| "internal error".to_string())?
 }
 
+// ── Marketplace (list / cancel / buy) ──────────────────────────────────────
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListingDto {
+    price_divi: f64,
+    payout_address: String,
+    expiry: u64,
+    seller_address: String,
+}
+
+/// List an item for sale (on-chain). `priceDivi` is what the buyer pays; the
+/// seller nets that minus the creator commission. `expiryHeight` 0 = never.
+/// Listing LOCKS the item until it is bought or cancelled.
+#[tauri::command]
+async fn nfd_list(owner_addr: String, item_id: String, price_divi: f64, payout_address: String, expiry_height: u64) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles::list_item(&cfg, &owner_addr, &item_id, price_divi, payout_address.trim(), expiry_height)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Cancel a listing and unlock the item (on-chain).
+#[tauri::command]
+async fn nfd_cancel_listing(owner_addr: String, item_id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles::cancel_listing(&cfg, &owner_addr, &item_id)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Buy a listed item (on-chain). The buyer's transaction pays the seller's net +
+/// the creator commission and moves ownership atomically. Returns the buy txid.
+#[tauri::command]
+async fn nfd_buy(buyer_addr: String, item_id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles::buy_item(&cfg, &buyer_addr, &item_id)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Read the active listing on an item (price + payout), or `None` if not listed.
+#[tauri::command]
+async fn nfd_listing_get(item_id: String) -> Result<Option<ListingDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        Ok(nfd_scan::listing_of(&cfg, &item_id)?.map(|l| ListingDto {
+            price_divi: l.price_duffs as f64 / dd69_supervisor::commission::DUFFS_PER_DIVI as f64,
+            payout_address: l.payout_address,
+            expiry: l.expiry,
+            seller_address: l.seller_address,
+        }))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Every active listing on the chain, for the marketplace browse.
+#[tauri::command]
+async fn nfd_marketplace() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        nfd_scan::all_listings(&cfg)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 // ── Admin: fees / treasury (public config only — no keys) ──────────────────
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2573,6 +2646,11 @@ fn main() {
             nfd_forge,
             nfd_forge_fee_get,
             nfd_forge_fee_set,
+            nfd_list,
+            nfd_cancel_listing,
+            nfd_buy,
+            nfd_listing_get,
+            nfd_marketplace,
             nfd_create_collection,
             nfd_import_open,
             nfd_import_read_item,

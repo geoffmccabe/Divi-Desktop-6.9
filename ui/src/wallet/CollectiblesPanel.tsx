@@ -4,7 +4,8 @@ import {
   nfdOwnedWallet, nfdCollectionMembers,
   nfdStorageBackends, nfdSetStorageBackend,
   nfdCommissionGet, nfdCommissionSet, nfdReveal, nfdForge, nfdForgeFeeGet, nfdForgeFeeSet, nfdGet,
-  type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends, type Commission, type ForgeFee,
+  nfdList, nfdCancelListing, nfdBuy, nfdMarketplace,
+  type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends, type Commission, type ForgeFee, type MarketListing,
 } from "./api";
 import { CollectionImport } from "./CollectionImport";
 import { RevealStage, type RevealSealed } from "./reveal/RevealStage";
@@ -324,23 +325,73 @@ export function CollectiblesPanel() {
     }
   }
 
-  // Listing (local draft until the on-chain atomic trade lands).
+  // Listing (on-chain). `listedById` is the live set of this view's known
+  // listings (built from the marketplace browse), so an owned card and the viewer
+  // can show "listed · N DIVI" and offer Cancel instead of List.
   const [listFor, setListFor] = useState<string | null>(null); // item txid being priced
   const [listPrice, setListPrice] = useState("");
   const [listComm, setListComm] = useState<Commission | null>(null);
+  const [listBusy, setListBusy] = useState(false);
+  const [listMsg, setListMsg] = useState("");
+  const [market, setMarket] = useState<MarketListing[]>([]);
+  const refreshMarket = () => nfdMarketplace().then((m) => setMarket(m.listings)).catch(() => {});
+  useEffect(() => { refreshMarket(); }, []);
+  const listedById = useMemo(() => {
+    const m = new Map<string, MarketListing>();
+    for (const l of market) m.set(l.id, l);
+    return m;
+  }, [market]);
   function beginList(it: Item) {
     setListFor(it.txid);
-    setListPrice(it.listPrice ? String(it.listPrice) : "");
+    const existing = listedById.get(it.txid);
+    setListPrice(existing ? String(existing.priceDivi) : "");
     setListComm(null);
+    setListMsg("");
     if (it.collectionId) nfdCommissionGet(it.collectionId).then(setListComm).catch(() => setListComm(null));
   }
-  function saveListing(it: Item) {
+  async function saveListing(it: Item) {
     const price = Number(listPrice);
-    setItems((prev) => prev.map((x) => (x.txid === it.txid ? { ...x, listPrice: price > 0 ? price : undefined } : x)));
-    setListFor(null);
+    if (!(price > 0)) { setListMsg("Enter a price greater than zero."); return; }
+    setListBusy(true); setListMsg("");
+    try {
+      // Payout defaults to the seller's own address (where the item is funded from).
+      await nfdList(it.ownerAddr, it.txid, price, it.ownerAddr, 0);
+      setListFor(null);
+      setListMsg("");
+      await refreshMarket();
+    } catch (e) {
+      setListMsg(String(e));
+    } finally {
+      setListBusy(false);
+    }
   }
-  function unlist(it: Item) {
-    setItems((prev) => prev.map((x) => (x.txid === it.txid ? { ...x, listPrice: undefined } : x)));
+  async function unlist(it: Item) {
+    setListBusy(true); setListMsg("");
+    try {
+      await nfdCancelListing(it.ownerAddr, it.txid);
+      await refreshMarket();
+    } catch (e) {
+      setListMsg(String(e));
+    } finally {
+      setListBusy(false);
+    }
+  }
+  // Buy a listed item (on-chain, non-custodial). `buyerAddr` is one of this
+  // wallet's addresses the payment is funded from.
+  const [buyBusy, setBuyBusy] = useState<string | null>(null); // item id being bought
+  const [buyMsg, setBuyMsg] = useState("");
+  async function buyListing(l: MarketListing) {
+    setBuyBusy(l.id); setBuyMsg("");
+    try {
+      const buyerAddr = await myNfdAddress(); // funded from the wallet's NFD address
+      await nfdBuy(buyerAddr, l.id);
+      setBuyMsg("Bought — it will appear in your collection once the trade confirms.");
+      await refreshMarket();
+    } catch (e) {
+      setBuyMsg(String(e));
+    } finally {
+      setBuyBusy(null);
+    }
   }
   const revealDelay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
   function openPreviewLevel() {
@@ -524,10 +575,10 @@ export function CollectiblesPanel() {
   // so input B is filtered to match input A once A is chosen.
   const forgeable = useMemo<Item[]>(
     () => displayItems.filter(
-      (it) => !it.sealed && !it.pending && !revealing.has(it.txid)
+      (it) => !it.sealed && !it.pending && !revealing.has(it.txid) && !listedById.has(it.txid)
         && !!it.collectionId && !!it.revealed && it.revealed.ur == null,
     ),
-    [displayItems, revealing],
+    [displayItems, revealing, listedById],
   );
   const forgeAItem = forgeable.find((i) => i.txid === forgeA) || null;
   const forgeBOptions = forgeAItem
@@ -1007,26 +1058,55 @@ export function CollectiblesPanel() {
       <section className="ts-section">
         <h3 className="ts-head">Marketplace</h3>
         <p className="wl-note">
-          Browse collections and their traits. This is the public gallery — you see everyone’s public previews
-          and rarity, while each original stays encrypted for its owner. Buying and selling settle on-chain with an
-          atomic, non-custodial trade — coming next.
+          Browse collections and their traits, and buy what's for sale. Buying and selling settle on-chain with an
+          atomic, non-custodial trade: a buy pays the seller and the creator commission and moves ownership in one
+          transaction, and a listed item is locked until it is bought or the seller cancels.
         </p>
-        {items.some((i) => i.listPrice) && (
-          <div style={{ marginBottom: 16 }}>
-            <div className="wl-note" style={{ marginBottom: 8 }}>
-              <strong>Your listings (draft)</strong> — these settle on-chain when the marketplace trade ships.
-            </div>
-            <div className="coll-grid">
-              {items.filter((i) => i.listPrice).map((it) => (
-                <button key={it.txid} className="coll-card" onClick={() => openItem(it)}>
-                  {it.thumb ? <img className="coll-card-thumb" src={it.thumb} alt={it.name} /> : <span className="coll-card-noimg" aria-hidden="true">🔒</span>}
-                  <span className="coll-card-name">{it.name}</span>
-                  <span className="coll-card-meta">{it.listPrice!.toLocaleString()} DIVI</span>
-                </button>
-              ))}
-            </div>
+        <div style={{ marginBottom: 16 }}>
+          <div className="wl-note" style={{ marginBottom: 8, display: "flex", gap: 10, alignItems: "center" }}>
+            <strong>For sale ({market.length})</strong>
+            <button className="wl-btn" onClick={refreshMarket}>Refresh</button>
           </div>
-        )}
+          {buyMsg && <p className="wl-note" style={{ marginTop: 0 }}>{buyMsg}</p>}
+          {market.length === 0 ? (
+            <p className="wl-note">Nothing is listed for sale right now.</p>
+          ) : (
+            <div className="coll-grid">
+              {market.map((l) => {
+                const mine = displayItems.some((d) => d.txid === l.id);
+                const rev = l.item?.revealed;
+                const sealed = l.item?.sealed;
+                const glow = rev ? tierGlowShadow(rev.tier, rev.ur) : undefined;
+                return (
+                  <div key={l.id} className="coll-card" style={glow ? { boxShadow: glow } : undefined}>
+                    {sealed ? (
+                      <span className="coll-card-noimg" aria-hidden="true">◈</span>
+                    ) : rev ? (
+                      <span className="coll-card-noimg" aria-hidden="true" style={{ color: tierGlow(rev.tier, rev.ur), fontWeight: 700, fontSize: 15 }}>
+                        {rev.ur != null ? "★UR" : `T${rev.tier}`}
+                      </span>
+                    ) : (
+                      <span className="coll-card-noimg" aria-hidden="true">🔒</span>
+                    )}
+                    <span className="coll-card-name">{sealed ? "Sealed PERC" : rev ? (rev.ur != null ? "Ultra Rare" : `Tier ${rev.tier}`) : "Collectible"}</span>
+                    <span className="coll-card-meta">{l.priceDivi.toLocaleString()} DIVI</span>
+                    {mine ? (
+                      <button className="wl-btn" style={{ marginTop: 6 }} disabled={listBusy}
+                        onClick={() => unlist({ txid: l.id, ownerAddr: l.sellerAddress } as Item)}>
+                        Cancel listing
+                      </button>
+                    ) : (
+                      <button className="wl-btn wl-btn-primary" style={{ marginTop: 6 }} disabled={buyBusy === l.id}
+                        onClick={() => buyListing(l)}>
+                        {buyBusy === l.id ? "Buying…" : `Buy for ${l.priceDivi.toLocaleString()} DIVI`}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
         {collections.length === 0 ? (
           <p className="wl-note">No collections yet. Create one in the NFD Builder tab.</p>
         ) : (
@@ -1102,6 +1182,7 @@ export function CollectiblesPanel() {
                     : it.collectionId
                     ? (collections.find((c) => c.id === it.collectionId)?.name ?? "in a collection")
                     : "owned · tap to open"}
+                  {listedById.has(it.txid) && ` · listed ${listedById.get(it.txid)!.priceDivi.toLocaleString()} DIVI`}
                 </span>
               </button>
               );
@@ -1281,22 +1362,24 @@ export function CollectiblesPanel() {
                       {Math.max(0, (Number(listPrice) || 0) - Number(listComm.amountDivi)).toLocaleString()} DIVI.
                     </p>
                   )}
-                  <button className="wl-btn wl-btn-primary" onClick={() => saveListing(active)}>
-                    {Number(listPrice) > 0 ? `List for ${Number(listPrice).toLocaleString()} DIVI` : "List for sale"}
+                  <button className="wl-btn wl-btn-primary" disabled={listBusy || !(Number(listPrice) > 0)} onClick={() => saveListing(active)}>
+                    {listBusy ? "Listing…" : Number(listPrice) > 0 ? `List for ${Number(listPrice).toLocaleString()} DIVI` : "List for sale"}
                   </button>
+                  <button className="wl-btn" disabled={listBusy} onClick={() => setListFor(null)}>Cancel</button>
                   <p className="wl-note hra-dim" style={{ margin: 0 }}>
-                    Draft listing. Buying and selling settles on-chain with an atomic, non-custodial trade — coming with the marketplace.
+                    Listing is on-chain and LOCKS the item: it can't be transferred, forged, or revealed until it sells or you cancel.
                   </p>
                 </>
-              ) : active.listPrice ? (
+              ) : listedById.get(active.txid) ? (
                 <>
-                  <p className="wl-note" style={{ margin: 0 }}>Listed for {active.listPrice.toLocaleString()} DIVI (draft).</p>
-                  <button className="wl-btn" onClick={() => beginList(active)}>Change price</button>
-                  <button className="wl-btn" onClick={() => unlist(active)}>Remove listing</button>
+                  <p className="wl-note" style={{ margin: 0 }}>Listed for {listedById.get(active.txid)!.priceDivi.toLocaleString()} DIVI (on-chain · locked).</p>
+                  <button className="wl-btn" disabled={listBusy} onClick={() => beginList(active)}>Change price</button>
+                  <button className="wl-btn" disabled={listBusy} onClick={() => unlist(active)}>{listBusy ? "Working…" : "Cancel listing"}</button>
                 </>
               ) : (
                 <button className="wl-btn" onClick={() => beginList(active)}>List for sale</button>
               )}
+              {listMsg && <p className="wl-err" style={{ margin: 0 }}>{listMsg}</p>}
             </div>
           </div>
         </div>

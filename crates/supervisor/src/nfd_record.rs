@@ -16,6 +16,9 @@ const SUB_BRIDGE_OUT: u8 = 0x07;
 const SUB_BRIDGE_IN: u8 = 0x08;
 const SUB_COMMISSION: u8 = 0x09;
 const SUB_FORGE_FEE: u8 = 0x0A;
+const SUB_LIST: u8 = 0x0B;
+const SUB_CANCEL: u8 = 0x0C;
+const SUB_BUY: u8 = 0x0D;
 
 /// Mint flag bits.
 pub const FLAG_ENCRYPTED: u8 = 0x01;
@@ -220,6 +223,44 @@ pub fn encode_forge_fee(collection_id: &str, amount_duffs: u64, payout_packed: &
         amount_duffs,
         payout_packed.to_lowercase()
     ))
+}
+
+/// Encode a LIST (0x0B): put an item up for sale. Layout:
+/// item_id(32) | price_duffs(u64 be, 8) | payout(21 packed) | expiry_height(u64 be, 8).
+/// The item id is a txid reference (internal byte order). `price` is what the
+/// buyer pays; `payout` is where the seller's net goes; `expiry` 0 = never.
+pub fn encode_list(item_id: &str, price_duffs: u64, payout_packed: &str, expiry_height: u64) -> Result<String, String> {
+    if !is_hex_len(item_id, 32) {
+        return Err("item_id must be 32 bytes hex".into());
+    }
+    if !is_hex_len(payout_packed, 21) {
+        return Err("payout must be a 21-byte packed address hex (kind + hash160)".into());
+    }
+    Ok(format!(
+        "{}{}{:016x}{}{:016x}",
+        prefix(SUB_LIST),
+        swap_txid_order(&item_id.to_lowercase()),
+        price_duffs,
+        payout_packed.to_lowercase(),
+        expiry_height,
+    ))
+}
+
+/// Encode a CANCEL-LISTING (0x0C): item_id(32). Removes the listing + unlocks.
+pub fn encode_cancel_listing(item_id: &str) -> Result<String, String> {
+    if !is_hex_len(item_id, 32) {
+        return Err("item_id must be 32 bytes hex".into());
+    }
+    Ok(format!("{}{}", prefix(SUB_CANCEL), swap_txid_order(&item_id.to_lowercase())))
+}
+
+/// Encode a BUY (0x0D): item_id(32). The buyer funds the transaction, which must
+/// also pay the seller's net + the creator commission (the indexer checks this).
+pub fn encode_buy(item_id: &str) -> Result<String, String> {
+    if !is_hex_len(item_id, 32) {
+        return Err("item_id must be 32 bytes hex".into());
+    }
+    Ok(format!("{}{}", prefix(SUB_BUY), swap_txid_order(&item_id.to_lowercase())))
 }
 
 /// Encode a REVEAL: the sealed Perc (by mint txid) the owner is opening. The
@@ -613,6 +654,21 @@ mod tests {
         assert!(hex.ends_with(&payout));
         assert!(encode_forge_fee("notlongenough", 1, &payout).is_err());
         assert!(encode_forge_fee(&cid, 1, "short").is_err());
+    }
+
+    #[test]
+    fn marketplace_records_encode() {
+        let id = "ab".repeat(32);
+        let payout = format!("00{}", "cd".repeat(20));
+        let list = encode_list(&id, 1000, &payout, 0).unwrap();
+        assert!(list.contains(&swap_txid_order(&id))); // item id in internal order
+        assert!(list.contains(&format!("{:016x}", 1000u64)));
+        assert!(list.ends_with(&format!("{:016x}", 0u64))); // expiry trails
+        assert!(encode_list(&id, 1, "short", 0).is_err());
+        // cancel + buy are just the (byte-swapped) item id after the prefix.
+        assert!(encode_cancel_listing(&id).unwrap().ends_with(&swap_txid_order(&id)));
+        assert!(encode_buy(&id).unwrap().ends_with(&swap_txid_order(&id)));
+        assert!(encode_buy("nope").is_err());
     }
 
     #[test]

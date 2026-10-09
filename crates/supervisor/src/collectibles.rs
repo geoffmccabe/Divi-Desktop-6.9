@@ -131,13 +131,28 @@ pub(crate) fn anchor_record(
     record_hex: &str,
     fee_output: Option<(&str, f64)>,
 ) -> Result<String, String> {
+    match fee_output {
+        Some(p) => anchor_record_multi(rpc, utxo, record_hex, &[p]),
+        None => anchor_record_multi(rpc, utxo, record_hex, &[]),
+    }
+}
+
+/// Like [`anchor_record`] but with any number of payment outputs (e.g. a buy pays
+/// both the seller's net and the creator commission). Each `(addr, divi)` becomes
+/// an output; any that equals the change address is merged into the change.
+pub(crate) fn anchor_record_multi(
+    rpc: &RpcClient,
+    utxo: &Value,
+    record_hex: &str,
+    pays: &[(&str, f64)],
+) -> Result<String, String> {
     // Pre-launch safety: never broadcast an NFD record on mainnet (see the fence above).
     mainnet_write_guard(rpc)?;
     let amount = utxo["amount"].as_f64().unwrap_or(0.0);
-    let treasury_fee = fee_output.map(|(_, f)| f).unwrap_or(0.0);
-    let change = ((amount - FEE - treasury_fee) * 1e8).round() / 1e8;
+    let total_pay: f64 = pays.iter().map(|(_, f)| *f).sum();
+    let change = ((amount - FEE - total_pay) * 1e8).round() / 1e8;
     if change < 0.0 {
-        return Err("Not enough DIVI to cover the network + treasury fee.".into());
+        return Err("Not enough DIVI to cover the network fee and the payment(s).".into());
     }
     // Change returns to the input's OWN address, so the owner address stays
     // funded and can authorize future transfers (spec §2b), instead of being
@@ -145,16 +160,18 @@ pub(crate) fn anchor_record(
     let change_addr = utxo["address"].as_str().ok_or("funding UTXO has no address")?.to_string();
     let inputs = json!([{ "txid": utxo["txid"], "vout": utxo["vout"] }]);
 
-    // Build the outputs: change + optional treasury-fee payment + the data record.
+    // Build the outputs: change + each payment + the data record. Payments to the
+    // change address (and to each other) are merged, since each key is unique.
     let outputs = |data_key: String, data_val: Value| -> serde_json::Map<String, Value> {
         let mut outs = serde_json::Map::new();
         let mut change_amt = change;
-        if let Some((addr, fee)) = fee_output {
-            let fee = (fee * 1e8).round() / 1e8; // round to duffs or createrawtransaction rejects
-            if addr == change_addr {
-                change_amt = ((change + fee) * 1e8).round() / 1e8; // same address -> merge
+        for (addr, fee) in pays {
+            let fee = (*fee * 1e8).round() / 1e8; // round to duffs or createrawtransaction rejects
+            if *addr == change_addr {
+                change_amt = ((change_amt + fee) * 1e8).round() / 1e8; // same address -> merge
             } else {
-                outs.insert(addr.to_string(), json!(fee));
+                let prev = outs.get(*addr).and_then(|v| v.as_f64()).unwrap_or(0.0);
+                outs.insert(addr.to_string(), json!(((prev + fee) * 1e8).round() / 1e8));
             }
         }
         outs.insert(change_addr.clone(), json!(change_amt));
@@ -259,6 +276,75 @@ pub fn set_forge_fee(
     let record = nfd_record::encode_forge_fee(collection_id, amount_duffs, &payout_packed)?;
     let utxo = pick_owner_utxo(&rpc, creator_addr)?;
     anchor_record(&rpc, &utxo, &record, None)
+}
+
+// ── Marketplace (list / cancel / buy) ───────────────────────────────────────
+/// List an item for sale. Signed by (funded from) the current owner, which is how
+/// the indexer accepts it. `price_divi` is what the BUYER pays; `payout_addr` is
+/// where the seller's net lands; `expiry_height` 0 = never expires. Listing LOCKS
+/// the item on-chain (no transfer/forge/reveal until bought or cancelled).
+pub fn list_item(
+    cfg: &NodeConfig,
+    owner_addr: &str,
+    item_id: &str,
+    price_divi: f64,
+    payout_addr: &str,
+    expiry_height: u64,
+) -> Result<String, String> {
+    if !(price_divi.is_finite() && price_divi > 0.0) {
+        return Err("the price must be greater than zero".into());
+    }
+    let rpc = RpcClient::new(cfg);
+    let payout_packed = address_to_packed(&rpc, payout_addr)?;
+    let price_duffs = (price_divi * crate::commission::DUFFS_PER_DIVI as f64).round() as u64;
+    let record = nfd_record::encode_list(item_id, price_duffs, &payout_packed, expiry_height)?;
+    let utxo = pick_owner_utxo(&rpc, owner_addr)?;
+    anchor_record(&rpc, &utxo, &record, None)
+}
+
+/// Cancel a listing and unlock the item. Signed by (funded from) the owner.
+pub fn cancel_listing(cfg: &NodeConfig, owner_addr: &str, item_id: &str) -> Result<String, String> {
+    let rpc = RpcClient::new(cfg);
+    let record = nfd_record::encode_cancel_listing(item_id)?;
+    let utxo = pick_owner_utxo(&rpc, owner_addr)?;
+    anchor_record(&rpc, &utxo, &record, None)
+}
+
+/// Buy a listed item. Reads the listing (price + payout) and the creator
+/// commission from the chain, then broadcasts a BUY funded by the buyer that pays
+/// the creator commission to the creator payout AND the seller's net (price -
+/// commission) to the listing payout, in the SAME transaction that moves
+/// ownership. This is the non-custodial settlement — the buyer cannot take
+/// ownership without paying, and the item was locked so the seller cannot have
+/// moved it away. Returns the buy txid.
+pub fn buy_item(cfg: &NodeConfig, buyer_addr: &str, item_id: &str) -> Result<String, String> {
+    let listing = crate::nfd_scan::listing_of(cfg, item_id)?
+        .ok_or("this item is not listed for sale")?;
+    // The creator commission for the item's collection (if any) comes OUT of the
+    // price; the seller nets the rest. The chain re-checks all of this.
+    let commission = match crate::nfd_scan::collection_of_item(cfg, item_id)? {
+        Some(cid) => crate::nfd_scan::commission_of(cfg, &cid)?,
+        None => None,
+    };
+    let duffs_per = crate::commission::DUFFS_PER_DIVI as f64;
+    let commission_divi = commission.as_ref().map(|(d, _)| *d as f64 / duffs_per).unwrap_or(0.0);
+    let price_divi = listing.price_duffs as f64 / duffs_per;
+    let seller_net = (price_divi - commission_divi).max(0.0);
+
+    let rpc = RpcClient::new(cfg);
+    let record = nfd_record::encode_buy(item_id)?;
+    let utxo = pick_owner_utxo(&rpc, buyer_addr)?;
+    // Build the payment outputs: seller net + (if any) creator commission.
+    let mut pays: Vec<(&str, f64)> = Vec::new();
+    if seller_net > 0.0 {
+        pays.push((listing.payout_address.as_str(), seller_net));
+    }
+    if let Some((_, ref creator_payout)) = commission {
+        if commission_divi > 0.0 {
+            pays.push((creator_payout.as_str(), commission_divi));
+        }
+    }
+    anchor_record_multi(&rpc, &utxo, &record, &pays)
 }
 
 /// Mint a collectible from `plaintext`. Owner = the funding UTXO's address.

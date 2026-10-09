@@ -350,6 +350,77 @@ pub fn forge_fee_of(cfg: &NodeConfig, collection_id_hex: &str) -> Result<Option<
     }))
 }
 
+/// A marketplace listing as read from the chain.
+pub struct ListingInfo {
+    pub price_duffs: u64,
+    pub payout_address: String,
+    pub expiry: u64,
+    pub seller_address: String,
+}
+
+/// The active listing on an item (display-order hex id), or `None` if not listed.
+pub fn listing_of(cfg: &NodeConfig, item_id_hex: &str) -> Result<Option<ListingInfo>, String> {
+    advance(cfg)?;
+    let id = id_from_hex(item_id_hex)?;
+    let guard = scan_cell().lock().map_err(|_| "scan state poisoned".to_string())?;
+    let st = guard.as_ref().ok_or_else(|| "index not ready".to_string())?;
+    let testnet = is_testnet_like(&st.chain);
+    Ok(st.overlay.nfd.listing_of(&id).map(|l| listing_info(&l, testnet)))
+}
+
+/// The collection id (display-order hex) an item belongs to, if any.
+pub fn collection_of_item(cfg: &NodeConfig, item_id_hex: &str) -> Result<Option<String>, String> {
+    advance(cfg)?;
+    let id = id_from_hex(item_id_hex)?;
+    let guard = scan_cell().lock().map_err(|_| "scan state poisoned".to_string())?;
+    let st = guard.as_ref().ok_or_else(|| "index not ready".to_string())?;
+    Ok(st.overlay.nfd.get(&id).and_then(|n| n.collection_id).map(|c| hex_le(&c)))
+}
+
+/// Every active listing, for the marketplace browse. Each entry carries the item
+/// id, its current owner, collection, price/payout/expiry, and (when known) the
+/// item's sealed/revealed state so the card can render it.
+pub fn all_listings(cfg: &NodeConfig) -> Result<Value, String> {
+    let progress = advance(cfg)?;
+    if progress["open"].as_bool() != Some(true) {
+        return Ok(json!({ "open": false, "syncing": false, "listings": [] }));
+    }
+    let guard = scan_cell().lock().map_err(|_| "scan state poisoned".to_string())?;
+    let st = guard.as_ref().ok_or_else(|| "index not ready".to_string())?;
+    let testnet = is_testnet_like(&st.chain);
+    let listings: Vec<Value> = st.overlay.nfd.all_listings().into_iter().map(|(id, l)| {
+        let info = listing_info(&l, testnet);
+        let item = query::nfd(&st.overlay, &id).map(|v| nfd_view_json(&v, testnet));
+        json!({
+            "id": hex_le(&id),
+            "priceDuffs": info.price_duffs,
+            "payoutAddress": info.payout_address,
+            "expiry": info.expiry,
+            "sellerAddress": info.seller_address,
+            "item": item,
+        })
+    }).collect();
+    Ok(json!({
+        "open": true,
+        "syncing": progress["syncing"].as_bool().unwrap_or(false),
+        "listings": listings,
+    }))
+}
+
+fn listing_info(l: &nfd_indexer::Listing, testnet: bool) -> ListingInfo {
+    let addr = |a: nfd_indexer::Addr21| {
+        let mut h = [0u8; 20];
+        h.copy_from_slice(&a[1..21]);
+        base58_of((a[0], h), testnet)
+    };
+    ListingInfo {
+        price_duffs: l.price,
+        payout_address: addr(l.payout),
+        expiry: l.expiry,
+        seller_address: addr(l.seller),
+    }
+}
+
 /// One collectible by its mint id (display-order hex txid).
 pub fn get(cfg: &NodeConfig, id_hex: &str) -> Result<Value, String> {
     let progress = advance(cfg)?;
