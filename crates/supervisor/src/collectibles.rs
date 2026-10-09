@@ -242,6 +242,25 @@ pub fn set_commission(
     anchor_record(&rpc, &utxo, &record, None)
 }
 
+/// Broadcast a COLLECTION-FORGE-FEE (0x0A): the creator sets the flat DIVI fee a
+/// forge of this collection's packs must pay, and the address it is paid to.
+/// Funded from (so signed by) the creator address, which is how the indexer's
+/// creator-only rule accepts it; the fee is freely settable (not down-only).
+/// Returns the anchoring txid.
+pub fn set_forge_fee(
+    cfg: &NodeConfig,
+    collection_id: &str,
+    creator_addr: &str,
+    amount_duffs: u64,
+    payout_addr: &str,
+) -> Result<String, String> {
+    let rpc = RpcClient::new(cfg);
+    let payout_packed = address_to_packed(&rpc, payout_addr)?;
+    let record = nfd_record::encode_forge_fee(collection_id, amount_duffs, &payout_packed)?;
+    let utxo = pick_owner_utxo(&rpc, creator_addr)?;
+    anchor_record(&rpc, &utxo, &record, None)
+}
+
 /// Mint a collectible from `plaintext`. Owner = the funding UTXO's address.
 /// `content_mime` is the art's real type (used only for Public mode's upload).
 /// `encrypted` = the creator's choice: true encrypts to the owner (owner-only),
@@ -555,8 +574,10 @@ pub fn reveal(cfg: &NodeConfig, owner_addr: &str, mint_txid: &str) -> Result<Rev
 }
 
 // ── Forging (PERC upgrade) ──────────────────────────────────────────────────
-/// The forge fee, paid to the creator's payout address. Flat DIVI, like commissions.
-pub const FORGE_FEE: f64 = 1000.0;
+/// The default forge fee (in whole DIVI) the UI offers a creator when they first
+/// set one. The ACTUAL fee is per-collection, creator-set, and read from the
+/// chain (`nfd_scan::forge_fee_of`); this is only the starting value in the form.
+pub const DEFAULT_FORGE_FEE_DIVI: f64 = 100.0;
 /// Blocks after the forge before its roll resolves — long enough that the forger
 /// can't have known the seed block's hash when they committed.
 pub const FORGE_DELAY: i64 = 6;
@@ -572,33 +593,39 @@ pub struct ForgeOutcome {
 }
 
 /// Commit a forge: burn two SAME-TIER NFDs (by mint txid) in a collection, pay the
-/// 1000-DIVI fee to `fee_address`, and anchor a FORGE record. The result tier is
-/// derived from a FUTURE block hash (see `forge_outcome`), so it can't be gamed —
-/// the forger is already committed before that block exists.
+/// collection's creator-set forge fee (read from the chain), and anchor a FORGE
+/// record. The result tier is decided on-chain from a FUTURE block hash (Model X),
+/// so it can't be gamed — the forger is already committed before that block
+/// exists. The fee + payout come from `nfd_scan::forge_fee_of`, so every forger
+/// pays exactly what the creator set (or nothing, if no fee is set).
 pub fn forge(
     cfg: &NodeConfig,
     owner_addr: &str,
     collection_id: &str,
     input_a: &str,
     input_b: &str,
-    fee_address: &str,
 ) -> Result<ForgeCommit, String> {
     if input_a.eq_ignore_ascii_case(input_b) {
         return Err("forge needs two different NFDs".into());
     }
     // Both inputs must be NFD mints in this collection. (Same-tier + ownership is
-    // enforced by the UI's local data now and by the indexer/consensus later.)
+    // enforced by the indexer/consensus; this is an early, friendlier check.)
     for id in [input_a, input_b] {
         match read_record(cfg, id)? {
             Some(nfd_record::NfdRecord::Mint { collection_id: Some(c), .. }) if c.eq_ignore_ascii_case(collection_id) => {}
             _ => return Err("an input NFD is not a mint in this collection".into()),
         }
     }
+    // The creator-set forge fee (amount + payout), read from the chain. None = free.
+    let fee = crate::nfd_scan::forge_fee_of(cfg, collection_id)?
+        .filter(|(amount, _)| *amount > 0)
+        .map(|(amount_duffs, payout)| (payout, amount_duffs as f64 / crate::commission::DUFFS_PER_DIVI as f64));
     let rpc = RpcClient::new(cfg);
     let height = rpc.call("getblockcount", json!([]))?.as_i64().ok_or("no block height")?;
     let record = nfd_record::encode_forge(input_a, input_b, collection_id)?;
     let utxo = pick_owner_utxo(&rpc, owner_addr)?;
-    let forge_txid = anchor_record(&rpc, &utxo, &record, Some((fee_address, FORGE_FEE)))?;
+    let fee_out = fee.as_ref().map(|(payout, divi)| (payout.as_str(), *divi));
+    let forge_txid = anchor_record(&rpc, &utxo, &record, fee_out)?;
     Ok(ForgeCommit { forge_txid, resolve_height: height + FORGE_DELAY })
 }
 

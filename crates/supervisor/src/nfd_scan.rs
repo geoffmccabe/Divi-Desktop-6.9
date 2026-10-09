@@ -333,6 +333,23 @@ pub fn commission_of(cfg: &NodeConfig, collection_id_hex: &str) -> Result<Option
     }))
 }
 
+/// The current on-chain creator forge fee for a collection, as
+/// `(amount_duffs, payout_base58)` — `None` if none is set (forging is free).
+/// Read from the chain so any forger pays the creator's chosen amount, even for a
+/// collection they did not create.
+pub fn forge_fee_of(cfg: &NodeConfig, collection_id_hex: &str) -> Result<Option<(u64, String)>, String> {
+    advance(cfg)?;
+    let id = id_from_hex(collection_id_hex)?;
+    let guard = scan_cell().lock().map_err(|_| "scan state poisoned".to_string())?;
+    let st = guard.as_ref().ok_or_else(|| "index not ready".to_string())?;
+    let testnet = is_testnet_like(&st.chain);
+    Ok(st.overlay.nfd.forge_fee_of(&id).map(|(amount, payout)| {
+        let mut h = [0u8; 20];
+        h.copy_from_slice(&payout[1..21]);
+        (amount, base58_of((payout[0], h), testnet))
+    }))
+}
+
 /// One collectible by its mint id (display-order hex txid).
 pub fn get(cfg: &NodeConfig, id_hex: &str) -> Result<Value, String> {
     let progress = advance(cfg)?;

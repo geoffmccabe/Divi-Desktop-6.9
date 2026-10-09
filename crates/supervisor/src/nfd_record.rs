@@ -15,6 +15,7 @@ const SUB_REVEAL: u8 = 0x06;
 const SUB_BRIDGE_OUT: u8 = 0x07;
 const SUB_BRIDGE_IN: u8 = 0x08;
 const SUB_COMMISSION: u8 = 0x09;
+const SUB_FORGE_FEE: u8 = 0x0A;
 
 /// Mint flag bits.
 pub const FLAG_ENCRYPTED: u8 = 0x01;
@@ -194,6 +195,27 @@ pub fn encode_commission_set(collection_id: &str, amount_duffs: u64, payout_pack
     Ok(format!(
         "{}{}{:016x}{}",
         prefix(SUB_COMMISSION),
+        swap_txid_order(&collection_id.to_lowercase()), // txid ref -> internal order
+        amount_duffs,
+        payout_packed.to_lowercase()
+    ))
+}
+
+/// Encode a COLLECTION-FORGE-FEE (0x0A): same layout as COMMISSION-SET —
+/// collection_id(32) | amount_duffs(u64, big-endian, 8) | payout(21 packed addr).
+/// The collection id is a txid reference (internal byte order). The indexer
+/// enforces creator-only; the fee is freely settable (not down-only). When set,
+/// a FORGE of this collection's packs must pay >= amount_duffs to payout.
+pub fn encode_forge_fee(collection_id: &str, amount_duffs: u64, payout_packed: &str) -> Result<String, String> {
+    if !is_hex_len(collection_id, 32) {
+        return Err("collection_id must be 32 bytes hex".into());
+    }
+    if !is_hex_len(payout_packed, 21) {
+        return Err("payout must be a 21-byte packed address hex (kind + hash160)".into());
+    }
+    Ok(format!(
+        "{}{}{:016x}{}",
+        prefix(SUB_FORGE_FEE),
         swap_txid_order(&collection_id.to_lowercase()), // txid ref -> internal order
         amount_duffs,
         payout_packed.to_lowercase()
@@ -578,6 +600,19 @@ mod tests {
         assert!(hex.contains(&format!("{:016x}", 1000u64)));
         assert!(encode_commission_set("notlongenough", 1, &payout).is_err());
         assert!(encode_commission_set(&cid, 1, "short").is_err());
+    }
+
+    #[test]
+    fn forge_fee_encodes() {
+        let cid = "ab".repeat(32);
+        let payout = format!("00{}", "cd".repeat(20)); // 21-byte packed address hex
+        let hex = encode_forge_fee(&cid, 100 * 100_000_000, &payout).unwrap();
+        // 0x0A subtype, (byte-swapped) collection id, amount, then payout.
+        assert!(hex.contains(&swap_txid_order(&cid)));
+        assert!(hex.contains(&format!("{:016x}", 100u64 * 100_000_000)));
+        assert!(hex.ends_with(&payout));
+        assert!(encode_forge_fee("notlongenough", 1, &payout).is_err());
+        assert!(encode_forge_fee(&cid, 1, "short").is_err());
     }
 
     #[test]

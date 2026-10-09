@@ -292,6 +292,17 @@ export interface ForgeCommit {
 }
 export const nfdForge = (ownerAddr: string, collectionId: string, inputA: string, inputB: string) =>
   invoke<ForgeCommit>("nfd_forge", { ownerAddr, collectionId, inputA, inputB });
+
+// ---- Creator forge fee (per-collection, set by the creator, read from chain) ----
+// `null` = no fee set (forging is free). Freely settable (not down-only).
+export interface ForgeFee {
+  amountDivi: number;
+  payoutAddress: string;
+}
+export const nfdForgeFeeGet = (collectionId: string) =>
+  invoke<ForgeFee | null>("nfd_forge_fee_get", { collectionId });
+export const nfdForgeFeeSet = (collectionId: string, amountDivi: number, payoutAddress: string, creatorAddr: string) =>
+  invoke<ForgeFee>("nfd_forge_fee_set", { collectionId, amountDivi, payoutAddress, creatorAddr });
 // ---- Payment requests (DVXP type 0x05) ----
 // A request only ASKS. Receiving one moves no money; paying is a separate,
 // explicitly signed act by the payer.

@@ -2183,25 +2183,60 @@ struct ForgeDto {
 }
 
 /// Forge two sealed-pack Percs you own into one guaranteed-upgrade result: burns
-/// both inputs (same tier, same collection), pays the forge fee to the creator,
-/// and broadcasts the FORGE. The result is a NEW sealed pack keyed by the forge
-/// txid; its tier resolves a few blocks later. Read it with `nfd_get(forgeTxid)`
-/// and watch for `revealed` to appear — the chain, not the wallet, decides the
-/// tier (Model X). The fee goes to the collection's on-chain commission payout
-/// (the creator); if none is set we fall back to the forger's own address so
-/// testnet forging is not blocked (no real funds move: the mainnet write fence
-/// in collectibles.rs refuses every NFD write on `main` until launch).
+/// both inputs (same tier, same collection), pays the collection's creator-set
+/// forge fee (read from the chain — the creator sets both the amount and the
+/// payout; none = free), and broadcasts the FORGE. The result is a NEW sealed
+/// pack keyed by the forge txid; its tier resolves a few blocks later. Read it
+/// with `nfd_get(forgeTxid)` and watch for `revealed` to appear — the chain, not
+/// the wallet, decides the tier (Model X). The mainnet write fence in
+/// collectibles.rs refuses every NFD write on `main` until launch.
 #[tauri::command]
 async fn nfd_forge(owner_addr: String, collection_id: String, input_a: String, input_b: String) -> Result<ForgeDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
-        // Forge fee destination: the creator's on-chain commission payout address.
-        let fee_address = match nfd_scan::commission_of(&cfg, &collection_id)? {
-            Some((_amount, payout)) if !payout.is_empty() => payout,
-            _ => owner_addr.clone(), // testnet placeholder; mainnet write fence blocks real use
-        };
-        let c = collectibles::forge(&cfg, &owner_addr, &collection_id, &input_a, &input_b, &fee_address)?;
+        let c = collectibles::forge(&cfg, &owner_addr, &collection_id, &input_a, &input_b)?;
         Ok(ForgeDto { forge_txid: c.forge_txid, resolve_height: c.resolve_height })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForgeFeeDto {
+    amount_divi: f64,
+    payout_address: String,
+}
+
+/// Read a collection's creator-set forge fee from the chain. `None` = no fee set
+/// (forging is free). The amount is the number a forge must pay to `payoutAddress`.
+#[tauri::command]
+async fn nfd_forge_fee_get(collection_id: String) -> Result<Option<ForgeFeeDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        Ok(nfd_scan::forge_fee_of(&cfg, &collection_id)?.map(|(duffs, payout)| ForgeFeeDto {
+            amount_divi: duffs as f64 / dd69_supervisor::commission::DUFFS_PER_DIVI as f64,
+            payout_address: payout,
+        }))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Set a collection's forge fee (creator only). `amountDivi` is the flat DIVI a
+/// forge of this collection's packs must pay to `payoutAddress`. Broadcasts the
+/// COLLECTION-FORGE-FEE record (funded from the creator, which is how the indexer
+/// accepts it). The fee is freely settable (not down-only).
+#[tauri::command]
+async fn nfd_forge_fee_set(collection_id: String, amount_divi: f64, payout_address: String, creator_addr: String) -> Result<ForgeFeeDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        if !(amount_divi.is_finite() && amount_divi >= 0.0) {
+            return Err("the forge fee must be zero or more".to_string());
+        }
+        let amount_duffs = (amount_divi * dd69_supervisor::commission::DUFFS_PER_DIVI as f64).round() as u64;
+        collectibles::set_forge_fee(&cfg, &collection_id, &creator_addr, amount_duffs, payout_address.trim())?;
+        Ok(ForgeFeeDto { amount_divi, payout_address: payout_address.trim().to_string() })
     })
     .await
     .map_err(|_| "internal error".to_string())?
@@ -2536,6 +2571,8 @@ fn main() {
             nfd_commission_set,
             nfd_reveal,
             nfd_forge,
+            nfd_forge_fee_get,
+            nfd_forge_fee_set,
             nfd_create_collection,
             nfd_import_open,
             nfd_import_read_item,

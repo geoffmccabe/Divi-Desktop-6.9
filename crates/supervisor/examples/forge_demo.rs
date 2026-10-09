@@ -35,8 +35,9 @@ fn main() {
     mine(1);
     println!("two T5 Percs = {} , {}", a.txid, b.txid);
 
-    // Commit the forge (fee to the forger's own address here, just for the test).
-    let commit = collectibles::forge(&cfg, &forger, &col.txid, &a.txid, &b.txid, &forger).expect("forge");
+    // Commit the forge. The fee (if any) is the collection's creator-set value,
+    // read from the chain inside `forge`; this demo sets none, so forging is free.
+    let commit = collectibles::forge(&cfg, &forger, &col.txid, &a.txid, &b.txid).expect("forge");
     println!("forge txid   = {} (resolves at height {})", commit.forge_txid, commit.resolve_height);
     mine(collectibles::FORGE_DELAY + 1);
 

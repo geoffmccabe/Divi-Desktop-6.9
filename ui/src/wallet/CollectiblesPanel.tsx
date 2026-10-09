@@ -3,8 +3,8 @@ import {
   nfdMint, nfdView, nfdReceiveCode, nfdTransfer, nfdClaim, nfdCreateCollection, newReceiveAddress,
   nfdOwnedWallet, nfdCollectionMembers,
   nfdStorageBackends, nfdSetStorageBackend,
-  nfdCommissionGet, nfdCommissionSet, nfdReveal, nfdForge, nfdGet,
-  type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends, type Commission,
+  nfdCommissionGet, nfdCommissionSet, nfdReveal, nfdForge, nfdForgeFeeGet, nfdForgeFeeSet, nfdGet,
+  type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends, type Commission, type ForgeFee,
 } from "./api";
 import { CollectionImport } from "./CollectionImport";
 import { RevealStage, type RevealSealed } from "./reveal/RevealStage";
@@ -231,6 +231,8 @@ export function CollectiblesPanel() {
   const [forgeA, setForgeA] = useState("");
   const [forgeB, setForgeB] = useState("");
   const [forgeMsg, setForgeMsg] = useState("");
+  // The creator-set forge fee for the collection of the chosen first input.
+  const [forgeFeeInfo, setForgeFeeInfo] = useState<ForgeFee | null>(null);
 
   // Storage backend (local / Arweave relay / GoBanq / DiviStore module).
   const [storage, setStorage] = useState<StorageBackends | null>(null);
@@ -259,6 +261,13 @@ export function CollectiblesPanel() {
   const [commPayout, setCommPayout] = useState("");
   const [commMsg, setCommMsg] = useState("");
   const [commBusy, setCommBusy] = useState(false);
+  // Creator forge fee (flat DIVI a forge must pay; freely settable). Keyed to the
+  // collection whose details are open. Defaults the input to 100 DIVI.
+  const [feeCur, setFeeCur] = useState<ForgeFee | null>(null);
+  const [feeAmt, setFeeAmt] = useState("");
+  const [feePayout, setFeePayout] = useState("");
+  const [feeMsg, setFeeMsg] = useState("");
+  const [feeBusy, setFeeBusy] = useState(false);
   useEffect(() => {
     if (!browsing) { setCommCur(null); setCommAmt(""); setCommMsg(""); return; }
     let live = true;
@@ -271,6 +280,34 @@ export function CollectiblesPanel() {
     }).catch(() => {});
     return () => { live = false; };
   }, [browsing]);
+  useEffect(() => {
+    if (!browsing) { setFeeCur(null); setFeeAmt(""); setFeeMsg(""); return; }
+    let live = true;
+    nfdForgeFeeGet(browsing).then((f) => {
+      if (!live) return;
+      setFeeCur(f);
+      setFeeAmt(f ? String(f.amountDivi) : "100"); // default the input to 100 DIVI
+      setFeePayout(f?.payoutAddress || "");
+      setFeeMsg("");
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [browsing]);
+  async function saveForgeFee() {
+    if (!browsing) return;
+    const creatorAddr = collections.find((c) => c.id === browsing)?.creatorAddr || "";
+    if (!creatorAddr) { setFeeMsg("Can't find the creator address for this collection."); return; }
+    if (!feePayout.trim()) { setFeeMsg("Enter a payout address for the forge fee."); return; }
+    setFeeBusy(true); setFeeMsg("");
+    try {
+      const f = await nfdForgeFeeSet(browsing, Number(feeAmt) || 0, feePayout.trim(), creatorAddr);
+      setFeeCur(f);
+      setFeeMsg(`Broadcast — the forge fee is now ${f.amountDivi} DIVI (settles on-chain shortly).`);
+    } catch (e) {
+      setFeeMsg(String(e));
+    } finally {
+      setFeeBusy(false);
+    }
+  }
   async function saveCommission() {
     if (!browsing) return;
     const creatorAddr = collections.find((c) => c.id === browsing)?.creatorAddr || "";
@@ -501,6 +538,15 @@ export function CollectiblesPanel() {
     const col = collections.find((c) => c.id === it.collectionId)?.name ?? "collection";
     return `${col} · T${it.revealed!.tier} · ${it.name || it.txid.slice(0, 8)}`;
   };
+  // Load the creator-set forge fee for the chosen input's collection, to show
+  // the forger what they'll pay before they commit.
+  const forgeCol = forgeAItem?.collectionId;
+  useEffect(() => {
+    if (!forgeCol) { setForgeFeeInfo(null); return; }
+    let live = true;
+    nfdForgeFeeGet(forgeCol).then((f) => live && setForgeFeeInfo(f)).catch(() => live && setForgeFeeInfo(null));
+    return () => { live = false; };
+  }, [forgeCol]);
 
   // When browsing a collection, read its FULL membership from the chain (every
   // item, not only this wallet's), overlaying local metadata where we have it.
@@ -1093,6 +1139,12 @@ export function CollectiblesPanel() {
             Forge {forgeAItem ? `two T${forgeAItem.revealed!.tier}` : ""}
           </button>
         </div>
+        {forgeAItem && (
+          <p className="wl-note" style={{ marginTop: 8 }}>
+            Forge fee: <strong>{forgeFeeInfo ? `${forgeFeeInfo.amountDivi} DIVI` : "free"}</strong>
+            {forgeFeeInfo ? " (paid to the collection creator)" : " (the creator has not set one)"}.
+          </p>
+        )}
         {forgeMsg && <p className="wl-note" style={{ marginTop: 8 }}>{forgeMsg}</p>}
       </section>
       )}
@@ -1303,6 +1355,40 @@ export function CollectiblesPanel() {
                 </button>
               </div>
               {commMsg && <p className="wl-note" style={{ marginTop: 6 }}>{commMsg}</p>}
+            </div>
+
+            <div style={{ border: "1px solid var(--border, #2a2a35)", borderRadius: 10, padding: "12px 14px", margin: "4px 0 16px" }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Forge fee</div>
+              <p className="wl-note" style={{ marginTop: 0 }}>
+                A flat DIVI fee a holder pays to forge two of this collection's same-tier Percs into one upgrade,
+                paid to you and enforced on-chain. You set the amount (default 100 DIVI) and can change it at any time.
+              </p>
+              <div className="wl-note" style={{ margin: "0 0 10px" }}>
+                Current forge fee: <strong>{feeCur ? `${feeCur.amountDivi} DIVI` : "not set (forging is free)"}</strong>
+              </div>
+              <label style={{ display: "block", marginBottom: 4, fontSize: 13 }}>Forge fee (DIVI)</label>
+              <input
+                className="wl-input"
+                type="number"
+                min={0}
+                placeholder="100"
+                value={feeAmt}
+                onChange={(e) => setFeeAmt(e.target.value)}
+                style={{ maxWidth: 260 }}
+              />
+              <input
+                className="wl-input mono"
+                placeholder="Payout address (D...)"
+                value={feePayout}
+                onChange={(e) => setFeePayout(e.target.value)}
+                style={{ maxWidth: 420, marginTop: 8 }}
+              />
+              <div style={{ marginTop: 8 }}>
+                <button className="wl-btn wl-btn-primary" disabled={feeBusy || !feeAmt.trim() || !feePayout.trim()} onClick={saveForgeFee}>
+                  {feeBusy ? "Saving…" : feeCur ? "Update forge fee" : "Set forge fee"}
+                </button>
+              </div>
+              {feeMsg && <p className="wl-note" style={{ marginTop: 6 }}>{feeMsg}</p>}
             </div>
 
             {browseItems.length === 0 ? (
