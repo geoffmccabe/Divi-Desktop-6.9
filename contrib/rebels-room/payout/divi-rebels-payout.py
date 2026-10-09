@@ -79,6 +79,30 @@ MIN_CLAIM = 100
 # nothing.
 WALLET = os.environ.get("REBELS_WALLET", "")
 
+# ---- ⚠ AND THE WALLET NAME IS NOT ENOUGH, NOW THERE ARE TWO DAEMONS ----
+#
+# The guard above was written for one daemon with two wallets, where the
+# active wallet's FILENAME told you which one you had. Geoff chose a different
+# architecture: a second divid with its own datadir, its own rpcport and its
+# own wallet. That is stronger in every way except this one - both wallets are
+# called `wallet.dat`, so `active_wallet` is the same string on both daemons
+# and the name check cannot tell them apart.
+#
+# And the failure that architecture actually has is a WRONG PORT, not a wrong
+# wallet. Measured on the live box on 2026-Oct-08: DIVI_RPC_URL was not set in
+# the payout's own env at all, so it fell through to the default and the
+# service had been pointed at the SCAN NODE - every cash-out would have been
+# paid out of the staking wallet. The name guard would have passed that
+# happily: the scan node's active wallet is also `wallet.dat`.
+#
+# So the real question is "whose wallet is this", and the way to ask it is to
+# name an address this wallet is known to own and make the daemon confirm it.
+# The scan node answers ismine false for the payout wallet's address, which
+# was checked by hand on both daemons before this was written. A wrong port, a
+# restored-from-elsewhere wallet, or a daemon that came up on someone else's
+# datadir all fail it.
+PAY_FROM = os.environ.get("REBELS_PAYOUT_ADDRESS", "")
+
 STATE_DIR = "/var/lib/divi-rebels"
 STATE = os.path.join(STATE_DIR, "payout.json")
 
@@ -244,26 +268,55 @@ def pay_one(st, row, balance):
 
 
 def wallet_is_right():
-    """Whether the daemon has the wallet we are meant to be paying from active.
+    """Whether the daemon on the other end of RPC is the payout wallet's own.
 
-    True also when REBELS_WALLET is unset, because this must not stop payouts
-    that are working; the log says the guard is off, loudly, every round.
+    Two independent checks, each skipped only if its variable is unset:
+
+      REBELS_PAYOUT_ADDRESS  an address this wallet owns. The strong one: it
+                             identifies the WALLET, so it catches a wrong
+                             rpcport, a wallet restored somewhere else, or a
+                             daemon started on another datadir.
+      REBELS_WALLET          the active wallet's filename. Kept for the
+                             one-daemon-two-wallets case it was written for.
+                             It cannot separate two daemons that both call
+                             their wallet `wallet.dat`, which is why the
+                             address check exists.
+
+    With NEITHER set this is inert and says so, loudly, every round: failing
+    closed by default would stop live payouts the moment it shipped, and that
+    is not a change for a script to make on its own initiative.
     """
-    if not WALLET:
-        log("⚠ REBELS_WALLET is not set: paying from whatever wallet the daemon "
-            "has active, which may be the scan node's own. This guard is off.")
+    if not WALLET and not PAY_FROM:
+        log("⚠ neither REBELS_PAYOUT_ADDRESS nor REBELS_WALLET is set: paying "
+            "from whatever wallet answers on DIVI_RPC_URL, which may be the "
+            "scan node's own. Both guards are off.")
         return True
-    try:
-        active = rpc("getwalletinfo").get("active_wallet")
-    except Exception as e:
-        # Cannot tell: refuse. An unreadable answer is not a matching one.
-        log(f"refusing to pay: could not read the active wallet ({e})")
-        return False
-    if active != WALLET:
-        log(f"REFUSING TO PAY: the daemon has {active!r} active, not {WALLET!r}. "
-            "Nothing has been sent. Every coin would have come out of the wrong "
-            "wallet, so this is a stop rather than a warning.")
-        return False
+
+    if PAY_FROM:
+        try:
+            info = rpc("validateaddress", [PAY_FROM])
+        except Exception as e:
+            # Cannot tell: refuse. An unreadable answer is not a matching one.
+            log(f"refusing to pay: could not check {PAY_FROM} ({e})")
+            return False
+        if not info.get("ismine"):
+            log(f"REFUSING TO PAY: the daemon on {RPC_URL} does not own "
+                f"{PAY_FROM}, so it is not the Rebels payout wallet. Nothing "
+                "has been sent. This is what a wrong rpcport looks like, and "
+                "every coin would have come out of somebody else's wallet.")
+            return False
+
+    if WALLET:
+        try:
+            active = rpc("getwalletinfo").get("active_wallet")
+        except Exception as e:
+            log(f"refusing to pay: could not read the active wallet ({e})")
+            return False
+        if active != WALLET:
+            log(f"REFUSING TO PAY: the daemon has {active!r} active, not {WALLET!r}. "
+                "Nothing has been sent. Every coin would have come out of the wrong "
+                "wallet, so this is a stop rather than a warning.")
+            return False
     return True
 
 
