@@ -64,7 +64,7 @@ import {
 import { R, OPEN_SPACE, cruiseScale } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { VIEW, inRange } from "../../../ui/src/wallet/rebels/rebelsView";
 import {
-  WING_MAX, wingPosition, wingSpin, wingShare, wingRounds, wingTiers,
+  WING_MAX, WING_NOSE, wingPosition, wingSpin, wingShare, wingRounds, wingTiers,
 } from "../../../ui/src/wallet/rebels/rebelsWings";
 import { distanceToTower, DOCK_RANGE, DOCK_SECONDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
@@ -518,9 +518,14 @@ export class RebelsRoom {
       if (!s.flying || s.dead || s.wings.length === 0) continue;
       const alive = s.wings.filter((x) => x.hull > 0);
       const spin = wingSpin(this.now, alive.length);
-      /* The ship's up, from its own frame: the room has no roll on the wire,
-         so away from the planet stands in, which is what level flight is. */
-      const up = s.body.pos.clone().normalize();
+      /* ---- THE SHIP'S OWN UP, WHEN IT SENDS ONE ----
+         The formation is a ring in the ship's frame, so this decides whether it
+         rolls with the ship. Away from the planet is the fallback for a cockpit
+         that does not send roll; it is what level flight looks like and it is
+         what every wingman used before, which is why they did not roll and why
+         they moved as a pilot flew round the globe. */
+      const up = (s.body as { up?: THREE.Vector3 }).up
+        ?? s.body.pos.clone().normalize();
       const frame = { pos: s.body.pos, fwd: s.body.fwd, up };
       for (const wing of alive) {
         wingPosition(frame, wing.slot, spin, s.body.reach ?? 2.2, wing.pos);
@@ -1585,6 +1590,16 @@ export class RebelsRoom {
 
     seat.body.pos.copy(p);
     seat.body.fwd.copy(f).normalize();
+    /* The ship's roll, when the cockpit sends it. Squared up against the nose
+       so a slightly stale pair cannot make a skewed frame. */
+    const u = vec(m.u);
+    if (u && u.lengthSq() > 1e-6) {
+      u.addScaledVector(seat.body.fwd, -u.dot(seat.body.fwd));
+      if (u.lengthSq() > 1e-6) {
+        (seat.body as { up?: THREE.Vector3 }).up =
+          ((seat.body as { up?: THREE.Vector3 }).up ?? new THREE.Vector3()).copy(u).normalize();
+      }
+    }
     seat.wantGuard = m.g === 1;
     (seat as { lastTf?: number }).lastTf = this.now;
   }
@@ -1660,8 +1675,19 @@ export class RebelsRoom {
            beside yours instead of through it. */
         const aim = _wingAim.copy(f).normalize();
         pushBullet(this.combat, {
-          pos: wing.pos.clone(),
-          vel: aim.clone().multiplyScalar(BULLET_SPEED),
+          /* ⚠ FROM THE DRONE'S NOSE, not from the centre the room keeps for
+             it. Geoff: "from the nose of the drone (a single shot from each
+             drone)". Born at the centre, a round's first visible moment is
+             already past the model it supposedly came out of. */
+          pos: wing.pos.clone().addScaledVector(aim, WING_NOSE),
+          /* ⚠ AND IT CARRIES THE SHIP'S VELOCITY, WHICH IT DID NOT.
+             fireGuns, fireMini and fireTorpedo were all given the ship's
+             velocity so that a round looks right from a moving cockpit, and
+             this hand-rolled pushBullet was missed: at boost a drone's rounds
+             fell behind the player's own, out of the formation they are
+             supposed to be flying in. The three functions WERE the bound I
+             thought I had applied; the denominator was four firing sites. */
+          vel: aim.clone().multiplyScalar(BULLET_SPEED).add(seat.vel),
           life: BULLET_LIFE,
           hostile: false,
           owner: seat.id,

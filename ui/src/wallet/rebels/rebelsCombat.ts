@@ -60,7 +60,33 @@ export const BULLET_LIFE = 2.2;
  */
 export const SHOT_SPEED_FLOOR = 0.34;
 export const BULLET_R = 0.16;         /* what it hits with */
-export const CONVERGE = 55;           /* where the two guns cross, in units ahead */
+/**
+ * Where the two streams meet, in units ahead.
+ *
+ * ⚠ THIS NUMBER IS FORCED BY GEOMETRY AND IT IS GEOFF'S CALL TO CHANGE IT.
+ * The guns sit at the EDGES OF THE FRAME, 2.46 units off the axis, because in
+ * first person there is no hull and fire arriving from the edges is the only
+ * thing that says where it came from.
+ *
+ * From there, three things are wanted and only two can be had:
+ *
+ *   rounds leave from the sides      wants the muzzle at 2.46
+ *   rounds never cross in view       wants no convergence
+ *   rounds hit what the crosshair    needs both streams within a fighter's
+ *     is on                          1.05 radius at fighting range
+ *
+ * A fighter is killed at 40 units in the tests and shoots from 70. To be within
+ * 1.05 of the axis at 40, the streams must meet by 70 - which is near enough
+ * that the crossing is visible. Fired perfectly parallel they straddle a
+ * fighter for ever and both rounds miss, at every range.
+ *
+ * So this stays where it was until Geoff picks which of the three to give up.
+ * The honest alternatives are: move the guns in toward the hull, in which case
+ * parallel works and the rounds no longer come from the frame edge; or accept
+ * the crossing; or widen what counts as a hit.
+ */
+export const CONVERGE = 55;
+
 
 /* ---- the mini gun ----
    A single fast round from the top right of the frame, aimed wherever the
@@ -73,6 +99,15 @@ export const MINI_AMMO = 0.25;
 /** It keeps firing while the trigger is held, twenty times a second. */
 export const MINI_INTERVAL = 0.05;
 export const ENEMY_R = 1.05;          /* hit radius of a fighter */
+/**
+ * How far either side of the nose the two guns sit.
+ *
+ * Narrower than a fighter's radius ON PURPOSE: parallel streams this far apart
+ * straddle the crosshair by less than the thing they are aimed at, so both
+ * rounds still land. That is the whole reason parallel is possible now and was
+ * not from the frame edges.
+ */
+export const GUN_HALF_SPAN = ENEMY_R * 0.8;
 /** And of a wingman, which is drawn at half a ship. */
 export const WING_HIT_R = 0.9;
 export const DRAGON_R = 3.6;          /* and of the dragon: it is big */
@@ -530,6 +565,35 @@ export const TRACER_LIFE = 3;
  */
 export const STREAK_SECONDS = 0.04;
 export const TRACER_MAX = 220;
+
+/**
+ * Where a round's streak starts, as the player sees it.
+ *
+ * ⚠ RELATIVE TO THE EYE, NOT TO THE WORLD, and that is the whole point of
+ * having this as a function rather than a line of arithmetic at the draw site.
+ * A round carries the velocity of the ship that fired it, so that your own
+ * fire looks right from the cockpit: "Bullet speed should be added to the ship
+ * speed in the same normalized proportions, so it's always appearing to be the
+ * same velocity from the ship's point of view." The cost is that the round's
+ * WORLD velocity now contains your speed as well, and a streak laid backwards
+ * along that is as long as the round's own length PLUS however far the ship
+ * flew in the same fortieth of a second: at full boost, several times too
+ * long, dragging behind every round. Geoff: "the tracer lines are flying
+ * behind them as if they are tails."
+ *
+ * Since the eye is moving too, what the player actually sees a round do is its
+ * velocity minus the eye's. Measured that way your own rounds streak the same
+ * length at any speed, a round closing on you streaks long, and one drifting
+ * alongside at your own speed barely streaks at all.
+ */
+export function streakTail(
+  pos: THREE.Vector3,
+  vel: THREE.Vector3,
+  eyeVel: THREE.Vector3,
+  out = new THREE.Vector3(),
+): THREE.Vector3 {
+  return out.copy(vel).sub(eyeVel).multiplyScalar(-STREAK_SECONDS).add(pos);
+}
 
 export interface Tracer {
   from: THREE.Vector3;
@@ -1292,12 +1356,28 @@ export function gunMuzzles(
   out: [THREE.Vector3, THREE.Vector3],
 ): void {
   const d = 2.2;
-  const halfH = Math.tan((fovDeg * Math.PI) / 360) * d;
-  const halfW = halfH * aspect;
+  /* ---- THE GUNS ARE ON THE HULL, NOT AT THE EDGES OF THE SCREEN ----
+     ⚠ THEY USED TO BE AT THE FRAME EDGES, tan(fov/2)*d*aspect out, which is
+     2.46 units off the axis, so that in first person the fire arriving from
+     the corners read as the ship. That placement is what made the two streams
+     cross: aimed at a point ahead they met right in the middle of the view,
+     and fired parallel from there they straddled a fighter's 1.05 radius and
+     both rounds missed whatever the crosshair was on.
+ 
+     Three things were wanted and only two were available from the frame edge.
+     Geoff chose which to give up: "move the guns in to the hull". So they sit
+     at the ship's own half-span, the rounds fly PERFECTLY PARALLEL, and they
+     still hit what the crosshair is on because the pair is now narrower than
+     the thing it is shooting at. In third person they leave the hull, which is
+     what he asked for: "from either the sides or from the ship itself".
+ 
+     fovDeg and aspect are kept in the signature: the cockpit still places the
+     muzzle FLASH from the frame, and callers pass them. */
   const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
   const centre = new THREE.Vector3().copy(pos).addScaledVector(fwd, d);
-  out[0].copy(centre).addScaledVector(right, -halfW * 0.96);
-  out[1].copy(centre).addScaledVector(right, halfW * 0.96);
+  void fovDeg; void aspect;
+  out[0].copy(centre).addScaledVector(right, -GUN_HALF_SPAN);
+  out[1].copy(centre).addScaledVector(right, GUN_HALF_SPAN);
 }
 
 export function fireGuns(
@@ -1355,13 +1435,23 @@ export function fireGuns(
      muzzle positions, and the ROUND leaves from within an enemy's radius of the
      axis. The pair still reads as two parallel streams and still hits what it is
      pointed at. */
-  const right = new THREE.Vector3().crossVectors(along, up).normalize();
-  const spread = Math.min(ENEMY_R * 0.9, 1);
-  const side = [-spread, spread];
-  for (let i = 0; i < m.length; i++) {
-    const muzzle = m[i].clone()
-      .sub(right.clone().multiplyScalar(m[i].clone().sub(pos).dot(right)))
-      .addScaledVector(right, side[i] ?? 0);
+  /* ---- AND THEY LEAVE FROM THE GUNS, WHICH IS WHERE THEY LOOK RIGHT ----
+     ⚠ MY FIRST ATTEMPT MOVED THE ORIGIN INSTEAD and that was worse. To stop
+     parallel streams straddling a 1.05-radius fighter I launched them from
+     within that radius of the axis, which in first person - where there is no
+     hull - put them in the middle of an empty screen. Geoff: "the bullets are
+     coming from a blank area in the screen instead of from either the sides or
+     from the ship itself... they just come from nowhere and it doesn't make
+     sense." Quite so: the frame edge IS the ship when you cannot see one, and
+     moving the round away from it removed the only thing that said where it
+     came from.
+
+     So the round leaves from the gun, and the convergence does the work
+     instead. See CONVERGE: far enough out that the streams are effectively
+     parallel through a whole fight and never cross in view. */
+  /* PERFECTLY PARALLEL, straight down the nose. Possible because the guns are
+     on the hull rather than at the frame edges; see GUN_HALF_SPAN. */
+  for (const muzzle of m) {
     const vel = along.clone().multiplyScalar(BULLET_SPEED);
     if (shipVel) vel.add(shipVel);
     pushBullet(c, { pos: muzzle.clone(), vel, life: BULLET_LIFE, hostile: false, owner });

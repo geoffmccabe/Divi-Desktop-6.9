@@ -18,6 +18,7 @@
 // (see the room's stepWings); the cockpit uses these same functions only to
 // know how big to draw things. One copy of the rules, as everywhere else.
 
+import { SHRINK } from "./orbitWorld";
 import * as THREE from "three";
 import { itemByKey, DRONE_SHARE, DRONE_ROUNDS, ITEM_TIER_MAX } from "./itemCatalog";
 
@@ -48,6 +49,21 @@ export const WING_RADIUS_MAX = 26;
    wingman was half the ship and read as a second fighter flying alongside
    rather than as a drone escorting one. */
 export const WING_SCALE = 0.25;
+/**
+ * How far a drone's nose is from its centre, in world units.
+ *
+ * Geoff asked for a drone's round to leave "the nose of the drone (a single
+ * shot from each drone)", and a drone is drawn as the player's own hull at
+ * WING_SCALE. The cockpit scales that model by SHIP_LENGTH * WING_SCALE, so
+ * its nose is half of that ahead of the centre the room keeps for it. The
+ * ship's length is 2.6 before SHRINK, same as the cockpit's SHIP_LENGTH.
+ *
+ * ⚠ THIS IS SMALL ON PURPOSE: about a sixth of a unit. It is not meant to
+ * move the round somewhere visible from the cockpit, it is meant to stop the
+ * round being born INSIDE the drone's hull, where the first thing a player
+ * sees of it is already past the model.
+ */
+export const WING_NOSE = 2.6 * SHRINK * WING_SCALE * 0.5;
 
 /** The ring's radius for a ship whose half-span is `reach`. */
 export function wingRadius(reach: number): number {
@@ -57,8 +73,18 @@ export function wingRadius(reach: number): number {
 
 /** How far round the ring has turned after `seconds`, for `count` wingmen. */
 export function wingSpin(seconds: number, count: number): number {
-  if (count < WING_SPIN_MIN) return 0;
-  return ((seconds % WING_SPIN_SECONDS) / WING_SPIN_SECONDS) * Math.PI * 2;
+  /* ---- THEY HOLD STATION. NO ORBIT. ----
+     ⚠ THE RING USED TO TURN, one revolution every fifteen seconds, and that is
+     why a wingman never seemed to be anywhere in particular. Geoff, on his
+     drone appearing to move when he did not expect it: "I think it may be the
+     orbiting part. Let's not make them orbit for now."
+ 
+     Each drone now keeps the slot it was given, in the ship's own frame, so it
+     rolls and turns WITH the ship and sits in the same place relative to it for
+     ever. The spin is kept as a function rather than deleted because the ring
+     geometry still reads it, and turning it back on is one line. */
+  void seconds; void count;
+  return 0;
 }
 
 /**

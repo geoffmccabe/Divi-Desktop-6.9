@@ -13,9 +13,10 @@
 //   2. Rings of detail. Full cubes only close by; further out one cube stands
 //      for 2, 4 then 8. A coarse chunk covers eight times the ground for a
 //      fraction of the triangles.
-//   3. The far side of the planet. Standing outside it, half the shell is
-//      behind nine thousand units of rock. Same horizon test the node towers
-//      needed once instancing took their culling away.
+//   3. ⚠ NOT the far side of the planet, which this used to drop and no
+//      longer does. The shell is a quarter full and see-through, so the far
+//      side is visible through it and has to be drawn. It is cheap: nine
+//      percent more triangles from orbit. See the note in visibleChunks.
 //   4. Nothing outside the planet. A chunk that cannot touch the shell, the
 //      spokes or the heart holds nothing and is skipped before it is built.
 //   5. A HARD BUDGET. Chunks are taken nearest first and stop when the
@@ -329,6 +330,61 @@ const LOOK_COS = 0.45;
  * million triangles for the same steadiness; defaulting coarse costs 705,000,
  * which is less than the scheme it replaces.
  */
+/**
+ * How much each box's split distance differs from its neighbours'.
+ *
+ * ⚠ THIS IS NOT MORE HYSTERESIS, AND MORE HYSTERESIS WOULD NOT HAVE HELPED.
+ * SPLIT_IN/SPLIT_OUT already hold a box's level across a band eight times
+ * wide, and they work: a box near a boundary does not flip back and forth.
+ * What they cannot do is stop boxes changing TOGETHER. Every box at a level
+ * shares one split distance, so when the ship dives the whole layer crosses
+ * that distance in the same frame and the rock visibly rearranges in one go.
+ * Widening the band delays the moment and makes it no smaller.
+ *
+ * Geoff, twice: "every few seconds all the cubes around me shift and change,
+ * as if they are being recreated differently", and "they are constantly
+ * shifting and flickering, appearing and disappearing in different
+ * configurations."
+ *
+ * So each box gets its OWN split distance, scattered thirty percent either
+ * way, from a hash of where it is. Measured over a 649-frame flight from far
+ * orbit down to the surface, along it, in through the shell and across to the
+ * heart, counting the boxes that split or merged each frame:
+ *
+ *   spread    changes over the flight    worst single frame
+ *   none                          672                    60
+ *   +/-10%                        664                    45
+ *   +/-20%                        669                    34
+ *   +/-30%                        673                    22
+ *   +/-40%                        682                    22
+ *
+ * The TOTAL is deliberately unchanged, which is the point: the same ground
+ * still earns the same detail, and the player stops seeing it arrive all at
+ * once. Sixty boxes changing in one frame is the rock rearranging; twenty-two
+ * is detail filling in. Past thirty percent it buys nothing.
+ *
+ * It costs no triangles (peak measured 2,999,200 against 2,933,400) and it
+ * must be a HASH rather than a random number: a box's own threshold has to be
+ * the same every frame, or the jitter becomes the flicker.
+ */
+const SPLIT_SPREAD = 0.6;
+
+/**
+ * A stable number in [0,1) for one box, from its position and level.
+ *
+ * The usual three large primes, then a couple of avalanche rounds so that
+ * neighbouring boxes - which differ by one in a single coordinate - land far
+ * apart rather than in a ramp. A ramp would make the detail boundary a smooth
+ * cone and put the layer right back in step.
+ */
+function boxHash(ox: number, oy: number, oz: number, step: number): number {
+  let h = (Math.imul(ox, 73856093) ^ Math.imul(oy, 19349663)
+    ^ Math.imul(oz, 83492791) ^ Math.imul(step, 2654435761)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 4294967296;
+}
+
 const SPLIT_IN = 0.35;
 const SPLIT_OUT = 2.8;
 
@@ -384,11 +440,35 @@ export function visibleChunks(
      demand is reduced ONCE, statically, in RING_CUBES, and the allowance is set
      above it. Nothing then has to change while anybody is flying. */
   const look = opts.look;
-  const vr = Math.hypot(viewer[0], viewer[1], viewer[2]);
-  const dustFarCubes = (opts.dustFar ?? dustFarFor(vr)) / CUBE;
-  const outside = vr > R_OUTER;
-  const vd = vr > 1e-6 ? [viewer[0] / vr, viewer[1] / vr, viewer[2] / vr] : [1, 0, 0];
-  const horizon = outside ? Math.min(0.999, R_OUTER / vr) - 0.1 : -1.1;
+  /* ⚠ AND THE DEFAULT IS NO CUT AT ALL, which the note below it already
+     claimed and this line was quietly contradicting. It read dustFarFor(vr),
+     so every caller that passed nothing still got the cut: "dustFar is still
+     accepted so a caller can bound the world if it ever needs to, but nothing
+     passes it" was true of the ARGUMENT and false of the BEHAVIOUR. Measured,
+     inside the shell, it was dropping 44 of 232 chunks; keeping them costs
+     2.2M triangles against a 4.5M allowance. */
+  const dustFarCubes = (opts.dustFar ?? Infinity) / CUBE;
+  /* ⚠ NO HORIZON CULL. It used to drop the far hemisphere whenever the viewer
+     was outside the planet, on the stated reasoning that "half the shell is
+     behind nine thousand units of rock". That is true of a solid planet and
+     FALSE OF THIS ONE: Spikeworld's shell is a quarter full and the channels
+     carve another third of that back out, so it is a lattice you see straight
+     through. Geoff: "Those in the distance are invisible and transparent, so
+     looking through the planet you don't see anything on the other side."
+
+     Measured, from each place a player actually flies, as triangles against a
+     4,500,000 allowance:
+
+       far orbit   435,200 -> 475,200    (+9%)
+       close orbit 736,000 -> 830,400   (+13%)
+       surface     939,600 -> 1,538,000 (+64%)
+       inside, cavity, heart    unchanged (it only ever applied outside)
+
+     So the entire far side of the planet costs nine percent from orbit, and
+     the worst case anywhere is 1.5M against 4.5M. It also puts the coarsest
+     detail level to work for the first time: step 16 never appeared in any
+     measurement before this, because everything far enough away to use it was
+     exactly what the horizon test was throwing away. */
 
   const found: ChunkRef[] = [];
 
@@ -447,11 +527,6 @@ export function visibleChunks(
     if (!mightHoldRock(ox, oy, oz, step)) return;          /* nothing in it */
 
     const mx = (lo[0] + hi[0]) / 2, my = (lo[1] + hi[1]) / 2, mz = (lo[2] + hi[2]) / 2;
-    /* Round the back of the planet, with the box's own size allowed for so one
-       straddling the limb is kept. */
-    const ml = Math.hypot(mx, my, mz) || 1;
-    const cosBack = (mx * vd[0] + my * vd[1] + mz * vd[2]) / ml;
-    if (cosBack + Math.min(0.9, (cell * 0.87) / ml) < horizon) return;
 
     /* On screen, or near enough to it. */
     const d = Math.hypot(mx - viewer[0], my - viewer[1], mz - viewer[2]);
@@ -484,7 +559,11 @@ export function visibleChunks(
        level, it KEEPS that level until the ship has moved decisively past the
        distance, not merely across it. */
     const i = LOD_STEPS.indexOf(step as (typeof LOD_STEPS)[number]);
-    const splitAt = i > 0 ? rings[i - 1] : -1;
+    /* This box's OWN split distance, not the level's. See SPLIT_SPREAD. */
+    const nominal = i > 0 ? rings[i - 1] : -1;
+    const splitAt = nominal > 0
+      ? nominal * (1 + SPLIT_SPREAD * (boxHash(ox, oy, oz, step) - 0.5))
+      : nominal;
     let wantSplit = false;
     if (step > 1) {
       if (near < splitAt * SPLIT_IN) wantSplit = true;
