@@ -23,7 +23,7 @@ import {
   rollLaserDamage, MINI_DAMAGE, LASER_MAX, TORPEDO_DAMAGE,
   type CombatWorld,
   miniMuzzle,
-  STAKE_BONUS_MS, TIERS, TRACER_LIFE, STREAK_SECONDS, ENEMY_FIRE_RANGE,
+  STAKE_BONUS_MS, TIERS, TRACER_LIFE, streakTail, ENEMY_FIRE_RANGE,
   type CombatState,
   type Enemy, type ShipClass,
 } from "./rebelsCombat";
@@ -2273,7 +2273,43 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
     return backwards;
   }
   /** The server's fight drawn here: enemies, rounds, streaks, torpedoes, wreckage, beams, loot, gauges, the wave and the crew. */
+  /**
+   * Above this, an eye-velocity reading is a region change rather than speed.
+   *
+   * Positions on the wire are local to the region, so crossing from Earth to
+   * Spikeworld moves the eye about two hundred thousand units between two
+   * frames: around twelve MILLION units a second at sixty frames, against a
+   * few hundred for a ship at full boost in open space. Anywhere in between
+   * separates the two, so this sits an order of magnitude above the fastest
+   * real speed and four below the slowest jump.
+   */
+  const EYE_VEL_MAX = 5000;
+
+  /* ---- how fast the VIEWER is going ----
+     Derived from where the eye actually was last frame rather than from
+     fwd * speed, because the eye also moves with the planet it is orbiting
+     and with anything else the flight model does; what a streak has to be
+     measured against is the motion the player actually has. The room does
+     the same thing for each seat, from reported positions. */
+  const _lastEye = new THREE.Vector3();
+  let _haveLastEye = false;
+  const _eyeVel = new THREE.Vector3();
+
+  function trackEyeVelocity(dt: number, camera: THREE.PerspectiveCamera): void {
+    if (dt > 0 && _haveLastEye) {
+      _eyeVel.copy(camera.position).sub(_lastEye).divideScalar(dt);
+      /* A region change moves the eye tens of thousands of units between two
+         frames, because positions are region-local. That is not speed. */
+      if (_eyeVel.length() > EYE_VEL_MAX) _eyeVel.set(0, 0, 0);
+    } else {
+      _eyeVel.set(0, 0, 0);
+    }
+    _lastEye.copy(camera.position);
+    _haveLastEye = true;
+  }
+
   function frameRoom(dt: number, flight: Flight, camera: THREE.PerspectiveCamera, inRoom: boolean): void {
+    trackEyeVelocity(dt, camera);
     /* ---- WHOSE FIGHT IS IT ----
        In a room, the room's. It simulates the fighters, every round in the
        air and the coins for everybody at once, and the cockpit's job is to
@@ -2359,10 +2395,25 @@ export function createRebels(labelFor: (ip: string) => string): RebelsController
          wire rather than tracked, because the cockpit has no history of
          a round it did not fire and cannot recognise one from one tick
          to the next. */
+      /* ⚠ MEASURED AGAINST THE VIEWER, NOT THE WORLD. A round now carries
+         the velocity of the ship that fired it, which is what makes your own
+         fire look right: "it's always appearing to be the same velocity from
+         the ship's point of view". But that also put the ship's speed into
+         the round's WORLD velocity, and a streak drawn backwards along that
+         stretches as far as the ship flies in a fortieth of a second on top
+         of the round's own length. From a cockpit doing two hundred units a
+         second that reads as a long tail dragging behind every round:
+         "the tracer lines are flying behind them as if they are tails".
+
+         The eye is moving too, so what the player sees a round do is its
+         velocity MINUS the eye's. Measured that way your own rounds streak
+         the same length whatever your speed, an enemy round closing on you
+         streaks long, and one drifting alongside at your speed barely
+         streaks at all, which is the truth of it. */
       combat.tracers.length = 0;
       for (const b of combat.bullets) {
         combat.tracers.push({
-          from: b.pos.clone().addScaledVector(b.vel, -STREAK_SECONDS),
+          from: streakTail(b.pos, b.vel, _eyeVel),
           to: b.pos,
           life: TRACER_LIFE, hostile: b.hostile, mini: !!b.mini, live: true,
         });

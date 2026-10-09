@@ -566,6 +566,35 @@ export const TRACER_LIFE = 3;
 export const STREAK_SECONDS = 0.04;
 export const TRACER_MAX = 220;
 
+/**
+ * Where a round's streak starts, as the player sees it.
+ *
+ * ⚠ RELATIVE TO THE EYE, NOT TO THE WORLD, and that is the whole point of
+ * having this as a function rather than a line of arithmetic at the draw site.
+ * A round carries the velocity of the ship that fired it, so that your own
+ * fire looks right from the cockpit: "Bullet speed should be added to the ship
+ * speed in the same normalized proportions, so it's always appearing to be the
+ * same velocity from the ship's point of view." The cost is that the round's
+ * WORLD velocity now contains your speed as well, and a streak laid backwards
+ * along that is as long as the round's own length PLUS however far the ship
+ * flew in the same fortieth of a second: at full boost, several times too
+ * long, dragging behind every round. Geoff: "the tracer lines are flying
+ * behind them as if they are tails."
+ *
+ * Since the eye is moving too, what the player actually sees a round do is its
+ * velocity minus the eye's. Measured that way your own rounds streak the same
+ * length at any speed, a round closing on you streaks long, and one drifting
+ * alongside at your own speed barely streaks at all.
+ */
+export function streakTail(
+  pos: THREE.Vector3,
+  vel: THREE.Vector3,
+  eyeVel: THREE.Vector3,
+  out = new THREE.Vector3(),
+): THREE.Vector3 {
+  return out.copy(vel).sub(eyeVel).multiplyScalar(-STREAK_SECONDS).add(pos);
+}
+
 export interface Tracer {
   from: THREE.Vector3;
   to: THREE.Vector3;

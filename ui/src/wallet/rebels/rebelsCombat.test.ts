@@ -11,7 +11,8 @@ import {
   AIM_ERROR, AIM_SPREAD, aimErrorFor, scatterAim, PLAYER_HIT_R,
   fireTorpedo, detonateOldest, clearEvents, fireMini, miniMuzzle,
   startWave, waveSize, WAVE_SECONDS,
-  BULLET_SPEED, CONVERGE, ENEMY_R, TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
+  BULLET_SPEED, CONVERGE, ENEMY_R, STREAK_SECONDS, streakTail,
+  TORPEDO_BLAST, TORPEDO_FUSE, TORPEDO_SPEED,
   TRACER_LIFE, TRACER_MAX, COIN_VALUE, COIN_PER_KILL, COIN_TOP, COIN_MU,
   FIGHTER, LASER_MIN, LASER_MAX, rollLaserDamage, hurtEnemy, TIERS, rollTier,
   setDropRandomForTests, dropItem, clampReach, REACH_MIN, REACH_MAX,
@@ -1784,6 +1785,65 @@ function run(c: CombatState, frames: number, w = world()) {
      Math.abs(tSeen - tStill) < 0.01, `leaves at ${tSeen.toFixed(1)}, was ${tStill.toFixed(1)} relative`);
   ok("(context) and it could before: the torpedo is slower than the ship",
      tStill < 40, `torpedo ${tStill.toFixed(1)} against a ship at 40`);
+}
+
+/* ---- the streak a player actually sees ---- */
+{
+  const expected = BULLET_SPEED * STREAK_SECONDS;
+
+  /* Your own round, from a standing start and from full boost. The streak has
+     to be the SAME length both times: that is what "the same velocity from
+     the ship's point of view" means once the round carries your speed. */
+  const lengths: number[] = [];
+  for (const shipSpeed of [0, 40, 200, 600]) {
+    const c = createCombat();
+    const fwd = new THREE.Vector3(0, 0, -1);
+    const shipVel = fwd.clone().multiplyScalar(shipSpeed);
+    fireGuns(c, new THREE.Vector3(), fwd, new THREE.Vector3(0, 1, 0), 70, 1.6, "me", undefined, shipVel);
+    const b = c.bullets[0];
+    lengths.push(streakTail(b.pos, b.vel, shipVel).distanceTo(b.pos));
+  }
+  ok("your streak is the same length at any ship speed",
+     lengths.every((l) => Math.abs(l - expected) < 1e-6),
+     lengths.map((l) => l.toFixed(3)).join(", "));
+
+  /* ⚠ AND IT IS NOT, MEASURED AGAINST THE WORLD. This is the bug being
+     fixed, kept as a test so that going back to world velocity fails here
+     rather than in the game. */
+  {
+    const c = createCombat();
+    const fwd = new THREE.Vector3(0, 0, -1);
+    const shipVel = fwd.clone().multiplyScalar(600);
+    fireGuns(c, new THREE.Vector3(), fwd, new THREE.Vector3(0, 1, 0), 70, 1.6, "me", undefined, shipVel);
+    const b = c.bullets[0];
+    const world = streakTail(b.pos, b.vel, new THREE.Vector3());
+    ok("measured against the world it would drag far behind",
+       world.distanceTo(b.pos) > expected * 3,
+       `${world.distanceTo(b.pos).toFixed(2)} against a true ${expected.toFixed(2)}`);
+  }
+
+  /* A round sitting STILL in the world, while you fly at it down -z. It has
+     no velocity of its own, so against the world it would have no streak at
+     all; in your frame it streams past you and must streak accordingly, by
+     exactly as far as you travel in the window. This is the case that cannot
+     be got right from world velocity at any length. */
+  {
+    const pos = new THREE.Vector3(0, 0, -10);
+    const tail = streakTail(pos, new THREE.Vector3(), new THREE.Vector3(0, 0, -200));
+    ok("a round you fly past streaks even though it is not moving",
+       Math.abs(tail.distanceTo(pos) - 200 * STREAK_SECONDS) < 1e-6,
+       `${tail.distanceTo(pos).toFixed(2)}`);
+    ok("and it streaks away on the far side, the way it appears to travel",
+       tail.z < pos.z, `tail at ${tail.z.toFixed(2)} vs round at ${pos.z}`);
+  }
+
+  /* And one keeping station with you leaves no streak at all. */
+  {
+    const v = new THREE.Vector3(3, -4, 12);
+    const tail = streakTail(new THREE.Vector3(5, 5, 5), v, v.clone());
+    ok("a round matching your speed barely streaks",
+       tail.distanceTo(new THREE.Vector3(5, 5, 5)) < 1e-9);
+  }
 }
 
 console.log(out.join("\n"));
