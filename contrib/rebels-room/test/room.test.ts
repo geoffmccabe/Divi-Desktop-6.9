@@ -14,7 +14,9 @@ import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES, MAX_GUARDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   setDropRandomForTests, setDragonRandomForTests, spawnDragon, spawnFleet,
+  BULLET_SPEED,
 } from "../../../ui/src/wallet/rebels/rebelsCombat";
+import { WING_NOSE } from "../../../ui/src/wallet/rebels/rebelsWings";
 setDragonRandomForTests(() => 0.99);
 
 /* Wrecks roll for items. Pinned to "nothing" so a count of gems or storage
@@ -753,6 +755,12 @@ const home: [number, number, number] = [0, 0, R + 8];
   room.combat.bullets.length = 0;
   room.now += 1;
   const p0 = seat.body.pos;
+  /* ⚠ THE SHIP IS MOVING, AND ACROSS ITS LINE OF FIRE, which is what makes
+     the velocity assertions below mean anything. With the seat stationary
+     every round's speed equals BULLET_SPEED whether the ship's velocity was
+     added or not, and the test passed with the bug in place: I checked by
+     putting the bug back. A test of an addition needs a non-zero addend. */
+  seat.vel.set(30, 0, -40);
   ws.deliver(JSON.stringify({ t: "fire", k: "main", p: [p0.x, p0.y, p0.z], f: [0, 1, 0], u: [0, 0, 1] }));
   const fired = room.combat.bullets;
   ok("the wingmen fire with their owner", fired.length === 5, `${fired.length} rounds`);
@@ -760,6 +768,36 @@ const home: [number, number, number] = [0, 0, R + 8];
   const shares = fired.map((b: any) => b.scale ?? 1).sort();
   ok("and carries its own tier's share", shares.join(",") === "0.8,0.8,1,1,1.4", shares.join(","));
   ok("their magazines empty, not the ship's", seat.wings.every((w: any) => w.ammo === w.ammoMax - 1));
+
+  /* ---- WHERE A DRONE'S ROUND COMES FROM AND HOW FAST ----
+     Geoff: "also in parallel, and from the nose of the drone (a single shot
+     from each drone)". Parallel and single were already true; these two were
+     not. */
+  {
+    const aim = new THREE.Vector3(0, 1, 0);
+    /* Every round, the player's and the drones', down the same line. */
+    ok("every round in the volley flies parallel",
+       fired.every((b: any) => {
+         const d = b.vel.clone().sub(seat.vel).normalize();
+         return d.angleTo(aim) < 1e-6;
+       }));
+    /* ⚠ AND EVERY ONE CARRIES THE SHIP'S VELOCITY. The drones' rounds did
+       not: their pushBullet was a fourth firing site that the velocity
+       inheritance never reached, so at boost a drone's fire fell behind the
+       player's out of the formation it flies in. */
+    ok("and every round carries the ship's own velocity",
+       fired.every((b: any) => {
+         const own = b.vel.clone().sub(seat.vel);
+         return Math.abs(own.length() - BULLET_SPEED) < 1e-6;
+       }), fired.map((b: any) => b.vel.clone().sub(seat.vel).length().toFixed(1)).join(", "));
+    /* The drones' rounds start AHEAD of the drone, not inside it. */
+    const droneRounds = fired.filter((b: any) => (b.scale ?? 1) !== 1 || b.pos.distanceTo(seat.body.pos) > 5);
+    ok("a drone's round starts ahead of the drone, not inside it",
+       seat.wings.every((w: any) => droneRounds.some((b: any) =>
+         Math.abs(b.pos.distanceTo(w.pos) - WING_NOSE) < 1e-6
+         && b.pos.clone().sub(w.pos).normalize().angleTo(aim) < 1e-6)),
+       `${droneRounds.length} drone rounds against ${seat.wings.length} drones`);
+  }
 
   /* Hit: the hull comes off the wingman, not the ship. */
   const hull = seat.wings[0].hull;

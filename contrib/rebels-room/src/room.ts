@@ -64,7 +64,7 @@ import {
 import { R, OPEN_SPACE, cruiseScale } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { VIEW, inRange } from "../../../ui/src/wallet/rebels/rebelsView";
 import {
-  WING_MAX, wingPosition, wingSpin, wingShare, wingRounds, wingTiers,
+  WING_MAX, WING_NOSE, wingPosition, wingSpin, wingShare, wingRounds, wingTiers,
 } from "../../../ui/src/wallet/rebels/rebelsWings";
 import { distanceToTower, DOCK_RANGE, DOCK_SECONDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import { weaponByKey, BEAM_SECONDS, BEAM_AMMO } from "../../../ui/src/wallet/rebels/weaponCatalog";
@@ -1675,8 +1675,19 @@ export class RebelsRoom {
            beside yours instead of through it. */
         const aim = _wingAim.copy(f).normalize();
         pushBullet(this.combat, {
-          pos: wing.pos.clone(),
-          vel: aim.clone().multiplyScalar(BULLET_SPEED),
+          /* ⚠ FROM THE DRONE'S NOSE, not from the centre the room keeps for
+             it. Geoff: "from the nose of the drone (a single shot from each
+             drone)". Born at the centre, a round's first visible moment is
+             already past the model it supposedly came out of. */
+          pos: wing.pos.clone().addScaledVector(aim, WING_NOSE),
+          /* ⚠ AND IT CARRIES THE SHIP'S VELOCITY, WHICH IT DID NOT.
+             fireGuns, fireMini and fireTorpedo were all given the ship's
+             velocity so that a round looks right from a moving cockpit, and
+             this hand-rolled pushBullet was missed: at boost a drone's rounds
+             fell behind the player's own, out of the formation they are
+             supposed to be flying in. The three functions WERE the bound I
+             thought I had applied; the denominator was four firing sites. */
+          vel: aim.clone().multiplyScalar(BULLET_SPEED).add(seat.vel),
           life: BULLET_LIFE,
           hostile: false,
           owner: seat.id,
