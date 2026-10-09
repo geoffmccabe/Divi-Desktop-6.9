@@ -151,9 +151,50 @@ and reveal for free.
 
 ---
 
-## 7. Open questions
+## 7. Decisions (answered by Geoff, 2026-Oct-08)
 
-1. The benefit scale, given the set runs to tier 30.
-2. Where ownership is read from, and whether the room verifies it.
-3. Who pays the mint fee, and when minting happens.
-4. Whether a dropped pack has its tier decided at drop or at reveal.
+1. **Benefit scale: the full 1% per tier, up to 30%.** A tier 30 holder deals
+   30% more damage, takes 30% less, and earns 30% more drops. No cap.
+2. **Ownership: the room verifies it on chain.** Nothing the client says about
+   its own tier is believed.
+3. **Minting: batched, treasury pays.** A pickup records a claim at once and
+   shows as PACKAGED; mints go out on a schedule.
+4. **Tier: rolled at reveal, blind.** The dropped cube is worth the same to
+   everyone until it is opened. This is the model already in `reveal.rs`.
+
+### 7.1 What decision 1 does to the payout caps
+
+Measured against the live games rather than estimated. One clear, with a
+tier 30 NFD:
+
+| Game | Now | With +30% | |
+|---|---|---|---|
+| Wave Defence (built-in) | 5,850 | 7,605 | over the 2,000 daily cap |
+| The Hollow Crown | 1,814 | 2,358 | over the 2,000 daily cap |
+| Warden's Gate | 1,443 | 1,876 | |
+| Descent | 1,259 | 1,637 | |
+
+The 10,000 per-game ceiling still holds for everything. The 2,000 DAILY cap
+does not: The Hollow Crown crosses it on a single clear once the bonus
+applies, and the built-in was already over it.
+
+This is the same shape as every bound fault on this project: the ceiling was
+sized against the game, and the NFD bonus is a multiplier OUTSIDE the thing
+the ceiling measures. So the bonus has to be inside `gamePayout`, not applied
+after it, or the ceiling will keep reporting a number nobody is actually
+paid. That is a Phase 2 requirement, not a later clean-up.
+
+### 7.2 What decision 2 blocks
+
+The room runs on Cloudflare and cannot reach the local overlay API at
+127.0.0.1:8710. Verifying ownership needs a PUBLIC read endpoint that answers
+"which NFDs does this address hold". That endpoint does not exist yet and is
+the critical path for Phase 2. Phases 0 and 1 do not depend on it.
+
+### 7.3 What decision 4 settles
+
+The Kinetink set's fixed per-item tiers become the ARTWORK table: tier 30 art
+is what a tier 30 roll shows. The roll itself is `reveal.rs`. The two models
+reconcile with no change to either, which is why this was worth asking before
+building rather than after.
+
