@@ -153,6 +153,21 @@ export interface RebelsMoney {
    * Optional, so no door has to grow a method it cannot answer.
    */
   walletDivi?(): Promise<number | null>;
+  /**
+   * The Divi collectibles (NFDs) this wallet holds, exactly as the chain's own
+   * index answers it, or absent where this door has no chain to ask.
+   *
+   * ⚠ RAW ON PURPOSE. The door's whole job is reaching the wallet; deciding
+   * what a holding means is the game's, and ui/src/nfd/nfdOwned.ts does it
+   * (readOwned). If a door started interpreting the answer there would be one
+   * interpretation per door, which is how two builds come to disagree about
+   * what somebody owns.
+   *
+   * The web door cannot answer: a browser tab has no node and no wallet, so
+   * the NFDs tab says so rather than showing an empty set as though the player
+   * owned nothing.
+   */
+  ownedNfds?(): Promise<unknown>;
 }
 
 /**

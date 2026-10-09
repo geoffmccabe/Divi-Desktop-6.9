@@ -69,6 +69,18 @@ export interface NfdCollection {
   items: NfdItem[];
   /** Whether this collection counts in the game. An admin turns it on. */
   enabled: boolean;
+  /**
+   * The on-chain collection id (64 hex), once the set has been launched on
+   * Divi, else null.
+   *
+   * ⚠ THIS IS THE ONLY THING TYING A HOLDING TO A SET. The chain says an
+   * address holds a collectible of collection `<hash>`; this file says that
+   * hash is this set. Without it, ownership cannot be matched and nothing
+   * shows, which is the correct way to be wrong: see ownedByCollection in
+   * nfdOwned.ts. A launch file cannot carry it, because the file is written
+   * before the launch; it is recorded afterwards.
+   */
+  chainId: string | null;
 }
 
 /* ================= READING A LAUNCH FILE ================= */
@@ -164,6 +176,17 @@ function readUltraRare(raw: unknown, errors: string[]): NfdUltraRareRoll | null 
 /** The id an admin types: lowercase letters, numbers and hyphens. */
 const ID_OK = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 
+/**
+ * An on-chain collection id, or null.
+ *
+ * Checked rather than taken, and not pushed onto `errors`: a row whose chain
+ * id is malformed is still a perfectly good catalog of pictures, and refusing
+ * to read the whole set because of it would hide the art as well as the
+ * ownership. A bad one reads as "not launched yet", which is what it means.
+ */
+const chainId = (v: unknown): string | null =>
+  typeof v === "string" && /^[0-9a-f]{64}$/i.test(v) ? v.toLowerCase() : null;
+
 /** Every reason a file cannot be used, or the collection it describes. */
 export function readLaunchFile(
   raw: unknown, id: string,
@@ -217,6 +240,9 @@ export function readLaunchFile(
          show." A collection that counted the moment it was uploaded would be
          the opposite of that. */
       enabled: false,
+      /* A launch file is exported BEFORE the set exists on chain, so it can
+         never carry the chain id. It is recorded against the row afterwards. */
+      chainId: null,
     },
   };
 }
@@ -273,6 +299,7 @@ export function validateCollection(
       banner,
       items,
       enabled: c.enabled === true,
+      chainId: chainId(c.chainId),
     },
   };
 }

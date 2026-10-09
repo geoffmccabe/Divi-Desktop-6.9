@@ -1,0 +1,220 @@
+/* ---- the inventory's NFDs tab ----
+   The cockpit's type and colour, with one difference: an NFD card is ART and
+   the art has to win. So a card is the picture, at the set's own shape, and
+   the furniture (tier, ultra rare, sealed) sits on top of it rather than
+   beside it.
+
+   ⚠ EVERY BREAKPOINT HERE IS A CONTAINER QUERY, NOT A MEDIA QUERY, and that
+   is not a style choice. A media query asks the WINDOW. This panel lives
+   inside the inventory, which lives inside the game, which inside the desktop
+   app may be a quarter of the screen; the same mistake in the admin panels
+   left a two column layout on at 456px and squeezed one column to 96px
+   (see ui/src/admin/panels/rebels-nfd.css). Asking the container is right in
+   all of those places at once. */
+.nfd-tab {
+  display: flex; flex-direction: column; gap: 16px;
+  container-type: inline-size;
+}
+
+/* ---- nothing to show, and why ---- */
+.nfd-empty {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+  padding: 16px 18px;
+  background: hsl(var(--rebels-hud) / 0.04);
+  border: 1px solid hsl(var(--rebels-hud) / 0.14); border-radius: 6px;
+}
+.nfd-empty p { margin: 0; font-size: 11.5px; line-height: 1.5; opacity: 0.75; max-width: 62ch; }
+.nfd-empty button {
+  font: inherit; font-size: 10px; letter-spacing: 0.14em; padding: 5px 12px; cursor: pointer;
+  color: hsl(var(--rebels-hud)); background: hsl(var(--rebels-hud) / 0.08);
+  border: 1px solid hsl(var(--rebels-hud) / 0.45); border-radius: 4px;
+}
+.nfd-empty button:hover { background: hsl(var(--rebels-hud) / 0.2); }
+
+/* ---- the one card that is paying out ----
+   Single column by default so it is right in the narrowest place it can
+   appear; the art moves beside the numbers once there is room for both. */
+.nfd-active {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px;
+  padding: 16px;
+  background:
+    radial-gradient(120% 140% at 0% 0%, hsl(var(--nfd) / 0.16), transparent 60%),
+    hsl(var(--rebels-hud) / 0.05);
+  border: 1px solid hsl(var(--nfd) / 0.5); border-radius: 8px;
+  box-shadow: 0 0 34px hsl(var(--nfd) / 0.16), inset 0 0 40px hsl(var(--nfd) / 0.06);
+}
+/* Once there is room: the art down the left across both rows, what it is on
+   the top right, what it pays underneath, stretched across the rest. Three
+   explicit placements rather than auto-flow, because auto-flow would drop the
+   numbers UNDER the art and leave the widest part of the panel empty. */
+@container (min-width: 560px) {
+  .nfd-active {
+    grid-template-columns: minmax(150px, 215px) minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .nfd-active-art { grid-column: 1; }
+  .nfd-active-main { grid-column: 2; }
+}
+
+.nfd-active-art {
+  position: relative; width: 100%; max-width: 230px;
+  aspect-ratio: var(--nfd-aspect, 1 / 1);
+  border-radius: 6px; overflow: hidden;
+  background: hsl(var(--rebels-ocean) / 0.8);
+  border: 1px solid hsl(var(--nfd) / 0.55);
+  box-shadow: 0 0 22px hsl(var(--nfd) / 0.3);
+}
+.nfd-active-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.nfd-active-tag {
+  position: absolute; left: 0; top: 0; padding: 4px 9px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.22em;
+  color: hsl(var(--rebels-ocean)); background: hsl(var(--nfd));
+  border-bottom-right-radius: 5px;
+}
+.nfd-ur-tag {
+  position: absolute; right: 0; bottom: 0; padding: 4px 8px;
+  font-size: 8.5px; font-weight: 700; letter-spacing: 0.18em;
+  color: hsl(var(--rebels-ocean)); background: #fff;
+  border-top-left-radius: 5px;
+}
+.nfd-noart {
+  display: grid; place-items: center; width: 100%; height: 100%;
+  font-size: 9.5px; letter-spacing: 0.18em; opacity: 0.4;
+}
+
+/* The right-hand side as one column, spread top to bottom so it is as tall as
+   the card beside it: what it is at the top, the ladder in the middle, what it
+   pays at the foot. A 5:7 card is tall and anything else leaves a hole. */
+.nfd-active-main {
+  display: flex; flex-direction: column; justify-content: space-between; gap: 14px; min-width: 0;
+}
+.nfd-active-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.nfd-tierline {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.2em; color: hsl(var(--nfd));
+}
+.nfd-tierline i { font-style: normal; font-weight: 400; letter-spacing: 0.12em; opacity: 0.5; }
+.nfd-active-text h5 { margin: 0; font-size: 15px; letter-spacing: 0.05em; }
+.nfd-active-text > em { font-style: normal; font-size: 10.5px; letter-spacing: 0.1em; opacity: 0.55; }
+.nfd-active-desc { margin: 4px 0 0; font-size: 10.5px; line-height: 1.5; opacity: 0.6; max-width: 70ch; }
+
+/* ---- the three numbers ----
+   auto-fill rather than three fixed columns: narrow, they stack; wide, they
+   sit in a row and the panel has no dead right-hand side. */
+/* auto-FIT, not auto-fill: with three readouts and a 1400px panel, auto-fill
+   leaves four empty tracks and the numbers huddle on the left. auto-fit
+   collapses the empty tracks and the three stretch across the whole width,
+   which is both better looking and easier to read at a glance. */
+.nfd-benefits {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 22px; margin: 0; align-content: start;
+}
+.nfd-pays { display: flex; flex-direction: column; gap: 6px; min-width: 0; margin-top: 10px; }
+.nfd-benefit { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.nfd-benefit-label { font-size: 9.5px; letter-spacing: 0.16em; opacity: 0.6; }
+.nfd-benefit-value {
+  font-size: 19px; font-weight: 700; letter-spacing: 0.04em; line-height: 1.05;
+  color: hsl(var(--nfd));
+}
+.nfd-benefit-bar {
+  display: block; height: 3px; border-radius: 2px; margin-top: 2px;
+  background: hsl(var(--rebels-hud) / 0.14); overflow: hidden;
+}
+.nfd-benefit-bar > i {
+  display: block; height: 100%; background: hsl(var(--nfd));
+  box-shadow: 0 0 8px hsl(var(--nfd) / 0.8);
+}
+.nfd-benefit-note {
+  margin: 0; font-style: normal; font-size: 9.5px; line-height: 1.45;
+  letter-spacing: 0.06em; opacity: 0.45;
+}
+
+/* ---- the ladder: one rung per tier in the set ----
+   The rungs grow taller towards the top of the set, so the shape alone says
+   which end is which before any colour is read. */
+.nfd-ladder {
+  display: flex; align-items: flex-end; gap: 2px; height: 46px; width: 100%;
+}
+.nfd-rung {
+  flex: 1 1 0; min-width: 2px; border-radius: 1px;
+  background: hsl(var(--rung) / 0.16);
+}
+.nfd-rung.held { background: hsl(var(--rung) / 0.5); }
+.nfd-rung.on {
+  background: hsl(var(--rung)); box-shadow: 0 0 10px hsl(var(--rung) / 0.9);
+}
+
+/* ---- the shelves ---- */
+.nfd-shelf h4, .nfd-sets h4 {
+  margin: 0 0 4px; font-size: 10px; letter-spacing: 0.2em; opacity: 0.8;
+  display: flex; gap: 8px; align-items: baseline;
+}
+.nfd-shelf h4 span, .nfd-sets h4 span { opacity: 0.55; font-weight: 400; }
+.nfd-shelf-why { margin: 0 0 8px; font-size: 10px; line-height: 1.45; opacity: 0.45; max-width: 72ch; }
+
+.nfd-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px;
+}
+@container (min-width: 560px) {
+  .nfd-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+}
+.nfd-card {
+  position: relative; aspect-ratio: var(--nfd-aspect, 1 / 1);
+  border-radius: 5px; overflow: hidden;
+  background: hsl(var(--rebels-ocean) / 0.8);
+  border: 1px solid hsl(var(--nfd) / 0.35);
+}
+.nfd-card img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+  /* Quiet, because none of these is paying out. It brightens under the
+     pointer so the player can still look at the art properly. */
+  filter: saturate(0.75) brightness(0.72);
+  transition: filter 120ms linear;
+}
+.nfd-card:hover img { filter: none; }
+.nfd-card.sealed img { filter: saturate(0.35) brightness(0.55); }
+.nfd-card-tier {
+  position: absolute; left: 0; bottom: 0; padding: 2px 6px;
+  font-size: 9px; font-weight: 700; letter-spacing: 0.12em;
+  color: hsl(var(--rebels-ocean)); background: hsl(var(--nfd) / 0.9);
+  border-top-right-radius: 4px;
+}
+.nfd-card.sealed .nfd-card-tier {
+  color: hsl(var(--rebels-hud)); background: hsl(var(--rebels-hud) / 0.22);
+}
+.nfd-card-ur {
+  position: absolute; right: 0; top: 0; padding: 2px 5px;
+  font-size: 8px; font-weight: 700; letter-spacing: 0.1em;
+  color: hsl(var(--rebels-ocean)); background: #fff;
+  border-bottom-left-radius: 4px;
+}
+
+/* ---- which sets count ---- */
+.nfd-sets-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px; }
+.nfd-set-row {
+  display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 9px; align-items: center;
+  padding: 7px 9px;
+  background: hsl(var(--rebels-hud) / 0.04);
+  border: 1px solid hsl(var(--rebels-hud) / 0.12); border-radius: 5px;
+}
+.nfd-set-row.on { border-color: hsl(var(--rebels-hud) / 0.4); background: hsl(var(--rebels-hud) / 0.1); }
+.nfd-set-row img { width: 34px; height: 34px; object-fit: cover; border-radius: 4px; display: block; }
+.nfd-set-row b { display: block; font-size: 11.5px; letter-spacing: 0.04em; }
+.nfd-set-row em { font-style: normal; font-size: 10px; opacity: 0.6; }
+
+/* ---- the inventory's tab strip ----
+   Added when the NFDs tab arrived. Everything that was in the inventory
+   before is behind GEAR, unchanged. */
+.orbit-inv-tabs { display: flex; gap: 6px; flex: 0 0 auto; margin-top: 10px; }
+.orbit-inv-tabs button {
+  font: inherit; font-size: 10px; letter-spacing: 0.16em; padding: 6px 14px; cursor: pointer;
+  color: hsl(var(--rebels-hud) / 0.6); background: transparent;
+  border: 1px solid hsl(var(--rebels-hud) / 0.2);
+  border-radius: 4px 4px 0 0; border-bottom-color: transparent;
+}
+.orbit-inv-tabs button:hover { color: hsl(var(--rebels-hud)); background: hsl(var(--rebels-hud) / 0.08); }
+.orbit-inv-tabs button.on {
+  color: hsl(var(--rebels-ocean)); background: hsl(var(--rebels-hud));
+  border-color: hsl(var(--rebels-hud));
+}
+.orbit-inv-tabs button span { opacity: 0.65; font-weight: 400; margin-left: 7px; }
+.orbit-inv-tabs button.on span { opacity: 0.75; }

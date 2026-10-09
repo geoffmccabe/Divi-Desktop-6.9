@@ -8,6 +8,11 @@
 // open it (Geoff, 2026-Sep-11). A marketplace for unopened spheres comes
 // later; this is why they are kept sealed rather than opened on pickup.
 //
+// Geoff, 2026-Oct-08: "NFDs appear in Inventory on an NFDs tab." So the panel
+// now has a tab strip. GEAR is everything that was here before, unchanged and
+// still the tab it opens on; NFDs is the Divi collectibles this wallet holds
+// (NfdsTab.tsx). The strip is the only change to what was already working.
+//
 // Right-click an opened UPGRADE (a strafe, a hull boost, a rear gun) and it asks
 // "Apply to Ship? (y/n)": yes fits it to the ship being flown for good, using the
 // item up (Geoff, 2026-Sep-13). Until then it does nothing; see shipFleet.ts.
@@ -24,9 +29,14 @@ import { platform } from "./platform/current";
 import { shipCatalog } from "./shipCatalog";
 import { loadShip } from "./shipChoice";
 import { showSphere } from "./sphereCards";
+import { NfdsTab } from "./NfdsTab";
+import "./nfds.css";
 
 export function InventoryPanel({ onClose }: { onClose: () => void }) {
   const [, bump] = useState(0);
+  /* GEAR first, always. Opening on anything else would move the ships and the
+     items a player already knows where to find. */
+  const [tab, setTab] = useState<"gear" | "nfds">("gear");
   const [fleet, setFleet] = useState<FleetShip[] | null>(null);
   const [note, setNote] = useState("");
   /** Which card the player has clicked. Nothing but a highlight, so the thing
@@ -109,10 +119,26 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
       <div className="orbit-inv">
         <div className="orbit-inv-head">
           <h3>INVENTORY</h3>
-          <span className="orbit-inv-note">{note || "Right-click a sealed sphere to open it."}</span>
+          <span className="orbit-inv-note">
+            {note || (tab === "nfds"
+              ? "Your best tier pays out. Nothing else does."
+              : "Right-click a sealed sphere to open it.")}
+          </span>
           <button type="button" onClick={onClose}>CLOSE</button>
         </div>
+        <div className="orbit-inv-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tab === "gear"}
+            className={tab === "gear" ? "on" : ""} onClick={() => setTab("gear")}>
+            GEAR
+          </button>
+          <button type="button" role="tab" aria-selected={tab === "nfds"}
+            className={tab === "nfds" ? "on" : ""} onClick={() => setTab("nfds")}>
+            NFDs
+          </button>
+        </div>
         <div className="orbit-inv-body">
+          {tab === "nfds" && <NfdsTab />}
+          {tab === "gear" && <>
           <section>
             <h4>SHIPS</h4>
             <div className="orbit-inv-rows">
@@ -202,6 +228,7 @@ export function InventoryPanel({ onClose }: { onClose: () => void }) {
           <p className="orbit-inv-foot">
             {ITEMS.length} things sold in the store; everything else is found. Strafe, Hull and Rear Gun items work once fitted to a ship (right-click one), from your next launch; four of a kind can be forged into one of the next tier.
           </p>
+          </>}
         </div>
 
         {fitting && (
