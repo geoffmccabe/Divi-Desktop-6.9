@@ -2,6 +2,7 @@ import { useEffect, useState, type ComponentType } from "react";
 import { syncActiveNode } from "./wallet/activeNode";
 import { NAV } from "./nav";
 import { resumeStaking } from "./wallet/api";
+import { nodeStatus } from "./bridge";
 import { stakingDesired } from "./wallet/stakeWin";
 import { togglePrimerPreview } from "./wallet/primerStore";
 import { Icon } from "./Icon";
@@ -121,6 +122,18 @@ export function Shell() {
     return () => window.removeEventListener("dd69:nodeswitch", onSwitch);
   }, []);
   useEffect(() => { syncActiveNode(); }, []);
+
+  /* The repair question (damaged chain: snapshot or rebuild) lives on the
+     Network map. From any other screen it was never seen (Geoff,
+     2026-Oct-09), so when the node needs an answer, go there. */
+  useEffect(() => {
+    let alive = true;
+    const ask = () => nodeStatus().then((s) => {
+      if (alive && s.repair && (s.repair.damaged || s.repair.rebuilding)) setView((v) => (v === "network" ? v : "network"));
+    }).catch(() => {});
+    const id = setInterval(ask, 15000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
   // The Contacts panel's Send button jumps to the Send view (SendPanel reads the
   // stashed recipient on its own dd69:sendto listener).

@@ -192,6 +192,12 @@ pub fn run() {
         // the machine put it to sleep — nothing brought it back and the wallet
         // simply said NODE NOT RUNNING until the owner restarted everything.
         let Some(pid) = crate::process::daemon_pid(&cfg.datadir) else {
+            /* Stopped on purpose: the chain is damaged and the wallet is
+               waiting for the user to choose snapshot or rebuild. Restarting
+               it here would either crash again or bypass the question. */
+            if crate::process::damaged_marker(&cfg.datadir).exists() {
+                continue;
+            }
             absent += 1;
             // Two checks of grace, so we never race the start-up sequence that
             // is probably already starting one.

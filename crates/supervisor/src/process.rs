@@ -737,6 +737,19 @@ pub fn start_with_recovery(
                        the node stays stopped, the status screen says the
                        data is damaged, and the user picks. */
                     if i == 0 && datadir == crate::config::dd69_datadir().as_path() {
+                        /* One more plain start first. Right after an unclean
+                           shutdown the first load often fails ("Failed to find
+                           best block in block index") and the second succeeds:
+                           Geoff's node, 2026-Oct-09, was declared damaged and
+                           then started fine when the watchdog tried again a
+                           minute later. Asking the user for a 5 GB repair
+                           that a retry would have avoided is wrong. */
+                        crate::setuplog::log("repair: the first load failed; trying one plain start again before calling the data damaged");
+                        std::thread::sleep(Duration::from_secs(5));
+                        if let Spawn::Running(pid) = spawn_once(divid, datadir, rpc, *timeout, &[]) {
+                            let _ = std::fs::remove_file(damaged_marker(datadir));
+                            return Ok(StartReport { pid, repaired_with: None });
+                        }
                         let _ = std::fs::write(damaged_marker(datadir), &msg);
                         crate::setuplog::log("repair: the chain data is damaged; waiting for the user to choose snapshot or rebuild");
                         return Err(format!("The blockchain data is damaged ({msg}). Choose a repair in the wallet: the chain snapshot (about an hour) or a rebuild from the blocks on disk (hours to days)."));
