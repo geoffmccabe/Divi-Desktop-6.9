@@ -45,6 +45,11 @@ export function RebelsNfdPanel() {
      and whatever reading it had to say. A refused file is held HERE and never
      reaches `saved`, so a half-read collection cannot be looked at as though
      it were real. */
+  /* The on-chain id, held separately while it is being typed. It is the one
+     field of a collection an admin writes by hand rather than importing, and
+     it only exists AFTER the set has been launched on Divi, so it can never
+     come from a launch file. */
+  const [chainEdit, setChainEdit] = useState<string | null>(null);
   const [newId, setNewId] = useState("");
   const [paste, setPaste] = useState("");
   const [readErrors, setReadErrors] = useState<string[]>([]);
@@ -61,8 +66,19 @@ export function RebelsNfdPanel() {
   };
   useEffect(() => { void reload(); }, []);
 
-  const chosen = pending ?? saved.find((c) => c.id === pick) ?? null;
+  const base = pending ?? saved.find((c) => c.id === pick) ?? null;
+  /* What SAVE would write: the chosen collection, with the chain id as typed
+     if it has been touched. Derived rather than copied into state, so picking
+     a different collection cannot leave a stale id behind. */
+  const chosen = base && chainEdit !== null
+    ? { ...base, chainId: chainEdit.trim() ? chainEdit.trim().toLowerCase() : null }
+    : base;
   const isPending = pending !== null;
+  /* 64 hex characters, or empty for "not launched yet". Anything else is
+     refused before SAVE rather than silently stored as null, because a typo
+     that reads as "not launched" looks identical to not having typed it. */
+  const chainShown = chainEdit ?? base?.chainId ?? "";
+  const chainBad = chainShown.trim().length > 0 && !/^[0-9a-f]{64}$/i.test(chainShown.trim());
   const normals = useMemo(() => (chosen ? normalsOf(chosen) : []), [chosen]);
   const ultras = useMemo(() => (chosen ? ultraRaresOf(chosen) : []), [chosen]);
   const top = chosen ? topTierOf(chosen) : 0;
@@ -107,14 +123,20 @@ export function RebelsNfdPanel() {
 
   const save = async () => {
     if (!chosen) return;
+    if (chainBad) { setStatus("saving failed: the on-chain id must be 64 hex characters, or empty"); return; }
     const ok = await run("saving", () => saveCollection(nfdStore, secret.trim(), chosen));
     if (!ok) return;
     setPending(null);
     setPaste("");
     setNewId("");
+    setChainEdit(null);
     await reload();
     setPick(chosen.id);
   };
+
+  /* Changing which collection is on screen abandons anything typed into the
+     chain id box. Carrying it across would attach one set's id to another. */
+  const choose = (id: string) => { setChainEdit(null); setPick(id); };
 
   const flip = async (on: boolean) => {
     if (!chosen || isPending) return;
@@ -161,7 +183,7 @@ export function RebelsNfdPanel() {
               : null}
             {saved.map((c) => (
               <button type="button" key={c.id} className={`rn-item${c.id === pick && !isPending ? " on" : ""}`}
-                onClick={() => { setPending(null); setPick(c.id); }}>
+                onClick={() => { setPending(null); choose(c.id); }}>
                 <span className="rn-item-name">{c.name}</span>
                 <span className="rn-tag">{c.items.length}</span>
                 <span className={`rn-tag${c.enabled ? " rn-on" : " rn-off"}`}>{c.enabled ? "counts" : "off"}</span>
@@ -221,7 +243,12 @@ export function RebelsNfdPanel() {
               </header>
 
               <div className="rn-acts">
-                <button type="button" className="rn-btn rn-primary" disabled={!canWrite || busy}
+                {/* A bad chain id stops SAVE at the button rather than only in
+                    the handler. The handler still refuses it, because a
+                    disabled button is a hint and not a guarantee, but a button
+                    that looks live and then says no is the worse half of the
+                    two. */}
+                <button type="button" className="rn-btn rn-primary" disabled={!canWrite || busy || chainBad}
                   onClick={() => void save()}>
                   {isPending ? "SAVE THIS COLLECTION" : "SAVE CHANGES"}
                 </button>
@@ -241,6 +268,28 @@ export function RebelsNfdPanel() {
                   {isPending
                     ? "Save it first. A saved collection always arrives switched off."
                     : "Forgetting a collection does not touch anybody's NFDs. They live on the Divi chain; the game just stops recognising the set."}
+                </span>
+              </div>
+
+              {/* ---- THE ON-CHAIN ID ----
+                  The one thing tying a wallet's holdings to this set. Until it
+                  is filled in, a player who owns the whole collection shows as
+                  owning nothing, which is correct rather than broken: the game
+                  has no way to tell their pieces from any other collection's.
+                  It cannot come from the launch file, because the file is
+                  exported before the set exists on chain. */}
+              <div className="rn-chain">
+                <label htmlFor="rn-chain-id">On-chain collection id</label>
+                <input id="rn-chain-id" className={"rn-input" + (chainBad ? " rn-bad" : "")}
+                  value={chainShown} spellCheck={false} autoComplete="off"
+                  placeholder="64 hex characters, from the launch transaction"
+                  onChange={(e) => setChainEdit(e.target.value)} />
+                <span className="rn-hint">
+                  {chainBad
+                    ? "That is not a collection id. It is 64 hex characters, or leave it empty until the set is launched."
+                    : chainShown.trim()
+                      ? "Holdings of this collection will be recognised once SAVE is pressed."
+                      : "Empty means not launched yet. Nobody's holdings can be matched to this set until it is filled in."}
                 </span>
               </div>
 

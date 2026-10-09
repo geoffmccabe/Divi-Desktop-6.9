@@ -135,3 +135,13 @@
 .rn-list::-webkit-scrollbar { width: 8px; }
 .rn-list::-webkit-scrollbar-thumb { background: #ff45d0; border-radius: 4px; }
 .rn-list::-webkit-scrollbar-track { background: transparent; }
+
+/* ---- the on-chain id ----
+   Its own row rather than a cell in the actions strip: it is the only field
+   on this panel an admin TYPES, everything else arrives in a file, and a box
+   you can type in should not sit in a row of buttons that do things. */
+.rn-chain { display: flex; flex-direction: column; gap: 5px; }
+.rn-chain label { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; opacity: 0.7; }
+.rn-chain .rn-input { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.rn-chain .rn-input.rn-bad { border-color: #ff5c7a; }
+.rn-chain .rn-hint { margin: 0; }
