@@ -57,8 +57,18 @@ export function wingRadius(reach: number): number {
 
 /** How far round the ring has turned after `seconds`, for `count` wingmen. */
 export function wingSpin(seconds: number, count: number): number {
-  if (count < WING_SPIN_MIN) return 0;
-  return ((seconds % WING_SPIN_SECONDS) / WING_SPIN_SECONDS) * Math.PI * 2;
+  /* ---- THEY HOLD STATION. NO ORBIT. ----
+     ⚠ THE RING USED TO TURN, one revolution every fifteen seconds, and that is
+     why a wingman never seemed to be anywhere in particular. Geoff, on his
+     drone appearing to move when he did not expect it: "I think it may be the
+     orbiting part. Let's not make them orbit for now."
+ 
+     Each drone now keeps the slot it was given, in the ship's own frame, so it
+     rolls and turns WITH the ship and sits in the same place relative to it for
+     ever. The spin is kept as a function rather than deleted because the ring
+     geometry still reads it, and turning it back on is one line. */
+  void seconds; void count;
+  return 0;
 }
 
 /**

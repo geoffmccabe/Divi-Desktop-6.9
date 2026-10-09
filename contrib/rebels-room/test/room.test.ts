@@ -740,10 +740,12 @@ const home: [number, number, number] = [0, 0, R + 8];
     return Array.isArray(st.W) && st.W.length === 3 && st.W[0][0] === seat.id && st.W[0][7] === 4;
   })(), JSON.stringify(ws.last("s").W?.[0]));
 
-  /* With two or more the ring turns: a revolution every fifteen seconds. */
+  /* ⚠ THE RING NO LONGER TURNS, and this used to assert that it did. Geoff:
+     "Let's not make them orbit for now." A wingman holds the slot it was given
+     in the ship's frame, so with the ship still it does not move at all. */
   const before = seat.wings[0].pos.clone();
   for (let i = 0; i < 20 * 4; i++) room.step();          /* four seconds */
-  ok("the ring turns slowly", seat.wings[0].pos.distanceTo(before) > 3 && seat.wings[0].pos.distanceTo(before) < 24,
+  ok("the ring holds station instead of turning", seat.wings[0].pos.distanceTo(before) < 1e-6,
      `${seat.wings[0].pos.distanceTo(before).toFixed(1)} units in four seconds`);
 
   /* ---- IN UNISON ----

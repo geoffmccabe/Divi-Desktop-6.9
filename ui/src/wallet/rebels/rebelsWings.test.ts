@@ -4,7 +4,7 @@
 
 import * as THREE from "three";
 import {
-  WING_SLOTS, WING_MAX, WING_SPIN_SECONDS, WING_SCALE, wingRadius, wingSpin, wingPosition,
+  WING_SLOTS, WING_MAX, WING_SCALE, wingRadius, wingSpin, wingPosition,
   wingShare, wingRounds, wingTiers, WING_RADIUS_MIN, WING_RADIUS_MAX,
 } from "./rebelsWings";
 
@@ -39,30 +39,34 @@ function ok(name: string, cond: boolean, extra = "") {
   ok("kept sane for a tiny hull and a huge one",
      wingRadius(0.1) === WING_RADIUS_MIN && wingRadius(99) === WING_RADIUS_MAX);
 
-  ok("one alone does not orbit", wingSpin(7, 1) === 0 && wingSpin(7, 0) === 0);
-  ok("two or more do", wingSpin(0.001, 2) > 0);
-  ok("a revolution every fifteen seconds",
-     Math.abs(wingSpin(WING_SPIN_SECONDS / 2, 2) - Math.PI) < 1e-9
-     && Math.abs(wingSpin(WING_SPIN_SECONDS / 4, 2) - Math.PI / 2) < 1e-9);
-  ok("and it comes round again", Math.abs(wingSpin(WING_SPIN_SECONDS, 2)) < 1e-9
-     && Math.abs(wingSpin(WING_SPIN_SECONDS * 3, 2)) < 1e-9);
-}
-
-/* ---- where they actually are ---- */
-{
-  /* A ship over the north pole, pointing along +x, rolled so its up is +z. */
+  /* ---- THEY HOLD STATION. NO ORBIT. ----
+     ⚠ THE RING USED TO TURN, once every fifteen seconds with two or more, and
+     these tests pinned that. Geoff: "I think it may be the orbiting part.
+     Let's not make them orbit for now." A drone now keeps the slot it was
+     given, in the ship's own frame, so it turns and rolls WITH the ship and is
+     always in the same place beside it. */
+  ok("a wingman holds its station rather than orbiting",
+     wingSpin(0.001, 2) === 0 && wingSpin(7, 4) === 0 && wingSpin(99, 8) === 0);
+  ok("and one alone still does not orbit either", wingSpin(7, 1) === 0);
+  /* ---- where each slot sits, which my edit above had cut the setup for ---- */
+  /* Rolled a quarter turn on purpose, so the test below that compares against
+     a world-up frame is actually comparing two different things. */
   const owner = {
-    pos: new THREE.Vector3(0, 300, 0),
-    fwd: new THREE.Vector3(1, 0, 0),
-    up: new THREE.Vector3(0, 0, 1),
+    pos: new THREE.Vector3(0, 0, 100),
+    fwd: new THREE.Vector3(0, 0, -1),
+    up: new THREE.Vector3(1, 0, 0),
   };
   const reach = 4;
   const r = wingRadius(reach);
-  const left = wingPosition(owner, 0, 0, reach);
-  const right = wingPosition(owner, 1, 0, reach);
-  const top = wingPosition(owner, 2, 0, reach);
-  ok("each one sits a ring's radius away", [left, right, top].every((p) => Math.abs(p.distanceTo(owner.pos) - r) < 1e-6),
-     `${left.distanceTo(owner.pos).toFixed(2)} of ${r}`);
+  const left = wingPosition(owner, 0, 0, reach, new THREE.Vector3());
+  const right = wingPosition(owner, 1, 0, reach, new THREE.Vector3());
+  const top = wingPosition(owner, 2, 0, reach, new THREE.Vector3());
+
+  /* The same slot at two different times is the same place. */
+  const at0 = wingPosition(owner, 0, wingSpin(0, 4), reach, new THREE.Vector3());
+  const at9 = wingPosition(owner, 0, wingSpin(9, 4), reach, new THREE.Vector3());
+  ok("so it is in the same place nine seconds later", at0.distanceTo(at9) < 1e-9,
+     `moved ${at0.distanceTo(at9).toFixed(4)}`);
   ok("none of them is in front of or behind the ship",
      [left, right, top].every((p) => Math.abs(p.clone().sub(owner.pos).dot(owner.fwd)) < 1e-6));
   ok("left and right are opposite", left.clone().sub(owner.pos).dot(right.clone().sub(owner.pos)) < 0);

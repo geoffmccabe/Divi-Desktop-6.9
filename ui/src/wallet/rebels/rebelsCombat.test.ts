@@ -105,8 +105,17 @@ function run(c: CombatState, frames: number, w = world()) {
      tan(fov/2)*d*aspect. They should sit just inside that, on the edge. */
   const d = m[0].clone().sub(pos).dot(fwd);
   const halfW = Math.tan((FOV * Math.PI) / 360) * d * ASPECT;
-  ok("they sit on the edges of the frame", Math.abs(Math.abs(lateral(m[1])) - halfW) < halfW * 0.1,
-     `${Math.abs(lateral(m[1])).toFixed(2)} vs edge ${halfW.toFixed(2)}`);
+  /* ⚠ ON THE HULL NOW, NOT AT THE FRAME EDGE. They were at tan(fov/2)*d*aspect
+     so that first-person fire came from the corners, and that placement is what
+     forced the two streams to cross: 2.46 off the axis cannot be parallel and
+     still hit a 1.05-wide fighter. Geoff chose the trade: "move the guns in to
+     the hull". Narrower than what they shoot at, so parallel lands. */
+  ok("they sit on the hull, inside a fighter's radius",
+     Math.abs(lateral(m[1])) <= ENEMY_R && Math.abs(lateral(m[1])) > 0,
+     `${Math.abs(lateral(m[1])).toFixed(2)} against a fighter's ${ENEMY_R}`);
+  ok("and the pair straddles the nose evenly",
+     Math.abs(lateral(m[0]) + lateral(m[1])) < 1e-6);
+  void halfW;
 
   const c = createCombat();
   fireGuns(c, pos, fwd, up, FOV, ASPECT);
@@ -131,10 +140,12 @@ function run(c: CombatState, frames: number, w = world()) {
      fighter's radius and both rounds miss what the crosshair is on, for ever.
      This asserts they are within a few degrees - no visible V leaving the ship -
      while the hit tests below assert they still land. Both are the contract. */
-  ok("the two streams run very nearly parallel", dir0.angleTo(dir1) < 0.1,
-     `${(dir0.angleTo(dir1) * 180 / Math.PI).toFixed(1)} degrees apart`);
-  ok("and both run within a few degrees of the ship's nose",
-     dir0.angleTo(fwd) < 0.05, `${(dir0.angleTo(fwd) * 180 / Math.PI).toFixed(1)} degrees`);
+  /* EXACTLY parallel, which only became possible once the guns moved to the
+     hull. From the frame edges this was unachievable without both rounds
+     missing everything; see GUN_HALF_SPAN. */
+  ok("the two streams are exactly parallel", dir0.distanceTo(dir1) < 1e-9,
+     `${(dir0.angleTo(dir1) * 180 / Math.PI).toFixed(4)} degrees apart`);
+  ok("and both run straight down the ship's nose", dir0.angleTo(fwd) < 1e-9);
   /* And they still pass close enough to the crosshair to hit what is under it. */
   const target = pos.clone().addScaledVector(fwd, CONVERGE);
   const miss = c.bullets.map((b) => {
