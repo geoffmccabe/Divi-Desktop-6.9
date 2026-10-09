@@ -1,16 +1,29 @@
 /* Admin: Rebels NFDs. The collections on the left, the chosen set on the
    right, its cards as a grid that fills whatever width it is given. Same
    tokens as the other Rebels panels, so this does not read as a new product. */
-.rn-panel { display: flex; flex-direction: column; gap: 14px; }
-.rn-split { display: grid; grid-template-columns: minmax(200px, 280px) minmax(0, 1fr);
-  gap: 14px; align-items: start; }
-@media (max-width: 820px) { .rn-split { grid-template-columns: minmax(0, 1fr); } }
+/* ⚠ THE PANEL IS NOT AS WIDE AS THE WINDOW. It is rendered inside the admin
+   drawer, which is 456px (.admin-drawer in index.css). A viewport media query
+   would therefore NEVER fire on a desktop: the window is 1400px, so the
+   two-column rule stayed on and squeezed the right column to 96px. Found by
+   looking at it rather than by reasoning about it.
+
+   So the breakpoint is on the CONTAINER, not the window. It is then right at
+   456px in the drawer, right if the drawer is ever widened, and right if this
+   panel is ever shown on a full page. */
+.rn-panel { display: flex; flex-direction: column; gap: 14px; container-type: inline-size; }
+.rn-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+@container (min-width: 820px) {
+  .rn-split { grid-template-columns: minmax(200px, 280px) minmax(0, 1fr); }
+}
+/* Browsers without container queries get the single column, which is the
+   layout that works at every width rather than the one that needs help. */
 
 .rn-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .rn-list, .rn-add, .rn-main { border-radius: 10px; border: 1px solid hsl(var(--border));
   background: hsl(var(--card) / 0.5); }
 .rn-list { display: flex; flex-direction: column; gap: 4px; padding: 8px;
-  max-height: 34vh; overflow-y: auto; }
+  max-height: 26vh; overflow-y: auto; }
+@container (min-width: 820px) { .rn-list { max-height: 34vh; } }
 .rn-item { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
   cursor: pointer; padding: 5px 8px; border-radius: 7px; font-size: 0.82rem;
   border: 1px solid transparent; background: transparent; color: hsl(var(--foreground)); }
@@ -41,6 +54,11 @@
 .rn-btn:hover:not(:disabled) { border-color: #ff45d0; }
 .rn-btn:disabled { opacity: 0.45; cursor: default; }
 .rn-btn.rn-primary { border-color: #ff45d0; background: #ff45d0; color: #15010f; font-weight: 600; }
+/* A disabled primary loses its FILL, not just some opacity. Fuchsia at 45% on
+   a black panel still reads as the thing to press, which is the opposite of
+   what disabled means, and the one it is waiting for (the admin secret) is
+   out of sight at the foot of the panel. */
+.rn-btn.rn-primary:disabled { background: transparent; color: #ff45d0; }
 .rn-btn.rn-danger { color: #ff7a8a; }
 
 .rn-errors { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; border-radius: 8px;
@@ -72,9 +90,14 @@
 
 .rn-odds > summary { cursor: pointer; font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
 .rn-odds > summary::marker { color: #ff45d0; }
-.rn-odds-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 3px 12px; margin: 8px 0; }
-.rn-odds-row { display: flex; justify-content: space-between; gap: 8px; font-size: 0.74rem; }
+/* Fixed-width cells rather than 1fr ones. Stretched across a wide panel the
+   label and the number ended up at opposite ends of the screen and the table
+   read as a run-on sentence; at a fixed width each row is one readable pair,
+   and the grid still fills the panel by adding columns. */
+.rn-odds-rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, max-content));
+  gap: 3px 22px; margin: 8px 0; justify-content: start; }
+.rn-odds-row { display: flex; gap: 8px; font-size: 0.74rem; }
+.rn-odds-row > span { min-width: 44px; }
 .rn-odds-row > span { color: hsl(var(--muted-foreground)); }
 /* The slots nobody will ever see, dimmed rather than hidden: the point is
    that they are in the set and still unreachable. */
@@ -87,7 +110,10 @@
 
 /* The cards. auto-fill so the grid uses the whole width it is given, at any
    width, rather than leaving the right-hand side empty. */
-.rn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+.rn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+@container (min-width: 820px) {
+  .rn-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+}
 .rn-card { margin: 0; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .rn-card img { width: 100%; aspect-ratio: var(--rn-aspect, 1 / 1); object-fit: cover;
   border-radius: 8px; border: 1px solid hsl(var(--border)); background: #0b0b10; display: block; }

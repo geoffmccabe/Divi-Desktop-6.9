@@ -293,7 +293,7 @@ export function RebelsNfdPanel() {
 
               <h4 className="rn-group">
                 The set &middot; {normals.length}
-                {chosen.packagedArt ? <span className="rn-hint"> (packaged art on the right)</span> : null}
+                {chosen.packagedArt ? <span className="rn-hint"> (the packaged art is the last card)</span> : null}
               </h4>
               <div className="rn-grid">
                 {normals.map(card)}
