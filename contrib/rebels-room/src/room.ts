@@ -47,7 +47,7 @@ import { fetchWorld } from "./enemySource";
 import { applyEnemyType, tierForType, typeById } from "./customEnemy";
 import { builtInEnemies, type EnemyType } from "../../../ui/src/wallet/rebels/enemyTypes";
 import {
-  waveDefence, DEFAULT_GAMES, gamePayout, GAME_MAX_PAYOUT,
+  waveDefence, DEFAULT_GAMES, gamePayout, GAME_MAX_PAYOUT, roundAt,
   type GameType, type Reward,
 } from "../../../ui/src/wallet/rebels/gameTypes";
 /* Spikeworld's dimensions. That folder deliberately imports nothing from the
@@ -796,17 +796,28 @@ export class RebelsRoom {
        round three collects nothing for it. The simplest rule that cannot be
        gamed by arriving late, and the one a player would guess. */
     if (ev.roundFinished) {
-      const round = run.game.rounds[ev.roundFinished - 1];
+      /* roundAt, not rounds[], so a round past the written description still
+         carries the award the described rounds carried. Wave Defence has no
+         round awards at all, so today this changes nothing; it would be a
+         silent stop in earnings on any endless game that did. */
+      const round = roundAt(run.game, ev.roundFinished);
       this.payAward(round?.award);
     }
     if (ev.gameFinished) {
       this.payAward(run.game.award);
-      /* ⚠ A BEHAVIOUR CHANGE, and it needs a decision rather than a default.
-         The old waves never ended: startWave(n + 1) climbed for ever. A
-         description has a last round, so Wave Defence now stops after thirty.
-         Starting it again keeps the room alive, which is what an always-on
-         Earth needs, but it drops the difficulty off a cliff at the hour mark
-         instead of climbing past it. Recorded in the plan; Geoff decides. */
+      /* ---- DECIDED 2026-Oct-09 ----
+         This used to be reached by Wave Defence every hour, because a described
+         game has a last round while the old hand-rolled waves climbed for ever,
+         so the difficulty fell off a cliff back to wave one. Asked which he
+         wanted, Geoff: "Wave Defence can keep going after 30 rounds, I think it
+         can just keep getting harder in a linear way?"
+
+         So Wave Defence is `endless` and no longer arrives here at all; this is
+         now only for games that really do finish, which restart to keep the
+         room alive. A FRESH PURSE comes with the restart, and that is the whole
+         reason an endless game must not be given one: a run that never ends
+         never refills its purse, so awards stop at GAME_PURSE instead of
+         printing money for ever. Stopping is the safe direction. */
       this.run = this.beginGame();
       this.roundBias.clear();
     }

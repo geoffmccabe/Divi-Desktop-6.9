@@ -10,6 +10,19 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "types": ["@cloudflare/workers-types", "node"],
+    /* ⚠ JSX, IN A WORKER THAT HAS NO UI. Same reason as the DOM lib above: the
+       room shares modules with the game, and one of them reaches a .tsx file
+       (platform/desktopInput.ts imports RebelsControls). Nothing in that path
+       is reachable from the worker, but tsc has to PARSE it to follow the
+       import, and without this it stops at TS6142 and checks nothing further.
+
+       That is what made this worth fixing rather than ignoring: a single
+       unresolved import left the room's typecheck reporting one error and
+       passing over all of src/ in silence, so the room's own code was only
+       ever checked by its tests. With the setting in place the room reports
+       clean, which is a statement about the room rather than about tsc giving
+       up early. wrangler bundles with esbuild and never cared either way. */
+    "jsx": "react-jsx",
     /* three's own package ships no declarations; the wallet gets them from
        @types/three, which lives in the ui install alongside it. */
     "paths": { "three": ["../../ui/node_modules/@types/three"] },

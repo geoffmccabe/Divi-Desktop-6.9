@@ -19,6 +19,7 @@
 // would make a round's length depend on how good the players are, and the
 // length is the thing an admin sets.
 
+import { roundAt } from "../../../ui/src/wallet/rebels/gameTypes";
 import type { GameType, Round, Spawn } from "../../../ui/src/wallet/rebels/gameTypes";
 
 /**
@@ -63,7 +64,8 @@ interface Pending {
 
 export interface Run {
   game: GameType;
-  /** Which round is running, from zero. Equals rounds.length when finished. */
+  /** Which round is running, from zero. Equals rounds.length when finished,
+   *  and climbs past it without limit on an endless game. */
   round: number;
   /** Seconds left in the current round. */
   left: number;
@@ -123,7 +125,7 @@ function planRound(round: Round): Pending[] {
 
 /** Begin a game at its first round. */
 export function startGame(game: GameType): Run {
-  const first = game.rounds[0];
+  const first = roundAt(game, 1);
   return {
     game,
     round: 0,
@@ -171,7 +173,14 @@ export function stepGame(run: Run, dt: number, spawner: Spawner): RunEvents {
   /* The round is over. On the clock, always. */
   events.roundFinished = run.round + 1;
   run.round += 1;
-  const next = run.game.rounds[run.round];
+  /* ---- WHERE AN ENDLESS GAME NEVER ENDS ----
+     THIS LINE USED TO BE `run.game.rounds[run.round]`, which is why Wave
+     Defence stopped after thirty rounds and the room then restarted it from ten
+     enemies: an hour of climbing, then a cliff back to wave one. roundAt gives
+     the same answer for every written round and carries the climb on past the
+     last one when the game says endless. Geoff: "Wave Defence can keep going
+     after 30 rounds, I think it can just keep getting harder in a linear way?" */
+  const next = roundAt(run.game, run.round + 1);
   if (!next) {
     run.done = true;
     run.left = 0;

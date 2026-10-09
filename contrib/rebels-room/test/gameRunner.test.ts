@@ -61,9 +61,19 @@ function play(game: GameType, dt = 0.05, limitSeconds = 60 * 90) {
 /* ================= WAVE DEFENCE, AS THE RUNNER WALKS IT ================= */
 {
   const game = waveDefence();
-  const { run, rec, events, t } = play(game);
+  /* ⚠ BOUNDED TO THE DESCRIBED LENGTH ON PURPOSE. Wave Defence is endless now,
+     so `play` with its default ninety-minute limit walks it into the rounds past
+     the description and every total below would count those too. This block is
+     about the thirty rounds that ARE described; the endless tail is its own
+     block at the bottom of this file. */
+  const described = WAVE_DEFENCE_ROUNDS * WAVE_DEFENCE_SECONDS;
+  const { run, rec, events, t } = play(game, 0.05, described);
 
-  ok("the built-in game finishes", run.done, `after ${t.toFixed(0)}s`);
+  /* ⚠ NO "IS IT STILL RUNNING" ASSERTION HERE, DELIBERATELY. One was written and
+     it passed with the bug put back: this play stops AT the hour, so the tick
+     that ends round thirty is never taken and done is false either way. An
+     assertion that cannot fail is worse than none, because it reads as cover.
+     The endless contract is asserted in the next block, which does fail. */
   ok("it runs for exactly its described length",
      Math.abs(gameLength(game) - WAVE_DEFENCE_ROUNDS * WAVE_DEFENCE_SECONDS) < 1e-9,
      `${gameLength(game)}s`);
@@ -105,8 +115,48 @@ function play(game: GameType, dt = 0.05, limitSeconds = 60 * 90) {
   ok("each round after the first is announced",
      events.filter((e) => e.startsWith("start:")).length === WAVE_DEFENCE_ROUNDS - 1,
      `${events.filter((e) => e.startsWith("start:")).length} announcements`);
-  ok("and the end of the game is announced once",
-     events.filter((e) => e.startsWith("over")).length === 1);
+}
+
+/* ================= AND THEN IT KEEPS GOING =================
+   Geoff: "Wave Defence can keep going after 30 rounds, I think it can just keep
+   getting harder in a linear way?"
+
+   ⚠ THE FAILURE THIS GUARDS IS SPECIFIC. The runner used to read
+   `rounds[run.round]`, get undefined after the thirtieth, and set done; the room
+   then started the game over, so an hour of climbing dropped back to wave one.
+   Checking only that the game is still running would not catch a tail that
+   repeats round thirty for ever, so the sizes are checked too. */
+{
+  const game = waveDefence();
+  /* Two hours: an hour of description and an hour past the end of it. */
+  const { run, rec, events, t } = play(game, 0.25, 2 * 60 * 60);
+
+  /* ⚠ THE "over" CHECK USED TO ASSERT THE OPPOSITE, in the block above: "the
+     end of the game is announced once". It was true, and it was exactly the
+     thing Geoff asked about, because the room answers that announcement by
+     starting the game again at ten enemies. */
+  ok("two hours in, it has not finished",
+     !run.done && events.every((e) => !e.startsWith("over")),
+     `${t.toFixed(0)}s, ${events.filter((e) => e.startsWith("over")).join(",") || "no end announced"}`);
+  ok("and it is well past the described rounds",
+     run.round + 1 > WAVE_DEFENCE_ROUNDS, `on round ${run.round + 1}`);
+
+  /* Round by round across the whole two hours, described and undescribed
+     alike, against the one description of the climb. */
+  let wrong: string[] = [];
+  const rounds = Math.floor(t / WAVE_DEFENCE_SECONDS);
+  for (let n = 1; n <= rounds; n++) {
+    const from = (n - 1) * WAVE_DEFENCE_SECONDS;
+    const sent = rec.calls
+      .filter((c) => c.at >= from && c.at < n * WAVE_DEFENCE_SECONDS)
+      .reduce((a, c) => a + c.n, 0);
+    if (sent !== waveDefenceSize(n)) wrong.push(`${n}: ${sent} not ${waveDefenceSize(n)}`);
+  }
+  ok("every round keeps climbing at the rate the description climbs at",
+     wrong.length === 0, wrong.slice(0, 4).join("; ") || `${rounds} rounds checked`);
+  ok("so a late round really is bigger than the last described one",
+     waveDefenceSize(rounds) > waveDefenceSize(WAVE_DEFENCE_ROUNDS),
+     `round ${rounds} sends ${waveDefenceSize(rounds)}, round 30 sent ${waveDefenceSize(WAVE_DEFENCE_ROUNDS)}`);
 }
 
 /* ================= ROUNDS END ON THE CLOCK, ALWAYS ================= */

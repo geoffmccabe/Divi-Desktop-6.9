@@ -15,7 +15,7 @@ import {
   waveDefence, waveDefenceSize, validateGame, validateGames, gameSeconds, gameMaxAward,
   DEFAULT_GAMES, PLACES, PLACES_LIVE, PLACE_NAMES, MAX_REWARD_DIVI, ROUND_MAX_ENEMIES,
   ROUND_MIN_SECONDS, ROUND_MAX_SECONDS, MAX_ROUNDS, BIAS_MAX, WAVE_DEFENCE_BIAS,
-  WAVE_DEFENCE_FIRST, WAVE_DEFENCE_STEP, WAVE_DEFENCE_SECONDS, WAVE_DEFENCE_ROUNDS,
+  WAVE_DEFENCE_FIRST, WAVE_DEFENCE_STEP, WAVE_DEFENCE_SECONDS, WAVE_DEFENCE_ROUNDS, roundAt,
   type GameType,
 } from "./gameTypes";
 import { WAVE_FIRST, WAVE_STEP, WAVE_SECONDS, waveSize, WAVE_BIAS_MIN, WAVE_BIAS_MAX, rollTier } from "./rebelsCombat";
@@ -193,8 +193,17 @@ function ok(name: string, cond: boolean, extra = ""): void {
 /* ================= A SET OF THEM ================= */
 {
   const a = waveDefence();
-  const b = { ...waveDefence(), id: "heart-assault", name: "Heart Assault", place: "spike" as const };
-  ok("two different games are fine", "ok" in validateGames([a, b]));
+  /* ⚠ `endless` IS DROPPED ON PURPOSE. Copying the built-in and giving it a new
+     id makes it authored content, and only the built-in may be endless: see the
+     validator for why (the payout ceiling is worked out per clear). Leaving it
+     on is its own test, below. */
+  const b = { ...waveDefence(), endless: undefined, id: "heart-assault", name: "Heart Assault", place: "spike" as const };
+  ok("two different games are fine", "ok" in validateGames([a, b]),
+     (() => { const v = validateGames([a, b]); return "errors" in v ? v.errors.join("; ") : ""; })());
+  const copied = validateGames([a, { ...waveDefence(), id: "heart-assault", name: "Heart Assault", place: "spike" as const }]);
+  ok("but an authored game that claims to be endless is refused",
+     "errors" in copied && copied.errors.some((e) => e.includes("only the built-in")),
+     "errors" in copied ? copied.errors.join("; ") : "accepted");
   const clash = validateGames([a, { ...b, id: a.id }]);
   ok("two games sharing an id are refused",
      "errors" in clash && clash.errors.some((e) => e.includes("share the id")),
@@ -202,6 +211,73 @@ function ok(name: string, cond: boolean, extra = ""): void {
   ok("something that is not a list is refused", "errors" in validateGames({ id: "x" }));
   ok("and the error names WHICH game is wrong",
      (() => { const v = validateGames([a, { ...b, name: "" }]); return "errors" in v && v.errors[0].startsWith("game 2:"); })());
+}
+
+/* ================= IT NEVER ENDS =================
+   Geoff, asked whether Wave Defence should stop at thirty rounds or go on:
+   "Wave Defence can keep going after 30 rounds, I think it can just keep
+   getting harder in a linear way?"
+
+   ⚠ WHAT THESE HAVE TO CATCH is the thing that was actually wrong: the runner
+   read `rounds[n]`, found nothing after thirty, and ended the game, so the room
+   restarted it from ten enemies. Any test that only checks round 31 EXISTS
+   would also pass if round 31 were a copy of round 30, which is not a climb. So
+   the counts are checked against waveDefenceSize, which is the description of
+   the climb, and the plateau is checked at the far end. */
+{
+  const g = waveDefence();
+  ok("the built-in says it never ends", g.endless === true);
+  ok("and it is still described as thirty rounds", g.rounds.length === WAVE_DEFENCE_ROUNDS);
+
+  /* Every written round is itself, unchanged: roundAt must not reinvent the
+     rounds it was given. */
+  ok("a written round is the written round",
+     [1, 2, 15, WAVE_DEFENCE_ROUNDS].every((n) => roundAt(g, n) === g.rounds[n - 1]));
+
+  /* THE CLIMB CONTINUES, at the rate the description climbs at. */
+  const sizeAt = (n: number) => roundAt(g, n)!.spawns.reduce((a, s) => a + s.count, 0);
+  ok("round thirty-one is bigger than round thirty",
+     sizeAt(31) > sizeAt(30), `${sizeAt(30)} then ${sizeAt(31)}`);
+  ok("and it is exactly what the climb says it should be",
+     [31, 32, 50, 100].every((n) => sizeAt(n) === waveDefenceSize(n)),
+     [31, 32, 50, 100].map((n) => `${n}: ${sizeAt(n)} vs ${waveDefenceSize(n)}`).join(", "));
+  ok("the step past the description is the step within it",
+     sizeAt(32) - sizeAt(31) === WAVE_DEFENCE_STEP, `${sizeAt(32) - sizeAt(31)}`);
+
+  /* Everything else is carried, so a late round is the same fight, bigger. */
+  const late = roundAt(g, 77)!;
+  ok("a late round lasts as long as an early one", late.seconds === WAVE_DEFENCE_SECONDS);
+  ok("and sends the same mix", late.spawns[0].enemy === g.rounds[0].spawns[0].enemy
+     && late.spawns[0].arrive === g.rounds[0].spawns[0].arrive);
+  ok("and is just as mixed in difficulty",
+     JSON.stringify(late.spawns[0].bias) === JSON.stringify(WAVE_DEFENCE_BIAS),
+     JSON.stringify(late.spawns[0].bias));
+
+  /* IT PLATEAUS RATHER THAN ENDING OR OVERFLOWING. */
+  ok("it never exceeds what a round may hold",
+     [196, 300, 1000, 100000].every((n) => sizeAt(n) <= ROUND_MAX_ENEMIES),
+     [196, 300, 1000, 100000].map((n) => `${n}: ${sizeAt(n)}`).join(", "));
+  ok("and it is still running at round one hundred thousand",
+     roundAt(g, 100000) !== undefined);
+  ok("the plateau is the cap itself, not something short of it",
+     sizeAt(100000) === ROUND_MAX_ENEMIES, `${sizeAt(100000)}`);
+
+  /* A GAME THAT IS NOT ENDLESS STILL ENDS. The whole point is that this is a
+     property of the game and not a new global behaviour. */
+  const finite: GameType = { ...waveDefence(), endless: undefined, id: "finite-one" };
+  ok("a finite game still runs out", roundAt(finite, WAVE_DEFENCE_ROUNDS + 1) === undefined);
+  ok("round zero and nonsense are nothing, endless or not",
+     roundAt(g, 0) === undefined && roundAt(g, -5) === undefined && roundAt(g, NaN) === undefined);
+
+  /* A one-round endless game has no gap to measure a climb from, so it repeats
+     rather than guessing a step. Checked because inventing a climb from a
+     single round would be making the number up. */
+  const one: GameType = {
+    ...waveDefence(), id: "wave-defence", rounds: [g.rounds[0]], endless: true,
+  };
+  ok("a one-round endless game repeats instead of inventing a climb",
+     roundAt(one, 9)!.spawns[0].count === g.rounds[0].spawns[0].count,
+     `${roundAt(one, 9)!.spawns[0].count}`);
 }
 
 console.log(out.join("\n"));
