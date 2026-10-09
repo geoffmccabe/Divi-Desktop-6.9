@@ -92,27 +92,13 @@ export function mediaUrlOk(raw: unknown): boolean {
   return u.protocol === "https:" && u.hostname === KINETINK_MEDIA_HOST;
 }
 
-/** Every reason a file cannot be used, or the collection it describes. */
-export function readLaunchFile(
-  raw: unknown, id: string,
-): { ok: NfdCollection } | { errors: string[] } {
-  const errors: string[] = [];
-  const f = (raw ?? {}) as Record<string, unknown>;
-
-  if (str(f.format) !== LAUNCH_FORMAT) {
-    errors.push(`format must be "${LAUNCH_FORMAT}" (got ${JSON.stringify(f.format)})`);
-    /* Nothing else is worth saying about a file that is not one of ours. */
-    return { errors };
-  }
-  if (num(f.version) !== 1) errors.push(`version must be 1 (got ${JSON.stringify(f.version)})`);
-  if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(id)) {
-    errors.push("the collection id must be lowercase letters, numbers and hyphens");
-  }
-
-  const c = (f.collection ?? {}) as Record<string, unknown>;
-  const rawItems = Array.isArray(f.items) ? f.items : [];
-  if (rawItems.length === 0) errors.push("the file lists no items");
-
+/**
+ * The items, checked one at a time. Shared by a launch file and a saved row,
+ * because an item has the same shape in both and a second copy of these rules
+ * is a second place for them to drift.
+ */
+function readItems(raw: unknown, errors: string[]): NfdItem[] {
+  const rawItems = Array.isArray(raw) ? raw : [];
   const items: NfdItem[] = [];
   const seen = new Set<number>();
   for (const [i, r] of rawItems.entries()) {
@@ -157,30 +143,61 @@ export function readLaunchFile(
         : [],
     });
   }
+  return items.sort((a, b) => a.edition - b.edition);
+}
+
+/** The Ultra Rare draw, checked. Also shared by both readers. */
+function readUltraRare(raw: unknown, errors: string[]): NfdUltraRareRoll | null {
+  const ur = (raw ?? null) as Record<string, unknown> | null;
+  if (!ur) return null;
+  const basicChance = num(ur.basicChance, 0);
+  const progressiveFactor = num(ur.progressiveFactor, 0);
+  const count = Math.round(num(ur.count, 0));
+  if (basicChance < 0 || basicChance > 1) errors.push("the Ultra Rare chance must be between 0 and 1");
+  if (progressiveFactor < 0 || progressiveFactor >= 1) {
+    errors.push("the Ultra Rare factor must be at least 0 and below 1");
+  }
+  if (count < 0) errors.push("the Ultra Rare count cannot be negative");
+  return { basicChance, progressiveFactor, count };
+}
+
+/** The id an admin types: lowercase letters, numbers and hyphens. */
+const ID_OK = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
+
+/** Every reason a file cannot be used, or the collection it describes. */
+export function readLaunchFile(
+  raw: unknown, id: string,
+): { ok: NfdCollection } | { errors: string[] } {
+  const errors: string[] = [];
+  const f = (raw ?? {}) as Record<string, unknown>;
+
+  if (str(f.format) !== LAUNCH_FORMAT) {
+    errors.push(`format must be "${LAUNCH_FORMAT}" (got ${JSON.stringify(f.format)})`);
+    /* Nothing else is worth saying about a file that is not one of ours. */
+    return { errors };
+  }
+  if (num(f.version) !== 1) errors.push(`version must be 1 (got ${JSON.stringify(f.version)})`);
+  if (!ID_OK.test(id)) {
+    errors.push("the collection id must be lowercase letters, numbers and hyphens");
+  }
+
+  const c = (f.collection ?? {}) as Record<string, unknown>;
+  if (!Array.isArray(f.items) || f.items.length === 0) errors.push("the file lists no items");
+  const items = readItems(f.items, errors);
 
   const packagedArt = mediaUrlOk(c.packagedArt) ? str(c.packagedArt) : null;
   if (c.packagedArt != null && packagedArt === null) {
     errors.push(`the packaged art is not an https URL on ${KINETINK_MEDIA_HOST}`);
   }
-  const image = (v: unknown): string | null => {
+  /* In a LAUNCH FILE the three shop pictures arrive wrapped, as {url}. In our
+     own stored shape they are plain strings. That difference is the only
+     reason these two readers are not one function. */
+  const wrapped = (v: unknown): string | null => {
     const o = (v ?? {}) as Record<string, unknown>;
     return mediaUrlOk(o.url) ? str(o.url) : null;
   };
   const images = (c.images ?? {}) as Record<string, unknown>;
-
-  const ur = (c.ultraRare ?? null) as Record<string, unknown> | null;
-  let ultraRare: NfdUltraRareRoll | null = null;
-  if (ur) {
-    const basicChance = num(ur.basicChance, 0);
-    const progressiveFactor = num(ur.progressiveFactor, 0);
-    const count = Math.round(num(ur.count, 0));
-    if (basicChance < 0 || basicChance > 1) errors.push("the Ultra Rare chance must be between 0 and 1");
-    if (progressiveFactor < 0 || progressiveFactor >= 1) {
-      errors.push("the Ultra Rare factor must be at least 0 and below 1");
-    }
-    if (count < 0) errors.push("the Ultra Rare count cannot be negative");
-    ultraRare = { basicChance, progressiveFactor, count };
-  }
+  const ultraRare = readUltraRare(c.ultraRare, errors);
 
   if (errors.length) return { errors };
   return {
@@ -191,15 +208,71 @@ export function readLaunchFile(
       aspectRatio: str(c.aspectRatio, "1:1"),
       packagedArt,
       ultraRare,
-      logo: image(images.logo),
-      featured: image(images.featured),
-      banner: image(images.banner),
-      items: items.sort((a, b) => a.edition - b.edition),
+      logo: wrapped(images.logo),
+      featured: wrapped(images.featured),
+      banner: wrapped(images.banner),
+      items,
       /* OFF until an admin says otherwise. Geoff: "only specific NFD
          collections would be useful in the game and anything else will not
          show." A collection that counted the moment it was uploaded would be
          the opposite of that. */
       enabled: false,
+    },
+  };
+}
+
+/**
+ * The same checks, against our OWN stored shape rather than a launch file.
+ *
+ * Why this exists as well as readLaunchFile: a row in the database was not
+ * necessarily written by today's panel. It may have been written by an older
+ * one, or by hand in the SQL editor, and a media URL that was fine when it was
+ * saved is still worth re-checking on the way out, because the whole point of
+ * the host allowlist is that nothing off that host is ever fetched. Reading a
+ * row is therefore a validation, not a cast.
+ *
+ * `enabled` is taken from the raw object here, unlike in a launch file where
+ * it is forced off: by the time a row is being read, an admin has already had
+ * their say.
+ */
+export function validateCollection(
+  raw: unknown, id: string,
+): { ok: NfdCollection } | { errors: string[] } {
+  const errors: string[] = [];
+  const c = (raw ?? {}) as Record<string, unknown>;
+
+  if (!ID_OK.test(id)) {
+    errors.push("the collection id must be lowercase letters, numbers and hyphens");
+  }
+  if (!Array.isArray(c.items) || c.items.length === 0) errors.push("that collection lists no items");
+  const items = readItems(c.items, errors);
+
+  const art = (v: unknown, what: string): string | null => {
+    if (v == null) return null;
+    if (mediaUrlOk(v)) return str(v);
+    errors.push(`the ${what} is not an https URL on ${KINETINK_MEDIA_HOST}`);
+    return null;
+  };
+  const packagedArt = art(c.packagedArt, "packaged art");
+  const logo = art(c.logo, "logo");
+  const featured = art(c.featured, "featured picture");
+  const banner = art(c.banner, "banner");
+  const ultraRare = readUltraRare(c.ultraRare, errors);
+
+  if (errors.length) return { errors };
+  return {
+    ok: {
+      id,
+      name: str(c.name) || id,
+      description: str(c.description),
+      aspectRatio: str(c.aspectRatio, "1:1"),
+      packagedArt,
+      ultraRare,
+      logo,
+      featured,
+      banner,
+      items,
+      enabled: c.enabled === true,
     },
   };
 }
