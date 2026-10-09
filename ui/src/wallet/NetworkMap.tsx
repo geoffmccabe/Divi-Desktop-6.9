@@ -343,6 +343,9 @@ interface SelfNode {
   ip: string;
   lat: number;
   lon: number;
+  /** What the node announced (its user agent), so the hearts view can
+      recognise the user's own other nodes as DD69 without a handshake. */
+  subver?: string;
   city?: string;
   country?: string;
 }
@@ -731,11 +734,14 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     try {
       const known = Object.keys(knownRef.current).filter((ip) => !myNodeIpsRef.current.has(ip));
       const live = (snapRef.current?.peers ?? []).map((p) => p.ip);
-      const ips = Array.from(new Set([...live, ...known]));
+      /* My other nodes join the handshake so their software is learned,
+         but never the probe: a firewalled one of mine is still mine. */
+      const ips = Array.from(new Set([...live, ...known, ...myNodeIpsRef.current]));
       if (!ips.length) return;
 
       const targets: ProbeTarget[] = [];
       for (const ip of ips) {
+        if (myNodeIpsRef.current.has(ip)) continue;
         const kp = knownRef.current[ip];
         if (kp && typeof kp.lat === "number" && typeof kp.lon === "number") {
           targets.push({ ip, lat: kp.lat, lon: kp.lon });
@@ -747,7 +753,13 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       // Alive means it spoke Divi to us, not merely that a port answered.
       resolve(reply.results.map((r) => ({ ip: r.ip, online: r.alive })));
       for (const r of reply.results) {
-        probeRef.current.set(r.ip, r.alive ? "online" : "offline");
+        if (!myNodeIpsRef.current.has(r.ip)) probeRef.current.set(r.ip, r.alive ? "online" : "offline");
+        if (r.alive && r.subver && myNodeIpsRef.current.has(r.ip)) {
+          for (const id of nodeListRef.current) {
+            const sn = loadSelfNode(id);
+            if (sn && sn.ip === r.ip && sn.subver !== r.subver) saveSelfNode(id, { ...sn, subver: r.subver });
+          }
+        }
         /* Remember what it called itself. The handshake returns each node's
            user agent, and this was being thrown away: the map only ever
            learned a node's user agent from getpeerinfo, i.e. from nodes we
@@ -927,7 +939,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       if (id === nodeId) continue;
       const sn = loadSelfNode(id);
       if (sn && sn.ip) {
-        knownRef.current[sn.ip] = { lat: sn.lat, lon: sn.lon, city: sn.city, country: sn.country, lastSeen: Date.now() };
+        knownRef.current[sn.ip] = { lat: sn.lat, lon: sn.lon, city: sn.city, country: sn.country, lastSeen: Date.now(), subver: sn.subver };
         myNodeIpsRef.current.add(sn.ip);
       }
     }
@@ -1087,9 +1099,14 @@ export function NetworkMap({ onReturn, autoplay = false }: {
       const g = await resolveGeos(ips, () => {});
       if (!alive) return;
       const stampOf = new Map(fresh.map((r) => [r.home, r.time]));
+      /* A node reachable through a relay runs this software by definition
+         (only DD69 nodes register with a helper), and a home node behind
+         NAT can never be handshaked over TCP, so this is the only way the
+         hearts view learns about most users (Andy in Nigeria, JimF). */
+      const dd69 = (ip: string) => (knownRef.current[ip]?.subver ?? "").toLowerCase().includes("dd69");
       const seen = ips
         .filter((ip) => g[ip])
-        .map((ip) => ({ ip, lat: g[ip].lat, lon: g[ip].lon, city: g[ip].city, country: g[ip].country, cc: g[ip].countryCode, seenAt: (stampOf.get(ip) ?? 0) * 1000 || undefined }));
+        .map((ip) => ({ ip, lat: g[ip].lat, lon: g[ip].lon, city: g[ip].city, country: g[ip].country, cc: g[ip].countryCode, seenAt: (stampOf.get(ip) ?? 0) * 1000 || undefined, subver: dd69(ip) ? undefined : "DIVI Core (dd69, reached through a relay)" }));
       if (seen.length) knownRef.current = recordKnown(knownRef.current, seen);
       const nowMs = Date.now();
       for (const r of fresh) {
@@ -1191,6 +1208,18 @@ export function NetworkMap({ onReturn, autoplay = false }: {
             // Remember the client each peer advertises, so its TYPE persists in
             // the 90-day store even after it stops being a live peer.
             seen.push({ ip: p.ip, lat: pg.lat, lon: pg.lon, city: pg.city, country: pg.country, cc: pg.countryCode, subver: p.subver });
+            /* My own other nodes are kept out of the shared store (so this
+               node is never drawn as a stranger), which also kept their
+               software unknown: London and France never showed as hearts
+               (Geoff, 2026-Oct-09). A live peer connection tells us. */
+            if (myNodeIpsRef.current.has(p.ip) && p.subver) {
+              const kp = knownRef.current[p.ip];
+              if (kp && kp.subver !== p.subver) knownRef.current = { ...knownRef.current, [p.ip]: { ...kp, subver: p.subver } };
+              for (const id of nodeListRef.current) {
+                const sn = loadSelfNode(id);
+                if (sn && sn.ip === p.ip && sn.subver !== p.subver) saveSelfNode(id, { ...sn, subver: p.subver });
+              }
+            }
             // v2: a node we are genuinely connected to is a PEER — fuchsia.
             // Only fire on the transition, so a standing peer doesn't re-pulse
             // every ten seconds.
