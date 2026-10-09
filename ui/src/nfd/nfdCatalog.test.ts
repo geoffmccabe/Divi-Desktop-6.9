@@ -1,7 +1,8 @@
 // Reading a Kinetink launch file, and refusing one we should not trust.
 
 import {
-  readLaunchFile, mediaUrlOk, ultraRareSlot, normalsOf, ultraRaresOf, topTierOf,
+  readLaunchFile, mediaUrlOk, ultraRareSlot, ultraRareOdds, cssAspect,
+  normalsOf, ultraRaresOf, topTierOf,
   KINETINK_MEDIA_HOST, LAUNCH_FORMAT,
 } from "./nfdCatalog";
 
@@ -134,19 +135,55 @@ const file = (over: Record<string, unknown> = {}) => ({
        slot 2  1 in 625          slot 7   1 in 1,953,125
        slot 3  1 in 3,125        slot 8   1 in 9,765,625
        slot 4  1 in 15,625       slot 9   1 in 48,828,125
-       slot 5  1 in 78,125       slot 10  1 in 244,140,625  */
+       slot 5  1 in 78,125       slot 10  1 in 195,312,500
+
+     Slot 10 is the ONE that is not (1-f)·f^i: it takes the whole remaining
+     share, f^9, so it is 1.25 times likelier than the formula suggests. The
+     first version of this comment said 244,140,625 for it, which was the
+     formula rather than the code. */
   const gate = 0.01;
-  const oneIn = (i: number) => Math.round(1 / (gate * want(i)));
+  const rows = ultraRareOdds({ basicChance: gate, progressiveFactor: f, count });
+  /* ⚠ THE LAST SLOT IS THE REMAINDER, not (1-f)·f^i, because ultraRareSlot
+     falls through to it. So the odds are SAMPLED from the function rather
+     than restated from the formula: the formula and the code disagree by a
+     factor of 1.25 on exactly that slot, and a test that restated the formula
+     would have agreed with itself and been wrong. */
+  ok("the odds table agrees with the function it describes",
+     rows.every((r, i) => Math.abs(share(i) - r.share) < 0.002),
+     rows.map((r) => `${(r.share * 100).toFixed(2)}%`).join(" "));
+  ok("including the last slot, which is the remainder and not the formula",
+     Math.abs(rows[count - 1].share - Math.pow(f, count - 1)) < 1e-12
+     && Math.abs(rows[count - 1].share - want(count - 1)) > 1e-9,
+     `${rows[count - 1].share.toExponential(3)} against the formula's ${want(count - 1).toExponential(3)}`);
   ok("the rarest slot is astronomically rare rather than merely rare",
-     oneIn(count - 1) > 100_000_000,
-     `slot ${count} is 1 in ${oneIn(count - 1).toLocaleString()} rolls`);
+     rows[count - 1].oneIn > 100_000_000,
+     `slot ${count} is 1 in ${rows[count - 1].oneIn.toLocaleString()} rolls`);
   ok("and how many slots are realistically reachable is stated, not assumed",
      true,
-     [...Array(count).keys()].filter((i) => oneIn(i) <= 1_000_000).length
+     rows.filter((r) => r.oneIn <= 1_000_000).length
      + ` of ${count} come up at least once per million rolls`);
+  ok("no Ultra Rare config at all is an empty table, not a crash",
+     ultraRareOdds(null).length === 0 && ultraRareOdds({ basicChance: 0.01, progressiveFactor: 0.2, count: 0 }).length === 0);
+  ok("a one-piece Ultra Rare set is the whole gate",
+     ultraRareOdds({ basicChance: 0.01, progressiveFactor: 0.2, count: 1 })[0].oneIn === 100);
   /* Degenerate configs must not loop or land outside the set. */
   ok("one slot is always slot zero", ultraRareSlot(0.99, 0.2, 1) === 0);
   ok("a zero factor is always slot zero", ultraRareSlot(0.99, 0, 10) === 0);
+}
+
+/* ================= THE CARD SHAPE ================= */
+{
+  ok("Kinetink's 5:7 becomes CSS's 5 / 7", cssAspect("5:7") === "5 / 7", cssAspect("5:7"));
+  ok("a slash is accepted too", cssAspect("16/9") === "16 / 9");
+  ok("whitespace is tolerated", cssAspect("  3 : 2 ") === "3 / 2", cssAspect("  3 : 2 "));
+  ok("decimals are kept", cssAspect("1.5:1") === "1.5 / 1");
+  /* Every one of these would otherwise reach a CSS aspect-ratio as a broken
+     value and collapse the card to nothing, which looks like a missing image
+     rather than a bad field. A square is wrong for no set; a collapsed grid is
+     badly wrong for one. */
+  for (const bad of ["", "square", "5:0", "0:7", "5:", ":7", "-5:7", "5:7:9", "NaN:1"]) {
+    ok(`${JSON.stringify(bad)} falls back to a square`, cssAspect(bad) === "1 / 1", cssAspect(bad));
+  }
 }
 
 console.log(out.join("\n"));

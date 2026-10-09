@@ -299,6 +299,41 @@ export const topTierOf = (c: NfdCollection): number =>
  * the two are held together by a test that checks the shares rather than by
  * one of them calling the other.
  */
+/**
+ * The chance of landing in each Ultra Rare slot, as a "one in N".
+ *
+ * ⚠ THE LAST SLOT IS NOT (1-f)·f^i. It gets the whole remainder, f^(count-1),
+ * because ultraRareSlot falls through to it. The difference is not academic:
+ * on this set's config the tenth slot is 1 in 195,312,500 rather than the
+ * 1 in 244,140,625 the simple formula gives, and a test that restated the
+ * formula instead of sampling the function would never have caught it.
+ */
+export function ultraRareOdds(
+  u: NfdUltraRareRoll | null,
+): Array<{ slot: number; share: number; oneIn: number }> {
+  if (!u || u.count <= 0) return [];
+  const f = u.progressiveFactor;
+  const rows: Array<{ slot: number; share: number; oneIn: number }> = [];
+  for (let i = 0; i < u.count; i++) {
+    const share = i === u.count - 1 ? Math.pow(f, i) : (1 - f) * Math.pow(f, i);
+    const p = u.basicChance * share;
+    rows.push({ slot: i + 1, share, oneIn: p > 0 ? Math.round(1 / p) : Infinity });
+  }
+  return rows;
+}
+
+/**
+ * A collection's card shape, as CSS wants it.
+ *
+ * Kinetink writes "5:7"; CSS wants "5 / 7". Anything unreadable falls back to
+ * a square, which is wrong for no set rather than badly wrong for one.
+ */
+export function cssAspect(raw: string): string {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*[:/]\s*(\d+(?:\.\d+)?)\s*$/.exec(raw);
+  if (!m || Number(m[1]) <= 0 || Number(m[2]) <= 0) return "1 / 1";
+  return `${m[1]} / ${m[2]}`;
+}
+
 export function ultraRareSlot(u: number, factor: number, count: number): number {
   if (count <= 1 || factor <= 0) return 0;
   let acc = 0;

@@ -1,5 +1,5 @@
 // The admin panel registry. Adding a future admin panel (network, node,
-// advanced, …) is one entry here — the gear/overlay pick it up automatically.
+// advanced, …) is one entry here, and the gear/overlay pick it up automatically.
 import type { ReactNode } from "react";
 import { StylePanel } from "./panels/StylePanel";
 import { PayoutsPanel } from "./panels/PayoutsPanel";
@@ -11,6 +11,7 @@ import { ChainHealthPanel } from "../wallet/ChainHealthPanel";
 import { RebelsDropsPanel } from "./panels/RebelsDropsPanel";
 import { RebelsEnemiesPanel } from "./panels/RebelsEnemiesPanel";
 import { RebelsGamesPanel } from "./panels/RebelsGamesPanel";
+import { RebelsNfdPanel } from "./panels/RebelsNfdPanel";
 
 export interface AdminPanel {
   id: string;
@@ -41,4 +42,8 @@ export const ADMIN_PANELS: AdminPanel[] = [
   // Divi Rebels: the games themselves - a place, a sequence of rounds, and
   // what they pay. The built-in is shown locked and is copied to start one.
   { id: "rebels-games", title: "Rebels Games", render: () => <RebelsGamesPanel /> },
+  // Divi Rebels: which collections of Divi collectibles count in the game.
+  // Reading a launch file SAVES a set; switching it on is a separate act, so
+  // correcting a file cannot change what is live by accident.
+  { id: "rebels-nfd", title: "Rebels NFDs", render: () => <RebelsNfdPanel /> },
 ];
