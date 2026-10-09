@@ -48,9 +48,9 @@ function ok(name: string, cond: boolean, extra = "") {
   ok("a wingman holds its station rather than orbiting",
      wingSpin(0.001, 2) === 0 && wingSpin(7, 4) === 0 && wingSpin(99, 8) === 0);
   ok("and one alone still does not orbit either", wingSpin(7, 1) === 0);
-  /* ---- where each slot sits, which my edit above had cut the setup for ---- */
-  /* Rolled a quarter turn on purpose, so the test below that compares against
-     a world-up frame is actually comparing two different things. */
+  /* ---- where each slot sits ----
+     Rolled a quarter turn on purpose: the last test here compares this frame
+     against a world-up one, so the two have to actually differ. */
   const owner = {
     pos: new THREE.Vector3(0, 0, 100),
     fwd: new THREE.Vector3(0, 0, -1),
