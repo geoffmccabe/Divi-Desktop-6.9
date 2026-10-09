@@ -192,18 +192,32 @@ for (const [name, at] of [places[0], places[3]]) {
      `estimated ${v.triangles}, really ${real}, allowance ${TRIANGLE_BUDGET}`);
 }
 
-/* ---- the far side of the planet is not drawn ---- */
+/* ---- ⚠ THE FAR SIDE OF THE PLANET *IS* DRAWN ----
+   This test asserted the opposite, and the behaviour it was guarding is what
+   Geoff was looking at: "Those in the distance are invisible and transparent,
+   so looking through the planet you don't see anything on the other side."
+   A horizon cull is right for a solid planet. This shell is a quarter full
+   with channels through it, so you see the far side through the near one, and
+   dropping it leaves the planet looking hollow. */
 {
   const v = visibleChunks([R_OUTER + SKY_EDGE, 0, 0]);
-  const behind = v.chunks.filter((c) => {
+  const behindOf = (r: typeof v) => r.chunks.filter((c) => {
     const mx = (c.ox + CHUNK / 2) * c.step;
     const my = (c.oy + CHUNK / 2) * c.step;
     const mz = (c.oz + CHUNK / 2) * c.step;
     const l = Math.hypot(mx, my, mz) || 1;
     return mx / l < -0.3;                     /* well round the back */
   });
-  ok("standing outside, the far side of the planet is not drawn",
-     behind.length === 0, `${behind.length} chunks behind the planet`);
+  const behind = behindOf(v);
+  ok("standing outside, the far side of the planet IS drawn",
+     behind.length > 0, `${behind.length} chunks behind the planet`);
+  /* And drawn COARSELY, which is what makes it affordable. Nothing round the
+     back is at full detail. */
+  ok("and drawn in big cubes, not at full detail",
+     behind.every((c) => c.step >= 8), `finest behind is step ${Math.min(...behind.map((c) => c.step))}`);
+  /* The whole point: it is cheap. Nine percent measured from far orbit. */
+  ok("and the far side is a small fraction of the cost",
+     v.triangles <= TRIANGLE_BUDGET, `${v.triangles} against ${TRIANGLE_BUDGET}`);
   /* Inside, there is no far side: you are in the rock and everything near you
      counts. */
   const inside = visibleChunks([(R_OUTER + R_INNER) / 2, 0, 0]);
@@ -359,6 +373,107 @@ for (const [name, at] of [places[0], places[3]]) {
          a.lo[0] >= b.lo[0] && a.hi[0] <= b.hi[0],
          `[${a.lo[0]},${a.hi[0]}] against [${b.lo[0]},${b.hi[0]}]`);
     }
+  }
+}
+
+/* ---- ⚠ WHAT THE PLAYER ACTUALLY SEES: HOW MUCH CHANGES AT ONCE ----
+   The fault Geoff kept reporting was never the TOTAL amount of detail
+   changing, it was the amount changing in one moment: "every few seconds all
+   the cubes around me shift and change, as if they are being recreated
+   differently."
+
+   So this flies a path and counts, per frame, the boxes that split or merged
+   since the frame before. An earlier attempt at this whole problem measured
+   chunks VANISHING instead, concluded a tightening had helped, and shipped a
+   change that bought nothing; the quantity has to be the one in front of the
+   player. See SPLIT_SPREAD for the measurements this bound comes from. */
+{
+  const key = (ox: number, oy: number, oz: number, st: number) => `${st}:${ox},${oy},${oz}`;
+  const ancestors = (ox: number, oy: number, oz: number, st: number) => {
+    const list: string[] = [];
+    let up = parentOf(ox, oy, oz, st);
+    while (up) { list.push(key(up.ox, up.oy, up.oz, up.step)); up = parentOf(up.ox, up.oy, up.oz, up.step); }
+    return list;
+  };
+
+  const path: [number, number, number][] = [];
+  for (let r = 900; r > 505; r -= 2.5) path.push([r, 0, 0]);
+  for (let a = 0; a < 0.35; a += 0.0035) path.push([505 * Math.cos(a), 505 * Math.sin(a), 0]);
+  for (let r = 505; r > 255; r -= 2) path.push([r * Math.cos(0.35), r * Math.sin(0.35), 0]);
+
+  let prev = new Map<string, number>();
+  let worstFrame = 0;
+  let peak = 0;
+  let dropped = 0;
+  for (const at of path) {
+    const held = prev;
+    const v = visibleChunks(at, {
+      lodHold: (ox, oy, oz, st) => {
+        if (held.has(key(ox, oy, oz, st))) return true;
+        for (const [k, s] of held) {
+          if (s >= st) continue;
+          const [sp, rest] = k.split(":");
+          const [a, b, c] = rest.split(",").map(Number);
+          if (ancestors(a, b, c, Number(sp)).includes(key(ox, oy, oz, st))) return false;
+        }
+        return undefined;
+      },
+    });
+    peak = Math.max(peak, v.triangles);
+    dropped += v.dropped;
+    const now = new Map<string, number>();
+    for (const c of v.chunks) now.set(key(c.ox, c.oy, c.oz, c.step), c.step);
+    let changed = 0;
+    for (const [k, st] of now) {
+      if (prev.has(k)) continue;
+      const [sp, rest] = k.split(":");
+      const [a, b, c] = rest.split(",").map(Number);
+      if (ancestors(a, b, c, Number(sp)).some((x) => prev.has(x))) { changed++; continue; }
+      for (const [pk, ps] of prev) {
+        if (ps >= st) continue;
+        const [psp, prest] = pk.split(":");
+        const [pa, pb, pc] = prest.split(",").map(Number);
+        if (ancestors(pa, pb, pc, Number(psp)).includes(k)) { changed++; break; }
+      }
+    }
+    worstFrame = Math.max(worstFrame, changed);
+    prev = now;
+  }
+
+  /* Measured at 22 with per-box thresholds and 60 without them. Thirty leaves
+     room for honest variation and still fails if they are taken out. */
+  ok("no frame rearranges a large part of the planet at once",
+     worstFrame <= 30, `worst frame changed ${worstFrame} boxes`);
+  ok("and the flight never runs out of triangle budget",
+     dropped === 0 && peak <= TRIANGLE_BUDGET, `peak ${peak}, dropped ${dropped}`);
+}
+
+/* ---- the per-box threshold itself ---- */
+{
+  /* Stable, or the jitter IS the flicker. Same box, same answer, always. */
+  const a = visibleChunks([505, 0, 0]);
+  const b = visibleChunks([505, 0, 0]);
+  ok("the same viewpoint gives exactly the same picture twice",
+     a.chunks.length === b.chunks.length
+     && a.chunks.every((c, i) => c.ox === b.chunks[i].ox && c.oy === b.chunks[i].oy
+       && c.oz === b.chunks[i].oz && c.step === b.chunks[i].step));
+
+  /* And neighbours must not land in a ramp: if the hash rose smoothly with
+     position, the detail boundary would just become a smooth cone and the
+     whole layer would be back in step. Checked by eye on the drawn result:
+     boxes at one level are NOT a clean shell of equal distances. */
+  const inside = visibleChunks([380, 0, 0]);
+  const atStep2 = inside.chunks.filter((c) => c.step === 2);
+  if (atStep2.length > 4) {
+    const dists = atStep2.map((c) => {
+      const mx = (c.ox + CHUNK / 2) * c.step, my = (c.oy + CHUNK / 2) * c.step, mz = (c.oz + CHUNK / 2) * c.step;
+      return Math.hypot(mx - 380, my, mz);
+    });
+    const lo = Math.min(...dists), hi = Math.max(...dists);
+    ok("one level's boxes sit at a spread of distances, not a clean shell",
+       hi - lo > 8, `${lo.toFixed(0)}..${hi.toFixed(0)} cubes`);
+  } else {
+    ok("one level's boxes sit at a spread of distances, not a clean shell", true, "too few to measure");
   }
 }
 
