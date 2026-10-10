@@ -86,7 +86,7 @@ fn main() {
     let creator = addr(&rpc);
     let _ = rpc.call("sendtoaddress", json!([creator, 1.0]));
     mine(&rpc);
-    let col = collectibles::create_collection(&cfg, &creator, "Scan Readback Set", "phase 2 proof", None, 3)
+    let col = collectibles::create_collection(&cfg, &creator, "Scan Readback Set", "phase 2 proof", None, 3, None)
         .expect("create collection");
     mine(&rpc);
 

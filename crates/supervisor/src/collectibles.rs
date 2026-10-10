@@ -222,6 +222,7 @@ pub fn create_collection(
     description: &str,
     cover: Option<(&[u8], &str)>,
     max_supply: u32,
+    rarity: Option<(u16, u32, u32, u16)>,
 ) -> Result<CollectionOutcome, String> {
     let rpc = RpcClient::new(cfg);
     // A spendable UTXO on the creator address funds (and thereby authors) it.
@@ -234,9 +235,11 @@ pub fn create_collection(
     };
     let meta = json!({ "name": name, "description": description, "image": image });
     let meta_ptr = storage.put_public(meta.to_string().as_bytes(), "application/json")?;
-    // No rarity config here yet (plain create). The Perc importer will pass the
-    // on-chain rarity config (tier_count + ultra-rare gate) when it lands.
-    let record = nfd_record::encode_collection_create(max_supply, &meta_ptr, None)?;
+    // `rarity` makes this a blind-pack (Perc) set: `(tier_count, ur_basic_ppm,
+    // ur_progressive_ppm, ur_count)` written on-chain so reveals/forges resolve
+    // provably-fairly. `None` = a plain collection. The caller converts the
+    // creator's percentages to parts-per-million.
+    let record = nfd_record::encode_collection_create(max_supply, &meta_ptr, rarity)?;
     let txid = anchor_record(&rpc, &utxo, &record, None)?;
     Ok(CollectionOutcome { txid, meta_ptr })
 }

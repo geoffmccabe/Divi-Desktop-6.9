@@ -550,6 +550,13 @@ export function CollectiblesPanel() {
   const [colEncrypted, setColEncrypted] = useState(true); // collection content mode
   const [colBusy, setColBusy] = useState(false);
   const [colErr, setColErr] = useState<string | null>(null);
+  // Blind-pack (Perc) set: tiers + an optional ultra-rare gate, written on-chain
+  // so reveals/forges resolve provably-fairly. Chance/drop-off are percentages.
+  const [colPerc, setColPerc] = useState(false);
+  const [colTiers, setColTiers] = useState("10");
+  const [colUrChance, setColUrChance] = useState("1");   // % gate that a pack is ultra-rare
+  const [colUrFactor, setColUrFactor] = useState("20");  // % drop-off between UR slots
+  const [colUrCount, setColUrCount] = useState("5");     // number of UR slots (0 = none)
 
   // Standalone (no-collection) mint content mode.
   const [mintEncrypted, setMintEncrypted] = useState(true);
@@ -698,7 +705,16 @@ export function CollectiblesPanel() {
     try {
       const creator = await myNfdAddress();
       const max = Math.max(0, Math.floor(Number(colMax) || 0));
-      const res = await nfdCreateCollection(creator, colName.trim(), "", max, colCover?.b64, colCover?.mime);
+      // A Perc set carries an on-chain rarity config. Percentages -> ppm.
+      const rarity = colPerc
+        ? {
+            tierCount: Math.max(1, Math.floor(Number(colTiers) || 1)),
+            urBasicPpm: Math.round(Math.max(0, Number(colUrChance) || 0) * 10_000),
+            urProgressivePpm: Math.round(Math.max(0, Number(colUrFactor) || 0) * 10_000),
+            urCount: Math.max(0, Math.floor(Number(colUrCount) || 0)),
+          }
+        : undefined;
+      const res = await nfdCreateCollection(creator, colName.trim(), "", max, colCover?.b64, colCover?.mime, rarity);
       const col: Collection = { id: res.txid, name: colName.trim(), creatorAddr: res.creatorAddr, maxSupply: max, minted: 0, cover: colCover?.dataUrl, encrypted: colEncrypted };
       setCollections((prev) => [col, ...prev]);
       setColName("");
@@ -1017,6 +1033,26 @@ export function CollectiblesPanel() {
             <option value="pub">Public — anyone can view the art (e.g. Percs)</option>
           </select>
         </label>
+        <label className="coll-field" style={{ alignItems: "center", gap: 8 }}>
+          <input type="checkbox" checked={colPerc} onChange={(e) => setColPerc(e.target.checked)} />
+          <span>Blind-pack (Perc) set — packs are sealed and revealed to a tier</span>
+        </label>
+        {colPerc && (
+          <div style={{ border: "1px solid var(--border, #2a2a35)", borderRadius: 10, padding: "10px 12px", margin: "2px 0 6px" }}>
+            <p className="wl-note" style={{ marginTop: 0 }}>
+              The tier odds and ultra-rare gate are written on-chain so every reveal and forge is
+              provably fair. You can open public minting afterward by setting a mint price on the collection.
+            </p>
+            <label style={{ display: "block", marginBottom: 4, fontSize: 13 }}>Number of tiers</label>
+            <input className="wl-input" type="number" min={1} value={colTiers} onChange={(e) => setColTiers(e.target.value)} style={{ maxWidth: 160 }} />
+            <label style={{ display: "block", margin: "8px 0 4px", fontSize: 13 }}>Ultra-rare chance (%) — 0 for none</label>
+            <input className="wl-input" type="number" min={0} step="0.1" value={colUrChance} onChange={(e) => setColUrChance(e.target.value)} style={{ maxWidth: 160 }} />
+            <label style={{ display: "block", margin: "8px 0 4px", fontSize: 13 }}>Ultra-rare drop-off (%) between slots</label>
+            <input className="wl-input" type="number" min={0} step="0.1" value={colUrFactor} onChange={(e) => setColUrFactor(e.target.value)} style={{ maxWidth: 160 }} />
+            <label style={{ display: "block", margin: "8px 0 4px", fontSize: 13 }}>Number of ultra-rare slots</label>
+            <input className="wl-input" type="number" min={0} value={colUrCount} onChange={(e) => setColUrCount(e.target.value)} style={{ maxWidth: 160 }} />
+          </div>
+        )}
         <button className="wl-btn wl-btn-primary" disabled={colBusy || !colName.trim()} onClick={createCollection}>
           {colBusy ? "Creating…" : "Create collection"}
         </button>
@@ -1572,10 +1608,19 @@ export function CollectiblesPanel() {
                 <p className="wl-note" style={{ marginTop: 0 }}>
                   This collection is open for minting at <strong>{priceCur.priceDivi} DIVI</strong> per sealed pack.
                   You pay from your wallet and get a sealed pack to open (reveal) afterward.
+                  {browseCol.maxSupply > 0 && (() => {
+                    const left = Math.max(0, browseCol.maxSupply - (browseChain?.collection?.minted ?? browseCol.minted));
+                    return <> <strong>{left}</strong> of {browseCol.maxSupply} left.</>;
+                  })()}
                 </p>
-                <button className="wl-btn wl-btn-primary" disabled={pubMintBusy} onClick={mintPublicPack}>
-                  {pubMintBusy ? "Minting…" : `Mint for ${priceCur.priceDivi} DIVI`}
-                </button>
+                {(() => {
+                  const soldOut = browseCol.maxSupply > 0 && (browseChain?.collection?.minted ?? browseCol.minted) >= browseCol.maxSupply;
+                  return (
+                    <button className="wl-btn wl-btn-primary" disabled={pubMintBusy || soldOut} onClick={mintPublicPack}>
+                      {soldOut ? "Sold out" : pubMintBusy ? "Minting…" : `Mint for ${priceCur.priceDivi} DIVI`}
+                    </button>
+                  );
+                })()}
                 {pubMintMsg && <p className="wl-note" style={{ marginTop: 6 }}>{pubMintMsg}</p>}
               </div>
             )}

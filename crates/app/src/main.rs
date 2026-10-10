@@ -2032,6 +2032,10 @@ async fn nfd_create_collection(
     max_supply: u32,
     cover_b64: Option<String>,
     cover_mime: Option<String>,
+    tier_count: Option<u16>,
+    ur_basic_ppm: Option<u32>,
+    ur_progressive_ppm: Option<u32>,
+    ur_count: Option<u16>,
 ) -> Result<NfdCollectionDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
@@ -2043,7 +2047,14 @@ async fn nfd_create_collection(
             (Some(b), Some(mime)) => Some((b.as_slice(), mime.as_str())),
             _ => None,
         };
-        let c = collectibles::create_collection(&cfg, &creator_addr, &name, &description, cover, max_supply)?;
+        // A blind-pack (Perc) set: tier_count > 0 makes it one; the ultra-rare
+        // gate values are parts-per-million (the UI converts the creator's
+        // percentages). `None`/0 = a plain collection.
+        let rarity = match tier_count {
+            Some(tc) if tc > 0 => Some((tc, ur_basic_ppm.unwrap_or(0), ur_progressive_ppm.unwrap_or(0), ur_count.unwrap_or(0))),
+            _ => None,
+        };
+        let c = collectibles::create_collection(&cfg, &creator_addr, &name, &description, cover, max_supply, rarity)?;
         Ok(NfdCollectionDto { txid: c.txid, meta_ptr: c.meta_ptr, creator_addr })
     })
     .await

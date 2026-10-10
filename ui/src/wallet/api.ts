@@ -135,6 +135,15 @@ export interface NfdCollection {
   metaPtr: string;
   creatorAddr: string;
 }
+// `rarity` makes it a blind-pack (Perc) set: tierCount + the ultra-rare gate in
+// parts-per-million (urBasicPpm/urProgressivePpm = chance/factor * 1_000_000,
+// urCount = number of UR slots). Omit it for a plain collection.
+export interface Rarity {
+  tierCount: number;
+  urBasicPpm: number;
+  urProgressivePpm: number;
+  urCount: number;
+}
 export const nfdCreateCollection = (
   creatorAddr: string,
   name: string,
@@ -142,6 +151,7 @@ export const nfdCreateCollection = (
   maxSupply: number,
   coverB64?: string,
   coverMime?: string,
+  rarity?: Rarity,
 ) =>
   invoke<NfdCollection>("nfd_create_collection", {
     creatorAddr,
@@ -150,6 +160,10 @@ export const nfdCreateCollection = (
     maxSupply,
     coverB64,
     coverMime,
+    tierCount: rarity?.tierCount,
+    urBasicPpm: rarity?.urBasicPpm,
+    urProgressivePpm: rarity?.urProgressivePpm,
+    urCount: rarity?.urCount,
   });
 
 export interface ReceiveCode {

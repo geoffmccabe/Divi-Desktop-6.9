@@ -103,7 +103,7 @@ fn main() {
     std::thread::sleep(std::time::Duration::from_millis(600));
 
     let cover = b"fake-webp-collection-cover";
-    let col = collectibles::create_collection(&cfg, &creator, "Divi Genesis", "the first drop", Some((cover, "image/webp")), 3)
+    let col = collectibles::create_collection(&cfg, &creator, "Divi Genesis", "the first drop", Some((cover, "image/webp")), 3, None)
         .expect("create collection");
     println!("\ncollection id   = {}", col.txid);
     let _ = rpc.call("setgenerate", json!([1]));
