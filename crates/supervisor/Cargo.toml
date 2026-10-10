@@ -25,6 +25,8 @@ nfd-indexer = { path = "../nfd-indexer" }
 ureq = "2"
 # Verifies the pinned checksum of the downloaded divid69 before it is installed.
 sha2 = "0.10"
+# HMAC-SHA256 for signing GoBanq Assets storage requests (Arweave uploads).
+hmac = "0.12"
 # Already in the tree via keyring; used directly for commit salts, which must
 # come from a real CSPRNG rather than a hash of a timestamp.
 getrandom = "0.2"

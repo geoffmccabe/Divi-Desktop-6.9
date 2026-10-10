@@ -7,6 +7,7 @@
 // exactly the pointer size the on-chain NFD record carries.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use hmac::{Hmac, Mac};
 use sha2::{Digest, Sha256};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -224,64 +225,148 @@ impl Storage for CachedRelay {
     }
 }
 
-/// GoBanq Assets: stores the (already-encrypted) bundle on Arweave and returns
-/// the same 32-byte pointer the relay did. The desktop wallet holds no secret:
-/// a Divi-side issuer mints a single-use upload ticket, and the wallet uploads
-/// with it. Downloads come straight from a public gateway, so viewing never
-/// depends on GoBanq. Config via GOBANQ_API_URL + GOBANQ_TICKET_URL (our
-/// issuer); until both are set the backend reports as not configured.
+/// Default GoBanq Assets host (devnet). Override with GOBANQ_API_URL or the
+/// `baseUrl` in the credential file.
+pub const DEFAULT_GOBANQ_URL: &str = "https://assets-devnet.gobanq.com";
+const GOBANQ_UPLOAD_PATH: &str = "/v1/storage/uploads";
+
+/// DD69's GoBanq Assets app login. GoBanq holds the funded Arweave account; DD69
+/// only holds this app id + secret (this is NOT an Arweave key and cannot spend
+/// Arweave funds directly — it authenticates DD69 to GoBanq, which uploads on its
+/// behalf under a spending cap).
+#[derive(Clone, Default)]
+pub struct GoBanqCred {
+    pub base_url: String,
+    pub app_id: String,
+    pub secret: String,
+}
+
+fn gobanq_cred_path() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("GOBANQ_CRED_FILE") {
+        return Some(PathBuf::from(p));
+    }
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".gobanq-dd69-devnet.json"))
+}
+
+/// Load the GoBanq credential: explicit env (GOBANQ_APP_ID/SECRET/API_URL) wins,
+/// else a JSON credential file (GOBANQ_CRED_FILE, default
+/// ~/.gobanq-dd69-devnet.json) shaped `{ baseUrl, appId, secret }`. Returns None
+/// when no usable credential is found.
+pub fn gobanq_cred() -> Option<GoBanqCred> {
+    if let (Ok(app_id), Ok(secret)) = (std::env::var("GOBANQ_APP_ID"), std::env::var("GOBANQ_APP_SECRET")) {
+        if !app_id.is_empty() && !secret.is_empty() {
+            let base_url = std::env::var("GOBANQ_API_URL").unwrap_or_else(|_| DEFAULT_GOBANQ_URL.to_string());
+            return Some(GoBanqCred { base_url, app_id, secret });
+        }
+    }
+    let text = std::fs::read_to_string(gobanq_cred_path()?).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let app_id = v["appId"].as_str().unwrap_or_default().to_string();
+    let secret = v["secret"].as_str().unwrap_or_default().to_string();
+    if app_id.is_empty() || secret.is_empty() {
+        return None;
+    }
+    let base_url = v["baseUrl"]
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("GOBANQ_API_URL").ok())
+        .unwrap_or_else(|| DEFAULT_GOBANQ_URL.to_string());
+    Some(GoBanqCred { base_url, app_id, secret })
+}
+
+/// GoBanq Assets: stores the bundle (encrypted bundle or public image) on Arweave
+/// via GoBanq and returns the same 32-byte pointer the on-chain NFD record
+/// carries. Every request is HMAC-SHA256 signed with the app login; downloads
+/// come straight from a public gateway, so viewing never depends on GoBanq.
 pub struct GoBanq {
-    api_base: String,
-    ticket_url: String,
+    cred: GoBanqCred,
     gateway: String,
     cache: LocalDir,
 }
 
-pub fn gobanq_api_url() -> String {
-    std::env::var("GOBANQ_API_URL").unwrap_or_default()
-}
-pub fn gobanq_ticket_url() -> String {
-    std::env::var("GOBANQ_TICKET_URL").unwrap_or_default()
-}
-
 impl GoBanq {
-    pub fn new(api_base: &str, ticket_url: &str, cache: LocalDir) -> Self {
+    pub fn new(cred: GoBanqCred, cache: LocalDir) -> Self {
         Self {
-            api_base: api_base.trim_end_matches('/').to_string(),
-            ticket_url: ticket_url.to_string(),
+            cred,
             gateway: "https://arweave.net".to_string(),
             cache,
         }
     }
+
     fn configured(&self) -> bool {
-        !self.api_base.is_empty() && !self.ticket_url.is_empty()
+        !self.cred.base_url.is_empty() && !self.cred.app_id.is_empty() && !self.cred.secret.is_empty()
     }
-    fn ticket(&self) -> Result<String, String> {
-        let resp = ureq::post(&self.ticket_url)
-            .timeout(std::time::Duration::from_secs(15))
-            .call()
-            .map_err(|e| format!("ticket issuer unreachable: {e}"))?;
-        let v: serde_json::Value = serde_json::from_str(&resp.into_string().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        v["ticket"].as_str().map(|s| s.to_string()).ok_or_else(|| "issuer returned no ticket".to_string())
+
+    fn now_ms() -> String {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+            .to_string()
     }
+
+    fn nonce() -> String {
+        let mut b = [0u8; 18];
+        let _ = getrandom::getrandom(&mut b);
+        URL_SAFE_NO_PAD.encode(b)
+    }
+
+    // canonical = METHOD\npathWithQuery\ntimestamp\nnonce\nsha256hex(body); signed
+    // with HMAC-SHA256(secret). Matches GoBanq's client-kit exactly.
+    fn sign(&self, method: &str, path: &str, ts: &str, nonce: &str, body: &[u8]) -> String {
+        let body_hash: String = Sha256::digest(body).iter().map(|b| format!("{b:02x}")).collect();
+        let canonical = format!("{}\n{}\n{}\n{}\n{}", method.to_uppercase(), path, ts, nonce, body_hash);
+        let mut mac = Hmac::<Sha256>::new_from_slice(self.cred.secret.as_bytes()).expect("hmac accepts any key length");
+        mac.update(canonical.as_bytes());
+        mac.finalize().into_bytes().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn base(&self) -> &str {
+        self.cred.base_url.trim_end_matches('/')
+    }
+
     fn upload(&self, bytes: &[u8], content_type: &str, encrypted: bool) -> Result<String, String> {
         if !self.configured() {
-            return Err("GoBanq storage is not configured yet (needs GOBANQ_API_URL and a ticket issuer).".to_string());
+            return Err("GoBanq storage is not configured (missing the app login at ~/.gobanq-dd69-devnet.json).".to_string());
         }
-        let ticket = self.ticket()?;
-        let mut req = ureq::post(&format!("{}/v1/storage/uploads", self.api_base))
-            .set("Content-Type", content_type)
-            .set("x-gobanq-ticket", &ticket);
+        let ts = Self::now_ms();
+        let nonce = Self::nonce();
+        let sig = self.sign("POST", GOBANQ_UPLOAD_PATH, &ts, &nonce, bytes);
+        let idem = format!("dd69-{ts}-{}", &nonce[..nonce.len().min(16)]);
+        let mut req = ureq::post(&format!("{}{}", self.base(), GOBANQ_UPLOAD_PATH))
+            .timeout(std::time::Duration::from_secs(45))
+            .set("content-type", content_type)
+            .set("x-gobanq-app", &self.cred.app_id)
+            .set("x-gobanq-timestamp", &ts)
+            .set("x-gobanq-nonce", &nonce)
+            .set("x-gobanq-signature", &sig)
+            .set("idempotency-key", &idem);
         if encrypted {
             req = req.set("x-gobanq-encrypted", "true");
         }
-        let body = req.send_bytes(bytes).map_err(|e| format!("upload failed: {e}"))?.into_string().map_err(|e| e.to_string())?;
+        let body = req
+            .send_bytes(bytes)
+            .map_err(|e| format!("GoBanq upload failed: {e}"))?
+            .into_string()
+            .map_err(|e| e.to_string())?;
         let v: serde_json::Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
+        // A deduplicated upload may already carry the Arweave id.
+        if let Some(id) = v["upload"]["arweaveId"].as_str() {
+            return arweave_id_to_ptr(id);
+        }
         let upload_id = v["upload"]["uploadId"].as_str().ok_or("GoBanq returned no uploadId")?.to_string();
-        // The upload runs as a job; poll for the Arweave id (seconds).
-        for _ in 0..40 {
-            let st_body = ureq::get(&format!("{}/v1/storage/uploads/{}", self.api_base, upload_id))
-                .set("x-gobanq-ticket", &ticket)
+        // The upload runs as a job; poll (signed GET) for the Arweave id.
+        for _ in 0..60 {
+            let path = format!("{GOBANQ_UPLOAD_PATH}/{upload_id}");
+            let ts = Self::now_ms();
+            let nonce = Self::nonce();
+            let sig = self.sign("GET", &path, &ts, &nonce, &[]);
+            let st_body = ureq::get(&format!("{}{}", self.base(), path))
+                .timeout(std::time::Duration::from_secs(15))
+                .set("x-gobanq-app", &self.cred.app_id)
+                .set("x-gobanq-timestamp", &ts)
+                .set("x-gobanq-nonce", &nonce)
+                .set("x-gobanq-signature", &sig)
                 .call()
                 .map_err(|e| e.to_string())?
                 .into_string()
@@ -291,9 +376,9 @@ impl GoBanq {
                 return arweave_id_to_ptr(id);
             }
             if s["upload"]["status"].as_str() == Some("failed") {
-                return Err("GoBanq reported the upload failed.".to_string());
+                return Err(format!("GoBanq reported the upload failed: {}", s["upload"]["error"].as_str().unwrap_or("")));
             }
-            std::thread::sleep(std::time::Duration::from_millis(500));
+            std::thread::sleep(std::time::Duration::from_millis(750));
         }
         Err("upload did not finish in time; it may still complete.".to_string())
     }
@@ -418,14 +503,14 @@ pub fn set_backend(datadir: &Path, id: &str) -> Result<(), String> {
 /// The backend list + which is active, for the panel's Storage section.
 pub fn backends_status(datadir: &Path) -> serde_json::Value {
     let active = active_backend(datadir);
-    let gb_conf = !gobanq_api_url().is_empty() && !gobanq_ticket_url().is_empty();
+    let gb = gobanq_cred();
     serde_json::json!({
         "active": active.id(),
         "backends": [
             { "id": "local", "label": Backend::Local.label(), "available": true, "detail": "Stored on this device only — for testing." },
             { "id": "relay", "label": Backend::Relay.label(), "available": true, "detail": format!("Uploads to {}", relay_url()) },
-            { "id": "gobanq", "label": Backend::GoBanq.label(), "available": gb_conf,
-              "detail": if gb_conf { format!("Uploads via GoBanq ({}).", gobanq_api_url()) } else { "Not configured yet — awaiting the GoBanq app key.".to_string() } },
+            { "id": "gobanq", "label": Backend::GoBanq.label(), "available": gb.is_some(),
+              "detail": match &gb { Some(c) => format!("Uploads to Arweave via GoBanq ({}).", c.base_url), None => "Not configured yet — missing the GoBanq app login.".to_string() } },
             { "id": "divistore", "label": Backend::DiviStore.label(), "available": DIVISTORE_READY,
               "detail": if DIVISTORE_READY { "Divi's own permanent storage.".to_string() } else { "Coming soon — Divi's own permanent storage.".to_string() } }
         ]
@@ -439,7 +524,7 @@ pub fn backends_status(datadir: &Path) -> serde_json::Value {
 pub fn for_node(datadir: &Path) -> Box<dyn Storage> {
     match active_backend(datadir) {
         Backend::Relay => Box::new(CachedRelay::new(Relay::new(&relay_url()), LocalDir::under_datadir(datadir))),
-        Backend::GoBanq => Box::new(GoBanq::new(&gobanq_api_url(), &gobanq_ticket_url(), LocalDir::under_datadir(datadir))),
+        Backend::GoBanq => Box::new(GoBanq::new(gobanq_cred().unwrap_or_default(), LocalDir::under_datadir(datadir))),
         Backend::DiviStore => Box::new(DiviStore::new(LocalDir::under_datadir(datadir))),
         Backend::Local => Box::new(LocalDir::under_datadir(datadir)),
     }

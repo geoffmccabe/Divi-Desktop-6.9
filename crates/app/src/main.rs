@@ -2055,7 +2055,7 @@ async fn nfd_create_collection(
             Some(tc) if tc > 0 => Some((tc, ur_basic_ppm.unwrap_or(0), ur_progressive_ppm.unwrap_or(0), ur_count.unwrap_or(0))),
             _ => None,
         };
-        let c = collectibles::create_collection(&cfg, &creator_addr, &name, &description, cover, max_supply, rarity, image_url.as_deref())?;
+        let c = collectibles::create_collection(&cfg, &creator_addr, &name, &description, cover, max_supply, rarity, image_url.as_deref(), None)?;
         Ok(NfdCollectionDto { txid: c.txid, meta_ptr: c.meta_ptr, creator_addr })
     })
     .await

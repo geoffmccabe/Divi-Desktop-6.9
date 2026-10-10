@@ -21,7 +21,7 @@ fn main() {
     mine(2);
 
     // A PUBLIC collection (Perc-style: art shared per tier, no encryption).
-    let col = collectibles::create_collection(&cfg, &creator, "Skylie Percs (test)", "batch test", None, 40, None, None)
+    let col = collectibles::create_collection(&cfg, &creator, "Skylie Percs (test)", "batch test", None, 40, None, None, None)
         .expect("create collection");
     mine(1);
     println!("collection = {}", col.txid);

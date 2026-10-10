@@ -14,6 +14,8 @@ use crate::{crypto_nfd, nfd_record};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::io::Read;
+use std::time::Duration;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 const FEE: f64 = 0.0001;
@@ -212,9 +214,37 @@ pub struct CollectionMint<'a> {
     pub traits_json: &'a [u8],
 }
 
+/// Download an art URL and return (bytes, normalized content-type). Used by the
+/// launch importer to MIRROR Kinet.ink art onto permanent storage (Arweave via
+/// GoBanq). The URL is validated against the trusted host before we get here.
+fn fetch_art(url: &str) -> Result<(Vec<u8>, String), String> {
+    let resp = ureq::get(url)
+        .timeout(Duration::from_secs(30))
+        .call()
+        .map_err(|e| format!("could not fetch art ({url}): {e}"))?;
+    let ct = resp.header("Content-Type").unwrap_or("application/octet-stream");
+    let ct = ct.split(';').next().unwrap_or("").trim().to_lowercase();
+    let ct = match ct.as_str() {
+        "image/jpg" => "image/jpeg".to_string(),
+        "" => "application/octet-stream".to_string(),
+        other => other.to_string(),
+    };
+    let mut buf = Vec::new();
+    resp.into_reader()
+        .take(32 * 1024 * 1024)
+        .read_to_end(&mut buf)
+        .map_err(|e| e.to_string())?;
+    if buf.is_empty() {
+        return Err(format!("art download was empty: {url}"));
+    }
+    Ok((buf, ct))
+}
+
 /// Create a collection (creator-only, optionally capped). The collection id is
 /// the returned txid; the creator is `creator_addr` and MUST be the same address
 /// that later mints items into it. `cover` is an optional public banner image.
+/// `tier_art` (a tier -> permanent-art-URL map) is embedded in the on-chain
+/// metadata JSON so any wallet can resolve a revealed Perc's artwork.
 pub fn create_collection(
     cfg: &NodeConfig,
     creator_addr: &str,
@@ -224,18 +254,25 @@ pub fn create_collection(
     max_supply: u32,
     rarity: Option<(u16, u32, u32, u16)>,
     image_url: Option<&str>,
+    tier_art: Option<&Value>,
 ) -> Result<CollectionOutcome, String> {
     let rpc = RpcClient::new(cfg);
     // A spendable UTXO on the creator address funds (and thereby authors) it.
     let utxo = pick_owner_utxo(&rpc, creator_addr)?;
     let storage = nfd_storage::for_node(&cfg.datadir);
     // Cover for the metadata image: uploaded bytes become a gateway URL; else an
-    // already-hosted `image_url` (e.g. a Kinet.ink launch cover) is used as-is.
+    // already-hosted `image_url` (for a launch, the already-mirrored Arweave
+    // cover) is used as-is.
     let image = match cover {
         Some((bytes, ct)) => nfd_storage::gateway_url(&storage.put_public(bytes, ct)?).ok(),
         None => image_url.filter(|s| !s.is_empty()).map(|s| s.to_string()),
     };
-    let meta = json!({ "name": name, "description": description, "image": image });
+    let mut meta = json!({ "name": name, "description": description, "image": image });
+    if let Some(ta) = tier_art {
+        if ta.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
+            meta["tierArt"] = ta.clone();
+        }
+    }
     let meta_ptr = storage.put_public(meta.to_string().as_bytes(), "application/json")?;
     // `rarity` makes this a blind-pack (Perc) set: `(tier_count, ur_basic_ppm,
     // ur_progressive_ppm, ur_count)` written on-chain so reveals/forges resolve
@@ -317,7 +354,6 @@ pub fn launch_from_bundle(
     let plan = crate::collectibles_import::open_launch(json_path)?;
     let name = plan["name"].as_str().unwrap_or("");
     let description = plan["description"].as_str().unwrap_or("");
-    let cover_url = plan["coverUrl"].as_str();
     let r = &plan["rarity"];
     let rarity = Some((
         r["tierCount"].as_u64().unwrap_or(1) as u16,
@@ -325,7 +361,53 @@ pub fn launch_from_bundle(
         r["urProgressivePpm"].as_u64().unwrap_or(0) as u32,
         r["urCount"].as_u64().unwrap_or(0) as u16,
     ));
-    let out = create_collection(cfg, creator_addr, name, description, None, max_supply, rarity, cover_url)?;
+
+    // MIRROR the art onto permanent storage. The bundle references art on the
+    // Kinet.ink host (temporary); an NFD must point at Arweave. Download each
+    // piece and upload it through GoBanq (the only funded Arweave path), then use
+    // the resulting arweave.net URLs. GoBanq dedups by content, so re-running a
+    // failed launch re-uploads cheaply.
+    let cred = nfd_storage::gobanq_cred().ok_or_else(|| {
+        "Launching needs GoBanq storage configured (the app login at ~/.gobanq-dd69-devnet.json).".to_string()
+    })?;
+    let storage: Box<dyn nfd_storage::Storage> =
+        Box::new(nfd_storage::GoBanq::new(cred, nfd_storage::LocalDir::under_datadir(&cfg.datadir)));
+    let mirror = |url: &str| -> Result<Option<String>, String> {
+        if url.is_empty() {
+            return Ok(None);
+        }
+        let (bytes, ct) = fetch_art(url)?;
+        let ptr = storage.put_public(&bytes, &ct)?;
+        Ok(Some(nfd_storage::gateway_url(&ptr)?))
+    };
+
+    let cover_arweave = match plan["coverUrl"].as_str() {
+        Some(u) => mirror(u)?,
+        None => None,
+    };
+    let mut tier_art = serde_json::Map::new();
+    if let Some(obj) = plan["tierArt"].as_object() {
+        for (tier, url) in obj {
+            if let Some(u) = url.as_str() {
+                if let Some(a) = mirror(u)? {
+                    tier_art.insert(tier.clone(), json!(a));
+                }
+            }
+        }
+    }
+    let tier_art = Value::Object(tier_art);
+
+    let out = create_collection(
+        cfg,
+        creator_addr,
+        name,
+        description,
+        None,
+        max_supply,
+        rarity,
+        cover_arweave.as_deref(),
+        Some(&tier_art),
+    )?;
     let price_duffs = plan["priceDuffs"].as_u64().unwrap_or(0);
     // A blank payout address defaults to the creator's own wallet.
     let payout = match plan["payoutAddress"].as_str() {
@@ -337,7 +419,7 @@ pub fn launch_from_bundle(
         "collectionId": out.txid,
         "priceDuffs": price_duffs,
         "name": name,
-        "tierArt": plan["tierArt"].clone(),
+        "tierArt": tier_art,
     }))
 }
 
