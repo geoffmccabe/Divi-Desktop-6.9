@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { nfdImportOpen, nfdImportReadItem, nfdCreateCollection, nfdMint, nfdPrepareFunding, nfdTxConfirmations, type ImportPlan } from "./api";
+import { nfdImportOpen, nfdImportReadItem, nfdCreateCollection, nfdMint, nfdPrepareFunding, nfdTxConfirmations, nfdPickZip, type ImportPlan } from "./api";
 import { makeThumbnailFromBase64, type Item, type Collection } from "./CollectiblesPanel";
 
 // Import a collection authored in Kinet.ink (a .zip of manifest.json + images)
@@ -44,20 +44,38 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
   const [prep, setPrep] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
 
-  async function openBundle() {
+  async function openBundle(zip?: string) {
+    const target = (zip ?? path).trim();
+    if (!target) return;
     setBusy(true);
     setErr(null);
     setPlan(null);
     setFinished(false);
     setProgress(null);
     try {
-      const p = await nfdImportOpen(path.trim());
+      const p = await nfdImportOpen(target);
       setPlan(p);
     } catch (e) {
       setErr(String(e));
     }
     setBusy(false);
   }
+
+  // Open the OS file picker, then read the chosen bundle. The user never sees or
+  // types a path — they click and pick the .zip in the normal Finder window.
+  async function chooseFile() {
+    setErr(null);
+    try {
+      const picked = await nfdPickZip();
+      if (!picked) return; // cancelled
+      setPath(picked);
+      await openBundle(picked);
+    } catch (e) {
+      setErr(String(e));
+    }
+  }
+
+  const fileName = path ? path.split("/").pop() : "";
 
   async function runImport() {
     if (!plan) return;
@@ -168,19 +186,18 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
     <section className="ts-section">
       <h3 className="ts-head">Import from Kinet.ink</h3>
       <p className="wl-note">
-        Publish a collection you built in Kinet.ink. Export it there as a <strong>.zip</strong> (manifest + images),
-        then give DD69 the full path to that file. DD69 creates the collection and mints every item into it —
-        resuming safely if a big batch is interrupted.
+        Publish a collection you built in Kinet.ink. Export it there as a <strong>.zip</strong>, then choose that
+        file below. DD69 creates the collection and mints every item into it, resuming safely if a big batch is
+        interrupted.
       </p>
-      <input
-        className="wl-input"
-        placeholder="Full path to the .zip (e.g. /Users/you/Downloads/divi-genesis.zip)"
-        value={path}
-        onChange={(e) => setPath(e.target.value)}
-      />
-      <button className="wl-btn" disabled={busy || !path.trim()} onClick={openBundle}>
-        {busy && !plan ? "Reading…" : "Open bundle"}
+      <button className="wl-btn wl-btn-primary" disabled={busy} onClick={chooseFile}>
+        {busy && !plan ? "Reading…" : fileName ? `Chosen: ${fileName} — choose another` : "Choose file…"}
       </button>
+      {fileName && !busy && !plan && (
+        <button className="wl-btn" style={{ marginLeft: 8 }} onClick={() => openBundle()}>
+          Open bundle
+        </button>
+      )}
 
       {plan && (
         <div className="import-plan">

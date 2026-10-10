@@ -2061,6 +2061,24 @@ async fn nfd_create_collection(
     .map_err(|_| "internal error".to_string())?
 }
 
+/// Open the OS file picker and return the chosen `.zip` path (or `None` if the
+/// user cancelled). This is how the import screen avoids ever showing or asking
+/// for a raw file path — the user clicks and picks in the normal Finder window.
+#[tauri::command]
+async fn nfd_pick_zip(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use tauri_plugin_dialog::DialogExt;
+        let picked = app
+            .dialog()
+            .file()
+            .add_filter("Collection bundle", &["zip"])
+            .blocking_pick_file();
+        Ok(picked.and_then(|fp| fp.as_path().map(|p| p.to_string_lossy().into_owned())))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// Open + validate a Kinet.ink collection import (.zip). Unpacks and returns a
 /// plan (collection meta + per-item ok/error) WITHOUT publishing anything.
 #[tauri::command]
@@ -2592,6 +2610,8 @@ async fn nfd_sync_state() -> Result<Value, String> {
 
 fn main() {
     tauri::Builder::default()
+        // Native file picker (used by the import screen's "Choose file" button).
+        .plugin(tauri_plugin_dialog::init())
         // Community apps load from divi-app://<id>/ so each one gets its own
         // origin and its own content policy. See crates/app/src/community.rs for
         // why inline frame content would not work here.
@@ -2722,6 +2742,7 @@ fn main() {
             nfd_listing_get,
             nfd_marketplace,
             nfd_create_collection,
+            nfd_pick_zip,
             nfd_import_open,
             nfd_import_read_item,
             nfd_prepare_funding,

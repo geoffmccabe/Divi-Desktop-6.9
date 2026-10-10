@@ -121,6 +121,8 @@ export interface ImportItem {
   previewB64: string | null;
   previewMime: string | null;
 }
+// Open the OS file picker; returns the chosen .zip path, or null if cancelled.
+export const nfdPickZip = () => invoke<string | null>("nfd_pick_zip");
 export const nfdImportOpen = (zipPath: string) => invoke<ImportPlan>("nfd_import_open", { zipPath });
 export const nfdImportReadItem = (importDir: string, edition: number) =>
   invoke<ImportItem>("nfd_import_read_item", { importDir, edition });
