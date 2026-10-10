@@ -39,9 +39,27 @@ export function tierGlowShadow(tier: number, ur: boolean | number | null = false
 // collection's manifest is known; empty until then (cards fall back to a
 // tier-coloured badge, which is correct and legible on its own).
 const manifests = new Map<string, Record<number, string>>();
+const LS_KEY = "nfd.tierArt";
+
+// Rehydrate any manifests registered in a previous session (e.g. at launch) so a
+// reveal after a restart still shows the tier art.
+try {
+  const saved = JSON.parse(localStorage.getItem(LS_KEY) || "{}") as Record<string, Record<number, string>>;
+  for (const [id, byTier] of Object.entries(saved)) manifests.set(id, byTier);
+} catch {
+  /* ignore */
+}
 
 export function setTierArtManifest(collectionId: string, byTier: Record<number, string>): void {
-  manifests.set(collectionId.toLowerCase(), byTier);
+  const id = collectionId.toLowerCase();
+  manifests.set(id, byTier);
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_KEY) || "{}") as Record<string, Record<number, string>>;
+    saved[id] = byTier;
+    localStorage.setItem(LS_KEY, JSON.stringify(saved));
+  } catch {
+    /* ignore */
+  }
 }
 
 /// The shared artwork URL for a tier in a collection, or null if not registered.

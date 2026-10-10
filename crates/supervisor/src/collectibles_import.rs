@@ -279,6 +279,113 @@ pub fn read_item(cfg: &NodeConfig, import_dir: &str, edition: u64) -> Result<Val
     }))
 }
 
+/// The only host DD69 trusts for a Kinet.ink launch bundle's art URLs. A bundle
+/// that points anywhere else is rejected, so a tampered file can't aim the UI at
+/// an arbitrary server. Update this if the Kinet.ink storage host ever changes.
+const KINETINK_ART_PREFIX: &str = "https://matteqdhinpiwfnvxaef.supabase.co/";
+
+/// Parse + validate a Kinet.ink *launch* bundle: a single `.json` in the v2
+/// `kinetink-collection-launch` format (art referenced by URL, not embedded; a
+/// priced set is mint-on-demand, so there is NO pre-mint). Returns a plan the UI
+/// shows BEFORE anything is published: collection + sale + the on-chain rarity
+/// config, plus a tier -> art-URL map for reveals. Nothing is fetched or
+/// published here; every art URL must be on the trusted Kinet.ink host.
+pub fn open_launch(json_path: &str) -> Result<Value, String> {
+    let meta = fs::metadata(json_path).map_err(|_| "file not found".to_string())?;
+    if meta.len() > MAX_MANIFEST_BYTES {
+        return Err("the launch file is too large".into());
+    }
+    let text = fs::read_to_string(json_path).map_err(|e| format!("cannot read file: {e}"))?;
+    let v: Value = serde_json::from_str(&text).map_err(|e| format!("not valid JSON: {e}"))?;
+    if v.get("format").and_then(|x| x.as_str()) != Some("kinetink-collection-launch") {
+        return Err("not a Kinet.ink launch bundle".into());
+    }
+    let version = v.get("version").and_then(|x| x.as_i64()).unwrap_or(0);
+    if !(1..=2).contains(&version) {
+        return Err("unsupported launch bundle version".into());
+    }
+    let col = v.get("collection").ok_or("bundle has no collection")?;
+    let name = cap_str(col, "name");
+    if name.is_empty() {
+        return Err("collection name is required".into());
+    }
+    let description = cap_str(col, "description");
+
+    // Primary sale: priceDuffs (integer), payoutAddress ("" = default to creator).
+    let sale = col.get("sale");
+    let price_duffs = sale.and_then(|s| s.get("priceDuffs")).and_then(|x| x.as_u64()).unwrap_or(0);
+    let payout_address = sale.and_then(|s| s.get("payoutAddress")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+
+    // Every referenced art URL must be on the trusted Kinet.ink host.
+    let check_url = |u: &str| -> Result<(), String> {
+        if u.is_empty() || u.starts_with(KINETINK_ART_PREFIX) {
+            Ok(())
+        } else {
+            Err("a bundle art URL is not on the trusted Kinet.ink host".to_string())
+        }
+    };
+
+    let cover_url = col.get("images").and_then(|i| i.get("logo")).and_then(|l| l.get("url")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+    check_url(&cover_url)?;
+    let packaged_art = col.get("packagedArt").and_then(|x| x.as_str()).unwrap_or("").to_string();
+    check_url(&packaged_art)?;
+
+    // Items: derive tier_count (highest non-UR tier) + the tier -> art-URL map.
+    let items = v.get("items").and_then(|x| x.as_array()).ok_or("bundle has no items")?;
+    if items.is_empty() {
+        return Err("the bundle has no items".into());
+    }
+    if items.len() > MAX_ITEMS {
+        return Err("the bundle has too many items".into());
+    }
+    let mut max_tier: u64 = 0;
+    let mut ur_items: u64 = 0;
+    let mut tier_art = serde_json::Map::new();
+    for it in items {
+        let tier = it.get("tier").and_then(|x| x.as_u64()).unwrap_or(0);
+        let is_ur = it.get("isUltraRare").and_then(|x| x.as_bool()).unwrap_or(false);
+        let img = it.get("media").and_then(|m| m.get("image")).and_then(|x| x.as_str()).unwrap_or("");
+        check_url(img)?;
+        if is_ur {
+            ur_items += 1;
+        } else {
+            if tier > max_tier {
+                max_tier = tier;
+            }
+            if tier >= 1 && !img.is_empty() {
+                tier_art.insert(tier.to_string(), json!(img));
+            }
+        }
+    }
+    let tier_count = max_tier.max(1).min(u16::MAX as u64) as u16;
+
+    // Ultra-rare config -> parts-per-million for the on-chain rarity record.
+    let ur = col.get("ultraRare");
+    let basic = ur.and_then(|u| u.get("basicChance")).and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let factor = ur.and_then(|u| u.get("progressiveFactor")).and_then(|x| x.as_f64()).unwrap_or(0.0);
+    let ur_count = ur.and_then(|u| u.get("count")).and_then(|x| x.as_u64()).unwrap_or(ur_items).min(u16::MAX as u64) as u16;
+    let to_ppm = |f: f64| -> u32 { (f.clamp(0.0, 1.0) * 1_000_000.0).round() as u32 };
+
+    Ok(json!({
+        "name": name,
+        "description": description,
+        "priceDuffs": price_duffs,
+        "payoutAddress": payout_address,
+        "rarity": {
+            "tierCount": tier_count,
+            "urBasicPpm": to_ppm(basic),
+            "urProgressivePpm": to_ppm(factor),
+            "urCount": ur_count,
+        },
+        "itemCount": items.len() as u64,
+        "maxTier": max_tier,
+        "urItemCount": ur_items,
+        "coverUrl": if cover_url.is_empty() { Value::Null } else { json!(cover_url) },
+        "packagedArt": if packaged_art.is_empty() { Value::Null } else { json!(packaged_art) },
+        "tierArt": Value::Object(tier_art),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,5 +462,41 @@ mod tests {
         // reading it must also fail (path escape rejected)
         let dir = plan["importDir"].as_str().unwrap().to_string();
         assert!(read_item(&c, &dir, 1).is_err());
+    }
+
+    #[test]
+    fn open_launch_parses_v2_and_derives_rarity() {
+        let base = std::env::temp_dir().join("nfd_launch_open");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let p = base.join("launch.json");
+        let host = "https://matteqdhinpiwfnvxaef.supabase.co/x.png";
+        let body = format!(
+            r#"{{"format":"kinetink-collection-launch","version":2,
+              "collection":{{"name":"Divi Rebels","description":"",
+                "sale":{{"mode":"mint-on-demand","priceDuffs":20000000000,"payoutAddress":""}},
+                "ultraRare":{{"basicChance":0.01,"progressiveFactor":0.5,"count":2}},
+                "packagedArt":"{host}","images":{{"logo":{{"url":"{host}"}}}}}},
+              "items":[
+                {{"tier":1,"isUltraRare":false,"media":{{"image":"{host}"}}}},
+                {{"tier":3,"isUltraRare":false,"media":{{"image":"{host}"}}}},
+                {{"tier":1,"isUltraRare":true,"media":{{"image":"{host}"}}}}]}}"#
+        );
+        fs::write(&p, &body).unwrap();
+        let plan = open_launch(p.to_str().unwrap()).unwrap();
+        assert_eq!(plan["name"], "Divi Rebels");
+        assert_eq!(plan["priceDuffs"], 20_000_000_000u64);
+        assert_eq!(plan["rarity"]["tierCount"], 3); // highest non-UR tier
+        assert_eq!(plan["rarity"]["urBasicPpm"], 10_000); // 0.01 -> ppm
+        assert_eq!(plan["rarity"]["urProgressivePpm"], 500_000); // 0.5 -> ppm
+        assert_eq!(plan["rarity"]["urCount"], 2);
+        assert_eq!(plan["urItemCount"], 1);
+        assert_eq!(plan["tierArt"]["3"], host);
+
+        // An art URL on an untrusted host is rejected.
+        let bad = body.replace("matteqdhinpiwfnvxaef.supabase.co", "evil.example.com");
+        let bp = base.join("bad.json");
+        fs::write(&bp, bad).unwrap();
+        assert!(open_launch(bp.to_str().unwrap()).is_err());
     }
 }

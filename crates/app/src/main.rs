@@ -2036,6 +2036,7 @@ async fn nfd_create_collection(
     ur_basic_ppm: Option<u32>,
     ur_progressive_ppm: Option<u32>,
     ur_count: Option<u16>,
+    image_url: Option<String>,
 ) -> Result<NfdCollectionDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
@@ -2054,16 +2055,17 @@ async fn nfd_create_collection(
             Some(tc) if tc > 0 => Some((tc, ur_basic_ppm.unwrap_or(0), ur_progressive_ppm.unwrap_or(0), ur_count.unwrap_or(0))),
             _ => None,
         };
-        let c = collectibles::create_collection(&cfg, &creator_addr, &name, &description, cover, max_supply, rarity)?;
+        let c = collectibles::create_collection(&cfg, &creator_addr, &name, &description, cover, max_supply, rarity, image_url.as_deref())?;
         Ok(NfdCollectionDto { txid: c.txid, meta_ptr: c.meta_ptr, creator_addr })
     })
     .await
     .map_err(|_| "internal error".to_string())?
 }
 
-/// Open the OS file picker and return the chosen `.zip` path (or `None` if the
+/// Open the OS file picker and return the chosen bundle path (or `None` if the
 /// user cancelled). This is how the import screen avoids ever showing or asking
 /// for a raw file path — the user clicks and picks in the normal Finder window.
+/// Accepts the Kinet.ink launch `.json` and the legacy `.zip`.
 #[tauri::command]
 async fn nfd_pick_zip(app: tauri::AppHandle) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -2071,9 +2073,35 @@ async fn nfd_pick_zip(app: tauri::AppHandle) -> Result<Option<String>, String> {
         let picked = app
             .dialog()
             .file()
-            .add_filter("Collection bundle", &["zip"])
+            .add_filter("Collection bundle", &["json", "zip"])
             .blocking_pick_file();
         Ok(picked.and_then(|fp| fp.as_path().map(|p| p.to_string_lossy().into_owned())))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Open + validate a Kinet.ink *launch* bundle (a `.json`). Returns the plan the
+/// UI reviews BEFORE anything is published: collection meta, the primary price,
+/// the on-chain rarity config, and the tier art map. Publishes nothing.
+#[tauri::command]
+async fn nfd_launch_open(json_path: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        collectibles_import::open_launch(&json_path)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Launch a Kinet.ink v2 bundle as a mint-on-demand Perc set: create the
+/// collection with its on-chain rarity config + cover, then set the primary mint
+/// price. Nothing is pre-minted. `maxSupply` 0 = unlimited packs. Returns the
+/// collection id, price, and tier -> art-URL map.
+#[tauri::command]
+async fn nfd_launch(creator_addr: String, json_path: String, max_supply: u32) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles::launch_from_bundle(&cfg, &creator_addr, &json_path, max_supply)
     })
     .await
     .map_err(|_| "internal error".to_string())?
@@ -2743,6 +2771,8 @@ fn main() {
             nfd_marketplace,
             nfd_create_collection,
             nfd_pick_zip,
+            nfd_launch_open,
+            nfd_launch,
             nfd_import_open,
             nfd_import_read_item,
             nfd_prepare_funding,

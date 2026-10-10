@@ -20,7 +20,7 @@ fn main() {
     }
     mine(2);
 
-    let col = collectibles::create_collection(&cfg, &forger, "Skylie Percs (forge test)", "", None, 0, None)
+    let col = collectibles::create_collection(&cfg, &forger, "Skylie Percs (forge test)", "", None, 0, None, None)
         .expect("create collection");
     mine(1);
 

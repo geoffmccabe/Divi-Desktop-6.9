@@ -1,10 +1,16 @@
 import { useState } from "react";
-import { nfdImportOpen, nfdImportReadItem, nfdCreateCollection, nfdMint, nfdPrepareFunding, nfdTxConfirmations, nfdPickZip, type ImportPlan } from "./api";
+import {
+  nfdImportOpen, nfdImportReadItem, nfdCreateCollection, nfdMint, nfdPrepareFunding, nfdTxConfirmations,
+  nfdPickZip, nfdLaunchOpen, nfdLaunch, type ImportPlan, type LaunchPlan,
+} from "./api";
 import { makeThumbnailFromBase64, type Item, type Collection } from "./CollectiblesPanel";
+import { setTierArtManifest } from "./reveal/tierArt";
 
-// Import a collection authored in Kinet.ink (a .zip of manifest.json + images)
-// and publish it into DD69: create the collection, then mint each item into it.
-// Resumable — a big batch that fails partway continues instead of restarting.
+// Launch a collection authored in Kinet.ink. The current (v2) export is a single
+// .json "launch bundle": a mint-on-demand Perc set, so DD69 creates the
+// collection on Divi (with its on-chain rarity config + cover) and opens it for
+// minting — buyers mint sealed packs and reveal them later. NOTHING is minted up
+// front. The older .zip bundle (per-item pre-mint) is still handled as a fallback.
 // See docs/NFD-COLLECTION-IMPORT.md.
 
 interface Props {
@@ -13,23 +19,24 @@ interface Props {
   onItem: (it: Item) => void;
 }
 
-// Per-import resume state, keyed by collection name so a re-run continues.
+const DUFFS_PER_DIVI = 100_000_000;
+
+// Per-import resume state (zip flow only), keyed by the bundle dir so a re-run continues.
 interface Resume {
   collectionId?: string;
   creatorAddr?: string;
   done: number[]; // editions already minted
 }
-const resumeKey = (name: string) => `nfd.import.${name}`;
-function loadResume(name: string): Resume {
+function loadResume(key: string): Resume {
   try {
-    return JSON.parse(localStorage.getItem(resumeKey(name)) || "") as Resume;
+    return JSON.parse(localStorage.getItem(`nfd.import.${key}`) || "") as Resume;
   } catch {
     return { done: [] };
   }
 }
-function saveResume(name: string, r: Resume) {
+function saveResume(key: string, r: Resume) {
   try {
-    localStorage.setItem(resumeKey(name), JSON.stringify(r));
+    localStorage.setItem(`nfd.import.${key}`, JSON.stringify(r));
   } catch {
     /* ignore */
   }
@@ -37,46 +44,79 @@ function saveResume(name: string, r: Resume) {
 
 export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) {
   const [path, setPath] = useState("");
-  const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  // Launch (v2 JSON) flow.
+  const [launchPlan, setLaunchPlan] = useState<LaunchPlan | null>(null);
+  const [maxPacks, setMaxPacks] = useState("0"); // 0 = unlimited
+  const [launchMsg, setLaunchMsg] = useState<string | null>(null);
+
+  // Legacy zip flow.
+  const [plan, setPlan] = useState<ImportPlan | null>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [prep, setPrep] = useState<string | null>(null);
   const [finished, setFinished] = useState(false);
 
-  async function openBundle(zip?: string) {
-    const target = (zip ?? path).trim();
-    if (!target) return;
-    setBusy(true);
+  const fileName = path ? path.split("/").pop() : "";
+
+  // Open the OS file picker, then read the chosen bundle. The user never sees or
+  // types a path. A .json is a launch bundle; a .zip is the legacy importer.
+  async function chooseFile() {
     setErr(null);
-    setPlan(null);
-    setFinished(false);
-    setProgress(null);
+    setLaunchMsg(null);
     try {
-      const p = await nfdImportOpen(target);
-      setPlan(p);
+      const picked = await nfdPickZip();
+      if (!picked) return; // cancelled
+      setPath(picked);
+      setPlan(null);
+      setLaunchPlan(null);
+      setFinished(false);
+      setProgress(null);
+      setBusy(true);
+      if (picked.toLowerCase().endsWith(".json")) {
+        setLaunchPlan(await nfdLaunchOpen(picked));
+      } else {
+        setPlan(await nfdImportOpen(picked));
+      }
     } catch (e) {
       setErr(String(e));
     }
     setBusy(false);
   }
 
-  // Open the OS file picker, then read the chosen bundle. The user never sees or
-  // types a path — they click and pick the .zip in the normal Finder window.
-  async function chooseFile() {
+  // Create the collection on Divi and open it for minting (no pre-mint).
+  async function doLaunch() {
+    if (!launchPlan) return;
+    setBusy(true);
     setErr(null);
+    setLaunchMsg(null);
     try {
-      const picked = await nfdPickZip();
-      if (!picked) return; // cancelled
-      setPath(picked);
-      await openBundle(picked);
+      const creator = await getMyAddress();
+      const cap = Math.max(0, Math.floor(Number(maxPacks) || 0));
+      const res = await nfdLaunch(creator, path, cap);
+      // Teach the reveal art registry this collection's tier -> art URLs.
+      const byTier: Record<number, string> = {};
+      for (const [k, v] of Object.entries(res.tierArt)) byTier[Number(k)] = v;
+      setTierArtManifest(res.collectionId, byTier);
+      onCollection({
+        id: res.collectionId,
+        name: res.name,
+        creatorAddr: creator,
+        maxSupply: cap,
+        minted: 0,
+        cover: launchPlan.coverUrl || undefined,
+        encrypted: false,
+      });
+      const priceDivi = res.priceDuffs / DUFFS_PER_DIVI;
+      setLaunchMsg(`Done ✓ — "${res.name}" is live and open for minting at ${priceDivi} DIVI per pack. See My Collection.`);
     } catch (e) {
       setErr(String(e));
     }
+    setBusy(false);
   }
 
-  const fileName = path ? path.split("/").pop() : "";
-
+  // ---- legacy zip flow (per-item pre-mint) ----
   async function runImport() {
     if (!plan) return;
     setBusy(true);
@@ -84,13 +124,10 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
     setFinished(false);
     const okItems = plan.items.filter((i) => i.ok && i.edition != null);
     const name = plan.collection.name;
-    // Resume is keyed by the unique bundle dir (not the display name), so two
-    // sets that happen to share a name can't collide.
     const rkey = plan.importDir;
     const resume = loadResume(rkey);
     try {
       const creator = await getMyAddress();
-      // Create the collection once (resume reuses it).
       if (!resume.collectionId) {
         const col = await nfdCreateCollection(
           creator,
@@ -120,13 +157,10 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
       const doneSet = new Set(resume.done);
       const remaining = okItems.length - doneSet.size;
 
-      // Pre-split the creator's coins into one confirmed UTXO per remaining item,
-      // so the batch doesn't stall waiting for each mint's change to confirm.
       if (remaining > 0) {
         setPrep("Preparing funds…");
         const fanTxid = await nfdPrepareFunding(creatorAddr, remaining);
         if (fanTxid) {
-          // Wait for the fan-out to confirm before spending its pieces.
           for (let i = 0; i < 240; i++) {
             if ((await nfdTxConfirmations(fanTxid)) >= 1) break;
             setPrep(`Preparing funds… (waiting for confirmation ${i + 1})`);
@@ -141,12 +175,10 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
         const edition = it.edition as number;
         if (doneSet.has(edition)) continue;
         const data = await nfdImportReadItem(plan.importDir, edition);
-        // Provided preview, else auto-generate a ≤500px WebP.
         const preview =
           data.previewB64 && data.previewMime
             ? { b64: data.previewB64, mime: data.previewMime, dataUrl: `data:${data.previewMime};base64,${data.previewB64}` }
             : await makeThumbnailFromBase64(data.originalB64, data.originalMime);
-        // Locked traits schema: { name, edition, tier, attributes }.
         const meta: Record<string, unknown> = { name: data.name, edition, attributes: data.attributes };
         if (data.tier) meta.tier = data.tier;
         const res = await nfdMint(data.originalB64, data.originalMime, encrypted, preview?.b64, preview?.mime, {
@@ -181,26 +213,51 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
 
   const okCount = plan?.okCount ?? 0;
   const badCount = plan ? plan.items.length - okCount : 0;
+  const priceDivi = launchPlan ? launchPlan.priceDuffs / DUFFS_PER_DIVI : 0;
 
   return (
     <section className="ts-section">
-      <h3 className="ts-head">Import from Kinet.ink</h3>
+      <h3 className="ts-head">Launch from Kinet.ink</h3>
       <p className="wl-note">
-        Publish a collection you built in Kinet.ink. Export it there as a <strong>.zip</strong>, then choose that
-        file below. DD69 creates the collection and mints every item into it, resuming safely if a big batch is
-        interrupted.
+        Build a collection in Kinet.ink, export its launch file, then choose it below. DD69 creates the
+        collection on Divi and opens it for minting — buyers mint sealed packs and reveal them. Nothing is
+        minted up front.
       </p>
       <button className="wl-btn wl-btn-primary" disabled={busy} onClick={chooseFile}>
-        {busy && !plan ? "Reading…" : fileName ? `Chosen: ${fileName} — choose another` : "Choose file…"}
+        {busy && !plan && !launchPlan ? "Reading…" : fileName ? `Chosen: ${fileName} — choose another` : "Choose file…"}
       </button>
-      {fileName && !busy && !plan && (
-        <button className="wl-btn" style={{ marginLeft: 8 }} onClick={() => openBundle()}>
-          Open bundle
-        </button>
+
+      {launchPlan && (
+        <div className="import-plan" style={{ marginTop: 12 }}>
+          <p className="wl-note">
+            <strong>{launchPlan.name}</strong> — a blind-pack (Perc) set with {launchPlan.rarity.tierCount} tiers
+            {launchPlan.rarity.urCount > 0 ? ` and ${launchPlan.rarity.urCount} ultra-rares` : ""}, from{" "}
+            {launchPlan.itemCount} art pieces.
+          </p>
+          <p className="wl-note">
+            Mint price: <strong>{priceDivi} DIVI</strong> per pack.{" "}
+            {launchPlan.payoutAddress ? `Paid to ${launchPlan.payoutAddress}.` : "Paid to your own wallet."}
+          </p>
+          <label style={{ display: "block", margin: "8px 0 4px", fontSize: 13 }}>Max packs (0 = unlimited)</label>
+          <input
+            className="wl-input"
+            type="number"
+            min={0}
+            value={maxPacks}
+            onChange={(e) => setMaxPacks(e.target.value)}
+            style={{ maxWidth: 200 }}
+          />
+          <div style={{ marginTop: 10 }}>
+            <button className="wl-btn wl-btn-primary" disabled={busy} onClick={doLaunch}>
+              {busy ? "Launching…" : "Create collection & open minting"}
+            </button>
+          </div>
+          {launchMsg && <p className="wl-note" style={{ marginTop: 8 }}>{launchMsg}</p>}
+        </div>
       )}
 
       {plan && (
-        <div className="import-plan">
+        <div className="import-plan" style={{ marginTop: 12 }}>
           <p className="wl-note">
             <strong>{plan.collection.name}</strong> — {okCount} item{okCount === 1 ? "" : "s"} ready
             {plan.collection.maxSupply > 0 ? ` of ${plan.collection.maxSupply}` : ""}

@@ -223,15 +223,17 @@ pub fn create_collection(
     cover: Option<(&[u8], &str)>,
     max_supply: u32,
     rarity: Option<(u16, u32, u32, u16)>,
+    image_url: Option<&str>,
 ) -> Result<CollectionOutcome, String> {
     let rpc = RpcClient::new(cfg);
     // A spendable UTXO on the creator address funds (and thereby authors) it.
     let utxo = pick_owner_utxo(&rpc, creator_addr)?;
     let storage = nfd_storage::for_node(&cfg.datadir);
-    // Optional public cover -> a resolvable gateway URL inside the metadata JSON.
+    // Cover for the metadata image: uploaded bytes become a gateway URL; else an
+    // already-hosted `image_url` (e.g. a Kinet.ink launch cover) is used as-is.
     let image = match cover {
         Some((bytes, ct)) => nfd_storage::gateway_url(&storage.put_public(bytes, ct)?).ok(),
-        None => None,
+        None => image_url.filter(|s| !s.is_empty()).map(|s| s.to_string()),
     };
     let meta = json!({ "name": name, "description": description, "image": image });
     let meta_ptr = storage.put_public(meta.to_string().as_bytes(), "application/json")?;
@@ -299,6 +301,44 @@ pub fn set_mint_price(
     let record = nfd_record::encode_mint_price(collection_id, amount_duffs, &payout_packed)?;
     let utxo = pick_owner_utxo(&rpc, creator_addr)?;
     anchor_record(&rpc, &utxo, &record, None)
+}
+
+/// Launch a Kinet.ink v2 bundle as a mint-on-demand Perc set: parse + validate
+/// the JSON, create the collection WITH its on-chain rarity config and cover,
+/// then set the primary mint price. Nothing is pre-minted — buyers mint packs on
+/// demand. `max_supply` 0 = unlimited packs. Returns the collection id, the price
+/// (duffs), and the tier -> art-URL map so the client can show reveal art.
+pub fn launch_from_bundle(
+    cfg: &NodeConfig,
+    creator_addr: &str,
+    json_path: &str,
+    max_supply: u32,
+) -> Result<serde_json::Value, String> {
+    let plan = crate::collectibles_import::open_launch(json_path)?;
+    let name = plan["name"].as_str().unwrap_or("");
+    let description = plan["description"].as_str().unwrap_or("");
+    let cover_url = plan["coverUrl"].as_str();
+    let r = &plan["rarity"];
+    let rarity = Some((
+        r["tierCount"].as_u64().unwrap_or(1) as u16,
+        r["urBasicPpm"].as_u64().unwrap_or(0) as u32,
+        r["urProgressivePpm"].as_u64().unwrap_or(0) as u32,
+        r["urCount"].as_u64().unwrap_or(0) as u16,
+    ));
+    let out = create_collection(cfg, creator_addr, name, description, None, max_supply, rarity, cover_url)?;
+    let price_duffs = plan["priceDuffs"].as_u64().unwrap_or(0);
+    // A blank payout address defaults to the creator's own wallet.
+    let payout = match plan["payoutAddress"].as_str() {
+        Some(a) if !a.is_empty() => a.to_string(),
+        _ => creator_addr.to_string(),
+    };
+    set_mint_price(cfg, &out.txid, creator_addr, price_duffs, &payout)?;
+    Ok(json!({
+        "collectionId": out.txid,
+        "priceDuffs": price_duffs,
+        "name": name,
+        "tierArt": plan["tierArt"].clone(),
+    }))
 }
 
 // ── Marketplace (list / cancel / buy) ───────────────────────────────────────

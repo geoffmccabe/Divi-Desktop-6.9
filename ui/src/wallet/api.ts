@@ -154,6 +154,7 @@ export const nfdCreateCollection = (
   coverB64?: string,
   coverMime?: string,
   rarity?: Rarity,
+  imageUrl?: string,
 ) =>
   invoke<NfdCollection>("nfd_create_collection", {
     creatorAddr,
@@ -166,7 +167,34 @@ export const nfdCreateCollection = (
     urBasicPpm: rarity?.urBasicPpm,
     urProgressivePpm: rarity?.urProgressivePpm,
     urCount: rarity?.urCount,
+    imageUrl,
   });
+
+// ---- Kinet.ink launch bundle (v2 JSON, mint-on-demand) ----
+// The plan DD69 shows before publishing; then nfdLaunch creates the collection
+// (with on-chain rarity + cover) and sets the primary price. No pre-mint.
+export interface LaunchPlan {
+  name: string;
+  description: string;
+  priceDuffs: number;
+  payoutAddress: string;
+  rarity: Rarity;
+  itemCount: number;
+  maxTier: number;
+  urItemCount: number;
+  coverUrl: string | null;
+  packagedArt: string | null;
+  tierArt: Record<string, string>;
+}
+export interface LaunchResult {
+  collectionId: string;
+  priceDuffs: number;
+  name: string;
+  tierArt: Record<string, string>;
+}
+export const nfdLaunchOpen = (jsonPath: string) => invoke<LaunchPlan>("nfd_launch_open", { jsonPath });
+export const nfdLaunch = (creatorAddr: string, jsonPath: string, maxSupply: number) =>
+  invoke<LaunchResult>("nfd_launch", { creatorAddr, jsonPath, maxSupply });
 
 export interface ReceiveCode {
   address: string;
