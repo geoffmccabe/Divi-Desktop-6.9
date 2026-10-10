@@ -278,6 +278,26 @@ pub fn set_forge_fee(
     anchor_record(&rpc, &utxo, &record, None)
 }
 
+/// Broadcast a MINT-PRICE-SET (0x0E): the creator sets (or lowers) the PRIMARY
+/// mint price — what a non-creator must pay to mint a pack into this collection,
+/// and the address it is paid to. Funded from (so signed by) the creator address,
+/// which is how the indexer's creator-only rule accepts it. The price is
+/// DOWN-ONLY: the first set may be any amount, after which it can only be lowered.
+/// Returns the anchoring txid.
+pub fn set_mint_price(
+    cfg: &NodeConfig,
+    collection_id: &str,
+    creator_addr: &str,
+    amount_duffs: u64,
+    payout_addr: &str,
+) -> Result<String, String> {
+    let rpc = RpcClient::new(cfg);
+    let payout_packed = address_to_packed(&rpc, payout_addr)?;
+    let record = nfd_record::encode_mint_price(collection_id, amount_duffs, &payout_packed)?;
+    let utxo = pick_owner_utxo(&rpc, creator_addr)?;
+    anchor_record(&rpc, &utxo, &record, None)
+}
+
 // ── Marketplace (list / cancel / buy) ───────────────────────────────────────
 /// List an item for sale. Signed by (funded from) the current owner, which is how
 /// the indexer accepts it. `price_divi` is what the BUYER pays; `payout_addr` is
@@ -343,6 +363,28 @@ pub fn buy_item(cfg: &NodeConfig, buyer_addr: &str, item_id: &str) -> Result<Str
         if commission_divi > 0.0 {
             pays.push((creator_payout.as_str(), commission_divi));
         }
+    }
+    anchor_record_multi(&rpc, &utxo, &record, &pays)
+}
+
+/// PUBLIC primary mint: a non-creator mints a sealed pack from a collection that
+/// has an open primary price. Reads the current price + payout from the chain and
+/// broadcasts a sealed, in-collection MINT funded by the buyer that pays >= the
+/// price to that payout, in the SAME transaction that creates the pack. The pack
+/// is SEALED (zeroed pointers, like a forge result); its tier is rolled only when
+/// the buyer later reveals it, so there is nothing to cherry-pick. The chain
+/// re-checks the payment and the supply cap. Returns the mint txid.
+pub fn mint_public(cfg: &NodeConfig, buyer_addr: &str, collection_id: &str) -> Result<String, String> {
+    let (price_duffs, payout_addr) = crate::nfd_scan::mint_price_of(cfg, collection_id)?
+        .ok_or("this collection is not open for public minting")?;
+    let rpc = RpcClient::new(cfg);
+    let zero = "00".repeat(32); // sealed pack: no per-item art; tier comes at reveal
+    let record = nfd_record::encode_mint(&zero, &zero, 0u8, None, Some((collection_id, &zero)))?;
+    let utxo = pick_owner_utxo(&rpc, buyer_addr)?;
+    let mut pays: Vec<(&str, f64)> = Vec::new();
+    if price_duffs > 0 {
+        let price_divi = price_duffs as f64 / crate::commission::DUFFS_PER_DIVI as f64;
+        pays.push((payout_addr.as_str(), price_divi));
     }
     anchor_record_multi(&rpc, &utxo, &record, &pays)
 }

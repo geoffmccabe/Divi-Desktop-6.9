@@ -350,6 +350,23 @@ pub fn forge_fee_of(cfg: &NodeConfig, collection_id_hex: &str) -> Result<Option<
     }))
 }
 
+/// The current on-chain PRIMARY mint price for a collection, as
+/// `(amount_duffs, payout_base58)` — `None` if none is set (minting is
+/// creator-only, no public sale). Read from the chain so any buyer pays the
+/// creator's current (down-only) price, even for a collection they did not create.
+pub fn mint_price_of(cfg: &NodeConfig, collection_id_hex: &str) -> Result<Option<(u64, String)>, String> {
+    advance(cfg)?;
+    let id = id_from_hex(collection_id_hex)?;
+    let guard = scan_cell().lock().map_err(|_| "scan state poisoned".to_string())?;
+    let st = guard.as_ref().ok_or_else(|| "index not ready".to_string())?;
+    let testnet = is_testnet_like(&st.chain);
+    Ok(st.overlay.nfd.mint_price_of(&id).map(|(amount, payout)| {
+        let mut h = [0u8; 20];
+        h.copy_from_slice(&payout[1..21]);
+        (amount, base58_of((payout[0], h), testnet))
+    }))
+}
+
 /// A marketplace listing as read from the chain.
 pub struct ListingInfo {
     pub price_duffs: u64,

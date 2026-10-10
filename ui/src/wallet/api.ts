@@ -304,6 +304,23 @@ export const nfdForgeFeeGet = (collectionId: string) =>
 export const nfdForgeFeeSet = (collectionId: string, amountDivi: number, payoutAddress: string, creatorAddr: string) =>
   invoke<ForgeFee>("nfd_forge_fee_set", { collectionId, amountDivi, payoutAddress, creatorAddr });
 
+// ---- Primary mint price (per-collection, set by the creator, read from chain) ----
+// `null` = no price set (minting is creator-only). When set, anyone may mint a
+// sealed pack by paying the price; the creator always mints free. DOWN-ONLY: the
+// price can be lowered but never raised.
+export interface MintPrice {
+  priceDivi: number;
+  payoutAddress: string;
+}
+export const nfdMintPriceGet = (collectionId: string) =>
+  invoke<MintPrice | null>("nfd_mint_price_get", { collectionId });
+export const nfdMintPriceSet = (collectionId: string, priceDivi: number, payoutAddress: string, creatorAddr: string) =>
+  invoke<MintPrice>("nfd_mint_price_set", { collectionId, priceDivi, payoutAddress, creatorAddr });
+// Public pay-to-mint: mint a sealed pack from a collection with an open price,
+// paying it in the same transaction. Returns the mint txid; reveal it afterward.
+export const nfdMintPublic = (buyerAddr: string, collectionId: string) =>
+  invoke<string>("nfd_mint_public", { buyerAddr, collectionId });
+
 // ---- Marketplace (list / cancel / buy; on-chain, non-custodial) ----
 // Listing LOCKS an item (no transfer/forge/reveal until bought or cancelled). A
 // buy pays the seller's net + the creator commission and moves ownership in one

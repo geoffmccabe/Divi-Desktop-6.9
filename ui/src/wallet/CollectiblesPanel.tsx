@@ -4,8 +4,9 @@ import {
   nfdOwnedWallet, nfdCollectionMembers,
   nfdStorageBackends, nfdSetStorageBackend,
   nfdCommissionGet, nfdCommissionSet, nfdReveal, nfdForge, nfdForgeFeeGet, nfdForgeFeeSet, nfdGet,
+  nfdMintPriceGet, nfdMintPriceSet, nfdMintPublic,
   nfdList, nfdCancelListing, nfdBuy, nfdMarketplace,
-  type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends, type Commission, type ForgeFee, type MarketListing,
+  type NfdOwned, type NfdChainItem, type NfdCollectionRead, type StorageBackends, type Commission, type ForgeFee, type MintPrice, type MarketListing,
 } from "./api";
 import { CollectionImport } from "./CollectionImport";
 import { RevealStage, type RevealSealed } from "./reveal/RevealStage";
@@ -307,6 +308,62 @@ export function CollectiblesPanel() {
       setFeeMsg(String(e));
     } finally {
       setFeeBusy(false);
+    }
+  }
+  // Primary mint price (what a non-creator pays to mint a sealed pack). Keyed to
+  // the collection whose details are open. Down-only once set; defaults to 100.
+  const [priceCur, setPriceCur] = useState<MintPrice | null>(null);
+  const [priceAmt, setPriceAmt] = useState("");
+  const [pricePayout, setPricePayout] = useState("");
+  const [priceMsg, setPriceMsg] = useState("");
+  const [priceBusy, setPriceBusy] = useState(false);
+  useEffect(() => {
+    if (!browsing) { setPriceCur(null); setPriceAmt(""); setPriceMsg(""); return; }
+    let live = true;
+    nfdMintPriceGet(browsing).then((p) => {
+      if (!live) return;
+      setPriceCur(p);
+      setPriceAmt(p ? String(p.priceDivi) : "100"); // default the input to 100 DIVI
+      setPricePayout(p?.payoutAddress || "");
+      setPriceMsg("");
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [browsing]);
+  async function saveMintPrice() {
+    if (!browsing) return;
+    const creatorAddr = collections.find((c) => c.id === browsing)?.creatorAddr || "";
+    if (!creatorAddr) { setPriceMsg("Can't find the creator address for this collection."); return; }
+    if (!pricePayout.trim()) { setPriceMsg("Enter a payout address for the mint price."); return; }
+    const next = Number(priceAmt) || 0;
+    if (priceCur && next > priceCur.priceDivi) {
+      setPriceMsg(`The price can only be lowered. It is currently ${priceCur.priceDivi} DIVI.`);
+      return;
+    }
+    setPriceBusy(true); setPriceMsg("");
+    try {
+      const p = await nfdMintPriceSet(browsing, next, pricePayout.trim(), creatorAddr);
+      setPriceCur(p);
+      setPriceMsg(`Broadcast — the mint price is now ${p.priceDivi} DIVI (settles on-chain shortly).`);
+    } catch (e) {
+      setPriceMsg(String(e));
+    } finally {
+      setPriceBusy(false);
+    }
+  }
+  // Public pay-to-mint (any viewer of a priced collection).
+  const [pubMintBusy, setPubMintBusy] = useState(false);
+  const [pubMintMsg, setPubMintMsg] = useState("");
+  async function mintPublicPack() {
+    if (!browsing) return;
+    setPubMintBusy(true); setPubMintMsg("");
+    try {
+      const buyer = await myNfdAddress();
+      const txid = await nfdMintPublic(buyer, browsing);
+      setPubMintMsg(`Minted — your sealed pack is on the way (tx ${txid.slice(0, 12)}…). Open it from My Collection to reveal it.`);
+    } catch (e) {
+      setPubMintMsg(String(e));
+    } finally {
+      setPubMintBusy(false);
     }
   }
   async function saveCommission() {
@@ -1473,6 +1530,55 @@ export function CollectiblesPanel() {
               </div>
               {feeMsg && <p className="wl-note" style={{ marginTop: 6 }}>{feeMsg}</p>}
             </div>
+
+            <div style={{ border: "1px solid var(--border, #2a2a35)", borderRadius: 10, padding: "12px 14px", margin: "4px 0 16px" }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Primary mint price</div>
+              <p className="wl-note" style={{ marginTop: 0 }}>
+                The price anyone pays to mint a sealed pack from this collection, paid to you and enforced on-chain.
+                You can give packs away or sell them cheaper by minting from your own wallet (that is always free).
+                Once set, the price can only be LOWERED, never raised.
+              </p>
+              <div className="wl-note" style={{ margin: "0 0 10px" }}>
+                Current price: <strong>{priceCur ? `${priceCur.priceDivi} DIVI` : "not set (minting is creator-only)"}</strong>
+              </div>
+              <label style={{ display: "block", marginBottom: 4, fontSize: 13 }}>Mint price (DIVI)</label>
+              <input
+                className="wl-input"
+                type="number"
+                min={0}
+                placeholder="100"
+                value={priceAmt}
+                onChange={(e) => setPriceAmt(e.target.value)}
+                style={{ maxWidth: 260 }}
+              />
+              <input
+                className="wl-input mono"
+                placeholder="Payout address (D...)"
+                value={pricePayout}
+                onChange={(e) => setPricePayout(e.target.value)}
+                style={{ maxWidth: 420, marginTop: 8 }}
+              />
+              <div style={{ marginTop: 8 }}>
+                <button className="wl-btn wl-btn-primary" disabled={priceBusy || !priceAmt.trim() || !pricePayout.trim()} onClick={saveMintPrice}>
+                  {priceBusy ? "Saving…" : priceCur ? "Lower mint price" : "Set mint price"}
+                </button>
+              </div>
+              {priceMsg && <p className="wl-note" style={{ marginTop: 6 }}>{priceMsg}</p>}
+            </div>
+
+            {priceCur && (
+              <div style={{ border: "1px solid var(--border, #2a2a35)", borderRadius: 10, padding: "12px 14px", margin: "4px 0 16px" }}>
+                <div style={{ fontWeight: 600, marginBottom: 6 }}>Mint a pack</div>
+                <p className="wl-note" style={{ marginTop: 0 }}>
+                  This collection is open for minting at <strong>{priceCur.priceDivi} DIVI</strong> per sealed pack.
+                  You pay from your wallet and get a sealed pack to open (reveal) afterward.
+                </p>
+                <button className="wl-btn wl-btn-primary" disabled={pubMintBusy} onClick={mintPublicPack}>
+                  {pubMintBusy ? "Minting…" : `Mint for ${priceCur.priceDivi} DIVI`}
+                </button>
+                {pubMintMsg && <p className="wl-note" style={{ marginTop: 6 }}>{pubMintMsg}</p>}
+              </div>
+            )}
 
             {browseItems.length === 0 ? (
               <p className="wl-note">No items minted into this collection yet.</p>

@@ -19,6 +19,7 @@ const SUB_FORGE_FEE: u8 = 0x0A;
 const SUB_LIST: u8 = 0x0B;
 const SUB_CANCEL: u8 = 0x0C;
 const SUB_BUY: u8 = 0x0D;
+const SUB_MINTPRICE: u8 = 0x0E;
 
 /// Mint flag bits.
 pub const FLAG_ENCRYPTED: u8 = 0x01;
@@ -219,6 +220,28 @@ pub fn encode_forge_fee(collection_id: &str, amount_duffs: u64, payout_packed: &
     Ok(format!(
         "{}{}{:016x}{}",
         prefix(SUB_FORGE_FEE),
+        swap_txid_order(&collection_id.to_lowercase()), // txid ref -> internal order
+        amount_duffs,
+        payout_packed.to_lowercase()
+    ))
+}
+
+/// Encode a MINT-PRICE-SET (0x0E): the PRIMARY mint price. Same layout as
+/// COMMISSION-SET — collection_id(32) | amount_duffs(u64, big-endian, 8) |
+/// payout(21 packed addr). The collection id is a txid reference (internal byte
+/// order). The indexer enforces creator-only and DOWN-ONLY. When set, anyone may
+/// MINT a pack into the collection by paying >= amount_duffs to payout (the
+/// creator still mints free).
+pub fn encode_mint_price(collection_id: &str, amount_duffs: u64, payout_packed: &str) -> Result<String, String> {
+    if !is_hex_len(collection_id, 32) {
+        return Err("collection_id must be 32 bytes hex".into());
+    }
+    if !is_hex_len(payout_packed, 21) {
+        return Err("payout must be a 21-byte packed address hex (kind + hash160)".into());
+    }
+    Ok(format!(
+        "{}{}{:016x}{}",
+        prefix(SUB_MINTPRICE),
         swap_txid_order(&collection_id.to_lowercase()), // txid ref -> internal order
         amount_duffs,
         payout_packed.to_lowercase()
@@ -654,6 +677,20 @@ mod tests {
         assert!(hex.ends_with(&payout));
         assert!(encode_forge_fee("notlongenough", 1, &payout).is_err());
         assert!(encode_forge_fee(&cid, 1, "short").is_err());
+    }
+
+    #[test]
+    fn mint_price_encodes() {
+        let cid = "ab".repeat(32);
+        let payout = format!("00{}", "cd".repeat(20)); // 21-byte packed address hex
+        let hex = encode_mint_price(&cid, 100 * 100_000_000, &payout).unwrap();
+        // 0x0E subtype, (byte-swapped) collection id, amount, then payout.
+        assert!(hex.starts_with(&prefix(SUB_MINTPRICE)));
+        assert!(hex.contains(&swap_txid_order(&cid)));
+        assert!(hex.contains(&format!("{:016x}", 100u64 * 100_000_000)));
+        assert!(hex.ends_with(&payout));
+        assert!(encode_mint_price("notlongenough", 1, &payout).is_err());
+        assert!(encode_mint_price(&cid, 1, "short").is_err());
     }
 
     #[test]

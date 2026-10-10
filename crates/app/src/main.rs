@@ -2242,6 +2242,62 @@ async fn nfd_forge_fee_set(collection_id: String, amount_divi: f64, payout_addre
     .map_err(|_| "internal error".to_string())?
 }
 
+// ── Primary mint price (0x0E) ───────────────────────────────────────────────
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MintPriceDto {
+    price_divi: f64,
+    payout_address: String,
+}
+
+/// Read a collection's PRIMARY mint price from the chain. `None` = no price set
+/// (minting is creator-only). The amount is what a non-creator must pay to
+/// `payoutAddress` to mint one pack.
+#[tauri::command]
+async fn nfd_mint_price_get(collection_id: String) -> Result<Option<MintPriceDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        Ok(nfd_scan::mint_price_of(&cfg, &collection_id)?.map(|(duffs, payout)| MintPriceDto {
+            price_divi: duffs as f64 / dd69_supervisor::commission::DUFFS_PER_DIVI as f64,
+            payout_address: payout,
+        }))
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Set or LOWER a collection's primary mint price (creator only). `priceDivi` is
+/// what a non-creator pays to `payoutAddress` to mint one pack. Broadcasts the
+/// MINT-PRICE-SET record (funded from the creator). The price is down-only: the
+/// first set may be any amount, after which it can only be lowered.
+#[tauri::command]
+async fn nfd_mint_price_set(collection_id: String, price_divi: f64, payout_address: String, creator_addr: String) -> Result<MintPriceDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        if !(price_divi.is_finite() && price_divi >= 0.0) {
+            return Err("the mint price must be zero or more".to_string());
+        }
+        let amount_duffs = (price_divi * dd69_supervisor::commission::DUFFS_PER_DIVI as f64).round() as u64;
+        collectibles::set_mint_price(&cfg, &collection_id, &creator_addr, amount_duffs, payout_address.trim())?;
+        Ok(MintPriceDto { price_divi, payout_address: payout_address.trim().to_string() })
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// PUBLIC mint: a non-creator mints a sealed pack from a collection that has an
+/// open primary price, paying that price in the same transaction. Returns the
+/// mint txid. The buyer reveals the pack afterward with the normal reveal flow.
+#[tauri::command]
+async fn nfd_mint_public(buyer_addr: String, collection_id: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles::mint_public(&cfg, &buyer_addr, &collection_id)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 // ── Marketplace (list / cancel / buy) ──────────────────────────────────────
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2646,6 +2702,9 @@ fn main() {
             nfd_forge,
             nfd_forge_fee_get,
             nfd_forge_fee_set,
+            nfd_mint_price_get,
+            nfd_mint_price_set,
+            nfd_mint_public,
             nfd_list,
             nfd_cancel_listing,
             nfd_buy,
