@@ -53,6 +53,123 @@ export interface NfdUltraRareRoll {
   count: number;
 }
 
+/* ================= WHAT A SET IS ON THE CHAIN ================= */
+
+/** Duffs in one DIVI. The chain counts in duffs; people talk in DIVI. */
+export const DUFFS_PER_DIVI = 100_000_000;
+
+/** `max_supply` is a u32 on the wire, so this is the largest cap that fits. */
+export const MAX_SUPPLY_LIMIT = 4_294_967_295;
+
+/**
+ * What a collection will be, or already is, on the Divi chain.
+ *
+ * Here because there is nowhere else to write it down, and because every one
+ * of these is a decision that cannot be taken back once the set is launched.
+ * Read out of the NORMATIVE protocol copy,
+ * /Users/geoffreymccabe/Divi-Blockchain_6.9/contrib/nfd-indexer/src/lib.rs
+ * (2026-Oct-10), not the vendored copy in this repo, which is a protocol
+ * generation behind and knows none of it.
+ */
+export interface NfdLaunchPlan {
+  /**
+   * The address that sends the create transaction.
+   *
+   * ⚠ PERMANENT. It is written once at creation and no operation moves it. It
+   * is the only address that can mint into the set, lower the commission or
+   * change the forge fee, so whatever mints must hold its key for the life of
+   * the set.
+   */
+  creator: string | null;
+  /** Where the resale commission is paid. It need not be the creator. */
+  payout: string | null;
+  /**
+   * The resale commission, which is the royalty: a FLAT amount in duffs, not
+   * a percentage. There is nowhere on the Divi side to put a percentage.
+   *
+   * ⚠ DOWN-ONLY on chain, and there is no operation that unsets it. It is
+   * enforced on every transfer as well as on a marketplace buy, so a transfer
+   * that does not pay it is not a valid transfer.
+   */
+  commissionDuffs: number | null;
+  /**
+   * The hard bound on how many pieces can ever exist. Written into the create
+   * transaction and unchangeable afterwards.
+   *
+   * ⚠ NULL HERE MEANS NO BOUND, because on chain `max_supply` of 0 means no
+   * bound. A cap is the one backstop that still holds if a public mint price
+   * is ever set, since that door cannot be closed again.
+   */
+  maxSupply: number | null;
+}
+
+/** A plan with nothing decided yet. */
+export const blankLaunchPlan = (): NfdLaunchPlan =>
+  ({ creator: null, payout: null, commissionDuffs: null, maxSupply: null });
+
+const BASE58 = /^[1-9A-HJ-NP-Za-km-z]{26,35}$/;
+
+/**
+ * Does this look like a Divi address?
+ *
+ * SHAPE ONLY: base58 characters and a plausible length. The real check is the
+ * checksum, which needs SHA-256 and is therefore asynchronous in a browser
+ * (isDiviAddress in ui/src/web-rebels/diviAddress.ts does it, and the admin
+ * panel runs it before saving), while this file is synchronous on purpose. A
+ * shape check still catches what matters here: a pasted URL, a truncated
+ * address, and the 0/O/I/l characters base58 does not use.
+ */
+export const looksLikeDiviAddress = (v: unknown): string | null =>
+  typeof v === "string" && BASE58.test(v.trim()) ? v.trim() : null;
+
+/**
+ * DIVI as a person types it, in duffs.
+ *
+ * Parsed as TEXT rather than multiplied through a float: 0.07 DIVI through
+ * `Number("0.07") * 1e8` is 7000000.000000001, and 0.29 lands BELOW the true
+ * amount at 28999999.999999996, which a floor turns into a missing duff. A
+ * royalty is a number the chain then holds for ever at an amount that can
+ * never be raised. Null for anything that is not a plain amount.
+ */
+export function diviToDuffs(text: string): number | null {
+  const m = /^\s*(\d{1,12})(?:\.(\d{1,8}))?\s*$/.exec(text);
+  if (!m) return null;
+  const duffs = Number(m[1]) * DUFFS_PER_DIVI + Number((m[2] ?? "0").padEnd(8, "0"));
+  return Number.isSafeInteger(duffs) ? duffs : null;
+}
+
+/** Duffs back to DIVI for display, with no trailing zeroes. */
+export function duffsToDivi(duffs: number): string {
+  const whole = Math.floor(duffs / DUFFS_PER_DIVI);
+  const frac = String(duffs % DUFFS_PER_DIVI).padStart(8, "0").replace(/0+$/, "");
+  return frac ? `${whole}.${frac}` : String(whole);
+}
+
+/**
+ * A stored launch plan, checked.
+ *
+ * SOFT, like the chain id and for the same reason: a row with a malformed
+ * address is still a perfectly good catalog of pictures, and refusing the
+ * whole set over it would hide the art as well as the address. Anything
+ * unreadable reads as "not decided yet", which is what it means. Zero reads as
+ * not decided too, for both numbers, because zero duffs is no royalty and a
+ * zero cap is no cap. The panel refuses bad input before it can be saved.
+ */
+export function readLaunchPlan(raw: unknown): NfdLaunchPlan {
+  const p = (raw ?? {}) as Record<string, unknown>;
+  const count = (v: unknown, max: number): number | null => {
+    if (typeof v !== "number" || !Number.isFinite(v)) return null;
+    const n = Math.floor(v);
+    return n > 0 && n <= max ? n : null;
+  };
+  return {
+    creator: looksLikeDiviAddress(p.creator),
+    payout: looksLikeDiviAddress(p.payout),
+    commissionDuffs: count(p.commissionDuffs, Number.MAX_SAFE_INTEGER),
+    maxSupply: count(p.maxSupply, MAX_SUPPLY_LIMIT),
+  };
+}
+
 export interface NfdCollection {
   /** Ours, not Kinetink's: a short stable key an admin types once. */
   id: string;
@@ -81,6 +198,15 @@ export interface NfdCollection {
    * before the launch; it is recorded afterwards.
    */
   chainId: string | null;
+  /**
+   * What this set will be, or already is, on the Divi chain: who launched it,
+   * where its royalties go, what the royalty is and what it is capped at.
+   *
+   * Separate from `chainId` because the id is a fact about a set that exists
+   * and these are decisions taken before it does. All of them are typed by an
+   * admin; none can come from a launch file.
+   */
+  launch: NfdLaunchPlan;
 }
 
 /* ================= READING A LAUNCH FILE ================= */
@@ -243,6 +369,10 @@ export function readLaunchFile(
       /* A launch file is exported BEFORE the set exists on chain, so it can
          never carry the chain id. It is recorded against the row afterwards. */
       chainId: null,
+      /* Nor can it carry any of the launch decisions. Kinetink's export has a
+         royalty PERCENTAGE and Divi has nowhere to put a percentage, so even
+         that one is not carried across: it is decided in the panel. */
+      launch: blankLaunchPlan(),
     },
   };
 }
@@ -300,6 +430,7 @@ export function validateCollection(
       items,
       enabled: c.enabled === true,
       chainId: chainId(c.chainId),
+      launch: readLaunchPlan(c.launch),
     },
   };
 }

@@ -2,8 +2,9 @@
 
 import {
   readLaunchFile, mediaUrlOk, ultraRareSlot, ultraRareOdds, cssAspect,
-  normalsOf, ultraRaresOf, topTierOf,
-  KINETINK_MEDIA_HOST, LAUNCH_FORMAT,
+  normalsOf, ultraRaresOf, topTierOf, validateCollection,
+  readLaunchPlan, blankLaunchPlan, diviToDuffs, duffsToDivi, looksLikeDiviAddress,
+  KINETINK_MEDIA_HOST, LAUNCH_FORMAT, MAX_SUPPLY_LIMIT, DUFFS_PER_DIVI,
 } from "./nfdCatalog";
 
 const out: string[] = [];
@@ -184,6 +185,146 @@ const file = (over: Record<string, unknown> = {}) => ({
   for (const bad of ["", "square", "5:0", "0:7", "5:", ":7", "-5:7", "5:7:9", "NaN:1"]) {
     ok(`${JSON.stringify(bad)} falls back to a square`, cssAspect(bad) === "1 / 1", cssAspect(bad));
   }
+}
+
+/* ================= THE LAUNCH DECISIONS ================= */
+/* Four facts about a set on the Divi chain, and the reason they are checked
+   this hard: the creator can never be moved, the royalty can only ever be
+   lowered, and the cap is fixed at creation. A typo in any of them is
+   permanent, so none of them is taken on trust. */
+{
+  /* Geoff's real addresses, which is the point: these are the ones that will
+     be typed in, so they are the ones the shape check has to accept. Both pass
+     the base58 checksum (verified 2026-Oct-10 with isDiviAddress in
+     ui/src/web-rebels/diviAddress.ts, which this file cannot call because that
+     check is asynchronous). */
+  const ROYALTY = "D6V6dP2L5CN386Wg1LZF7KszXxuuSDvmmd";
+  const SCANNER = "DTv5kfMgFhjPfDGji9YgXGZuWN7ZKdtALj";
+  ok("a real Divi address is accepted", looksLikeDiviAddress(ROYALTY) === ROYALTY);
+  ok("and so is the scanner's main one", looksLikeDiviAddress(SCANNER) === SCANNER);
+  ok("surrounding spaces are trimmed rather than refused",
+     looksLikeDiviAddress(`  ${ROYALTY} `) === ROYALTY);
+  /* Each of these is a way an address field actually gets filled in wrong. */
+  for (const [why, bad] of [
+    ["a pasted URL", "https://divi.love/rebels/"],
+    ["a truncated address", ROYALTY.slice(0, 20)],
+    ["an address with a zero in it", `${ROYALTY.slice(0, 10)}0${ROYALTY.slice(11)}`],
+    ["an address with a capital O in it", `${ROYALTY.slice(0, 10)}O${ROYALTY.slice(11)}`],
+    ["an address with an l in it", `${ROYALTY.slice(0, 10)}l${ROYALTY.slice(11)}`],
+    ["empty", ""],
+    ["a number", 12345],
+    ["nothing at all", null],
+  ] as Array<[string, unknown]>) {
+    ok(`${why} is not an address`, looksLikeDiviAddress(bad) === null);
+  }
+
+  /* ---- DIVI TO DUFFS ----
+     ⚠ THE REASON THIS IS PARSED AS TEXT, in two amounts a person could easily
+     type. The number goes onto a chain that holds it for ever at an amount
+     that can never be raised, so being one duff out is permanent. */
+  ok("0.07 DIVI is exactly seven million duffs", diviToDuffs("0.07") === 7_000_000,
+     String(diviToDuffs("0.07")));
+  ok("and multiplying through a float would not be, so the care is warranted",
+     Number("0.07") * DUFFS_PER_DIVI !== 7_000_000,
+     String(Number("0.07") * DUFFS_PER_DIVI));
+  ok("0.29 DIVI is exactly twenty-nine million duffs", diviToDuffs("0.29") === 29_000_000);
+  ok("where the float lands BELOW it, which a floor turns into a missing duff",
+     Number("0.29") * DUFFS_PER_DIVI < 29_000_000,
+     String(Number("0.29") * DUFFS_PER_DIVI));
+  ok("a tenth of a DIVI is ten million duffs", diviToDuffs("0.1") === 10_000_000);
+  ok("5 DIVI is five hundred million duffs", diviToDuffs("5") === 5 * DUFFS_PER_DIVI);
+  ok("2.5 DIVI survives the trip", diviToDuffs("2.5") === 250_000_000);
+  ok("one duff is the smallest amount there is", diviToDuffs("0.00000001") === 1);
+  ok("spaces around the number are tolerated", diviToDuffs("  2.5  ") === 250_000_000);
+  for (const bad of ["", "abc", "-1", "1.123456789", "1e8", "1,000", "0x10", "1.2.3", "."]) {
+    ok(`${JSON.stringify(bad)} is not an amount`, diviToDuffs(bad) === null, String(diviToDuffs(bad)));
+  }
+  ok("an amount too large to count in duffs is refused rather than rounded",
+     diviToDuffs("999999999999") === null);
+
+  ok("duffs come back as DIVI with no trailing zeroes", duffsToDivi(DUFFS_PER_DIVI) === "1",
+     duffsToDivi(DUFFS_PER_DIVI));
+  ok("one duff reads as eight decimal places", duffsToDivi(1) === "0.00000001", duffsToDivi(1));
+  ok("and two and a half DIVI reads as 2.5", duffsToDivi(250_000_000) === "2.5", duffsToDivi(250_000_000));
+  ok("zero duffs is zero", duffsToDivi(0) === "0", duffsToDivi(0));
+  /* A sweep rather than three hand-picked cases: the panel shows a saved
+     amount with one of these and reads the next edit back with the other, so a
+     disagreement between them would quietly change a royalty on every save. */
+  {
+    let worst = "";
+    for (let d = 1; d <= 2_000_000_000; d = Math.ceil(d * 1.37)) {
+      if (diviToDuffs(duffsToDivi(d)) !== d) { worst = String(d); break; }
+    }
+    ok("every amount survives duffs -> DIVI -> duffs across a 20 DIVI sweep",
+       worst === "", worst ? `${worst} duffs did not` : "");
+  }
+
+  /* ---- READING A STORED PLAN ---- */
+  const full = readLaunchPlan({
+    creator: ROYALTY, payout: ROYALTY, commissionDuffs: 5 * DUFFS_PER_DIVI, maxSupply: 100_000,
+  });
+  ok("a complete plan reads back whole",
+     full.creator === ROYALTY && full.payout === ROYALTY
+     && full.commissionDuffs === 5 * DUFFS_PER_DIVI && full.maxSupply === 100_000);
+  const blank = blankLaunchPlan();
+  ok("a row with no plan at all is four undecided fields, not a crash",
+     JSON.stringify(readLaunchPlan(undefined)) === JSON.stringify(blank));
+  ok("and so is a row whose plan is nonsense",
+     JSON.stringify(readLaunchPlan("purple")) === JSON.stringify(blank));
+  /* ⚠ ZERO IS NOT A CAP AND NOT A ROYALTY. On chain `max_supply` of 0 means no
+     bound at all, so it has to read as "undecided" here or the panel would
+     show a cap of zero as though it were a limit of nothing. */
+  const zeroes = readLaunchPlan({ commissionDuffs: 0, maxSupply: 0 });
+  ok("a zero cap reads as NO CAP rather than a cap of zero", zeroes.maxSupply === null);
+  ok("and a zero royalty reads as no royalty", zeroes.commissionDuffs === null);
+  ok("a cap larger than the chain's u32 is refused, not truncated",
+     readLaunchPlan({ maxSupply: MAX_SUPPLY_LIMIT + 1 }).maxSupply === null);
+  ok("the largest cap that fits is kept",
+     readLaunchPlan({ maxSupply: MAX_SUPPLY_LIMIT }).maxSupply === MAX_SUPPLY_LIMIT);
+  ok("a negative cap is undecided", readLaunchPlan({ maxSupply: -5 }).maxSupply === null);
+  ok("a fractional cap is floored", readLaunchPlan({ maxSupply: 99.9 }).maxSupply === 99);
+  ok("a cap that is text is undecided", readLaunchPlan({ maxSupply: "100000" }).maxSupply === null);
+  ok("an address that is not one is undecided rather than stored",
+     readLaunchPlan({ creator: "not an address", payout: 7 }).creator === null);
+
+  /* ---- A LAUNCH FILE CANNOT CARRY ANY OF IT ----
+     Kinetink's export has a royalty PERCENTAGE and Divi has nowhere to put a
+     percentage, so even a file that offers a plan is not believed. The file
+     comes from outside; these four decide where money goes. */
+  const offered = readLaunchFile(
+    { ...file(), launch: { creator: ROYALTY, payout: ROYALTY, commissionDuffs: 1, maxSupply: 10 } },
+    "divi-rebels",
+  );
+  ok("a launch file offering its own creator and royalty is ignored",
+     "ok" in offered && JSON.stringify(offered.ok.launch) === JSON.stringify(blank),
+     "ok" in offered ? JSON.stringify(offered.ok.launch) : "refused");
+
+  /* ---- A SAVED ROW KEEPS IT ----
+     The round trip the panel does on every save. Without this the four fields
+     would be dropped on the way back out and an admin would think they had
+     not been written. */
+  const row = {
+    name: "Divi Rebels", description: "", aspectRatio: "5:7",
+    packagedArt: url("sealed.webp"), ultraRare: null,
+    logo: null, featured: null, banner: null,
+    items: [item(1), item(2)], enabled: true, chainId: "a".repeat(64),
+    launch: { creator: ROYALTY, payout: SCANNER, commissionDuffs: 250_000_000, maxSupply: 100_000 },
+  };
+  const back = validateCollection(row, "divi-rebels");
+  ok("a saved collection reads its launch plan back",
+     "ok" in back && back.ok.launch.creator === ROYALTY && back.ok.launch.payout === SCANNER
+     && back.ok.launch.commissionDuffs === 250_000_000 && back.ok.launch.maxSupply === 100_000,
+     "ok" in back ? JSON.stringify(back.ok.launch) : back.errors.join("; "));
+  /* SOFT on purpose, exactly like the chain id: a row with a mistyped address
+     is still a perfectly good catalog of pictures, and refusing to read the
+     whole set would hide the art as well as the address. */
+  const mangled = validateCollection(
+    { ...row, launch: { ...row.launch, payout: "not-an-address" } }, "divi-rebels");
+  ok("a mistyped royalty address does not make the set unreadable",
+     "ok" in mangled && mangled.ok.items.length === 2,
+     "ok" in mangled ? "" : mangled.errors.join("; "));
+  ok("it reads as not decided yet, which is what it means",
+     "ok" in mangled && mangled.ok.launch.payout === null);
 }
 
 console.log(out.join("\n"));

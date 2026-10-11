@@ -198,3 +198,59 @@ is what a tier 30 roll shows. The roll itself is `reveal.rs`. The two models
 reconcile with no change to either, which is why this was worth asking before
 building rather than after.
 
+
+---
+
+## 8. Launch decisions (answered by Geoff, 2026-Oct-10)
+
+These are facts about the set ON THE DIVI CHAIN, and they are listed together
+because every one of them is permanent or down-only from the moment the
+collection is created. They are now recorded in the admin panel rather than in
+somebody's head: see `launch` on `NfdCollection` in
+`/Users/geoffreymccabe/dd69-rebels/ui/src/nfd/nfdCatalog.ts`.
+
+1. **Royalties are paid to `D6V6dP2L5CN386Wg1LZF7KszXxuuSDvmmd`**, a child
+   address of the UK scanner node's address. Checksum verified 2026-Oct-10.
+2. **The set launches from that same address if it can**, otherwise from the UK
+   scanner node's main wallet address `DTv5kfMgFhjPfDGji9YgXGZuWN7ZKdtALj`
+   (checksum also verified). It can: see 8.1.
+3. **The royalty amount is still open.** It is a FLAT amount in duffs, not a
+   percentage, and on chain it can only ever be lowered.
+4. **The supply cap is 100,000.** Written into the create transaction, where it
+   is a u32, and unchangeable afterwards. It is the only hard bound on how many
+   pieces can exist, and the one backstop that still holds if a public mint
+   price is ever set, because that door cannot be closed again.
+
+### 8.1 Why launching from a child address works
+
+The creator of a collection is the address that funds `vin[0]` of the create
+transaction: `sender_of` in
+`/Users/geoffreymccabe/Divi-Blockchain_6.9/contrib/dvxp-scan/src/rpc.rs:219`,
+read by `apply_collection_create` in
+`/Users/geoffreymccabe/Divi-Blockchain_6.9/contrib/nfd-indexer/src/lib.rs:584`.
+
+The launcher already works that way. `create_collection` in
+`/Users/geoffreymccabe/dd69-nfd/crates/supervisor/src/collectibles.rs:248`
+takes a `creator_addr` and funds the transaction from a UTXO on exactly that
+address (`pick_owner_utxo`), so a child address is as good as a main one. Two
+conditions follow from the code rather than from preference:
+
+- **The key has to be in the wallet the launching node runs**, because the
+  transaction is signed with `signrawtransaction` on that node.
+- **The address has to keep a little DIVI.** Change returns to the input's own
+  address on purpose, and every later mint, commission change or forge-fee
+  change must also be funded from it.
+
+Separately: the royalty payout address is a different field from the creator,
+so the two need not be the same even though here they are. `set_commission`
+takes `creator_addr` and `payout_addr` independently.
+
+### 8.2 What still blocks an actual launch
+
+`MAINNET_WRITE_ENABLED` is `false` in
+`/Users/geoffreymccabe/dd69-nfd/crates/supervisor/src/collectibles.rs:33`, and
+`anchor_record` refuses to broadcast ANY NFD record on the `main` chain while
+it is. That fence exists because a regtest test once resolved to the live
+mainnet daemon and broadcast a stray mint. Flipping it is a deliberate Phase 7
+step, together with setting the real activation height, and it is not part of
+recording these decisions.

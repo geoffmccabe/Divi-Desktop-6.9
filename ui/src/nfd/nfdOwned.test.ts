@@ -5,7 +5,7 @@ import {
   readOwned, readOwnedRow, ownedByCollection, sortOwned, topTier, itemForOwned,
   type OwnedNfd,
 } from "./nfdOwned";
-import { KINETINK_MEDIA_HOST, type NfdCollection, type NfdItem } from "./nfdCatalog";
+import { blankLaunchPlan, KINETINK_MEDIA_HOST, type NfdCollection, type NfdItem } from "./nfdCatalog";
 
 const out: string[] = [];
 let failures = 0;
@@ -30,7 +30,7 @@ const collection = (over: Partial<NfdCollection> = {}): NfdCollection => ({
   packagedArt: url("sealed.webp"), ultraRare: { basicChance: 0.01, progressiveFactor: 0.2, count: 3 },
   logo: null, featured: null, banner: null,
   items: [item(1, 1), item(2, 2), item(3, 3), item(10, 1, true), item(11, 2, true)],
-  enabled: true, chainId: CHAIN_A,
+  enabled: true, chainId: CHAIN_A, launch: blankLaunchPlan(),
   ...over,
 });
 const row = (over: Record<string, unknown> = {}) => ({

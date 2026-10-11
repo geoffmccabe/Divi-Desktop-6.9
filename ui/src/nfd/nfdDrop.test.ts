@@ -5,7 +5,7 @@ import {
   nfdDropSets, nfdDropProblems, nfdDropChance, rollNfdDrop, nfdDropOdds,
   NFD_DROP_CHANCE_PER_TIER,
 } from "./nfdDrop";
-import type { NfdCollection } from "./nfdCatalog";
+import { blankLaunchPlan, type NfdCollection } from "./nfdCatalog";
 
 const out: string[] = [];
 let failures = 0;
@@ -19,7 +19,7 @@ const set = (over: Partial<NfdCollection> = {}): NfdCollection => ({
   id: "divi-rebels", name: "Divi Rebels", description: "", aspectRatio: "5:7",
   packagedArt: "https://example.test/sealed.webp",
   ultraRare: null, logo: null, featured: null, banner: null,
-  items: [], enabled: true, chainId: hash("a"),
+  items: [], enabled: true, chainId: hash("a"), launch: blankLaunchPlan(),
   ...over,
 });
 

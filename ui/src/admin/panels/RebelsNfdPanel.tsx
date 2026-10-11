@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   readLaunchFile, normalsOf, ultraRaresOf, topTierOf, ultraRareOdds, cssAspect,
-  KINETINK_MEDIA_HOST, LAUNCH_FORMAT,
+  duffsToDivi, diviToDuffs, looksLikeDiviAddress, DUFFS_PER_DIVI,
+  KINETINK_MEDIA_HOST, LAUNCH_FORMAT, MAX_SUPPLY_LIMIT,
   type NfdCollection, type NfdItem,
 } from "../../nfd/nfdCatalog";
+import { isDiviAddress } from "../../web-rebels/diviAddress";
 import {
   fetchCollections, saveCollection, enableCollection, deleteCollection,
 } from "../../nfd/nfdRemote";
@@ -31,6 +33,9 @@ import "./rebels-nfd.css";
 
 const SECRET_KEY = "dd69.admin.rebelsDropsSecret";
 
+/** The four launch boxes, as text. Empty means "not decided yet". */
+interface LaunchEdit { creator: string; payout: string; royalty: string; cap: string }
+
 export function RebelsNfdPanel() {
   const [saved, setSaved] = useState<NfdCollection[]>([]);
   const [source, setSource] = useState("loading");
@@ -50,6 +55,15 @@ export function RebelsNfdPanel() {
      it only exists AFTER the set has been launched on Divi, so it can never
      come from a launch file. */
   const [chainEdit, setChainEdit] = useState<string | null>(null);
+  /* The launch decisions, held as TEXT while they are being typed so a
+     half-typed amount is not repeatedly reinterpreted as a number, and null
+     until something is touched so picking another collection shows that one's
+     values rather than this one's. */
+  const [launchEdit, setLaunchEdit] = useState<LaunchEdit | null>(null);
+  /* Whether each address passes its base58 CHECKSUM. null = not checked yet.
+     Local arithmetic, no node and no network, so it works on the web too. */
+  const [sums, setSums] = useState<{ creator: boolean | null; payout: boolean | null }>(
+    { creator: null, payout: null });
   const [newId, setNewId] = useState("");
   const [paste, setPaste] = useState("");
   const [readErrors, setReadErrors] = useState<string[]>([]);
@@ -67,23 +81,87 @@ export function RebelsNfdPanel() {
   useEffect(() => { void reload(); }, []);
 
   const base = pending ?? saved.find((c) => c.id === pick) ?? null;
-  /* What SAVE would write: the chosen collection, with the chain id as typed
-     if it has been touched. Derived rather than copied into state, so picking
-     a different collection cannot leave a stale id behind. */
-  const chosen = base && chainEdit !== null
-    ? { ...base, chainId: chainEdit.trim() ? chainEdit.trim().toLowerCase() : null }
-    : base;
   const isPending = pending !== null;
   /* 64 hex characters, or empty for "not launched yet". Anything else is
      refused before SAVE rather than silently stored as null, because a typo
      that reads as "not launched" looks identical to not having typed it. */
   const chainShown = chainEdit ?? base?.chainId ?? "";
   const chainBad = chainShown.trim().length > 0 && !/^[0-9a-f]{64}$/i.test(chainShown.trim());
-  const normals = useMemo(() => (chosen ? normalsOf(chosen) : []), [chosen]);
-  const ultras = useMemo(() => (chosen ? ultraRaresOf(chosen) : []), [chosen]);
-  const top = chosen ? topTierOf(chosen) : 0;
-  const odds = useMemo(() => ultraRareOdds(chosen?.ultraRare ?? null), [chosen]);
+
+  /* ---- THE LAUNCH DECISIONS, as typed ----
+     Each box is empty for "not decided yet", and each is parsed in exactly one
+     place, here. See the warnings on NfdLaunchPlan in ui/src/nfd/nfdCatalog.ts
+     for why every one of them is permanent. */
+  const shown: LaunchEdit = launchEdit ?? {
+    creator: base?.launch.creator ?? "",
+    payout: base?.launch.payout ?? "",
+    royalty: base?.launch.commissionDuffs != null ? duffsToDivi(base.launch.commissionDuffs) : "",
+    cap: base?.launch.maxSupply != null ? String(base.launch.maxSupply) : "",
+  };
+  const editField = (k: keyof LaunchEdit, v: string) => setLaunchEdit({ ...shown, [k]: v });
+  const creatorAddr = looksLikeDiviAddress(shown.creator);
+  const payoutAddr = looksLikeDiviAddress(shown.payout);
+  const creatorBad = shown.creator.trim() !== "" && (creatorAddr === null || sums.creator === false);
+  const payoutBad = shown.payout.trim() !== "" && (payoutAddr === null || sums.payout === false);
+  const royaltyDuffs = shown.royalty.trim() === "" ? null : diviToDuffs(shown.royalty);
+  const royaltyBad = shown.royalty.trim() !== "" && royaltyDuffs === null;
+  /* Commas and spaces are what a person types into a number this big, so they
+     are stripped rather than refused. */
+  const capText = shown.cap.replace(/[\s,]/g, "");
+  const cap = capText === "" ? null : Number(capText);
+  const capBad = capText !== "" && !(Number.isInteger(cap) && cap !== null && cap >= 1 && cap <= MAX_SUPPLY_LIMIT);
+  /* A royalty with no payout address is the one combination the chain cannot
+     hold: COMMISSION-SET carries the amount and the payout together. */
+  const payoutMissing = royaltyDuffs !== null && payoutAddr === null;
+  const launchBad = creatorBad || payoutBad || royaltyBad || capBad || payoutMissing;
+
+  /* What SAVE would write: the chosen collection with everything as typed.
+     Derived rather than copied into state, so picking a different collection
+     cannot leave a stale value behind. Only values that PARSED go in, so a
+     refused field can never overwrite a good saved one. */
+  const chosen: NfdCollection | null = base ? {
+    ...base,
+    chainId: chainShown.trim() ? chainShown.trim().toLowerCase() : null,
+    launch: {
+      creator: creatorBad ? base.launch.creator : creatorAddr,
+      payout: payoutBad ? base.launch.payout : payoutAddr,
+      commissionDuffs: royaltyBad ? base.launch.commissionDuffs : royaltyDuffs,
+      maxSupply: capBad ? base.launch.maxSupply : cap,
+    },
+  } : null;
+  /* The item work keys on `base`, NOT on `chosen`: `chosen` is a fresh object
+     on every keystroke in the boxes above, and nothing typed there changes a
+     single card. */
+  const normals = useMemo(() => (base ? normalsOf(base) : []), [base]);
+  const ultras = useMemo(() => (base ? ultraRaresOf(base) : []), [base]);
+  const top = base ? topTierOf(base) : 0;
+  const odds = useMemo(() => ultraRareOdds(base?.ultraRare ?? null), [base]);
   const canWrite = secret.trim().length > 0;
+  /* What a FLAT royalty actually costs a buyer, which is the whole difficulty
+     with a flat one: the same amount is a third of a cheap sale and a rounding
+     error on an expensive one. Shown rather than explained. */
+  const royaltyDivi = royaltyDuffs === null ? null : royaltyDuffs / DUFFS_PER_DIVI;
+  const shareOf = (sale: number) =>
+    royaltyDivi === null ? ""
+      : royaltyDivi >= sale ? "more than 100%"
+        : `${((royaltyDivi / sale) * 100).toFixed(2)}%`;
+
+  /* The checksum the shape check cannot do: a Divi address carries four bytes
+     of it, and almost every mistyped address fails it. Debounced only so it
+     does not run on every keystroke. A royalty address nobody owns is money
+     posted into a hole, so this is also re-checked inside save(). */
+  useEffect(() => {
+    let alive = true;
+    setSums({ creator: null, payout: null });
+    const t = setTimeout(() => {
+      void (async () => {
+        const creator = creatorAddr ? await isDiviAddress(creatorAddr) : null;
+        const payout = payoutAddr ? await isDiviAddress(payoutAddr) : null;
+        if (alive) setSums({ creator, payout });
+      })();
+    }, 350);
+    return () => { alive = false; clearTimeout(t); };
+  }, [creatorAddr, payoutAddr]);
 
   /* ---- READING A FILE ---- */
   const readIt = (text: string) => {
@@ -124,19 +202,33 @@ export function RebelsNfdPanel() {
   const save = async () => {
     if (!chosen) return;
     if (chainBad) { setStatus("saving failed: the on-chain id must be 64 hex characters, or empty"); return; }
+    if (launchBad) { setStatus("saving failed: one of the launch fields below is not right"); return; }
+    /* The checksum again, HERE and not only in the button's disabled state.
+       A disabled button is a hint; this is the guarantee, and royalties sent
+       to an address nobody owns cannot be recovered by anybody. */
+    for (const [what, addr] of [
+      ["creator", chosen.launch.creator], ["royalty", chosen.launch.payout],
+    ] as const) {
+      if (addr && !(await isDiviAddress(addr))) {
+        setStatus(`saving failed: the ${what} address fails its checksum, so it is not a Divi address`);
+        return;
+      }
+    }
     const ok = await run("saving", () => saveCollection(nfdStore, secret.trim(), chosen));
     if (!ok) return;
     setPending(null);
     setPaste("");
     setNewId("");
     setChainEdit(null);
+    setLaunchEdit(null);
     await reload();
     setPick(chosen.id);
   };
 
   /* Changing which collection is on screen abandons anything typed into the
-     chain id box. Carrying it across would attach one set's id to another. */
-  const choose = (id: string) => { setChainEdit(null); setPick(id); };
+     boxes. Carrying it across would attach one set's id, or one set's royalty
+     address, to another. */
+  const choose = (id: string) => { setChainEdit(null); setLaunchEdit(null); setPick(id); };
 
   const flip = async (on: boolean) => {
     if (!chosen || isPending) return;
@@ -248,7 +340,8 @@ export function RebelsNfdPanel() {
                     disabled button is a hint and not a guarantee, but a button
                     that looks live and then says no is the worse half of the
                     two. */}
-                <button type="button" className="rn-btn rn-primary" disabled={!canWrite || busy || chainBad}
+                <button type="button" className="rn-btn rn-primary"
+                  disabled={!canWrite || busy || chainBad || launchBad}
                   onClick={() => void save()}>
                   {isPending ? "SAVE THIS COLLECTION" : "SAVE CHANGES"}
                 </button>
@@ -291,6 +384,85 @@ export function RebelsNfdPanel() {
                       ? "Holdings of this collection will be recognised once SAVE is pressed."
                       : "Empty means not launched yet. Nobody's holdings can be matched to this set until it is filled in."}
                 </span>
+              </div>
+
+              {/* ---- LAUNCHING IT ON DIVI ----
+                  Four decisions, written down rather than acted on: nothing
+                  here broadcasts anything. The launcher reads them when the
+                  set actually goes out (create_collection and set_commission
+                  in /Users/geoffreymccabe/dd69-nfd/crates/supervisor/src/collectibles.rs),
+                  and from that moment every one of them is either permanent or
+                  can only ever be lowered. That is why they are recorded where
+                  they can be read and checked before anybody presses launch,
+                  rather than typed once into a terminal. */}
+              <div className="rn-launch">
+                <h4 className="rn-group">
+                  Launching it on Divi
+                  <span className="rn-hint"> nothing here is broadcast. These are the decisions the launch will use, and each one is permanent or down-only afterwards.</span>
+                </h4>
+                <div className="rn-launch-grid">
+                  <label className="rn-field rn-wide">
+                    <span>Creator address: launches it, and the only address that can ever mint</span>
+                    <input className={"wl-input rn-mono" + (creatorBad ? " rn-bad" : "")}
+                      value={shown.creator} spellCheck={false} autoComplete="off"
+                      placeholder="the address the create transaction is sent from"
+                      onChange={(e) => editField("creator", e.target.value)} />
+                    <span className={creatorBad ? "rn-hint rn-warn" : "rn-hint"}>
+                      {creatorBad
+                        ? creatorAddr === null
+                          ? "That is not the shape of a Divi address."
+                          : "That address fails its checksum, so it has been mistyped."
+                        : "Permanent: no operation moves it. Its key has to stay reachable by whatever mints, and it needs a little DIVI of its own, because every mint is funded from it."}
+                    </span>
+                  </label>
+
+                  <label className="rn-field rn-wide">
+                    <span>Royalty address: where resale royalties are paid</span>
+                    <input className={"wl-input rn-mono" + (payoutBad || payoutMissing ? " rn-bad" : "")}
+                      value={shown.payout} spellCheck={false} autoComplete="off"
+                      placeholder="can be a different address from the creator"
+                      onChange={(e) => editField("payout", e.target.value)} />
+                    <span className={payoutBad || payoutMissing ? "rn-hint rn-warn" : "rn-hint"}>
+                      {payoutBad
+                        ? payoutAddr === null
+                          ? "That is not the shape of a Divi address."
+                          : "That address fails its checksum, so it has been mistyped."
+                        : payoutMissing
+                          ? "A royalty needs an address to go to: the chain carries the amount and the payout together."
+                          : "It need not be the creator, and a cold address is the safer choice: nothing ever has to spend from it."}
+                    </span>
+                  </label>
+
+                  <label className="rn-field">
+                    <span>Royalty, in DIVI, on every resale</span>
+                    <input className={"wl-input" + (royaltyBad ? " rn-bad" : "")}
+                      value={shown.royalty} spellCheck={false} autoComplete="off" inputMode="decimal"
+                      placeholder="e.g. 5"
+                      onChange={(e) => editField("royalty", e.target.value)} />
+                    <span className={royaltyBad ? "rn-hint rn-warn" : "rn-hint"}>
+                      {royaltyBad
+                        ? "An amount of DIVI, like 5 or 2.5. Up to eight decimal places."
+                        : royaltyDivi === null
+                          ? "Empty means no royalty. It is a FLAT amount, not a percentage: Divi has nowhere to put a percentage."
+                          : `A FLAT amount, so it is ${shareOf(10)} of a 10 DIVI resale and ${shareOf(1000)} of a 1,000 DIVI one. It can only ever be lowered, never raised, and never removed.`}
+                    </span>
+                  </label>
+
+                  <label className="rn-field">
+                    <span>Supply cap: how many can ever exist</span>
+                    <input className={"wl-input" + (capBad ? " rn-bad" : "")}
+                      value={shown.cap} spellCheck={false} autoComplete="off" inputMode="numeric"
+                      placeholder="e.g. 100000"
+                      onChange={(e) => editField("cap", e.target.value)} />
+                    <span className={capBad ? "rn-hint rn-warn" : "rn-hint"}>
+                      {capBad
+                        ? `A whole number from 1 to ${MAX_SUPPLY_LIMIT.toLocaleString()}.`
+                        : cap === null
+                          ? "⚠ Empty means NO LIMIT AT ALL. The cap is fixed when the set is created and is the only hard bound on how many pieces can exist."
+                          : `${cap.toLocaleString()} pieces, for ever. Fixed at creation; nothing can raise it afterwards.`}
+                    </span>
+                  </label>
+                </div>
               </div>
 
               {/* ---- WHAT OWNING THE TOP ONE IS WORTH ----

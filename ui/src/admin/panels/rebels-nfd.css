@@ -145,3 +145,17 @@
 .rn-chain .rn-input { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .rn-chain .rn-input.rn-bad { border-color: #ff5c7a; }
 .rn-chain .rn-hint { margin: 0; }
+
+/* ---- launching it on Divi ----
+   Four boxes that hold decisions nobody can take back. auto-fit rather than a
+   fixed two columns, so it is one readable column in the 456px admin drawer
+   and fills the width on a full page; the two addresses take a whole row of
+   their own at any width, because an address wrapped across two lines cannot
+   be checked by eye and checking it by eye is the entire point. */
+.rn-launch { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 9px;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--secondary) / 0.4); }
+.rn-launch-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px 14px; }
+.rn-launch-grid .rn-wide { grid-column: 1 / -1; }
+.rn-launch .rn-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.78rem; }
+.rn-launch .wl-input.rn-bad { border-color: #ff5c7a; }
+.rn-launch .rn-warn { color: #ffc2c9; }
