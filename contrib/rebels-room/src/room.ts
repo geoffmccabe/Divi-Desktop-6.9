@@ -690,7 +690,14 @@ export class RebelsRoom {
    *  forty-eight. Checking for one let a formation land entire from 1,999 and
    *  put the sky over the ceiling by a formation: still bounded, which is why
    *  it was not urgent, but a bound with a caveat is the kind of bound this
-   *  project keeps being caught by. Spotted in review by the other session. */
+   *  project keeps being caught by. Spotted in review by the other session.
+   *
+   *  AND IT ERRS THE SAFE WAY, which is not visible from here: spawnFleet
+   *  takes the SMALLER of the fleet size and what the drone cap still has
+   *  room for, so a formation can arrive smaller than it was asked about.
+   *  Asking for the full size can therefore refuse one that would have fitted
+   *  after all, and can never let one over the ceiling. For a bound on the
+   *  machine, that is the direction to be wrong in. */
   private roomInSky(want = 1): boolean {
     return this.combat.enemies.length + want <= LIVE_MAX_ENEMIES;
   }
