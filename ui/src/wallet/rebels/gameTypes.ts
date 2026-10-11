@@ -304,6 +304,32 @@ export const ROUND_MAX_SECONDS = 1200;
 /** Per round, across all its spawns. The simulation has its own cap on live
  *  drones; this stops a round DESCRIBING a thousand of them. */
 export const ROUND_MAX_ENEMIES = 400;
+/**
+ * How many enemies may be ALIVE at once, whatever the rounds ask for.
+ *
+ * ⚠ THE BOUND ABOVE COVERS A FRACTION OF THE QUESTION, which is the shape of
+ * mistake this file keeps finding. ROUND_MAX_ENEMIES bounds what one round may
+ * ASK for. Nothing bounded what is in the sky, and the two are not the same
+ * number: a round that ends with survivors rolls them into the next by design
+ * (see gameRunner's note on the clock), and an enemy is only given up on when
+ * it wanders out of range of a player. One that keeps chasing is never culled.
+ *
+ * While a game ended, that was self-limiting. An endless game has no end, so
+ * the sky filled for as long as somebody stayed alive. MEASURED, not feared,
+ * with one player who survived and killed nothing: 205 alive at round 11,
+ * 1,580 at round 36, climbing by about 38 a minute for ever, and the room's
+ * cost per tick climbing with it - multiplied again by every seat, because the
+ * broadcast asks of every enemy whether this player can see it.
+ *
+ * So this is a bound on the MACHINE and deliberately not on the difficulty.
+ * Five times what one round may ask for: high enough that no player who is
+ * still alive will ever reach it (they are long dead first, and their kills
+ * make room continuously), low enough that a full room cannot be driven into
+ * the ground by leaving it running. Enforced in ONE place, the room's spawner,
+ * because the room owns the world; the validator has nothing to say about it,
+ * since this is not a thing a game description can get wrong.
+ */
+export const LIVE_MAX_ENEMIES = 2000;
 export const MAX_ROUNDS = 60;
 /** What a difficulty bias may be set to. Zero would be tier ones for ever;
  *  above about ten the rarest tiers stop being rare, and tier seven is meant
