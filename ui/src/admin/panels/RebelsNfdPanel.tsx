@@ -7,6 +7,7 @@ import {
   type NfdCollection, type NfdItem,
 } from "../../nfd/nfdCatalog";
 import { isDiviAddress } from "../../web-rebels/diviAddress";
+import { readSecret, writeSecret } from "../adminAccess";
 import {
   fetchCollections, saveCollection, enableCollection, deleteCollection,
 } from "../../nfd/nfdRemote";
@@ -26,12 +27,14 @@ import "./rebels-nfd.css";
 //
 // WHO CAN GET IN. The same gate as the Drops, Enemies and Games panels: the
 // admin secret, held in public.rebels_admin where nothing can read it through
-// the API. There is no role check yet because there are no roles yet; when
-// LW-Auth lands, the check moves there for all four panels at once. Until
-// then the panel is visible to anyone who opens the gear and useless to them
-// without the secret.
-
-const SECRET_KEY = "dd69.admin.rebelsDropsSecret";
+// the API. Every save is refused by the database unless the secret is right,
+// so the secret, and not any check made in a browser, is the gate.
+//
+// WHO CAN SEE IT is a second and smaller question, and on the public web page
+// it matters: a player must not be shown an admin tab even if every button on
+// it would be refused. public.rebels_role answers it there, and admin/
+// adminAccess.ts asks. In the app the gear is simply there, because the app is
+// one person's own wallet.
 
 /** The four launch boxes, as text. Empty means "not decided yet". */
 interface LaunchEdit { creator: string; payout: string; royalty: string; cap: string }
@@ -40,9 +43,7 @@ export function RebelsNfdPanel() {
   const [saved, setSaved] = useState<NfdCollection[]>([]);
   const [source, setSource] = useState("loading");
   const [pick, setPick] = useState("");
-  const [secret, setSecret] = useState(() => {
-    try { return localStorage.getItem(SECRET_KEY) ?? ""; } catch { return ""; }
-  });
+  const [secret, setSecret] = useState(() => readSecret());
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -180,6 +181,16 @@ export function RebelsNfdPanel() {
     }, 350);
     return () => { alive = false; clearTimeout(t); };
   }, [creatorAddr, payoutAddr]);
+
+  /* The secret is KEPT once it is typed, the way the other three panels keep it
+     when they save, so it is typed once for all four. It is also the thing the
+     web door asks the database about, so typing it here is what makes the gear
+     appear on the next visit to divi.love/rebels: see admin/adminAccess.ts.
+     Debounced, so a half-typed secret is not written on every keystroke. */
+  useEffect(() => {
+    const t = setTimeout(() => writeSecret(secret), 400);
+    return () => clearTimeout(t);
+  }, [secret]);
 
   /* ---- READING A FILE ---- */
   const readIt = (text: string) => {

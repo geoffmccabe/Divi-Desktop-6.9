@@ -266,3 +266,62 @@ it is. That fence exists because a regtest test once resolved to the live
 mainnet daemon and broadcast a stray mint. Flipping it is a deliberate Phase 7
 step, together with setting the real activation height, and it is not part of
 recording these decisions.
+
+## 9. Reaching the panel from the web (2026-Oct-11)
+
+Geoff: "anyone with Admin or Superadmin role should be able to see the Admin
+panel." The panel where the launch decisions above are recorded lived only in
+the desktop app, so none of it could be looked at without a DD69 build. It is
+now reachable at https://divi.love/rebels as well.
+
+### 9.1 What is shown, and to whom
+
+A player sees nothing: no gear, no tab, and not a byte of the panels, which are
+their own chunk the page never fetches unless the gear is clicked
+(`WebAdminPanels-*.js`, about 42 KB).
+
+The gear appears when the DATABASE says the credential in this browser belongs
+to an admin. `public.rebels_role` answers that question
+(`supabase/migrations/20261011120000_rebels_admin_role.sql`), checking the same
+`public.rebels_admin` row named `drops` that every save function already checks.
+One source of truth on purpose: a second one would mean a credential that opens
+the panels and then cannot save anything, which reads as a broken panel rather
+than as a refused login. The answer is `'superadmin'` or nothing, as text rather
+than as a boolean, so that the `admin` / `superadmin` split LW-SSO already makes
+per account can land there later without changing the shape of the answer.
+
+`ui/src/admin/adminAccess.ts` asks the question, remembers a yes for 30 days,
+and re-asks on every load where a secret is stored, so changing the admin secret
+closes the door in every browser that had it without anybody clearing anything.
+
+### 9.2 The way in on a browser that has never been here
+
+The server cannot recognise an admin who has not typed the secret in this
+browser yet, so there is one way in that does not depend on being recognised:
+`https://divi.love/rebels/?admin=1` shows the gear for that visit. It grants
+nothing. Every panel behind it still refuses to save without the secret, which
+the database checks, exactly as in the app. Typing the secret is what makes the
+gear appear on later visits with no query string;
+`https://divi.love/rebels/?admin=0` gives it up again on a shared machine.
+
+### 9.3 Four panels, not thirteen
+
+`ui/src/admin/webPanels.tsx` lists the four that reach nothing but the game's
+own database: Rebels NFDs first, then Games, Enemies and Drops. The others
+(Style, Value, AI, Payouts, Chain, Arweave) talk to the app's Rust side, and
+importing the registry that holds them would drag the app's bridge into the web
+page, which `scripts/check-rebels-boundary.mjs` refuses. `AdminOverlay` takes
+its panel list as an argument for that reason, rather than importing one.
+
+### 9.4 When LW-SSO sign-in lands
+
+Sign-in for the web door is task B6 in
+`docs/DIVI-REBELS-MODULAR-BUILD-AGENT.md`, is owned by the build session, and is
+waiting on Geoff's greenlight in the SSO admin panel (an app row with
+`https://*.divi.love` among its redirect origins; there is no `divi-rebels` row
+today, and `divi.love` is not in the Vercel origin list either). When it lands,
+`POST https://sso.lightningworks.io/api/verify` returns the signed-in account's
+`role`, one of `user` / `admin` / `superadmin`, and that role can be handed to
+the same door: `adminAccess.ts` already speaks in those words, and nothing in
+the panels changes. The shared secret stays the write gate until the database
+functions learn to check an identity instead.

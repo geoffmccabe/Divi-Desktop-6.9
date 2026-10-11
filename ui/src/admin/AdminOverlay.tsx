@@ -1,23 +1,32 @@
 import { useRef, useState } from "react";
-import { ADMIN_PANELS } from "./registry";
+import type { AdminPanel } from "./registry";
 import "./admin-tabs-nav.css";
 
 // A right-side frosted drawer that hosts the registered admin panels. With one
-// panel it just shows it; with several it shows a tab row — no code change.
+// panel it just shows it; with several it shows a tab row, no code change.
+//
+// THE PANEL LIST IS PASSED IN, never imported. The desktop app hands over the
+// whole registry; the public web page hands over only the panels that work
+// there (webPanels.tsx). Importing the registry here instead would put every
+// panel, and so the desktop app's own bridge, into the web page's bundle, which
+// the boundary guard refuses for good reason.
 export function AdminOverlay({
+  panels,
   onClose,
   initialPanel,
 }: {
+  /** The panels this door offers, most important first. */
+  panels: AdminPanel[];
   onClose: () => void;
   /** Open straight to this panel, when something sent the person here for it. */
   initialPanel?: string;
 }) {
   const [activeId, setActiveId] = useState(
-    initialPanel && ADMIN_PANELS.some((p) => p.id === initialPanel)
+    initialPanel && panels.some((p) => p.id === initialPanel)
       ? initialPanel
-      : ADMIN_PANELS[0].id,
+      : panels[0].id,
   );
-  const active = ADMIN_PANELS.find((p) => p.id === activeId) ?? ADMIN_PANELS[0];
+  const active = panels.find((p) => p.id === activeId) ?? panels[0];
   const dim = active.dim !== false;
 
   // The tab row scrolls when there are more tabs than fit the narrow drawer; the
@@ -34,7 +43,7 @@ export function AdminOverlay({
               ‹
             </button>
             <div className="admin-tabs" ref={tabsRef}>
-              {ADMIN_PANELS.map((p) => (
+              {panels.map((p) => (
                 <button
                   key={p.id}
                   type="button"

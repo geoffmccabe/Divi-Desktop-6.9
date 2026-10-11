@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AdminOverlay } from "./AdminOverlay";
+import { ADMIN_PANELS } from "./registry";
 import { Icon } from "../Icon";
 
 // The purple gear, fixed bottom-right, that opens the admin panels (Style/skins).
@@ -33,7 +34,7 @@ export function AdminGear() {
           fixed overlay inside the sidebar. */}
       {open &&
         createPortal(
-          <AdminOverlay initialPanel={panel} onClose={() => setOpen(false)} />,
+          <AdminOverlay panels={ADMIN_PANELS} initialPanel={panel} onClose={() => setOpen(false)} />,
           document.body,
         )}
     </>

@@ -18,6 +18,9 @@ import { createWebDoor } from "./webDoor";
 import { loadTowers, SCANNER } from "./webNodes";
 import { restoreGuest } from "./pilot";
 import { hydrateWebStorage } from "./webStore";
+/* The admin door: nothing at all for a player, and the four Rebels panels for
+   somebody the database recognises as an admin. See admin/WebAdminDoor.tsx. */
+import { WebAdminDoor } from "../admin/WebAdminDoor";
 
 /* ---- ?phone=1: A PREVIEW OF THE PHONE COCKPIT ----
    Touch controls and the phone layout on this same page, for trying on a phone
@@ -97,6 +100,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ThemeProvider>
       <WebRebels />
+      <WebAdminDoor />
     </ThemeProvider>
   </React.StrictMode>,
 );

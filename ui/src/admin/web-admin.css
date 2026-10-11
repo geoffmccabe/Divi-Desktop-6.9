@@ -1,0 +1,17 @@
+/* The admin gear on the public page.
+   In the app the gear sits inside the sidebar, so index.css places it with
+   position: absolute. There is no sidebar here, so it is pinned to the window
+   instead, above the cockpit and the launch card but below the drawer it opens
+   (the scrim is z-index 50). Its own colour is spelled out with a fallback,
+   because the page can be loaded before a theme has set anything. */
+.web-admin-gear {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 45;
+  width: 22px;
+  height: 22px;
+  color: hsl(var(--primary, 280 80% 60%));
+  opacity: 0.55;
+}
+.web-admin-gear:hover { opacity: 1; }
