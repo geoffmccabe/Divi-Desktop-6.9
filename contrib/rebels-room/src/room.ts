@@ -47,7 +47,7 @@ import { fetchWorld } from "./enemySource";
 import { applyEnemyType, tierForType, typeById } from "./customEnemy";
 import { builtInEnemies, type EnemyType } from "../../../ui/src/wallet/rebels/enemyTypes";
 import {
-  waveDefence, DEFAULT_GAMES, gamePayout, GAME_MAX_PAYOUT, roundAt,
+  waveDefence, DEFAULT_GAMES, gamePayout, GAME_MAX_PAYOUT, roundAt, LIVE_MAX_ENEMIES,
   type GameType, type Reward,
 } from "../../../ui/src/wallet/rebels/gameTypes";
 /* Spikeworld's dimensions. That folder deliberately imports nothing from the
@@ -695,6 +695,17 @@ export class RebelsRoom {
         const all = this.world.players ?? [];
         if (all.length === 0) return;
         for (let i = 0; i < n; i++) {
+          /* ---- THE SKY HAS A CEILING ----
+             Tested inside the loop rather than once, so a round asking for
+             fifty stops at the ceiling instead of stepping over it, and so a
+             flock (one call, a whole formation) is counted as it arrives.
+
+             What is refused is simply not sent, which is the rule this runner
+             already lives by: a round that ends owing arrivals has run out of
+             time and the ones it never sent are gone. See LIVE_MAX_ENEMIES for
+             why this exists and what it is NOT - it is a bound on the machine,
+             not on the difficulty, and no living player will ever meet it. */
+          if (this.combat.enemies.length >= LIVE_MAX_ENEMIES) return;
           /* In front of SOMEBODY, picked fresh each time, so a room's arrivals
              do not all pile onto whoever is first in the list. */
           const mark = all[all.length > 1 ? Math.floor(Math.random() * all.length) : 0];

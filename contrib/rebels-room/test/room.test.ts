@@ -9,12 +9,12 @@
 
 import * as THREE from "three";
 import { RebelsRoom } from "../src/room";
-import { GAME_MAX_PAYOUT } from "../../../ui/src/wallet/rebels/gameTypes";
+import { GAME_MAX_PAYOUT, LIVE_MAX_ENEMIES } from "../../../ui/src/wallet/rebels/gameTypes";
 import { R } from "../../../ui/src/wallet/rebels/orbitWorld";
 import { MAX_AMMO, MAX_SHIELD, BOOST, MAX_TORPEDOES, MAX_GUARDS } from "../../../ui/src/wallet/rebels/orbitFlight";
 import {
   setDropRandomForTests, setDragonRandomForTests, spawnDragon, spawnFleet,
-  BULLET_SPEED,
+  spawnFighter, BULLET_SPEED,
 } from "../../../ui/src/wallet/rebels/rebelsCombat";
 import { WING_NOSE } from "../../../ui/src/wallet/rebels/rebelsWings";
 setDragonRandomForTests(() => 0.99);
@@ -1534,6 +1534,61 @@ const home: [number, number, number] = [0, 0, R + 8];
   ok("and the number is there to act on, not just a flag",
      (s2.credits as number) > GAME_MAX_PAYOUT,
      `${s2.credits} over ${GAME_MAX_PAYOUT}`);
+  room.stop();
+}
+
+// THE SKY HAS A CEILING.
+//
+// An endless game never stops asking, survivors roll from one round into the
+// next by design, and an enemy that keeps chasing a player is never culled for
+// being far away. So the thing that bounded the sky was the game ending, and
+// the built-in game no longer ends.
+//
+// Measured before this was written, with one player who survived and killed
+// nothing: 205 alive at round 11, 1,580 at round 36, climbing by about 38 a
+// minute with no limit in sight, and the room's cost per tick climbing with it.
+// This is the ceiling, and these tests are about where it bites and where it
+// must not.
+{
+  const room = newRoom();
+  const ws = new FakeSocket();
+  join(room, ws, "node-cap", home);
+  const spawner = room.spawner();
+  const sky = () => room.combat.enemies.length;
+
+  /* Where it must NOT bite: an ordinary round in an ordinary sky. */
+  spawner.spawn("tier1", 10);
+  ok("a normal round arrives in full", sky() === 10, `${sky()} in the sky`);
+
+  /* Filled to just under the ceiling with real fighters rather than with a
+     pretend list, so what is counted is what the room would actually be
+     flying. */
+  const mark = room.world.players[0];
+  while (sky() < LIVE_MAX_ENEMIES - 5) {
+    spawnFighter(room.combat, mark.pos, mark.fwd, { tier: 1 });
+  }
+  ok("(setup) five places left", sky() === LIVE_MAX_ENEMIES - 5, `${sky()}`);
+
+  /* A round asking for fifty gets the five that are left and stops there,
+     rather than stepping over the ceiling by forty-five. */
+  spawner.spawn("tier1", 50);
+  ok("a round asking for more than there is room for stops AT the ceiling",
+     sky() === LIVE_MAX_ENEMIES, `${sky()} of ${LIVE_MAX_ENEMIES}`);
+
+  /* And then nothing more arrives at all, however long the game goes on. */
+  spawner.spawn("tier1", 50);
+  spawner.spawn("fighters", 50);
+  spawner.spawn("flock", 3);
+  ok("a full sky takes nothing more, fighters or flocks",
+     sky() === LIVE_MAX_ENEMIES, `${sky()} of ${LIVE_MAX_ENEMIES}`);
+
+  /* ⚠ THE CEILING MUST NOT BE A ONE-WAY DOOR. A cap that stopped spawning for
+     good would empty the sky for the rest of a six-hour run the moment a
+     player cleared it. Killing makes room, immediately. */
+  room.combat.enemies.splice(0, 100);
+  spawner.spawn("tier1", 40);
+  ok("killing makes room again", sky() === LIVE_MAX_ENEMIES - 60,
+     `${sky()} of ${LIVE_MAX_ENEMIES}`);
   room.stop();
 }
 
