@@ -403,6 +403,9 @@ export class RebelsRoom {
                          credits: this.runCredits(),
                          ...(this.overCeiling() ? { overCeiling: true } : {}) } : {}),
         enemies: this.combat.enemies.length,
+        /* Only when it has happened, so a normal room's state page says
+           nothing and a capped one cannot be mistaken for a quiet one. */
+        ...(this.skyRefused ? { skyRefused: this.skyRefused } : {}),
         tick: this.tick,
       });
     }
@@ -670,6 +673,16 @@ export class RebelsRoom {
    */
   private roundBias = new Map<string, number>();
 
+  /** How many arrivals the ceiling has refused since this room started,
+   *  counted as the round counted them (a flock is one arrival, not a dozen).
+   *
+   *  ⚠ COUNTED BECAUSE A SILENT CAP IS THE WRONG KIND OF CAP, the same
+   *  argument overCeiling makes: a sky that has stopped filling looks exactly
+   *  like a round that asked for nothing, and the difference is the whole
+   *  question when somebody reports that an endless game went quiet. It is on
+   *  /state, and it should normally be zero: see LIVE_MAX_ENEMIES. */
+  private skyRefused = 0;
+
   private biasFor(range?: readonly [number, number]): number {
     const lo = range ? range[0] : WAVE_BIAS_MIN;
     const hi = range ? range[1] : WAVE_BIAS_MAX;
@@ -705,7 +718,10 @@ export class RebelsRoom {
              time and the ones it never sent are gone. See LIVE_MAX_ENEMIES for
              why this exists and what it is NOT - it is a bound on the machine,
              not on the difficulty, and no living player will ever meet it. */
-          if (this.combat.enemies.length >= LIVE_MAX_ENEMIES) return;
+          if (this.combat.enemies.length >= LIVE_MAX_ENEMIES) {
+            this.skyRefused += n - i;
+            return;
+          }
           /* In front of SOMEBODY, picked fresh each time, so a room's arrivals
              do not all pile onto whoever is first in the list. */
           const mark = all[all.length > 1 ? Math.floor(Math.random() * all.length) : 0];

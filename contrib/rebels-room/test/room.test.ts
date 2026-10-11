@@ -1589,7 +1589,29 @@ const home: [number, number, number] = [0, 0, R + 8];
   spawner.spawn("tier1", 40);
   ok("killing makes room again", sky() === LIVE_MAX_ENEMIES - 60,
      `${sky()} of ${LIVE_MAX_ENEMIES}`);
+
+  /* ⚠ AND IT SAYS SO. A sky that has stopped filling looks exactly like a
+     round that asked for nothing, and that is the whole question when somebody
+     reports an endless game going quiet. Same argument as overCeiling: the cap
+     must not be refused, and it must not be silent either. */
+  const capped = await room.fetch(new Request("https://r/room/earth/state"))
+    .then((r: Response) => r.json() as Promise<Record<string, unknown>>);
+  ok("the state page says the ceiling has been refusing arrivals",
+     typeof capped.skyRefused === "number" && (capped.skyRefused as number) > 0,
+     `${capped.skyRefused} refused`);
   room.stop();
+
+  /* And an ordinary room says nothing at all, so the field appearing MEANS
+     something. */
+  const quiet = newRoom();
+  const qws = new FakeSocket();
+  join(quiet, qws, "node-quiet", home);
+  quiet.spawner().spawn("tier1", 10);
+  const fine = await quiet.fetch(new Request("https://r/room/earth/state"))
+    .then((r: Response) => r.json() as Promise<Record<string, unknown>>);
+  ok("a room under the ceiling says nothing about it",
+     fine.skyRefused === undefined, JSON.stringify(fine));
+  quiet.stop();
 }
 
 console.log(out.join("\n"));
