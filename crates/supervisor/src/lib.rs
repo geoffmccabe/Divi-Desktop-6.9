@@ -19,6 +19,7 @@ pub mod fees;
 pub mod health;
 pub mod bearer;
 pub mod install;
+pub mod launch_client;
 pub mod mempool;
 pub mod multisig;
 pub mod security;

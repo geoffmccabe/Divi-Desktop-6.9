@@ -423,6 +423,245 @@ pub fn launch_from_bundle(
     }))
 }
 
+// ── Public pay-per-launch (no GoBanq credential needed) ─────────────────────
+// A DD69 user who holds NO GoBanq secret launches a Kinet.ink set in two steps:
+//   1. launch_quote     downloads the art, asks GoBanq for a DIVI price to store
+//                        it permanently on Arweave, and returns that price + an
+//                        order id (the UI shows the price before any money moves).
+//   2. launch_execute    pays that price to the treasury from the user's OWN
+//                        wallet, waits for GoBanq to confirm the payment, uploads
+//                        the art (GoBanq stores it on its own funded Arweave
+//                        account, server-side), then creates the collection
+//                        on-chain pointing at the permanent arweave.net links.
+// GoBanq's funded account never leaves its server; the DIVI payment is the gate.
+
+/// One piece of collection art, downloaded once and reused for the quote and the
+/// upload so the bytes GoBanq prices are exactly the bytes it stores.
+struct ArtPiece {
+    sha: String,
+    ct: String,
+    bytes: Vec<u8>,
+}
+
+/// The art a launch needs to store: the unique pieces (deduped by content), plus
+/// which piece is the cover and which piece backs each tier (by sha).
+struct GatheredArt {
+    pieces: Vec<ArtPiece>,
+    cover_sha: Option<String>,
+    tier_sha: std::collections::BTreeMap<String, String>,
+}
+
+/// Download every art URL a launch bundle references (cover + each tier),
+/// deduplicating by URL and by content. The same normalization `fetch_art` does
+/// (e.g. image/jpg -> image/jpeg) makes the quoted type match the uploaded type.
+fn gather_art(plan: &Value) -> Result<GatheredArt, String> {
+    let mut url_to_sha: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    let mut sha_to_piece: std::collections::BTreeMap<String, ArtPiece> = std::collections::BTreeMap::new();
+
+    // Download a URL once; return its content sha (None for an empty URL).
+    let mut fetch = |url: &str| -> Result<Option<String>, String> {
+        if url.is_empty() {
+            return Ok(None);
+        }
+        if let Some(s) = url_to_sha.get(url) {
+            return Ok(Some(s.clone()));
+        }
+        let (bytes, ct) = fetch_art(url)?;
+        let sha = sha256_hex(&bytes);
+        url_to_sha.insert(url.to_string(), sha.clone());
+        sha_to_piece.entry(sha.clone()).or_insert(ArtPiece { sha: sha.clone(), ct, bytes });
+        Ok(Some(sha))
+    };
+
+    let cover_sha = match plan["coverUrl"].as_str() {
+        Some(u) => fetch(u)?,
+        None => None,
+    };
+    let mut tier_sha: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    if let Some(obj) = plan["tierArt"].as_object() {
+        for (tier, url) in obj {
+            if let Some(u) = url.as_str() {
+                if let Some(sha) = fetch(u)? {
+                    tier_sha.insert(tier.clone(), sha);
+                }
+            }
+        }
+    }
+    drop(fetch);
+    Ok(GatheredArt { pieces: sha_to_piece.into_values().collect(), cover_sha, tier_sha })
+}
+
+/// Rarity tuple from a launch bundle's `rarity` block.
+fn plan_rarity(plan: &Value) -> Option<(u16, u32, u32, u16)> {
+    let r = &plan["rarity"];
+    Some((
+        r["tierCount"].as_u64().unwrap_or(1) as u16,
+        r["urBasicPpm"].as_u64().unwrap_or(0) as u32,
+        r["urProgressivePpm"].as_u64().unwrap_or(0) as u32,
+        r["urCount"].as_u64().unwrap_or(0) as u16,
+    ))
+}
+
+/// STEP 1 — price a launch. Parse + validate the bundle, download the art, and
+/// ask GoBanq what it costs (in DIVI) to store that art permanently on Arweave.
+/// Publishes nothing and moves no money; it just opens a quoted order and returns
+/// the price for the UI to confirm. `storagePriceDuffs` is the storage fee (what
+/// the user pays GoBanq); `mintPriceDuffs` is the separate per-pack price buyers
+/// will pay later. The treasury is returned both as an address and, if it has a
+/// Divi Name (HRA), as that friendlier name.
+pub fn launch_quote(cfg: &NodeConfig, json_path: &str) -> Result<serde_json::Value, String> {
+    let plan = crate::collectibles_import::open_launch(json_path)?;
+    let art = gather_art(&plan)?;
+    if art.pieces.is_empty() {
+        return Err("This collection has no art to store.".into());
+    }
+    let files: Vec<Value> = art
+        .pieces
+        .iter()
+        .map(|p| json!({ "sha256": p.sha, "bytes": p.bytes.len(), "contentType": p.ct }))
+        .collect();
+    let quote = crate::launch_client::quote(&json!(files))?;
+    let treasury = quote["treasury"].as_str().unwrap_or("").to_string();
+    // A friendly Divi Name for the treasury, if one is set (best-effort).
+    let treasury_name = crate::names::reverse(cfg, &treasury).ok().flatten();
+    Ok(json!({
+        "orderId": quote["orderId"],
+        "name": plan["name"].as_str().unwrap_or(""),
+        "description": plan["description"].as_str().unwrap_or(""),
+        "storagePriceDivi": quote["divi"],
+        "storagePriceDuffs": quote["duffs"],
+        "treasury": treasury,
+        "treasuryName": treasury_name,
+        "fileCount": quote["fileCount"],
+        "totalBytes": quote["totalBytes"],
+        "expiresAt": quote["expiresAt"],
+        "mintPriceDuffs": plan["priceDuffs"].as_u64().unwrap_or(0),
+    }))
+}
+
+/// STEP 2 — pay for and complete a launch quoted by [`launch_quote`]. Pays the
+/// storage fee to the treasury from the user's own wallet, waits for GoBanq to
+/// confirm the payment on-chain, uploads the art (GoBanq stores it on Arweave),
+/// then creates the collection and sets its primary mint price. `max_supply` 0 =
+/// unlimited packs. Returns the collection id, the per-pack mint price (duffs),
+/// and the tier -> permanent-art-URL map, the same shape the old launch returned.
+pub fn launch_execute(
+    cfg: &NodeConfig,
+    creator_addr: &str,
+    json_path: &str,
+    order_id: &str,
+    max_supply: u32,
+) -> Result<serde_json::Value, String> {
+    let plan = crate::collectibles_import::open_launch(json_path)?;
+    let art = gather_art(&plan)?;
+
+    // Read the authoritative amount + treasury from GoBanq (not from the client).
+    let st = crate::launch_client::status(order_id)?;
+    let treasury = st["treasury"].as_str().ok_or("that launch order has no treasury")?.to_string();
+    let duffs: u64 = st["duffs"].as_str().and_then(|s| s.parse().ok()).ok_or("that launch order has no amount")?;
+    let status = st["status"].as_str().unwrap_or("");
+    let already_paid = matches!(status, "paid" | "storing" | "complete");
+
+    // 1. Pay the storage fee (unless this order was already paid — safe re-run).
+    if !already_paid {
+        if status != "quoted" {
+            return Err(format!("This launch order is {status}; request a new quote."));
+        }
+        let amount_divi = duffs as f64 / crate::commission::DUFFS_PER_DIVI as f64;
+        let txid = crate::fastsend::fast_send(cfg, &treasury, amount_divi, None)?;
+        // GoBanq only settles once the payment has enough confirmations, so keep
+        // asking it to settle until it accepts (or we give up).
+        let mut settled = false;
+        let mut last = String::new();
+        for _ in 0..240 {
+            match crate::launch_client::pay(order_id, &txid) {
+                Ok(_) => {
+                    settled = true;
+                    break;
+                }
+                Err(e) => {
+                    if e.status == 402 || e.code == "PAYMENT_NOT_CONFIRMED" {
+                        last = e.to_string();
+                        std::thread::sleep(Duration::from_secs(3));
+                        continue;
+                    }
+                    return Err(format!("Payment sent ({txid}) but GoBanq rejected it: {e}"));
+                }
+            }
+        }
+        if !settled {
+            return Err(format!(
+                "Payment was sent ({txid}) but GoBanq did not confirm it in time ({last}). It may still complete; you can retry this launch to finish it without paying again."
+            ));
+        }
+    }
+
+    // 2. Upload every file (idempotent on GoBanq's side — a retry is cheap).
+    for p in &art.pieces {
+        crate::launch_client::upload_file(order_id, &p.bytes, &p.ct)?;
+    }
+
+    // 3. Wait until every file is live on Arweave, collecting sha -> permanent URL.
+    let mut sha_url: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+    for _ in 0..240 {
+        let s = crate::launch_client::status(order_id)?;
+        sha_url.clear();
+        let files = s["files"].as_array().cloned().unwrap_or_default();
+        let total = files.len();
+        for f in &files {
+            if let (Some(sha), Some(url)) = (f["sha256"].as_str(), f["url"].as_str()) {
+                sha_url.insert(sha.to_string(), url.to_string());
+            }
+        }
+        if total > 0 && sha_url.len() == total {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(2));
+    }
+    for p in &art.pieces {
+        if !sha_url.contains_key(&p.sha) {
+            return Err("GoBanq has not finished storing the art yet. Retry this launch in a minute to finish it (you will not be charged again).".into());
+        }
+    }
+
+    // 4. Resolve the cover + tier art to their permanent arweave.net URLs.
+    let cover_url = art.cover_sha.as_ref().and_then(|s| sha_url.get(s)).cloned();
+    let mut tier_art = serde_json::Map::new();
+    for (tier, sha) in &art.tier_sha {
+        if let Some(u) = sha_url.get(sha) {
+            tier_art.insert(tier.clone(), json!(u));
+        }
+    }
+    let tier_art = Value::Object(tier_art);
+
+    // 5. Create the collection on-chain + set its primary mint price.
+    let name = plan["name"].as_str().unwrap_or("");
+    let description = plan["description"].as_str().unwrap_or("");
+    let out = create_collection(
+        cfg,
+        creator_addr,
+        name,
+        description,
+        None,
+        max_supply,
+        plan_rarity(&plan),
+        cover_url.as_deref(),
+        Some(&tier_art),
+    )?;
+    let mint_price = plan["priceDuffs"].as_u64().unwrap_or(0);
+    let payout = match plan["payoutAddress"].as_str() {
+        Some(a) if !a.is_empty() => a.to_string(),
+        _ => creator_addr.to_string(),
+    };
+    set_mint_price(cfg, &out.txid, creator_addr, mint_price, &payout)?;
+    Ok(json!({
+        "collectionId": out.txid,
+        "priceDuffs": mint_price,
+        "name": name,
+        "tierArt": tier_art,
+    }))
+}
+
 // ── Marketplace (list / cancel / buy) ───────────────────────────────────────
 /// List an item for sale. Signed by (funded from) the current owner, which is how
 /// the indexer accepts it. `price_divi` is what the BUYER pays; `payout_addr` is

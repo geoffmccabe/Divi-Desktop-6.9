@@ -196,6 +196,28 @@ export const nfdLaunchOpen = (jsonPath: string) => invoke<LaunchPlan>("nfd_launc
 export const nfdLaunch = (creatorAddr: string, jsonPath: string, maxSupply: number) =>
   invoke<LaunchResult>("nfd_launch", { creatorAddr, jsonPath, maxSupply });
 
+// Public pay-per-launch (no GoBanq credential): the user pays a one-time DIVI
+// fee to permanently store the art on Arweave, then the collection is created.
+// `storagePrice*` is that storage fee; `mintPriceDuffs` is the separate per-pack
+// price buyers will pay later. The treasury is shown as its Divi Name if it has
+// one. quote() moves no money; execute() pays and publishes.
+export interface LaunchQuote {
+  orderId: string;
+  name: string;
+  description: string;
+  storagePriceDivi: string; // DIVI, decimal string
+  storagePriceDuffs: string; // duffs, string
+  treasury: string;
+  treasuryName: string | null;
+  fileCount: number;
+  totalBytes: number;
+  expiresAt: string;
+  mintPriceDuffs: number;
+}
+export const nfdLaunchQuote = (jsonPath: string) => invoke<LaunchQuote>("nfd_launch_quote", { jsonPath });
+export const nfdLaunchExecute = (creatorAddr: string, jsonPath: string, orderId: string, maxSupply: number) =>
+  invoke<LaunchResult>("nfd_launch_execute", { creatorAddr, jsonPath, orderId, maxSupply });
+
 export interface ReceiveCode {
   address: string;
   encPubkey: string;

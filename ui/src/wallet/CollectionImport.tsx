@@ -1,7 +1,8 @@
 import { useState } from "react";
 import {
   nfdImportOpen, nfdImportReadItem, nfdCreateCollection, nfdMint, nfdPrepareFunding, nfdTxConfirmations,
-  nfdPickZip, nfdLaunchOpen, nfdLaunch, type ImportPlan, type LaunchPlan,
+  nfdPickZip, nfdLaunchOpen, nfdLaunchQuote, nfdLaunchExecute,
+  type ImportPlan, type LaunchPlan, type LaunchQuote,
 } from "./api";
 import { makeThumbnailFromBase64, type Item, type Collection } from "./CollectiblesPanel";
 import { setTierArtManifest } from "./reveal/tierArt";
@@ -51,6 +52,8 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
   const [launchPlan, setLaunchPlan] = useState<LaunchPlan | null>(null);
   const [maxPacks, setMaxPacks] = useState("0"); // 0 = unlimited
   const [launchMsg, setLaunchMsg] = useState<string | null>(null);
+  // The storage-fee quote the user confirms (with the DIVI price) before paying.
+  const [launchQuote, setLaunchQuote] = useState<LaunchQuote | null>(null);
 
   // Legacy zip flow.
   const [plan, setPlan] = useState<ImportPlan | null>(null);
@@ -71,6 +74,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
       setPath(picked);
       setPlan(null);
       setLaunchPlan(null);
+      setLaunchQuote(null);
       setFinished(false);
       setProgress(null);
       setBusy(true);
@@ -85,16 +89,33 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
     setBusy(false);
   }
 
-  // Create the collection on Divi and open it for minting (no pre-mint).
-  async function doLaunch() {
+  // Step 1: price storing the art permanently on Arweave. Downloads the art and
+  // asks GoBanq for a one-time DIVI fee. Moves no money and publishes nothing —
+  // it just opens the confirmation screen with the price.
+  async function doQuote() {
     if (!launchPlan) return;
+    setBusy(true);
+    setErr(null);
+    setLaunchMsg(null);
+    try {
+      setLaunchQuote(await nfdLaunchQuote(path));
+    } catch (e) {
+      setErr(String(e));
+    }
+    setBusy(false);
+  }
+
+  // Step 2: pay the quoted storage fee from the user's own wallet, let GoBanq
+  // store the art on Arweave, then create the collection and open minting.
+  async function doExecute() {
+    if (!launchPlan || !launchQuote) return;
     setBusy(true);
     setErr(null);
     setLaunchMsg(null);
     try {
       const creator = await getMyAddress();
       const cap = Math.max(0, Math.floor(Number(maxPacks) || 0));
-      const res = await nfdLaunch(creator, path, cap);
+      const res = await nfdLaunchExecute(creator, path, launchQuote.orderId, cap);
       // Teach the reveal art registry this collection's tier -> art URLs.
       const byTier: Record<number, string> = {};
       for (const [k, v] of Object.entries(res.tierArt)) byTier[Number(k)] = v;
@@ -109,6 +130,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
         encrypted: false,
       });
       const priceDivi = res.priceDuffs / DUFFS_PER_DIVI;
+      setLaunchQuote(null);
       setLaunchMsg(`Done ✓ — "${res.name}" is live and open for minting at ${priceDivi} DIVI per pack. See My Collection.`);
     } catch (e) {
       setErr(String(e));
@@ -247,11 +269,36 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
             onChange={(e) => setMaxPacks(e.target.value)}
             style={{ maxWidth: 200 }}
           />
-          <div style={{ marginTop: 10 }}>
-            <button className="wl-btn wl-btn-primary" disabled={busy} onClick={doLaunch}>
-              {busy ? "Launching…" : "Create collection & open minting"}
-            </button>
-          </div>
+          {!launchQuote && (
+            <div style={{ marginTop: 10 }}>
+              <button className="wl-btn wl-btn-primary" disabled={busy} onClick={doQuote}>
+                {busy ? "Pricing…" : "Get storage price"}
+              </button>
+            </div>
+          )}
+
+          {launchQuote && (
+            <div className="import-plan" style={{ marginTop: 12 }}>
+              <p className="wl-note">
+                Store the art for <strong>{launchQuote.name}</strong> permanently on Arweave.
+              </p>
+              <p className="wl-note" style={{ fontSize: 15 }}>
+                Permanent art storage: <strong>{launchQuote.storagePriceDivi} DIVI</strong> (one-time)
+              </p>
+              <p className="wl-note" style={{ fontSize: 12, opacity: 0.8 }}>
+                Paid from your wallet to {launchQuote.treasuryName || launchQuote.treasury}. This is separate from
+                the {priceDivi} DIVI per-pack mint price buyers pay later.
+              </p>
+              <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                <button className="wl-btn wl-btn-primary" disabled={busy} onClick={doExecute}>
+                  {busy ? "Launching…" : `Pay ${launchQuote.storagePriceDivi} DIVI & launch`}
+                </button>
+                <button className="wl-btn" disabled={busy} onClick={() => setLaunchQuote(null)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           {launchMsg && <p className="wl-note" style={{ marginTop: 8 }}>{launchMsg}</p>}
         </div>
       )}

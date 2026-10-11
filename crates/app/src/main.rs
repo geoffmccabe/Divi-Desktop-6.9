@@ -2107,6 +2107,40 @@ async fn nfd_launch(creator_addr: String, json_path: String, max_supply: u32) ->
     .map_err(|_| "internal error".to_string())?
 }
 
+/// Public pay-per-launch STEP 1: price storing this bundle's art permanently on
+/// Arweave (via GoBanq). Downloads the art and returns the DIVI price + an order
+/// id for the UI to confirm. No GoBanq credential needed; nothing is published
+/// and no money moves. See `collectibles::launch_quote`.
+#[tauri::command]
+async fn nfd_launch_quote(json_path: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles::launch_quote(&cfg, &json_path)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
+/// Public pay-per-launch STEP 2: pay the quoted storage fee from the user's own
+/// wallet, let GoBanq store the art on Arweave, then create the collection and
+/// set its primary mint price. `maxSupply` 0 = unlimited packs. Returns the
+/// collection id, per-pack price, and tier -> art-URL map. See
+/// `collectibles::launch_execute`.
+#[tauri::command]
+async fn nfd_launch_execute(
+    creator_addr: String,
+    json_path: String,
+    order_id: String,
+    max_supply: u32,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles::launch_execute(&cfg, &creator_addr, &json_path, &order_id, max_supply)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// Open + validate a Kinet.ink collection import (.zip). Unpacks and returns a
 /// plan (collection meta + per-item ok/error) WITHOUT publishing anything.
 #[tauri::command]
@@ -2773,6 +2807,8 @@ fn main() {
             nfd_pick_zip,
             nfd_launch_open,
             nfd_launch,
+            nfd_launch_quote,
+            nfd_launch_execute,
             nfd_import_open,
             nfd_import_read_item,
             nfd_prepare_funding,
