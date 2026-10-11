@@ -4,7 +4,7 @@ import {
   readLaunchFile, mediaUrlOk, ultraRareSlot, ultraRareOdds, cssAspect,
   normalsOf, ultraRaresOf, topTierOf, validateCollection,
   readLaunchPlan, blankLaunchPlan, diviToDuffs, duffsToDivi, looksLikeDiviAddress,
-  KINETINK_MEDIA_HOST, LAUNCH_FORMAT, MAX_SUPPLY_LIMIT, DUFFS_PER_DIVI,
+  KINETINK_MEDIA_HOST, LAUNCH_FORMAT, MAX_SUPPLY_LIMIT, DUFFS_PER_DIVI, DEFAULT_ROYALTY_DUFFS,
 } from "./nfdCatalog";
 
 const out: string[] = [];
@@ -258,6 +258,24 @@ const file = (over: Record<string, unknown> = {}) => ({
     ok("every amount survives duffs -> DIVI -> duffs across a 20 DIVI sweep",
        worst === "", worst ? `${worst} duffs did not` : "");
   }
+
+  /* ---- THE DEFAULT ROYALTY ----
+     Geoff, 2026-Oct-10: a new set starts at 25 DIVI, whoever launches it can
+     choose otherwise, and it can be lowered later as far as zero. The panel
+     prefills the box from this, so the number and the units both matter. */
+  ok("a new set's royalty default is 25 DIVI", DEFAULT_ROYALTY_DUFFS === 2_500_000_000,
+     String(DEFAULT_ROYALTY_DUFFS));
+  ok("and it is the same number the box's own text parses to",
+     diviToDuffs("25") === DEFAULT_ROYALTY_DUFFS && duffsToDivi(DEFAULT_ROYALTY_DUFFS) === "25",
+     duffsToDivi(DEFAULT_ROYALTY_DUFFS));
+  /* ⚠ ZERO IS NOT "ALMOST FREE", IT IS FREE. The chain skips the payment check
+     entirely when the amount is 0 (`if amount > 0`, nfd-indexer/src/lib.rs:548
+     in the chain repo), so a royalty lowered to zero is no royalty, and our
+     undecided-is-null reading agrees with the chain rather than merely
+     resembling it. */
+  ok("a royalty of zero reads the same as no royalty, which is what the chain does",
+     readLaunchPlan({ commissionDuffs: 0 }).commissionDuffs === null
+     && readLaunchPlan({}).commissionDuffs === null);
 
   /* ---- READING A STORED PLAN ---- */
   const full = readLaunchPlan({

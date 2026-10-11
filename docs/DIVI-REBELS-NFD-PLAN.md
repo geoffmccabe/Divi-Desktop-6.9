@@ -214,8 +214,20 @@ somebody's head: see `launch` on `NfdCollection` in
 2. **The set launches from that same address if it can**, otherwise from the UK
    scanner node's main wallet address `DTv5kfMgFhjPfDGji9YgXGZuWN7ZKdtALj`
    (checksum also verified). It can: see 8.1.
-3. **The royalty amount is still open.** It is a FLAT amount in duffs, not a
-   percentage, and on chain it can only ever be lowered.
+3. **The royalty default is 25 DIVI**, and it belongs to whoever launches the
+   set rather than being fixed by us: the launch screen offers 25, the launcher
+   can type anything, and afterwards they can lower it as often as they like,
+   as far as zero. Nobody can ever raise it. It is a FLAT amount in duffs, not
+   a percentage, so 25 DIVI is a quarter of a 100 DIVI resale and 0.25% of a
+   10,000 DIVI one. Zero is genuinely zero: the chain skips the payment check
+   entirely when the amount is 0 (`if amount > 0`,
+   `/Users/geoffreymccabe/Divi-Blockchain_6.9/contrib/nfd-indexer/src/lib.rs:548`),
+   so a royalty lowered to zero is no royalty, not a dust charge.
+
+   ⚠ It is charged on every TRANSFER, not only on a sale, so a gift or a move
+   between two of your own wallets pays it too. That is what makes it
+   uncircumventable, and it is also why the number should not approach the
+   value of a cheap piece.
 4. **The supply cap is 100,000.** Written into the create transaction, where it
    is a u32, and unchangeable afterwards. It is the only hard bound on how many
    pieces can exist, and the one backstop that still holds if a public mint

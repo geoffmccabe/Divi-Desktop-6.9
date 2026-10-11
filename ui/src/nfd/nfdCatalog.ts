@@ -58,6 +58,19 @@ export interface NfdUltraRareRoll {
 /** Duffs in one DIVI. The chain counts in duffs; people talk in DIVI. */
 export const DUFFS_PER_DIVI = 100_000_000;
 
+/**
+ * What a new set's royalty starts at: 25 DIVI (Geoff, 2026-Oct-10).
+ *
+ * A DEFAULT, not a rule. Whoever launches a set types whatever they want, and
+ * can lower it afterwards as often as they like, all the way to zero. Zero is
+ * genuinely zero rather than a technicality: the chain skips the payment check
+ * entirely when the amount is 0 (`if amount > 0` at
+ * /Users/geoffreymccabe/Divi-Blockchain_6.9/contrib/nfd-indexer/src/lib.rs:548),
+ * so a royalty lowered to zero is no royalty at all. What nobody can do, ever,
+ * is put it back up.
+ */
+export const DEFAULT_ROYALTY_DUFFS = 25 * DUFFS_PER_DIVI;
+
 /** `max_supply` is a u32 on the wire, so this is the largest cap that fits. */
 export const MAX_SUPPLY_LIMIT = 4_294_967_295;
 

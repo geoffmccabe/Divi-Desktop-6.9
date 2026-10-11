@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import {
   readLaunchFile, normalsOf, ultraRaresOf, topTierOf, ultraRareOdds, cssAspect,
-  duffsToDivi, diviToDuffs, looksLikeDiviAddress, DUFFS_PER_DIVI,
+  duffsToDivi, diviToDuffs, looksLikeDiviAddress, DUFFS_PER_DIVI, DEFAULT_ROYALTY_DUFFS,
   KINETINK_MEDIA_HOST, LAUNCH_FORMAT, MAX_SUPPLY_LIMIT,
   type NfdCollection, type NfdItem,
 } from "../../nfd/nfdCatalog";
@@ -95,7 +95,13 @@ export function RebelsNfdPanel() {
   const shown: LaunchEdit = launchEdit ?? {
     creator: base?.launch.creator ?? "",
     payout: base?.launch.payout ?? "",
-    royalty: base?.launch.commissionDuffs != null ? duffsToDivi(base.launch.commissionDuffs) : "",
+    /* A set with no royalty recorded yet starts at the DEFAULT rather than
+       empty, because 25 DIVI is what Geoff wants a new set to launch with and
+       a default nobody can see is a default nobody applies. Clearing the box
+       is still how you say "no royalty": it is a default, not a floor. */
+    royalty: base?.launch.commissionDuffs != null
+      ? duffsToDivi(base.launch.commissionDuffs)
+      : duffsToDivi(DEFAULT_ROYALTY_DUFFS),
     cap: base?.launch.maxSupply != null ? String(base.launch.maxSupply) : "",
   };
   const editField = (k: keyof LaunchEdit, v: string) => setLaunchEdit({ ...shown, [k]: v });
@@ -110,10 +116,22 @@ export function RebelsNfdPanel() {
   const capText = shown.cap.replace(/[\s,]/g, "");
   const cap = capText === "" ? null : Number(capText);
   const capBad = capText !== "" && !(Number.isInteger(cap) && cap !== null && cap >= 1 && cap <= MAX_SUPPLY_LIMIT);
-  /* A royalty with no payout address is the one combination the chain cannot
-     hold: COMMISSION-SET carries the amount and the payout together. */
+  /* A royalty with no payout address cannot be broadcast, because the chain
+     carries the amount and the payout together. It is a WARNING rather than a
+     refusal: a half-finished plan is a normal thing to write down, and the
+     thing that must insist on the pair is the launch, not the note. */
   const payoutMissing = royaltyDuffs !== null && payoutAddr === null;
-  const launchBad = creatorBad || payoutBad || royaltyBad || capBad || payoutMissing;
+  /* ⚠ DOWN-ONLY, enforced here as well as by the chain. Once a set is launched
+     the only direction a royalty can move is down, to zero if you like, and
+     never back up: the chain refuses a raise outright
+     (nfd-indexer/src/lib.rs:641 in the chain repo). So a higher number typed
+     against a launched set is not a decision, it is a transaction that will
+     bounce, and it is better to say so here than to find out on broadcast. An
+     UNLAUNCHED set has no such history: anything goes until it goes out. */
+  const recorded = base?.launch.commissionDuffs ?? null;
+  const royaltyRaise = base?.chainId != null && recorded !== null
+    && royaltyDuffs !== null && royaltyDuffs > recorded;
+  const launchBad = creatorBad || payoutBad || royaltyBad || capBad || royaltyRaise;
 
   /* What SAVE would write: the chosen collection with everything as typed.
      Derived rather than copied into state, so picking a different collection
@@ -428,23 +446,28 @@ export function RebelsNfdPanel() {
                           ? "That is not the shape of a Divi address."
                           : "That address fails its checksum, so it has been mistyped."
                         : payoutMissing
-                          ? "A royalty needs an address to go to: the chain carries the amount and the payout together."
+                          ? "⚠ A royalty needs an address to go to. This can still be saved, but the set cannot be launched until there is one, because the chain carries the amount and the payout together."
                           : "It need not be the creator, and a cold address is the safer choice: nothing ever has to spend from it."}
                     </span>
                   </label>
 
                   <label className="rn-field">
-                    <span>Royalty, in DIVI, on every resale</span>
-                    <input className={"wl-input" + (royaltyBad ? " rn-bad" : "")}
+                    <span>
+                      Royalty, in DIVI, on every resale
+                      {recorded === null ? " (default)" : ""}
+                    </span>
+                    <input className={"wl-input" + (royaltyBad || royaltyRaise ? " rn-bad" : "")}
                       value={shown.royalty} spellCheck={false} autoComplete="off" inputMode="decimal"
-                      placeholder="e.g. 5"
+                      placeholder={duffsToDivi(DEFAULT_ROYALTY_DUFFS)}
                       onChange={(e) => editField("royalty", e.target.value)} />
-                    <span className={royaltyBad ? "rn-hint rn-warn" : "rn-hint"}>
+                    <span className={royaltyBad || royaltyRaise ? "rn-hint rn-warn" : "rn-hint"}>
                       {royaltyBad
-                        ? "An amount of DIVI, like 5 or 2.5. Up to eight decimal places."
-                        : royaltyDivi === null
-                          ? "Empty means no royalty. It is a FLAT amount, not a percentage: Divi has nowhere to put a percentage."
-                          : `A FLAT amount, so it is ${shareOf(10)} of a 10 DIVI resale and ${shareOf(1000)} of a 1,000 DIVI one. It can only ever be lowered, never raised, and never removed.`}
+                        ? "An amount of DIVI, like 25 or 2.5. Up to eight decimal places."
+                        : royaltyRaise
+                          ? `This set is launched, so ${duffsToDivi(recorded ?? 0)} DIVI can only go DOWN. The chain refuses a raise outright, so this would not broadcast.`
+                          : royaltyDivi === null
+                            ? "Empty means no royalty at all. It is a FLAT amount, not a percentage: Divi has nowhere to put a percentage."
+                            : `A FLAT amount, so it takes ${shareOf(10)} of a 10 DIVI resale and ${shareOf(1000)} of a 1,000 DIVI one. Whoever launches the set chooses it, and can lower it afterwards as often as they like, to zero if they want. Nobody can ever raise it.`}
                     </span>
                   </label>
 
