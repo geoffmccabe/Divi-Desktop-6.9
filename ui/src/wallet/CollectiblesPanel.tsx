@@ -276,7 +276,13 @@ export function CollectiblesPanel() {
     nfdCommissionGet(browsing).then((c) => {
       if (!live) return;
       setCommCur(c);
-      setCommAmt("");
+      // A collection with no commission yet defaults the box to 25 DIVI
+      // (Geoff, 2026-Oct-10): it is the amount a new set should launch with,
+      // and the creator is free to type anything else. Once one EXISTS the box
+      // starts empty instead, because the only thing that can be broadcast
+      // then is a lower number, and pre-filling the current one would invite a
+      // broadcast that changes nothing.
+      setCommAmt(c ? "" : "25");
       setCommPayout(c?.payoutAddress || "");
       setCommMsg("");
     }).catch(() => {});
@@ -1499,8 +1505,10 @@ export function CollectiblesPanel() {
             <div style={{ border: "1px solid var(--border, #2a2a35)", borderRadius: 10, padding: "12px 14px", margin: "4px 0 16px" }}>
               <div style={{ fontWeight: 600, marginBottom: 6 }}>Creator commission</div>
               <p className="wl-note" style={{ marginTop: 0 }}>
-                A flat DIVI fee paid to you on every resale of this collection's items — enforced on-chain as part of a
-                valid transfer, so a marketplace can't skip it. It can only be lowered, never raised.
+                A flat DIVI fee paid to you on every transfer of this collection's items, enforced on-chain as part of
+                a valid transfer, so a marketplace can't skip it (and nor can a gift). You choose the amount: it starts
+                at 25 DIVI and you can lower it later as often as you like, as far as zero, which removes it. Nobody can
+                ever raise it.
               </p>
               <div className="wl-note" style={{ display: "flex", flexDirection: "column", gap: 2, margin: "0 0 10px" }}>
                 <span>Original commission: <strong>{commCur ? `${commCur.originalDivi} DIVI` : "—"}</strong></span>
