@@ -137,7 +137,7 @@ const home: [number, number, number] = [0, 0, R + 8];
 
 // 2. THE ONE THAT MATTERS: a client cannot invent a score.
 //
-//    There is no message for it. This checks the negative — that sending the
+//    There is no message for it. This checks the negative, that sending the
 //    obvious shapes an attacker would try changes nothing at all.
 {
   const room = newRoom();
@@ -1580,6 +1580,20 @@ const home: [number, number, number] = [0, 0, R + 8];
   spawner.spawn("fighters", 50);
   spawner.spawn("flock", 3);
   ok("a full sky takes nothing more, fighters or flocks",
+     sky() === LIVE_MAX_ENEMIES, `${sky()} of ${LIVE_MAX_ENEMIES}`);
+
+  /* ⚠ THE CASE THAT CROSSES THE LINE, which the first version of this got
+     wrong: a flock arrives as a whole formation in one call, so asking "is
+     there room for one more" let forty-eight land from 1,999 and put the sky
+     OVER its ceiling. Checked from one place short of full, where a single
+     fighter fits and a formation cannot. */
+  room.combat.enemies.splice(0, 1);
+  ok("(setup) one place left", sky() === LIVE_MAX_ENEMIES - 1, `${sky()}`);
+  spawner.spawn("flock", 1);
+  ok("a formation that will not fit is not squeezed in",
+     sky() === LIVE_MAX_ENEMIES - 1, `${sky()} of ${LIVE_MAX_ENEMIES}`);
+  spawner.spawn("tier1", 1);
+  ok("but a single fighter still takes the last place",
      sky() === LIVE_MAX_ENEMIES, `${sky()} of ${LIVE_MAX_ENEMIES}`);
 
   /* ⚠ THE CEILING MUST NOT BE A ONE-WAY DOOR. A cap that stopped spawning for
