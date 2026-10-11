@@ -1,7 +1,7 @@
 // The ledger: one object, for every room and every week.
 //
-// It answers exactly one question — how much has this node earned, and how much
-// has it already been paid — and it is the only thing the payout is allowed to
+// It answers exactly one question, how much has this node earned and how much
+// has it already been paid, and it is the only thing the payout is allowed to
 // ask. Rooms write to it. Nothing else does.
 //
 // WHY THE PAYING IS NOT DONE HERE
@@ -16,7 +16,7 @@
 // A claim is therefore a conversation: London asks "what does this node have?",
 // this object answers and marks the amount as being paid, London sends it, and
 // then confirms. If London never confirms, the reservation expires and the
-// balance comes back — so a failed send loses the player nothing, and a
+// balance comes back, so a failed send loses the player nothing, and a
 // duplicated one is refused because the amount was already taken out.
 
 import { guestIdOk } from "./protocol";

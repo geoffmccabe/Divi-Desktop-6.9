@@ -17,7 +17,7 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
 
-    /* /room/<name> — a cockpit joining a world. One object per name, so
+    /* /room/<name>: a cockpit joining a world. One object per name, so
        "earth" is one shared fight and a private name is a private one. */
     const room = url.pathname.match(/^\/room\/([A-Za-z0-9_-]{1,40})(\/[a-z]*)?$/);
     if (room) {
@@ -27,7 +27,7 @@ export default {
       return env.ROOM.get(id).fetch(req);
     }
 
-    /* /pilot — a guest asking for their pilot number, which the ledger object
+    /* /pilot: a guest asking for their pilot number, which the ledger object
        hands out in order. Public on purpose: the page needs a name before it
        has joined anything, and a pilot number is neither secret nor worth
        anything. See RebelsLedger.pilot. */
@@ -36,7 +36,7 @@ export default {
       return env.LEDGER.get(id).fetch(req);
     }
 
-    /* /ledger/* — the payout conversation, and the leaderboard. The object
+    /* /ledger/*: the payout conversation, and the leaderboard. The object
        checks the secret itself; the router deliberately does not, so there is
        only ONE place that decides who may read a balance. */
     if (url.pathname.startsWith("/ledger/")) {
@@ -48,7 +48,7 @@ export default {
 
          It is refused here AND refused again inside the ledger, which checks
          that the request came over the binding rather than off the wire. Two
-         checks for one rule is not belt and braces on something cosmetic — the
+         checks for one rule is not belt and braces on something cosmetic: the
          thing on the other side of it is a treasury. */
       if (url.pathname === "/ledger/credit") return new Response("not found", { status: 404 });
       /* The player's half of a cash-out is the same kind of thing: a room

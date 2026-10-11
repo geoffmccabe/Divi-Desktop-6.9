@@ -3,7 +3,7 @@
 // THE ONE IDEA HERE
 // -----------------
 // The room runs the fight. Not a copy of the fight, not a check on the client's
-// fight — the fight. Fighters, bullets, hits, kills, coins and waves all live in
+// fight, the fight. Fighters, bullets, hits, kills, coins and waves all live in
 // this object's memory, and a cockpit is a camera with a joystick attached.
 //
 // That is the difference between a leaderboard and a faucet. Divi Rebels pays
@@ -38,7 +38,7 @@ import {
   WAVE_BIAS_MIN, WAVE_BIAS_MAX,
   type CombatState, type CombatWorld, type PlayerBody,
 } from "../../../ui/src/wallet/rebels/rebelsCombat";
-import { HEART_GUARD, HEART_GUARD_COUNT } from "../../../ui/src/wallet/rebels/rebelsFlock";
+import { HEART_GUARD, HEART_GUARD_COUNT, fleetSize } from "../../../ui/src/wallet/rebels/rebelsFlock";
 import { startGame, stepGame, type Run, type Spawner } from "./gameRunner";
 import { placeById, type Place } from "../../../ui/src/wallet/rebels/rebelsPlaces";
 import { award, newPurse, type Purse } from "./gameRewards";
@@ -472,7 +472,7 @@ export class RebelsRoom {
     if (!this.seats.delete(seat.id)) return;
     seat.flying = false;
     /* Whatever they earned is banked before the socket is forgotten, so
-       closing the lid is not a way to lose someone else's money — or a way to
+       closing the lid is not a way to lose someone else's money, or a way to
        keep yours out of the ledger's sight. */
     void this.bank(seat);
     this.refreshRoster();
@@ -683,6 +683,18 @@ export class RebelsRoom {
    *  /state, and it should normally be zero: see LIVE_MAX_ENEMIES. */
   private skyRefused = 0;
 
+  /** Whether `want` more bodies fit under the ceiling.
+   *
+   *  ⚠ ASKED WITH THE WHOLE FORMATION, because a flock arrives in one call and
+   *  "is there room for one" is the wrong question for a thing that brings
+   *  forty-eight. Checking for one let a formation land entire from 1,999 and
+   *  put the sky over the ceiling by a formation: still bounded, which is why
+   *  it was not urgent, but a bound with a caveat is the kind of bound this
+   *  project keeps being caught by. Spotted in review by the other session. */
+  private roomInSky(want = 1): boolean {
+    return this.combat.enemies.length + want <= LIVE_MAX_ENEMIES;
+  }
+
   private biasFor(range?: readonly [number, number]): number {
     const lo = range ? range[0] : WAVE_BIAS_MIN;
     const hi = range ? range[1] : WAVE_BIAS_MAX;
@@ -718,7 +730,7 @@ export class RebelsRoom {
              time and the ones it never sent are gone. See LIVE_MAX_ENEMIES for
              why this exists and what it is NOT - it is a bound on the machine,
              not on the difficulty, and no living player will ever meet it. */
-          if (this.combat.enemies.length >= LIVE_MAX_ENEMIES) {
+          if (!this.roomInSky()) {
             this.skyRefused += n - i;
             return;
           }
@@ -739,8 +751,15 @@ export class RebelsRoom {
           if (drone || enemy === "flock") {
             /* A flock is one call for the whole formation, however many the
                round asked for: spawnFleet sizes it by tier. Asking for three
-               flocks means three formations, which is what the count means. */
-            spawnFleet(this.combat, drone ? Number(drone[1]) : 1, mark.pos, mark.fwd, {});
+               flocks means three formations, which is what the count means.
+               And the ceiling is asked about the formation, not about one
+               drone: see roomInSky. */
+            const tierOf = drone ? Number(drone[1]) : 1;
+            if (!this.roomInSky(fleetSize(tierOf))) {
+              this.skyRefused += n - i;
+              return;
+            }
+            spawnFleet(this.combat, tierOf, mark.pos, mark.fwd, {});
             continue;
           }
           if (enemy === "dragon") {
@@ -777,6 +796,10 @@ export class RebelsRoom {
           if (type.behaviour === "drone") {
             /* A flock is one call for the whole formation, as above. Its
                members are tuned one by one, because spawnFleet builds them. */
+            if (!this.roomInSky(fleetSize(builtAs))) {
+              this.skyRefused += n - i;
+              return;
+            }
             const made = spawnFleet(this.combat, builtAs, mark.pos, mark.fwd, {});
             for (const d of made) applyEnemyType(d, type);
             continue;
@@ -1558,8 +1581,8 @@ export class RebelsRoom {
    *
    * Two things are checked, and they are the two that matter while flight is
    * still client-side. Could it have GOT there since its last report, at the
-   * fastest the ship flies? And is it inside the world at all? Anything else —
-   * a heading that snaps, a turn no stick could make — is a matter of feel,
+   * fastest the ship flies? And is it inside the world at all? Anything else,
+   * a heading that snaps, a turn no stick could make, is a matter of feel,
    * costs nothing to score, and is not worth refusing a connection over.
    */
   private onTransform(seat: Seat, m: Extract<ClientMessage, { t: "tf" }>): void {

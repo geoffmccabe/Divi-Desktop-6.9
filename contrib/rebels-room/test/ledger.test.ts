@@ -91,7 +91,7 @@ async function main() {
     const first = await j(await led.fetch(post("reserve", { node: "n3", ref: "r1" })));
     ok("a claim reserves the whole balance", first.ok === true && first.amount === 250, `${first.amount}`);
 
-    /* Asked again while the first is still in flight — the shape of both an
+    /* Asked again while the first is still in flight, the shape of both an
        impatient player double-clicking and a deliberate race. */
     const second = await j(await led.fetch(post("reserve", { node: "n3", ref: "r2" })));
     ok("a second claim while one is in flight is refused", second.ok === false, String(second.why));
