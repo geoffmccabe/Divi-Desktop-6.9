@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState , useLayoutEffect } from "react";
 import { networkPeers, probePeers, noteSetupLog, relayedNodes, listNodes, nodeIdentity, networkCrawl, peerAdd, addressBookStamps, type Peer, type Geo } from "./api";
 import { resolveGeos } from "./geoCache";
 import { loadKnown, recordKnown, redateFromBook, addMyIps, loadLastPeers, saveLastPeers, type Known } from "./knownPeers";
+import { mapAnimActive, IDLE_TICK_MS } from "./animGate";
 import { emitPeerCount } from "./peerEvents";
 /* The map's animation system: every act of communication the app performs is
    drawn here, and nothing is drawn that isn't really happening. The trigger
@@ -1528,11 +1529,14 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     window.addEventListener("mouseup", onUp);
 
     let raf = 0;
+    let idle = 0;
     // Full-display-rate canvas repaints were burning GPU the whole time the
     // map tab was open. 30fps is indistinguishable for drifting arcs and dots
     // and halves the render cost (or better, on 120 Hz screens).
     let lastFrame = 0;
     const draw = () => {
+      // Window in the background: sleep, do not draw (animGate.ts).
+      if (!mapAnimActive()) { idle = window.setTimeout(draw, IDLE_TICK_MS); return; }
       // GLOBE view is showing: skip all 2D work, just keep the loop alive so it
       // resumes instantly when the user switches back to FLAT.
       if (globeActiveRef.current) {
@@ -2325,6 +2329,7 @@ export function NetworkMap({ onReturn, autoplay = false }: {
     raf = requestAnimationFrame(draw);
     return () => {
       cancelAnimationFrame(raf);
+      window.clearTimeout(idle);
       ro.disconnect();
       wrap.removeEventListener("mousemove", onMove);
       wrap.removeEventListener("mouseleave", onLeave);

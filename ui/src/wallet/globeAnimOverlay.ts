@@ -9,6 +9,7 @@
 // the flat map uses, so the two surfaces cannot drift into showing different
 // things about the same node. That was the whole point of the exercise.
 
+import { mapAnimActive, IDLE_TICK_MS } from "./animGate";
 import type { GlobeMethods } from "react-globe.gl";
 import { drawMapAnim } from "./mapAnimRender";
 
@@ -23,9 +24,12 @@ export interface GlobeOverlayOpts {
 /** Start the overlay loop. Returns a dispose function. */
 export function createGlobeAnimOverlay(opts: GlobeOverlayOpts): () => void {
   let raf = 0;
+  let idle = 0;
   let lastFrame = 0;
 
   const frame = () => {
+    /* Window in the background: sleep, do not draw (animGate.ts). */
+    if (!mapAnimActive()) { idle = window.setTimeout(frame, IDLE_TICK_MS); return; }
     raf = requestAnimationFrame(frame);
 
     const g = opts.globe();
@@ -93,5 +97,5 @@ export function createGlobeAnimOverlay(opts: GlobeOverlayOpts): () => void {
   };
 
   raf = requestAnimationFrame(frame);
-  return () => cancelAnimationFrame(raf);
+  return () => { cancelAnimationFrame(raf); window.clearTimeout(idle); };
 }

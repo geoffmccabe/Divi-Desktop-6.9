@@ -4,6 +4,7 @@ import * as THREE from "three";
 import earthNight from "../assets/earth-night.jpg";
 import diviLogo from "../assets/divi-coin.webp";
 import { pulseTrigger, pulseHsl, pulseActiveUntil, makeLegs, legU, pingDone, type Leg } from "./activityPulse";
+import { mapAnimActive, onMapAnimChange, IDLE_TICK_MS } from "./animGate";
 import { useTheme } from "../theme/ThemeProvider";
 import { dflow } from "./rebels/rebelsDflow";
 import { platform } from "./rebels/platform/current";
@@ -1091,7 +1092,16 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
     let lastTrig = 0; // last pulse trigger seen (to hand out fresh legs)
     const controls = g.controls() as unknown as { enabled: boolean; autoRotate: boolean; update: () => void };
     let wasFlying = false;
+    /* Nobody looking (window in the background, see animGate.ts): the globe's
+       own WebGL render loop is paused and this loop sleeps, one cheap check a
+       second, until focus comes back. */
+    let idle = 0;
+    const gate = onMapAnimChange((active) => {
+      if (active) { last = performance.now(); g.resumeAnimation(); } else g.pauseAnimation();
+    });
+    if (!mapAnimActive()) g.pauseAnimation();
     const animate = () => {
+      if (!mapAnimActive()) { idle = window.setTimeout(animate, IDLE_TICK_MS); return; }
       const now = performance.now();
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
@@ -1273,6 +1283,9 @@ export function GlobeMap({ points, center, getWinnerIp, flight }: { points: Glob
 
     return () => {
       cancelAnimationFrame(raf);
+      window.clearTimeout(idle);
+      gate();
+      g.resumeAnimation();
       detachFlight();
       dom.removeEventListener("pointermove", onMove);
       scene.remove(detail.object);
