@@ -274,6 +274,38 @@ pub fn gobanq_cred() -> Option<GoBanqCred> {
     Some(GoBanqCred { base_url, app_id, secret })
 }
 
+/// The SEPARATE drops.read credential for the owner-only master-key GRANT flow
+/// (listing a collection's drop and posting re-wrapped cell keys). Kept distinct
+/// from the storage upload login so the two scopes never blur together:
+/// `GOBANQ_DROPS_CRED_FILE`, else `$HOME/.gobanq-dd69-drops-devnet.json`, shaped
+/// `{ baseUrl, appId, secret }`. Deliberately does NOT fall back to the storage
+/// login file — a missing drops cred returns `None` rather than silently reusing
+/// the wrong credential.
+pub fn gobanq_drops_cred() -> Option<GoBanqCred> {
+    if let (Ok(app_id), Ok(secret)) = (std::env::var("GOBANQ_DROPS_APP_ID"), std::env::var("GOBANQ_DROPS_APP_SECRET")) {
+        if !app_id.is_empty() && !secret.is_empty() {
+            let base_url = std::env::var("GOBANQ_API_URL").unwrap_or_else(|_| DEFAULT_GOBANQ_URL.to_string());
+            return Some(GoBanqCred { base_url, app_id, secret });
+        }
+    }
+    let path = std::env::var_os("GOBANQ_DROPS_CRED_FILE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".gobanq-dd69-drops-devnet.json")))?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let app_id = v["appId"].as_str().unwrap_or_default().to_string();
+    let secret = v["secret"].as_str().unwrap_or_default().to_string();
+    if app_id.is_empty() || secret.is_empty() {
+        return None;
+    }
+    let base_url = v["baseUrl"]
+        .as_str()
+        .map(|s| s.to_string())
+        .or_else(|| std::env::var("GOBANQ_API_URL").ok())
+        .unwrap_or_else(|| DEFAULT_GOBANQ_URL.to_string());
+    Some(GoBanqCred { base_url, app_id, secret })
+}
+
 /// GoBanq Assets: stores the bundle (encrypted bundle or public image) on Arweave
 /// via GoBanq and returns the same 32-byte pointer the on-chain NFD record
 /// carries. Every request is HMAC-SHA256 signed with the app login; downloads

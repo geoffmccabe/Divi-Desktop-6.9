@@ -1063,6 +1063,152 @@ pub fn receive_code(cfg: &NodeConfig, my_addr: &str) -> Result<ReceiveCode, Stri
     Ok(ReceiveCode { address: my_addr.to_string(), enc_pubkey: to_hex(pk.as_bytes()) })
 }
 
+/// Creator-side owner-only master-key GRANT. For a collection you created, hands
+/// every revealed-card owner the master-art key for their slot: it recovers your
+/// master key from your own node signature (never leaving the machine), re-wraps
+/// it to each owner's announced encryption key, and posts it to GoBanq. Safe to
+/// run repeatedly as more cards get revealed: it skips owners who already hold a
+/// key, and GoBanq's store is first-writer-wins. Uses the SEPARATE drops
+/// credential, never the storage upload login.
+///
+/// Returns a plain summary (counts + any slots it had to skip). GoBanq re-checks
+/// on chain that each owner truly holds a revealed card of the slot before
+/// storing, so a bad or stale target is refused there rather than trusted here.
+pub fn grant_master_keys(cfg: &NodeConfig, collection_id_hex: &str, creator_addr: &str) -> Result<Value, String> {
+    use std::collections::{BTreeSet, HashMap, HashSet};
+
+    // 1. Read-only chain scan: who is owed a key, and who the real creator is.
+    let (creator_on_chain, targets) = crate::nfd_scan::grant_targets(cfg, collection_id_hex)?;
+    if creator_on_chain != creator_addr {
+        return Err(format!(
+            "only the collection's creator ({creator_on_chain}) can grant its master keys; this wallet is not the creator"
+        ));
+    }
+    if targets.is_empty() {
+        return Ok(json!({
+            "collection": collection_id_hex,
+            "granted": 0, "alreadyHad": 0, "skippedSlots": [], "errors": [],
+            "note": "no revealed-card owner is currently owed a key",
+        }));
+    }
+
+    // 2. Recover the creator's master encryption keypair from the node. The launch
+    //    key blob is the recipient whose pubkey is this one (or source "launch").
+    let rpc = RpcClient::new(cfg);
+    let (master_sk, master_pk) = owner_keypair(&rpc, creator_addr)?;
+    let master_pk_hex = to_hex(master_pk.as_bytes()).to_lowercase();
+
+    // 3. Open GoBanq with the drops credential; find this collection's drop.
+    let cred = nfd_storage::gobanq_drops_cred()
+        .ok_or("the GoBanq drops credential is not set up (expected ~/.gobanq-dd69-drops-devnet.json)")?;
+    let gobanq = nfd_storage::GoBanq::new(cred, nfd_storage::LocalDir::under_datadir(&cfg.datadir));
+    let drop_id = gobanq
+        .drop_id_for_collection(collection_id_hex)?
+        .ok_or("GoBanq has no drop for this collection yet (has it been imported?)")?;
+
+    // 4. Per distinct slot: the launch blob to re-wrap from, and who already holds
+    //    a key (loaded once, lazily). slot -> Some(wrapped_b64) / None if missing.
+    let mut launch_blob: HashMap<String, Option<String>> = HashMap::new();
+    let mut have: HashMap<String, HashSet<String>> = HashMap::new();
+
+    let mut granted = 0u32;
+    let mut already = 0u32;
+    let mut skipped_slots: BTreeSet<String> = BTreeSet::new();
+    let mut errors: Vec<String> = Vec::new();
+
+    for t in &targets {
+        if !launch_blob.contains_key(&t.slot) {
+            match gobanq.slot_key_recipients(&drop_id, &t.slot) {
+                Ok(v) => {
+                    let mut present = HashSet::new();
+                    let mut blob = None;
+                    if let Some(arr) = v["recipients"].as_array() {
+                        for r in arr {
+                            if let Some(pk) = r["recipientPub"].as_str() {
+                                present.insert(pk.to_lowercase());
+                                let is_launch = r["source"].as_str() == Some("launch")
+                                    || pk.eq_ignore_ascii_case(&master_pk_hex);
+                                if is_launch {
+                                    if let Some(w) = r["wrapped"].as_str() {
+                                        blob = Some(w.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    have.insert(t.slot.clone(), present);
+                    launch_blob.insert(t.slot.clone(), blob);
+                }
+                Err(e) => {
+                    errors.push(format!("{}: could not read keys ({e})", t.slot));
+                    have.insert(t.slot.clone(), HashSet::new());
+                    launch_blob.insert(t.slot.clone(), None);
+                }
+            }
+        }
+
+        // No launch blob for this slot = nothing to re-wrap from; skip it.
+        let blob_b64 = match launch_blob.get(&t.slot).cloned().flatten() {
+            Some(b) => b,
+            None => {
+                skipped_slots.insert(t.slot.clone());
+                continue;
+            }
+        };
+        // Owner already has a key for this slot? GoBanq is first-writer-wins anyway.
+        if have
+            .get(&t.slot)
+            .map(|s| s.contains(&t.recipient_pub_hex.to_lowercase()))
+            .unwrap_or(false)
+        {
+            already += 1;
+            continue;
+        }
+
+        let wrapped = match STANDARD.decode(blob_b64.as_bytes()) {
+            Ok(b) => b,
+            Err(e) => {
+                errors.push(format!("{}: bad launch blob ({e})", t.slot));
+                continue;
+            }
+        };
+        let recipient_pub = match pubkey_from_hex(&t.recipient_pub_hex) {
+            Ok(p) => p,
+            Err(e) => {
+                errors.push(format!("{}: {e}", t.slot));
+                continue;
+            }
+        };
+        let new_wrapped = match crypto_nfd::rewrap(&wrapped, &master_sk, &recipient_pub) {
+            Ok(b) => b,
+            Err(e) => {
+                errors.push(format!("{}: {e}", t.slot));
+                continue;
+            }
+        };
+        let new_b64 = STANDARD.encode(&new_wrapped);
+        match gobanq.grant_slot_key(&drop_id, &t.slot, &t.owner_addr, &t.recipient_pub_hex, &new_b64) {
+            Ok(v) => {
+                if v["stored"].as_bool() == Some(false) {
+                    already += 1; // idempotent duplicate, not an error
+                } else {
+                    granted += 1;
+                }
+            }
+            Err(e) => errors.push(format!("{}: grant failed ({e})", t.slot)),
+        }
+    }
+
+    Ok(json!({
+        "collection": collection_id_hex,
+        "dropId": drop_id,
+        "granted": granted,
+        "alreadyHad": already,
+        "skippedSlots": skipped_slots.into_iter().collect::<Vec<_>>(),
+        "errors": errors,
+    }))
+}
+
 /// Result of a transfer: the anchoring txid + the pointer to the re-wrapped key.
 pub struct TransferOutcome {
     pub txid: String,

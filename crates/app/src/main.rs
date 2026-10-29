@@ -2659,6 +2659,21 @@ async fn nfd_collection_members(id: String) -> Result<Value, String> {
     .map_err(|_| "internal error".to_string())?
 }
 
+/// Creator-only: hand out the collection's master-art keys to everyone who has
+/// revealed a card and is owed one. Re-wraps the creator's master key (recovered
+/// from the creator's own node signature) to each owner and posts it to GoBanq.
+/// Safe to re-run as more cards get revealed. Returns a summary:
+/// `{ collection, dropId, granted, alreadyHad, skippedSlots, errors }`.
+#[tauri::command]
+async fn nfd_grant_master_keys(collection_id: String, creator_addr: String) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
+        collectibles::grant_master_keys(&cfg, &collection_id, &creator_addr)
+    })
+    .await
+    .map_err(|_| "internal error".to_string())?
+}
+
 /// Chain-read sync state for a poller: `{ open, chain, syncing, scannedHeight, tip }`.
 #[tauri::command]
 async fn nfd_sync_state() -> Result<Value, String> {
@@ -2817,6 +2832,7 @@ fn main() {
             nfd_owned_wallet,
             nfd_get,
             nfd_collection_members,
+            nfd_grant_master_keys,
             nfd_sync_state,
             community::community_builtin_apps,
             community::community_app_base,

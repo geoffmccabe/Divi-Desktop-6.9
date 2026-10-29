@@ -489,6 +489,66 @@ pub fn collection_members(cfg: &NodeConfig, id_hex: &str) -> Result<Value, Strin
     }))
 }
 
+/// One owner owed the collection's master-art key for a revealed slot.
+pub struct GrantTarget {
+    /// GoBanq canonical cell id: `base.<tier>` or `ur.<set>.<tier>`.
+    pub slot: String,
+    /// The revealed card's current owner (base58).
+    pub owner_addr: String,
+    /// The owner's announced X25519 encryption key, hex (the grant re-wraps to it).
+    pub recipient_pub_hex: String,
+}
+
+/// Scan limit for the grant sweep. Larger than [`QUERY_LIMIT`] because a grant
+/// must consider EVERY revealed member (a silent truncation would leave some
+/// owners without their key). A collection past this size needs paging before
+/// launch; flagged in docs/PERC_LAUNCH_COORDINATION.md.
+const GRANT_SCAN_LIMIT: usize = 100_000;
+
+/// Read-only: every (revealed slot, owner, owner's announced enc key) in a
+/// collection that is OWED the master-art key. Returns the collection creator's
+/// base58 address (the only identity whose key can grant) and the deduped
+/// targets. A member counts only once per slot, and only when it is both revealed
+/// AND its owner has announced an encryption key (no key = nothing to wrap to).
+/// Does no crypto or network itself; the caller (collectibles::grant_master_keys)
+/// derives the master key and posts to GoBanq.
+pub fn grant_targets(cfg: &NodeConfig, collection_id_hex: &str) -> Result<(String, Vec<GrantTarget>), String> {
+    let progress = advance(cfg)?;
+    if progress["open"].as_bool() != Some(true) {
+        return Err("the collectibles index is not open yet; try again once it has synced".to_string());
+    }
+    let id = id_from_hex(collection_id_hex)?;
+    let guard = scan_cell().lock().map_err(|_| "scan state poisoned".to_string())?;
+    let st = guard.as_ref().ok_or_else(|| "index not ready".to_string())?;
+    let testnet = is_testnet_like(&st.chain);
+
+    let creator = query::collection(&st.overlay, &id)
+        .map(|c| base58_of(c.creator, testnet))
+        .ok_or_else(|| "no such collection on this chain".to_string())?;
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut targets = Vec::new();
+    for v in query::collection_members(&st.overlay, &id, GRANT_SCAN_LIMIT) {
+        let (Some((base_tier, ur_set, ur_tier)), Some(enc)) = (v.revealed, v.owner_enc_pubkey) else {
+            continue;
+        };
+        let slot = match (ur_set, ur_tier) {
+            (Some(s), Some(t)) => format!("ur.{s}.{t}"),
+            _ => format!("base.{base_tier}"),
+        };
+        let owner_addr = base58_of(v.owner, testnet);
+        if !seen.insert((slot.clone(), owner_addr.clone())) {
+            continue; // same owner already owed this slot (holds >1 card of it)
+        }
+        targets.push(GrantTarget {
+            slot,
+            owner_addr,
+            recipient_pub_hex: enc.iter().map(|b| format!("{b:02x}")).collect(),
+        });
+    }
+    Ok((creator, targets))
+}
+
 // ---------------------------------------------------------------------------
 // Encoding helpers. Txids/ids are shown in display (reversed) order; Arweave and
 // hash pointers are shown as stored (not reversed), matching the read API.
