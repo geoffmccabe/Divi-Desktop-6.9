@@ -256,7 +256,7 @@ export async function pickMedia(file: File): Promise<PickedMedia> {
   if (!isImage && !isVideo) throw new Error("Choose an image or a short video.");
   if (file.size > MAX_BYTES) {
     const mb = (file.size / 1024 / 1024).toFixed(1);
-    throw new Error(`That file is ${mb}MB. The limit is 3MB — try a smaller or shorter one.`);
+    throw new Error(`That file is ${mb}MB. The limit is 3MB. Try a smaller or shorter one.`);
   }
   const thumb = isVideo ? await videoThumb(file) : await imageThumb(file);
   await putBlob(file); // the ORIGINAL — animation intact

@@ -118,7 +118,7 @@ export function AiPanel() {
 
       <h3 className="ai-section-head">Your own keys (this machine only)</h3>
       <p className="wl-note ai-security">
-        Stored in the OS keychain and used only on this computer — never bundled into the app or
+        Stored in the OS keychain and used only on this computer; never bundled into the app or
         shared with other users. A client app can't safely hold a key everyone shares, so for a
         subscription that gives <em>all</em> users access, use the Gateway below instead.
       </p>
@@ -133,7 +133,7 @@ export function AiPanel() {
       <p className="wl-note ai-security">
         This key also powers the <strong>App Builder</strong>. It is yours, set
         once, here: the people building apps never see it and are never asked for
-        one — they pay in points for what they use. Saving a key here starts the
+        one; they pay in points for what they use. Saving a key here starts the
         builder using it straight away.
       </p>
       <KeyRow

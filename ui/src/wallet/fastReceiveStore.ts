@@ -109,7 +109,7 @@ function rate(rec: FastRec) {
   factors.push({
     label: "Fee covers relay",
     ok: healthyFee,
-    note: `${feePerByte.toFixed(1)} sat/byte${healthyFee ? "" : " — low"}`,
+    note: `${feePerByte.toFixed(1)} sat/byte${healthyFee ? "" : " (low)"}`,
   });
   factors.push({ label: "Amount within instant range", ok: !bigAmount, note: bigAmount ? `over ${INSTANT_CAP} DIVI` : "small payment" });
   factors.push({ label: "Confirmations", ok: rec.confirmations >= 1, note: `${rec.confirmations}` });

@@ -16,7 +16,7 @@ import { getAskMode, setAskMode, type AskMode } from "./securityPrefs";
 const MODES: { id: AskMode; label: string; hint: string }[] = [
   { id: "always", label: "Always ask", hint: "Ask for the password on every send." },
   { id: "send", label: "Ask only on send", hint: "Stakes in the background; asks only when you send." },
-  { id: "open", label: "Leave open", hint: "Fully unlocked — sends need no password. Least secure." },
+  { id: "open", label: "Leave open", hint: "Fully unlocked: sends need no password. Least secure." },
 ];
 
 // First-time encryption: force a seed backup, then set the password.
@@ -223,8 +223,8 @@ export function PasswordPanel() {
 
       <h4 className="pw-sub">Two-factor (2FA)</h4>
       <p className="set-note pw-soon">
-        Email / DiviGo two-factor is planned. Note it protects the app, not the keys — anyone with
-        your wallet file and password bypasses it — and it needs an email/DiviGo backend, so it’s a
+        Email / DiviGo two-factor is planned. Note it protects the app, not the keys (anyone with
+        your wallet file and password bypasses it) and it needs an email/DiviGo backend, so it’s a
         later add.
       </p>
     </section>

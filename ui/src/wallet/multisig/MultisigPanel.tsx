@@ -87,7 +87,7 @@ function SpendReview({ preview }: { preview: SpendPreview }) {
       {!preview.sourceOk && (
         <div className="ms-review-row ms-warn">
           {preview.mixedSources
-            ? "⚠ This spend draws coins from more than one address. It will be refused — a shared-wallet spend must spend only that wallet's own coins."
+            ? "⚠ This spend draws coins from more than one address. It will be refused: a shared-wallet spend must spend only that wallet's own coins."
             : "⚠ These coins do not match the shared wallet this spend claims. Signing will be refused."}
         </div>
       )}
@@ -126,7 +126,7 @@ function SpendReview({ preview }: { preview: SpendPreview }) {
         <span className="ms-review-k">Signatures</span>
         <span>
           {preview.signed} of {preview.required}
-          {preview.complete ? " — ready to send" : ""}
+          {preview.complete ? ", ready to send" : ""}
         </span>
       </div>
     </div>
@@ -155,7 +155,7 @@ function MyPubkey() {
       <button type="button" className="ms-mini-btn ms-self-start" disabled={busy} onClick={get}>
         {busy ? "…" : "Get my public key"}
       </button>
-      {myKey && <CopyBox label="My public key — send to the wallet's creator" value={myKey.pubkey} rows={2} />}
+      {myKey && <CopyBox label="My public key: send to the wallet's creator" value={myKey.pubkey} rows={2} />}
     </div>
   );
 }
@@ -282,7 +282,7 @@ function WalletRow({ w, onForget }: { w: MultisigWallet; onForget: (a: string) =
         <div className="ms-confirm">
           <span>
             Remove <strong>{w.label}</strong> from this app? It stays safe on-chain and can be re-added from
-            its definition — but back that up first if you haven't.
+            its definition, but back that up first if you haven't.
           </span>
           <div className="ms-btn-row">
             <button type="button" className="ms-mini-btn" onClick={() => setConfirming(false)}>
@@ -361,9 +361,9 @@ function CreateForm({ onChanged }: { onChanged: () => void }) {
           <div className="ms-mono ms-created-addr">{made.address}</div>
           <p className="wl-note">
             Fund it at that address. Then give the definition below to every co-signer so they add the exact
-            same wallet — and keep a copy as your backup.
+            same wallet, and keep a copy as your backup.
           </p>
-          <CopyBox label="Shared-wallet definition — share with co-signers + back up" value={made.definition} rows={2} />
+          <CopyBox label="Shared-wallet definition: share with co-signers + back up" value={made.definition} rows={2} />
         </div>
       )}
       <label className="ms-field">
@@ -499,7 +499,7 @@ function ProposeForm({ wallets }: { wallets: MultisigWallet[] }) {
         <select className="ms-input" value={from} onChange={(e) => setFrom(e.target.value)}>
           {wallets.map((w) => (
             <option key={w.address} value={w.address}>
-              {w.label} — {short(w.address)} ({w.m} of {w.n})
+              {w.label}, {short(w.address)} ({w.m} of {w.n})
             </option>
           ))}
         </select>
@@ -539,7 +539,7 @@ function ProposeForm({ wallets }: { wallets: MultisigWallet[] }) {
             Built a spend that needs <strong>{pending.required}</strong> signatures. Sign it in the next
             section, then send this to the other signers.
           </p>
-          <CopyBox label="Pending spend — share with co-signers" value={pending.blob} />
+          <CopyBox label="Pending spend: share with co-signers" value={pending.blob} />
         </div>
       )}
     </div>
@@ -703,7 +703,7 @@ function SignForm() {
 
       {res && !res.complete && (
         <div className="ms-pending">
-          <CopyBox label="Updated spend — pass to the next signer" value={blob} />
+          <CopyBox label="Updated spend: pass to the next signer" value={blob} />
         </div>
       )}
     </div>

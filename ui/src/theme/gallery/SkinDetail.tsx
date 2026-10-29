@@ -104,7 +104,7 @@ function BuyButton({ skin }: { skin: GallerySkin }) {
       <div className="gallery-buy-done">
         <p className="wl-note">
           {owned
-            ? `✓ Sent ${skin.price_divi} DIVI — confirmed.`
+            ? `✓ Sent ${skin.price_divi} DIVI. Confirmed.`
             : `✓ Sent ${skin.price_divi} DIVI. It takes effect once the transaction is in a block.`}
         </p>
         {txid && <p className="wl-note gallery-buy-txid">Transaction: {txid}</p>}

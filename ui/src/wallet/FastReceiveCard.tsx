@@ -37,13 +37,13 @@ export function RatingMeter({ rec }: { rec: FastRec }) {
 function statusLine(rec: FastRec): string {
   switch (rec.status) {
     case "incoming":
-      return "In process — payment seen on your node, not yet in a block.";
+      return "In process: payment seen on your node, not yet in a block.";
     case "confirming":
-      return `Confirming — ${rec.confirmations} of ${FULLY} confirmations.`;
+      return `Confirming: ${rec.confirmations} of ${FULLY} confirmations.`;
     case "confirmed":
       return "FULLY CONFIRMED.";
     case "conflicted":
-      return "CONFLICT — do not accept this payment.";
+      return "CONFLICT: do not accept this payment.";
   }
 }
 
@@ -78,7 +78,7 @@ function Card({ rec }: { rec: FastRec }) {
           ))}
         </ul>
         <p className="fr-caveat">
-          Preliminary — this is your own node's view. A network-wide rating (many nodes cross-checking) arrives in a
+          Preliminary: this is your own node's view. A network-wide rating (many nodes cross-checking) arrives in a
           later phase. Only a confirmation is final.
         </p>
       </details>

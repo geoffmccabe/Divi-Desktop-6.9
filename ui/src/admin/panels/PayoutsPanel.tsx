@@ -39,7 +39,7 @@ export function PayoutsPanel() {
     <div className="admin-panel-body">
       <p className="wl-note">
         Fees are paid to your public <strong>treasury address</strong> as an on-chain output. Only the
-        address and amounts are stored here — <strong>never any key</strong>. Leave the fee at 0 (or the
+        address and amounts are stored here: <strong>never any key</strong>. Leave the fee at 0 (or the
         address blank) to disable.
       </p>
 
@@ -63,7 +63,7 @@ export function PayoutsPanel() {
       {msg && <p className="wl-note">{msg}</p>}
 
       <p className="wl-note">
-        Fees accumulate at the treasury address on-chain — track its balance in any explorer. Other fees
+        Fees accumulate at the treasury address on-chain. Track its balance in any explorer. Other fees
         (Proof of Existence, DMT tokens) will appear here as those features wire to the same treasury.
       </p>
     </div>

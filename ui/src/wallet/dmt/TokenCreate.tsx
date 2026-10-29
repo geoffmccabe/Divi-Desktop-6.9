@@ -92,7 +92,7 @@ export function TokenCreate({ canSend }: { canSend: boolean }) {
             setSupply("");
           }}
         >
-          <option value={0}>Indivisible — whole units only (tickets, passes, licences)</option>
+          <option value={0}>Indivisible: whole units only (tickets, passes, licences)</option>
           <option value={2}>2 decimal places (like pounds and pence)</option>
           <option value={8}>8 decimal places (like DIVI itself)</option>
         </select>
@@ -127,7 +127,7 @@ export function TokenCreate({ canSend }: { canSend: boolean }) {
         <ol>
           <li>
             <strong>Claim privately.</strong> Your wallet publishes a sealed commitment to the
-            ticker — the name itself isn’t revealed.
+            ticker; the name itself isn’t revealed.
           </li>
           <li>
             <strong>About twelve minutes pass.</strong> This gap is what stops anyone watching the

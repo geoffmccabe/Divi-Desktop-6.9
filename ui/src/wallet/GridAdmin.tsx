@@ -123,7 +123,7 @@ export function GridAdmin() {
 
   return (
     <section className="gridadmin">
-      <h4 className="gridadmin-head">Admin — assign the six grid characters</h4>
+      <h4 className="gridadmin-head">Admin: assign the six grid characters</h4>
       <p className="wl-note" style={{ fontSize: "0.72rem" }}>
         Create each character in Kinetink, then paste its API key here with a name and image. These become
         the characters everyone can pick from the grid. Saved on this machine for now.

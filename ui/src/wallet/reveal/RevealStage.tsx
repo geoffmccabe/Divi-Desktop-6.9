@@ -71,8 +71,8 @@ export function RevealStage({ open, sealed, run, muted = false, onToggleMute, on
     setRes(result);
     setPhase("revealed");
     setStatus(result.ur ? "ULTRA RARE pulled!" : result.floor
-      ? `Revealed T${result.tier} — a +${result.jump} jump from the forge floor.`
-      : `Revealed T${result.tier} — a +${result.jump} jump.`);
+      ? `Revealed T${result.tier}, a +${result.jump} jump from the forge floor.`
+      : `Revealed T${result.tier}, a +${result.jump} jump.`);
 
     // card pop scales with the jump
     const ov = 1 + 0.12 + intensity(result.jump) * 0.22;

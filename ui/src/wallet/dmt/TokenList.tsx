@@ -58,7 +58,7 @@ export function TokenList() {
   if (!rows.length) {
     return (
       <p className="wl-note">
-        No tokens yet. Tokens you’re sent will appear here automatically — there’s nothing to switch
+        No tokens yet. Tokens you’re sent will appear here automatically. There’s nothing to switch
         on and nothing to keep safe from your own wallet.
       </p>
     );
@@ -83,11 +83,11 @@ export function TokenList() {
                   <div className="dmt-sub mono">{bal.tokenId}</div>
                 </td>
                 <td>
-                  <span className="dmt-ticker">{meta?.ticker ?? "—"}</span>
+                  <span className="dmt-ticker">{meta?.ticker ?? "None"}</span>
                   {meta?.decimals === 0 && (
                     <span
                       className="badge dmt-badge-whole"
-                      title="This token cannot be divided — you can hold 3, never 3.5."
+                      title="This token cannot be divided. You can hold 3, never 3.5."
                     >
                       WHOLE UNITS
                     </span>
@@ -108,7 +108,7 @@ export function TokenList() {
           holding tokens must be able to pay for one. Warn before it bites. */}
       <p className="wl-note dmt-reserve">
         Keep a little DIVI in this wallet. Sending a token is a normal Divi transaction, so it needs
-        a small fee — without it, tokens can be received but not moved.
+        a small fee. Without it, tokens can be received but not moved.
       </p>
     </div>
   );

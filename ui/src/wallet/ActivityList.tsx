@@ -23,7 +23,7 @@ const FILTERS: { id: string; label: string; c: string; disabled?: boolean; title
   { id: "receive", label: "Received", c: "var(--success)" }, // green
   // Lottery wins are still lumped in with stakes at the data level, so this is
   // greyed until the backend tags them separately.
-  { id: "lottery", label: "Lottery", c: "var(--primary)", disabled: true, title: "Coming soon — lottery wins currently appear under Stakes" },
+  { id: "lottery", label: "Lottery", c: "var(--primary)", disabled: true, title: "Coming soon: lottery wins currently appear under Stakes" },
 ];
 
 // `cert`: if this tx is a Bearer/Pin certificate the wallet created, the type
@@ -152,9 +152,9 @@ function statusText(s: TxStatus, n: number): string {
     case "parsing":
       return `Parsing ${(s.count ?? 0).toLocaleString()} transactions…`;
     case "syncing":
-      return "The node is syncing — showing saved transactions…";
+      return "The node is syncing: showing saved transactions…";
     case "unreachable":
-      return "Can't reach the blockchain right now — showing saved transactions.";
+      return "Can't reach the blockchain right now: showing saved transactions.";
     case "uptodate":
       return `Up to date · ${n.toLocaleString()} transactions`;
   }

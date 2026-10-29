@@ -28,13 +28,13 @@ export function BalanceCard() {
       <div className="balance-card">
         <span className="bl-label">Spendable</span>
         <span className="bl-amt">
-          {b ? fmtDivi(b.spendable) : "—"} <em>DIVI</em>
+          {b ? fmtDivi(b.spendable) : "n/a"} <em>DIVI</em>
         </span>
       </div>
       <div className="balance-card">
         <span className="bl-label">Staking</span>
         <span className="bl-amt">
-          {b ? fmtDivi(b.staking) : "—"} <em>DIVI</em>
+          {b ? fmtDivi(b.staking) : "n/a"} <em>DIVI</em>
         </span>
       </div>
       {b && (b.pending > 0 || b.immature > 0) && (

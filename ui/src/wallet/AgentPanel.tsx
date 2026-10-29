@@ -124,10 +124,10 @@ export function AgentPanel() {
 
   const soon =
     tab === "chat"
-      ? "Chat with your agent — coming soon."
+      ? "Chat with your agent: coming soon."
       : tab === "stats"
-        ? "Agent stats — coming soon."
-        : `${sub.toUpperCase()} — coming soon.`;
+        ? "Agent stats: coming soon."
+        : `${sub.toUpperCase()}: coming soon.`;
 
   return (
     <div className="agent-setup">

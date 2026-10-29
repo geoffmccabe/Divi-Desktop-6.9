@@ -87,7 +87,7 @@ export function ValuePanel() {
         <p className="set-note" style={{ marginTop: 4 }}>
           {s.cmcKey.trim()
             ? `Key saved (${s.cmcKey.trim().length} characters). CoinMarketCap is now the source.`
-            : "No key saved yet — the price is coming from CoinGecko, which reads far lower for DIVI."}
+            : "No key saved yet. The price is coming from CoinGecko, which reads far lower for DIVI."}
         </p>
         <button
           type="button"
@@ -104,16 +104,16 @@ export function ValuePanel() {
             onChange={(e) => update({ useCoingecko: e.target.checked })}
           />
           <span>
-            Also use CoinGecko <span className="set-note">(off — DIVI has no active markets there yet)</span>
+            Also use CoinGecko <span className="set-note">(off: DIVI has no active markets there yet)</span>
           </span>
         </label>
 
         <div className="value-status">
           <span className={prices?.coinmarketcapOk ? "src-ok" : "src-off"}>
-            CoinMarketCap {prices?.coinmarketcapOk ? "✓" : "—"}
+            CoinMarketCap {prices?.coinmarketcapOk ? "✓" : "n/a"}
           </span>
           <span className={prices?.coingeckoOk ? "src-ok" : "src-off"}>
-            CoinGecko {prices?.coingeckoOk ? "✓" : s.useCoingecko ? "—" : "off"}
+            CoinGecko {prices?.coingeckoOk ? "✓" : s.useCoingecko ? "n/a" : "off"}
           </span>
           <button type="button" className="wl-link" onClick={refresh} disabled={loading}>
             {loading ? "…" : "Refresh"}
@@ -121,7 +121,7 @@ export function ValuePanel() {
         </div>
         {prices?.cmcError && (
           <p style={{ fontSize: "0.7rem", color: "rgb(255, 140, 125)", marginTop: 6 }}>
-            {prices.cmcError} — showing no value rather than another exchange's price, which differs by several times.
+            {prices.cmcError}. Showing no value rather than another exchange's price, which differs by several times.
           </p>
         )}
       </section>
@@ -143,7 +143,7 @@ export function ValuePanel() {
                   />
                   <span className="value-cur-code">{c}</span>
                 </label>
-                <span className="value-cur-price">{per != null ? formatFiat(per, c) + " / DIVI" : "—"}</span>
+                <span className="value-cur-price">{per != null ? formatFiat(per, c) + " / DIVI" : "n/a"}</span>
                 <button type="button" className="value-cur-rm" onClick={() => removeCurrency(c)} disabled={s.currencies.length <= 1}>
                   ✕
                 </button>

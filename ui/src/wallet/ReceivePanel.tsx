@@ -60,7 +60,7 @@ export function ReceivePanel() {
   function emailAddress() {
     if (!addr) return;
     const subject = "My Divi address";
-    const body = `Here's my Divi address — you can send DIVI to it:\n\n${addr}\n\nPaste it into your Divi wallet's Send screen to pay me.`;
+    const body = `Here's my Divi address. You can send DIVI to it:\n\n${addr}\n\nPaste it into your Divi wallet's Send screen to pay me.`;
     openUrl(`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
   }
 
@@ -68,7 +68,7 @@ export function ReceivePanel() {
     <div className="rcv-explain">
       <div className="rcv-explain-title">Getting paid in DIVI</div>
       <p>
-        This is your wallet's <strong>address</strong> — think of it like an account number. Anyone
+        This is your wallet's <strong>address</strong>. Think of it like an account number. Anyone
         can send DIVI to it, and it arrives in your wallet.
       </p>
       <p>To receive a payment, share your address any of these ways:</p>
@@ -84,7 +84,7 @@ export function ReceivePanel() {
         </li>
       </ul>
       <p className="rcv-safe">
-        It's safe to share — an address only lets people <em>send</em> you DIVI, never take it. For
+        It's safe to share: an address only lets people <em>send</em> you DIVI, never take it. For
         extra privacy you can <strong>use a new address</strong>; money to any of your addresses
         still lands in this one wallet.
       </p>

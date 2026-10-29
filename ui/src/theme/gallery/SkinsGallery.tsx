@@ -23,7 +23,7 @@ export function SkinsGallery() {
       {err && <p className="style-note style-upload-err">{err}</p>}
       {!err && skins === null && <p className="style-note">Loading the gallery…</p>}
       {skins && skins.length === 0 && (
-        <p className="style-note">No skins published yet — be the first, from Settings → Style.</p>
+        <p className="style-note">No skins published yet. Be the first, from Settings → Style.</p>
       )}
       {skins && skins.length > 0 && (
         <div className="gallery-grid">

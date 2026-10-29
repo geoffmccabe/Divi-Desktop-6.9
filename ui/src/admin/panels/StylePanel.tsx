@@ -170,7 +170,7 @@ function PublishControl({ theme }: { theme: SavedTheme }) {
     if (address || addrErr) return;
     try {
       const a = await invoke<string | null>("signing_address");
-      if (!a) throw new Error("No signing address — is the node reachable?");
+      if (!a) throw new Error("No signing address. Is the node reachable?");
       setAddress(a);
     } catch (ex) {
       setAddrErr(ex instanceof Error ? ex.message : "Couldn't read the wallet's address");
@@ -291,7 +291,7 @@ export function StylePanel() {
           ))}
         </ul>
         <p className="style-note">
-          Design and sell your own skin — a paid marketplace (in DIVI) is coming; your saved themes
+          Design and sell your own skin. A paid marketplace (in DIVI) is coming; your saved themes
           below are the starting point.
         </p>
       </section>
@@ -301,7 +301,7 @@ export function StylePanel() {
           <h3>{group}</h3>
           {group === "Icons" && (
             <p className="style-note">
-              Upload a simple single-color SVG shape per icon — only its outline matters, since it
+              Upload a simple single-color SVG shape per icon. Only its outline matters, since it
               recolors automatically to match the rest of the skin, just like the built-in set.
             </p>
           )}

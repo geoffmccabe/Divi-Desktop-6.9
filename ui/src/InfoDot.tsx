@@ -1,8 +1,9 @@
 import { useState } from "react";
 
-// A "?" in a circle that reveals a short explanation on hover or click.
-// Click toggles (for touch); hover shows on desktop.
-export function InfoDot({ text }: { text: string }) {
+// A glyph in a circle that reveals a short explanation on hover or click.
+// Click toggles (for touch); hover shows on desktop. The glyph defaults to "?";
+// pass glyph="i" for an information marker.
+export function InfoDot({ text, glyph = "?" }: { text: string; glyph?: string }) {
   const [open, setOpen] = useState(false);
   return (
     <span
@@ -19,7 +20,7 @@ export function InfoDot({ text }: { text: string }) {
           setOpen((o) => !o);
         }}
       >
-        ?
+        {glyph}
       </button>
       {open && <span className="info-dot-bubble">{text}</span>}
     </span>

@@ -82,7 +82,7 @@ export function TokenSend({ canSend }: { canSend: boolean }) {
           {rows.length === 0 && <option>No tokens held</option>}
           {rows.map(({ bal, meta }) => (
             <option key={bal.tokenId} value={bal.tokenId}>
-              {meta?.ticker ?? bal.tokenId} — {formatAmount(bal.amount, meta?.decimals ?? 0)}{" "}
+              {meta?.ticker ?? bal.tokenId}: {formatAmount(bal.amount, meta?.decimals ?? 0)}{" "}
               available
             </option>
           ))}
@@ -106,7 +106,7 @@ export function TokenSend({ canSend }: { canSend: boolean }) {
       <label className="dmt-field">
         <span>
           Amount
-          {decimals === 0 && <em className="dmt-hint"> — whole units only</em>}
+          {decimals === 0 && <em className="dmt-hint"> (whole units only)</em>}
         </span>
         <input
           className="wl-input"
@@ -119,7 +119,7 @@ export function TokenSend({ canSend }: { canSend: boolean }) {
       {amountBad && (
         <p className="wl-err">
           {decimals === 0
-            ? "This token can’t be split — enter a whole number."
+            ? "This token can’t be split. Enter a whole number."
             : `Use at most ${decimals} decimal places.`}
         </p>
       )}

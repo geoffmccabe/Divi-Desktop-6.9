@@ -139,7 +139,7 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
         </span>
       </div>
       <p className="wl-status-line">
-        {error ? "Can't reach the node service yet — retrying…" : status?.headline ?? "Checking the node…"}
+        {error ? "Can't reach the node service yet. Retrying…" : status?.headline ?? "Checking the node…"}
         {reconnecting && <span className="wl-refreshing"> · refreshing…</span>}
       </p>
       <div className="wl-status-chips">
@@ -156,7 +156,7 @@ export function StatusPanel({ onOpenNetwork }: { onOpenNetwork?: () => void }) {
                 </span>
               )
             ) : (
-              <span className="chip-num">—</span>
+              <span className="chip-num">n/a</span>
             )}
           </div>
         </div>

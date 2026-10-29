@@ -67,7 +67,7 @@ export function MyNodes() {
                     </div>
                     <div>
                       <span>RPC user</span>
-                      <b>{n.user || "—"}</b>
+                      <b>{n.user || "n/a"}</b>
                     </div>
                     <div>
                       <span>Password</span>

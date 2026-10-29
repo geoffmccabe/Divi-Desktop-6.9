@@ -301,7 +301,7 @@ export function BuilderPanel() {
               <div className="bd-blocked">
                 <p className="bd-note bd-bad">
                   Nothing can be built until this wallet has an AI key. Your
-                  points are safe and your apps are saved — this is a one-time
+                  points are safe and your apps are saved. This is a one-time
                   setup, and it is not something you buy.
                 </p>
                 <button
@@ -440,7 +440,7 @@ function ProjectList({ projects, onStart, onOpen, onDelete }: {
       ) : projects.length === 0 ? (
         <div className="bd-note bd-firstrun">
           <p>
-            Nothing built yet. Name an app above and describe what it should do —
+            Nothing built yet. Name an app above and describe what it should do:
             the model writes the files, you pay in points for what it uses, and
             the work is saved as it goes so you can come back to it.
           </p>
@@ -644,7 +644,7 @@ function Offline({ error, onRetry }: { error?: string; onRetry: () => void }) {
         {svc?.running ? (
           <p className="bd-note">
             The service is running but has not answered yet. Give it a second and
-            press Try again. Nothing is lost either way — your saved apps are on
+            press Try again. Nothing is lost either way. Your saved apps are on
             disk.
           </p>
         ) : svc?.trouble ? (
@@ -660,7 +660,7 @@ function Offline({ error, onRetry }: { error?: string; onRetry: () => void }) {
         ) : (
           <p className="bd-note">
             The wallet starts this for you when it opens. It is not answering
-            yet. Nothing is broken and nothing is lost — your saved apps are on
+            yet. Nothing is broken and nothing is lost. Your saved apps are on
             disk and will be here when it comes back.
           </p>
         )}

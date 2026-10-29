@@ -87,7 +87,7 @@ export function PayoutPanel() {
             : addrOk === true
               ? "✓ Valid Divi address."
               : addrOk === false
-                ? "✗ Not a valid Divi address — anchors will refuse to send rather than burn funds."
+                ? "✗ Not a valid Divi address. Anchors will refuse to send rather than burn funds."
                 : "Could not check the address (node unreachable)."}
         </p>
       )}
@@ -105,7 +105,7 @@ export function PayoutPanel() {
       </label>
 
       <label className="admin-field">
-        <span>Your share ({s.payoutPercent}% — staker gets {100 - s.payoutPercent}%)</span>
+        <span>Your share ({s.payoutPercent}%, staker gets {100 - s.payoutPercent}%)</span>
         <input
           type="range"
           min="0"

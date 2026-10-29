@@ -50,7 +50,7 @@ async function authHeaders(message: string, auth: Auth, extra: Record<string, st
   // Wallet: sign `message` with the node's address. Requires the wallet unlocked
   // — the caller surfaces the passphrase flow on failure.
   const address = await invoke<string | null>("signing_address");
-  if (!address) throw new Error("No signing address — is the node reachable?");
+  if (!address) throw new Error("No signing address. Is the node reachable?");
   const signature = await invoke<string>("wallet_sign", { address, message });
   return { "X-Divi-Address": address, "X-Divi-Signature": signature, ...extra };
 }

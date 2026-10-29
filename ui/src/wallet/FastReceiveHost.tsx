@@ -39,10 +39,10 @@ export function FastReceiveHost({ onGoto }: { onGoto: (view: string) => void }) 
         <div className="fr-modal-amt">+{fmtDivi(rec.amount)} DIVI</div>
         <div className="fr-modal-status">
           {rec.status === "conflicted"
-            ? "Conflict detected — do not accept."
+            ? "Conflict detected: do not accept."
             : rec.status === "confirmed"
               ? "Fully confirmed."
-              : "Payment detected — in process."}
+              : "Payment detected: in process."}
         </div>
         {rec.tier !== "conflicted" && <RatingMeter rec={rec} />}
         {rec.warnings.length > 0 && (
@@ -52,7 +52,7 @@ export function FastReceiveHost({ onGoto }: { onGoto: (view: string) => void }) 
             ))}
           </ul>
         )}
-        <p className="fr-caveat">Preliminary rating — your node's view only. Only a confirmation is final.</p>
+        <p className="fr-caveat">Preliminary rating: your node's view only. Only a confirmation is final.</p>
         <div className="fr-modal-actions">
           <button
             type="button"

@@ -10,7 +10,7 @@ import { Icon } from "../Icon";
 import { InfoDot } from "../InfoDot";
 
 const MATURITY_HELP =
-  "Coins you receive must “age” for about 1 hour before they can stake — this keeps staking fair. " +
+  "Coins you receive must “age” for about 1 hour before they can stake. This keeps staking fair. " +
   "Once mature they stake for good. See Settings → Coin Maturity for a live countdown of each deposit.";
 
 // Animated "…" so a wait reads as "working", never frozen or wrong.
@@ -210,7 +210,7 @@ function StartStaking({ onStarted }: { onStarted?: () => void }) {
 // treat them as provisional until verified against a synced mainnet node.
 
 function fmtDate(unix: number | null): string {
-  if (!unix) return "—";
+  if (!unix) return "n/a";
   return new Date(unix * 1000).toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",

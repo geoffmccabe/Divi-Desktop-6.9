@@ -8,7 +8,7 @@ export function VoterGrid() {
   return (
     <div className="gov-voters">
       <div className="gov-group">
-        <span className="gov-group-label">7 Board — elected experts</span>
+        <span className="gov-group-label">7 Board: elected experts</span>
         <div className="gov-seats">
           {Array.from({ length: 7 }).map((_, i) => (
             <span key={i} className="gov-seat gov-seat-board">
@@ -19,7 +19,7 @@ export function VoterGrid() {
       </div>
 
       <div className="gov-group">
-        <span className="gov-group-label">4 Community teams — vote your stake</span>
+        <span className="gov-group-label">4 Community teams: vote your stake</span>
         <div className="gov-seats">
           {TEAMS.map((t) => (
             <span key={t} className="gov-seat gov-seat-team">
@@ -30,7 +30,7 @@ export function VoterGrid() {
       </div>
 
       <div className="gov-group">
-        <span className="gov-group-label">2 AI voters — always informed</span>
+        <span className="gov-group-label">2 AI voters: always informed</span>
         <div className="gov-seats">
           <span className="gov-seat gov-seat-ai">AI Voter 1</span>
           <span className="gov-seat gov-seat-ai">AI Voter 2</span>

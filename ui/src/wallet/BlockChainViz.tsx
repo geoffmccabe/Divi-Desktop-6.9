@@ -160,7 +160,7 @@ export function BlockChainViz() {
               if (el) orphanRefs.current.set(o.height, el);
               else orphanRefs.current.delete(o.height);
             }}
-            title={`Stale block at height ${o.height.toLocaleString()} — minted, then beaten by the block next to it (${o.status}${o.branchLen > 1 ? `, ${o.branchLen}-block branch` : ""}). Seen by this node only.`}
+            title={`Stale block at height ${o.height.toLocaleString()}: minted, then beaten by the block next to it (${o.status}${o.branchLen > 1 ? `, ${o.branchLen}-block branch` : ""}). Seen by this node only.`}
             style={{
               position: "absolute",
               top: 0,

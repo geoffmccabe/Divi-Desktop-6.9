@@ -123,7 +123,7 @@ export function HeaderBar() {
                 {spend.frac && <span className="bl-frac">.{spend.frac}</span>}
               </>
             ) : (
-              "—"
+              "n/a"
             )}{" "}
             <em>DIVI</em>
           </span>
@@ -180,7 +180,7 @@ export function HeaderBar() {
                 Staking <span className={"addr-chevron" + (openPanel === "staking" ? " up" : "")}>▾</span>
               </span>
               <span className="bl-amt bl-amt-staking">
-                — <em>DIVI</em>
+                n/a <em>DIVI</em>
               </span>
             </>
           )}
@@ -214,7 +214,7 @@ export function HeaderBar() {
           </button>
         </div>
         <button type="button" className="addr-toggle" onClick={() => toggle("addresses")}>
-          <span className="addr-toggle-text">{main ? main.address : "—"}</span>
+          <span className="addr-toggle-text">{main ? main.address : "n/a"}</span>
           <span className={"addr-chevron" + (openPanel === "addresses" ? " up" : "")}>▾</span>
         </button>
         <AddressDropdown open={openPanel === "addresses"} addresses={addrs} />

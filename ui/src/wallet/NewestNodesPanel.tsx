@@ -115,7 +115,7 @@ export function NewestNodesPanel({
         </div>
       )}
 
-      <div style={{ opacity: 0.5, fontSize: "0.62rem", marginTop: 2 }}>First seen by your node — not "joined".</div>
+      <div style={{ opacity: 0.5, fontSize: "0.62rem", marginTop: 2 }}>First seen by your node, not "joined".</div>
     </div>
   );
 }

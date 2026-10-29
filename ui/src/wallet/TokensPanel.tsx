@@ -46,7 +46,7 @@ export function TokensPanel() {
       <header className="dmt-intro">
         <h3 className="ts-head">Divi Meta Tokens</h3>
         <p className="wl-note">
-          Tokens issued on the Divi blockchain — currencies, tickets, passes, credits and community
+          Tokens issued on the Divi blockchain: currencies, tickets, passes, credits and community
           tokens. Balances are recorded and ordered by the Divi chain.
         </p>
       </header>
@@ -70,7 +70,7 @@ export function TokensPanel() {
 
       {!DMT_STUB && sync && !sync.halted && behind > 2 && (
         <div className="dmt-banner dmt-banner-behind">
-          Catching up — {behind.toLocaleString()} blocks behind. Balances may be out of date.
+          Catching up: {behind.toLocaleString()} blocks behind. Balances may be out of date.
         </div>
       )}
 
@@ -115,7 +115,7 @@ export function TokensPanel() {
               {" · "}
               <span
                 className="mono"
-                title="A running fingerprint of the token ledger. Anyone running their own indexer should compute the same value — that is how two implementations detect a disagreement immediately."
+                title="A running fingerprint of the token ledger. Anyone running their own indexer should compute the same value. That is how two implementations detect a disagreement immediately."
               >
                 {sync.fingerprint.slice(0, 12)}…
               </span>

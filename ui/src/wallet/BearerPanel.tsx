@@ -138,7 +138,7 @@ function BearerCreate() {
           placeholder="0.00"
           inputMode="decimal"
         />
-        <span className="send-avail">Spendable: {bal ? fmtDivi(bal.spendable) : "—"} DIVI</span>
+        <span className="send-avail">Spendable: {bal ? fmtDivi(bal.spendable) : "n/a"} DIVI</span>
       </label>
       {needsPass && (
         <label className="send-field">
@@ -148,7 +148,7 @@ function BearerCreate() {
       )}
       <p className="wl-note">
         Revocable: the key stays in this wallet, so you can reclaim an unredeemed code below. Keep amounts modest while
-        this is new — the code itself is spendable.
+        this is new: the code itself is spendable.
       </p>
       <button type="button" className="wl-btn wl-btn-primary" onClick={create} disabled={busy || amount == null || (needsPass && !pass)}>
         {busy ? "Creating…" : "Create bearer code"}

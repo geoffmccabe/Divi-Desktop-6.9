@@ -56,7 +56,7 @@ export function CoinMaturity() {
       <h3 className="set-title">Coin Maturity</h3>
       <p className="set-note">
         In Divi, coins you receive can’t stake right away. Each deposit has to “age” for about{" "}
-        <strong>1 hour</strong> before it can join staking — a rule that keeps the network fair.
+        <strong>1 hour</strong> before it can join staking, a rule that keeps the network fair.
         Once a coin matures it stakes for good; you only wait again if you move it. Times below are
         approximate.
       </p>
@@ -75,7 +75,7 @@ export function CoinMaturity() {
           )}
           {immature > 0 && (
             <div className="cm-rewards">
-              {fmtDivi(immature)} <em>DIVI</em> in recent staking rewards is still maturing — these
+              {fmtDivi(immature)} <em>DIVI</em> in recent staking rewards is still maturing. These
               need ~20 confirmations (about 20 minutes) before they can restake.
             </div>
           )}

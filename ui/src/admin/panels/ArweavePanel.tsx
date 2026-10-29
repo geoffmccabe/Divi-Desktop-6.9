@@ -5,7 +5,7 @@ import { nfdRelayStatus, openUrl, type RelayStatus } from "../../wallet/api";
 // Turbo-funded storage account, not the treasury. No keys are shown or held here.
 
 function credits(winc: string | null): string {
-  if (!winc) return "—";
+  if (!winc) return "n/a";
   const n = Number(winc);
   if (!isFinite(n)) return winc;
   return `≈ ${(n / 1e12).toLocaleString(undefined, { maximumFractionDigits: 4 })} credits`;
@@ -41,7 +41,7 @@ export function ArweavePanel() {
         </div>
         <div>Balance: {credits(status?.balanceWinc ?? null)}</div>
         {status && !status.reachable && (
-          <p className="wl-note">The uploader isn’t reachable yet — deploy it, or check nfds.divi.love.</p>
+          <p className="wl-note">The uploader isn’t reachable yet. Deploy it, or check nfds.divi.love.</p>
         )}
       </div>
 
@@ -52,7 +52,7 @@ export function ArweavePanel() {
         Top up with card
       </button>
       <p className="wl-note">
-        Top-up opens ArDrive Turbo — log in with the uploader’s funded wallet and buy credits with a
+        Top-up opens ArDrive Turbo: log in with the uploader’s funded wallet and buy credits with a
         credit/debit card. The balance above updates on Refresh.
       </p>
     </div>

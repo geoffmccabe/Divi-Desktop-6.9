@@ -309,7 +309,7 @@ export function CollectiblesPanel() {
     try {
       const f = await nfdForgeFeeSet(browsing, Number(feeAmt) || 0, feePayout.trim(), creatorAddr);
       setFeeCur(f);
-      setFeeMsg(`Broadcast — the forge fee is now ${f.amountDivi} DIVI (settles on-chain shortly).`);
+      setFeeMsg(`Broadcast: the forge fee is now ${f.amountDivi} DIVI (settles on-chain shortly).`);
     } catch (e) {
       setFeeMsg(String(e));
     } finally {
@@ -349,7 +349,7 @@ export function CollectiblesPanel() {
     try {
       const p = await nfdMintPriceSet(browsing, next, pricePayout.trim(), creatorAddr);
       setPriceCur(p);
-      setPriceMsg(`Broadcast — the mint price is now ${p.priceDivi} DIVI (settles on-chain shortly).`);
+      setPriceMsg(`Broadcast: the mint price is now ${p.priceDivi} DIVI (settles on-chain shortly).`);
     } catch (e) {
       setPriceMsg(String(e));
     } finally {
@@ -365,7 +365,7 @@ export function CollectiblesPanel() {
     try {
       const buyer = await myNfdAddress();
       const txid = await nfdMintPublic(buyer, browsing);
-      setPubMintMsg(`Minted — your sealed pack is on the way (tx ${txid.slice(0, 12)}…). Open it from My Collection to reveal it.`);
+      setPubMintMsg(`Minted: your sealed pack is on the way (tx ${txid.slice(0, 12)}…). Open it from My Collection to reveal it.`);
     } catch (e) {
       setPubMintMsg(String(e));
     } finally {
@@ -380,7 +380,7 @@ export function CollectiblesPanel() {
     try {
       const c = await nfdCommissionSet(browsing, Number(commAmt) || 0, commPayout.trim(), creatorAddr);
       setCommCur(c); setCommAmt("");
-      setCommMsg(`Broadcast — the commission is now ${c.amountDivi} DIVI (settles on-chain shortly).`);
+      setCommMsg(`Broadcast: the commission is now ${c.amountDivi} DIVI (settles on-chain shortly).`);
     } catch (e) {
       setCommMsg(String(e));
     } finally {
@@ -448,7 +448,7 @@ export function CollectiblesPanel() {
     try {
       const buyerAddr = await myNfdAddress(); // funded from the wallet's NFD address
       await nfdBuy(buyerAddr, l.id);
-      setBuyMsg("Bought — it will appear in your collection once the trade confirms.");
+      setBuyMsg("Bought. It will appear in your collection once the trade confirms.");
       await refreshMarket();
     } catch (e) {
       setBuyMsg(String(e));
@@ -498,7 +498,7 @@ export function CollectiblesPanel() {
       // will resolve on-chain; the background poller flips the card to its tier
       // when it does, so we KEEP the in-flight flag (the pack stays "opening…"
       // rather than re-arming a tap that would re-broadcast).
-      throw new Error("The reveal is taking longer than expected. It will resolve on-chain — the pack will show its tier shortly.");
+      throw new Error("The reveal is taking longer than expected. It will resolve on-chain; the pack will show its tier shortly.");
     });
     setRevealOpen(true);
   }
@@ -533,7 +533,7 @@ export function CollectiblesPanel() {
           if (rev) return resultFromChain(rev.tier, rev.ur, Math.min(40, inputTier + 1));
         } catch { /* node busy; keep polling */ }
       }
-      throw new Error("The forge is taking longer than expected. It will resolve on-chain — the new pack will show its tier shortly.");
+      throw new Error("The forge is taking longer than expected. It will resolve on-chain; the new pack will show its tier shortly.");
     });
     setRevealOpen(true);
   }
@@ -891,7 +891,7 @@ export function CollectiblesPanel() {
       };
       setItems((prev) => [item, ...prev]);
       setClaimIn("");
-      setRecvMsg("Claimed ✓ — added to My Collectibles.");
+      setRecvMsg("Claimed ✓. Added to My Collectibles.");
     } catch (e) {
       setRecvMsg("Couldn't claim: " + String(e));
     }
@@ -949,21 +949,21 @@ export function CollectiblesPanel() {
         <h3 className="ts-head">Reveal preview</h3>
         <p className="wl-note">
           See the sealed-pack opening. Pick an effect level to check each tier-jump look, or open a sample pack.
-          In the live flow, opening a pack (and forging) is an on-chain transaction — see your collection.
+          In the live flow, opening a pack (and forging) is an on-chain transaction. See your collection.
         </p>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <select className="wl-input mono" value={previewLevel} onChange={(e) => setPreviewLevel(e.target.value)} style={{ maxWidth: 280 }}>
-            <option value="1">Level 1 — grey-tan · ×20%</option>
-            <option value="2">Level 2 — green · ×30%</option>
-            <option value="3">Level 3 — blue · ×40%</option>
-            <option value="4">Level 4 — purple · ×50%</option>
-            <option value="5">Level 5 — red · ×60%</option>
-            <option value="6">Level 6 — white + glitter · ×70%</option>
-            <option value="7">Level 7 — pink + glitter · ×80%</option>
-            <option value="8">Level 8 — rainbow + glitter · ×90%</option>
-            <option value="9">Level 9 — fire + glitter · ×100%</option>
-            <option value="10">Level 10 — gold + glitter · ×100%</option>
-            <option value="ur">★ Ultra Rare — fireworks</option>
+            <option value="1">Level 1: grey-tan · ×20%</option>
+            <option value="2">Level 2: green · ×30%</option>
+            <option value="3">Level 3: blue · ×40%</option>
+            <option value="4">Level 4: purple · ×50%</option>
+            <option value="5">Level 5: red · ×60%</option>
+            <option value="6">Level 6: white + glitter · ×70%</option>
+            <option value="7">Level 7: pink + glitter · ×80%</option>
+            <option value="8">Level 8: rainbow + glitter · ×90%</option>
+            <option value="9">Level 9: fire + glitter · ×100%</option>
+            <option value="10">Level 10: gold + glitter · ×100%</option>
+            <option value="ur">★ Ultra Rare: fireworks</option>
           </select>
           <button className="wl-btn wl-btn-primary" onClick={openPreviewLevel}>Preview effect</button>
         </div>
@@ -1016,7 +1016,7 @@ export function CollectiblesPanel() {
       <section className="ts-section">
         <h3 className="ts-head">Create a collection</h3>
         <p className="wl-note">
-          A collection is a themed set with a fixed supply and shared branding — like an ERC-721 series. Only
+          A collection is a themed set with a fixed supply and shared branding, like an ERC-721 series. Only
           you can mint into it, up to its cap. Items you add can carry public traits (background, rarity, …) so
           marketplaces can browse and rank them, while each original stays encrypted for its owner.
         </p>
@@ -1029,19 +1029,19 @@ export function CollectiblesPanel() {
           onChange={(e) => setColMax(e.target.value.replace(/[^0-9]/g, ""))}
         />
         <label className="wl-btn ts-file">
-          {colCover ? "Cover image ✓ — change" : "Add a cover image (optional)"}
+          {colCover ? "Cover image ✓. Change" : "Add a cover image (optional)"}
           <input type="file" accept="image/*" onChange={pickCover} hidden />
         </label>
         <label className="coll-field">
           <span>Content</span>
           <select className="wl-input" value={colEncrypted ? "enc" : "pub"} onChange={(e) => setColEncrypted(e.target.value === "enc")}>
-            <option value="enc">Encrypted — only the owner can view the original</option>
-            <option value="pub">Public — anyone can view the art (e.g. Percs)</option>
+            <option value="enc">Encrypted: only the owner can view the original</option>
+            <option value="pub">Public: anyone can view the art (e.g. Percs)</option>
           </select>
         </label>
         <label className="coll-field" style={{ alignItems: "center", gap: 8 }}>
           <input type="checkbox" checked={colPerc} onChange={(e) => setColPerc(e.target.checked)} />
-          <span>Blind-pack (Perc) set — packs are sealed and revealed to a tier</span>
+          <span>Blind-pack (Perc) set: packs are sealed and revealed to a tier</span>
         </label>
         {colPerc && (
           <div style={{ border: "1px solid var(--border, #2a2a35)", borderRadius: 10, padding: "10px 12px", margin: "2px 0 6px" }}>
@@ -1051,7 +1051,7 @@ export function CollectiblesPanel() {
             </p>
             <label style={{ display: "block", marginBottom: 4, fontSize: 13 }}>Number of tiers</label>
             <input className="wl-input" type="number" min={1} value={colTiers} onChange={(e) => setColTiers(e.target.value)} style={{ maxWidth: 160 }} />
-            <label style={{ display: "block", margin: "8px 0 4px", fontSize: 13 }}>Ultra-rare chance (%) — 0 for none</label>
+            <label style={{ display: "block", margin: "8px 0 4px", fontSize: 13 }}>Ultra-rare chance (%), 0 for none</label>
             <input className="wl-input" type="number" min={0} step="0.1" value={colUrChance} onChange={(e) => setColUrChance(e.target.value)} style={{ maxWidth: 160 }} />
             <label style={{ display: "block", margin: "8px 0 4px", fontSize: 13 }}>Ultra-rare drop-off (%) between slots</label>
             <input className="wl-input" type="number" min={0} step="0.1" value={colUrFactor} onChange={(e) => setColUrFactor(e.target.value)} style={{ maxWidth: 160 }} />
@@ -1068,8 +1068,8 @@ export function CollectiblesPanel() {
       <section className="ts-section">
         <h3 className="ts-head">Mint a collectible</h3>
         <p className="wl-note">
-          Turn a file into a Divi Collectible you own. It’s encrypted on your machine before it’s stored —
-          only you can unlock it — and ownership is anchored on the Divi blockchain. Minting spends a small
+          Turn a file into a Divi Collectible you own. It’s encrypted on your machine before it’s stored
+          (only you can unlock it), and ownership is anchored on the Divi blockchain. Minting spends a small
           network fee (~0.0001 DIVI).
         </p>
         <label className="coll-field">
@@ -1086,14 +1086,14 @@ export function CollectiblesPanel() {
         </label>
         {selectedCol ? (
           <p className="wl-note">
-            Content: <strong>{selectedCol.encrypted ? "Encrypted (owner-only)" : "Public"}</strong> — set by this collection.
+            Content: <strong>{selectedCol.encrypted ? "Encrypted (owner-only)" : "Public"}</strong>, set by this collection.
           </p>
         ) : (
           <label className="coll-field">
             <span>Content</span>
             <select className="wl-input" value={mintEncrypted ? "enc" : "pub"} onChange={(e) => setMintEncrypted(e.target.value === "enc")}>
-              <option value="enc">Encrypted — only the owner can view the original</option>
-              <option value="pub">Public — anyone can view the art</option>
+              <option value="enc">Encrypted: only the owner can view the original</option>
+              <option value="pub">Public: anyone can view the art</option>
             </select>
           </label>
         )}
@@ -1117,7 +1117,7 @@ export function CollectiblesPanel() {
                 <option value="Mythic" />
               </datalist>
             </label>
-            <p className="wl-note">Public traits (optional) — shown to everyone, like ERC-721 attributes.</p>
+            <p className="wl-note">Public traits (optional): shown to everyone, like ERC-721 attributes.</p>
             {traits.map((t, i) => (
               <div key={i} className="coll-trait-row">
                 <input className="wl-input" placeholder="Trait (e.g. Background)" value={t.type} onChange={(e) => setTrait(i, { type: e.target.value })} />
@@ -1133,7 +1133,7 @@ export function CollectiblesPanel() {
         <label className="coll-check">
           <input type="checkbox" checked={withThumb} onChange={(e) => setWithThumb(e.target.checked)} />
           <span>
-            <strong>Publish a public preview</strong> — a small copy (≤{THUMB_MAX_PX}px, WebP) that anyone can
+            <strong>Publish a public preview</strong>: a small copy (≤{THUMB_MAX_PX}px, WebP) that anyone can
             see. This reveals a <em>low-resolution</em> version publicly; your full-quality original stays
             encrypted and only the owner unlocks it. (Images only.)
           </span>
@@ -1237,7 +1237,7 @@ export function CollectiblesPanel() {
           <p className="wl-note">
             {chain?.open && chain.syncing
               ? "Reading the chain…"
-              : "Nothing yet — mint one above, or claim one you were sent."}
+              : "Nothing yet. Mint one above, or claim one you were sent."}
           </p>
         ) : (
           <div className="coll-grid">
@@ -1295,7 +1295,7 @@ export function CollectiblesPanel() {
         <h3 className="ts-head">Forge</h3>
         <p className="wl-note">
           Combine two revealed Percs of the <em>same tier</em> from one collection into a single new pack with a
-          <em> guaranteed upgrade</em> — at least one tier higher, often more. Both inputs are burned and the forge fee
+          <em> guaranteed upgrade</em>: at least one tier higher, often more. Both inputs are burned and the forge fee
           is paid to the collection's creator. The new tier is rolled by the chain from a future block, so it can't be
           gamed; you'll see it resolve a few blocks after you forge.
         </p>
@@ -1352,7 +1352,7 @@ export function CollectiblesPanel() {
       <section className="ts-section">
         <h3 className="ts-head">Receive a collectible</h3>
         <p className="wl-note">
-          Share your receive code with a sender. When they transfer to you, they’ll give you a claim code —
+          Share your receive code with a sender. When they transfer to you, they’ll give you a claim code,
           paste it below to unlock it.
         </p>
         <button className="wl-btn" disabled={recvBusy} onClick={showReceiveCode}>
@@ -1405,7 +1405,7 @@ export function CollectiblesPanel() {
                   </div>
                 )}
                 <p className="wl-note">
-                  {active.revealed!.ur != null ? "Ultra Rare" : `Tier ${active.revealed!.tier}`} — this Perc shows its
+                  {active.revealed!.ur != null ? "Ultra Rare" : `Tier ${active.revealed!.tier}`}. This Perc shows its
                   tier's shared collection artwork{viewSrc ? "." : " (art loads once the collection's tier set is published)."}
                 </p>
               </>
@@ -1511,7 +1511,7 @@ export function CollectiblesPanel() {
                 ever raise it.
               </p>
               <div className="wl-note" style={{ display: "flex", flexDirection: "column", gap: 2, margin: "0 0 10px" }}>
-                <span>Original commission: <strong>{commCur ? `${commCur.originalDivi} DIVI` : "—"}</strong></span>
+                <span>Original commission: <strong>{commCur ? `${commCur.originalDivi} DIVI` : "n/a"}</strong></span>
                 <span>Current commission: <strong>{commCur ? `${commCur.amountDivi} DIVI` : "not set yet"}</strong></span>
               </div>
               <label style={{ display: "block", marginBottom: 4, fontSize: 13 }}>
@@ -1521,7 +1521,7 @@ export function CollectiblesPanel() {
                 className="wl-input"
                 type="number"
                 min={0}
-                placeholder={commCur ? `enter here — ${commCur.amountDivi} DIVI or lower` : "enter here (DIVI)"}
+                placeholder={commCur ? `enter here, ${commCur.amountDivi} DIVI or lower` : "enter here (DIVI)"}
                 value={commAmt}
                 onChange={(e) => setCommAmt(e.target.value)}
                 style={{ maxWidth: 260 }}

@@ -26,7 +26,7 @@ export function LotteryCountdown({ info }: { info: LotteryInfo | null }) {
     return (
       <div className="hdr-lottery">
         <span className="bl-label">Next Lottery</span>
-        <span className="lot-when">—</span>
+        <span className="lot-when">n/a</span>
       </div>
     );
   }

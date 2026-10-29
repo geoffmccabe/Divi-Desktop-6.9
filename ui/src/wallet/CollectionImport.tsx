@@ -6,6 +6,7 @@ import {
 } from "./api";
 import { makeThumbnailFromBase64, type Item, type Collection } from "./CollectiblesPanel";
 import { setTierArtManifest } from "./reveal/tierArt";
+import { InfoDot } from "../InfoDot";
 
 // Launch a collection authored in Kinet.ink. The current (v2) export is a single
 // .json "launch bundle": a mint-on-demand Perc set, so DD69 creates the
@@ -131,7 +132,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
       });
       const priceDivi = res.priceDuffs / DUFFS_PER_DIVI;
       setLaunchQuote(null);
-      setLaunchMsg(`Done ✓ — "${res.name}" is live and open for minting at ${priceDivi} DIVI per pack. See My Collection.`);
+      setLaunchMsg(`Done ✓. "${res.name}" is live and open for minting at ${priceDivi} DIVI per pack. See My Collection.`);
     } catch (e) {
       setErr(String(e));
     }
@@ -227,7 +228,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
       }
       setFinished(true);
     } catch (e) {
-      setErr("Stopped: " + String(e) + " — fix and run again to resume where it left off.");
+      setErr("Stopped: " + String(e) + ". Fix and run again to resume where it left off.");
     }
     setPrep(null);
     setBusy(false);
@@ -240,19 +241,21 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
   return (
     <section className="ts-section">
       <h3 className="ts-head">Launch from Kinet.ink</h3>
-      <p className="wl-note">
-        Build a collection in Kinet.ink, export its launch file, then choose it below. DD69 creates the
-        collection on Divi and opens it for minting — buyers mint sealed packs and reveal them. Nothing is
-        minted up front.
-      </p>
-      <button className="wl-btn wl-btn-primary" disabled={busy} onClick={chooseFile}>
-        {busy && !plan && !launchPlan ? "Reading…" : fileName ? `Chosen: ${fileName} — choose another` : "Choose file…"}
-      </button>
+      <p className="wl-note">Publish a collection you built in Kinet.ink.</p>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button className="wl-btn wl-btn-primary" disabled={busy} onClick={chooseFile}>
+          {busy && !plan && !launchPlan ? "Reading…" : fileName ? `Chosen: ${fileName}. Upload another` : "Upload Collection Bundle"}
+        </button>
+        <InfoDot
+          glyph="i"
+          text="Design your collection in Kinet.ink and save it as a JSON file. Be sure to select the Divi or Diva blockchain, then upload it here."
+        />
+      </div>
 
       {launchPlan && (
         <div className="import-plan" style={{ marginTop: 12 }}>
           <p className="wl-note">
-            <strong>{launchPlan.name}</strong> — a blind-pack (Perc) set with {launchPlan.rarity.tierCount} tiers
+            <strong>{launchPlan.name}</strong>: a blind-pack (Perc) set with {launchPlan.rarity.tierCount} tiers
             {launchPlan.rarity.urCount > 0 ? ` and ${launchPlan.rarity.urCount} ultra-rares` : ""}, from{" "}
             {launchPlan.itemCount} art pieces.
           </p>
@@ -306,7 +309,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
       {plan && (
         <div className="import-plan" style={{ marginTop: 12 }}>
           <p className="wl-note">
-            <strong>{plan.collection.name}</strong> — {okCount} item{okCount === 1 ? "" : "s"} ready
+            <strong>{plan.collection.name}</strong>: {okCount} item{okCount === 1 ? "" : "s"} ready
             {plan.collection.maxSupply > 0 ? ` of ${plan.collection.maxSupply}` : ""}
             {badCount > 0 ? `, ${badCount} skipped` : ""}.
           </p>
@@ -327,7 +330,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
               {progress.done < progress.total ? "…" : ""}
             </p>
           )}
-          {finished && <p className="wl-note">Done ✓ — see My Collection and Marketplace.</p>}
+          {finished && <p className="wl-note">Done ✓. See My Collection and Marketplace.</p>}
           <button className="wl-btn wl-btn-primary" disabled={busy || okCount === 0} onClick={runImport}>
             {busy && progress ? "Publishing…" : progress ? "Resume publishing" : `Create & mint ${okCount} item${okCount === 1 ? "" : "s"}`}
           </button>

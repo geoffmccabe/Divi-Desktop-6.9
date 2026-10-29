@@ -143,7 +143,7 @@ export function PointsChip({ compact = false }: { compact?: boolean }) {
     <>
       <span className="pts-chip">
         <span className={`pts-value${balance !== null && balance < 200 ? " pts-low" : ""}`}>
-          {balance === null ? "—" : balance.toLocaleString()}
+          {balance === null ? "n/a" : balance.toLocaleString()}
         </span>
         {!compact && <span className="pts-label">points</span>}
         <button type="button" className="wl-btn pts-buy" onClick={() => setBuying(true)}>

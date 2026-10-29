@@ -335,7 +335,7 @@ function SendForm({ fast, acceptHandoff = false }: { fast: boolean; acceptHandof
           disabled={stage !== "form"}
         />
         <span className="send-avail">
-          Spendable: {bal ? fmtDivi(bal.spendable) : "—"} DIVI · leave a little for the network fee
+          Spendable: {bal ? fmtDivi(bal.spendable) : "n/a"} DIVI · leave a little for the network fee
         </span>
         {overBalance && <span className="wl-err">More than your spendable balance. The send may be rejected.</span>}
       </label>

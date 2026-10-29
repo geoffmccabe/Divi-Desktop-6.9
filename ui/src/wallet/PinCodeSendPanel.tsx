@@ -155,7 +155,7 @@ function EscrowCreate() {
       <label className="send-field">
         <span className="send-label">Amount</span>
         <input className="wl-input" value={amountStr} onChange={(e) => setAmountStr(e.target.value)} placeholder="0.00" inputMode="decimal" />
-        <span className="send-avail">Spendable: {bal ? fmtDivi(bal.spendable) : "—"} DIVI</span>
+        <span className="send-avail">Spendable: {bal ? fmtDivi(bal.spendable) : "n/a"} DIVI</span>
       </label>
       {needsPass && (
         <label className="send-field">
