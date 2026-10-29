@@ -259,10 +259,30 @@ pub fn create_collection(
     let rpc = RpcClient::new(cfg);
     // A spendable UTXO on the creator address funds (and thereby authors) it.
     let utxo = pick_owner_utxo(&rpc, creator_addr)?;
+    let meta_ptr = build_collection_meta(cfg, name, description, cover, image_url, tier_art)?;
+    // `rarity` makes this a blind-pack (Perc) set: `(tier_count, ur_basic_ppm,
+    // ur_progressive_ppm, ur_count)` written on-chain so reveals/forges resolve
+    // provably-fairly. `None` = a plain collection. The caller converts the
+    // creator's percentages to parts-per-million.
+    let record = nfd_record::encode_collection_create(max_supply, &meta_ptr, rarity)?;
+    let txid = anchor_record(&rpc, &utxo, &record, None)?;
+    Ok(CollectionOutcome { txid, meta_ptr })
+}
+
+/// Upload a collection's public metadata JSON (name, description, image, optional
+/// `tierArt`) and return its storage pointer. Shared by the v1 and v2 creators so
+/// both build identical metadata. A `cover` is uploaded and its gateway URL used;
+/// otherwise an already-hosted `image_url` (e.g. an already-mirrored Arweave
+/// cover) is used as-is.
+fn build_collection_meta(
+    cfg: &NodeConfig,
+    name: &str,
+    description: &str,
+    cover: Option<(&[u8], &str)>,
+    image_url: Option<&str>,
+    tier_art: Option<&Value>,
+) -> Result<String, String> {
     let storage = nfd_storage::for_node(&cfg.datadir);
-    // Cover for the metadata image: uploaded bytes become a gateway URL; else an
-    // already-hosted `image_url` (for a launch, the already-mirrored Arweave
-    // cover) is used as-is.
     let image = match cover {
         Some((bytes, ct)) => nfd_storage::gateway_url(&storage.put_public(bytes, ct)?).ok(),
         None => image_url.filter(|s| !s.is_empty()).map(|s| s.to_string()),
@@ -273,12 +293,39 @@ pub fn create_collection(
             meta["tierArt"] = ta.clone();
         }
     }
-    let meta_ptr = storage.put_public(meta.to_string().as_bytes(), "application/json")?;
-    // `rarity` makes this a blind-pack (Perc) set: `(tier_count, ur_basic_ppm,
-    // ur_progressive_ppm, ur_count)` written on-chain so reveals/forges resolve
-    // provably-fairly. `None` = a plain collection. The caller converts the
-    // creator's percentages to parts-per-million.
-    let record = nfd_record::encode_collection_create(max_supply, &meta_ptr, rarity)?;
+    storage.put_public(meta.to_string().as_bytes(), "application/json")
+}
+
+/// Create a collection with the v2 (multi-UR-set) rarity shape: a base tier
+/// ladder (`base_tier_count` + `base_factor_ppm`) plus named Ultra-Rare sets
+/// (each `(tier_count, chance_ppm, factor_ppm)`, least-rare first), and a 32-byte
+/// hex `manifest_ptr` to the set manifest (all-zero = none yet). Mirrors
+/// `create_collection` but writes a COLLECTION-CREATE v2 record.
+pub fn create_collection_v2(
+    cfg: &NodeConfig,
+    creator_addr: &str,
+    name: &str,
+    description: &str,
+    cover: Option<(&[u8], &str)>,
+    max_supply: u32,
+    base_tier_count: u16,
+    base_factor_ppm: u32,
+    ur_sets: &[(u16, u32, u32)],
+    manifest_ptr: &str,
+    image_url: Option<&str>,
+    tier_art: Option<&Value>,
+) -> Result<CollectionOutcome, String> {
+    let rpc = RpcClient::new(cfg);
+    let utxo = pick_owner_utxo(&rpc, creator_addr)?;
+    let meta_ptr = build_collection_meta(cfg, name, description, cover, image_url, tier_art)?;
+    let record = nfd_record::encode_collection_create_v2(
+        max_supply,
+        &meta_ptr,
+        base_tier_count,
+        base_factor_ppm,
+        ur_sets,
+        manifest_ptr,
+    )?;
     let txid = anchor_record(&rpc, &utxo, &record, None)?;
     Ok(CollectionOutcome { txid, meta_ptr })
 }
@@ -397,17 +444,35 @@ pub fn launch_from_bundle(
     }
     let tier_art = Value::Object(tier_art);
 
-    let out = create_collection(
-        cfg,
-        creator_addr,
-        name,
-        description,
-        None,
-        max_supply,
-        rarity,
-        cover_arweave.as_deref(),
-        Some(&tier_art),
-    )?;
+    // Prefer the v2 (named multi-UR-set) launch when the package carries it;
+    // otherwise the existing single-UR / plain path, unchanged.
+    let out = match plan_set_shape_v2(&plan) {
+        Some((base_tier_count, base_factor_ppm, ur_sets, manifest_ptr)) => create_collection_v2(
+            cfg,
+            creator_addr,
+            name,
+            description,
+            None,
+            max_supply,
+            base_tier_count,
+            base_factor_ppm,
+            &ur_sets,
+            &manifest_ptr,
+            cover_arweave.as_deref(),
+            Some(&tier_art),
+        )?,
+        None => create_collection(
+            cfg,
+            creator_addr,
+            name,
+            description,
+            None,
+            max_supply,
+            rarity,
+            cover_arweave.as_deref(),
+            Some(&tier_art),
+        )?,
+    };
     let price_duffs = plan["priceDuffs"].as_u64().unwrap_or(0);
     // A blank payout address defaults to the creator's own wallet.
     let payout = match plan["payoutAddress"].as_str() {
@@ -500,6 +565,43 @@ fn plan_rarity(plan: &Value) -> Option<(u16, u32, u32, u16)> {
         r["urProgressivePpm"].as_u64().unwrap_or(0) as u32,
         r["urCount"].as_u64().unwrap_or(0) as u16,
     ))
+}
+
+/// The v2 (multi-UR-set) set shape from a launch package, if it carries one.
+/// Present iff the package has a non-empty `ultraRareSets` array (the acked
+/// Kinet.ink v5 shape, least-rare first). Returns
+/// `(base_tier_count, base_factor_ppm, ur_sets, manifest_ptr_hex)`. Base fields
+/// read from a `setShape` object if present, else the v1 `rarity` block / 50%.
+/// `manifest_ptr` falls back to all-zero ("no manifest yet"), which the chain
+/// normalizes to none. A package WITHOUT `ultraRareSets` returns `None`, so the
+/// existing single-UR / plain path (plan_rarity + create_collection) is unchanged.
+fn plan_set_shape_v2(plan: &Value) -> Option<(u16, u32, Vec<(u16, u32, u32)>, String)> {
+    let arr = plan.get("ultraRareSets").and_then(|v| v.as_array())?;
+    if arr.is_empty() {
+        return None;
+    }
+    let shape = plan.get("setShape").unwrap_or(plan);
+    let base_tier_count = shape["baseTierCount"]
+        .as_u64()
+        .or_else(|| plan["rarity"]["tierCount"].as_u64())
+        .unwrap_or(1) as u16;
+    let base_factor_ppm = shape["baseFactorPpm"].as_u64().unwrap_or(500_000) as u32;
+    let ur_sets = arr
+        .iter()
+        .map(|s| {
+            (
+                s["tierCount"].as_u64().unwrap_or(1) as u16,
+                s["chancePpm"].as_u64().unwrap_or(0) as u32,
+                s["factorPpm"].as_u64().unwrap_or(500_000) as u32,
+            )
+        })
+        .collect();
+    let manifest_ptr = plan["manifest"]["pointerHex"]
+        .as_str()
+        .or_else(|| plan["manifestPtrHex"].as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "00".repeat(32));
+    Some((base_tier_count, base_factor_ppm, ur_sets, manifest_ptr))
 }
 
 /// STEP 1 — price a launch. Parse + validate the bundle, download the art, and
@@ -634,20 +736,38 @@ pub fn launch_execute(
     }
     let tier_art = Value::Object(tier_art);
 
-    // 5. Create the collection on-chain + set its primary mint price.
+    // 5. Create the collection on-chain + set its primary mint price. Prefer the
+    // v2 (named multi-UR-set) shape when the package carries it; else the
+    // existing single-UR / plain path, unchanged.
     let name = plan["name"].as_str().unwrap_or("");
     let description = plan["description"].as_str().unwrap_or("");
-    let out = create_collection(
-        cfg,
-        creator_addr,
-        name,
-        description,
-        None,
-        max_supply,
-        plan_rarity(&plan),
-        cover_url.as_deref(),
-        Some(&tier_art),
-    )?;
+    let out = match plan_set_shape_v2(&plan) {
+        Some((base_tier_count, base_factor_ppm, ur_sets, manifest_ptr)) => create_collection_v2(
+            cfg,
+            creator_addr,
+            name,
+            description,
+            None,
+            max_supply,
+            base_tier_count,
+            base_factor_ppm,
+            &ur_sets,
+            &manifest_ptr,
+            cover_url.as_deref(),
+            Some(&tier_art),
+        )?,
+        None => create_collection(
+            cfg,
+            creator_addr,
+            name,
+            description,
+            None,
+            max_supply,
+            plan_rarity(&plan),
+            cover_url.as_deref(),
+            Some(&tier_art),
+        )?,
+    };
     let mint_price = plan["priceDuffs"].as_u64().unwrap_or(0);
     let payout = match plan["payoutAddress"].as_str() {
         Some(a) if !a.is_empty() => a.to_string(),
