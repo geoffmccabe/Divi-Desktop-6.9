@@ -504,13 +504,15 @@ fn nfd_view_json(v: &query::NfdView, testnet: bool) -> Value {
         "collectionId": v.collection_id.map(|c| hex_le(&c)),
         "mintHeight": v.mint_height,
         // Perc state: a sealed pack shows a wrapper until it is revealed; once
-        // revealed the UI shows the rolled tier (and its glow). `ur` marks an
-        // ultra-rare and carries the UR sub-tier.
+        // revealed the UI shows the rolled tier (and its glow). `ur` is the
+        // ultra-rare sub-tier and `urSetIndex` which named UR set it landed in
+        // (0-based, least-rare-first); both null for a base-tier card.
         "sealed": v.sealed,
         "pending": v.reveal_pending,
-        "revealed": v.revealed.map(|(base, ur)| json!({
+        "revealed": v.revealed.map(|(base, ur_set, ur_tier)| json!({
             "tier": base,
-            "ur": ur,
+            "ur": ur_tier,
+            "urSetIndex": ur_set,
         })),
     })
 }
