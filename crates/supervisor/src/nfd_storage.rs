@@ -325,6 +325,85 @@ impl GoBanq {
         self.cred.base_url.trim_end_matches('/')
     }
 
+    /// A signed GET returning JSON (empty body in the signature). `path_with_query`
+    /// is everything after the host, query string included, exactly as signed.
+    fn signed_get(&self, path_with_query: &str) -> Result<serde_json::Value, String> {
+        if !self.configured() {
+            return Err("GoBanq storage is not configured (missing the app login).".to_string());
+        }
+        let ts = Self::now_ms();
+        let nonce = Self::nonce();
+        let sig = self.sign("GET", path_with_query, &ts, &nonce, b"");
+        let resp = ureq::get(&format!("{}{}", self.base(), path_with_query))
+            .timeout(std::time::Duration::from_secs(20))
+            .set("x-gobanq-app", &self.cred.app_id)
+            .set("x-gobanq-timestamp", &ts)
+            .set("x-gobanq-nonce", &nonce)
+            .set("x-gobanq-signature", &sig)
+            .call()
+            .map_err(|e| format!("GoBanq GET {path_with_query} failed: {e}"))?
+            .into_string()
+            .map_err(|e| e.to_string())?;
+        serde_json::from_str(&resp).map_err(|e| e.to_string())
+    }
+
+    /// A signed POST of a JSON body returning JSON.
+    fn signed_post(&self, path: &str, body: &serde_json::Value) -> Result<serde_json::Value, String> {
+        if !self.configured() {
+            return Err("GoBanq storage is not configured (missing the app login).".to_string());
+        }
+        let bytes = serde_json::to_vec(body).map_err(|e| e.to_string())?;
+        let ts = Self::now_ms();
+        let nonce = Self::nonce();
+        let sig = self.sign("POST", path, &ts, &nonce, &bytes);
+        let resp = ureq::post(&format!("{}{}", self.base(), path))
+            .timeout(std::time::Duration::from_secs(20))
+            .set("content-type", "application/json")
+            .set("x-gobanq-app", &self.cred.app_id)
+            .set("x-gobanq-timestamp", &ts)
+            .set("x-gobanq-nonce", &nonce)
+            .set("x-gobanq-signature", &sig)
+            .send_bytes(&bytes)
+            .map_err(|e| format!("GoBanq POST {path} failed: {e}"))?
+            .into_string()
+            .map_err(|e| e.to_string())?;
+        serde_json::from_str(&resp).map_err(|e| e.to_string())
+    }
+
+    /// Find GoBanq's dropId for an on-chain collection (its COLLECTION-CREATE
+    /// txid, 64-hex). `None` when no drop exists for it (an empty list, not 404).
+    pub fn drop_id_for_collection(&self, collection_ref_hex: &str) -> Result<Option<String>, String> {
+        let v = self.signed_get(&format!("/v1/drops?collectionRef={collection_ref_hex}"))?;
+        Ok(v["drops"]
+            .as_array()
+            .and_then(|a| a.first())
+            .and_then(|d| d["dropId"].as_str())
+            .map(|s| s.to_string()))
+    }
+
+    /// Who already holds a key for one cell of a drop: the `recipients` array
+    /// (each `{ recipientPub, wrapped, source, grantedFor, at }`). `slot` is the
+    /// canonical id (`base.<t>` or `ur.<set>.<t>`).
+    pub fn slot_key_recipients(&self, drop_id: &str, slot: &str) -> Result<serde_json::Value, String> {
+        self.signed_get(&format!("/v1/drops/{drop_id}/keys/{slot}"))
+    }
+
+    /// Grant one cell key to a new owner: POST the re-wrapped blob (base64 of
+    /// epk|nonce|ct+tag). GoBanq verifies on chain that `owner` holds a revealed
+    /// card of the cell and that `recipient_pub_hex` is their announced key.
+    /// First-writer-wins: a duplicate returns `stored:false`, not an error.
+    pub fn grant_slot_key(
+        &self,
+        drop_id: &str,
+        slot: &str,
+        owner: &str,
+        recipient_pub_hex: &str,
+        wrapped_b64: &str,
+    ) -> Result<serde_json::Value, String> {
+        let body = serde_json::json!({ "owner": owner, "recipientPub": recipient_pub_hex, "wrapped": wrapped_b64 });
+        self.signed_post(&format!("/v1/drops/{drop_id}/keys/{slot}"), &body)
+    }
+
     fn upload(&self, bytes: &[u8], content_type: &str, encrypted: bool) -> Result<String, String> {
         if !self.configured() {
             return Err("GoBanq storage is not configured (missing the app login at ~/.gobanq-dd69-devnet.json).".to_string());
