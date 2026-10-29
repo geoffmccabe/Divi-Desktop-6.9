@@ -116,12 +116,16 @@ pub struct Nfd {
 /// On-chain rarity config for a blind-pack (Perc) collection, so a reveal/forge
 /// roll can be resolved by the protocol itself (the chain can't read Arweave).
 /// Ultra-rare chances are parts-per-million (e.g. 10_000 ppm = 1%).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RarityConfig {
-    pub tier_count: u16,
-    pub ur_basic_ppm: u32,
-    pub ur_progressive_ppm: u32,
-    pub ur_count: u16,
+    /// Number of base tiers (the least-rare-first halving ladder).
+    pub base_tier_count: u16,
+    /// Base halving factor in ppm (500_000 = the standard 50%: T1 50 / T2 25 …).
+    pub base_factor_ppm: u32,
+    /// The named Ultra-Rare sets, stored least-rare-first (= the on-chain order).
+    /// Empty = a plain tiered set with no ultra-rares. A v1 record maps onto a
+    /// single set here, reproducing the old single-UR odds exactly.
+    pub ur_sets: Vec<UrSet>,
 }
 
 /// A collection: creator-owned, capped, with public metadata.
@@ -134,6 +138,10 @@ pub struct Collection {
     /// Rarity config for blind-pack collections (None = not a blind-pack set, or
     /// a plain collection). Written into the COLLECTION-CREATE record at launch.
     pub rarity: Option<RarityConfig>,
+    /// Arweave pointer to the set manifest (names, placeholders) from a v2
+    /// COLLECTION-CREATE. `None` for v1/plain collections, and an all-zero
+    /// on-chain pointer is normalized to `None` (no manifest yet).
+    pub manifest_ptr: Option<[u8; 32]>,
     /// Creator commission (amount_duffs, payout address). `None` until the
     /// creator sets one. A transfer of a member must pay >= amount_duffs to
     /// payout to be valid. The amount can only be lowered over time.
@@ -302,7 +310,16 @@ impl NfdLedger {
     }
     /// The on-chain rarity config for a collection, if it is a blind-pack set.
     pub fn rarity_of(&self, id: &[u8; 32]) -> Option<RarityConfig> {
-        self.collections.get(id).and_then(|c| c.rarity)
+        self.collections.get(id).and_then(|c| c.rarity.clone())
+    }
+    /// Cheap "is this a blind-pack (Perc) set" check that avoids cloning the
+    /// config just to test for its presence.
+    pub fn is_perc_collection(&self, id: &[u8; 32]) -> bool {
+        self.collections.get(id).map_or(false, |c| c.rarity.is_some())
+    }
+    /// The set manifest pointer for a collection, if it carries one (v2 only).
+    pub fn manifest_ptr_of(&self, id: &[u8; 32]) -> Option<[u8; 32]> {
+        self.collections.get(id).and_then(|c| c.manifest_ptr)
     }
     /// True while a pack's reveal has been committed but not yet resolved (it is
     /// waiting for its seed block). Any client can show "opening…" and refuse a
@@ -586,30 +603,62 @@ impl NfdLedger {
         let ms = c.read_bytes(4).map_err(|_| Ignored::Malformed("max_supply"))?;
         let max_supply = u32::from_be_bytes([ms[0], ms[1], ms[2], ms[3]]);
         let meta_ptr = read32(&mut c)?;
-        // Optional trailing rarity config for a blind-pack collection. When
-        // present it is exactly 12 bytes: tier_count(2) ur_basic_ppm(4)
-        // ur_progressive_ppm(4) ur_count(2), all big-endian.
-        let rarity = if c.is_empty() {
-            None
-        } else {
-            let tc = c.read_bytes(2).map_err(|_| Ignored::Malformed("tier_count"))?;
-            let tier_count = u16::from_be_bytes([tc[0], tc[1]]);
-            let ub = c.read_bytes(4).map_err(|_| Ignored::Malformed("ur_basic_ppm"))?;
-            let ur_basic_ppm = u32::from_be_bytes([ub[0], ub[1], ub[2], ub[3]]);
-            let up = c.read_bytes(4).map_err(|_| Ignored::Malformed("ur_progressive_ppm"))?;
-            let ur_progressive_ppm = u32::from_be_bytes([up[0], up[1], up[2], up[3]]);
-            let uc = c.read_bytes(2).map_err(|_| Ignored::Malformed("ur_count"))?;
-            let ur_count = u16::from_be_bytes([uc[0], uc[1]]);
-            if !c.is_empty() {
+        // Optional trailing rarity config for a blind-pack collection. Two forms,
+        // told apart by length (both the wallet codec and this parser agree):
+        //   v1 (legacy, 12 bytes): tier_count(2) ur_basic_ppm(4)
+        //       ur_progressive_ppm(4) ur_count(2) — a single-UR set. Mapped onto
+        //       the v2 shape here so the roll has one code path.
+        //   v2 (docs/NFD-SET-SHAPE-AND-ART.md §11): version(1)=0x02
+        //       base_tier_count(2) base_factor_ppm(4) ur_set_count(1)
+        //       [tier_count(2) chance_ppm(4) factor_ppm(4)]*n manifest_ptr(32).
+        // max_supply(4) + meta_ptr(32) were already read, so the tail is body[36..].
+        let tail = &body[36..];
+        let (rarity, manifest_ptr) = if tail.is_empty() {
+            (None, None)
+        } else if tail.len() == 12 {
+            let tier_count = u16::from_be_bytes([tail[0], tail[1]]);
+            let ur_basic_ppm = u32::from_be_bytes([tail[2], tail[3], tail[4], tail[5]]);
+            let ur_progressive_ppm = u32::from_be_bytes([tail[6], tail[7], tail[8], tail[9]]);
+            let ur_count = u16::from_be_bytes([tail[10], tail[11]]);
+            // v1 -> v2: base factor is the historical 50%; the single UR set (if
+            // any) carries the old basic gate + progressive curve + ur_count.
+            let ur_sets = if ur_count > 0 && ur_basic_ppm > 0 {
+                vec![UrSet { tier_count: ur_count, chance_ppm: ur_basic_ppm, factor_ppm: ur_progressive_ppm }]
+            } else {
+                Vec::new()
+            };
+            (Some(RarityConfig { base_tier_count: tier_count, base_factor_ppm: 500_000, ur_sets }), None)
+        } else if tail[0] == 0x02 {
+            if tail.len() < 8 {
+                return Err(Ignored::Malformed("rarity v2 header"));
+            }
+            let base_tier_count = u16::from_be_bytes([tail[1], tail[2]]);
+            let base_factor_ppm = u32::from_be_bytes([tail[3], tail[4], tail[5], tail[6]]);
+            let n = tail[7] as usize;
+            if tail.len() != 8 + 10 * n + 32 {
                 return Err(Ignored::TrailingBytes);
             }
-            Some(RarityConfig { tier_count, ur_basic_ppm, ur_progressive_ppm, ur_count })
+            let mut ur_sets = Vec::with_capacity(n);
+            for k in 0..n {
+                let o = 8 + 10 * k;
+                ur_sets.push(UrSet {
+                    tier_count: u16::from_be_bytes([tail[o], tail[o + 1]]),
+                    chance_ppm: u32::from_be_bytes([tail[o + 2], tail[o + 3], tail[o + 4], tail[o + 5]]),
+                    factor_ppm: u32::from_be_bytes([tail[o + 6], tail[o + 7], tail[o + 8], tail[o + 9]]),
+                });
+            }
+            let mut mp = [0u8; 32];
+            mp.copy_from_slice(&tail[8 + 10 * n..8 + 10 * n + 32]);
+            let manifest_ptr = if mp == [0u8; 32] { None } else { Some(mp) };
+            (Some(RarityConfig { base_tier_count, base_factor_ppm, ur_sets }), manifest_ptr)
+        } else {
+            return Err(Ignored::Malformed("unknown rarity config"));
         };
         if self.collections.contains_key(&ctx.txid) {
             return Err(Ignored::RuleViolation("duplicate collection id for this tx"));
         }
         let creator = Self::sender(ctx)?;
-        self.collections.insert(ctx.txid, Collection { creator, max_supply, meta_ptr, minted: 0, commission: None, forge_fee: None, mint_price: None, rarity });
+        self.collections.insert(ctx.txid, Collection { creator, max_supply, meta_ptr, minted: 0, commission: None, forge_fee: None, mint_price: None, rarity, manifest_ptr });
         self.undo.push(Undo::CollectionCreated { id: ctx.txid });
 
         let mut d = vec![SUB_COLLECTION];
@@ -879,7 +928,7 @@ impl NfdLedger {
         }
         // Only a Perc (an item in a collection that carries a rarity config) can
         // be revealed.
-        let is_perc = coll.and_then(|cid| self.collections.get(&cid)).and_then(|c| c.rarity).is_some();
+        let is_perc = coll.map_or(false, |cid| self.is_perc_collection(&cid));
         if !is_perc {
             return Err(Ignored::RuleViolation("not a revealable Perc"));
         }
@@ -949,7 +998,7 @@ impl NfdLedger {
             return Err(Ignored::RuleViolation("inputs are not the same tier"));
         }
         // The collection must be a Perc set (carries a rarity config), mirroring reveal.
-        let is_perc = self.collections.get(&collection_id).and_then(|c| c.rarity).is_some();
+        let is_perc = self.is_perc_collection(&collection_id);
         if !is_perc {
             return Err(Ignored::RuleViolation("not a Perc collection"));
         }
@@ -1022,7 +1071,7 @@ impl NfdLedger {
                 .get(&pack_id)
                 .and_then(|n| n.collection_id)
                 .and_then(|cid| self.collections.get(&cid))
-                .and_then(|c| c.rarity);
+                .and_then(|c| c.rarity.clone());
             let Some(cfg) = cfg else { continue }; // collection/config gone (reorg edge): skip
             // seed = SHA256(pack_id || seed_block_hash)
             let mut h = Sha256::new();
@@ -1031,7 +1080,7 @@ impl NfdLedger {
             let digest = h.finalize();
             let mut seed = [0u8; 32];
             seed.copy_from_slice(&digest);
-            let outcome = resolve_reveal(&seed, &cfg);
+            let outcome = resolve_reveal_sets(&seed, cfg.base_tier_count, cfg.base_factor_ppm, &cfg.ur_sets);
             if let Some(nfd) = self.nfds.get_mut(&pack_id) {
                 nfd.revealed = Some(outcome);
             }
@@ -1057,7 +1106,7 @@ impl NfdLedger {
             seed.copy_from_slice(&digest);
             let result_tier = fp.input_tier.saturating_add(forge_tier_bump(&seed));
             if let Some(nfd) = self.nfds.get_mut(&fp.result_id) {
-                nfd.revealed = Some(RevealOutcome { base_tier: result_tier, ur_tier: None });
+                nfd.revealed = Some(RevealOutcome { base_tier: result_tier, ur_set: None, ur_tier: None });
             }
             self.undo.push(Undo::ForgeResolved { result_id: fp.result_id, seed_height: height, input_tier: fp.input_tier });
             delta.push(SUB_FORGE);
@@ -1116,23 +1165,38 @@ fn read32(c: &mut Cursor) -> Result<[u8; 32], Ignored> {
     Ok(a)
 }
 
-/// The outcome of resolving a reveal: a base tier (always) and, when the
-/// ultra-rare gate fires, a UR tier on its own ladder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RevealOutcome {
-    pub base_tier: u16,       // 1..=tier_count
-    pub ur_tier: Option<u16>, // Some(1..=ur_count) when ultra-rare
+/// A single Ultra-Rare set in the multi-set model (docs/NFD-SET-SHAPE-AND-ART.md
+/// §3): `chance_ppm` is the gate into this set, `factor_ppm` the within-set
+/// halving curve, `tier_count` how many artworks the set has. Sets are stored
+/// least-rare first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UrSet {
+    pub tier_count: u16,
+    pub chance_ppm: u32,
+    pub factor_ppm: u32,
 }
 
-/// Resolve a reveal PROVABLY-FAIRLY from a deterministic `seed` (derived from a
-/// future block, so no one can grind it) and the collection's on-chain
-/// [`RarityConfig`]. Integer-only, so the wallet, every indexer and the explorer
-/// reach the identical result. The base tier is a 1/2-geometric (50 / 25 / 12.5
-/// …) capped at `tier_count`. The ultra-rare gate fires with probability
-/// `ur_basic_ppm`; when it does, a UR tier is drawn from a `ur_progressive_ppm`
-/// geometric, capped at `ur_count`. The base tier is kept either way.
-pub fn resolve_reveal(seed: &[u8; 32], cfg: &RarityConfig) -> RevealOutcome {
-    // Independent 32-bit draws: word(n) = first 4 bytes of SHA256(seed || n_le).
+/// The outcome of resolving a reveal: a base tier (always drawn), plus which
+/// named Ultra-Rare set (0-based, in the stored least-rare-first order) was hit
+/// and the tier within it. `ur_set`/`ur_tier` are `None` for a base-tier Perc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RevealOutcome {
+    pub base_tier: u16,
+    pub ur_set: Option<u16>,
+    pub ur_tier: Option<u16>,
+}
+
+/// Roll a reveal over a base tier ladder + an ordered list of Ultra-Rare sets,
+/// from a fair 32-byte seed. This is THE reveal roll (the live `resolve_due`
+/// drives it). Deterministic integer math so the wallet, every indexer and the
+/// explorer reach the identical result: `word(n)` = first 4 LE bytes of
+/// SHA256(seed || n_le), and a draw "continues" with probability ppm/1_000_000.
+/// The base tier is a halving ladder on `base_factor_ppm` (500_000 = 50%: T1 50 /
+/// T2 25 / …) capped at `base_tier_count`. The UR sets are checked
+/// RAREST-FIRST (the reverse of their least-rare-first storage), and the first
+/// whose gate passes claims the Perc, so when a rare event hits, the rarest
+/// applicable set wins. With a single set this reproduces [`resolve_reveal`]'s odds.
+pub fn resolve_reveal_sets(seed: &[u8; 32], base_tier_count: u16, base_factor_ppm: u32, ur_sets: &[UrSet]) -> RevealOutcome {
     let word = |n: u32| -> u32 {
         let mut h = Sha256::new();
         h.update(seed);
@@ -1140,31 +1204,104 @@ pub fn resolve_reveal(seed: &[u8; 32], cfg: &RarityConfig) -> RevealOutcome {
         let d = h.finalize();
         u32::from_le_bytes([d[0], d[1], d[2], d[3]])
     };
-    // "Continue" with probability ppm/1_000_000. 64-bit so 100% (= 1_000_000,
-    // whose 2^32 threshold overflows a u32) is handled as always-continue.
     let cont = |w: u32, ppm: u32| -> bool {
         ppm >= 1_000_000 || (w as u64) < (((ppm as u64) << 32) / 1_000_000)
     };
-
-    let tier_cap = cfg.tier_count.max(1);
+    // Base tier: the configurable halving ladder (base_factor_ppm; 500_000 = the
+    // standard 50% so T1 50 / T2 25 / T3 12.5 …), each step "goes rarer" with that
+    // probability, same cont() test as the UR curves.
+    let tier_cap = base_tier_count.max(1);
     let mut base: u16 = 1;
     let mut i = 0u32;
-    while base < tier_cap && (word(i) & 0x8000_0000) != 0 {
+    while base < tier_cap && cont(word(i), base_factor_ppm) {
         base += 1;
         i += 1;
     }
-
+    // UR sets, rarest-first. Distinct domain tags per set keep the sets independent
+    // draws off the one seed: gate = word(10_000 + set), within-set tier =
+    // word(20_000 + 100*set + j).
+    let mut ur_set = None;
     let mut ur_tier = None;
-    if cfg.ur_count > 0 && cfg.ur_basic_ppm > 0 && cont(word(1_000), cfg.ur_basic_ppm) {
-        let mut ut: u16 = 1;
-        let mut j = 0u32;
-        while ut < cfg.ur_count && cont(word(2_000 + j), cfg.ur_progressive_ppm) {
-            ut += 1;
-            j += 1;
+    for s in (0..ur_sets.len()).rev() {
+        let set = &ur_sets[s];
+        if set.tier_count == 0 || set.chance_ppm == 0 {
+            continue;
         }
-        ur_tier = Some(ut);
+        if cont(word(10_000 + s as u32), set.chance_ppm) {
+            let mut ut: u16 = 1;
+            let mut j = 0u32;
+            while ut < set.tier_count && cont(word(20_000 + 100 * s as u32 + j), set.factor_ppm) {
+                ut += 1;
+                j += 1;
+            }
+            ur_set = Some(s as u16);
+            ur_tier = Some(ut);
+            break;
+        }
     }
-    RevealOutcome { base_tier: base, ur_tier }
+    RevealOutcome { base_tier: base, ur_set, ur_tier }
+}
+
+#[cfg(test)]
+mod reveal_sets_tests {
+    use super::{resolve_reveal_sets, UrSet};
+    use sha2::{Digest, Sha256};
+
+    fn seed(i: u32) -> [u8; 32] {
+        let mut h = Sha256::new();
+        h.update(b"reveal-sets-test");
+        h.update(i.to_le_bytes());
+        h.finalize().into()
+    }
+
+    #[test]
+    fn single_set_matches_the_one_percent_90_9_curve() {
+        // One UR set, 1% gate, 10% within-set curve: must reproduce the odds of the
+        // legacy single-UR resolve_reveal (50/25/12.5 base, 1% UR, 90/9 within).
+        let n = 400_000u32;
+        let sets = [UrSet { tier_count: 5, chance_ppm: 10_000, factor_ppm: 100_000 }];
+        let (mut t1, mut t2, mut t3) = (0u32, 0u32, 0u32);
+        let (mut ur_hits, mut ur1, mut ur2) = (0u32, 0u32, 0u32);
+        for i in 0..n {
+            let o = resolve_reveal_sets(&seed(i), 40, 500_000, &sets);
+            match o.base_tier { 1 => t1 += 1, 2 => t2 += 1, 3 => t3 += 1, _ => {} }
+            if let Some(ut) = o.ur_tier {
+                ur_hits += 1;
+                match ut { 1 => ur1 += 1, 2 => ur2 += 1, _ => {} }
+            }
+        }
+        let p = |c: u32| c as f64 / n as f64;
+        assert!((p(t1) - 0.5).abs() < 0.01, "T1 {}", p(t1));
+        assert!((p(t2) - 0.25).abs() < 0.01, "T2 {}", p(t2));
+        assert!((p(t3) - 0.125).abs() < 0.01, "T3 {}", p(t3));
+        assert!((p(ur_hits) - 0.01).abs() < 0.003, "UR rate {}", p(ur_hits));
+        let among = |c: u32| c as f64 / ur_hits.max(1) as f64;
+        assert!((among(ur1) - 0.9).abs() < 0.05, "UR-T1 {}", among(ur1));
+        assert!((among(ur2) - 0.09).abs() < 0.04, "UR-T2 {}", among(ur2));
+    }
+
+    #[test]
+    fn two_sets_independent_and_rarest_wins() {
+        // set0 least-rare (1%), set1 rarer (0.1%); checked rarest-first so set1
+        // takes ~0.1% outright and set0 takes ~1% of the rest.
+        let n = 400_000u32;
+        let sets = [
+            UrSet { tier_count: 3, chance_ppm: 10_000, factor_ppm: 200_000 },
+            UrSet { tier_count: 3, chance_ppm: 1_000, factor_ppm: 200_000 },
+        ];
+        let (mut s0, mut s1) = (0u32, 0u32);
+        for i in 0..n {
+            match resolve_reveal_sets(&seed(i + 7), 10, 500_000, &sets).ur_set {
+                Some(0) => s0 += 1,
+                Some(1) => s1 += 1,
+                _ => {}
+            }
+        }
+        let p = |c: u32| c as f64 / n as f64;
+        assert!((p(s1) - 0.001).abs() < 0.001, "set1 {}", p(s1));
+        assert!((p(s0) - 0.01).abs() < 0.003, "set0 {}", p(s0));
+        assert!(s0 > s1, "least-rare set should be more common");
+    }
 }
 
 /// The forge tier bump K from a 32-byte seed: treat the seed's bits as fair coin
@@ -1575,14 +1712,54 @@ mod tests {
         body.extend_from_slice(&100_000u32.to_be_bytes()); // ur_progressive_ppm (10%)
         body.extend_from_slice(&3u16.to_be_bytes()); // ur_count
         l.apply(&rec(SUB_COLLECTION, &body), &ctx(2, Some(addr(7)))).unwrap();
+        // v1 maps onto the v2 shape: base factor 50%, one UR set carrying the old
+        // basic gate + progressive curve + ur_count.
         assert_eq!(
             l.rarity_of(&[2; 32]),
-            Some(RarityConfig { tier_count: 40, ur_basic_ppm: 10_000, ur_progressive_ppm: 100_000, ur_count: 3 })
+            Some(RarityConfig {
+                base_tier_count: 40,
+                base_factor_ppm: 500_000,
+                ur_sets: vec![UrSet { tier_count: 3, chance_ppm: 10_000, factor_ppm: 100_000 }],
+            })
         );
+        assert_eq!(l.manifest_ptr_of(&[2; 32]), None); // v1 carries no manifest
         // a trailing config of the wrong length is rejected (not silently kept)
         let mut bad = collection_body(1);
         bad.extend_from_slice(&[0xaa; 5]);
         assert!(l.apply(&rec(SUB_COLLECTION, &bad), &ctx(3, Some(addr(7)))).is_err());
+
+        // v2: version 0x02, 30 base tiers at 50%, two named UR sets, a manifest.
+        let mut v2 = collection_body(50);
+        v2.push(0x02); // version
+        v2.extend_from_slice(&30u16.to_be_bytes()); // base_tier_count
+        v2.extend_from_slice(&500_000u32.to_be_bytes()); // base_factor_ppm
+        v2.push(2u8); // ur_set_count
+        for (tc, chance, factor) in [(12u16, 10_000u32, 500_000u32), (6u16, 1_000u32, 500_000u32)] {
+            v2.extend_from_slice(&tc.to_be_bytes());
+            v2.extend_from_slice(&chance.to_be_bytes());
+            v2.extend_from_slice(&factor.to_be_bytes());
+        }
+        v2.extend_from_slice(&[0xcd; 32]); // manifest_ptr (non-zero)
+        l.apply(&rec(SUB_COLLECTION, &v2), &ctx(4, Some(addr(7)))).unwrap();
+        assert_eq!(
+            l.rarity_of(&[4; 32]),
+            Some(RarityConfig {
+                base_tier_count: 30,
+                base_factor_ppm: 500_000,
+                ur_sets: vec![
+                    UrSet { tier_count: 12, chance_ppm: 10_000, factor_ppm: 500_000 },
+                    UrSet { tier_count: 6, chance_ppm: 1_000, factor_ppm: 500_000 },
+                ],
+            })
+        );
+        assert_eq!(l.manifest_ptr_of(&[4; 32]), Some([0xcd; 32]));
+        // a v2 record whose declared ur_set_count disagrees with its length is rejected
+        let mut badv2 = collection_body(7);
+        badv2.push(0x02);
+        badv2.extend_from_slice(&10u16.to_be_bytes());
+        badv2.extend_from_slice(&500_000u32.to_be_bytes());
+        badv2.push(1u8); // claims 1 set but supplies none + no manifest
+        assert!(l.apply(&rec(SUB_COLLECTION, &badv2), &ctx(5, Some(addr(7)))).is_err());
     }
 
     fn seed_of(k: u32) -> [u8; 32] {
@@ -1597,14 +1774,19 @@ mod tests {
 
     #[test]
     fn reveal_roll_is_deterministic_and_fair() {
-        let cfg = RarityConfig { tier_count: 40, ur_basic_ppm: 10_000, ur_progressive_ppm: 100_000, ur_count: 3 };
+        // The old v1 single-UR odds, expressed as one UR set on the v2 roll.
+        let (base_tiers, base_factor) = (40u16, 500_000u32);
+        let sets = [UrSet { tier_count: 3, chance_ppm: 10_000, factor_ppm: 100_000 }];
         let s = [9u8; 32];
-        assert_eq!(resolve_reveal(&s, &cfg), resolve_reveal(&s, &cfg)); // deterministic
+        assert_eq!(
+            resolve_reveal_sets(&s, base_tiers, base_factor, &sets),
+            resolve_reveal_sets(&s, base_tiers, base_factor, &sets)
+        ); // deterministic
 
         let n = 40_000u32;
         let (mut t1, mut t2, mut ur) = (0u32, 0u32, 0u32);
         for k in 0..n {
-            let o = resolve_reveal(&seed_of(k), &cfg);
+            let o = resolve_reveal_sets(&seed_of(k), base_tiers, base_factor, &sets);
             assert!(o.base_tier >= 1 && o.base_tier <= 40);
             if let Some(u) = o.ur_tier {
                 assert!(u >= 1 && u <= 3);
@@ -1627,14 +1809,17 @@ mod tests {
 
     #[test]
     fn reveal_respects_caps() {
-        // 100% gate + 100% progressive -> always UR, UR tier pinned at the cap.
-        let cfg = RarityConfig { tier_count: 3, ur_basic_ppm: 1_000_000, ur_progressive_ppm: 1_000_000, ur_count: 2 };
-        let o = resolve_reveal(&[7u8; 32], &cfg);
+        // 100% gate + 100% within-set -> always UR, UR tier pinned at the cap.
+        let sets = [UrSet { tier_count: 2, chance_ppm: 1_000_000, factor_ppm: 1_000_000 }];
+        let o = resolve_reveal_sets(&[7u8; 32], 3, 500_000, &sets);
         assert!(o.base_tier >= 1 && o.base_tier <= 3);
+        assert_eq!(o.ur_set, Some(0));
         assert_eq!(o.ur_tier, Some(2));
-        // no UR configured -> never ultra-rare
-        let none = RarityConfig { tier_count: 5, ur_basic_ppm: 1_000_000, ur_progressive_ppm: 0, ur_count: 0 };
-        assert_eq!(resolve_reveal(&[1u8; 32], &none).ur_tier, None);
+        // no UR sets -> never ultra-rare
+        let none: [UrSet; 0] = [];
+        let o2 = resolve_reveal_sets(&[1u8; 32], 5, 500_000, &none);
+        assert_eq!(o2.ur_set, None);
+        assert_eq!(o2.ur_tier, None);
     }
 
     fn perc_collection_body() -> Vec<u8> {

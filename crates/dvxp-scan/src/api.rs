@@ -253,13 +253,45 @@ fn route(path: &str, qs: &str, shared: &Shared) -> (u16, Value) {
             let list = match (param(qs, "owner"), param(qs, "q")) {
                 (Some(_), _) => match single_address(qs) {
                     Err(bad) => return finish(Err((400, bad)), meta),
-                    Ok(a) => query::nfds_owned_by(&overlay, a, limit),
+                    // Optional collection filter (accepts `collection` or
+                    // `collectionRef`), applied server-side before the limit.
+                    Ok(a) => match param(qs, "collection").or_else(|| param(qs, "collectionRef")) {
+                        None => query::nfds_owned_by(&overlay, a, limit),
+                        Some(cref) => match hash_arg(&percent_decode(cref)) {
+                            None => return finish(Err((400, "collection must be 64 hex characters")), meta),
+                            Some(cid) => query::nfds_owned_in_collection(&overlay, a, &cid, limit),
+                        },
+                    },
                 },
                 (None, Some(q)) => query::search_nfds(&overlay, &percent_decode(q), limit),
                 (None, None) => query::recent_nfds(&overlay, limit),
             };
             Ok(json!({ "nfds": list.iter().map(nfd_json).collect::<Vec<_>>() }))
         }
+
+        // The announced X25519 encryption key for ONE address (base58 or
+        // kind:hash160-hex), for a client that must wrap a key to someone before
+        // that someone owns anything (e.g. a creator wrapping to their own key at
+        // launch). `encryptionPubkeyHex` is 32 raw bytes as lowercase hex, or null
+        // when no KEY-ANNOUNCE exists yet for the address.
+        ("enc-key", a) if !a.is_empty() => match addr_arg(a) {
+            None => Err((400, "address must be base58 or kind:hash160-hex")),
+            Some(ak) => Ok(json!({
+                "address": addr_json(ak),
+                "encryptionPubkeyHex": overlay.nfd.enc_pubkey_of(&addr21(ak)).map(|k| payload_hex(&k)),
+            })),
+        },
+
+        // The distinct grid slots a collection has had revealed (base.<t> |
+        // ur.<set>.<t>). The first reveal of a slot un-secrets its public
+        // thumbnail, so a storage service reads this to gate thumbnail serving.
+        ("revealed-slots", id) => match hash_arg(id) {
+            None => Err((400, "collection id must be 64 hex characters")),
+            Some(h) => Ok(json!({
+                "collection": hash_hex(&h),
+                "revealedSlots": query::revealed_slots(&overlay, &h),
+            })),
+        },
 
         ("collection", id) => match hash_arg(id) {
             None => Err((400, "id must be 64 hex characters")),
@@ -272,6 +304,9 @@ fn route(path: &str, qs: &str, shared: &Shared) -> (u16, Value) {
                         "maxSupply": c.max_supply,
                         "minted": c.minted,
                         "metaPtr": payload_hex(&c.meta_ptr),
+                        // Arweave pointer to the set manifest (names, placeholders)
+                        // for a v2 blind-pack set; null for v1/plain collections.
+                        "manifestPtr": c.manifest_ptr.map(|m| payload_hex(&m)),
                     },
                     "members": query::collection_members(&overlay, &h, limit_of(qs, 200))
                         .iter().map(nfd_json).collect::<Vec<_>>(),
@@ -380,6 +415,22 @@ fn nfd_json(n: &query::NfdView) -> Value {
         "thumbPtr": n.thumb_ptr.map(|t| payload_hex(&t)),
         "collectionId": n.collection_id.map(|c| hash_hex(&c)),
         "mintHeight": n.mint_height,
+        // The owner's announced encryption key (raw 32 bytes, lowercase hex), or
+        // null if they have not announced one yet. A storage service uses this to
+        // match an owner to their wrapped master-key blob; null = master pending.
+        "encryptionPubkeyHex": n.owner_enc_pubkey.map(|k| payload_hex(&k)),
+        // Product status, so a storage/grid client can place the card without
+        // re-reading the chain. `sealed` is always a bool (read it FIRST: a sealed
+        // pack has no tier). `tier`/`ultraRare`/`urTier`/`urSetIndex` are null
+        // until revealed. For an ultra-rare the grid slot is ur.<urSetIndex>.<urTier>;
+        // `tier` stays the BASE tier even for an ultra-rare (do NOT file an
+        // ultra-rare by `tier`), and `urSetIndex`/`urTier` are null for a base card.
+        "sealed": n.sealed,
+        "revealPending": n.reveal_pending,
+        "tier": n.revealed.map(|(base, _, _)| base),
+        "ultraRare": n.revealed.map(|(_, ur_set, _)| ur_set.is_some()),
+        "urSetIndex": n.revealed.and_then(|(_, ur_set, _)| ur_set),
+        "urTier": n.revealed.and_then(|(_, _, ur_tier)| ur_tier),
     })
 }
 
@@ -454,10 +505,29 @@ fn addresses_of(qs: &str) -> Result<Vec<AddrKey>, &'static str> {
     Ok(out)
 }
 
+/// Parse an address in EITHER accepted form: a base58 Divi address (what an app
+/// hands us) or our own `kind:hash160-hex` emission (what a row's `owner` field
+/// carries). Accepting both means a value copied straight out of a response round
+/// trips as a query, closing the "looks-like-not-owned but was-really-bad-format"
+/// footgun.
+fn addr_arg(s: &str) -> Option<AddrKey> {
+    if let Some(parsed) = addr_from_str(s) {
+        return Some(dmt_indexer::ledger::state::addr_key(parsed));
+    }
+    crate::query::hex_to_addr(s)
+}
+
 fn single_address(qs: &str) -> Result<AddrKey, &'static str> {
     let raw = param(qs, "owner").ok_or("owner parameter required")?;
-    let parsed = addr_from_str(raw).ok_or("not a Divi address")?;
-    Ok(dmt_indexer::ledger::state::addr_key(parsed))
+    addr_arg(raw).ok_or("not a Divi address (base58 or kind:hash160-hex)")
+}
+
+/// Pack an `AddrKey` (kind, hash160) into the 21-byte form the indexer keys by.
+fn addr21(a: AddrKey) -> [u8; 21] {
+    let mut packed = [0u8; 21];
+    packed[0] = a.0;
+    packed[1..].copy_from_slice(&a.1);
+    packed
 }
 
 /// A 64-character hex hash, in display order, converted back to raw bytes.
@@ -611,6 +681,19 @@ mod tests {
         assert_eq!(route("/token/1:0", "", &shared).0, 404);
         assert_eq!(route("/nfd/zz", "", &shared).0, 400);
         assert_eq!(route("/balances", "", &shared).0, 400);
+        // enc-key: a non-address arg is a clear 400; a missing arg is just 404.
+        assert_eq!(route("/enc-key/notanaddress", "", &shared).0, 400);
+        assert_eq!(route("/enc-key", "", &shared).0, 404);
+        // an address with no KEY-ANNOUNCE yet is a 200 with null, not an error.
+        let (status, body) = route("/enc-key/0:0000000000000000000000000000000000000000", "", &shared);
+        assert_eq!(status, 200);
+        assert!(body["encryptionPubkeyHex"].is_null());
+        // revealed-slots: a short id is a 400; a valid id on an empty index is a
+        // 200 with an empty list (no collection yet, but not an error).
+        assert_eq!(route("/revealed-slots/zz", "", &shared).0, 400);
+        let (status, body) = route(&format!("/revealed-slots/{}", "ab".repeat(32)), "", &shared);
+        assert_eq!(status, 200);
+        assert!(body["revealedSlots"].as_array().unwrap().is_empty());
     }
 
     /// Every response carries the caveat, including the failures. A client that

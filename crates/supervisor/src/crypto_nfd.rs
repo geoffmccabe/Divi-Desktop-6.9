@@ -162,6 +162,41 @@ mod tests {
         assert_ne!(p1.as_bytes(), p3.as_bytes(), "different sig must give different key");
     }
 
+    /// LOCKED cross-implementation vector (shared with Kinet.ink's browser wallet,
+    /// 2026-Oct-28). A fixed stand-in signature derives a fixed X25519 pubkey:
+    /// pub = X25519(clamp(SHA-256(sig)), basepoint). Any drift here breaks the
+    /// wallet<->launcher encryption interop, so this must stay byte-exact.
+    #[test]
+    fn derive_enc_keypair_matches_locked_vector() {
+        let (_sk, pk) = derive_enc_keypair(b"NFD-roundtrip-test-signature-v1");
+        let got: String = pk.as_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(got, "305c65302340c3bf24b95882d4005a2230bea69642e70580790d3b410ceb7631");
+    }
+
+    /// Other half of the LOCKED cross-impl vector: a wrapped cell key + content
+    /// blob produced by Kinet.ink's browser (WebCrypto) MUST decrypt here with the
+    /// Rust core. Fixtures in testdata/ were generated against the pubkey above.
+    /// This proves their-encrypt -> our-decrypt interop byte-for-byte.
+    #[test]
+    fn decrypts_kinetink_webcrypto_vector() {
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let wrapped = b64
+            .decode(include_str!("testdata/nfd_vector_wrapped.b64").trim())
+            .expect("wrapped b64");
+        let content = b64
+            .decode(include_str!("testdata/nfd_vector_content.b64").trim())
+            .expect("content b64");
+        assert_eq!(wrapped.len(), 92);
+        assert_eq!(content.len(), 8218);
+        let (sk, _pk) = derive_enc_keypair(b"NFD-roundtrip-test-signature-v1");
+        let plaintext = decrypt_content(&content, &wrapped, &sk).expect("decrypt must succeed");
+        assert_eq!(plaintext.len(), 8190);
+        let digest: String = Sha256::digest(&plaintext).iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(digest, "dcb7b211876b23b550b34de9278df8a7bdb7e58f105e079a9e6775ff77a729db");
+        assert_eq!(&plaintext[..21], b"NFD-roundtrip-test-v1");
+    }
+
     #[test]
     fn owner_roundtrip() {
         let (osk, opk) = kp(b"alice-sig");

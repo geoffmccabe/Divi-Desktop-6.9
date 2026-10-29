@@ -184,6 +184,47 @@ pub fn encode_collection_create(max_supply: u32, meta_ptr: &str, rarity: Option<
     Ok(out)
 }
 
+/// Encode a COLLECTION-CREATE, v2 rarity shape (docs/NFD-SET-SHAPE-AND-ART.md §11).
+/// Adds named Ultra-Rare SETS (each with its own tier count + rarity dials) and a
+/// manifest pointer. Layout appended after `max_supply(4) meta_ptr(32)`:
+///   version(1)=0x02 | base_tier_count(2) | base_factor_ppm(4) | ur_set_count(1) |
+///   per set least-rare-first { tier_count(2) chance_ppm(4) factor_ppm(4) } |
+///   manifest_ptr(32, all-zero = no manifest yet).
+/// All big-endian. `ur_set_count = 0` is a plain tiered set. The reveal roll walks
+/// the sets rarest-first; this only builds the bytes (the indexer drives the roll).
+pub fn encode_collection_create_v2(
+    max_supply: u32,
+    meta_ptr: &str,
+    base_tier_count: u16,
+    base_factor_ppm: u32,
+    ur_sets: &[(u16, u32, u32)], // (tier_count, chance_ppm, factor_ppm), least-rare first
+    manifest_ptr: &str,
+) -> Result<String, String> {
+    if !is_hex_len(meta_ptr, 32) {
+        return Err("meta_ptr must be 32 bytes hex".into());
+    }
+    if !is_hex_len(manifest_ptr, 32) {
+        return Err("manifest_ptr must be 32 bytes hex (all-zero = none)".into());
+    }
+    if ur_sets.len() > u8::MAX as usize {
+        return Err("too many UR sets (max 255)".into());
+    }
+    let mut out = format!(
+        "{}{:08x}{}02{:04x}{:08x}{:02x}",
+        prefix(SUB_COLLECTION),
+        max_supply,
+        meta_ptr.to_lowercase(),
+        base_tier_count,
+        base_factor_ppm,
+        ur_sets.len(),
+    );
+    for (tier_count, chance_ppm, factor_ppm) in ur_sets {
+        out.push_str(&format!("{tier_count:04x}{chance_ppm:08x}{factor_ppm:08x}"));
+    }
+    out.push_str(&manifest_ptr.to_lowercase());
+    Ok(out)
+}
+
 /// Encode a COMMISSION-SET (creator commission on a collection):
 /// collection_id(32) | amount_duffs(u64, big-endian, 8) | payout(21 packed addr).
 /// The collection id is a txid reference, so it goes on the wire in internal
@@ -504,13 +545,27 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
         SUB_KEYANNOUNCE if body.len() == 64 => Some(NfdRecord::KeyAnnounce {
             enc_pubkey: body[0..64].to_string(),
         }),
-        // 72 = plain collection; 96 = with the appended 12-byte rarity config
-        // (blind-pack). The wallet keeps only max_supply + meta_ptr here; the
-        // indexer is what reads and acts on the rarity config.
-        SUB_COLLECTION if body.len() == 72 || body.len() == 96 => Some(NfdRecord::CollectionCreate {
-            max_supply: u32::from_str_radix(&body[0..8], 16).ok()?,
-            meta_ptr: body[8..72].to_string(),
-        }),
+        // 72 = plain collection; 96 = v1 rarity (12-byte dials); v2 = a version
+        // byte 0x02 at offset 72 then named UR sets + a manifest pointer
+        // (§11, length 152 + 20*ur_set_count). The wallet keeps only
+        // max_supply + meta_ptr here; the indexer reads and acts on the rarity.
+        SUB_COLLECTION => {
+            let ok = body.len() == 72
+                || body.len() == 96
+                || (body.len() >= 88 && &body[72..74] == "02" && {
+                    // v2: version(2) tier(4) factor(8) ur_set_count(2) then
+                    // 20 per set then manifest(64). EXACT length, no trailing.
+                    let count = usize::from_str_radix(&body[86..88], 16).ok()?;
+                    body.len() == 88 + 20 * count + 64
+                });
+            if !ok {
+                return None;
+            }
+            Some(NfdRecord::CollectionCreate {
+                max_supply: u32::from_str_radix(&body[0..8], 16).ok()?,
+                meta_ptr: body[8..72].to_string(),
+            })
+        }
         SUB_FORGE if body.len() == 192 => Some(NfdRecord::Forge {
             // All three are txid refs on the wire in internal order -> back to display.
             input_a: swap_txid_order(&body[0..64]),
@@ -631,6 +686,35 @@ mod tests {
         // with the appended rarity config it still parses to the same base fields
         let script2 = op_meta_script(&encode_collection_create(100, &m, Some((40, 10_000, 100_000, 3))).unwrap());
         assert_eq!(parse(&script2), Some(NfdRecord::CollectionCreate { max_supply: 100, meta_ptr: m }));
+    }
+
+    #[test]
+    fn collection_create_v2_roundtrips() {
+        let m = "ff".repeat(32);
+        let manifest = "ab".repeat(32);
+        // two UR sets, least-rare first
+        let sets = [(12u16, 10_000u32, 500_000u32), (6u16, 1_000u32, 500_000u32)];
+        let payload = encode_collection_create_v2(500, &m, 30, 500_000, &sets, &manifest).unwrap();
+        // pinned byte layout (the indexer's v2 reader must match these offsets):
+        assert_eq!(&payload[..12], &prefix(SUB_COLLECTION)); // DVXP|ver|type|subtype
+        let body = &payload[12..];
+        assert_eq!(&body[0..8], "000001f4"); // max_supply = 500
+        assert_eq!(&body[8..72], m); // meta_ptr
+        assert_eq!(&body[72..74], "02"); // version
+        assert_eq!(&body[74..78], "001e"); // base_tier_count = 30
+        assert_eq!(&body[78..86], "0007a120"); // base_factor_ppm = 500000
+        assert_eq!(&body[86..88], "02"); // ur_set_count = 2
+        assert_eq!(body.len(), 88 + 20 * 2 + 64); // exact
+        assert!(body.ends_with(&manifest));
+        // parses back to the base fields; rarity is the indexer's job
+        let script = op_meta_script(&payload);
+        assert_eq!(parse(&script), Some(NfdRecord::CollectionCreate { max_supply: 500, meta_ptr: m }));
+        // a trailing byte is rejected (exact-length discipline)
+        assert!(parse(&op_meta_script(&format!("{payload}00"))).is_none());
+        // zero UR sets is a plain tiered v2 set (no sets, manifest still present)
+        let p0 = encode_collection_create_v2(0, &"cc".repeat(32), 10, 500_000, &[], &"00".repeat(32)).unwrap();
+        assert!(matches!(parse(&op_meta_script(&p0)), Some(NfdRecord::CollectionCreate { .. })));
+        assert!(encode_collection_create_v2(1, "short", 1, 1, &[], &manifest).is_err());
     }
 
     #[test]

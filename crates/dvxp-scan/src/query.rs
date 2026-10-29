@@ -147,9 +147,16 @@ pub struct NfdView {
     /// resolved (waiting for its seed block). Lets every client show "opening…"
     /// and refuse a second reveal. Implies `sealed` (not yet revealed).
     pub reveal_pending: bool,
-    /// The revealed roll, once it has resolved: `(base_tier, ur_tier)`. `None`
-    /// while sealed (or for a non-Perc NFD). `ur_tier` is `Some` for ultra-rares.
-    pub revealed: Option<(u16, Option<u16>)>,
+    /// The revealed roll, once it has resolved: `(base_tier, ur_set, ur_tier)`.
+    /// `None` while sealed (or for a non-Perc NFD). `ur_set`/`ur_tier` are `Some`
+    /// for ultra-rares: `ur_set` is the 0-based named UR set (least-rare-first),
+    /// `ur_tier` the tier within it.
+    pub revealed: Option<(u16, Option<u16>, Option<u16>)>,
+    /// The owner's announced X25519 encryption key (from their KEY-ANNOUNCE),
+    /// raw 32 bytes. `None` = no key announced yet. A storage service needs this
+    /// to pick which wrapped master-key blob belongs to this owner; absent means
+    /// "master pending until the owner announces a key".
+    pub owner_enc_pubkey: Option<[u8; 32]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,6 +167,9 @@ pub struct CollectionView {
     pub max_supply: u32,
     pub meta_ptr: [u8; 32],
     pub minted: u32,
+    /// Arweave pointer to the set manifest (names, placeholders) from a v2
+    /// blind-pack COLLECTION-CREATE; `None` for v1/plain collections.
+    pub manifest_ptr: Option<[u8; 32]>,
 }
 
 // ---------------------------------------------------------------------------
@@ -510,7 +520,8 @@ pub fn nfd(o: &Overlay, id: &[u8; 32]) -> Option<NfdView> {
         // so they are never sealed.
         sealed: n.collection_id.map_or(false, |c| o.nfd.rarity_of(&c).is_some()) && n.revealed.is_none(),
         reveal_pending: o.nfd.reveal_pending(id),
-        revealed: n.revealed.map(|r| (r.base_tier, r.ur_tier)),
+        revealed: n.revealed.map(|r| (r.base_tier, r.ur_set, r.ur_tier)),
+        owner_enc_pubkey: o.nfd.enc_pubkey_of(&owner),
     })
 }
 
@@ -589,6 +600,24 @@ pub fn nfds_owned_by(o: &Overlay, addr: AddrKey, limit: usize) -> Vec<NfdView> {
     o.nfd.owned_by(&packed).iter().take(limit).filter_map(|id| nfd(o, id)).collect()
 }
 
+/// What one address holds WITHIN a single collection, bounded. Filters by
+/// collection BEFORE applying the limit, so a holder's cards in other collections
+/// can't crowd this set's out of a truncated page. This read drives per-set grids
+/// and the master-key ownership check, where a silent truncation would read as
+/// "doesn't own it" and wrongly deny someone their own art.
+pub fn nfds_owned_in_collection(o: &Overlay, addr: AddrKey, collection: &[u8; 32], limit: usize) -> Vec<NfdView> {
+    let mut packed = [0u8; 21];
+    packed[0] = addr.0;
+    packed[1..].copy_from_slice(&addr.1);
+    o.nfd
+        .owned_by(&packed)
+        .iter()
+        .filter_map(|id| nfd(o, id))
+        .filter(|n| n.collection_id == Some(*collection))
+        .take(limit)
+        .collect()
+}
+
 pub fn collection(o: &Overlay, id: &[u8; 32]) -> Option<CollectionView> {
     let c = o.nfd.collection_of(id)?;
     let mut creator = [0u8; 21];
@@ -603,6 +632,7 @@ pub fn collection(o: &Overlay, id: &[u8; 32]) -> Option<CollectionView> {
         max_supply: c.max_supply,
         meta_ptr: c.meta_ptr,
         minted: c.minted,
+        manifest_ptr: c.manifest_ptr,
     })
 }
 
@@ -625,6 +655,33 @@ pub fn collection_members(o: &Overlay, id: &[u8; 32], limit: usize) -> Vec<NfdVi
     out.dedup_by_key(|n| n.id);
     out.truncate(limit);
     out
+}
+
+/// The DISTINCT grid slots in a collection that have been revealed by anyone.
+///
+/// The first on-chain reveal of a slot is what un-secrets its public thumbnail
+/// (docs/NFD-SET-SHAPE-AND-ART.md §5), so a storage service reads this to decide
+/// which thumbnails it may serve. A slot id is GoBanq's canonical form:
+/// `base.<tier>` for a base-tier card, `ur.<setIndex>.<tier>` for an ultra-rare
+/// (setIndex 0-based, least-rare-first). Deduped and sorted. This does NOT carry
+/// who revealed first or when; that needs reveal-provenance the ledger does not
+/// record yet (a later addition, for discovery credit / leaderboards).
+pub fn revealed_slots(o: &Overlay, collection: &[u8; 32]) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    for e in o.log.nfd_events() {
+        let Some(n) = nfd(o, &e.id) else { continue };
+        if n.collection_id.as_ref() != Some(collection) {
+            continue;
+        }
+        if let Some((base_tier, ur_set, ur_tier)) = n.revealed {
+            let slot = match (ur_set, ur_tier) {
+                (Some(s), Some(t)) => format!("ur.{s}.{t}"),
+                _ => format!("base.{base_tier}"),
+            };
+            seen.insert(slot);
+        }
+    }
+    seen.into_iter().collect()
 }
 
 #[cfg(test)]
