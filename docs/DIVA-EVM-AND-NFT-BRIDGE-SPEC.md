@@ -49,6 +49,29 @@ DIVA is a **geth (go-ethereum) fork** secured by **POAS** (Proof of Authority St
 ### 2.4 Why native gas = bridged Divi (context)
 DIVA launches with ~zero native supply. Bridging Divi in mints native gas 1:1; bridging out burns it. This is the "custom gas token" pattern (supported by Arbitrum Orbit / OP Stack / Polygon CDK). The **NFT bridge does not mint gas** — it mints ERC-721s — but it shares the same federation and the same lock-and-release invariant. Keep the two bridges as separate contracts with a shared signer set.
 
+### 2.5 Address & identity model: one key, two faces, one name (added 2026-Oct-30)
+
+**The question answered here:** can a Divi address and its DIVA address be the same, so bridging round-trips to "the same you"? Functionally yes; literally (identical string) no, and this section fixes why and how.
+
+**Not the identical string, and why we reject forcing it.** A Divi address and a DIVA (EVM) address are both 20 bytes, but derived from the public key by *different* hashing recipes: Divi uses the Bitcoin recipe (`hash160` = RIPEMD160(SHA256(pubkey)), wrapped in Base58Check with a version byte — the leading `D`), the EVM uses the last 20 bytes of `keccak256(pubkey)`, hex with `0x`. Same key in, different bytes out. To make the bytes identical we would have to change how the EVM derives an account address from a key and from a signature (`ecrecover`, CREATE/CREATE2, every tool). That breaks compatibility with MetaMask, hardware wallets, and all standard EVM libraries, which is the whole point of being a normal EVM chain. **Rejected.** We embrace "two faces of one key," not "one string."
+
+**The good news that makes it work: same curve, same key.** Divi and the EVM both use **secp256k1**. The private/public key is *identical* across both chains; only the derived address differs. So a single seed already controls both your Divi address and your DIVA address. That is as close to "same address" as the math allows, and it is enough.
+
+**Auto-routing round-trip (the real goal, achievable).** No manual address entry is needed in either direction:
+- **Bridging out of Divi:** spending a Divi UTXO reveals the owner's public key in the input (standard P2PKH, no SegWit on Divi). The bridge takes that pubkey, derives the owner's DIVA (EVM) address itself, and delivers there.
+- **Bridging back from DIVA:** the EVM signature reveals the same pubkey (`ecrecover`), so the bridge derives the Divi `hash160` address and delivers home.
+Because both faces come from one key, the mapping is deterministic and needs no registry: given the key, both addresses are fixed and computable. Value always returns to the same owner.
+
+**The name layer IS the Divi HRA project — not a second namespace.** "DIVA:geoff" must resolve to the *same* `GEOFF` that lives in the Divi Human-Readable-Address registry (DVXP record type **0x05**, one namespace shared with DMT tickers, uppercase-ASCII, OP_META, no fork — built and regtest-proven; see `/Users/geoffreymccabe/Divi-Desktop-6.9/docs/HUMAN-READABLE-ADDRESSES.md` and the `name-registry` crate). A separate DIVA naming system is **forbidden**: two namespaces means `GEOFF` the person and `GEOFF` owned by someone else, which is exactly the impersonation hole the "one namespace" decision closes.
+
+Design for resolving a name on DIVA:
+- **Divi stays the single source of truth.** Names are registered, owned, transferred, renewed and expired on Divi. DIVA does not run a competing registry; it **reads** the Divi name state through the same per-epoch registry-root / checkpoint path this bridge already defines for NFD ownership (§3 onward).
+- **Add a DIVA-address pointer to the name record,** exactly like ENS holds addresses for several chains under one name. `GEOFF` then carries both a Divi-address record and a DIVA-address record. The owner sets it; it needs the same both-directions-agree (reverse-resolution) check the HRA design already requires, so a name can never display as someone else.
+- **Same-key users get it for free:** the wallet derives the owner's DIVA address from the one key and fills/proves the pointer automatically. A user who wants a *different* DIVA address sets it by hand.
+- **"DIVA:" is a resolver/display hint only,** never part of the stored name (the stored name is just `GEOFF`). Keep it out of the on-chain record, and note that `DIVA` could itself be a registered name, so the prefix must stay a UI convention, not a namespace.
+
+**Status.** The Divi/HRA half is built and regtest-proven. The DIVA-address pointer record type and the DIVA-side resolver are **to-build**, and they ride the registry-root / checkpoint path, which is itself gated on the network + POAS landing (see `DIVA-2-NODE-LAUNCH-PLAN.md`). This is a clean extension of locked architecture, not a new design.
+
 ---
 
 ## 3. Divi UTXO side: the NFD layer (THIS IS BUILT — read the real code)
