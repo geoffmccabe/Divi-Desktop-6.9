@@ -173,6 +173,37 @@ export const nfdCreateCollection = (
 // ---- Kinet.ink launch bundle (v2 JSON, mint-on-demand) ----
 // The plan DD69 shows before publishing; then nfdLaunch creates the collection
 // (with on-chain rarity + cover) and sets the primary price. No pre-mint.
+// Per-Ultra-Rare-set forge dials (v6): whether the set can be forged, and how a
+// forge climbs — "plus1" = always exactly +1 tier; "variable" = a geometric climb
+// where continueChancePpm is the chance (parts-per-million) of climbing one more.
+export interface ForgeDials {
+  enabled: boolean;
+  mode: "plus1" | "variable";
+  continueChancePpm: number;
+}
+// One Ultra Rare set's editable spec (v6). `chancePpm` is the resolved appearance
+// chance derived from the weights; `tierCount` is structural (from the art).
+export interface UrSetSpec {
+  name: string;
+  tierCount: number;
+  rarityWeight: number;
+  chancePpm: number;
+  factorPpm: number;
+  forge: ForgeDials;
+}
+export interface SetShape {
+  baseTierCount: number;
+  baseFactorPpm: number;
+  mainSetWeight: number;
+  ultraRareSets: UrSetSpec[];
+}
+export interface LaunchItem {
+  edition: number | null;
+  name: string;
+  set: string;
+  tier: number;
+  isUltraRare: boolean;
+}
 export interface LaunchPlan {
   name: string;
   description: string;
@@ -180,16 +211,49 @@ export interface LaunchPlan {
   payoutAddress: string;
   rarity: Rarity;
   itemCount: number;
-  maxTier: number;
-  urItemCount: number;
   coverUrl: string | null;
-  packagedArt: string | null;
   tierArt: Record<string, string>;
+  // v2-only extras (absent on v6).
+  maxTier?: number;
+  urItemCount?: number;
+  packagedArt?: string | null;
+  // v6 (owner-only, multi-UR-set) extras.
+  version?: number;
+  symbol?: string;
+  website?: string;
+  maxSupply?: number;
+  forgeFeeDuffs?: number | null;
+  setShape?: SetShape;
+  items?: LaunchItem[];
+}
+// The review screen's edited spec, sent to execute. Only these fields are
+// editable; art is never touched. Per-set edits are matched by array index.
+export interface LaunchEdits {
+  name?: string;
+  description?: string;
+  symbol?: string;
+  website?: string;
+  maxSupply?: number;
+  priceDuffs?: number;
+  payoutAddress?: string;
+  forgeFeeDuffs?: number | null;
+  setShape?: {
+    baseFactorPpm?: number;
+    mainSetWeight?: number;
+    ultraRareSets?: Array<{
+      name?: string;
+      rarityWeight?: number;
+      chancePpm?: number;
+      factorPpm?: number;
+      forge?: Partial<ForgeDials>;
+    }>;
+  };
 }
 export interface LaunchResult {
   collectionId: string;
   priceDuffs: number;
   name: string;
+  forgeFeeDuffs?: number | null;
   tierArt: Record<string, string>;
 }
 export const nfdLaunchOpen = (jsonPath: string) => invoke<LaunchPlan>("nfd_launch_open", { jsonPath });
@@ -215,8 +279,13 @@ export interface LaunchQuote {
   mintPriceDuffs: number;
 }
 export const nfdLaunchQuote = (jsonPath: string) => invoke<LaunchQuote>("nfd_launch_quote", { jsonPath });
-export const nfdLaunchExecute = (creatorAddr: string, jsonPath: string, orderId: string, maxSupply: number) =>
-  invoke<LaunchResult>("nfd_launch_execute", { creatorAddr, jsonPath, orderId, maxSupply });
+export const nfdLaunchExecute = (
+  creatorAddr: string,
+  jsonPath: string,
+  orderId: string,
+  maxSupply: number,
+  edits?: LaunchEdits,
+) => invoke<LaunchResult>("nfd_launch_execute", { creatorAddr, jsonPath, orderId, maxSupply, edits });
 
 export interface ReceiveCode {
   address: string;

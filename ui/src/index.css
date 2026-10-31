@@ -863,6 +863,45 @@ code, .mono { font-family: var(--font-mono); }
 .wl-btn-disabled { opacity: 0.5; pointer-events: none; }
 .import-plan { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .import-warn { margin: 0; padding-left: 18px; font-size: 0.78rem; color: hsl(var(--muted-foreground)); max-height: 140px; overflow-y: auto; }
+
+/* Editable review screen (v6 launch). All colours come from theme tokens. */
+.launch-editor { display: flex; flex-direction: column; gap: 10px; }
+.le-head { margin: 10px 0 2px; font-size: 0.95rem; font-weight: 600; color: hsl(var(--foreground)); }
+.le-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.le-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+.le-field > span { display: flex; align-items: center; gap: 6px; }
+.le-span2 { grid-column: 1 / -1; }
+.le-narrow { max-width: 150px; }
+.le-rarity { display: flex; flex-direction: column; gap: 8px; }
+.le-set {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; border: 1px solid hsl(var(--border) / 0.6); border-radius: 8px;
+  background: hsl(var(--subpanel-bg) / 0.4);
+}
+.le-set-main { background: hsl(var(--accent) / 0.08); }
+.le-set-top { display: flex; align-items: center; gap: 10px; }
+.le-set-top strong { color: hsl(var(--foreground)); }
+.le-setname { flex: 1; min-width: 0; font-weight: 600; }
+.le-tiers { font-size: 0.78rem; color: hsl(var(--muted-foreground)); white-space: nowrap; }
+.le-set-row { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; }
+.le-chance { font-size: 0.82rem; color: hsl(var(--accent)); align-self: center; }
+.le-forge { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
+.le-inline { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: hsl(var(--muted-foreground)); }
+.le-inline > span { display: flex; align-items: center; gap: 6px; }
+.le-select { min-width: 110px; }
+.le-dim { opacity: 0.45; }
+.le-cardgroup { display: flex; flex-direction: column; gap: 6px; }
+.le-cardgroup-name { font-size: 0.82rem; font-weight: 600; color: hsl(var(--muted-foreground)); }
+.le-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; }
+.le-card {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 6px;
+  border: 1px solid hsl(var(--border) / 0.6); border-radius: 8px;
+  background: hsl(var(--subpanel-bg) / 0.5); min-width: 0;
+}
+.le-card-ur { border-color: hsl(var(--accent) / 0.7); }
+.le-card-tier { font-size: 0.72rem; font-weight: 700; color: hsl(var(--accent)); }
+.le-card-name { font-size: 0.74rem; color: hsl(var(--foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 520px) { .le-grid2 { grid-template-columns: 1fr; } }
 .coll-xfer { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
 .admin-panel-body { display: flex; flex-direction: column; gap: 12px; padding: 4px 2px; }
 .pay-row { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: hsl(var(--foreground)); }

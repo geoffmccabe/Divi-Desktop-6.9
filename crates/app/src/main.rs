@@ -2132,10 +2132,11 @@ async fn nfd_launch_execute(
     json_path: String,
     order_id: String,
     max_supply: u32,
+    edits: Option<Value>,
 ) -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let cfg = NodeConfig::load().map_err(|_| "No Divi node is set up yet.".to_string())?;
-        collectibles::launch_execute(&cfg, &creator_addr, &json_path, &order_id, max_supply)
+        collectibles::launch_execute(&cfg, &creator_addr, &json_path, &order_id, max_supply, edits.as_ref())
     })
     .await
     .map_err(|_| "internal error".to_string())?

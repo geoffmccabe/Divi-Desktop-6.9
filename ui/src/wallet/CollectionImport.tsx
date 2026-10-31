@@ -2,11 +2,12 @@ import { useState } from "react";
 import {
   nfdImportOpen, nfdImportReadItem, nfdCreateCollection, nfdMint, nfdPrepareFunding, nfdTxConfirmations,
   nfdPickZip, nfdLaunchOpen, nfdLaunchQuote, nfdLaunchExecute,
-  type ImportPlan, type LaunchPlan, type LaunchQuote,
+  type ImportPlan, type LaunchPlan, type LaunchQuote, type LaunchEdits,
 } from "./api";
 import { makeThumbnailFromBase64, type Item, type Collection } from "./CollectiblesPanel";
 import { setTierArtManifest } from "./reveal/tierArt";
 import { InfoDot } from "../InfoDot";
+import { LaunchEditor } from "./LaunchEditor";
 
 // Launch a collection authored in Kinet.ink. The current (v2) export is a single
 // .json "launch bundle": a mint-on-demand Perc set, so DD69 creates the
@@ -52,6 +53,8 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
   // Launch (v2 JSON) flow.
   const [launchPlan, setLaunchPlan] = useState<LaunchPlan | null>(null);
   const [maxPacks, setMaxPacks] = useState("0"); // 0 = unlimited
+  // The review screen's edited spec (v6). Null for the legacy summary (v2).
+  const [launchEdits, setLaunchEdits] = useState<LaunchEdits | null>(null);
   const [launchMsg, setLaunchMsg] = useState<string | null>(null);
   // The storage-fee quote the user confirms (with the DIVI price) before paying.
   const [launchQuote, setLaunchQuote] = useState<LaunchQuote | null>(null);
@@ -75,6 +78,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
       setPath(picked);
       setPlan(null);
       setLaunchPlan(null);
+      setLaunchEdits(null);
       setLaunchQuote(null);
       setFinished(false);
       setProgress(null);
@@ -116,7 +120,7 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
     try {
       const creator = await getMyAddress();
       const cap = Math.max(0, Math.floor(Number(maxPacks) || 0));
-      const res = await nfdLaunchExecute(creator, path, launchQuote.orderId, cap);
+      const res = await nfdLaunchExecute(creator, path, launchQuote.orderId, cap, launchEdits ?? undefined);
       // Teach the reveal art registry this collection's tier -> art URLs.
       const byTier: Record<number, string> = {};
       for (const [k, v] of Object.entries(res.tierArt)) byTier[Number(k)] = v;
@@ -254,24 +258,36 @@ export function CollectionImport({ getMyAddress, onCollection, onItem }: Props) 
 
       {launchPlan && (
         <div className="import-plan" style={{ marginTop: 12 }}>
-          <p className="wl-note">
-            <strong>{launchPlan.name}</strong>: a blind-pack (Perc) set with {launchPlan.rarity.tierCount} tiers
-            {launchPlan.rarity.urCount > 0 ? ` and ${launchPlan.rarity.urCount} ultra-rares` : ""}, from{" "}
-            {launchPlan.itemCount} art pieces.
-          </p>
-          <p className="wl-note">
-            Mint price: <strong>{priceDivi} DIVI</strong> per pack.{" "}
-            {launchPlan.payoutAddress ? `Paid to ${launchPlan.payoutAddress}.` : "Paid to your own wallet."}
-          </p>
-          <label style={{ display: "block", margin: "8px 0 4px", fontSize: 13 }}>Max packs (0 = unlimited)</label>
-          <input
-            className="wl-input"
-            type="number"
-            min={0}
-            value={maxPacks}
-            onChange={(e) => setMaxPacks(e.target.value)}
-            style={{ maxWidth: 200 }}
-          />
+          {launchPlan.version === 6 || launchPlan.setShape ? (
+            <LaunchEditor
+              plan={launchPlan}
+              onChange={(e, ms) => {
+                setLaunchEdits(e);
+                setMaxPacks(String(ms));
+              }}
+            />
+          ) : (
+            <>
+              <p className="wl-note">
+                <strong>{launchPlan.name}</strong>: a blind-pack (Perc) set with {launchPlan.rarity.tierCount} tiers
+                {launchPlan.rarity.urCount > 0 ? ` and ${launchPlan.rarity.urCount} ultra-rares` : ""}, from{" "}
+                {launchPlan.itemCount} art pieces.
+              </p>
+              <p className="wl-note">
+                Mint price: <strong>{priceDivi} DIVI</strong> per pack.{" "}
+                {launchPlan.payoutAddress ? `Paid to ${launchPlan.payoutAddress}.` : "Paid to your own wallet."}
+              </p>
+              <label style={{ display: "block", margin: "8px 0 4px", fontSize: 13 }}>Max packs (0 = unlimited)</label>
+              <input
+                className="wl-input"
+                type="number"
+                min={0}
+                value={maxPacks}
+                onChange={(e) => setMaxPacks(e.target.value)}
+                style={{ maxWidth: 200 }}
+              />
+            </>
+          )}
           {!launchQuote && (
             <div style={{ marginTop: 10 }}>
               <button className="wl-btn wl-btn-primary" disabled={busy} onClick={doQuote}>

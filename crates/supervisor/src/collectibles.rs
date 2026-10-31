@@ -576,7 +576,12 @@ fn plan_rarity(plan: &Value) -> Option<(u16, u32, u32, u16)> {
 /// normalizes to none. A package WITHOUT `ultraRareSets` returns `None`, so the
 /// existing single-UR / plain path (plan_rarity + create_collection) is unchanged.
 fn plan_set_shape_v2(plan: &Value) -> Option<(u16, u32, Vec<(u16, u32, u32)>, String)> {
-    let arr = plan.get("ultraRareSets").and_then(|v| v.as_array())?;
+    // The sets live either at the top level (v5 shape) or nested under `setShape`
+    // (v6 shape). Try both so either package drives the multi-UR-set record.
+    let arr = plan
+        .get("ultraRareSets")
+        .and_then(|v| v.as_array())
+        .or_else(|| plan.get("setShape").and_then(|s| s.get("ultraRareSets")).and_then(|v| v.as_array()))?;
     if arr.is_empty() {
         return None;
     }
@@ -641,6 +646,82 @@ pub fn launch_quote(cfg: &NodeConfig, json_path: &str) -> Result<serde_json::Val
     }))
 }
 
+/// Apply the review screen's edits over a parsed launch plan, in place. Only
+/// SPEC fields are editable (names, numbers, rarity weights/chances, forge dials);
+/// NEVER art URLs or item art, so a tampered edits blob cannot repoint storage.
+/// The UI recomputes each set's `chancePpm` from the weights and sends the final
+/// values, so the backend just accepts them (clamped). `tierCount` is structural
+/// (it comes from the art) and is kept from the file, not from edits.
+fn apply_launch_edits(plan: &mut Value, edits: &Value) {
+    let cap = |s: &str| -> String { s.chars().take(512).collect() };
+    for k in ["name", "description", "symbol", "website"] {
+        if let Some(s) = edits.get(k).and_then(|x| x.as_str()) {
+            plan[k] = json!(cap(s));
+        }
+    }
+    if let Some(n) = edits.get("maxSupply").and_then(|x| x.as_u64()) {
+        plan["maxSupply"] = json!(n.min(u32::MAX as u64));
+    }
+    if let Some(n) = edits.get("priceDuffs").and_then(|x| x.as_u64()) {
+        plan["priceDuffs"] = json!(n);
+    }
+    if let Some(s) = edits.get("payoutAddress").and_then(|x| x.as_str()) {
+        plan["payoutAddress"] = json!(cap(s));
+    }
+    // forgeFeeDuffs: a number sets the per-collection forge cost; explicit null clears it.
+    if let Some(v) = edits.get("forgeFeeDuffs") {
+        plan["forgeFeeDuffs"] = if v.is_null() { Value::Null } else { json!(v.as_u64().unwrap_or(0)) };
+    }
+    // setShape scalars + per-UR-set spec fields.
+    if let Some(es) = edits.get("setShape").cloned() {
+        if !plan["setShape"].is_object() {
+            plan["setShape"] = json!({});
+        }
+        let shape = &mut plan["setShape"];
+        if let Some(n) = es.get("baseFactorPpm").and_then(|x| x.as_u64()) {
+            shape["baseFactorPpm"] = json!(n.min(u32::MAX as u64));
+        }
+        if let Some(n) = es.get("mainSetWeight").and_then(|x| x.as_u64()) {
+            shape["mainSetWeight"] = json!(n.min(u32::MAX as u64));
+        }
+        if let (Some(e_sets), Some(p_sets)) = (
+            es.get("ultraRareSets").and_then(|x| x.as_array()),
+            shape.get_mut("ultraRareSets").and_then(|x| x.as_array_mut()),
+        ) {
+            for (i, p) in p_sets.iter_mut().enumerate() {
+                let Some(e) = e_sets.get(i) else { continue };
+                if let Some(s) = e.get("name").and_then(|x| x.as_str()) {
+                    p["name"] = json!(cap(s));
+                }
+                if let Some(n) = e.get("rarityWeight").and_then(|x| x.as_u64()) {
+                    p["rarityWeight"] = json!(n.min(u32::MAX as u64));
+                }
+                if let Some(n) = e.get("chancePpm").and_then(|x| x.as_u64()) {
+                    p["chancePpm"] = json!(n.min(1_000_000));
+                }
+                if let Some(n) = e.get("factorPpm").and_then(|x| x.as_u64()) {
+                    p["factorPpm"] = json!(n.min(u32::MAX as u64));
+                }
+                if let Some(f) = e.get("forge") {
+                    if !p["forge"].is_object() {
+                        p["forge"] = json!({});
+                    }
+                    let pf = &mut p["forge"];
+                    if let Some(b) = f.get("enabled").and_then(|x| x.as_bool()) {
+                        pf["enabled"] = json!(b);
+                    }
+                    if let Some(m) = f.get("mode").and_then(|x| x.as_str()) {
+                        pf["mode"] = json!(if m == "plus1" { "plus1" } else { "variable" });
+                    }
+                    if let Some(n) = f.get("continueChancePpm").and_then(|x| x.as_u64()) {
+                        pf["continueChancePpm"] = json!(n.min(1_000_000));
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// STEP 2 — pay for and complete a launch quoted by [`launch_quote`]. Pays the
 /// storage fee to the treasury from the user's own wallet, waits for GoBanq to
 /// confirm the payment on-chain, uploads the art (GoBanq stores it on Arweave),
@@ -653,8 +734,14 @@ pub fn launch_execute(
     json_path: &str,
     order_id: &str,
     max_supply: u32,
+    edits: Option<&Value>,
 ) -> Result<serde_json::Value, String> {
-    let plan = crate::collectibles_import::open_launch(json_path)?;
+    let mut plan = crate::collectibles_import::open_launch(json_path)?;
+    // The review screen's edits (names, prices, rarity weights/chances, forge
+    // dials, forge cost) replace the file's values before anything is published.
+    if let Some(e) = edits {
+        apply_launch_edits(&mut plan, e);
+    }
     let art = gather_art(&plan)?;
 
     // Read the authoritative amount + treasury from GoBanq (not from the client).
@@ -774,10 +861,21 @@ pub fn launch_execute(
         _ => creator_addr.to_string(),
     };
     set_mint_price(cfg, &out.txid, creator_addr, mint_price, &payout)?;
+
+    // Per-collection forge cost (v6): if the package/edits carry one, record it so
+    // a forge of this collection's packs must pay it to the creator payout. The
+    // per-set forge BEHAVIOR dials are honored by the chain's forge resolver.
+    let forge_fee_duffs = plan["forgeFeeDuffs"].as_u64();
+    if let Some(fee) = forge_fee_duffs {
+        if fee > 0 {
+            set_forge_fee(cfg, &out.txid, creator_addr, fee, &payout)?;
+        }
+    }
     Ok(json!({
         "collectionId": out.txid,
         "priceDuffs": mint_price,
         "name": name,
+        "forgeFeeDuffs": forge_fee_duffs,
         "tierArt": tier_art,
     }))
 }

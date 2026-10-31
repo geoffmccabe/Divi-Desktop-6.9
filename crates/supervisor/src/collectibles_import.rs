@@ -284,6 +284,15 @@ pub fn read_item(cfg: &NodeConfig, import_dir: &str, edition: u64) -> Result<Val
 /// an arbitrary server. Update this if the Kinet.ink storage host ever changes.
 const KINETINK_ART_PREFIX: &str = "https://matteqdhinpiwfnvxaef.supabase.co/";
 
+/// Every referenced art URL must be empty or on the trusted Kinet.ink host.
+fn check_art_url(u: &str) -> Result<(), String> {
+    if u.is_empty() || u.starts_with(KINETINK_ART_PREFIX) {
+        Ok(())
+    } else {
+        Err("a bundle art URL is not on the trusted Kinet.ink host".to_string())
+    }
+}
+
 /// Parse + validate a Kinet.ink *launch* bundle: a single `.json` in the v2
 /// `kinetink-collection-launch` format (art referenced by URL, not embedded; a
 /// priced set is mint-on-demand, so there is NO pre-mint). Returns a plan the UI
@@ -301,8 +310,14 @@ pub fn open_launch(json_path: &str) -> Result<Value, String> {
         return Err("not a Kinet.ink launch bundle".into());
     }
     let version = v.get("version").and_then(|x| x.as_i64()).unwrap_or(0);
-    if !(1..=2).contains(&version) {
+    if !(1..=6).contains(&version) {
         return Err("unsupported launch bundle version".into());
+    }
+    // v6 (and later) carry a `setShape` with per-Ultra-Rare-set dials and the
+    // owner-only encrypted master model. That shape is read by its own parser so
+    // the edit screen gets the full editable spec; v1/v2 stay on the path below.
+    if v.get("setShape").is_some() {
+        return open_launch_v6(&v);
     }
     let col = v.get("collection").ok_or("bundle has no collection")?;
     let name = cap_str(col, "name");
@@ -383,6 +398,140 @@ pub fn open_launch(json_path: &str) -> Result<Value, String> {
         "coverUrl": if cover_url.is_empty() { Value::Null } else { json!(cover_url) },
         "packagedArt": if packaged_art.is_empty() { Value::Null } else { json!(packaged_art) },
         "tierArt": Value::Object(tier_art),
+    }))
+}
+
+/// Parse a v6 (owner-only, multi-Ultra-Rare-set) launch bundle into the rich,
+/// EDITABLE plan the review screen shows before anything is published. Unlike v2,
+/// v6 art is encrypted per item (`media.master.ciphertextUrl` + `wrappedKeys`) and
+/// thumbnails are null, so there is no public tier -> art map here; the master +
+/// keys are handled later by the mint/drops pipeline, not at launch. This parser
+/// only validates and surfaces the spec (names, tiers, per-set rarity weights and
+/// forge dials, supply, prices, forge cost) for the user to review and edit.
+fn open_launch_v6(v: &Value) -> Result<Value, String> {
+    let col = v.get("collection").ok_or("bundle has no collection")?;
+    let name = cap_str(col, "name");
+    if name.is_empty() {
+        return Err("collection name is required".into());
+    }
+    let description = cap_str(col, "description");
+    let symbol = cap_str(col, "symbol");
+    let website = cap_str(col, "website");
+    let max_supply = col.get("maxSupply").and_then(|x| x.as_u64()).unwrap_or(0).min(u32::MAX as u64) as u32;
+
+    // Primary sale.
+    let sale = col.get("sale");
+    let price_duffs = sale.and_then(|s| s.get("priceDuffs")).and_then(|x| x.as_u64()).unwrap_or(0);
+    let payout_address = sale.and_then(|s| s.get("payoutAddress")).and_then(|x| x.as_str()).unwrap_or("").to_string();
+
+    // Per-collection forge cost (null until the creator sets one).
+    let forge_fee_duffs = v.get("forgeFee").and_then(|f| f.get("duffs")).and_then(|x| x.as_u64());
+
+    // Cover: collection.images.logo.url, on the trusted host.
+    let cover_url = col
+        .get("images")
+        .and_then(|i| i.get("logo"))
+        .and_then(|l| l.get("url"))
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    check_art_url(&cover_url)?;
+
+    // setShape: the base ladder + the Ultra-Rare sets with their dials.
+    let shape = v.get("setShape").ok_or("bundle has no setShape")?;
+    let base_tier_count = shape.get("baseTierCount").and_then(|x| x.as_u64()).unwrap_or(0).min(u16::MAX as u64) as u16;
+    let base_factor_ppm = shape.get("baseFactorPpm").and_then(|x| x.as_u64()).unwrap_or(0).min(u32::MAX as u64) as u32;
+    let main_set_weight = shape.get("mainSetWeight").and_then(|x| x.as_u64()).unwrap_or(100).min(u32::MAX as u64) as u32;
+
+    let ur_in = shape.get("ultraRareSets").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+    if ur_in.len() > u8::MAX as usize {
+        return Err("too many Ultra Rare sets".into());
+    }
+    let mut ur_sets = Vec::with_capacity(ur_in.len());
+    for s in &ur_in {
+        let set_name: String = s.get("name").and_then(|x| x.as_str()).unwrap_or("").chars().take(STR_MAX).collect();
+        let tier_count = s.get("tierCount").and_then(|x| x.as_u64()).unwrap_or(0).min(u16::MAX as u64) as u16;
+        let rarity_weight = s.get("rarityWeight").and_then(|x| x.as_u64()).unwrap_or(0).min(u32::MAX as u64) as u32;
+        let chance_ppm = s.get("chancePpm").and_then(|x| x.as_u64()).unwrap_or(0).min(1_000_000) as u32;
+        let factor_ppm = s.get("factorPpm").and_then(|x| x.as_u64()).unwrap_or(0).min(u32::MAX as u64) as u32;
+        // Forge dials. mode is "plus1" or "variable" (default variable); the
+        // continue-chance is clamped to a valid probability in ppm.
+        let f = s.get("forge");
+        let forge_enabled = f.and_then(|f| f.get("enabled")).and_then(|x| x.as_bool()).unwrap_or(false);
+        let mode = f.and_then(|f| f.get("mode")).and_then(|x| x.as_str()).unwrap_or("variable");
+        let forge_mode = if mode == "plus1" { "plus1" } else { "variable" };
+        let continue_ppm = f
+            .and_then(|f| f.get("continueChancePpm"))
+            .and_then(|x| x.as_u64())
+            .unwrap_or(500_000)
+            .min(1_000_000) as u32;
+        ur_sets.push(json!({
+            "name": set_name,
+            "tierCount": tier_count,
+            "rarityWeight": rarity_weight,
+            "chancePpm": chance_ppm,
+            "factorPpm": factor_ppm,
+            "forge": { "enabled": forge_enabled, "mode": forge_mode, "continueChancePpm": continue_ppm },
+        }));
+    }
+
+    // Items: a lightweight grid for the review screen (no art bytes; masters are
+    // encrypted). Validate every referenced URL is on the trusted host.
+    let items = v.get("items").and_then(|x| x.as_array()).ok_or("bundle has no items")?;
+    if items.is_empty() {
+        return Err("the bundle has no items".into());
+    }
+    if items.len() > MAX_ITEMS {
+        return Err("the bundle has too many items".into());
+    }
+    let mut out_items = Vec::with_capacity(items.len());
+    for it in items {
+        let edition = it.get("edition").and_then(|x| x.as_u64());
+        let iname = cap_str(it, "name");
+        let set: String = it.get("set").and_then(|x| x.as_str()).unwrap_or("").chars().take(STR_MAX).collect();
+        let tier = it.get("tier").and_then(|x| x.as_u64()).unwrap_or(0);
+        let is_ur = it.get("isUltraRare").and_then(|x| x.as_bool()).unwrap_or(false);
+        if let Some(master) = it.get("media").and_then(|m| m.get("master")) {
+            check_art_url(master.get("ciphertextUrl").and_then(|x| x.as_str()).unwrap_or(""))?;
+            check_art_url(master.get("animationCiphertextUrl").and_then(|x| x.as_str()).unwrap_or(""))?;
+        }
+        if let Some(t) = it.get("media").and_then(|m| m.get("thumbnail")).and_then(|t| t.get("url")).and_then(|x| x.as_str()) {
+            check_art_url(t)?;
+        }
+        out_items.push(json!({
+            "edition": edition, "name": iname, "set": set, "tier": tier, "isUltraRare": is_ur,
+        }));
+    }
+
+    let ur_count = ur_sets.len() as u64;
+    Ok(json!({
+        "version": 6,
+        "name": name,
+        "description": description,
+        "symbol": symbol,
+        "website": website,
+        "maxSupply": max_supply,
+        "priceDuffs": price_duffs,
+        "payoutAddress": payout_address,
+        "forgeFeeDuffs": forge_fee_duffs,
+        "setShape": {
+            "baseTierCount": base_tier_count,
+            "baseFactorPpm": base_factor_ppm,
+            "mainSetWeight": main_set_weight,
+            "ultraRareSets": ur_sets,
+        },
+        "items": out_items,
+        "itemCount": items.len() as u64,
+        "coverUrl": if cover_url.is_empty() { Value::Null } else { json!(cover_url) },
+        // v6 masters are encrypted (owner-only); no public per-tier art map.
+        "tierArt": Value::Object(serde_json::Map::new()),
+        // Kept for any legacy reader; the edit screen uses `setShape`.
+        "rarity": {
+            "tierCount": base_tier_count,
+            "urBasicPpm": 0,
+            "urProgressivePpm": 0,
+            "urCount": ur_count,
+        },
     }))
 }
 
@@ -496,6 +645,55 @@ mod tests {
         // An art URL on an untrusted host is rejected.
         let bad = body.replace("matteqdhinpiwfnvxaef.supabase.co", "evil.example.com");
         let bp = base.join("bad.json");
+        fs::write(&bp, bad).unwrap();
+        assert!(open_launch(bp.to_str().unwrap()).is_err());
+    }
+
+    #[test]
+    fn open_launch_parses_v6_setshape_and_forge_dials() {
+        let base = std::env::temp_dir().join("nfd_launch_v6");
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let p = base.join("v6.json");
+        let host = "https://matteqdhinpiwfnvxaef.supabase.co/x.enc";
+        let body = format!(
+            r#"{{"format":"kinetink-collection-launch","version":6,
+              "collection":{{"name":"Divi Rebels","description":"d","symbol":"REBEL",
+                "maxSupply":100000,
+                "sale":{{"mode":"mint-on-demand","priceDuffs":10000000000,"payoutAddress":""}},
+                "images":{{"logo":{{"url":"{host}"}}}}}},
+              "forgeFee":{{"duffs":100000000000,"destination":"creator-payout"}},
+              "setShape":{{"baseTierCount":30,"baseFactorPpm":500000,"mainSetWeight":100,
+                "ultraRareSets":[
+                  {{"name":"Gold","tierCount":12,"rarityWeight":5,"chancePpm":47170,"factorPpm":100000,
+                    "forge":{{"enabled":true,"mode":"variable","continueChancePpm":500000}}}},
+                  {{"name":"Diamond","tierCount":6,"rarityWeight":1,"chancePpm":9434,"factorPpm":100000,
+                    "forge":{{"enabled":true,"mode":"plus1","continueChancePpm":0}}}}]}},
+              "items":[
+                {{"edition":1,"name":"Rebel T1","set":"base","tier":1,"isUltraRare":false,
+                  "media":{{"master":{{"ciphertextUrl":"{host}","animationCiphertextUrl":null}},"thumbnail":{{"url":null}}}}}},
+                {{"edition":31,"name":"Gold UR-1","set":"Gold","tier":1,"isUltraRare":true,
+                  "media":{{"master":{{"ciphertextUrl":"{host}","animationCiphertextUrl":null}},"thumbnail":{{"url":null}}}}}}]}}"#
+        );
+        fs::write(&p, &body).unwrap();
+        let plan = open_launch(p.to_str().unwrap()).unwrap();
+        assert_eq!(plan["version"], 6);
+        assert_eq!(plan["name"], "Divi Rebels");
+        assert_eq!(plan["symbol"], "REBEL");
+        assert_eq!(plan["priceDuffs"], 10_000_000_000u64);
+        assert_eq!(plan["forgeFeeDuffs"], 100_000_000_000u64);
+        assert_eq!(plan["setShape"]["baseTierCount"], 30);
+        assert_eq!(plan["setShape"]["mainSetWeight"], 100);
+        assert_eq!(plan["setShape"]["ultraRareSets"][0]["name"], "Gold");
+        assert_eq!(plan["setShape"]["ultraRareSets"][0]["rarityWeight"], 5);
+        assert_eq!(plan["setShape"]["ultraRareSets"][0]["forge"]["mode"], "variable");
+        assert_eq!(plan["setShape"]["ultraRareSets"][1]["forge"]["mode"], "plus1");
+        assert_eq!(plan["itemCount"], 2);
+        assert_eq!(plan["items"][1]["set"], "Gold");
+
+        // An encrypted-master URL on an untrusted host is rejected.
+        let bad = body.replace("matteqdhinpiwfnvxaef.supabase.co", "evil.example.com");
+        let bp = base.join("bad6.json");
         fs::write(&bp, bad).unwrap();
         assert!(open_launch(bp.to_str().unwrap()).is_err());
     }
