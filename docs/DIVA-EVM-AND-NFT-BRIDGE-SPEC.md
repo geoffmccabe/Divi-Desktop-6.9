@@ -72,6 +72,34 @@ Design for resolving a name on DIVA:
 
 **Status.** The Divi/HRA half is built and regtest-proven. The DIVA-address pointer record type and the DIVA-side resolver are **to-build**, and they ride the registry-root / checkpoint path, which is itself gated on the network + POAS landing (see `DIVA-2-NODE-LAUNCH-PLAN.md`). This is a clean extension of locked architecture, not a new design.
 
+### 2.6 Cross-chain state model: known on both sides, active on one (added 2026-Oct-31)
+
+**Goal (Geoff):** both chains should know the ownership registry of everything on either chain (NFDs, names, tokens), and a user should be able to transact on one chain with an asset that currently lives on the other, in one action, without planning or doing two manual steps.
+
+**The safety rule this is built on:** an asset is **canonical on exactly one chain at any moment.** "Known on both" (information) is unlimited and encouraged; "transferable on both at once" is forbidden (it is a double-spend). The other side either knows the asset read-only, or holds a locked original / burned wrapper while it is active elsewhere.
+
+**2.6.1 The information mirror (both chains know the whole registry).** Use the signed registry-root mechanism (`/Users/geoffreymccabe/Divi-Blockchain_6.9/docs/NFD-REGISTRY-ROOT.md`) in both directions: Divi→DIVA via per-epoch (hourly) ownership roots, DIVA→Divi via the per-Divi-block tip checkpoint already in §1. How complete the on-chain knowledge is, is a choice:
+- **Root only (light):** the chain stores the 32-byte root; ownership is proven on demand with a small proof. Scales to any count.
+- **Full on-chain mirror:** a contract holds every item's id→owner, refreshed each epoch. Lets on-chain logic read ownership directly, but storage/gas grow with the item count.
+- **Hybrid (recommended):** anchor the root on-chain (cheap, authoritative) and keep a full, fast, queryable copy in an off-chain index/API for wallets and apps, with proofs available whenever trustlessness is needed.
+
+Extends beyond NFDs by the same pattern: **HRA names** (one name resolvable on both, §2.5), **DMT tickers / fungible registry** (shared namespace, so each chain knows which tickers exist and who owns them), and **Proof-of-Existence timestamps** (DIVA can verify "registered on Divi at time T", useful for art/POE clients).
+
+**2.6.2 Asset-location passport.** Give every bridgeable item a small location status carried in the registry: its **home chain** (where launched) and its **currently-active chain**. Both chains mirror it; the wallet always shows where an item lives and offers a one-click "bring it here." The lock sets the flag and the mint reads it, so double-activation is structurally impossible, not merely discouraged.
+
+**2.6.3 Transacting across the boundary in one action (the key UX).** Scenario: owner holds a Divi-born NFD not yet on DIVA and wants to sell/use it on DIVA.
+
+- **Unavoidable:** the asset must be locked on Divi (only the owner's Divi key can authorize that) before it mints on DIVA. So there is always a Divi signature. What we remove is the *manual two-step*, not the signature.
+- **One approval, two legs.** Because one secp256k1 key controls both chains (§2.5), the wallet signs the Divi lock and the DIVA action in a single confirmation and orchestrates the rest. One click for the user.
+- **Honest latency.** The DIVA side must wait for the Divi lock to be **final** (about 1 to 3 minutes: ~1-minute Divi blocks, 1-2 confirmations) before completing. Pair this with a transparent UI: "This item is on Divi; selling it here brings it over first, up to about N minutes. Proceed?" (Geoff's option 3, which is the right default, combined with the automatic option 1.)
+- **Hide the wait behind browsing:** start the bring-over the moment the owner **lists**, not when a buyer commits. By the time a buyer appears the item is already a native DIVA NFT and the sale is instant and normal. The DIVA marketplace contract must never accept a sale of an item that is not yet finally minted on DIVA.
+
+**2.6.4 The fast-lane, and why the naive version is unsafe (correction, 2026-Oct-31).** A tempting "instant" path is to act on the **unconfirmed Divi mempool** lock and mint on DIVA immediately. The cheapest attacker against this is **the owner double-spending their own unconfirmed lock**: broadcast the lock, let DIVA mint and the sale complete, then get a conflicting Divi tx mined so the lock never happened, keeping both the asset and the proceeds. This is a cheap mempool trick, NOT a "massive stake control" attack, so an unconfirmed lock must never be treated as final.
+- **Fungibles (DMT, stablecoins):** a safe instant path exists via an **underwriter/solver** who fronts the amount and is repaid on finality, eating the loss (or claiming a posted bond) if the lock fails. Proven elsewhere (Mayan, deBridge); price the risk as a small fee. OK to offer.
+- **Unique NFTs/NFDs:** do NOT offer the unconfirmed-mempool path by default. A unique item cannot be fronted from a pool, and a completed sale against a failed lock leaves the buyer with a worthless wrapper and no clean unwind. If an instant NFT lane is ever wanted, it requires an explicit underwriter accepting unique-asset risk plus an owner bond, and it is a later nicety, not the foundation. Default for NFTs is finality-gated (2.6.3).
+
+**2.6.5 Trust and status.** As everywhere, the mirror and the lock-attestation are only as trustworthy as who signs the roots and the mint/release quorum. Today that is effectively one key; it becomes trust-minimized only once POAS and the validator set exist. Built today: the Divi-side NFD registry + roots, HRA. To-build: the DIVA-side mirror contract/index, the location-passport flag, the one-approval two-leg wallet flow, the fungible fast-lane; and the symmetric gap from §3 (a DIVA-*origin* NFT moving to Divi needs the NFD format to carry a foreign-origin pointer).
+
 ---
 
 ## 3. Divi UTXO side: the NFD layer (THIS IS BUILT — read the real code)
