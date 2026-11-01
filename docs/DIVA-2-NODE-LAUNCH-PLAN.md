@@ -43,6 +43,29 @@ Two decisions this forces:
 
 **Rehearse first.** Stand up a throwaway local clique network (a disposable genesis) to confirm everything, especially that the modern forks activate (Section 0 catch), before finalizing the real genesis. That keeps the real chain's block 1 pristine.
 
+## 1.6 Producer selection: 5 reserved seats + 33 stake-elected seats
+
+The 38 producers are split into two kinds of seat. This is a known, well-proven pattern (a trusted core plus an open, stake-decided set), and it gives stability at launch and genuine decentralization as the network grows. (Geoff, 2026-Nov-01.)
+
+- **5 reserved (founder) seats.** Hand-picked by Geoff and baked into the chain. They are **truly untouchable**: the stake ranking never applies to them, they can never be out-ranked or bumped off by a bigger staker, and they are **not kicked for downtime**. The only way a reserved seat ever changes is a deliberate governance decision. These are the launch set (we flip them on at the "block 1 grand launch", Section 1.5).
+- **33 open seats.** Filled automatically by stake ranking: everyone who meets the minimum bond is sorted by stake amount, and the top 33 hold the open seats. No approval from Geoff is needed; seats fill themselves as stakers join. These seats ARE subject to the uptime gate: an open-seat holder that goes offline loses its slot to the next staker in line.
+- **Total caps at 38.** Before 33 stakers show up, the chain simply runs with however many seats are filled (the 5 reserved plus however many open seats are taken). It only caps at 38; it never requires 38 to run.
+
+**Decided rules (Geoff, 2026-Nov-01):**
+
+1. **Reserved seats are permanent and exempt from the stake sort.** Untouchable except by governance. (Confirmed.)
+2. **Reserved seats earn rewards the same way everyone else does — strictly by their own stake, their proportional share, no special treatment.** A founder seat with zero stake still produces blocks (keeps the chain alive) but earns nothing from the stake-weighted jackpot. There is no founder bonus and no free rewards.
+3. **Reserved seats carry a small minimum stake: 1,000 Divi.** Not the full 3,000,000 open-seat bond — just a floor so a founder seat always has some skin in the game and a non-zero reward share. (Parameter; 1,000 is the chosen starting value.)
+4. **Open seats require the full minimum bond** (proposed 3,000,000 Divi, Section 8) to enter the stake ranking.
+5. **Re-ranking cadence is per-epoch, not per-block.** Recompute the open-seat ranking on a fixed slow cadence (for example once every 24 hours / once per epoch), never every block, so the set is stable and not attackable by moment-to-moment stake shuffling.
+6. **Deterministic tie-break.** If two stakers are tied for the last open seat, the earlier bond wins (un-gameable).
+
+**Launch vs. mature:**
+- **Launch (now):** only the reserved seats exist in practice. Start the clique bootstrap with 1-2 signers, flip to the 5 reserved signers at the grand launch (Section 1.5). The 33 open seats sit empty until staking goes live.
+- **Mature (POAS phase, Section 8):** the 33 open seats come alive once the bond/stake machinery is built. From then on, strangers join permissionlessly by bonding Divi — this is the point where "my friends" stops scaling and the open market takes over the other 33 slots.
+
+Implementation note: the chain holds the reserved set as a fixed list (changeable only by governance) and computes the open set each epoch from the staking contract's ranking. The two lists are concatenated into the active producer set (max 38). The reward/jackpot eligibility (Section 8) treats all active producers uniformly by their own stake, so rule 2 falls out naturally — a reserved seat with 1,000 Divi simply has a tiny share.
+
 ## 2. The three machines and their roles
 
 | Machine | Role | Always-on? | Public P2P reachable? |
@@ -92,7 +115,7 @@ scan.divi.love's DIVA side is fragile and points at an ephemeral tunnel origin (
 
 When we move from clique to full POAS (Parlia with the staking system contracts), the reward model to build is the hourly-jackpot design Geoff proposed, which is sound because of one key property: **the reward is real Divi earned by the locked bond staking on the Divi mainchain, not freshly printed on DIVA.** DIVA's native coin is bridged Divi backed 1-to-1, so DIVA must never mint new Divi as a reward (that would break the peg). Earning it on the mainchain sidesteps that entirely.
 
-The model, to be specified in full later:
+The model, to be specified in full later (and it fills the **33 open seats** defined in Section 1.6; the 5 reserved seats run on the same reward math but with only a 1,000-Divi floor):
 
 - To run a validator you bridge in a minimum bond (proposed **3,000,000 Divi**; a parameter). The DIVI locks on the Divi mainchain in bridge custody and appears as your bond on DIVA.
 - That locked DIVI **stakes on the Divi mainchain** and earns real Divi staking rewards. This earned Divi is the reward pool. (Requires the bridge custody to actually run Divi staking/masternodes with the locked funds, and to secure that custody: real work, but it is the engine.)
