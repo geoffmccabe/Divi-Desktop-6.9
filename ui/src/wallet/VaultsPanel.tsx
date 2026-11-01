@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   walletBalance,
   vaultBalance,
@@ -7,6 +7,7 @@ import {
   vaultManagerAddress,
   vaultList,
   newReceiveAddress,
+  validateAddress,
   type Balance,
   type VaultEntry,
 } from "./api";
@@ -25,7 +26,14 @@ import "./vaults.css";
 // error, which we show with a hint to unlock.
 
 type Tab = "self" | "custodial";
-type Confirm = null | "deposit" | "withdraw";
+
+// What the user is confirming. Captured when they click Deposit/Withdraw and
+// never re-read from the inputs, so what they confirm is exactly what runs even
+// if the fields change underneath.
+type Pending =
+  | { kind: "deposit"; amount: number }
+  | { kind: "withdraw"; amount: number; to: string }
+  | null;
 
 // The real DiviGo Telegram handle goes here once we have it; until then the
 // "Set up DiviGo" button stays disabled rather than pointing nowhere.
@@ -41,73 +49,97 @@ export function VaultsPanel() {
   const [depositAmt, setDepositAmt] = useState("");
   const [withdrawAmt, setWithdrawAmt] = useState("");
   const [withdrawTo, setWithdrawTo] = useState("");
-  const [confirm, setConfirm] = useState<Confirm>(null);
+  const [pending, setPending] = useState<Pending>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Hard guard against a double-tap firing the same money action twice before
+  // React re-renders the disabled state.
+  const inFlight = useRef(false);
 
   const refresh = () => {
-    walletBalance()
-      .then((v) => setBal(v))
-      .catch(() => {});
-    vaultBalance()
-      .then((v) => setVaulted(v))
-      .catch(() => {});
-    vaultList()
-      .then((v) => setVaults(v))
-      .catch(() => {});
+    walletBalance().then(setBal).catch(() => {});
+    vaultBalance().then(setVaulted).catch(() => {});
+    vaultList().then(setVaults).catch(() => {});
   };
 
   useEffect(() => {
     refresh();
-    vaultManagerAddress()
-      .then((a) => setManager(a))
-      .catch(() => {});
+    vaultManagerAddress().then(setManager).catch(() => {});
     const id = setInterval(refresh, 8000);
     return () => clearInterval(id);
   }, []);
 
-  const doDeposit = async () => {
+  // Step 1: validate, then show the confirm. Nothing moves yet.
+  const startDeposit = () => {
+    setMsg(null);
+    setErr(null);
+    const amount = parseFloat(depositAmt);
+    if (!(amount > 0)) return setErr("Enter an amount greater than zero.");
+    if (bal && amount > bal.spendable)
+      return setErr(`You only have ${fmtDivi(bal.spendable)} DIVI available to vault.`);
+    setPending({ kind: "deposit", amount });
+  };
+
+  const startWithdraw = async () => {
+    setMsg(null);
+    setErr(null);
+    const amount = parseFloat(withdrawAmt);
+    const to = withdrawTo.trim();
+    if (!(amount > 0)) return setErr("Enter an amount greater than zero.");
+    if (!to) return setErr("Enter an address to withdraw to.");
+    if (vaulted != null && amount > vaulted)
+      return setErr(`You only have ${fmtDivi(vaulted)} DIVI in vaults.`);
+    // Check the address with the node before we let them confirm, so a typo
+    // can't send coins into the void.
+    setBusy(true);
+    const ok = await validateAddress(to).catch(() => false);
+    setBusy(false);
+    if (!ok) return setErr("That doesn't look like a valid DIVI address. Check it and try again.");
+    setPending({ kind: "withdraw", amount, to });
+  };
+
+  // Step 2: run exactly what was confirmed.
+  const runPending = async () => {
+    if (!pending || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setMsg(null);
     setErr(null);
     try {
-      const amount = parseFloat(depositAmt);
-      if (!(amount > 0)) throw new Error("Enter an amount greater than zero.");
-      const mgr = manager ?? (await vaultManagerAddress());
-      if (!mgr) throw new Error("Couldn't find the main node's staking address.");
-      const owner = await newReceiveAddress();
-      const txid = await vaultFund(owner, mgr, amount);
-      setMsg(`Vaulted ${fmtDivi(amount)} DIVI. Transaction ${txid.slice(0, 12)}…`);
-      setDepositAmt("");
+      if (pending.kind === "deposit") {
+        const mgr = manager ?? (await vaultManagerAddress());
+        if (!mgr) throw new Error("Couldn't find the main node's staking address.");
+        const owner = await newReceiveAddress();
+        const txid = await vaultFund(owner, mgr, pending.amount);
+        setMsg(`Vaulted ${fmtDivi(pending.amount)} DIVI. Transaction ${txid.slice(0, 12)}…`);
+        setDepositAmt("");
+      } else {
+        const txid = await vaultReclaim(pending.to, pending.amount);
+        setMsg(`Withdrew ${fmtDivi(pending.amount)} DIVI. Transaction ${txid.slice(0, 12)}…`);
+        setWithdrawAmt("");
+      }
       refresh();
     } catch (e) {
       setErr(errText(e));
     } finally {
+      inFlight.current = false;
       setBusy(false);
-      setConfirm(null);
+      setPending(null);
     }
   };
 
-  const doWithdraw = async () => {
-    setBusy(true);
-    setMsg(null);
-    setErr(null);
+  // Fill the withdraw box with a fresh address from this wallet, so a
+  // non-technical user doesn't have to hunt for one.
+  const fillMyAddress = async () => {
     try {
-      const amount = parseFloat(withdrawAmt);
-      if (!(amount > 0)) throw new Error("Enter an amount greater than zero.");
-      if (!withdrawTo.trim()) throw new Error("Enter an address to withdraw to.");
-      const txid = await vaultReclaim(withdrawTo.trim(), amount);
-      setMsg(`Withdrew ${fmtDivi(amount)} DIVI. Transaction ${txid.slice(0, 12)}…`);
-      setWithdrawAmt("");
-      refresh();
-    } catch (e) {
-      setErr(errText(e));
-    } finally {
-      setBusy(false);
-      setConfirm(null);
+      setWithdrawTo(await newReceiveAddress());
+    } catch {
+      setErr("Couldn't get an address from your wallet.");
     }
   };
+
+  const locked = pending !== null;
 
   return (
     <div className="vault">
@@ -168,7 +200,7 @@ export function VaultsPanel() {
           {err && (
             <div className="vault-banner">
               {err}
-              {/wallet is locked|unlock|locked/i.test(err) && " Unlock your wallet, then try again."}
+              {/lock/i.test(err) && " Unlock your wallet, then try again."}
             </div>
           )}
 
@@ -179,25 +211,26 @@ export function VaultsPanel() {
               inputMode="decimal"
               placeholder="Amount in DIVI"
               value={depositAmt}
+              disabled={locked}
               onChange={(e) => setDepositAmt(e.target.value)}
             />
             <button
               type="button"
               className="wl-btn"
-              disabled={busy || !(parseFloat(depositAmt) > 0)}
-              onClick={() => setConfirm("deposit")}
+              disabled={busy || locked || !(parseFloat(depositAmt) > 0)}
+              onClick={startDeposit}
             >
               Deposit
             </button>
           </div>
-          {confirm === "deposit" && (
+          {pending?.kind === "deposit" && (
             <div className="vault-banner">
-              Vault {fmtDivi(parseFloat(depositAmt) || 0)} DIVI to the main node?
+              Vault {fmtDivi(pending.amount)} DIVI to the main node?
               <div className="vault-actions">
-                <button type="button" className="wl-btn" disabled={busy} onClick={doDeposit}>
-                  Confirm
+                <button type="button" className="wl-btn" disabled={busy} onClick={runPending}>
+                  {busy ? "Working…" : "Confirm"}
                 </button>
-                <button type="button" className="wl-btn" disabled={busy} onClick={() => setConfirm(null)}>
+                <button type="button" className="wl-btn" disabled={busy} onClick={() => setPending(null)}>
                   Cancel
                 </button>
               </div>
@@ -210,32 +243,37 @@ export function VaultsPanel() {
               className="wl-input"
               placeholder="Your DIVI address"
               value={withdrawTo}
+              disabled={locked}
               onChange={(e) => setWithdrawTo(e.target.value)}
             />
+            <button type="button" className="wl-btn" disabled={busy || locked} onClick={fillMyAddress}>
+              Use my wallet
+            </button>
             <input
               className="wl-input"
               inputMode="decimal"
               placeholder="Amount in DIVI"
               value={withdrawAmt}
+              disabled={locked}
               onChange={(e) => setWithdrawAmt(e.target.value)}
             />
             <button
               type="button"
               className="wl-btn"
-              disabled={busy || !(parseFloat(withdrawAmt) > 0) || !withdrawTo.trim()}
-              onClick={() => setConfirm("withdraw")}
+              disabled={busy || locked || !(parseFloat(withdrawAmt) > 0) || !withdrawTo.trim()}
+              onClick={startWithdraw}
             >
               Withdraw
             </button>
           </div>
-          {confirm === "withdraw" && (
+          {pending?.kind === "withdraw" && (
             <div className="vault-banner">
-              Withdraw {fmtDivi(parseFloat(withdrawAmt) || 0)} DIVI to {withdrawTo.trim()}?
+              Withdraw {fmtDivi(pending.amount)} DIVI to {pending.to}?
               <div className="vault-actions">
-                <button type="button" className="wl-btn" disabled={busy} onClick={doWithdraw}>
-                  Confirm
+                <button type="button" className="wl-btn" disabled={busy} onClick={runPending}>
+                  {busy ? "Working…" : "Confirm"}
                 </button>
-                <button type="button" className="wl-btn" disabled={busy} onClick={() => setConfirm(null)}>
+                <button type="button" className="wl-btn" disabled={busy} onClick={() => setPending(null)}>
                   Cancel
                 </button>
               </div>

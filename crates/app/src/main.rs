@@ -183,6 +183,7 @@ async fn vault_reclaim(destination: String, amount: f64) -> Result<String, Strin
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct VaultDto {
     /// "owner:manager" encoding identifying this vault.
     vault: String,

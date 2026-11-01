@@ -98,6 +98,29 @@ fund_vault(sideWalletAddress, manager, amount). To reclaim that side wallet's
 specific vault, use debit_vault_by_name(its "owner:manager", destination, amount).
 HRAs can use the same calls (owner = the HRA-linked address).
 
+## Audit (2026-11-01) - fixes applied
+
+Money-safety / security:
+- Confirm is now bound to a snapshot of the amount (and address) captured when
+  the user clicks, and the inputs lock while confirming, so what is confirmed is
+  exactly what runs. (Before, the amount box stayed editable under the confirm.)
+- Withdraw address is validated against the node (validateAddress) before the
+  confirm appears, so a typo can't send coins to a bad address.
+- Double-submit guard (useRef) so a fast double-tap can't fire a send twice.
+- Pre-checks: deposit can't exceed spendable; withdraw can't exceed vaulted.
+
+UX:
+- "Use my wallet" button fills the withdraw address from newReceiveAddress.
+- Inputs lock + "Working…" label during a pending action.
+
+Checked clean: no hard-coded colors (theme tokens only), no passphrase handled
+(relies on the existing unlock flow), no shell/command injection (RPC params are
+structured values), VaultDto now camelCase to match house style.
+
+By design (not bugs): each deposit uses a fresh owner address so "Your vaults"
+may list one entry per deposit; "In vaults" reflects the wallet the node has
+loaded (the multi-wallet feature controls which).
+
 ## Known limitations / TODO on merge
 
 - Deposit uses a fresh owned address (newReceiveAddress) as the vault owner. In
