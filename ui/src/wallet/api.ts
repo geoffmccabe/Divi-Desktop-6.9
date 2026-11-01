@@ -195,6 +195,9 @@ export interface SetShape {
   baseTierCount: number;
   baseFactorPpm: number;
   mainSetWeight: number;
+  // The main/base collection's forge dials (forging the main set is on by
+  // default). Optional for older plans that predate it.
+  baseForge?: ForgeDials;
   ultraRareSets: UrSetSpec[];
 }
 export interface LaunchItem {
@@ -240,6 +243,7 @@ export interface LaunchEdits {
   setShape?: {
     baseFactorPpm?: number;
     mainSetWeight?: number;
+    baseForge?: Partial<ForgeDials>;
     ultraRareSets?: Array<{
       name?: string;
       rarityWeight?: number;

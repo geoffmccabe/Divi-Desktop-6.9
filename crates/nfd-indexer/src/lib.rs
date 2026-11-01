@@ -113,6 +113,54 @@ pub struct Nfd {
     pub revealed: Option<RevealOutcome>,
 }
 
+/// How one group's forge roll behaves. A "group" is the base/main set or one
+/// Ultra-Rare set. `Off` = that group cannot be forged at all. `Plus1` = a forge
+/// always yields exactly input_tier + 1. `Variable` = a forge yields at least +1,
+/// then climbs one more tier per "continue" roll at `continue_ppm` (500_000 = the
+/// standard 50%, giving +1 at 50% / +2 at 25% / +3 at 12.5% …).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForgeMode {
+    Off,
+    Plus1,
+    Variable,
+}
+
+impl ForgeMode {
+    /// On-chain byte: 0 = Off, 1 = Plus1, 2 = Variable. Anything else -> Off, so
+    /// an unknown future byte disables forging rather than mis-rolling.
+    pub fn from_byte(b: u8) -> ForgeMode {
+        match b {
+            1 => ForgeMode::Plus1,
+            2 => ForgeMode::Variable,
+            _ => ForgeMode::Off,
+        }
+    }
+    pub fn to_byte(self) -> u8 {
+        match self {
+            ForgeMode::Off => 0,
+            ForgeMode::Plus1 => 1,
+            ForgeMode::Variable => 2,
+        }
+    }
+}
+
+/// One group's forge dials: how it rolls, and (for `Variable`) the per-step climb
+/// chance in ppm. Carried per group in a v3 rarity config (base set + each UR set).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ForgeCfg {
+    pub mode: ForgeMode,
+    pub continue_ppm: u32,
+}
+
+impl ForgeCfg {
+    /// The legacy forge: Variable at 50% — reproduces the old global roll
+    /// (guaranteed +1, then halving). Used for the main set of v1/v2 collections
+    /// (which carried no forge dials) and as the main-set default elsewhere.
+    pub const LEGACY: ForgeCfg = ForgeCfg { mode: ForgeMode::Variable, continue_ppm: 500_000 };
+    /// Forging disabled for this group.
+    pub const OFF: ForgeCfg = ForgeCfg { mode: ForgeMode::Off, continue_ppm: 0 };
+}
+
 /// On-chain rarity config for a blind-pack (Perc) collection, so a reveal/forge
 /// roll can be resolved by the protocol itself (the chain can't read Arweave).
 /// Ultra-rare chances are parts-per-million (e.g. 10_000 ppm = 1%).
@@ -122,6 +170,9 @@ pub struct RarityConfig {
     pub base_tier_count: u16,
     /// Base halving factor in ppm (500_000 = the standard 50%: T1 50 / T2 25 …).
     pub base_factor_ppm: u32,
+    /// The main/base set's forge dials. A v1/v2 record carries no forge config, so
+    /// its base set maps to [`ForgeCfg::LEGACY`] (the old global forge behavior).
+    pub base_forge: ForgeCfg,
     /// The named Ultra-Rare sets, stored least-rare-first (= the on-chain order).
     /// Empty = a plain tiered set with no ultra-rares. A v1 record maps onto a
     /// single set here, reproducing the old single-UR odds exactly.
@@ -198,8 +249,9 @@ pub enum Undo {
     /// burned inputs exactly as they were, and drops the pending forge entry.
     Forged { result_id: [u8; 32], seed_height: u64, restored_inputs: Vec<([u8; 32], Nfd)> },
     /// A pending forge was resolved at its seed block. Clear the result's tier
-    /// and put it back on the pending forge list for that height.
-    ForgeResolved { result_id: [u8; 32], seed_height: u64, input_tier: u16 },
+    /// and put it back on the pending forge list for that height, restoring the
+    /// exact group/tier the roll started from.
+    ForgeResolved { seed_height: u64, pending: ForgePending },
     /// A listing was created or updated. Restore the listing it replaced (`None`
     /// means the item had no listing before, so remove it).
     Listed { item_id: [u8; 32], previous: Option<Listing> },
@@ -210,12 +262,16 @@ pub enum Undo {
     Bought { item_id: [u8; 32], previous_owner: Addr21, listing: Listing },
 }
 
-/// A forge result awaiting its seed block: the new pack's id plus the shared
-/// input tier the halving bump is added to when it resolves.
+/// A forge result awaiting its seed block: the new pack's id, which GROUP it is
+/// climbing (`None` = the base/main set, `Some(s)` = UR set s), the shared input
+/// tier the bump is added to when it resolves, and the base tier to stamp on the
+/// result (for a UR-group result; for a base-group result it equals input_tier).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ForgePending {
+pub struct ForgePending {
     result_id: [u8; 32],
+    ur_set: Option<u16>,
     input_tier: u16,
+    base_tier: u16,
 }
 
 /// An active marketplace listing on an item. `price` is what the buyer pays (the
@@ -444,14 +500,14 @@ impl NfdLedger {
                         self.nfds.insert(id, nfd);
                     }
                 }
-                Undo::ForgeResolved { result_id, seed_height, input_tier } => {
+                Undo::ForgeResolved { seed_height, pending } => {
                     // Un-roll: clear the result's tier and put it back on the
-                    // pending forge list for its seed height.
-                    if let Some(nfd) = self.nfds.get_mut(&result_id) {
+                    // pending forge list for its seed height, exactly as it was.
+                    if let Some(nfd) = self.nfds.get_mut(&pending.result_id) {
                         nfd.revealed = None;
                     }
-                    self.pending_forges.entry(seed_height).or_default().push(ForgePending { result_id, input_tier });
-                    self.pending_forge_set.insert(result_id);
+                    self.pending_forges.entry(seed_height).or_default().push(pending);
+                    self.pending_forge_set.insert(pending.result_id);
                 }
             }
         }
@@ -603,14 +659,22 @@ impl NfdLedger {
         let ms = c.read_bytes(4).map_err(|_| Ignored::Malformed("max_supply"))?;
         let max_supply = u32::from_be_bytes([ms[0], ms[1], ms[2], ms[3]]);
         let meta_ptr = read32(&mut c)?;
-        // Optional trailing rarity config for a blind-pack collection. Two forms,
-        // told apart by length (both the wallet codec and this parser agree):
+        // Optional trailing rarity config for a blind-pack collection. Three forms,
+        // told apart by length / version byte (wallet codec and this parser agree):
         //   v1 (legacy, 12 bytes): tier_count(2) ur_basic_ppm(4)
         //       ur_progressive_ppm(4) ur_count(2) — a single-UR set. Mapped onto
-        //       the v2 shape here so the roll has one code path.
+        //       the v3 shape here so the roll has one code path.
         //   v2 (docs/NFD-SET-SHAPE-AND-ART.md §11): version(1)=0x02
         //       base_tier_count(2) base_factor_ppm(4) ur_set_count(1)
         //       [tier_count(2) chance_ppm(4) factor_ppm(4)]*n manifest_ptr(32).
+        //   v3 (docs/NFD-FORGING.md): version(1)=0x03 base_tier_count(2)
+        //       base_factor_ppm(4) base_forge_mode(1) base_forge_continue_ppm(4)
+        //       ur_set_count(1) [tier_count(2) chance_ppm(4) factor_ppm(4)
+        //       forge_mode(1) forge_continue_ppm(4)]*n manifest_ptr(32). Adds a
+        //       per-group forge dial (base set + each UR set).
+        // v1/v2 carried no forge dials, so their base set maps to the legacy forge
+        // (Variable @ 50%, the old global roll) and their UR sets to Off (the old
+        // forge only climbed the base ladder).
         // max_supply(4) + meta_ptr(32) were already read, so the tail is body[36..].
         let tail = &body[36..];
         let (rarity, manifest_ptr) = if tail.is_empty() {
@@ -620,14 +684,14 @@ impl NfdLedger {
             let ur_basic_ppm = u32::from_be_bytes([tail[2], tail[3], tail[4], tail[5]]);
             let ur_progressive_ppm = u32::from_be_bytes([tail[6], tail[7], tail[8], tail[9]]);
             let ur_count = u16::from_be_bytes([tail[10], tail[11]]);
-            // v1 -> v2: base factor is the historical 50%; the single UR set (if
+            // v1 -> v3: base factor is the historical 50%; the single UR set (if
             // any) carries the old basic gate + progressive curve + ur_count.
             let ur_sets = if ur_count > 0 && ur_basic_ppm > 0 {
-                vec![UrSet { tier_count: ur_count, chance_ppm: ur_basic_ppm, factor_ppm: ur_progressive_ppm }]
+                vec![UrSet { tier_count: ur_count, chance_ppm: ur_basic_ppm, factor_ppm: ur_progressive_ppm, forge: ForgeCfg::OFF }]
             } else {
                 Vec::new()
             };
-            (Some(RarityConfig { base_tier_count: tier_count, base_factor_ppm: 500_000, ur_sets }), None)
+            (Some(RarityConfig { base_tier_count: tier_count, base_factor_ppm: 500_000, base_forge: ForgeCfg::LEGACY, ur_sets }), None)
         } else if tail[0] == 0x02 {
             if tail.len() < 8 {
                 return Err(Ignored::Malformed("rarity v2 header"));
@@ -645,12 +709,48 @@ impl NfdLedger {
                     tier_count: u16::from_be_bytes([tail[o], tail[o + 1]]),
                     chance_ppm: u32::from_be_bytes([tail[o + 2], tail[o + 3], tail[o + 4], tail[o + 5]]),
                     factor_ppm: u32::from_be_bytes([tail[o + 6], tail[o + 7], tail[o + 8], tail[o + 9]]),
+                    forge: ForgeCfg::OFF,
                 });
             }
             let mut mp = [0u8; 32];
             mp.copy_from_slice(&tail[8 + 10 * n..8 + 10 * n + 32]);
             let manifest_ptr = if mp == [0u8; 32] { None } else { Some(mp) };
-            (Some(RarityConfig { base_tier_count, base_factor_ppm, ur_sets }), manifest_ptr)
+            (Some(RarityConfig { base_tier_count, base_factor_ppm, base_forge: ForgeCfg::LEGACY, ur_sets }), manifest_ptr)
+        } else if tail[0] == 0x03 {
+            // v3 header = version(1) + base_tier_count(2) + base_factor_ppm(4) +
+            // base_forge_mode(1) + base_forge_continue_ppm(4) + ur_set_count(1) = 13.
+            if tail.len() < 13 {
+                return Err(Ignored::Malformed("rarity v3 header"));
+            }
+            let base_tier_count = u16::from_be_bytes([tail[1], tail[2]]);
+            let base_factor_ppm = u32::from_be_bytes([tail[3], tail[4], tail[5], tail[6]]);
+            let base_forge = ForgeCfg {
+                mode: ForgeMode::from_byte(tail[7]),
+                continue_ppm: u32::from_be_bytes([tail[8], tail[9], tail[10], tail[11]]),
+            };
+            let n = tail[12] as usize;
+            // each UR set = tier_count(2) chance_ppm(4) factor_ppm(4)
+            // forge_mode(1) forge_continue_ppm(4) = 15 bytes; manifest_ptr(32).
+            if tail.len() != 13 + 15 * n + 32 {
+                return Err(Ignored::TrailingBytes);
+            }
+            let mut ur_sets = Vec::with_capacity(n);
+            for k in 0..n {
+                let o = 13 + 15 * k;
+                ur_sets.push(UrSet {
+                    tier_count: u16::from_be_bytes([tail[o], tail[o + 1]]),
+                    chance_ppm: u32::from_be_bytes([tail[o + 2], tail[o + 3], tail[o + 4], tail[o + 5]]),
+                    factor_ppm: u32::from_be_bytes([tail[o + 6], tail[o + 7], tail[o + 8], tail[o + 9]]),
+                    forge: ForgeCfg {
+                        mode: ForgeMode::from_byte(tail[o + 10]),
+                        continue_ppm: u32::from_be_bytes([tail[o + 11], tail[o + 12], tail[o + 13], tail[o + 14]]),
+                    },
+                });
+            }
+            let mut mp = [0u8; 32];
+            mp.copy_from_slice(&tail[13 + 15 * n..13 + 15 * n + 32]);
+            let manifest_ptr = if mp == [0u8; 32] { None } else { Some(mp) };
+            (Some(RarityConfig { base_tier_count, base_factor_ppm, base_forge, ur_sets }), manifest_ptr)
         } else {
             return Err(Ignored::Malformed("unknown rarity config"));
         };
@@ -977,8 +1077,10 @@ impl NfdLedger {
         }
         let sender = Self::sender(ctx)?;
         // Each input must exist, be owned by the forger, be in the named
-        // collection, and be revealed. Read their tiers without a mutable borrow.
-        let read_input = |me: &Self, id: &[u8; 32], which: &'static str| -> Result<u16, Ignored> {
+        // collection, and be revealed. Read their full outcomes (not just the base
+        // tier) without a mutable borrow, so we can tell which GROUP each belongs
+        // to: the base/main set, or a specific Ultra-Rare set.
+        let read_input = |me: &Self, id: &[u8; 32], which: &'static str| -> Result<RevealOutcome, Ignored> {
             let nfd = me.nfds.get(id).ok_or(Ignored::RuleViolation(match which {
                 "a" => "unknown input a",
                 _ => "unknown input b",
@@ -989,18 +1091,47 @@ impl NfdLedger {
             if nfd.collection_id != Some(collection_id) {
                 return Err(Ignored::RuleViolation("an input is not in this collection"));
             }
-            let outcome = nfd.revealed.ok_or(Ignored::RuleViolation("an input is not revealed"))?;
-            Ok(outcome.base_tier)
+            nfd.revealed.ok_or(Ignored::RuleViolation("an input is not revealed"))
         };
-        let tier_a = read_input(self, &input_a, "a")?;
-        let tier_b = read_input(self, &input_b, "b")?;
+        // A card's GROUP + TIER: a UR card belongs to its UR set at its ur_tier; a
+        // plain card belongs to the base/main set at its base_tier.
+        let group_key = |o: &RevealOutcome| -> (Option<u16>, u16) {
+            match o.ur_set {
+                Some(s) => (Some(s), o.ur_tier.unwrap_or(1)),
+                None => (None, o.base_tier),
+            }
+        };
+        let out_a = read_input(self, &input_a, "a")?;
+        let out_b = read_input(self, &input_b, "b")?;
+        let (group_a, tier_a) = group_key(&out_a);
+        let (group_b, tier_b) = group_key(&out_b);
+        // Inputs must be from the SAME group (you can't mix a main card with a UR
+        // card, or two different UR sets) AND the same tier within it.
+        if group_a != group_b {
+            return Err(Ignored::RuleViolation("inputs are not from the same set"));
+        }
         if tier_a != tier_b {
             return Err(Ignored::RuleViolation("inputs are not the same tier"));
         }
-        // The collection must be a Perc set (carries a rarity config), mirroring reveal.
-        let is_perc = self.is_perc_collection(&collection_id);
-        if !is_perc {
-            return Err(Ignored::RuleViolation("not a Perc collection"));
+        // The collection must be a Perc set (carries a rarity config), mirroring
+        // reveal, AND the matched group's forge dials must be enabled.
+        let group_forge = {
+            let cfg = self
+                .collections
+                .get(&collection_id)
+                .and_then(|c| c.rarity.as_ref())
+                .ok_or(Ignored::RuleViolation("not a Perc collection"))?;
+            match group_a {
+                None => cfg.base_forge,
+                Some(s) => cfg
+                    .ur_sets
+                    .get(s as usize)
+                    .map(|u| u.forge)
+                    .ok_or(Ignored::RuleViolation("input set is not in this collection's config"))?,
+            }
+        };
+        if group_forge.mode == ForgeMode::Off {
+            return Err(Ignored::RuleViolation("forging is disabled for this set"));
         }
         // Creator forge fee: if this collection carries one, the forge transaction
         // must pay at least that amount to the payout address, or the forge is
@@ -1039,12 +1170,11 @@ impl NfdLedger {
                 revealed: None,
             },
         );
-        // Defer the roll to a future block (ungrindable), carrying the input tier.
+        // Defer the roll to a future block (ungrindable), carrying the group, the
+        // input tier, and the base tier to stamp on the result.
         let seed_height = ctx.height + FORGE_DELAY;
-        self.pending_forges
-            .entry(seed_height)
-            .or_default()
-            .push(ForgePending { result_id: ctx.txid, input_tier: tier_a });
+        let pending = ForgePending { result_id: ctx.txid, ur_set: group_a, input_tier: tier_a, base_tier: out_a.base_tier };
+        self.pending_forges.entry(seed_height).or_default().push(pending);
         self.pending_forge_set.insert(ctx.txid);
         self.undo.push(Undo::Forged { result_id: ctx.txid, seed_height, restored_inputs });
 
@@ -1052,6 +1182,10 @@ impl NfdLedger {
         d.extend_from_slice(&ctx.txid);
         d.extend_from_slice(&input_a);
         d.extend_from_slice(&input_b);
+        d.push(group_a.is_some() as u8);
+        if let Some(s) = group_a {
+            d.extend_from_slice(&s.to_be_bytes());
+        }
         d.extend_from_slice(&tier_a.to_be_bytes());
         d.extend_from_slice(&seed_height.to_be_bytes());
         Ok(d)
@@ -1094,23 +1228,47 @@ impl NfdLedger {
             }
         }
         // Forge results whose seed block is this one: result tier = input tier +
-        // the halving bump, seeded by SHA256(result_id || block_hash).
+        // the climb K, seeded by SHA256(result_id || block_hash). The climb uses
+        // the group's forge dials (the base set, or the UR set it is climbing).
+        // The tier number may exceed the group's art count — the art caps at the
+        // top available tier, the number keeps climbing (docs/NFD-FORGING.md). A
+        // UR-group result is stamped back into its UR set at the new tier.
         let forges_due = self.pending_forges.remove(&height).unwrap_or_default();
         for fp in forges_due {
             self.pending_forge_set.remove(&fp.result_id);
+            // The group's forge dials, from the result pack's collection config.
+            let group_forge = self
+                .nfds
+                .get(&fp.result_id)
+                .and_then(|n| n.collection_id)
+                .and_then(|cid| self.collections.get(&cid))
+                .and_then(|c| c.rarity.as_ref())
+                .and_then(|cfg| match fp.ur_set {
+                    None => Some(cfg.base_forge),
+                    Some(s) => cfg.ur_sets.get(s as usize).map(|u| u.forge),
+                });
+            let Some(group_forge) = group_forge else { continue }; // config gone (reorg edge): skip
             let mut h = Sha256::new();
             h.update(fp.result_id);
             h.update(block_hash);
             let digest = h.finalize();
             let mut seed = [0u8; 32];
             seed.copy_from_slice(&digest);
-            let result_tier = fp.input_tier.saturating_add(forge_tier_bump(&seed));
+            let result_tier = fp.input_tier.saturating_add(forge_climb(&seed, group_forge));
+            let outcome = match fp.ur_set {
+                None => RevealOutcome { base_tier: result_tier, ur_set: None, ur_tier: None },
+                Some(s) => RevealOutcome { base_tier: fp.base_tier, ur_set: Some(s), ur_tier: Some(result_tier) },
+            };
             if let Some(nfd) = self.nfds.get_mut(&fp.result_id) {
-                nfd.revealed = Some(RevealOutcome { base_tier: result_tier, ur_set: None, ur_tier: None });
+                nfd.revealed = Some(outcome);
             }
-            self.undo.push(Undo::ForgeResolved { result_id: fp.result_id, seed_height: height, input_tier: fp.input_tier });
+            self.undo.push(Undo::ForgeResolved { seed_height: height, pending: fp });
             delta.push(SUB_FORGE);
             delta.extend_from_slice(&fp.result_id);
+            delta.push(fp.ur_set.is_some() as u8);
+            if let Some(s) = fp.ur_set {
+                delta.extend_from_slice(&s.to_be_bytes());
+            }
             delta.extend_from_slice(&result_tier.to_be_bytes());
         }
         delta
@@ -1174,6 +1332,9 @@ pub struct UrSet {
     pub tier_count: u16,
     pub chance_ppm: u32,
     pub factor_ppm: u32,
+    /// This set's forge dials (v3). v1/v2 records carried none, so their UR sets
+    /// map to [`ForgeCfg::OFF`] — the old forge only ever climbed the base ladder.
+    pub forge: ForgeCfg,
 }
 
 /// The outcome of resolving a reveal: a base tier (always drawn), plus which
@@ -1244,7 +1405,7 @@ pub fn resolve_reveal_sets(seed: &[u8; 32], base_tier_count: u16, base_factor_pp
 
 #[cfg(test)]
 mod reveal_sets_tests {
-    use super::{resolve_reveal_sets, UrSet};
+    use super::{resolve_reveal_sets, ForgeCfg, UrSet};
     use sha2::{Digest, Sha256};
 
     fn seed(i: u32) -> [u8; 32] {
@@ -1259,7 +1420,7 @@ mod reveal_sets_tests {
         // One UR set, 1% gate, 10% within-set curve: must reproduce the odds of the
         // legacy single-UR resolve_reveal (50/25/12.5 base, 1% UR, 90/9 within).
         let n = 400_000u32;
-        let sets = [UrSet { tier_count: 5, chance_ppm: 10_000, factor_ppm: 100_000 }];
+        let sets = [UrSet { tier_count: 5, chance_ppm: 10_000, factor_ppm: 100_000, forge: ForgeCfg::OFF }];
         let (mut t1, mut t2, mut t3) = (0u32, 0u32, 0u32);
         let (mut ur_hits, mut ur1, mut ur2) = (0u32, 0u32, 0u32);
         for i in 0..n {
@@ -1286,8 +1447,8 @@ mod reveal_sets_tests {
         // takes ~0.1% outright and set0 takes ~1% of the rest.
         let n = 400_000u32;
         let sets = [
-            UrSet { tier_count: 3, chance_ppm: 10_000, factor_ppm: 200_000 },
-            UrSet { tier_count: 3, chance_ppm: 1_000, factor_ppm: 200_000 },
+            UrSet { tier_count: 3, chance_ppm: 10_000, factor_ppm: 200_000, forge: ForgeCfg::OFF },
+            UrSet { tier_count: 3, chance_ppm: 1_000, factor_ppm: 200_000, forge: ForgeCfg::OFF },
         ];
         let (mut s0, mut s1) = (0u32, 0u32);
         for i in 0..n {
@@ -1304,25 +1465,40 @@ mod reveal_sets_tests {
     }
 }
 
-/// The forge tier bump K from a 32-byte seed: treat the seed's bits as fair coin
-/// flips (MSB first), K = (leading 1-bits) + 1, capped at FORGE_MAX_BUMP. So
-/// P(K=1)=1/2, P(K=2)=1/4, ..., exactly the halving spec in docs/NFD-FORGING.md.
-/// This is the authoritative roll; the wallet reads the result back from here.
-pub fn forge_tier_bump(seed: &[u8; 32]) -> u16 {
-    let mut heads: u16 = 0;
-    'outer: for &byte in seed.iter() {
-        for i in (0..8).rev() {
-            if (byte >> i) & 1 == 1 {
-                heads += 1;
-                if heads + 1 >= FORGE_MAX_BUMP {
-                    break 'outer; // capped
-                }
-            } else {
-                break 'outer; // first tail ends the run
+/// The forge climb K (>= 1) from a 32-byte seed and a group's forge dials. This
+/// is THE authoritative roll; the wallet reads the result back from here.
+/// - `Plus1`  -> always 1 (a forge is exactly input_tier + 1).
+/// - `Variable` -> 1 plus the number of consecutive "continue" rolls at
+///   `continue_ppm` (500_000 = 50%, giving +1 at 50% / +2 at 25% / +3 at 12.5% …),
+///   using the same word()/cont() integer draw as the reveal roll so every
+///   indexer agrees bit-for-bit. Capped at FORGE_MAX_BUMP so a pathological seed
+///   can't loop unbounded; a disabled group never reaches here (apply_forge
+///   rejects it), so `Off` is treated defensively as +1.
+pub fn forge_climb(seed: &[u8; 32], cfg: ForgeCfg) -> u16 {
+    match cfg.mode {
+        ForgeMode::Plus1 | ForgeMode::Off => 1,
+        ForgeMode::Variable => {
+            let word = |n: u32| -> u32 {
+                let mut h = Sha256::new();
+                h.update(seed);
+                h.update(n.to_le_bytes());
+                let d = h.finalize();
+                u32::from_le_bytes([d[0], d[1], d[2], d[3]])
+            };
+            let cont = |w: u32, ppm: u32| -> bool {
+                ppm >= 1_000_000 || (w as u64) < (((ppm as u64) << 32) / 1_000_000)
+            };
+            // Domain tag 40_000 keeps this draw independent of the reveal roll's
+            // word domains (0.., 10_000, 20_000).
+            let mut k: u16 = 1;
+            let mut i = 0u32;
+            while k < FORGE_MAX_BUMP && cont(word(40_000 + i), cfg.continue_ppm) {
+                k += 1;
+                i += 1;
             }
+            k
         }
     }
-    (heads + 1).min(FORGE_MAX_BUMP)
 }
 
 #[cfg(test)]
@@ -1719,7 +1895,8 @@ mod tests {
             Some(RarityConfig {
                 base_tier_count: 40,
                 base_factor_ppm: 500_000,
-                ur_sets: vec![UrSet { tier_count: 3, chance_ppm: 10_000, factor_ppm: 100_000 }],
+                base_forge: ForgeCfg::LEGACY,
+                ur_sets: vec![UrSet { tier_count: 3, chance_ppm: 10_000, factor_ppm: 100_000, forge: ForgeCfg::OFF }],
             })
         );
         assert_eq!(l.manifest_ptr_of(&[2; 32]), None); // v1 carries no manifest
@@ -1746,9 +1923,10 @@ mod tests {
             Some(RarityConfig {
                 base_tier_count: 30,
                 base_factor_ppm: 500_000,
+                base_forge: ForgeCfg::LEGACY,
                 ur_sets: vec![
-                    UrSet { tier_count: 12, chance_ppm: 10_000, factor_ppm: 500_000 },
-                    UrSet { tier_count: 6, chance_ppm: 1_000, factor_ppm: 500_000 },
+                    UrSet { tier_count: 12, chance_ppm: 10_000, factor_ppm: 500_000, forge: ForgeCfg::OFF },
+                    UrSet { tier_count: 6, chance_ppm: 1_000, factor_ppm: 500_000, forge: ForgeCfg::OFF },
                 ],
             })
         );
@@ -1776,7 +1954,7 @@ mod tests {
     fn reveal_roll_is_deterministic_and_fair() {
         // The old v1 single-UR odds, expressed as one UR set on the v2 roll.
         let (base_tiers, base_factor) = (40u16, 500_000u32);
-        let sets = [UrSet { tier_count: 3, chance_ppm: 10_000, factor_ppm: 100_000 }];
+        let sets = [UrSet { tier_count: 3, chance_ppm: 10_000, factor_ppm: 100_000, forge: ForgeCfg::OFF }];
         let s = [9u8; 32];
         assert_eq!(
             resolve_reveal_sets(&s, base_tiers, base_factor, &sets),
@@ -1810,7 +1988,7 @@ mod tests {
     #[test]
     fn reveal_respects_caps() {
         // 100% gate + 100% within-set -> always UR, UR tier pinned at the cap.
-        let sets = [UrSet { tier_count: 2, chance_ppm: 1_000_000, factor_ppm: 1_000_000 }];
+        let sets = [UrSet { tier_count: 2, chance_ppm: 1_000_000, factor_ppm: 1_000_000, forge: ForgeCfg::OFF }];
         let o = resolve_reveal_sets(&[7u8; 32], 3, 500_000, &sets);
         assert!(o.base_tier >= 1 && o.base_tier <= 3);
         assert_eq!(o.ur_set, Some(0));
@@ -1994,32 +2172,47 @@ mod tests {
     }
 
     #[test]
-    fn forge_tier_bump_is_always_at_least_one_and_halves() {
-        assert_eq!(forge_tier_bump(&[0x00; 32]), 1); // first flip tail -> +1
-        assert_eq!(forge_tier_bump(&[0xff; 32]), FORGE_MAX_BUMP); // all heads -> capped
-        let mut seed = [0u8; 32];
-        seed[0] = 0b1011_1111; // one head then tail -> +2
-        assert_eq!(forge_tier_bump(&seed), 2);
-        // distribution: ~50% +1, ~25% +2 over pseudo-random seeds
-        let n = 40_000u32;
-        let (mut k1, mut k2) = (0u32, 0u32);
-        for i in 0..n {
+    fn forge_climb_honors_mode_and_chance() {
+        let legacy = ForgeCfg::LEGACY; // Variable @ 50%
+        let plus1 = ForgeCfg { mode: ForgeMode::Plus1, continue_ppm: 0 };
+        // +1-only is always exactly 1, whatever the seed.
+        assert_eq!(forge_climb(&[0x00; 32], plus1), 1);
+        assert_eq!(forge_climb(&[0xff; 32], plus1), 1);
+        // Off is treated defensively as +1 (apply_forge rejects a disabled group).
+        assert_eq!(forge_climb(&[0xff; 32], ForgeCfg::OFF), 1);
+        // Variable is always an upgrade (>= 1) and never exceeds the cap.
+        for i in 0..2000u32 {
             let mut h = Sha256::new();
-            h.update(b"forge-idx-dist");
+            h.update(b"forge-climb-bounds");
             h.update(i.to_le_bytes());
-            let d = h.finalize();
-            let mut s = [0u8; 32];
-            s.copy_from_slice(&d);
-            match forge_tier_bump(&s) {
-                1 => k1 += 1,
-                2 => k2 += 1,
-                _ => {}
-            }
+            let s: [u8; 32] = h.finalize().into();
+            let k = forge_climb(&s, legacy);
+            assert!(k >= 1 && k <= FORGE_MAX_BUMP, "k={k}");
         }
-        let p1 = k1 as f64 / n as f64;
-        let p2 = k2 as f64 / n as f64;
-        assert!((p1 - 0.5).abs() < 0.02, "P(+1)={p1}");
-        assert!((p2 - 0.25).abs() < 0.02, "P(+2)={p2}");
+        // Tally K over pseudo-random seeds for a given config.
+        let dist = |cfg: ForgeCfg, tag: &[u8]| -> (f64, f64) {
+            let n = 40_000u32;
+            let (mut k1, mut k2) = (0u32, 0u32);
+            for i in 0..n {
+                let mut h = Sha256::new();
+                h.update(tag);
+                h.update(i.to_le_bytes());
+                let s: [u8; 32] = h.finalize().into();
+                match forge_climb(&s, cfg) {
+                    1 => k1 += 1,
+                    2 => k2 += 1,
+                    _ => {}
+                }
+            }
+            (k1 as f64 / n as f64, k2 as f64 / n as f64)
+        };
+        // Variable @ 50% reproduces the halving: ~50% +1, ~25% +2.
+        let (p1, p2) = dist(legacy, b"climb-50");
+        assert!((p1 - 0.5).abs() < 0.02, "P(+1)@50%={p1}");
+        assert!((p2 - 0.25).abs() < 0.02, "P(+2)@50%={p2}");
+        // The climb-chance knob actually changes the curve: @25%, P(+1) ~ 75%.
+        let (q1, _q2) = dist(ForgeCfg { mode: ForgeMode::Variable, continue_ppm: 250_000 }, b"climb-25");
+        assert!((q1 - 0.75).abs() < 0.03, "P(+1)@25%={q1}");
     }
 
     #[test]
@@ -2065,6 +2258,105 @@ mod tests {
         l.apply(&rec(SUB_FORGE, &forge_body([10; 32], [11; 32], cid)), &ctx_pay(30, Some(creator), pay(payout, 100))).unwrap();
         assert!(l.get(&[10; 32]).is_none());
         assert_eq!(l.owner_of(&[30; 32]), Some(pk(7)));
+    }
+
+    // --- v3 per-group forge dials ------------------------------------------
+
+    // Build a COLLECTION-CREATE v3 body: base set forge dials + per-UR-set dials.
+    // `base_forge` / each set's last two fields are (mode_byte, continue_ppm).
+    fn collection_body_v3(
+        max_supply: u32,
+        base_tier_count: u16,
+        base_factor_ppm: u32,
+        base_forge: (u8, u32),
+        ur_sets: &[(u16, u32, u32, u8, u32)],
+    ) -> Vec<u8> {
+        let mut b = max_supply.to_be_bytes().to_vec();
+        b.extend_from_slice(&[0xee; 32]); // meta_ptr
+        b.push(0x03);
+        b.extend_from_slice(&base_tier_count.to_be_bytes());
+        b.extend_from_slice(&base_factor_ppm.to_be_bytes());
+        b.push(base_forge.0);
+        b.extend_from_slice(&base_forge.1.to_be_bytes());
+        b.push(ur_sets.len() as u8);
+        for (tc, ch, fa, mode, cont) in ur_sets {
+            b.extend_from_slice(&tc.to_be_bytes());
+            b.extend_from_slice(&ch.to_be_bytes());
+            b.extend_from_slice(&fa.to_be_bytes());
+            b.push(*mode);
+            b.extend_from_slice(&cont.to_be_bytes());
+        }
+        b.extend_from_slice(&[0u8; 32]); // manifest_ptr: none
+        b
+    }
+
+    #[test]
+    fn collection_v3_parses_per_group_forge_dials() {
+        let mut l = NfdLedger::new();
+        // base: Variable @ 50%; UR set 0: Plus1; UR set 1: Off.
+        let body = collection_body_v3(
+            100,
+            20,
+            500_000,
+            (2, 500_000),
+            &[(8, 10_000, 500_000, 1, 0), (4, 1_000, 500_000, 0, 0)],
+        );
+        l.apply(&rec(SUB_COLLECTION, &body), &ctx(1, Some(addr(7)))).unwrap();
+        let cfg = l.rarity_of(&[1; 32]).unwrap();
+        assert_eq!(cfg.base_forge, ForgeCfg { mode: ForgeMode::Variable, continue_ppm: 500_000 });
+        assert_eq!(cfg.ur_sets[0].forge, ForgeCfg { mode: ForgeMode::Plus1, continue_ppm: 0 });
+        assert_eq!(cfg.ur_sets[1].forge, ForgeCfg::OFF);
+        // exact-length discipline: a trailing byte is rejected.
+        let mut bad = body.clone();
+        bad.push(0);
+        assert!(l.apply(&rec(SUB_COLLECTION, &bad), &ctx(2, Some(addr(7)))).is_err());
+    }
+
+    #[test]
+    fn forge_rejected_when_group_disabled() {
+        let mut l = NfdLedger::new();
+        let creator = addr(7);
+        let cid = [5u8; 32];
+        // base forge Off, one base tier, no UR sets.
+        l.apply(&rec(SUB_COLLECTION, &collection_body_v3(0, 1, 500_000, (0, 0), &[])), &ctx(5, Some(creator))).unwrap();
+        l.apply(&rec(SUB_MINT, &mint_into_body(cid)), &ctx(10, Some(creator))).unwrap();
+        l.apply(&rec(SUB_MINT, &mint_into_body(cid)), &ctx(11, Some(creator))).unwrap();
+        l.apply(&rec(SUB_REVEAL, &[10u8; 32].to_vec()), &ctx(12, Some(creator))).unwrap();
+        l.apply(&rec(SUB_REVEAL, &[11u8; 32].to_vec()), &ctx(13, Some(creator))).unwrap();
+        l.resolve_due(106, &[0x42; 32]);
+        let _ = l.take_block_undo();
+        // The base group's forge is Off -> rejected, nothing burned.
+        assert!(l.apply(&rec(SUB_FORGE, &forge_body([10; 32], [11; 32], cid)), &ctx(30, Some(creator))).is_err());
+        assert!(l.get(&[10; 32]).is_some());
+    }
+
+    #[test]
+    fn forge_climbs_within_a_ur_set() {
+        let mut l = NfdLedger::new();
+        let creator = addr(7);
+        let cid = [5u8; 32];
+        // base Off; one UR set that ALWAYS hits (100% gate) and pins to its top
+        // tier (100% within-set curve), 5 tiers, forge = Plus1.
+        let body = collection_body_v3(0, 3, 500_000, (0, 0), &[(5, 1_000_000, 1_000_000, 1, 0)]);
+        l.apply(&rec(SUB_COLLECTION, &body), &ctx(5, Some(creator))).unwrap();
+        l.apply(&rec(SUB_MINT, &mint_into_body(cid)), &ctx(10, Some(creator))).unwrap();
+        l.apply(&rec(SUB_MINT, &mint_into_body(cid)), &ctx(11, Some(creator))).unwrap();
+        l.apply(&rec(SUB_REVEAL, &[10u8; 32].to_vec()), &ctx(12, Some(creator))).unwrap();
+        l.apply(&rec(SUB_REVEAL, &[11u8; 32].to_vec()), &ctx(13, Some(creator))).unwrap();
+        l.resolve_due(106, &[0x42; 32]);
+        // Both revealed into UR set 0 at the pinned top tier 5.
+        let a = l.revealed_of(&[10; 32]).unwrap();
+        assert_eq!((a.ur_set, a.ur_tier), (Some(0), Some(5)));
+        let _ = l.take_block_undo();
+        // Forge them: same UR set + tier is allowed; Plus1 -> result ur_tier = 6
+        // (climbs one above the 5 available art tiers — the number keeps going).
+        l.apply(&rec(SUB_FORGE, &forge_body([10; 32], [11; 32], cid)), &ctx(30, Some(creator))).unwrap();
+        assert!(l.get(&[10; 32]).is_none() && l.forge_pending(&[30; 32]));
+        let _ = l.take_block_undo();
+        l.resolve_due(106, &[0x42; 32]);
+        let out = l.revealed_of(&[30; 32]).unwrap();
+        assert_eq!(out.ur_set, Some(0));
+        assert_eq!(out.ur_tier, Some(6));
     }
 
     // --- Primary mint price (0x0E) -----------------------------------------

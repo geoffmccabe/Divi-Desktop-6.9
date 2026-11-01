@@ -330,6 +330,46 @@ pub fn create_collection_v2(
     Ok(CollectionOutcome { txid, meta_ptr })
 }
 
+/// Create a collection with the v3 (multi-UR-set + per-group forge) rarity shape.
+/// Like `create_collection_v2` but each group (the base/main set and every UR set)
+/// also carries forge dials: a mode (0 off / 1 +1-only / 2 variable) and, for
+/// variable, a per-step climb chance in ppm. `ur_sets` is
+/// `(tier_count, chance_ppm, factor_ppm, forge_mode, forge_continue_ppm)`,
+/// least-rare first. Writes a COLLECTION-CREATE v3 record (docs/NFD-FORGING.md).
+#[allow(clippy::too_many_arguments)]
+pub fn create_collection_v3(
+    cfg: &NodeConfig,
+    creator_addr: &str,
+    name: &str,
+    description: &str,
+    cover: Option<(&[u8], &str)>,
+    max_supply: u32,
+    base_tier_count: u16,
+    base_factor_ppm: u32,
+    base_forge_mode: u8,
+    base_forge_continue_ppm: u32,
+    ur_sets: &[(u16, u32, u32, u8, u32)],
+    manifest_ptr: &str,
+    image_url: Option<&str>,
+    tier_art: Option<&Value>,
+) -> Result<CollectionOutcome, String> {
+    let rpc = RpcClient::new(cfg);
+    let utxo = pick_owner_utxo(&rpc, creator_addr)?;
+    let meta_ptr = build_collection_meta(cfg, name, description, cover, image_url, tier_art)?;
+    let record = nfd_record::encode_collection_create_v3(
+        max_supply,
+        &meta_ptr,
+        base_tier_count,
+        base_factor_ppm,
+        base_forge_mode,
+        base_forge_continue_ppm,
+        ur_sets,
+        manifest_ptr,
+    )?;
+    let txid = anchor_record(&rpc, &utxo, &record, None)?;
+    Ok(CollectionOutcome { txid, meta_ptr })
+}
+
 /// Broadcast a COMMISSION-SET: the creator sets or lowers a collection's flat
 /// DIVI resale toll. Funded from (and so signed by) the creator address, which
 /// is how the indexer's creator-only rule accepts it; the indexer also enforces
@@ -444,10 +484,10 @@ pub fn launch_from_bundle(
     }
     let tier_art = Value::Object(tier_art);
 
-    // Prefer the v2 (named multi-UR-set) launch when the package carries it;
-    // otherwise the existing single-UR / plain path, unchanged.
-    let out = match plan_set_shape_v2(&plan) {
-        Some((base_tier_count, base_factor_ppm, ur_sets, manifest_ptr)) => create_collection_v2(
+    // Prefer the v3 (named multi-UR-set + per-group forge) launch when the package
+    // carries UR sets; otherwise the existing single-UR / plain path, unchanged.
+    let out = match plan_set_shape_v3(&plan) {
+        Some((base_tier_count, base_factor_ppm, base_forge, ur_sets, manifest_ptr)) => create_collection_v3(
             cfg,
             creator_addr,
             name,
@@ -456,6 +496,8 @@ pub fn launch_from_bundle(
             max_supply,
             base_tier_count,
             base_factor_ppm,
+            base_forge.0,
+            base_forge.1,
             &ur_sets,
             &manifest_ptr,
             cover_arweave.as_deref(),
@@ -567,15 +609,37 @@ fn plan_rarity(plan: &Value) -> Option<(u16, u32, u32, u16)> {
     ))
 }
 
-/// The v2 (multi-UR-set) set shape from a launch package, if it carries one.
-/// Present iff the package has a non-empty `ultraRareSets` array (the acked
-/// Kinet.ink v5 shape, least-rare first). Returns
-/// `(base_tier_count, base_factor_ppm, ur_sets, manifest_ptr_hex)`. Base fields
-/// read from a `setShape` object if present, else the v1 `rarity` block / 50%.
-/// `manifest_ptr` falls back to all-zero ("no manifest yet"), which the chain
-/// normalizes to none. A package WITHOUT `ultraRareSets` returns `None`, so the
-/// existing single-UR / plain path (plan_rarity + create_collection) is unchanged.
-fn plan_set_shape_v2(plan: &Value) -> Option<(u16, u32, Vec<(u16, u32, u32)>, String)> {
+/// Read a forge dial object into `(mode_byte, continue_ppm)` for the v3 record.
+/// `mode_byte`: 0 = off, 1 = +1-only, 2 = variable. `enabled:false` forces off;
+/// otherwise the `mode` string ("off"/"plus1"/"variable") maps, defaulting to
+/// `default_mode` when absent. `continueChancePpm` is the per-step climb chance
+/// (default 500_000 = 50%). The main set has no `enabled` flag (it is always a
+/// group), so its default is `variable` — forging the main collection is on by
+/// default, matching the locked design.
+fn forge_dials(v: &Value, default_mode: u8) -> (u8, u32) {
+    let enabled = v.get("enabled").and_then(|x| x.as_bool());
+    let mode_str = v.get("mode").and_then(|x| x.as_str());
+    let continue_ppm = v.get("continueChancePpm").and_then(|x| x.as_u64()).unwrap_or(500_000) as u32;
+    let mode = match (enabled, mode_str) {
+        (Some(false), _) => 0,
+        (_, Some("off")) => 0,
+        (_, Some("plus1")) => 1,
+        (_, Some("variable")) => 2,
+        _ => default_mode,
+    };
+    (mode, continue_ppm)
+}
+
+/// The v3 (multi-UR-set + per-group forge) set shape from a launch package, if it
+/// carries one. Present iff the package has a non-empty `ultraRareSets` array
+/// (least-rare first). Returns `(base_tier_count, base_factor_ppm,
+/// base_forge(mode,continue_ppm), ur_sets[(tier,chance,factor,forge_mode,forge_continue)],
+/// manifest_ptr_hex)`. Base fields read from a `setShape` object if present, else
+/// the v1 `rarity` block / 50%. The base set's forge dials come from
+/// `setShape.baseForge` (default variable @ 50%); each UR set's from its `forge`
+/// object. `manifest_ptr` falls back to all-zero ("no manifest yet"). A package
+/// WITHOUT `ultraRareSets` returns `None`, so the single-UR / plain path is unchanged.
+fn plan_set_shape_v3(plan: &Value) -> Option<(u16, u32, (u8, u32), Vec<(u16, u32, u32, u8, u32)>, String)> {
     // The sets live either at the top level (v5 shape) or nested under `setShape`
     // (v6 shape). Try both so either package drives the multi-UR-set record.
     let arr = plan
@@ -591,13 +655,18 @@ fn plan_set_shape_v2(plan: &Value) -> Option<(u16, u32, Vec<(u16, u32, u32)>, St
         .or_else(|| plan["rarity"]["tierCount"].as_u64())
         .unwrap_or(1) as u16;
     let base_factor_ppm = shape["baseFactorPpm"].as_u64().unwrap_or(500_000) as u32;
+    // Main-set forge dials: default variable @ 50% (main forging is on by default).
+    let base_forge = forge_dials(&shape["baseForge"], 2);
     let ur_sets = arr
         .iter()
         .map(|s| {
+            let (mode, continue_ppm) = forge_dials(&s["forge"], 2);
             (
                 s["tierCount"].as_u64().unwrap_or(1) as u16,
                 s["chancePpm"].as_u64().unwrap_or(0) as u32,
                 s["factorPpm"].as_u64().unwrap_or(500_000) as u32,
+                mode,
+                continue_ppm,
             )
         })
         .collect();
@@ -606,7 +675,7 @@ fn plan_set_shape_v2(plan: &Value) -> Option<(u16, u32, Vec<(u16, u32, u32)>, St
         .or_else(|| plan["manifestPtrHex"].as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "00".repeat(32));
-    Some((base_tier_count, base_factor_ppm, ur_sets, manifest_ptr))
+    Some((base_tier_count, base_factor_ppm, base_forge, ur_sets, manifest_ptr))
 }
 
 /// STEP 1 — price a launch. Parse + validate the bundle, download the art, and
@@ -683,6 +752,22 @@ fn apply_launch_edits(plan: &mut Value, edits: &Value) {
         }
         if let Some(n) = es.get("mainSetWeight").and_then(|x| x.as_u64()) {
             shape["mainSetWeight"] = json!(n.min(u32::MAX as u64));
+        }
+        // Main-set forge dials (on/off, +1-only vs variable, climb chance).
+        if let Some(f) = es.get("baseForge") {
+            if !shape["baseForge"].is_object() {
+                shape["baseForge"] = json!({});
+            }
+            let bf = &mut shape["baseForge"];
+            if let Some(b) = f.get("enabled").and_then(|x| x.as_bool()) {
+                bf["enabled"] = json!(b);
+            }
+            if let Some(m) = f.get("mode").and_then(|x| x.as_str()) {
+                bf["mode"] = json!(if m == "plus1" { "plus1" } else { "variable" });
+            }
+            if let Some(n) = f.get("continueChancePpm").and_then(|x| x.as_u64()) {
+                bf["continueChancePpm"] = json!(n.min(1_000_000));
+            }
         }
         if let (Some(e_sets), Some(p_sets)) = (
             es.get("ultraRareSets").and_then(|x| x.as_array()),
@@ -824,12 +909,12 @@ pub fn launch_execute(
     let tier_art = Value::Object(tier_art);
 
     // 5. Create the collection on-chain + set its primary mint price. Prefer the
-    // v2 (named multi-UR-set) shape when the package carries it; else the
-    // existing single-UR / plain path, unchanged.
+    // v3 (named multi-UR-set + per-group forge) shape when the package carries UR
+    // sets; else the existing single-UR / plain path, unchanged.
     let name = plan["name"].as_str().unwrap_or("");
     let description = plan["description"].as_str().unwrap_or("");
-    let out = match plan_set_shape_v2(&plan) {
-        Some((base_tier_count, base_factor_ppm, ur_sets, manifest_ptr)) => create_collection_v2(
+    let out = match plan_set_shape_v3(&plan) {
+        Some((base_tier_count, base_factor_ppm, base_forge, ur_sets, manifest_ptr)) => create_collection_v3(
             cfg,
             creator_addr,
             name,
@@ -838,6 +923,8 @@ pub fn launch_execute(
             max_supply,
             base_tier_count,
             base_factor_ppm,
+            base_forge.0,
+            base_forge.1,
             &ur_sets,
             &manifest_ptr,
             cover_url.as_deref(),
@@ -1444,7 +1531,8 @@ pub struct ForgeCommit {
 }
 pub struct ForgeOutcome {
     pub result_tier: u32,
-    /// Which tier's artwork the result uses: itself up to 40, else T40's.
+    /// Which tier's artwork the result uses: itself up to the group's art count,
+    /// else the top available art (the tier number keeps climbing, the art caps).
     pub art_tier: u32,
 }
 
@@ -1486,8 +1574,20 @@ pub fn forge(
 }
 
 /// Resolve a committed forge once `resolve_height` exists: the guaranteed upgrade
-/// from `input_tier`, read from that block's hash. None if not mined yet (wait).
-pub fn forge_outcome(cfg: &NodeConfig, forge_txid: &str, resolve_height: i64, input_tier: u32) -> Result<Option<ForgeOutcome>, String> {
+/// from `input_tier` under the matched group's dials (`mode`: 0 off / 1 +1-only /
+/// 2 variable, with `continue_ppm` the variable climb chance), read from that
+/// block's hash. `art_count` is the group's available-art count (the tier number
+/// may climb past it; the art caps). None if not mined yet (wait). This mirrors
+/// the indexer's authoritative roll for the wallet's preview.
+pub fn forge_outcome(
+    cfg: &NodeConfig,
+    forge_txid: &str,
+    resolve_height: i64,
+    input_tier: u32,
+    mode: u8,
+    continue_ppm: u32,
+    art_count: u32,
+) -> Result<Option<ForgeOutcome>, String> {
     let rpc = RpcClient::new(cfg);
     let tip = rpc.call("getblockcount", json!([]))?.as_i64().unwrap_or(0);
     if tip < resolve_height {
@@ -1499,8 +1599,8 @@ pub fn forge_outcome(cfg: &NodeConfig, forge_txid: &str, resolve_height: i64, in
         .ok_or("could not read the resolve block hash")?
         .to_string();
     let seed = crate::forge::forge_seed(forge_txid, &block_hash);
-    let result_tier = crate::forge::forge_result_tier(input_tier, &seed);
-    Ok(Some(ForgeOutcome { result_tier, art_tier: crate::forge::art_tier_for(result_tier) }))
+    let result_tier = crate::forge::forge_result_tier(input_tier, mode, continue_ppm, &seed);
+    Ok(Some(ForgeOutcome { result_tier, art_tier: crate::forge::art_tier_for(result_tier, art_count) }))
 }
 
 /// Mint a PUBLIC collectible that REFERENCES existing art (no upload, no crypto) —

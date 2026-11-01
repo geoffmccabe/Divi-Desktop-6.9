@@ -225,6 +225,53 @@ pub fn encode_collection_create_v2(
     Ok(out)
 }
 
+/// Encode a COLLECTION-CREATE, v3 rarity shape (docs/NFD-FORGING.md). Extends v2
+/// with a PER-GROUP forge dial: one for the base/main set and one per Ultra-Rare
+/// set. Layout appended after `max_supply(4) meta_ptr(32)`:
+///   version(1)=0x03 | base_tier_count(2) | base_factor_ppm(4) |
+///   base_forge_mode(1) | base_forge_continue_ppm(4) | ur_set_count(1) |
+///   per set least-rare-first { tier_count(2) chance_ppm(4) factor_ppm(4)
+///   forge_mode(1) forge_continue_ppm(4) } | manifest_ptr(32, all-zero = none).
+/// `forge_mode`: 0 = off, 1 = +1-only, 2 = variable (climb at continue_ppm; the
+/// result tier may exceed the group's art count — the art caps, the number keeps
+/// climbing). All big-endian. The indexer drives the roll; this only builds bytes.
+pub fn encode_collection_create_v3(
+    max_supply: u32,
+    meta_ptr: &str,
+    base_tier_count: u16,
+    base_factor_ppm: u32,
+    base_forge_mode: u8,
+    base_forge_continue_ppm: u32,
+    ur_sets: &[(u16, u32, u32, u8, u32)], // (tier_count, chance_ppm, factor_ppm, forge_mode, forge_continue_ppm)
+    manifest_ptr: &str,
+) -> Result<String, String> {
+    if !is_hex_len(meta_ptr, 32) {
+        return Err("meta_ptr must be 32 bytes hex".into());
+    }
+    if !is_hex_len(manifest_ptr, 32) {
+        return Err("manifest_ptr must be 32 bytes hex (all-zero = none)".into());
+    }
+    if ur_sets.len() > u8::MAX as usize {
+        return Err("too many UR sets (max 255)".into());
+    }
+    let mut out = format!(
+        "{}{:08x}{}03{:04x}{:08x}{:02x}{:08x}{:02x}",
+        prefix(SUB_COLLECTION),
+        max_supply,
+        meta_ptr.to_lowercase(),
+        base_tier_count,
+        base_factor_ppm,
+        base_forge_mode,
+        base_forge_continue_ppm,
+        ur_sets.len(),
+    );
+    for (tier_count, chance_ppm, factor_ppm, forge_mode, forge_continue_ppm) in ur_sets {
+        out.push_str(&format!("{tier_count:04x}{chance_ppm:08x}{factor_ppm:08x}{forge_mode:02x}{forge_continue_ppm:08x}"));
+    }
+    out.push_str(&manifest_ptr.to_lowercase());
+    Ok(out)
+}
+
 /// Encode a COMMISSION-SET (creator commission on a collection):
 /// collection_id(32) | amount_duffs(u64, big-endian, 8) | payout(21 packed addr).
 /// The collection id is a txid reference, so it goes on the wire in internal
@@ -557,6 +604,13 @@ pub fn parse(script_hex: &str) -> Option<NfdRecord> {
                     // 20 per set then manifest(64). EXACT length, no trailing.
                     let count = usize::from_str_radix(&body[86..88], 16).ok()?;
                     body.len() == 88 + 20 * count + 64
+                })
+                || (body.len() >= 98 && &body[72..74] == "03" && {
+                    // v3: version(2) tier(4) factor(8) base_forge_mode(2)
+                    // base_forge_continue(8) ur_set_count(2) then 30 per set
+                    // (adds forge_mode(2) + forge_continue(8)) then manifest(64).
+                    let count = usize::from_str_radix(&body[96..98], 16).ok()?;
+                    body.len() == 98 + 30 * count + 64
                 });
             if !ok {
                 return None;
@@ -696,8 +750,8 @@ mod tests {
         let sets = [(12u16, 10_000u32, 500_000u32), (6u16, 1_000u32, 500_000u32)];
         let payload = encode_collection_create_v2(500, &m, 30, 500_000, &sets, &manifest).unwrap();
         // pinned byte layout (the indexer's v2 reader must match these offsets):
-        assert_eq!(&payload[..12], &prefix(SUB_COLLECTION)); // DVXP|ver|type|subtype
-        let body = &payload[12..];
+        assert_eq!(&payload[..14], &prefix(SUB_COLLECTION)); // DVXP|ver|type|subtype (14 hex)
+        let body = &payload[14..];
         assert_eq!(&body[0..8], "000001f4"); // max_supply = 500
         assert_eq!(&body[8..72], m); // meta_ptr
         assert_eq!(&body[72..74], "02"); // version
@@ -715,6 +769,40 @@ mod tests {
         let p0 = encode_collection_create_v2(0, &"cc".repeat(32), 10, 500_000, &[], &"00".repeat(32)).unwrap();
         assert!(matches!(parse(&op_meta_script(&p0)), Some(NfdRecord::CollectionCreate { .. })));
         assert!(encode_collection_create_v2(1, "short", 1, 1, &[], &manifest).is_err());
+    }
+
+    #[test]
+    fn collection_create_v3_roundtrips() {
+        let m = "ff".repeat(32);
+        let manifest = "ab".repeat(32);
+        // base: variable @ 50%; set0: +1-only; set1: variable @ 25%.
+        let sets = [
+            (12u16, 10_000u32, 500_000u32, 1u8, 0u32),
+            (6u16, 1_000u32, 500_000u32, 2u8, 250_000u32),
+        ];
+        let payload = encode_collection_create_v3(500, &m, 30, 500_000, 2, 500_000, &sets, &manifest).unwrap();
+        // pinned byte layout (the indexer's v3 reader must match these offsets):
+        assert_eq!(&payload[..14], &prefix(SUB_COLLECTION)); // DVXP|ver|type|subtype (14 hex)
+        let body = &payload[14..];
+        assert_eq!(&body[0..8], "000001f4"); // max_supply = 500
+        assert_eq!(&body[8..72], m); // meta_ptr
+        assert_eq!(&body[72..74], "03"); // version
+        assert_eq!(&body[74..78], "001e"); // base_tier_count = 30
+        assert_eq!(&body[78..86], "0007a120"); // base_factor_ppm = 500000
+        assert_eq!(&body[86..88], "02"); // base_forge_mode = variable
+        assert_eq!(&body[88..96], "0007a120"); // base_forge_continue_ppm = 500000
+        assert_eq!(&body[96..98], "02"); // ur_set_count = 2
+        assert_eq!(body.len(), 98 + 30 * 2 + 64); // exact
+        assert!(body.ends_with(&manifest));
+        // parses back to the base fields; rarity + forge are the indexer's job
+        let script = op_meta_script(&payload);
+        assert_eq!(parse(&script), Some(NfdRecord::CollectionCreate { max_supply: 500, meta_ptr: m }));
+        // a trailing byte is rejected (exact-length discipline)
+        assert!(parse(&op_meta_script(&format!("{payload}00"))).is_none());
+        // zero UR sets: a plain tiered v3 set (base dials only, manifest present)
+        let p0 = encode_collection_create_v3(0, &"cc".repeat(32), 10, 500_000, 2, 500_000, &[], &"00".repeat(32)).unwrap();
+        assert!(matches!(parse(&op_meta_script(&p0)), Some(NfdRecord::CollectionCreate { .. })));
+        assert!(encode_collection_create_v3(1, "short", 1, 1, 2, 0, &[], &manifest).is_err());
     }
 
     #[test]

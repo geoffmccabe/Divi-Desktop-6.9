@@ -34,6 +34,9 @@ interface State {
   mainSetWeight: number;
   baseTierCount: number;
   baseFactorPpm: number;
+  baseForgeEnabled: boolean;
+  baseForgeMode: "plus1" | "variable";
+  baseContinuePct: string; // main-set continue-chance as a percent string
   urSets: UrEdit[];
 }
 
@@ -64,6 +67,11 @@ function initState(plan: LaunchPlan): State {
     mainSetWeight: shape?.mainSetWeight ?? 100,
     baseTierCount: shape?.baseTierCount ?? 0,
     baseFactorPpm: shape?.baseFactorPpm ?? 0,
+    // Main-set forge dials: default ON, variable climb @ 50% (forging the main
+    // collection is on by default).
+    baseForgeEnabled: shape?.baseForge?.enabled ?? true,
+    baseForgeMode: shape?.baseForge?.mode ?? "variable",
+    baseContinuePct: ((shape?.baseForge?.continueChancePpm ?? 500_000) / 10_000).toString(),
     urSets: (shape?.ultraRareSets ?? []).map((u) => ({
       name: u.name,
       rarityWeight: String(u.rarityWeight),
@@ -111,6 +119,11 @@ export function LaunchEditor({
       setShape: {
         baseFactorPpm: st.baseFactorPpm,
         mainSetWeight: st.mainSetWeight,
+        baseForge: {
+          enabled: st.baseForgeEnabled,
+          mode: st.baseForgeMode,
+          continueChancePpm: st.baseForgeMode === "plus1" ? 0 : Math.round(Number(st.baseContinuePct || "0") * 10_000),
+        },
         ultraRareSets: st.urSets.map((u) => ({
           name: u.name,
           rarityWeight: intOf(u.rarityWeight),
@@ -226,6 +239,45 @@ export function LaunchEditor({
             <span className="le-tiers">{st.baseTierCount} tiers</span>
           </div>
           {st.urSets.length > 0 && <div className="le-chance">Main Set appears {mainPct.toFixed(2)}% of the time</div>}
+          <div className="le-forge">
+            <label className="le-inline">
+              <span>Forging</span>
+              <select
+                className="wl-input le-select"
+                value={st.baseForgeEnabled ? "yes" : "no"}
+                onChange={(e) => set("baseForgeEnabled", e.target.value === "yes")}
+              >
+                <option value="no">No</option>
+                <option value="yes">Yes</option>
+              </select>
+            </label>
+            <label className={"le-inline" + (!st.baseForgeEnabled ? " le-dim" : "")}>
+              <span>Mode</span>
+              <select
+                className="wl-input le-select"
+                disabled={!st.baseForgeEnabled}
+                value={st.baseForgeMode}
+                onChange={(e) => set("baseForgeMode", e.target.value === "plus1" ? "plus1" : "variable")}
+              >
+                <option value="plus1">+1 Only</option>
+                <option value="variable">Variable</option>
+              </select>
+            </label>
+            <label className={"le-inline" + (!st.baseForgeEnabled || st.baseForgeMode === "plus1" ? " le-dim" : "")}>
+              <span>Climb chance %</span>
+              <input
+                className="wl-input le-narrow"
+                inputMode="decimal"
+                disabled={!st.baseForgeEnabled || st.baseForgeMode === "plus1"}
+                value={st.baseContinuePct}
+                onChange={(e) => set("baseContinuePct", e.target.value)}
+              />
+              <InfoDot
+                glyph="i"
+                text="For a Variable forge, the chance of climbing one more tier at each step. 50% means +1 half the time, +2 a quarter, and so on. Past the last artwork the tier number keeps climbing and reuses the top card's art."
+              />
+            </label>
+          </div>
         </div>
 
         {st.urSets.map((u, i) => {
@@ -289,7 +341,7 @@ export function LaunchEditor({
                   />
                   <InfoDot
                     glyph="i"
-                    text="For a Variable forge, the chance of climbing one more tier at each step. 50% means +1 half the time, +2 a quarter, and so on. It stops at this set's top card."
+                    text="For a Variable forge, the chance of climbing one more tier at each step. 50% means +1 half the time, +2 a quarter, and so on. Past the last artwork the tier number keeps climbing and reuses the top card's art."
                   />
                 </label>
               </div>

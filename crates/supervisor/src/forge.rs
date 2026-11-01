@@ -1,38 +1,56 @@
-// NFD forging — the PERC upgrade mechanic. Burn two NFDs of the SAME tier, pay
-// the forge fee, and re-roll a guaranteed upgrade: +1 tier at 50%, +2 at 25%,
-// +3 at 12.5%, … up to +40. The result tier may exceed 40 (it reuses T40 art).
-// See docs/NFD-FORGING.md.
+// NFD forging — the PERC upgrade mechanic. Burn two NFDs of the SAME group and
+// tier, pay the collection's forge fee, and re-roll a guaranteed upgrade. The
+// roll is per-GROUP (the base/main set or a specific Ultra-Rare set), driven by
+// that group's dials: a MODE (+1-only or variable climb) and, for variable, a
+// per-step climb chance. +1 at `continue_ppm`, +2 at `continue_ppm`², … The
+// result tier may exceed the group's art count — the number keeps climbing, the
+// ARTWORK caps at the top available tier. See docs/NFD-FORGING.md.
 //
 // FAIRNESS: the roll is derived from a seed the forger cannot predict or grind —
 // the hash of a FUTURE block (chosen at forge time) combined with the forge txid.
 // The forger has already burned the inputs and paid the fee before that block
 // exists, so there is no retry, and the outcome is deterministic + verifiable by
 // anyone from the block hash. This module is the pure roll; the on-chain flow
-// (commit + resolve) lives in collectibles.rs.
+// (commit + resolve) lives in collectibles.rs. The AUTHORITATIVE roll is the
+// indexer's `forge_climb` (nfd-indexer); this mirrors its distribution for the
+// wallet's preview.
 
 use sha2::{Digest, Sha256};
 
-/// Largest tier bump forging can grant (result tier may still exceed 40).
+/// Forge modes, matching the indexer's on-chain byte: 0 = off, 1 = +1-only,
+/// 2 = variable.
+pub const MODE_OFF: u8 = 0;
+pub const MODE_PLUS1: u8 = 1;
+pub const MODE_VARIABLE: u8 = 2;
+
+/// Largest climb a single forge can grant (a safety cap so a pathological seed
+/// can't loop unbounded; the result tier may still exceed a group's art count).
 pub const MAX_BUMP: u32 = 40;
 
-/// Draw the tier bump K in 1..=40 from a 32-byte seed.
-/// Treat the seed's bits as fair coin flips (MSB first): K = (leading 1-bits) + 1,
-/// capped at 40. So P(K=1)=1/2, P(K=2)=1/4, …, P(K=k)=1/2^k — exactly the spec.
-pub fn draw_tier_bump(seed: &[u8]) -> u32 {
-    let mut heads: u32 = 0;
-    'outer: for &byte in seed {
-        for i in (0..8).rev() {
-            if (byte >> i) & 1 == 1 {
-                heads += 1;
-                if heads + 1 >= MAX_BUMP {
-                    break 'outer; // 39 heads => K capped at 40
-                }
-            } else {
-                break 'outer; // first tail ends the run
-            }
-        }
+/// The climb K (>= 1) from a seed under a group's dials.
+/// - `MODE_PLUS1` (and defensively `MODE_OFF`) -> always 1.
+/// - `MODE_VARIABLE` -> 1 plus the consecutive "continue" rolls at `continue_ppm`
+///   (500_000 = 50% -> +1 50% / +2 25% / …), capped at `MAX_BUMP`. Uses the same
+///   word()/cont() integer draw as the indexer so the distribution matches.
+pub fn climb(seed: &[u8], mode: u8, continue_ppm: u32) -> u32 {
+    if mode != MODE_VARIABLE {
+        return 1;
     }
-    (heads + 1).min(MAX_BUMP)
+    let word = |n: u32| -> u32 {
+        let mut h = Sha256::new();
+        h.update(seed);
+        h.update(n.to_le_bytes());
+        let d = h.finalize();
+        u32::from_le_bytes([d[0], d[1], d[2], d[3]])
+    };
+    let cont = |w: u32, ppm: u32| -> bool { ppm >= 1_000_000 || (w as u64) < (((ppm as u64) << 32) / 1_000_000) };
+    let mut k = 1u32;
+    let mut i = 0u32;
+    while k < MAX_BUMP && cont(word(40_000 + i), continue_ppm) {
+        k += 1;
+        i += 1;
+    }
+    k
 }
 
 /// The forge seed: sha256(forge_txid_bytes || resolve_block_hash_bytes). Neither
@@ -44,14 +62,15 @@ pub fn forge_seed(forge_txid_hex: &str, block_hash_hex: &str) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// Full outcome: from same-tier inputs `tier`, the result tier = tier + bump.
-pub fn forge_result_tier(input_tier: u32, seed: &[u8]) -> u32 {
-    input_tier + draw_tier_bump(seed)
+/// Result tier = input tier + the climb under this group's dials.
+pub fn forge_result_tier(input_tier: u32, mode: u8, continue_ppm: u32, seed: &[u8]) -> u32 {
+    input_tier + climb(seed, mode, continue_ppm)
 }
 
-/// Which tier's ARTWORK a result tier uses: itself up to 40, else T40's art.
-pub fn art_tier_for(result_tier: u32) -> u32 {
-    result_tier.min(40)
+/// Which tier's ARTWORK a result uses: itself up to the group's art count, else
+/// the top available art. The tier NUMBER keeps climbing; only the art caps.
+pub fn art_tier_for(result_tier: u32, art_count: u32) -> u32 {
+    result_tier.min(art_count.max(1))
 }
 
 #[cfg(test)]
@@ -59,43 +78,56 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bump_bounds() {
-        assert_eq!(draw_tier_bump(&[0x00; 32]), 1); // first flip tail -> +1
-        assert_eq!(draw_tier_bump(&[0xff; 32]), 40); // all heads -> capped +40
-        // 0b1011_.. : one head then tail -> +2
-        assert_eq!(draw_tier_bump(&[0b1011_1111, 0, 0]), 2);
-        // 0b1100_.. : two heads then tail -> +3
-        assert_eq!(draw_tier_bump(&[0b1100_0000, 0, 0]), 3);
+    fn plus1_is_always_one() {
+        assert_eq!(climb(&[0x00; 32], MODE_PLUS1, 0), 1);
+        assert_eq!(climb(&[0xff; 32], MODE_PLUS1, 0), 1);
+        assert_eq!(climb(&[0xff; 32], MODE_OFF, 0), 1); // defensive
     }
 
     #[test]
-    fn art_mapping_reuses_t40_beyond_40() {
-        assert_eq!(art_tier_for(37), 37);
-        assert_eq!(art_tier_for(40), 40);
-        assert_eq!(art_tier_for(45), 40);
-        assert_eq!(forge_result_tier(38, &[0b1111_1110, 0, 0]), 38 + 8); // 7 heads -> +8
-    }
-
-    #[test]
-    fn distribution_matches_halving() {
-        // Deterministic pseudo-seeds; tally the bump distribution over 200k draws.
-        let n = 200_000u32;
-        let mut counts = [0u32; 42];
-        for i in 0..n {
-            let seed: [u8; 32] = {
-                let mut h = Sha256::new();
-                h.update(b"forge-dist-test");
-                h.update(i.to_le_bytes());
-                h.finalize().into()
-            };
-            counts[draw_tier_bump(&seed) as usize] += 1;
+    fn variable_is_always_an_upgrade_and_capped() {
+        for i in 0..2000u32 {
+            let mut h = Sha256::new();
+            h.update(b"forge-climb-bounds");
+            h.update(i.to_le_bytes());
+            let s: [u8; 32] = h.finalize().into();
+            let k = climb(&s, MODE_VARIABLE, 500_000);
+            assert!(k >= 1 && k <= MAX_BUMP, "k={k}");
         }
-        let p = |k: usize| counts[k] as f64 / n as f64;
-        // Within 1.5% absolute of the ideal 1/2^k.
-        assert!((p(1) - 0.5).abs() < 0.015, "P(+1)={} expected .5", p(1));
-        assert!((p(2) - 0.25).abs() < 0.015, "P(+2)={} expected .25", p(2));
-        assert!((p(3) - 0.125).abs() < 0.015, "P(+3)={} expected .125", p(3));
-        assert!((p(4) - 0.0625).abs() < 0.01, "P(+4)={} expected .0625", p(4));
-        assert_eq!(counts[0], 0, "bump is never 0 — always an upgrade");
+    }
+
+    #[test]
+    fn art_caps_but_number_climbs() {
+        // 30 art tiers: tier 34 still shows tier 30's art.
+        assert_eq!(art_tier_for(29, 30), 29);
+        assert_eq!(art_tier_for(30, 30), 30);
+        assert_eq!(art_tier_for(34, 30), 30);
+        // result_tier is unbounded by art; forge_result_tier returns the number.
+        assert!(forge_result_tier(29, MODE_PLUS1, 0, &[0u8; 32]) == 30);
+    }
+
+    #[test]
+    fn variable_matches_halving_at_50_and_bends_at_25() {
+        let dist = |ppm: u32, tag: &[u8]| -> (f64, f64) {
+            let n = 40_000u32;
+            let (mut k1, mut k2) = (0u32, 0u32);
+            for i in 0..n {
+                let mut h = Sha256::new();
+                h.update(tag);
+                h.update(i.to_le_bytes());
+                let s: [u8; 32] = h.finalize().into();
+                match climb(&s, MODE_VARIABLE, ppm) {
+                    1 => k1 += 1,
+                    2 => k2 += 1,
+                    _ => {}
+                }
+            }
+            (k1 as f64 / n as f64, k2 as f64 / n as f64)
+        };
+        let (p1, p2) = dist(500_000, b"fp-50");
+        assert!((p1 - 0.5).abs() < 0.02, "P(+1)@50%={p1}");
+        assert!((p2 - 0.25).abs() < 0.02, "P(+2)@50%={p2}");
+        let (q1, _) = dist(250_000, b"fp-25");
+        assert!((q1 - 0.75).abs() < 0.03, "P(+1)@25%={q1}");
     }
 }

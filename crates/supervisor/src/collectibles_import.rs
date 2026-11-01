@@ -503,6 +503,22 @@ fn open_launch_v6(v: &Value) -> Result<Value, String> {
         }));
     }
 
+    // Main-set forge dials. The v6 package carries forge switches only on the UR
+    // sets, so the base/main set defaults to ON with a variable climb @ 50% (the
+    // locked design: the main collection is forgeable). A future package may carry
+    // `setShape.baseForge` to override; the review screen can edit it either way.
+    let bf = shape.get("baseForge");
+    let base_forge_enabled = bf.and_then(|f| f.get("enabled")).and_then(|x| x.as_bool()).unwrap_or(true);
+    let base_forge_mode = match bf.and_then(|f| f.get("mode")).and_then(|x| x.as_str()) {
+        Some("plus1") => "plus1",
+        _ => "variable",
+    };
+    let base_forge_continue = bf
+        .and_then(|f| f.get("continueChancePpm"))
+        .and_then(|x| x.as_u64())
+        .unwrap_or(500_000)
+        .min(1_000_000) as u32;
+
     let ur_count = ur_sets.len() as u64;
     Ok(json!({
         "version": 6,
@@ -518,6 +534,7 @@ fn open_launch_v6(v: &Value) -> Result<Value, String> {
             "baseTierCount": base_tier_count,
             "baseFactorPpm": base_factor_ppm,
             "mainSetWeight": main_set_weight,
+            "baseForge": { "enabled": base_forge_enabled, "mode": base_forge_mode, "continueChancePpm": base_forge_continue },
             "ultraRareSets": ur_sets,
         },
         "items": out_items,

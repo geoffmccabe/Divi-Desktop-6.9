@@ -41,14 +41,15 @@ fn main() {
     println!("forge txid   = {} (resolves at height {})", commit.forge_txid, commit.resolve_height);
     mine(collectibles::FORGE_DELAY + 1);
 
-    // Resolve the guaranteed upgrade from the future block hash.
-    let outcome = collectibles::forge_outcome(&cfg, &commit.forge_txid, commit.resolve_height, 5)
+    // Resolve the guaranteed upgrade from the future block hash. Base-set dials:
+    // variable climb (mode 2) at 50%, 40 art tiers (the legacy forge behavior).
+    let outcome = collectibles::forge_outcome(&cfg, &commit.forge_txid, commit.resolve_height, 5, 2, 500_000, 40)
         .expect("forge_outcome")
         .expect("should be resolvable now");
     println!("result tier  = T{} (uses T{} art)", outcome.result_tier, outcome.art_tier);
     assert!(outcome.result_tier > 5, "forge must ALWAYS upgrade");
     assert!(outcome.result_tier >= 6 && outcome.result_tier <= 45, "T5 + K, K in 1..=40");
-    assert_eq!(outcome.art_tier, outcome.result_tier.min(40), "art reuses T40 past 40");
+    assert_eq!(outcome.art_tier, outcome.result_tier.min(40), "art reuses top art past the count");
 
     // Mint the result, reusing the tier art (test reuses input a's art pointer).
     let traits = format!("{{\"name\":\"Forged Perc\",\"tier\":\"T{}\",\"forged\":true}}", outcome.result_tier);
