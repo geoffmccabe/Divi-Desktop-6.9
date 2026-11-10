@@ -6,6 +6,8 @@
 
 **Rebrand (v0.2):** the smart-contract chain is now called **DIVINA** everywhere in the whitepaper. This is the public name for the same chain our internal docs and the `~/diva` workspace still call "DIVA" (chain number 1838 is unchanged). File paths cited below keep their on-disk "DIVA" spelling on purpose, so they stay findable.
 
+**Positioning (2026-Nov-10, Geoff):** do NOT lead with "green" as the defining characteristic (it's table stakes now, old news). Demote low power to a feature, framed as "like Ethereum, not Bitcoin" (staking, not mining). Lead instead with DIVINA being **the most useful** chain (all the best modern features) **backed by the proven legacy Divi UTXO chain** (uninterrupted operation since 2018, partnered with the La Liga football league, once a top-100 cryptocurrency). Carry this framing into Benefits/Tech.
+
 **Two-sided layout (v0.2):** the whitepaper has **two sides** the reader flips between with two prominent tabs at the top:
 - **Tab 1 — DIVI** (the base chain, the overlay toolkit, the apps you can create, and the Divi Desktop wallet)
 - **Tab 2 — DIVINA** (the green smart-contract chain, permanent storage, privacy & compliance, and real-world money)
@@ -23,8 +25,9 @@ Each side carries **its own features and its own roadmap.** A short shared secti
 
 ## Section D1 — The Divi Network (the green base chain)
 
-- **Green Proof-of-Stake** — Divi runs on staking, not mining, so securing it uses almost no electricity. *LIVE*
+- **Proven track record** — Divi has run without interruption since 2018, was partnered with the La Liga football league, and was once a top-100 cryptocurrency by market value. *LIVE*
 - **Fast, steady blocks** — a new block about every 60 seconds since launch (~4.1M blocks). *LIVE*
+- **Low power (like Ethereum, not Bitcoin)** — Divi runs on staking rather than mining, so like Ethereum and other modern chains it secures itself with almost no electricity, unlike proof-of-work Bitcoin. *LIVE*
 - **LoveNodes (tiered nodes)** — tiered staking nodes, including a lightweight "LoveNode" that can stake from a phone through a relay. *LIVE (chain); phone client partly DESIGNED*
 - **Lottery blocks** — a recurring, network-wide jackpot draw built into the chain itself. *LIVE*
 - **Deliberately simple money model** — a clean Bitcoin-style transaction format (no SegWit) that makes everything built on top unambiguous and safe. *LIVE*
@@ -74,12 +77,14 @@ Each side carries **its own features and its own roadmap.** A short shared secti
 
 ---
 
-# TAB 2 — DIVINA (the green smart-contract chain and real-world money)
+# TAB 2 — DIVINA (the most useful smart-contract chain and real-world money)
 
-## Section V1 — DIVINA: the green smart-contract chain
+## Section V1 — DIVINA: the most useful smart-contract chain
 
-- **DIVINA EVM side-chain** — a green smart-contract chain that runs standard Ethereum-style apps, built as the "Costa Rica blockchain" (chain number 1838, Costa Rica's sovereignty year). *BUILT (devnet); core consensus in progress*
-- **POAS consensus** — Proof Of Authority Staking, named for Costa Rica's Poás volcano: validators stake to take turns producing blocks, with no mining and no electricity cost. *DESIGNED (interim launch uses a simpler authority mode)*
+- **DIVINA EVM side-chain** — a smart-contract chain built to be *the most useful*: it runs standard Ethereum-style apps with all the best modern features, built as the "Costa Rica blockchain" (chain number 1838, Costa Rica's sovereignty year). *BUILT (devnet); core consensus in progress*
+- **Backed by proven Divi** — DIVINA is anchored to Divi, a UTXO chain that has operated without interruption since 2018, was partnered with the La Liga football league, and was once a top-100 cryptocurrency by market value. DIVINA writes its state into Divi, inheriting that track record and its finality. *LIVE (Divi) / DESIGNED (anchoring)*
+- **POAS consensus** — Proof Of Authority Staking, named for Costa Rica's Poás volcano: validators stake to take turns producing blocks, with no mining. *DESIGNED (interim launch uses a simpler authority mode)*
+- **Low power (like Ethereum, not Bitcoin)** — like Ethereum and other modern chains, DIVINA secures itself by staking rather than mining, so it runs on a tiny fraction of the energy a proof-of-work chain such as Bitcoin needs. *BUILT (devnet)*
 - **38 producers: 5 reserved seats + 33 open seats** — the block-producer set is split in two. 5 reserved (founder) seats are baked into the chain, can't be out-ranked or kicked for downtime, and only change by a governance vote; they're the launch set. The other 33 open seats fill themselves automatically by stake ranking (meet the bond, land in the top 33, hold a seat), and lose the seat to the next staker in line if they go offline. The chain runs with however many seats are filled and only caps at 38. Reserved seats earn rewards the same way as everyone, strictly by their own stake (no founder bonus), with just a small 1,000-Divi floor instead of the full open-seat bond. *DESIGNED (launch runs the reserved seats only; open seats go live in the POAS staking phase)*
 - **No empty blocks** — DIVINA only makes a block when there's something to do, aiming for 2 to 3 second blocks on ordinary hardware. *BUILT (verified feasible)*
 - **One coin** — DIVINA uses bridged Divi as its only coin for fees and staking; there is no separate coin. *DECIDED*
