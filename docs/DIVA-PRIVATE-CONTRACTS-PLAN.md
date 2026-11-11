@@ -1,6 +1,8 @@
 # DIVA Private Smart Contracts Plan
 
-**Status:** Design / spec. Nothing built yet.
+**BUILD STATUS (2026-Nov-11):** Phase 1 **sealed-data** is BUILT and self-tested (privacy-only; the §4-§5 compliance/warrant disclosure path is deliberately NOT built, per Geoff "no privacy invasion of govt, add later"). This covers build-order steps 1-2 (confidential records + per-recipient access control) via client-side encryption + on-chain allow-list, rather than FHE. Location: `/Users/geoffreymccabe/diva/private/` (`contracts/ConfidentialVault.sol`, `lib/sealed-data.mjs`, self-tests). Verified: crypto 10/10, on-chain 11/11. FHE (the flagship, steps 1-5 proper) is the labeled next phase: `/Users/geoffreymccabe/diva/private/FHE-NEXT-PHASE.md`. See also `/Users/geoffreymccabe/diva/private/README.md`.
+
+**Status:** Design / spec. Original design below (Phase 1 now partially built as above).
 **Scope:** Confidential smart contracts on **DIVA** (the Divi Authority chain, our forked geth side-chain secured by POAS), plus the compliance knobs that keep them defensible.
 **Date:** 2026-Jul-30
 
